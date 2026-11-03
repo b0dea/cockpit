@@ -6,13 +6,15 @@ import { parse, stringify } from 'smol-toml'
 import { loadCockpitConfig, type LoadedCockpitConfig } from '../src/config/load.js'
 import {
     issueLifecycleRunContext,
-    issueSetupRunContext,
     type LifecycleRunContext,
     type LifecycleRunContextInput,
+} from '../src/environment/application/lifecycle-context.js'
+import {
+    issueSetupRunContext,
     type SetupCommandAdapters,
     type SetupRunContext,
     type SetupRunContextInput,
-} from '../src/environment/application.js'
+} from '../src/environment/application/setup.js'
 import type { SetupObservation, SetupResult } from '../src/environment/setup.js'
 import { observeSetupCheckout, withSetupCheckoutProjection } from '../src/environment/setup-observation.js'
 import { selectStateRoot } from '../src/environment/state.js'

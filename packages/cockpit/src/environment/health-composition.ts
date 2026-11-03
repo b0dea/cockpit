@@ -6,14 +6,10 @@ import { evaluatorUnavailable, findEvaluators } from '../grading/evaluate.js'
 import { createWorkStore } from '../work-orders/store.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import {
-    decodeLifecycleRecord,
-    revalidateService,
-    type DoctorCommandAdapters,
-    type HealthObservationProducers,
-    type PreflightCommandAdapters,
-    type RuntimeReadiness,
-} from './application.js'
+import { type DoctorCommandAdapters } from './application/doctor.js'
+import { type HealthObservationProducers, type PreflightCommandAdapters } from './application/health.js'
+import { decodeLifecycleRecord, revalidateService } from './application/lifecycle.js'
+import { type RuntimeReadiness } from './application/lifecycle-context.js'
 import { decodeCoordinationRecord, observeClaimState, readRootPortInventory } from './claims.js'
 import { inspectCodexHookTrust } from './codex-hook-trust.js'
 import { observeEnvSchemas } from './env-schema-observation.js'

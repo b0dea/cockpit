@@ -1,10 +1,6 @@
-import { runSetup } from '../environment/application.js'
-import type {
-    SetupCommandAdapters,
-    SetupCommandInput,
-    SetupCommandResult,
-} from '../environment/application.js'
-import type { SetupApplicationOutcome } from '../environment/application.js'
+import { runSetup } from '../environment/application/setup.js'
+import type { SetupCommandAdapters, SetupCommandInput, SetupCommandResult } from '../environment/application/setup.js'
+import type { SetupApplicationOutcome } from '../environment/application/setup.js'
 
 export type { SetupCommandAdapters, SetupCommandInput, SetupCommandResult }
 

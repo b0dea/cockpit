@@ -16,11 +16,7 @@ import { shellPayload } from '../guards/fixtures/invocation-corpus.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import type { ExecutionStep } from './contract.js'
 import { loadCockpitConfig } from '../config/load.js'
-import {
-    prepareGuardEvaluationPolicy,
-    runGuardEvaluationApplication,
-    type GuardEvaluationApplicationInput,
-} from './application.js'
+import { prepareGuardEvaluationPolicy, runGuardEvaluationApplication, type GuardEvaluationApplicationInput } from './application/guard.js'
 import { observeSetupCheckout } from './setup-observation.js'
 import { CockpitConfig } from '../schema.js'
 import { GuardCommandArgv } from '../schema.js'

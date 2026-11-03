@@ -53,12 +53,8 @@ vi.mock('./reclaim.js', async (importOriginal) => {
         reconcileReclaimAction: (...args: Parameters<typeof actual.reconcileReclaimAction>) => applicationOwners.reclaim.reconcileReclaimAction?.(...args) ?? actual.reconcileReclaimAction(...args),
     }
 })
-import {
-    beginOperatorReset,
-    issueDestructiveRunContext,
-    runDown,
-    runReset,
-} from './application.js'
+import { beginOperatorReset, runDown, runReset } from './application/destructive.js'
+import { issueDestructiveRunContext } from './application/lifecycle-context.js'
 import { decodeCoordinationRecord } from './claims.js'
 import { readState, transactState } from './state.js'
 import { resolveLifecycleStage } from './lifecycle-stage.js'

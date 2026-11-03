@@ -18,7 +18,7 @@ import { measuredBrowserHarnessVersions, observeBrowserProjectPackage, renderBro
 import { isGuardSurfaceTarget } from '../surfaces/harness-registry.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import { stripDevelopmentMarkers } from '../surfaces/development-markers.js'
-import { decodeLifecycleRecord } from '../environment/application.js'
+import { decodeLifecycleRecord } from '../environment/application/lifecycle.js'
 import type { EnvironmentSnapshot, RuntimeEvidence } from '../environment/evidence.js'
 import { resolveExecutablePath } from '../environment/executable.js'
 import {

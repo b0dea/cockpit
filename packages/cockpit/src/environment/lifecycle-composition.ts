@@ -17,7 +17,7 @@ import {
     type RuntimeReadinessPurpose,
     type SleepCommandAdapters,
     type UpCommandAdapters,
-} from './application.js'
+} from './application/lifecycle-context.js'
 import { isProcessStart, observeProcessStart, processHost, releaseDeadSessionHolders, type HolderProcess } from './claims.js'
 import {
     errorCause,

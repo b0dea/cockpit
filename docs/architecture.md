@@ -120,7 +120,7 @@ handler. A harness mechanism that has not been probed beside a deliberately brok
 
 Add a public command to `packages/cockpit/src/command-table.ts`, bind it in
 `packages/cockpit/src/cli.ts`, and order environment work through the environment application
-(`packages/cockpit/src/environment/application.ts`). Every child process crosses
+(`packages/cockpit/src/environment/application/`). Every child process crosses
 `packages/cockpit/src/environment-exec/execute.ts`; health and lifecycle verdicts stay in their
 existing modules. Add a schema field only together with the code that consumes it.
 

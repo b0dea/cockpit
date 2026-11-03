@@ -32,7 +32,7 @@ import { createRuntimeAdapter, observeRuntimeExecution, projectRuntimeExecutionE
 import { deriveEntrypoints, observePortFamily, projectPortLeaseResult } from './environment/ports.js'
 import { leasePortFamilyFixture } from '../test-support/port-lease-fixture.js'
 import { holderId as deriveHolderId } from './environment/identity.js'
-import type { HealthObservationProducers, HealthObservationSource, HealthObservationSourceInput } from './environment/application.js'
+import type { HealthObservationProducers, HealthObservationSource, HealthObservationSourceInput } from './environment/application/health.js'
 
 const application = vi.hoisted(() => ({
     runDoctor: vi.fn(),
@@ -45,11 +45,17 @@ const application = vi.hoisted(() => ({
     runUp: vi.fn(),
 }))
 
-vi.mock('./environment/application.js', () => application)
+vi.mock('./environment/application/setup.js', () => ({ runSetup: application.runSetup }))
+vi.mock('./environment/application/lifecycle.js', () => ({ runUp: application.runUp, runSleep: application.runSleep }))
+vi.mock('./environment/application/destructive.js', () => ({ runDown: application.runDown, runReset: application.runReset }))
+// The real doctor reads helpers from the health module, so these two keep every other export real.
+vi.mock('./environment/application/health.js', async importOriginal => ({ ...await importOriginal<object>(), runPreflight: application.runPreflight }))
+vi.mock('./environment/application/doctor.js', async importOriginal => ({ ...await importOriginal<object>(), runDoctor: application.runDoctor }))
+vi.mock('./environment/application/logs.js', () => ({ runLogs: application.runLogs }))
 
 afterEach(() => vi.clearAllMocks())
 
-const applicationPath = fileURLToPath(new URL('./environment/application.ts', import.meta.url))
+const applicationPath = fileURLToPath(new URL('./environment/application/setup.ts', import.meta.url))
 const commandPath = fileURLToPath(new URL('./setup/command.ts', import.meta.url))
 const checkoutId = deriveCheckoutId({ checkoutPath: '/synthetic/checkout' })
 const stackId = deriveStackId({
@@ -72,9 +78,9 @@ describe('setup command adapter boundary', () => {
         expect(application).toMatch(/export interface SetupCommandResult/)
         expect(application).toMatch(/export interface SetupCommandAdapters/)
         expect(imports(application)).not.toContain('../setup/command.js')
-        expect(imports(command)).toContain('../environment/application.js')
+        expect(imports(command)).toContain('../environment/application/setup.js')
         const contractImport = command.match(
-            /import type\s*\{([\s\S]*?)\}\s*from '..\/environment\/application\.js'/,
+            /import type\s*\{([\s\S]*?)\}\s*from '..\/environment\/application\/setup\.js'/,
         )?.[1]
         expect(contractImport).toContain('SetupCommandInput')
         expect(contractImport).toContain('SetupCommandResult')
@@ -183,7 +189,8 @@ describe('environment observation command adapters', () => {
                 { name: 'configuration-unavailable', producer: 'state', value: missingConfiguration, verdict: 'unavailable' },
                 { name: 'transport', producer: 'runtime', value: unhealthy.find(({ code }) => code === ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE)!, verdict: 'unavailable' },
             ]
-            const actual = await vi.importActual<typeof import('./environment/application.js')>('./environment/application.js')
+            const actualHealth = await vi.importActual<typeof import('./environment/application/health.js')>('./environment/application/health.js')
+            const actualDoctor = await vi.importActual<typeof import('./environment/application/doctor.js')>('./environment/application/doctor.js')
             for (const row of rows) {
                 const load = async (_input: unknown, issue: (source: HealthObservationSourceInput) => HealthObservationSource | undefined) => {
                     const fresh = await loadCockpitConfig(configPath)
@@ -221,8 +228,8 @@ describe('environment observation command adapters', () => {
                     return source
                 }
                 const adapters = { load, execute: executeProbe }
-                const first = await actual.runPreflight({ configPath }, adapters)
-                const second = await actual.runDoctor({ configPath }, adapters)
+                const first = await actualHealth.runPreflight({ configPath }, adapters)
+                const second = await actualDoctor.runDoctor({ configPath }, adapters)
                 if (row.name === 'acquisition-only') {
                     expect(first).toMatchObject({ kind: 'blocked', status: 2, result: { verdict: 'unavailable', checks: [] } })
                     expect(second.result).toMatchObject({ verdict: 'unavailable', checks: [] })

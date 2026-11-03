@@ -4,9 +4,7 @@ import type { Decider } from '../schema.js'
 import { ENVIRONMENT_CODES, type Diagnostic } from './contract.js'
 import { EXIT_CODES } from '../invocation.js'
 import { refusalOutcome as refusal } from '../refusal.js'
-import type {
-    ResetCommandInput,
-} from './application.js'
+import type { ResetCommandInput } from './application/lifecycle-context.js'
 import type {
     GeneratedEnvironmentCommandInput,
     GeneratedEnvironmentSyncInput,

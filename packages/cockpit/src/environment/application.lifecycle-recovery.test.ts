@@ -71,11 +71,8 @@ vi.mock('./ports.js', async (importOriginal) => {
     }
 })
 import { loadCockpitConfig } from '../config/load.js'
-import {
-    runSleep,
-    runUp,
-    type LifecycleRunContext,
-} from './application.js'
+import { runSleep, runUp } from './application/lifecycle.js'
+import { type LifecycleRunContext } from './application/lifecycle-context.js'
 import { readState, transactState } from './state.js'
 import { recordLifecycleStarted } from './lifecycle-stage.js'
 import { createApplicationFixtureSupport } from '../../test-support/application-fixture.js'

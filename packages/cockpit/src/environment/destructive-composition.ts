@@ -14,7 +14,7 @@ import {
     type DownCommandAdapters,
     type LifecycleRunContext,
     type ResetCommandAdapters,
-} from './application.js'
+} from './application/lifecycle-context.js'
 import { ENVIRONMENT_CODES, forwardedRefusal, type Diagnostic, type EnvironmentCommandOutcome, type EnvironmentDiagnostic, type ExecutionStep } from './contract.js'
 import { decodeCoordinationRecord, liveHolderMessage, observeProcessStart, processHost, readActiveStackInventory, releaseDeadSessionHolders } from './claims.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'

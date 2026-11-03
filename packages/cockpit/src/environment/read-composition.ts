@@ -3,13 +3,10 @@ import { realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { loadCockpitConfig, consumeLoadedConfigProjection, type ConsumedLoadedConfig } from '../config/load.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import {
-    decodeLifecycleRecord,
-    type RuntimeEvidenceObservation,
-    type LogObservation,
-    type LogsCommandAdapters,
-    type ReadinessRefusal,
-} from './application.js'
+import { type RuntimeEvidenceObservation } from './application/health.js'
+import { decodeLifecycleRecord } from './application/lifecycle.js'
+import { type ReadinessRefusal } from './application/lifecycle-context.js'
+import { type LogObservation, type LogsCommandAdapters } from './application/logs.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { deriveEntrypoints, observeRetainedPortFamily, projectRetainedPortFamilyResult, type PortLeaseProjection } from './ports.js'
 import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, type ExecutionStep, type HolderId, type LifecycleProgress, type StackId, RefusalError } from './contract.js'

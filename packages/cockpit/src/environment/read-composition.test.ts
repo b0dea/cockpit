@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { createReadCommandAdapters } from './read-composition.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
-import { runLogs } from './application.js'
+import { runLogs } from './application/logs.js'
 import { RefusalError } from './contract.js'
 
 const sha = (value: string) => value.padEnd(64, value[0] ?? 'a').slice(0, 64)

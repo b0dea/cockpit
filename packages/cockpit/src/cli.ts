@@ -28,23 +28,25 @@ import {
 } from './registry-resolve/command.js'
 import { setupCommand, type SetupCommandInput } from './setup/command.js'
 import {
-    type DoctorCommandInput,
-    type DownCommandInput,
-    type PreflightCommandInput,
-    type ResetCommandInput,
-    type SleepCommandInput,
-    type UpCommandInput,
     beginOperatorReset as beginOperatorResetApplication,
-    runDoctor as runDoctorApplication,
     runDown as runDownApplication,
-    runLogs as runLogsApplication,
-    runPreflight as runPreflightApplication,
     runReset as runResetApplication,
+} from './environment/application/destructive.js'
+import { type DoctorCommandInput, runDoctor as runDoctorApplication } from './environment/application/doctor.js'
+import { runGuardEvaluationApplication } from './environment/application/guard.js'
+import { type PreflightCommandInput, runPreflight as runPreflightApplication } from './environment/application/health.js'
+import {
     runSession as runSessionApplication,
     runSleep as runSleepApplication,
     runUp as runUpApplication,
-    runGuardEvaluationApplication,
-} from './environment/application.js'
+} from './environment/application/lifecycle.js'
+import {
+    type DownCommandInput,
+    type ResetCommandInput,
+    type SleepCommandInput,
+    type UpCommandInput,
+} from './environment/application/lifecycle-context.js'
+import { runLogs as runLogsApplication } from './environment/application/logs.js'
 import { executeForegroundProcess, executePlan, executeProbe } from './environment-exec/execute.js'
 import { createDestructiveCommandAdapters, selectDestructiveDaemon } from './environment/destructive-composition.js'
 import { createHealthCommandAdapters } from './environment/health-composition.js'
@@ -55,12 +57,7 @@ import { createReadCommandAdapters } from './environment/read-composition.js'
 import { probeInstalledRuntime, runRuntimeMeasure } from './environment/runtime-measurement.js'
 import { initializeLocalGitRepository, runSiblingAdd, runSiblingRemove, type SiblingAddInput, type SiblingRemoveInput } from './environment/sibling-registration.js'
 import { runToolChange, type ToolChangeInput } from './environment/tool-registration.js'
-import {
-    issueSetupRunContext,
-    setupEnvironment,
-    type SetupCommandAdapters,
-    type SetupRunContext,
-} from './environment/application.js'
+import { issueSetupRunContext, setupEnvironment, type SetupCommandAdapters, type SetupRunContext } from './environment/application/setup.js'
 import {
     consumeSetupCheckoutProjection,
     observeEnvironmentIgnore,

@@ -27,7 +27,7 @@ import {
     type SetupCommandAdapters,
     type SetupRunContextInput,
     type SetupRunContext,
-} from './application.js'
+} from './application/setup.js'
 import type { SetupObservation } from './setup.js'
 import {
     observeSetupCheckout,

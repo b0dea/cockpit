@@ -41,14 +41,9 @@ vi.mock('./git-observation.js', async (importOriginal) => {
     }
 })
 import { loadCockpitConfig } from '../config/load.js'
-import {
-    runPreflight,
-    runDoctor,
-    runLogs,
-    type HealthObservationSource,
-    type HealthObservationSourceInput,
-    type DoctorSurfaceOverrideInspection,
-} from './application.js'
+import { runDoctor, type DoctorSurfaceOverrideInspection } from './application/doctor.js'
+import { runPreflight, type HealthObservationSource, type HealthObservationSourceInput } from './application/health.js'
+import { runLogs } from './application/logs.js'
 import {
     observeSetupCheckout,
     withSetupCheckoutProjection,

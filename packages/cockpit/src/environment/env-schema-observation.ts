@@ -2,7 +2,7 @@
 // `.env.schema`). Must not: read, keep or print a resolved value, decide the health verdict
 // (observations.ts), or spawn a process itself (environment-exec/execute.ts runs the step).
 // Varlock is optional, so a sibling without `.env.schema` is not observed at all and an absent
-// binary is advisory. Handed off to: health-composition.ts (producer) and application.ts (rows,
+// binary is advisory. Handed off to: health-composition.ts (producer) and application/health.ts (rows,
 // diagnostics).
 //
 // `varlock load --agent` still prints partial values, and its error messages can quote a value, so

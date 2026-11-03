@@ -57,7 +57,7 @@ settings directories are not published (enforced by `tree-hygiene.test.ts`).
 | Declare and load | `packages/cockpit/src/schema.ts` validates declarations; `packages/cockpit/src/config/load.ts` binds source bytes and path. |
 | Observe | `packages/cockpit/src/environment/{setup-observation,git-observation,runtime,ports,lifecycle-stage}.ts` produce bounded evidence. |
 | Decide | `packages/cockpit/src/environment/observations.ts` evaluates health; `lifecycle.ts`, `claims.ts` and `reclaim.ts` in the same directory decide permitted work. |
-| Sequence | `packages/cockpit/src/environment/application.ts` orders setup, lifecycle, health, logs and destructive operations. Thin command modules forward its outcomes. |
+| Sequence | `packages/cockpit/src/environment/application/` orders setup, lifecycle, health, doctor, logs, guard and destructive operations, one module per command family. Thin command modules forward its outcomes. |
 | Execute and postcheck | `packages/cockpit/src/environment-exec/execute.ts` owns process mechanics. Owner modules authenticate the resulting observations before application publishes state. |
 | Bind and test | `packages/cockpit/src/cli.ts` supplies production dependencies and renders outcomes. Adjacent `*.test.ts` files exercise each owner; `.dependency-cruiser.mjs` holds the import-graph rules and `packages/cockpit/src/architecture.test.ts` runs them beside the confinement checks a graph cannot express. |
 
