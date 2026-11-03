@@ -59,7 +59,7 @@ function issueObservation(value: EnvironmentObservation): EnvironmentObservation
     return snapshot
 }
 
-export function isClaimObservation(value: unknown): value is EnvironmentObservation {
+function isClaimObservation(value: unknown): value is EnvironmentObservation {
     return value !== null && typeof value === 'object' && issuedObservations.has(value)
 }
 

@@ -98,4 +98,4 @@ function replaceApprovedActiveMarker(fence, approved, writer, fields) {
     }
 }
 
-module.exports = { readFenceMarkerFile, readApprovedActiveMarker, replaceApprovedActiveMarker, syncDirectory }
+module.exports = { readFenceMarkerFile, replaceApprovedActiveMarker, syncDirectory }

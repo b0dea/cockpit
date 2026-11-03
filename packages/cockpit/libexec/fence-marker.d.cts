@@ -15,7 +15,6 @@ export interface ApprovedFenceMarker extends FenceMarkerIdentity {
 }
 
 export function readFenceMarkerFile(markerPath: string): { readonly value: unknown; readonly identity: FenceMarkerIdentity } | undefined
-export function readApprovedActiveMarker(fence: FenceMarkerLocation, approved: ApprovedFenceMarker): Record<string, unknown> | undefined
 export function replaceApprovedActiveMarker(
     fence: FenceMarkerLocation,
     approved: ApprovedFenceMarker,
