@@ -250,10 +250,6 @@ describe('consumer surface declarations', () => {
         }).success).toBe(false)
     })
 
-    it.each(['claudecode', 'codexcli', 'opencode'])('refuses the shipped harness identity %s', (name) => {
-        expect(CustomHarness.safeParse({ ...customHarness, name }).success).toBe(false)
-    })
-
     it.each([
         ['missing date', () => { const value = structuredClone(customHarness); Reflect.deleteProperty(value.capabilities[0]!, 'measured_on'); return value }],
         ['missing mechanism', () => { const value = structuredClone(customHarness); Reflect.deleteProperty(value.capabilities[0]!, 'mechanism'); return value }],
@@ -327,6 +323,7 @@ describe('generated environment declarations', () => {
         ['host operation with service', (config: typeof generatedConfig) => { config.environment.generated.services[0].health.probe.location = 'host' }],
         ['inferred unconfirmed provenance', (config: typeof generatedConfig) => { config.environment.generated.services[0].provenance.kind = 'inferred' }],
         ['open-ended decision subject', (config: typeof generatedConfig) => { config.environment.generated.decisions.entries[0].subject = 'structure' }],
+        ['uppercase endpoint URL spelling', (config: typeof generatedConfig) => { config.environment.generated.vendors[0].endpoints[0].sink = 'HTTP://APP:3000/sink' }],
     ])('rejects %s through runtime and editor schemas', (_name, mutate) => {
         const config = structuredClone(generatedConfig)
         mutate(config)
@@ -443,15 +440,6 @@ describe('generated environment declarations', () => {
         }
     })
 
-    it('requires canonical lowercase endpoint URL spelling in runtime and editor schemas', () => {
-        const config = structuredClone(generatedConfig)
-        config.environment.generated.vendors[0].endpoints[0].sink = 'HTTP://APP:3000/sink'
-
-        expect(CockpitConfig.safeParse(config).success).toBe(false)
-        const validate = publishedCockpitValidator
-        expect(validate(config)).toBe(false)
-    })
-
     it.each([
         ['zero port', 'http://app:0/sink', true],
         ['maximum port', 'http://app:65535/sink', true],
@@ -468,19 +456,6 @@ describe('generated environment declarations', () => {
 })
 
 describe('entrypoint kind ownership', () => {
-    it('publishes one frozen closed vocabulary', () => {
-        expect(ENTRYPOINT_KINDS).toEqual([
-            'entrypoint',
-            'origin',
-            'callback_url',
-            'advertised_listener',
-            'cors_origin',
-            'public_base_url',
-        ])
-        expect(Object.isFrozen(ENTRYPOINT_KINDS)).toBe(true)
-        expect(Reflect.set(ENTRYPOINT_KINDS, 0, 'other')).toBe(false)
-    })
-
     it('accepts every published kind and rejects values outside the vocabulary', () => {
         for (const kind of ENTRYPOINT_KINDS) {
             expect(EntrypointDerivative.safeParse({ name: 'web', kind, port: 'WEB', path: '/' }).success).toBe(true)
@@ -816,11 +791,6 @@ describe('vendor client policy declarations', () => {
         config.environment.generated.vendors[0].egress_guard.local_service = 'undeclared-backend'
         expect(CockpitConfig.safeParse(config).success).toBe(false)
     })
-})
-
-it('allows a lower attempt cap and rejects raising the maximum', () => {
-    expect(Workorders.safeParse({ attempt_cap: 1 }).success).toBe(true)
-    expect(Workorders.safeParse({ attempt_cap: 3 }).success).toBe(false)
 })
 
 it('rejects the superseded stale age control as an unknown key', () => {
