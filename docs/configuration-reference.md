@@ -232,7 +232,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `network_exposure_reason` | Why the browser needs wider network access; required when network_exposure is wider than loopback. | string |  | 1–512 characters |
 | `harnesses` | Agent tools, with versions, that are wired to the browser. | array of table: [`[[browser.harnesses]]`](#browserharnesses) |  | required; 1–3 items; unique items |
 | `images` | Pinned container images for the browser. | table: [`[browser.images]`](#browserimages) |  | required |
-| `project` | Node project the runner installs its driver from. | table: [`[browser.project]`](#browserproject) |  | required |
+| `project` | Node project the browser commands load their Playwright driver from. | table: [`[browser.project]`](#browserproject) |  | required |
 | `endpoint` | WebSocket address of the browser server, using an allowed host. | string |  | format `uri` |
 | `max_clients` | Most browser clients that may connect at once. | integer |  | required; 1–64 |
 | `proxy` | Proxy the browser reaches the application through. | table: [`[browser.proxy]`](#browserproxy) |  | required |
@@ -240,7 +240,6 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `authentication` | How browser sessions sign in to the application. | table: [`[browser.authentication]`](#browserauthentication) |  | required |
 | `data` | Statement about the data the browser touches; cockpit cannot observe it. | table: [`[browser.data]`](#browserdata) |  | required |
 | `request_preapproval` | Run browser tools without prompts; allowed only on isolated, non-production, non-restored data. | boolean | `false` |  |
-| `headed` | Show the browser window instead of running it headless. | boolean | `false` |  |
 | `artifacts` | Generated host paths for browser output. | table: [`[browser.artifacts]`](#browserartifacts) |  | required |
 
 - Must match at least one of `[{"properties":{"request_preapproval":{"enum":[false]}}},{"properties":{"data":{"required":["mode","isolated","reaches_production"],"properties":{"mode":{"enum":["empty","seeded"]},"isolated":{"enum":[true]},"reaches_production":{"enum":[false]}}}}}]`.
@@ -256,8 +255,14 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
-| `runner` | Image that runs the browser. | table: [`runner` shape](#runner-shape) |  | required |
-| `mcp` | Image that serves the browser MCP server. | table: [`runner` shape](#runner-shape) |  | required |
+| `mcp` | Image that serves the browser MCP server. | table: [`[browser.images.mcp]`](#browserimagesmcp) |  | required |
+
+### `[browser.images.mcp]`
+
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `reference` | Image reference pinned by sha256 digest. | string |  | required; pattern `^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$` |
+| `driver_version` | Playwright driver version the image carries. | string |  | required; pattern [P5](#patterns); at most 128 characters |
 
 ### `[browser.project]`
 
@@ -265,9 +270,9 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | --- | --- | --- | --- | --- |
 | `manifest` | package.json for the project; omit to use the one beside the lockfile. | string |  | pattern [P1](#patterns) |
 | `manifest_sha256` | SHA-256 of the manifest; required when manifest is set. | string |  | pattern `^[a-f0-9]{64}$` |
-| `lockfile` | Lockfile the runner installs from. | string |  | required; pattern [P1](#patterns) |
+| `lockfile` | Lockfile that pins the Playwright driver the browser commands load. | string |  | required; pattern [P1](#patterns) |
 | `sha256` | SHA-256 of the lockfile. | string |  | required; pattern `^[a-f0-9]{64}$` |
-| `driver_version` | Playwright driver version the lockfile pins. | string |  | required; pattern [P6](#patterns); at most 128 characters |
+| `driver_version` | Playwright driver version the lockfile pins. | string |  | required; pattern [P5](#patterns); at most 128 characters |
 
 ### `[browser.proxy]`
 
@@ -312,11 +317,9 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
-| `runner` | Generated host path for the browser runner's files. | string |  | required; pattern [P1](#patterns) |
 | `mcp` | Generated host path for the browser MCP server's files. | string |  | required; pattern [P1](#patterns) |
 | `cli` | Generated host path for command-line browser output. | string |  | required; pattern [P1](#patterns) |
 | `auth` | Generated host path for saved sign-in state. | string |  | required; pattern [P1](#patterns) |
-| `debugger` | Generated host path for debugger sessions. | string |  | required; pattern [P1](#patterns) |
 
 ### `[testing]`
 
@@ -382,7 +385,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `generated_host_paths` | Host paths cockpit generates and owns, relative to the cockpit. | array of string | `[]` | unique items; each item: pattern [P1](#patterns) |
 | `compose_files` | Compose files, relative to the cockpit, that make up the stack; cockpit runs them as written. | array of string | `[]` | unique items; each item: pattern [P1](#patterns), pattern `^[^:]+$` |
 | `entrypoint_derivatives` | Addresses derived from leased ports, such as application origins and callback URLs. | array of table: [`[[environment.entrypoint_derivatives]]`](#environmententrypoint_derivatives) | `[]` |  |
-| `install_policies` | How dependencies are installed for each toolchain. | array of table: [`[[environment.install_policies]]`](#environmentinstall_policies) | `[]` |  |
+| `install_policies` | The build and test commands the guard admits for each toolchain and lockfile. | array of table: [`[[environment.install_policies]]`](#environmentinstall_policies) | `[]` |  |
 | `seed` | Command up runs once the stack is healthy, whenever a resettable volume was created since the last successful seed. | table: [`[environment.seed]`](#environmentseed) |  |  |
 
 ### `[[environment.posture_requirements]]`
@@ -419,11 +422,8 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
-| `toolchain` | Toolchain whose dependencies this policy installs. | string |  | required; one of `"node"`, `"python"`, `"ruby"`, `"go"`, `"rust"`, `"dotnet"` |
-| `volume` | Resettable volume that holds the installed dependencies. | string |  | required; pattern `^[a-z0-9][a-z0-9_.-]*$` |
-| `lockfile` | Lockfile, relative to the sibling, that this policy applies to. | string |  | required; pattern [P1](#patterns) |
-| `install` | Command, as an argument list, that installs the dependencies. | array of string |  | required; at least 1 item; each item: at least 1 character |
-| `load_probe` | Command, as an argument list, that proves the installed dependencies load. | array of string |  | required; at least 1 item; each item: at least 1 character |
+| `toolchain` | Toolchain of the siblings this policy applies to. | string |  | required; one of `"node"`, `"python"`, `"ruby"`, `"go"`, `"rust"`, `"dotnet"` |
+| `lockfile` | Lockfile, relative to the sibling, that selects this policy. | string |  | required; pattern [P1](#patterns) |
 | `build` | Build command, as an argument list, when the product owns one. | array of string |  | 1–32 items; each item: pattern [P4](#patterns) |
 | `test` | Test command, as an argument list, when the product owns one. | array of string |  | 1–32 items; each item: pattern [P4](#patterns) |
 
@@ -451,14 +451,14 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `name` | Name of the declaration; an overlay that reuses a core name replaces it. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
 | `feature` | Kind of surface the overlay provides. | string |  | required; one of `"rules"`, `"subagents"`, `"skills"`, `"hooks"` |
 | `sources` | Files that make up the declaration. | array of table: [`[[surfaces.overlays.sources]]`](#surfacesoverlayssources) |  | required; 1–256 items |
-| `source` | Where the declaration was read from. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
+| `source` | Where the declaration was read from. | string |  | required; pattern [P1](#patterns); pattern [P6](#patterns); at most 4096 characters |
 | `replaces` | Core declaration this overlay replaces; required when the name matches a core one. | table: [`[surfaces.overlays.replaces]`](#surfacesoverlaysreplaces) |  |  |
 
 ### `[[surfaces.overlays.sources]]`
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
-| `path` | Path of the source file. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
+| `path` | Path of the source file. | string |  | required; pattern [P1](#patterns); pattern [P6](#patterns); at most 4096 characters |
 | `bytes` | Full text of the source. | string |  | required; at most 65536 characters |
 
 ### `[surfaces.overlays.replaces]`
@@ -481,8 +481,8 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | --- | --- | --- | --- | --- |
 | `feature` | Surface feature this row describes. | string |  | required; one of `"rules"`, `"mcp"`, `"subagents"`, `"skills"`, `"hooks"`, `"permissions"` |
 | `measured_on` | Date the capability was measured. | string |  | required; format `date`; pattern [P2](#patterns) |
-| `spelling` | File the harness reads for this feature. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
-| `control` | Path of the deliberately broken control file the capability was measured against. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
+| `spelling` | File the harness reads for this feature. | string |  | required; pattern [P1](#patterns); pattern [P6](#patterns); at most 4096 characters |
+| `control` | Path of the deliberately broken control file the capability was measured against. | string |  | required; pattern [P1](#patterns); pattern [P6](#patterns); at most 4096 characters |
 | `mechanism` | Code that emits the surface. | table: [`mechanism` shape](#mechanism-shape) |  | required |
 | `state` | Whether the harness enforces, only instructs, or lacks this capability. | string |  | required; exactly `"enforced"` |
 | `evidence` | Evidence that the harness enforces the capability. | table: [`[surfaces.harnesses.capabilities.evidence]`](#surfacesharnessescapabilitiesevidence) |  | required |
@@ -491,7 +491,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
-| `reference` | Probe record or file, relative to the cockpit. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
+| `reference` | Probe record or file, relative to the cockpit. | string |  | required; pattern [P1](#patterns); pattern [P6](#patterns); at most 4096 characters |
 | `sha256` | SHA-256 of the evidence. | string |  | required; pattern `^[a-f0-9]{64}$` |
 
 ### `[[surfaces.harnesses.capabilities]]` form 2
@@ -500,8 +500,8 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | --- | --- | --- | --- | --- |
 | `feature` | Surface feature this row describes. | string |  | required; one of `"rules"`, `"mcp"`, `"subagents"`, `"skills"`, `"hooks"`, `"permissions"` |
 | `measured_on` | Date the capability was measured. | string |  | required; format `date`; pattern [P2](#patterns) |
-| `spelling` | File the harness reads for this feature. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
-| `control` | Path of the deliberately broken control file the capability was measured against. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
+| `spelling` | File the harness reads for this feature. | string |  | required; pattern [P1](#patterns); pattern [P6](#patterns); at most 4096 characters |
+| `control` | Path of the deliberately broken control file the capability was measured against. | string |  | required; pattern [P1](#patterns); pattern [P6](#patterns); at most 4096 characters |
 | `mechanism` | Code that emits the surface. | table: [`mechanism` shape](#mechanism-shape) |  | required |
 | `state` | Whether the harness enforces, only instructs, or lacks this capability. | string |  | required; exactly `"instructed"` |
 
@@ -519,7 +519,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
 | `path` | Harness settings file that was adopted. | string |  | required; one of `".claude/settings.json"`, `".codex/config.toml"`, `".codex/hooks.json"` |
-| `source` | Where the adopted copy now lives, under cockpit/adopted/. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
+| `source` | Where the adopted copy now lives, under cockpit/adopted/. | string |  | required; pattern [P1](#patterns); pattern [P6](#patterns); at most 4096 characters |
 | `sha256` | SHA-256 of the bytes that were moved, as a record for review. | string |  | required; pattern `^[a-f0-9]{64}$` |
 | `adopted_on` | Date the file was adopted. | string |  | required; format `date`; pattern [P2](#patterns) |
 | `provenance` | Where the adoption came from; its kind must be declared. | table: [`provenance` shape](#provenance-shape) |  | required |
@@ -532,7 +532,7 @@ These tables recur in several places; each place links here instead of repeating
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
-| `module` | Module that implements the capability. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
+| `module` | Module that implements the capability. | string |  | required; pattern [P1](#patterns); pattern [P6](#patterns); at most 4096 characters |
 | `export` | Export of the module that implements the capability. | string |  | required; pattern `^[A-Za-z_$][A-Za-z0-9_$]*$`; at most 128 characters |
 
 ### `provenance` shape
@@ -547,13 +547,6 @@ These tables recur in several places; each place links here instead of repeating
 
 - Must match at least one of `[{"properties":{"kind":{"enum":["declared"]}}},{"properties":{"kind":{"enum":["measured"]}},"required":["observed_on"]},{"properties":{"kind":{"enum":["inferred"]},"confirmed":{"enum":[true]}},"required":["confirmed","observed_on"]}]`.
 
-### `runner` shape
-
-| Key | Meaning | Type | Default | Constraints |
-| --- | --- | --- | --- | --- |
-| `reference` | Image reference pinned by sha256 digest. | string |  | required; pattern [P5](#patterns) |
-| `driver_version` | Playwright driver version the image carries. | string |  | required; pattern [P6](#patterns); at most 128 characters |
-
 ## Patterns
 
 Long patterns that several keys share, cited by name in the tables.
@@ -564,9 +557,8 @@ Long patterns that several keys share, cited by name in the tables.
 | P2 | `^(?:(?:\d\d[2468][048]\|\d\d[13579][26]\|\d\d0[48]\|[02468][048]00\|[13579][26]00)-02-29\|\d{4}-(?:(?:0[13578]\|1[02])-(?:0[1-9]\|[12]\d\|3[01])\|(?:0[469]\|11)-(?:0[1-9]\|[12]\d\|30)\|(?:02)-(?:0[1-9]\|1\d\|2[0-8])))$` |
 | P3 | `^(?:\*\.)?(?=[a-z0-9.-]{1,253}(?![\s\S]))[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*(?![\s\S])` |
 | P4 | `^[^\x00-\x1f\x7f-\x9f\uD800-\uDFFF]{1,128}(?![\s\S])` |
-| P5 | `^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$` |
-| P6 | `^(?:0\|[1-9]\d*)\.(?:0\|[1-9]\d*)\.(?:0\|[1-9]\d*)(?:-(?:0\|[1-9]\d*\|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0\|[1-9]\d*\|\d*[A-Za-z-][0-9A-Za-z-]*))*)?$` |
-| P7 | `^(?!.*(?:^\|\/)(?:\.git\|internal\|node_modules)(?:\/\|$)).+$` |
+| P5 | `^(?:0\|[1-9]\d*)\.(?:0\|[1-9]\d*)\.(?:0\|[1-9]\d*)(?:-(?:0\|[1-9]\d*\|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0\|[1-9]\d*\|\d*[A-Za-z-][0-9A-Za-z-]*))*)?$` |
+| P6 | `^(?!.*(?:^\|\/)(?:\.git\|internal\|node_modules)(?:\/\|$)).+$` |
 
 ## Checks beyond the schema
 
@@ -583,13 +575,12 @@ cockpit checks these rules when it loads the configuration (`x-cockpit-runtime-c
 | `environment.generated_host_paths[]` | `unique` |  |
 | `environment.compose_files[]` | `unique` |  |
 | `environment.entrypoint_derivatives[].name` | `unique` | yes |
-| `environment.install_policies[].volume` | `unique` | yes |
 | `environment.install_policies[].toolchain+lockfile` | `unique` | yes |
 | `environment.posture_requirements[].requirement` | `unique` | yes |
 | `environment.entrypoint_derivatives[].port` | `declared_in_ports.bases` | yes |
 | `browser.artifacts` | `exact_environment.generated_host_paths_coverage` | yes |
 | `browser` | `matches_environment_addressing_authentication_and_client_cap` | yes |
-| `browser.images` | `runner_driver_equals_project_driver_and_mcp_driver_shares_major_minor` | yes |
+| `browser.images` | `mcp_driver_shares_major_minor_with_project_driver` | yes |
 | `testing.gates[].stages[]` | `references_declared_testing_stage` | yes |
 | `sibling[].environment_files[]` | `template_and_instance_differ` | yes |
 | `sibling[].derives.mcp_sources[].path` | `unique_within_sibling` | yes |

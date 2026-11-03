@@ -904,28 +904,6 @@
         "images": {
           "type": "object",
           "properties": {
-            "runner": {
-              "type": "object",
-              "properties": {
-                "reference": {
-                  "type": "string",
-                  "pattern": "^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$",
-                  "description": "Image reference pinned by sha256 digest."
-                },
-                "driver_version": {
-                  "type": "string",
-                  "maxLength": 128,
-                  "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*))*)?$",
-                  "description": "Playwright driver version the image carries."
-                }
-              },
-              "required": [
-                "reference",
-                "driver_version"
-              ],
-              "additionalProperties": false,
-              "description": "Image that runs the browser."
-            },
             "mcp": {
               "type": "object",
               "properties": {
@@ -950,7 +928,6 @@
             }
           },
           "required": [
-            "runner",
             "mcp"
           ],
           "additionalProperties": false,
@@ -972,7 +949,7 @@
             "lockfile": {
               "type": "string",
               "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$",
-              "description": "Lockfile the runner installs from."
+              "description": "Lockfile that pins the Playwright driver the browser commands load."
             },
             "sha256": {
               "type": "string",
@@ -992,7 +969,7 @@
             "driver_version"
           ],
           "additionalProperties": false,
-          "description": "Node project the runner installs its driver from."
+          "description": "Node project the browser commands load their Playwright driver from."
         },
         "endpoint": {
           "description": "WebSocket address of the browser server, using an allowed host.",
@@ -1171,19 +1148,9 @@
           "description": "Run browser tools without prompts; allowed only on isolated, non-production, non-restored data.",
           "type": "boolean"
         },
-        "headed": {
-          "default": false,
-          "description": "Show the browser window instead of running it headless.",
-          "type": "boolean"
-        },
         "artifacts": {
           "type": "object",
           "properties": {
-            "runner": {
-              "type": "string",
-              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$",
-              "description": "Generated host path for the browser runner's files."
-            },
             "mcp": {
               "type": "string",
               "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$",
@@ -1198,19 +1165,12 @@
               "type": "string",
               "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$",
               "description": "Generated host path for saved sign-in state."
-            },
-            "debugger": {
-              "type": "string",
-              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$",
-              "description": "Generated host path for debugger sessions."
             }
           },
           "required": [
-            "runner",
             "mcp",
             "cli",
-            "auth",
-            "debugger"
+            "auth"
           ],
           "additionalProperties": false,
           "description": "Generated host paths for browser output."
@@ -1714,7 +1674,7 @@
         },
         "install_policies": {
           "default": [],
-          "description": "How dependencies are installed for each toolchain.",
+          "description": "The build and test commands the guard admits for each toolchain and lockfile.",
           "type": "array",
           "items": {
             "type": "object",
@@ -1729,35 +1689,12 @@
                   "rust",
                   "dotnet"
                 ],
-                "description": "Toolchain whose dependencies this policy installs."
-              },
-              "volume": {
-                "type": "string",
-                "pattern": "^[a-z0-9][a-z0-9_.-]*$",
-                "description": "Resettable volume that holds the installed dependencies."
+                "description": "Toolchain of the siblings this policy applies to."
               },
               "lockfile": {
                 "type": "string",
                 "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$",
-                "description": "Lockfile, relative to the sibling, that this policy applies to."
-              },
-              "install": {
-                "minItems": 1,
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "description": "Command, as an argument list, that installs the dependencies."
-              },
-              "load_probe": {
-                "minItems": 1,
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "description": "Command, as an argument list, that proves the installed dependencies load."
+                "description": "Lockfile, relative to the sibling, that selects this policy."
               },
               "build": {
                 "description": "Build command, as an argument list, when the product owns one.",
@@ -1782,10 +1719,7 @@
             },
             "required": [
               "toolchain",
-              "volume",
-              "lockfile",
-              "install",
-              "load_probe"
+              "lockfile"
             ],
             "additionalProperties": false
           }
@@ -2461,10 +2395,6 @@
       "rule": "unique"
     },
     {
-      "path": "environment.install_policies[].volume",
-      "rule": "unique"
-    },
-    {
       "path": "environment.install_policies[].toolchain+lockfile",
       "rule": "unique"
     },
@@ -2486,7 +2416,7 @@
     },
     {
       "path": "browser.images",
-      "rule": "runner_driver_equals_project_driver_and_mcp_driver_shares_major_minor"
+      "rule": "mcp_driver_shares_major_minor_with_project_driver"
     },
     {
       "path": "testing.gates[].stages[]",
@@ -2580,10 +2510,6 @@
       "rule": "declared_in_ports.bases"
     },
     {
-      "path": "environment.install_policies[].volume",
-      "rule": "unique"
-    },
-    {
       "path": "environment.install_policies[].toolchain+lockfile",
       "rule": "unique"
     },
@@ -2601,7 +2527,7 @@
     },
     {
       "path": "browser.images",
-      "rule": "runner_driver_equals_project_driver_and_mcp_driver_shares_major_minor"
+      "rule": "mcp_driver_shares_major_minor_with_project_driver"
     },
     {
       "path": "testing.gates[].stages[]",
