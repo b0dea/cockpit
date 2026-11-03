@@ -62,8 +62,7 @@ import {
 } from '../setup-observation.js'
 import { loadCockpitConfig, consumeLoadedConfigProjection, type LoadedConfigProjection } from '../../config/load.js'
 import { deriveRegistry } from '../../registry-derivation.js'
-import { confinedPath, ownDataValues, sameSource } from './shared.js'
-import { lifecycleRefusal } from './lifecycle-state.js'
+import { confinedPath, lifecycleRefusal, ownDataValues, sameSource } from './shared.js'
 
 export interface GuardEvaluationApplicationInput {
     readonly identity: unknown

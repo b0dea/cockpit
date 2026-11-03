@@ -63,7 +63,7 @@ const CONFINED: readonly (readonly [capability: string, pattern: RegExp, allowed
     // only the application, and the lifecycle adapter around a fresh acquisition, invoke it.
     ['compensation runs only where it is owned or sequenced', /\bcompensat\w*\s*\(/i,
         [`${SRC}environment-exec/execute.ts`, `${ENV}ports.ts`, `${SRC}generated-environment/transaction.ts`, `${ENV}application/lifecycle.ts`, `${ENV}application/destructive.ts`, `${ENV}lifecycle-composition.ts`]],
-    ['plan execution is bound only by the CLI', /\bexecutePlan\b/, [`${SRC}environment-exec/execute.ts`, `${SRC}cli.ts`]],
+    ['plan execution is bound only by the CLI', /\bexecutePlan\b/, [`${SRC}environment-exec/execute.ts`, `${SRC}cli-main.ts`]],
     ['lifecycle issuance is consumed only by the application', /\bconsumeLifecycleIssuance\b/, [`${ENV}lifecycle.ts`, `${ENV}application/lifecycle.ts`, `${ENV}application/destructive.ts`]],
     ['drain reducers stay inside the claims broker', /\breduceDrain\w*\b/, [`${ENV}claims.ts`]],
     ['drain reservation and outcome publication are the application\'s',
@@ -76,7 +76,7 @@ const CONFINED: readonly (readonly [capability: string, pattern: RegExp, allowed
     ['guard input is parsed only for the guard application', /\bparseGuardInput\b/, [`${SRC}guards/invocation-parser.ts`, `${ENV}application/guard.ts`]],
     ['guard policy is evaluated only by the guard application', /\bevaluateGuard\b/, [`${SRC}guards/evaluator.ts`, `${ENV}application/guard.ts`]],
     ['ordinary invocations are admitted through the command table', /\bresolveOrdinaryInvocation\b/,
-        [`${SRC}command-table.ts`, `${ENV}application/guard.ts`, `${SRC}cli.ts`]],
+        [`${SRC}command-table.ts`, `${ENV}application/guard.ts`, `${SRC}cli-main.ts`]],
     ['runtime guard policy is assembled once',
         /\b(?:protectedBranches|hostedDatabaseHosts|vendorHosts|declaredAllows|declaredDenies|cockpitInvocations|cockpitLaunchers|projectCommands)\b/,
         [`${SRC}guards/evaluator.ts`, `${ENV}application/guard.ts`]],

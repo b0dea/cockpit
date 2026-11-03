@@ -4,7 +4,7 @@
 const SRC = 'packages/cockpit/src'
 const ENV = `${SRC}/environment`
 const COMMANDS = [`^${SRC}/commands?(?:/|\\.ts$)`, `^${SRC}/.*/commands?(?:/|\\.ts$)`, `^${SRC}/.*-command\\.ts$`]
-const CLI = `^${SRC}/cli\\.ts$`
+const CLI = `^${SRC}/cli(?:-main|-guard)?\\.ts$`
 const COMMAND_TABLE = `^${SRC}/command-table\\.ts$`
 const APPLICATION = `^${ENV}/application/[^/]+\\.ts$`
 const GENERATED_APPLICATION = `^${ENV}/generated-application/[^/]+\\.ts$`

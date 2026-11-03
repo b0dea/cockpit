@@ -14,17 +14,8 @@ import { abortStateTransaction, readState, transactState, type StateRecord, type
 import { decodeLifecycleRecord, resolveLifecycleStage, type CurrentLifecycleRecord, type LifecycleRecordValue } from '../lifecycle-stage.js'
 import { inspectPortLeaseTransfer, revalidatePortLeaseProjection, type PortLeaseProjection } from '../ports.js'
 import { commitDrainOutcome, decodeCoordinationRecord, type DrainOutcome } from '../claims.js'
-import { ownerDiagnostic, shellQuote } from './shared.js'
+import { lifecycleRefusal, ownerDiagnostic, shellQuote } from './shared.js'
 import { type LifecycleRunContext, type SleepCommandResult, type UpCommandResult, withLifecycleConfiguration } from './lifecycle-context.js'
-
-export function lifecycleRefusal(
-    code: EnvironmentDiagnostic['code'],
-    message: string,
-    target: string,
-    fix?: string,
-): Extract<EnvironmentCommandOutcome<never>, { kind: 'refusal' }> {
-    return forwardedRefusal([ownerDiagnostic(code, message, target, fix)])
-}
 
 export function lifecycleSuggestion(context: LifecycleRunContext, command: 'up' | 'down'): string {
     return cockpitCommand(command, { config: context.source.path })

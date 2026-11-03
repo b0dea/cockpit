@@ -1,5 +1,5 @@
 import { isAbsolute, relative, sep } from 'node:path'
-import { type EnvironmentDiagnostic, type SourceProvenance, snapshotJson } from '../contract.js'
+import { type EnvironmentCommandOutcome, type EnvironmentDiagnostic, type SourceProvenance, forwardedRefusal, snapshotJson } from '../contract.js'
 
 export function exactEnvironment(input: unknown): Readonly<Record<string, string>> | undefined {
     const snapshot = snapshotJson(input)
@@ -66,4 +66,13 @@ export function ownDataValues(
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
+}
+
+export function lifecycleRefusal(
+    code: EnvironmentDiagnostic['code'],
+    message: string,
+    target: string,
+    fix?: string,
+): Extract<EnvironmentCommandOutcome<never>, { kind: 'refusal' }> {
+    return forwardedRefusal([ownerDiagnostic(code, message, target, fix)])
 }

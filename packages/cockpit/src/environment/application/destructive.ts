@@ -49,12 +49,11 @@ import {
 import {
     exactCommandConfigPath,
     invalidateCompletedLifecycle,
-    lifecycleRefusal,
     lifecycleSuggestion,
     publishDrainOutcome,
     publishDrainOutcomeRecord,
 } from './lifecycle-state.js'
-import { uniqueDiagnostics } from './shared.js'
+import { lifecycleRefusal, uniqueDiagnostics } from './shared.js'
 
 type DestructivePlan = Extract<TeardownPlanResult | ResetPlanResult, { kind: 'complete' }>
 

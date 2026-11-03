@@ -84,7 +84,6 @@ import {
 import {
     exactCommandConfigPath,
     invalidateCompletedLifecycle,
-    lifecycleRefusal,
     lifecycleSuggestion,
     publishDrainOutcome,
     publishLifecycleRecord,
@@ -92,7 +91,7 @@ import {
     repairRequired,
     unheldStack,
 } from './lifecycle-state.js'
-import { ownerDiagnostic, uniqueDiagnostics } from './shared.js'
+import { lifecycleRefusal, ownerDiagnostic, uniqueDiagnostics } from './shared.js'
 
 function seconds(millis: number): string {
     return String(millis / 1_000)
