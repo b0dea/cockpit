@@ -308,13 +308,13 @@ describe('printed cockpit commands', () => {
             }
         }
         // These name the installed executable or the command line's shape, not a command to run.
-        const shapes = new Set(['./node_modules/.bin/cockpit', './node_modules/.bin/cockpit <command>', './node_modules/.bin/cockpit <command> --help'])
+        const shapes = new Set(['./node_modules/.bin/cockpit', './node_modules/.bin/cockpit <command>', './node_modules/.bin/cockpit <command> --help', 'npx --no cockpit <command>'])
         const commands = [...new Map(printed.filter(row => !shapes.has(row.command)).map(row => [row.command, row])).values()]
         expect(commands.length).toBeGreaterThan(60)
         for (const name of shapes) expect(printed.map(row => row.command)).toContain(name)
 
         // Placeholders become synthetic values of the kind the parser accepts; the rest stay generic.
-        const placeholder: Readonly<Record<string, string>> = { kind: 'spec', target: 'codexcli', command: 'true', 'agent command': 'true' }
+        const placeholder: Readonly<Record<string, string>> = { kind: 'spec', target: 'codexcli', tool: 'codexcli', root: '.', command: 'true', 'agent command': 'true' }
         const substitute = (command: string) => command.replace(/<([^<>]+)>/g, (_, name: string) => placeholder[name]
             ?? (/sha256$/i.test(name) ? 'a'.repeat(64) : `synthetic-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`))
         // The files a reader has written by the time they run the command: the init answers it reads
