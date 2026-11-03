@@ -496,6 +496,7 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `RESET_CONFIRMATION_MISMATCH` | see the message |
 | `RESET_CONFIRMATION_REQUIRED` | see the message |
 | `RESET_CO_TENANT` | see the message |
+| `RESTORE_INTERRUPTED` | run npx --no cockpit reset --config <your cockpit.toml>, which only previews the data it would delete; a person who agrees runs it again with --interactive and confirms. Then npx --no cockpit up --config <your cockpit.toml> restores the data again |
 | `RESTRICTION_ADAPTER_INVALID` | see the message |
 | `RESTRICTION_EVENT_UNADAPTED` | see the message |
 | `RESTRICTION_INPUT_INVALID` | see the message |
