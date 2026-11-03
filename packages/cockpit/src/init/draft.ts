@@ -1291,10 +1291,10 @@ async function completeConfigurationDocument(
         status: 0, question: null }
 }
 
-async function documentCommandOwned(
+export async function draftFromRegistry(
     input: DocumentCommandInput,
-    estateGaps: EstateClassificationResult['gaps'],
-    estateRunnable: EstateClassificationResult['runnable'],
+    estateGaps: EstateClassificationResult['gaps'] = [],
+    estateRunnable: EstateClassificationResult['runnable'] = [],
 ): Promise<DocumentOutcome> {
     const root = resolve(input.root)
     const registry = input.registry ? resolve(input.registry) : resolve(root, 'env/lib/instance.sh')
@@ -1362,12 +1362,8 @@ async function documentCommandOwned(
         createHash('sha256').update(bytes).digest('hex'), parsed.siblings, estateGaps, estateRunnable)
 }
 
-export async function documentCommand(input: DocumentCommandInput): Promise<DocumentOutcome> {
-    return documentCommandOwned(input, [], [])
-}
-
-export async function documentObservedCommand(input: DocumentCommandInput): Promise<DocumentOutcome> {
-    if (input.registry !== undefined) return documentCommand(input)
+export async function draftFromEstate(input: DocumentCommandInput): Promise<DocumentOutcome> {
+    if (input.registry !== undefined) return draftFromRegistry(input)
     const classified = await classifyEstateObservation(input.estate ?? { root: resolve(input.root) }, { observe: observePublicEstate })
     if (classified.kind !== 'complete') return {
         kind: 'refusal', status: 2, artifact: null, destination: null, result: null,
@@ -1378,5 +1374,5 @@ export async function documentObservedCommand(input: DocumentCommandInput): Prom
         return refusal('DOCUMENT_ESTATE_OBSERVATION_CHANGED',
             'the configuration answers are not bound to the current public estate observation', input.root)
     }
-    return documentCommandOwned(input, classified.result.gaps, classified.result.runnable)
+    return draftFromRegistry(input, classified.result.gaps, classified.result.runnable)
 }

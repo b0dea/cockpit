@@ -10,7 +10,7 @@ import { runInitApplication, type InitApplicationAdapters, type InitApplicationI
 import { runCli } from '../cli.js'
 import { renderHumanValue } from '../diagnostics.js'
 import { cockpitCommand, initCommand } from '../fix-catalogue.js'
-import { classifyEstateObservation, documentObservedCommand, observePublicEstate } from '../init/draft.js'
+import { classifyEstateObservation, draftFromEstate, observePublicEstate } from '../init/draft.js'
 import { readState, selectBootstrapStateRoot } from './state.js'
 import { syncTeamGeneratedEnvironment } from './generated-application/sync.js'
 import { inspectInitReadiness } from './readiness-composition.js'
@@ -41,7 +41,7 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
         resumeBootstrap: resumeSelectedBootstrapSurface,
         applyBootstrap: applySelectedBootstrapSurface,
         document: async input => {
-            const outcome = await documentObservedCommand(input)
+            const outcome = await draftFromEstate(input)
             if (outcome.question?.field === 'configuration.defaults') defaultsDocument = outcome.artifact ?? undefined
             return outcome
         },
@@ -170,7 +170,7 @@ it.each([
         prepareBootstrap: prepareSelectedBootstrapSurface,
         resumeBootstrap: resumeSelectedBootstrapSurface,
         applyBootstrap: applySelectedBootstrapSurface,
-        document: documentObservedCommand,
+        document: draftFromEstate,
         classifyEstate: input => classifyEstateObservation(input, { observe: observePublicEstate }),
         observeDestination: async ({ path }) => {
             if (!existsSync(path)) return { kind: 'absent' }
@@ -302,7 +302,7 @@ it.each(['scalar', 'artifact'] as const)('refuses an unreviewable defaults draft
         resumeBootstrap: resumeSelectedBootstrapSurface,
         applyBootstrap: applySelectedBootstrapSurface,
         document: async input => {
-            const outcome = await documentObservedCommand(input)
+            const outcome = await draftFromEstate(input)
             if (outcome.question?.field === 'configuration.defaults') defaultsDocument = outcome.artifact ?? undefined
             return outcome
         },

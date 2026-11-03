@@ -14,7 +14,7 @@ import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
 import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS, isGuardSurfaceTarget } from './surfaces/harness-registry.js'
 import type { FixContext } from './fix-catalogue.js'
 import { type Diagnostic, renderHumanDiagnostics, renderHumanValue, renderJsonResponse } from './diagnostics.js'
-import { classifyEstateObservation, documentObservedCommand, observeCockpitRoot, observePublicEstate } from './init/draft.js'
+import { classifyEstateObservation, draftFromEstate, observeCockpitRoot, observePublicEstate } from './init/draft.js'
 import { runInitOperatorCommand, type UnattendedInit } from './init/command.js'
 import { deriveInferredFacts } from './init/derive.js'
 import { runInitApplication, type InitApplicationInput, type InitApplicationOutcome, type InitResult } from './environment/init-application.js'
@@ -587,7 +587,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             prepareBootstrap: prepareSelectedBootstrapSurface,
             resumeBootstrap: resumeSelectedBootstrapSurface,
             applyBootstrap: applySelectedBootstrapSurface,
-            document: documentObservedCommand,
+            document: draftFromEstate,
             classifyEstate: input => classifyEstateObservation(input, { observe: observePublicEstate }),
             observeRoot: observeCockpitRoot,
             infer: deriveInferredFacts,
