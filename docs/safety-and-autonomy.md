@@ -339,7 +339,8 @@ tool calls the guard inspects.
 Every writing `sync` records the policy it ran under in `.cockpit/policy.json`. A later sync that finds
 a field weaker than that record, such as a gate moved from `person` to `agent` or grading from
 `independent` to `self`, writes nothing and reports `POLICY_WEAKENING_UNCONFIRMED` with the change and
-its digest; a person runs `sync --interactive`, reads it and types the digest. Until then every work
+its digest; a person runs `sync --interactive`, reads it and types the digest. `check` and `doctor` report
+the same weakening before any sync runs. Until then every work
 command refuses to run under the weaker policy, and so does `reset --apply` when `[autonomy] reset` is
 the weakened field. A stronger policy needs nobody.
 

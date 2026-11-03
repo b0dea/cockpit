@@ -184,9 +184,9 @@ Host clients use the host resolver, and conforming resolvers map `.localhost` na
 loopback. Inside a container, loopback is that container's own, so a product container that calls
 the host-published URL needs its own `extra_hosts` mapping to the right host gateway;
 service-to-service traffic normally uses Compose service names and container ports instead.
-`browser.resolver` supplies mappings only to the browser runtime declared in cockpit, not to an
+`browser.resolver` supplies mappings only to the browser the `browser` commands launch, not to an
 unrelated remote browser, MCP server or other client: put the mapping where that client's network
-process runs. Browser operations then use that runtime's own networking and DNS, as described in
+process runs. Browser operations then use that browser's own networking and DNS, as described in
 [Work and browser](work-and-browser.md#browser-evidence).
 
 `scheme = "https"` only declares a URL; the product's Compose stack must serve TLS on that leased
@@ -599,7 +599,7 @@ environment:
 
 ## Demo data, test users and roles
 
-This section is for whoever makes the local stack start with useful data and signed-in test users.
+This section is for whoever makes the local stack start with useful data and test users.
 cockpit runs the product's own seed command and records when it last succeeded. It never writes
 rows or creates identities itself: the product's writers already encode its invariants, and a
 second writer in cockpit would drift from them.
@@ -623,34 +623,27 @@ or runs longer than `timeout_seconds`, refuses with `DATA_SEED_FAILED`: the stac
 may be partly applied, and the next `up` runs the seed again, so write it to be rerun. When Docker
 cannot say when the volumes were created, `up` refuses with `DATA_SEED_UNAVAILABLE` rather than
 guess. `seed` requires `resettable_volumes`, because those volumes are what tells cockpit the data
-is gone. To seed or restore from inside the stack instead, see
+is gone. To seed from inside the stack instead, see
 [Compose patterns](compose-patterns.md#seed-or-restore-data).
 
-Run the declared flow in this order. Replace the two `*-gate-id` placeholders with IDs from
-`[testing.gates]`; those gates call the product's own state-minting and authorization setup.
+Preview a reset with `cockpit reset`, which lists exactly which volumes and host paths it will remove.
+Applying it wipes data, so it needs a person by default: `reset --interactive` in a terminal, or
+`reset --apply` when `[autonomy] reset` allows the caller. The next `up` seeds again, because the
+volume `reset` recreated is newer than the last seed.
 
-```sh human-only: resets data, creates provider state, and requires the declared local stack
-./node_modules/.bin/cockpit check --config cockpit.toml --json
+```sh human-only: resets data and requires the declared local stack
 ./node_modules/.bin/cockpit up --config cockpit.toml
 ./node_modules/.bin/cockpit reset --config cockpit.toml --json
 ./node_modules/.bin/cockpit reset --interactive --config cockpit.toml
 ./node_modules/.bin/cockpit up --config cockpit.toml
-./node_modules/.bin/cockpit test-run --config cockpit.toml --gate auth-state-gate-id
-./node_modules/.bin/cockpit test-run --config cockpit.toml --gate authorization-gate-id
-./node_modules/.bin/cockpit check --config cockpit.toml --json
 ```
 
-The first `up` runs the seed. Reset previews exactly which volumes and host paths it will remove;
-only the interactive command applies that preview. The second `up` seeds again, because the
-volume `reset` recreated is newer than the last seed. The first
-product gate mints one signed-in state per persona, and the second proves both an allowed and a
-denied operation. Running only part of a gate is PARTIAL, never a pass of the whole gate.
-
-**Personas.** Give each test user a stable synthetic ID such as `auth-admin` or `auth-member`, its
-role and permissions, and one operation it must be allowed and one it must be denied. Stable IDs let
-a re-seed update the same rows instead of duplicating them. Keep these [personas](concepts.md#persona)
-in a product-owned fixture that both the seed and the tests read. The allowed and denied pair is
-what proves the roles work, not only that a sign-in succeeded.
+**Test users.** cockpit has no user model; the product's seed creates them. Give each test user a
+stable synthetic ID such as `auth-admin` or `auth-member`, a role, one operation it must be allowed
+and one it must be denied. Stable IDs let a re-seed update the same rows, and the allowed and denied
+pair proves the roles work, not only that a sign-in succeeded. The shipped `cockpit-setup` skill
+carries an on-demand reference (`references/test-data-and-personas.md`) that keeps these identities
+separate from what an identity provider owns.
 
 **Fixture hygiene.** These rules come from seeders that broke in real use:
 
@@ -659,43 +652,11 @@ what proves the roles work, not only that a sign-in succeeded.
   run fails its own precondition. Unset fields rather than writing null.
 - Seed the settled state a test needs. Default column values can read as work in flight and
   disable the interface.
-- Every mode keeps the schema's indexes and constraints, so an empty stack still rejects the rows
-  production would reject. cockpit cannot check this; the mode's operations and probes must.
-- Print every restore gap before applying the restore. A silent omission looks like a complete local
-  copy even though the missing table or object can change product behavior.
 - Before a seed writer runs, assert that every database and service target is local. A development
   fixture is no permission to reach a shared or non-local environment.
 - Resolve a sibling fixture path by probing the declared sibling root and a documented fallback;
   never embed one checkout layout as a constant.
-- Adopt only provider objects that carry the synthetic namespace's ownership marker. Refuse any
-  other, naming the account, and never rewrite the roles of an identity people share.
-- A local stack receives no webhooks from an identity provider, so link the provider's ID to the
-  product row explicitly.
-- Prove a seeded credential by using it once. A placeholder passes every read-only check.
 - Clean up by ownership, never by time window.
-
-**Signed-in browser state.** Mint one state file per persona, one at a time, under the declared
-auth root (directory mode 0700, files 0600). Warm the application first, and wait for the
-provider's session to exist before saving the state. Mint again after any reseed or reset, because
-a reused session goes stale and fails in ways that look like product bugs. Name the files so that
-the reset patterns match them, and replay each wipe pattern against a synthetic fixture before
-relying on it; a file outside those patterns survives a reset.
-
-The shipped `cockpit-setup` skill carries an on-demand reference for this
-(`references/test-data-and-personas.md`), which `cockpit-browser` also loads before signed-in
-testing. It keeps stable synthetic persona IDs and the product's own rows separate from what the
-identity provider owns, and asks for both an allowed and a denied authorization check. It works
-with whichever identity provider the product's lockfile shows, through the product's own adapter
-and Playwright. It does not make cockpit an identity provider, does not create provider identities
-without explicit permission, and does not treat an existing state file as proof of a live login. Provider writes and cleanup stay limited to an approved development
-instance and the exact operation that was approved.
-
-| Symptom | Likely cause |
-| --- | --- |
-| Redirect loop or a wall of 401s across parallel workers | One provider session shared by several workers; mint per worker or run serially |
-| Bounced back to sign-in after a reseed | Stale state file; mint again |
-| Sign-in times out on the first run only | Cold application; warm it before minting |
-| Signed in but lands on a "no role" page | The role exists in the product database but not as a provider membership, or the reverse |
 
 ## Declare environment postures
 
