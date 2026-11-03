@@ -16,7 +16,7 @@ import { readState, type StateRecord, type StateResult } from './state.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
 import { isVersionFloor, issueRuntimeMeasurementProbeAuthority, observeDockerRuntime, versionAtLeast } from './runtime.js'
 import { PROBE_OWNER_LABEL, isProbeOwner } from './runtime-probe-residue.js'
-import { exactOwnKeys } from '../exact-keys.js'
+import { exactKeys } from '../exact-keys.js'
 
 export interface RuntimeProbeRequest {
     readonly executable: ResolvedExecutable
@@ -117,42 +117,37 @@ function unavailable(
 }
 
 function captureRequest(value: unknown): RuntimeProbeRequest | undefined {
-    try {
-        if (value === null || typeof value !== 'object' || Array.isArray(value)
-            || !exactOwnKeys(value, ['executable', 'gitExecutable', 'cwd', 'projectPrefix', 'owner', 'env', 'composeFloor', 'measuredOn', 'timeoutMs', 'image', 'installedModule'])) return undefined
-        const input = value as Partial<RuntimeProbeRequest>
-        if (!isResolvedDockerExecutable(input.executable)
-            || !isResolvedGitExecutable(input.gitExecutable)
-            || typeof input.cwd !== 'string' || !isAbsolute(input.cwd) || normalize(input.cwd) !== input.cwd || input.cwd.includes('\0')
-            || typeof input.projectPrefix !== 'string' || !PROJECT_PREFIX.test(input.projectPrefix)
-            || typeof input.owner !== 'string' || !isProbeOwner(input.owner)
-            || input.env === null || typeof input.env !== 'object' || Array.isArray(input.env)
-            || Object.entries(input.env).some(([name, item]) => !SAFE_ENV.has(name) || typeof item !== 'string' || item.includes('\0'))
-            || typeof input.composeFloor !== 'string' || !isVersionFloor(input.composeFloor)
-            || typeof input.measuredOn !== 'string' || !validDate(input.measuredOn)
-            || input.measuredOn !== new Date().toISOString().slice(0, 10)
-            || !Number.isSafeInteger(input.timeoutMs) || input.timeoutMs! < 1 || input.timeoutMs! > MAX_TIMEOUT_MS
-            || input.image === null || typeof input.image !== 'object' || Array.isArray(input.image)
-            || !exactOwnKeys(input.image, ['reference', 'id']) || typeof input.image.reference !== 'string'
-            || typeof input.image.id !== 'string' || !IMAGE_ID.test(input.image.id)
-            || input.image.reference !== input.image.id
-            || input.installedModule === null || typeof input.installedModule !== 'object' || Array.isArray(input.installedModule)
-            || !exactOwnKeys(input.installedModule, ['canonicalPath', 'sha256'])
-            || typeof input.installedModule.canonicalPath !== 'string' || !isAbsolute(input.installedModule.canonicalPath)
-            || normalize(input.installedModule.canonicalPath) !== input.installedModule.canonicalPath
-            || typeof input.installedModule.sha256 !== 'string' || !SHA256.test(input.installedModule.sha256)) return undefined
-        const captured = input as RuntimeProbeRequest
-        return {
-            ...captured,
-            executable: { ...captured.executable },
-            gitExecutable: { ...captured.gitExecutable },
-            env: { ...captured.env },
-            image: { ...captured.image },
-            installedModule: { ...captured.installedModule },
-        }
-    } catch {
-        // A throwing accessor or proxy trap makes the request malformed, which the caller refuses.
-        return undefined
+    if (value === null || typeof value !== 'object' || Array.isArray(value)
+        || !exactKeys(value, ['executable', 'gitExecutable', 'cwd', 'projectPrefix', 'owner', 'env', 'composeFloor', 'measuredOn', 'timeoutMs', 'image', 'installedModule'])) return undefined
+    const input = value as Partial<RuntimeProbeRequest>
+    if (!isResolvedDockerExecutable(input.executable)
+        || !isResolvedGitExecutable(input.gitExecutable)
+        || typeof input.cwd !== 'string' || !isAbsolute(input.cwd) || normalize(input.cwd) !== input.cwd || input.cwd.includes('\0')
+        || typeof input.projectPrefix !== 'string' || !PROJECT_PREFIX.test(input.projectPrefix)
+        || typeof input.owner !== 'string' || !isProbeOwner(input.owner)
+        || input.env === null || typeof input.env !== 'object' || Array.isArray(input.env)
+        || Object.entries(input.env).some(([name, item]) => !SAFE_ENV.has(name) || typeof item !== 'string' || item.includes('\0'))
+        || typeof input.composeFloor !== 'string' || !isVersionFloor(input.composeFloor)
+        || typeof input.measuredOn !== 'string' || !validDate(input.measuredOn)
+        || input.measuredOn !== new Date().toISOString().slice(0, 10)
+        || !Number.isSafeInteger(input.timeoutMs) || input.timeoutMs! < 1 || input.timeoutMs! > MAX_TIMEOUT_MS
+        || input.image === null || typeof input.image !== 'object' || Array.isArray(input.image)
+        || !exactKeys(input.image, ['reference', 'id']) || typeof input.image.reference !== 'string'
+        || typeof input.image.id !== 'string' || !IMAGE_ID.test(input.image.id)
+        || input.image.reference !== input.image.id
+        || input.installedModule === null || typeof input.installedModule !== 'object' || Array.isArray(input.installedModule)
+        || !exactKeys(input.installedModule, ['canonicalPath', 'sha256'])
+        || typeof input.installedModule.canonicalPath !== 'string' || !isAbsolute(input.installedModule.canonicalPath)
+        || normalize(input.installedModule.canonicalPath) !== input.installedModule.canonicalPath
+        || typeof input.installedModule.sha256 !== 'string' || !SHA256.test(input.installedModule.sha256)) return undefined
+    const captured = input as RuntimeProbeRequest
+    return {
+        ...captured,
+        executable: { ...captured.executable },
+        gitExecutable: { ...captured.gitExecutable },
+        env: { ...captured.env },
+        image: { ...captured.image },
+        installedModule: { ...captured.installedModule },
     }
 }
 
