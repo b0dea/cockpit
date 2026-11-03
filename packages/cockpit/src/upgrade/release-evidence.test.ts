@@ -152,6 +152,17 @@ describe('authenticated release evidence discovery', () => {
             candidatePath,
             candidateSha256: digest(candidateBytes),
         })).resolves.toEqual({ kind: 'refusal', reason: 'candidate release record could not be authenticated' })
+
+        // A malformed record or evidence file is named with where it stopped parsing, not as a bare SyntaxError.
+        const truncated = '{\n  "schema": 1,\n}\n'
+        await writeFile(candidatePath, truncated)
+        await expect(assembleReleaseEvidence({ currentPath, currentSha256: digest(current.bytes), candidatePath, candidateSha256: digest(truncated) }))
+            .resolves.toEqual({ kind: 'refusal', reason: 'candidate release record is not valid JSON at line 3, column 1; expected a cockpit-upgrade-release-record/v1 document' })
+        await writeFile(evidencePath, truncated)
+        await expect(createReleaseEvidenceDiscovery({ configPath: 'cockpit.toml', evidencePath, expectedSha256: digest(truncated),
+            projection: { activeOverrides: [] }, installed: { package: manifest.name, version: manifest.version } })({ configPath: 'cockpit.toml' }))
+            .resolves.toEqual({ kind: 'refusal', code: 'UPGRADE_REPAIR_UNVERIFIED',
+                reason: 'release evidence is not valid JSON at line 3, column 1; expected a cockpit-upgrade-release-evidence/v1 document' })
     })
 
     it('reports only candidate changes to every authenticated active override', async () => {
