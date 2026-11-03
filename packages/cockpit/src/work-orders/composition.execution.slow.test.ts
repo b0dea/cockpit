@@ -4,7 +4,7 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, 
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { ExecutionStep } from '../environment/contract.js'
 import { prepareGeneratedEnvironmentCurrentness } from '../generated-environment/command.js'
 import { runCli } from '../cli.js'
@@ -257,9 +257,29 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
             kind: 'complete', value: { metrics: { history: { observedOrders: 2 } } },
         })
     }, 120_000)
+})
 
-    it('routes current source-bound work through acceptance, native grading, CAS refusal and the completion sentinel', async () => {
-        const fixture = await configuredFixture()
+// One fixture carries a work order through its whole life. Each case is one stage of that life and
+// starts from the state the previous stage left, so a failure names the stage it happened in; the
+// fixture is built once, so the split adds no setup time.
+describe('a source-bound work order from intake to completion', () => {
+    const stageRoots: string[] = []
+    const { configuredFixture: stageFixture } = createWorkCompositionFixtureSupport(stageRoots)
+    let fixture: Awaited<ReturnType<typeof stageFixture>>
+    let declared = 0
+    let completed = 0
+    const stage = (title: string, body: () => Promise<void>) => {
+        const index = declared++
+        it(title, async () => {
+            if (completed !== index) throw new Error('an earlier stage of this work order failed or did not run')
+            await body()
+            completed += 1
+        }, 300_000)
+    }
+    beforeAll(async () => { fixture = await stageFixture() }, 300_000)
+    afterAll(async () => { await Promise.all(stageRoots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
+
+    stage('recovers or refuses interrupted work-order transactions before any use', async () => {
         const ordersPath = join(fixture.root, 'workorders'); const heldOrdersPath = join(fixture.root, 'workorders-held')
         await rename(ordersPath, heldOrdersPath)
         try {
@@ -350,6 +370,9 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
         const recovered = await createConfiguredWorkApplicationComposition({ configPath: fixture.configPath, env: fixture.environment })
         if (recovered.kind !== 'complete') throw new Error(recovered.reason)
         fixture.composition = recovered.composition
+    })
+
+    stage('refuses malformed requests and a declared environment instance, and judges test gates', async () => {
         await expect(runWorkApplication({ operation: 'work-intake', intent: 'intents/fix.json', candidate: 'candidates/missing.md' }, fixture.composition)).resolves.toMatchObject({
             kind: 'complete', operation: 'work-intake', value: { kind: 'fix' },
         })
@@ -400,6 +423,9 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
         await expect(runWorkApplication({ operation: 'test-run', gate: 'stacked', mode: 'canonical' }, fixture.composition)).resolves.toMatchObject({
             kind: 'unsatisfied', operation: 'test-run', reason: expect.stringContaining('stack unavailable'), value: { verdict: 'DEGRADED' },
         })
+    })
+
+    stage('binds intake to an intact source audit', async () => {
         const firstAuditPath = join(fixture.root, 'workorders/WO-001.source-audit.json'); const firstAudit = await readFile(firstAuditPath)
         const decodedAudit = JSON.parse(firstAudit.toString('utf8')) as { sources: unknown; gaps: unknown }
         await writeFile(firstAuditPath, JSON.stringify({ sources: decodedAudit.sources, gaps: decodedAudit.gaps }))
@@ -419,7 +445,9 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
         })
         await expect(runWorkApplication(accessor as never, fixture.composition)).resolves.toMatchObject({ kind: 'refusal', operation: 'invalid' })
         expect(accessorReads).toBe(0)
+    })
 
+    stage('accepts, records evidence, executes and tracks source drift', async () => {
         const started = await runWorkApplication({ operation: 'work-accept', workOrderId: 'WO-001' }, fixture.composition)
         if (started.kind !== 'human-needed') throw new Error(`acceptance continuation unavailable: ${started.kind === 'refusal' ? started.reason : started.kind}`)
         await expect(started.continuation.decide(`accept ${started.continuation.digest}`)).resolves.toMatchObject({ kind: 'complete' })
@@ -484,6 +512,10 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
             kind: 'refusal', operation: 'work-review', reason: expect.stringContaining('current checked proof for every step'),
         })
         await expect(readFile(join(fixture.root, '.native-calls'))).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
+    stage('reviews, refuses an unavailable evaluator, grades and writes the completion sentinel', async () => {
+        const contractPath = join(fixture.root, 'workorders/WO-001.md')
         await writeFile(join(fixture.root, '.verification-fail'), 'fail')
         await expect(runWorkApplication({ operation: 'work-execute', workOrderId: 'WO-001', approach: 'bounded failure control' }, fixture.composition)).resolves.toMatchObject({
             kind: 'unsatisfied', operation: 'work-execute', reason: 'Declared verification failed with exit 1',
@@ -570,7 +602,9 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
             await expect(readFile(join(fixture.root, '.cockpit/work-orders/WO-001', generation, stale))).rejects.toMatchObject({ code: 'ENOENT' })
         }
         await expect(readdir(join(fixture.root, '.cockpit/actors'))).resolves.toEqual([])
+    })
 
+    stage('refuses a changed contract, an unmet grade and a completion race', async () => {
         const stale = await runWorkApplication({ operation: 'work-accept', workOrderId: 'WO-002' }, fixture.composition)
         if (stale.kind !== 'human-needed') throw new Error('stale acceptance continuation unavailable')
         const changed = fixture.secondBytes.replace('Repair the cache boundary', 'Repair the current cache boundary')
@@ -622,7 +656,9 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
         await expect(readFile(join(fixture.root, '.cockpit/work-orders/WO-003', `generation-${String(thirdManifest.generation).padStart(8, '0')}`, 'completion.json')))
             .rejects.toMatchObject({ code: 'ENOENT' })
         await expect(readdir(join(fixture.root, '.cockpit/actors'))).resolves.toEqual([])
+    })
 
+    stage('mints programme work and refuses configuration drift', async () => {
         await Promise.all([rm(join(fixture.root, 'workorders/WO-001.md')), rm(join(fixture.root, 'workorders/WO-001.source-audit.json')),
             rm(join(fixture.root, 'workorders/WO-002.md')), rm(join(fixture.root, 'workorders/WO-002.source-audit.json'))])
         await expect(runWorkApplication({ operation: 'work-programme-mint', programmeId: 'cache' }, fixture.composition)).resolves.toMatchObject({
@@ -647,7 +683,7 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
             .resolves.toMatchObject({ kind: 'refusal', reason: expect.stringContaining('source') })
         await expect(runWorkApplication({ operation: 'work-status', workOrderId: '../escape' } as never, fixture.composition))
             .resolves.toMatchObject({ kind: 'refusal', operation: 'invalid' })
-    }, 300_000)
+    })
 })
 
 describe('product test stages', () => {
