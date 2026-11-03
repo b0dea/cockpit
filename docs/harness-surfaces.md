@@ -394,9 +394,10 @@ approve stale removals, run `sync --interactive` in a terminal. It ends by print
 lines from the installed `CHANGELOG.md` between the two versions (a line there names a step `sync`
 does not do), or the npm page when the package has no changelog.
 
-Only the dry run is an agent invocation: until `sync` runs, the guard holds every agent tool call,
-because it trusts only the cockpit it was generated for, so a person runs the real upgrade in a
-terminal outside the agent. A built-in that one of your overlays replaces and that the new release
+An agent may run `upgrade`, with or without `--dry-run`: it installs an exact version and its `sync`
+child keeps its own refusals, so removing stale generated files still needs the digest a person
+approves with `sync --interactive`. Until `sync` finishes, the guard holds every agent tool call,
+because it trusts only the cockpit it was generated for. A built-in that one of your overlays replaces and that the new release
 changed is reported as `OVERRIDDEN_CORE_CHANGED`: review the new built-in against your override
 before updating its recorded hash. Then review `git diff` and commit `package.json`, the lockfile and
 the regenerated files together.

@@ -134,7 +134,7 @@ describe('closed ordinary invocation metadata', () => {
     const ordinary = (argv: string[], patch = {}) => resolveOrdinaryInvocation({ executable: authority.executable, cwd: authority.canonicalRoot, argv, ...patch }, authority, () => true)
     // The words each available config-bearing row needs besides --config.
     const requiredWords: Readonly<Record<string, readonly string[]>> = {
-        selftest: ['--probe-specifications', 'probes.json'], logs: ['--service', 'app'], runtime: ['measure', '--image', 'node:22-alpine'], sync: ['--dry-run'], upgrade: ['--dry-run'],
+        selftest: ['--probe-specifications', 'probes.json'], logs: ['--service', 'app'], runtime: ['measure', '--image', 'node:22-alpine'], sync: ['--dry-run'],
         'test-run': ['--gate', 'quick'], 'work intake': ['--intent', 'intents/task.json'], 'work recover': ['--lock', 'WO-001'],
         'work execute': ['--work-order', 'WO-001', '--approach', 'first-try'], 'work record': ['--work-order', 'WO-001', '--event-file', 'workorders/events/progress.json'],
         'work review': ['--work-order', 'WO-001'], 'work grade': ['--work-order', 'WO-001'], 'work programme-mint': ['--programme', 'release'],
@@ -209,6 +209,13 @@ describe('closed ordinary invocation metadata', () => {
         }
     })
 
+    // The install is exact and sync keeps its own stale-removal refusal, so an agent may run the real upgrade.
+    it('admits the real upgrade, with or without one exact version', () => {
+        for (const extra of [[], ['1.2.3'], ['--dry-run'], ['1.2.3', '--dry-run']]) {
+            expect(ordinary(['upgrade', ...extra, '--config', authority.configPath]), extra.join(' ')).toBeDefined()
+        }
+    })
+
     // Writes into a product repository change what every agent session there loads, so a person runs them.
     it('leaves setup writes into sibling repositories to a person', () => {
         for (const flag of ['--write-instruction-pointers', '--write-instruction-files']) {
@@ -223,7 +230,7 @@ describe('closed ordinary invocation metadata', () => {
             ['selftest', '--probe-specifications', 'probe', '--write-probe-specifications', 'draft'],
             ['logs'], ['logs', '--service', 'other'], ['logs', '--service', 'app', '--tail', '0'], ['logs', '--service', 'app', '--tail', '10001'],
             ['logs', '--service', 'app', '--tail', '1.5'], ['logs', '--service', 'app', '--since', '1m;id'], ['logs', '--service', 'app', '--since', 'x'.repeat(65)],
-            ['sync'], ['upgrade'], ['upgrade', '1.2.3', '--dry-run'], ['reset'], ['guard-evaluate', '--harness', 'claudecode'],
+            ['sync'], ['upgrade', '^1.2.3'], ['upgrade', '1.2.3', '1.2.4'], ['upgrade', '--dry-run', '--dry-run'], ['reset'], ['guard-evaluate', '--harness', 'claudecode'],
             ['runtime', '--image', 'node:22-alpine'], ['runtime', 'other', '--image', 'node:22-alpine'], ['runtime', 'measure'],
             ['runtime', 'measure', 'extra', '--image', 'node:22-alpine'], ['runtime', 'measure', '--image', 'node 22'],
             ['runtime', 'measure', '--image', 'node:22-alpine', '--write'],

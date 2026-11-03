@@ -153,7 +153,7 @@ export type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; re
     executableRole: 'installed-cockpit'
     command: HandlerIdentifier
     // An `operation` positional must be one of `operations`, the exact subcommand words.
-    positional: Readonly<{ min: number; max: number; roles: readonly ['confined-root'] | readonly ['operation'] | readonly []; operations?: readonly string[] }>
+    positional: Readonly<{ min: number; max: number; roles: readonly ['confined-root'] | readonly ['operation'] | readonly ['version'] | readonly []; operations?: readonly string[] }>
     options: Readonly<Record<string, OrdinaryOption>>
     cwdRole: 'canonical-root'
     configuration: 'resolved' | 'none'
@@ -164,6 +164,7 @@ export type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; re
     requires?: 'browser-preapproval'
 }>
 
+const EXACT_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
 const flag: OrdinaryOption = Object.freeze({ kind: 'flag', role: 'boolean', repetition: 'singleton' })
 function value(role: OrdinaryValueRole, required = false): OrdinaryOption {
     return Object.freeze({ kind: 'value', role, repetition: 'singleton', ...(required ? { required: true as const } : {}) })
@@ -264,9 +265,10 @@ export const commands: readonly CommandDefinition[] = [
         usage: '[<version>] [options]',
         handler: 'upgrade',
         visibility: 'public',
-        // A real upgrade installs a package and rewrites the guard's own files, so only the dry run is an
-        // ordinary agent invocation.
-        ordinary: ordinary('upgrade', { config: configured.config, 'dry-run': Object.freeze({ ...flag, required: true as const }) }),
+        // The install is exact and sync keeps its own refusals (stale removals need a digest), so an agent
+        // may run the real upgrade; the version is the one positional.
+        ordinary: ordinary('upgrade', { config: configured.config, 'dry-run': flag }, {
+            positional: Object.freeze({ min: 0, max: 1, roles: Object.freeze(['version'] as const) }) }),
         options: {
             config: { type: 'string' },
             'dry-run': { type: 'boolean', default: false },
@@ -651,6 +653,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
     if (positionals.length < grammar.positional.min || positionals.length > grammar.positional.max
         || positionals.some((word, index) => grammar.positional.roles[index] === 'operation'
             ? !grammar.positional.operations?.includes(word)
+            : grammar.positional.roles[index] === 'version' ? !EXACT_VERSION.test(word)
             : grammar.positional.roles[index] !== 'confined-root' || !confined(word))
         || Object.entries(grammar.options).some(([name, option]) => option.required && !options.has(name))
         || grammar.selection === 'intent-xor-work-order' && (options.has('intent') === options.has('work-order') || options.has('candidate') && !options.has('intent'))
