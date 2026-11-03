@@ -15,7 +15,7 @@ const applicationOwners = vi.hoisted(() => ({
     lifecycle: {} as Partial<Pick<typeof import('./lifecycle.js'), 'admitUpProgress' | 'consumeLifecycleIssuance' | 'planAdmittedUp' | 'planSleep'>>,
     runtime: {} as Partial<Pick<typeof import('./runtime.js'), 'admitRuntimeServiceHealth' | 'observeRuntimeServiceColdStart' | 'resolveRuntimeServiceOrder' | 'revalidateRuntimeService' | 'startRuntimeService' | 'stopRuntime'>>,
     logs: {} as Partial<Pick<typeof import('./logs.js'), 'admitFailureLogs' | 'planFailureLogs'>>,
-    claims: {} as Partial<Pick<typeof import('./claims.js'), 'finalizeDrainOutcome' | 'inspectSleepDrainRecovery' | 'prepareDrainOutcomePublication' | 'recoverSleepDrainReservation' | 'reserveDrain' | 'reserveDrainAttempt'>>,
+    claims: {} as Partial<Pick<typeof import('./claims.js'), 'inspectSleepDrainRecovery' | 'commitDrainOutcome' | 'recoverSleepDrainReservation' | 'reserveDrain' | 'reserveDrainAttempt'>>,
     ports: {} as Partial<Pick<typeof import('./ports.js'), 'compensateAcquiredPortHolder' | 'deriveEntrypoints' | 'observeRetainedPortFamily' | 'projectRetainedPortFamilyResult' | 'releasePortFamily'>>,
 }))
 vi.mock('./lifecycle.js', async (importOriginal) => {
@@ -52,9 +52,8 @@ vi.mock('./claims.js', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./claims.js')>()
     return {
         ...actual,
-        finalizeDrainOutcome: (...args: Parameters<typeof actual.finalizeDrainOutcome>) => applicationOwners.claims.finalizeDrainOutcome?.(...args) ?? actual.finalizeDrainOutcome(...args),
         inspectSleepDrainRecovery: (...args: Parameters<typeof actual.inspectSleepDrainRecovery>) => applicationOwners.claims.inspectSleepDrainRecovery?.(...args) ?? actual.inspectSleepDrainRecovery(...args),
-        prepareDrainOutcomePublication: (...args: Parameters<typeof actual.prepareDrainOutcomePublication>) => applicationOwners.claims.prepareDrainOutcomePublication?.(...args) ?? actual.prepareDrainOutcomePublication(...args),
+        commitDrainOutcome: (...args: Parameters<typeof actual.commitDrainOutcome>) => applicationOwners.claims.commitDrainOutcome?.(...args) ?? actual.commitDrainOutcome(...args),
         recoverSleepDrainReservation: (...args: Parameters<typeof actual.recoverSleepDrainReservation>) => applicationOwners.claims.recoverSleepDrainReservation?.(...args) ?? actual.recoverSleepDrainReservation(...args),
         reserveDrain: (...args: Parameters<typeof actual.reserveDrain>) => applicationOwners.claims.reserveDrain?.(...args) ?? actual.reserveDrain(...args),
         reserveDrainAttempt: (...args: Parameters<typeof actual.reserveDrainAttempt>) => applicationOwners.claims.reserveDrainAttempt?.(...args) ?? actual.reserveDrainAttempt(...args),
@@ -855,7 +854,7 @@ describe('lifecycle application contracts', () => {
             await execute({ id: 'postcheck' } as never)
             return { kind: 'stopped', authority: outcomeAuthority, fence: executionFence('sleep-stop') } as never
         }
-        applicationOwners.claims.prepareDrainOutcomePublication = async () => {
+        applicationOwners.claims.commitDrainOutcome = async () => {
             expect(await readState(context.namespace.paths.lifecycle(context.stackId))).toMatchObject({
                 kind: 'complete',
                 value: {
@@ -870,10 +869,6 @@ describe('lifecycle application contracts', () => {
             events.push('publish')
             return { kind: 'complete', value: {} } as never
         }
-        applicationOwners.claims.finalizeDrainOutcome = () => {
-            events.push('finalize')
-            return true
-        }
 
         const result = await runSleep({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
@@ -884,11 +879,11 @@ describe('lifecycle application contracts', () => {
             },
         })
 
-        expect(events).toEqual(['reserve', 'attempt', 'stop', 'postcheck', 'publish', 'finalize'])
+        expect(events).toEqual(['reserve', 'attempt', 'stop', 'postcheck', 'publish'])
         expect(result).toMatchObject({ kind: 'complete', result: { stackId: context.stackId, change: 'stopped' } })
     })
 
-    it('does not finalize an indeterminate drain publication', async () => {
+    it('refuses sleep as indeterminate when its drain publication is indeterminate', async () => {
         const { configPath, context } = await lifecycleContextFixture()
         const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
         applicationOwners.ports.observeRetainedPortFamily = async () => ({
@@ -915,12 +910,10 @@ describe('lifecycle application contracts', () => {
             await execute({ id: 'postcheck' } as never)
             return { kind: 'stopped', authority: ({}), fence: executionFence('sleep-indeterminate') } as never
         }
-        applicationOwners.claims.prepareDrainOutcomePublication = async () => ({
+        applicationOwners.claims.commitDrainOutcome = async () => ({
             kind: 'indeterminate', code: 'STATE_DURABILITY_INDETERMINATE',
             message: 'drain publication durability is indeterminate', target: context.stackId,
         }) as never
-        const finalize = vi.fn(() => true)
-        applicationOwners.claims.finalizeDrainOutcome = finalize
 
         const result = await runSleep({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
@@ -928,7 +921,6 @@ describe('lifecycle application contracts', () => {
             execute: async () => ({}) as never,
         })
 
-        expect(finalize).not.toHaveBeenCalled()
         expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'STATE_DURABILITY_INDETERMINATE' }] })
     })
 
@@ -988,8 +980,7 @@ describe('lifecycle application contracts', () => {
             await execute({ id: 'postcheck' } as never)
             return { kind: 'stopped', authority: ({}), fence: executionFence('sleep-recovery') } as never
         }
-        applicationOwners.claims.prepareDrainOutcomePublication = async () => ({ kind: 'complete', value: {} }) as never
-        applicationOwners.claims.finalizeDrainOutcome = () => true
+        applicationOwners.claims.commitDrainOutcome = async () => ({ kind: 'complete', value: {} }) as never
 
         const result = await runSleep({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),

@@ -12,7 +12,6 @@ import {
     type StackId,
 } from './contract.js'
 import {
-    finalizeDrainOutcome,
     matchReclaimDrainContinuation,
     reduceDrainOutcome,
     inspectDrainAttemptAuthority,
@@ -25,7 +24,7 @@ import {
     decodeCoordinationRecord,
     observeProcessStart,
     processHost,
-    prepareDrainOutcomePublication,
+    commitDrainOutcome,
     releaseDeadSessionHolders,
     removeExactCoordinationHolder,
     openReclaimDrainExecution,
@@ -793,9 +792,8 @@ describe('destructive drain recovery inspection', () => {
         if (!failure) throw new Error('expected failed destructive outcome')
         const reduced = reduceDrainOutcome({ authority: failure, record: active.value })
         if (!reduced) throw new Error('expected failed destructive reduction')
-        const publication = await prepareDrainOutcomePublication({ authority: failure, namespace: state, stackId })
+        const publication = await commitDrainOutcome({ authority: failure, namespace: state, stackId })
         if ('diagnostics' in publication) throw new Error('expected failed destructive publication')
-        expect(finalizeDrainOutcome({ authority: failure, publication, address: state.paths.coordination(stackId) })).toBe(true)
 
         const inspected = await inspectDestructiveDrainRecovery({ namespace: state, stackId, holderId: holderA, purpose: 'down' })
         expect(inspected).toEqual({ kind: 'recoverable', request })
@@ -1424,7 +1422,7 @@ describe('dead session holders', () => {
 })
 
 describe('session-aware claims', () => {
-    it('keeps a settled runtime outcome reusable through reduction until finalization', async () => {
+    it('keeps a settled runtime outcome reusable through reduction until it is committed', async () => {
         const state = await namespace()
         await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
         const request = {
@@ -1469,74 +1467,36 @@ describe('session-aware claims', () => {
         if (otherNamespace.kind !== 'complete') throw new Error('expected other namespace')
         const copiedToOtherCockpit = { ...record.value, cockpitId: otherCockpitId }
         expect(reduceDrainOutcome({ authority: outcome, record: copiedToOtherCockpit })).toEqual(reduced)
-        expect(await prepareDrainOutcomePublication({
+        expect(await commitDrainOutcome({
             authority: outcome, namespace: otherNamespace.value, stackId,
         })).toMatchObject({ kind: 'refusal', diagnostics: [
             { code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED },
         ] })
         const otherRoot = await namespace()
-        expect(await prepareDrainOutcomePublication({
+        expect(await commitDrainOutcome({
             authority: outcome, namespace: otherRoot, stackId,
         })).toMatchObject({ kind: 'refusal', diagnostics: [
             { code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED },
         ] })
-        let suppliedClockReads = 0
-        expect(await prepareDrainOutcomePublication({
-            authority: outcome, namespace: state, stackId,
-            get updatedAt() { suppliedClockReads += 1; return new Date().toISOString() },
-        } as never)).toMatchObject({ kind: 'refusal' })
-        expect(suppliedClockReads).toBe(0)
         expect(reduceDrainOutcome({ authority: outcome, record: record.value })).toEqual(reduced)
         const address = state.paths.coordination(stackId)
-        const refused = await transactState(state, address, { ownerId: holderA }, () => record.value)
-        if (!('kind' in refused)) throw new Error('expected refused publication')
-        expect(refused).toMatchObject({ kind: 'refusal' })
-        expect(finalizeDrainOutcome({ authority: outcome, publication: refused, address })).toBe(false)
-        expect(reduceDrainOutcome({ authority: outcome, record: record.value })).toEqual(reduced)
-        const otherStack = `stack:${'c'.repeat(64)}` as StackId
-        const otherAddress = state.paths.coordination(otherStack)
-        let otherPublication
-        for (let revision = 0; revision <= record.value.revision + 1; revision += 1) {
-            otherPublication = await transactState(state, otherAddress, { ownerId: holderA }, (current) =>
-                coordinationStateRecord(state, otherStack, current, new Date().toISOString(), reduced))
-        }
-        if (!otherPublication || !('kind' in otherPublication)) throw new Error('expected other publication')
-        expect(finalizeDrainOutcome({ authority: outcome, publication: otherPublication, address: otherAddress })).toBe(false)
-        expect(reduceDrainOutcome({ authority: outcome, record: record.value })).toEqual(reduced)
-        const beforeHostileOwner = await readFile(address.path)
-        expect(await prepareDrainOutcomePublication({
-            authority: outcome, namespace: state, stackId, ownerId: holderB,
-        } as never)).toMatchObject({ kind: 'refusal', diagnostics: [
-            { code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED },
-        ] })
-        expect(await readFile(address.path)).toEqual(beforeHostileOwner)
         const sync = await interceptDirectorySync(dirname(address.path), () => {
             throw new Error('injected directory sync failure')
         })
         let committed
         try {
-            committed = await prepareDrainOutcomePublication({ authority: outcome, namespace: state, stackId })
+            committed = await commitDrainOutcome({ authority: outcome, namespace: state, stackId })
         } finally {
             sync.restore()
         }
         if ('diagnostics' in committed || committed.kind !== 'indeterminate') throw new Error('expected indeterminate publication')
         expect(committed).toMatchObject({ kind: 'indeterminate' })
-        expect(finalizeDrainOutcome({ authority: outcome, publication: { ...committed }, address })).toBe(false)
-        let publicationReads = 0
-        const accessor = { authority: outcome, address,
-            get publication() { publicationReads += 1; return committed },
-        }
-        expect(finalizeDrainOutcome(accessor as never)).toBe(false)
-        expect(publicationReads).toBe(0)
         expect(reduceDrainOutcome({ authority: outcome, record: record.value })).toEqual(reduced)
-        expect(finalizeDrainOutcome({ authority: outcome, publication: committed, address })).toBe(true)
         expect(await readState(address)).toMatchObject({ kind: 'complete', value: { revision: record.value.revision + 1 } })
-        expect(reduceDrainOutcome({ authority: outcome, record: record.value })).toBeUndefined()
-        expect(finalizeDrainOutcome({ authority: outcome, publication: committed, address })).toBe(false)
         expect(await recoverDrainReservation({ namespace: state, request })).toMatchObject({ kind: 'complete' })
     })
 
-    it('refuses caller-controlled directory sync behavior without consuming outcome authority', async () => {
+    it('publishes with its own clock and directory sync whatever the caller supplies', async () => {
         const state = await namespace()
         await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
         const request = {
@@ -1557,23 +1517,17 @@ describe('session-aware claims', () => {
         if (active.kind !== 'complete') throw new Error('expected active drain')
         const reduced = reduceDrainOutcome({ authority: outcome, record: active.value })
         if (!reduced) throw new Error('expected reduced outcome')
-        const before = await readFile(address.path)
-        expect(await prepareDrainOutcomePublication({
-            authority: outcome, namespace: state, stackId,
-            beforeDirectorySync: async () => undefined,
-        } as never)).toMatchObject({ kind: 'refusal', diagnostics: [
-            { code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED },
-        ] })
-        expect(await readFile(address.path)).toEqual(before)
-        let reads = 0
-        expect(await prepareDrainOutcomePublication({
-            authority: outcome, namespace: state, stackId,
-            get beforeDirectorySync() { reads += 1; return async () => undefined },
-        } as never)).toMatchObject({ kind: 'refusal' })
-        expect(reads).toBe(0)
-        expect(reduceDrainOutcome({ authority: outcome, record: active.value })).toEqual(reduced)
-        const publication = await prepareDrainOutcomePublication({ authority: outcome, namespace: state, stackId })
-        expect(publication).toMatchObject({ kind: 'complete' })
+        const beforeDirectorySync = vi.fn(async () => undefined)
+        let suppliedClockReads = 0
+        const startedAt = Date.now()
+        const publication = await commitDrainOutcome({
+            authority: outcome, namespace: state, stackId, beforeDirectorySync,
+            get updatedAt() { suppliedClockReads += 1; return '2000-01-01T00:00:00.000Z' },
+        } as never)
+        expect(publication).toMatchObject({ kind: 'complete', value: { value: reduced } })
+        expect(beforeDirectorySync).not.toHaveBeenCalled()
+        expect(suppliedClockReads).toBe(0)
+        if (publication.kind === 'complete') expect(Date.parse(publication.value.updatedAt)).toBeGreaterThanOrEqual(startedAt)
     })
 
     it.each(['complete', 'indeterminate'] as const)(
@@ -1608,7 +1562,7 @@ describe('session-aware claims', () => {
             })
             : undefined
         const before = await readFile(address.path)
-        const refused = await prepareDrainOutcomePublication({ authority: outcome, namespace: state, stackId })
+        const refused = await commitDrainOutcome({ authority: outcome, namespace: state, stackId })
         expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [
             { code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED },
         ] })
@@ -1617,13 +1571,12 @@ describe('session-aware claims', () => {
         expect(reduceDrainOutcome({ authority: outcome, record: active.value })).toEqual(reduced)
         let retry
         try {
-            retry = await prepareDrainOutcomePublication({ authority: outcome, namespace: state, stackId })
+            retry = await commitDrainOutcome({ authority: outcome, namespace: state, stackId })
         } finally {
             sync?.restore()
         }
         if ('diagnostics' in retry) throw new Error('expected repair publication')
         expect(retry.kind).toBe(kind)
-        expect(finalizeDrainOutcome({ authority: outcome, publication: retry, address })).toBe(true)
         expect(await recoverDrainReservation({ namespace: state, request })).toMatchObject({ kind: 'complete' })
         },
     )
@@ -1652,7 +1605,7 @@ describe('session-aware claims', () => {
         const reduced = reduceDrainOutcome({ authority: outcome, record: active.value })
         if (!reduced) throw new Error('expected drain outcome reduction')
         const before = await readFile(address.path)
-        const refused = await prepareDrainOutcomePublication({
+        const refused = await commitDrainOutcome({
             authority: outcome, namespace: state, stackId,
             beforePublish: async () => { vi.setSystemTime(Date.parse(attempted.attempt.committedAt) - 1) },
         })
@@ -1662,11 +1615,10 @@ describe('session-aware claims', () => {
         expect(await readFile(address.path)).toEqual(before)
         vi.setSystemTime(attempted.attempt.committedAt)
         expect(reduceDrainOutcome({ authority: outcome, record: active.value })).toEqual(reduced)
-        const committed = await prepareDrainOutcomePublication({
+        const committed = await commitDrainOutcome({
             authority: outcome, namespace: state, stackId,
         })
         if ('diagnostics' in committed || committed.kind !== 'complete') throw new Error('expected drain outcome commit')
-        expect(finalizeDrainOutcome({ authority: outcome, publication: committed, address })).toBe(true)
         expect(await readState(address)).toMatchObject({ kind: 'complete', value: { value: { drain: null } } })
     })
 
@@ -1698,7 +1650,7 @@ describe('session-aware claims', () => {
         const address = state.paths.coordination(stackId)
         const before = await readFile(address.path)
         vi.setSystemTime(Date.parse(attempted.attempt.committedAt) - 1)
-        const refused = await prepareDrainOutcomePublication({ authority: outcome, namespace: state, stackId })
+        const refused = await commitDrainOutcome({ authority: outcome, namespace: state, stackId })
         expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [
             { code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED },
         ] })
@@ -1711,13 +1663,12 @@ describe('session-aware claims', () => {
             : undefined
         let publication
         try {
-            publication = await prepareDrainOutcomePublication({ authority: outcome, namespace: state, stackId })
+            publication = await commitDrainOutcome({ authority: outcome, namespace: state, stackId })
         } finally {
             sync?.restore()
         }
         if ('diagnostics' in publication) throw new Error('expected failed outcome publication')
         expect(publication.kind).toBe(kind)
-        expect(finalizeDrainOutcome({ authority: outcome, publication, address })).toBe(true)
         expect(await readState(address)).toMatchObject({ kind: 'complete', value: {
             revision: attempted.attempt.committedRevision + 1,
             value: { drain: { attempt: {
@@ -1780,12 +1731,10 @@ describe('session-aware claims', () => {
         const failedRecord = coordinationStateRecord(state, stackId, active.value, failedAt, failed)
         expect(matchReclaimDrainContinuation({ continuation, record: failedRecord })).toBe('failed')
         expect(matchReclaimDrainContinuation({ continuation, record: failedRecord })).toBe('failed')
-        const failedCommit = await prepareDrainOutcomePublication({
+        const failedCommit = await commitDrainOutcome({
             authority: outcome, namespace: state, stackId,
         })
         if (failedCommit.kind !== 'complete') throw new Error('expected failed reclaim commit')
-        expect(finalizeDrainOutcome({ authority: outcome, publication: failedCommit,
-            address: state.paths.coordination(stackId) })).toBe(true)
         const retryReservation = await recoverDrainReservation({ namespace: state, request })
         if (retryReservation.kind !== 'complete') throw new Error('expected retry reservation')
         const retry = await reserveDrainAttempt({ namespace: state, authority: retryReservation.authority })
@@ -1933,15 +1882,14 @@ describe('session-aware claims', () => {
         expect(reduceDrainOutcome({ record: active.value, authority: failureAuthority })).toEqual(failedValue)
         expect(failedValue).toMatchObject({ drain: { attempt: { status: 'failed', failedRevision: 3, failedAt } } })
         if (!failedValue) return
-        const committed = await prepareDrainOutcomePublication({
+        const committed = await commitDrainOutcome({
             authority: failureAuthority, namespace: state, stackId,
         })
         expect(committed).toMatchObject({ kind: 'complete', value: { revision: 3 } })
         if ('diagnostics' in committed) throw new Error('expected failed outcome publication')
-        expect(finalizeDrainOutcome({ authority: failureAuthority, publication: committed,
-            address: state.paths.coordination(stackId) })).toBe(true)
-        expect(finalizeDrainOutcome({ authority: failureAuthority, publication: committed,
-            address: state.paths.coordination(stackId) })).toBe(false)
+        // The outcome reduces only against the record it settled from, so it cannot be published twice.
+        expect(await commitDrainOutcome({ authority: failureAuthority, namespace: state, stackId }))
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED }] })
         const recovered = await recoverDrainReservation({ namespace: state, request })
         expect(recovered).toMatchObject({ kind: 'complete', reservation: {
             reservationId: first.reservation.reservationId, generation: request.generation,
@@ -2010,12 +1958,10 @@ describe('session-aware claims', () => {
         if (!failure) throw new Error('expected failed outcome authority')
         const failed = reduceDrainOutcome({ record: active.value, authority: failure })
         if (!failed) throw new Error('expected failed drain state')
-        const committed = await prepareDrainOutcomePublication({
+        const committed = await commitDrainOutcome({
             authority: failure, namespace: state, stackId,
         })
         if (committed.kind !== 'complete') throw new Error('expected failed attempt commit')
-        expect(finalizeDrainOutcome({ authority: failure, publication: committed,
-            address: state.paths.coordination(stackId) })).toBe(true)
         const recovered = await recoverDrainReservation({ namespace: state, request })
         if (recovered.kind !== 'complete') throw new Error('expected failed drain recovery')
         const address = state.paths.coordination(stackId)
@@ -2187,13 +2133,11 @@ describe('session-aware claims', () => {
         expect(await recoverDrainReservation({ namespace: state, request })).toMatchObject({
             kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }],
         })
-        const progressCommit = await prepareDrainOutcomePublication({
+        const progressCommit = await commitDrainOutcome({
             authority: success, namespace: state, stackId,
         })
         expect(progressCommit).toMatchObject({ kind: 'complete', value: { revision: 3 } })
         if (progressCommit.kind !== 'complete') throw new Error('expected progress commit')
-        expect(finalizeDrainOutcome({ authority: success, publication: progressCommit,
-            address: state.paths.coordination(stackId) })).toBe(true)
         expect(await reserveDrainAttempt({ namespace: state, authority: reserved.authority })).toMatchObject({ kind: 'refusal' })
         const recovered = await recoverDrainReservation({ namespace: state, request })
         if (recovered.kind !== 'complete') throw new Error('expected progressed drain recovery')
@@ -2324,12 +2268,10 @@ describe('session-aware claims', () => {
             ...decoded, lease: { ...decoded.lease, offset: 1, ports: { WEB: 3100 } },
         })
         expect(matchReclaimDrainContinuation({ continuation, record: changedLease })).toBe('unmatched')
-        const committed = await prepareDrainOutcomePublication({
+        const committed = await commitDrainOutcome({
             authority: failure, namespace: state, stackId,
         })
         if (committed.kind !== 'complete') throw new Error('expected failed reclaim commit')
-        expect(finalizeDrainOutcome({ authority: failure, publication: committed,
-            address: state.paths.coordination(stackId) })).toBe(true)
         expect(matchReclaimDrainContinuation({ continuation, record: committed.value })).toBe('failed')
         const retryReservation = await recoverDrainReservation({ namespace: state, request })
         if (retryReservation.kind !== 'complete') throw new Error('expected failed reclaim recovery')
@@ -2412,12 +2354,10 @@ describe('session-aware claims', () => {
         if (!firstSuccess) throw new Error('expected first reclaim success')
         const firstProgress = reduceDrainOutcome({ record: retryRecord.value, authority: firstSuccess })
         if (!firstProgress) throw new Error('expected first reclaim progress')
-        const firstProgressCommit = await prepareDrainOutcomePublication({
+        const firstProgressCommit = await commitDrainOutcome({
             authority: firstSuccess, namespace: state, stackId,
         })
         if (firstProgressCommit.kind !== 'complete') throw new Error('expected first reclaim progress commit')
-        expect(finalizeDrainOutcome({ authority: firstSuccess, publication: firstProgressCommit,
-            address: state.paths.coordination(stackId) })).toBe(true)
         const secondReservation = await recoverDrainReservation({ namespace: state, request })
         if (secondReservation.kind !== 'complete') throw new Error('expected second reclaim recovery')
         const secondAttempt = await reserveDrainAttempt({ namespace: state, authority: secondReservation.authority })
@@ -2435,12 +2375,10 @@ describe('session-aware claims', () => {
         if (!secondFailure) throw new Error('expected second reclaim failure')
         const secondFailedValue = reduceDrainOutcome({ record: secondActive.value, authority: secondFailure })
         if (!secondFailedValue) throw new Error('expected second reclaim failure transition')
-        const secondFailedCommit = await prepareDrainOutcomePublication({
+        const secondFailedCommit = await commitDrainOutcome({
             authority: secondFailure, namespace: state, stackId,
         })
         if (secondFailedCommit.kind !== 'complete') throw new Error('expected second reclaim failure commit')
-        expect(finalizeDrainOutcome({ authority: secondFailure, publication: secondFailedCommit,
-            address: state.paths.coordination(stackId) })).toBe(true)
         const secondRecovery = await recoverDrainReservation({ namespace: state, request })
         if (secondRecovery.kind !== 'complete') throw new Error('expected persisted second reclaim recovery')
         const secondRecoveryAuthority = inspectFailedReclaimRecovery({

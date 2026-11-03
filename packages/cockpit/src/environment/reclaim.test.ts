@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import { ENVIRONMENT_CODES, type CheckoutId, type CockpitId, type HolderId, type StackId } from './contract.js'
-import { coordinationStateRecord, decodeCoordinationRecord, finalizeDrainOutcome, inspectDrainAttemptAuthority, openRuntimeDrainExecution, prepareDrainOutcomePublication, recoverDrainReservation, reduceDrainOutcome, reserveDrain, reserveDrainAttempt, settleRuntimeDrainSuccess } from './claims.js'
+import { coordinationStateRecord, decodeCoordinationRecord, inspectDrainAttemptAuthority, openRuntimeDrainExecution, commitDrainOutcome, recoverDrainReservation, reduceDrainOutcome, reserveDrain, reserveDrainAttempt, settleRuntimeDrainSuccess } from './claims.js'
 import {
     classifyReclaim,
     discoverReclaim,
@@ -952,12 +952,10 @@ describe('reset planning', () => {
                 if (active.kind !== 'complete') throw new Error('active drain unavailable')
                 const progressed = reduceDrainOutcome({ record: active.value, authority: runtimeSuccess })
                 if (!progressed) throw new Error('runtime progress unavailable')
-                const progressCommit = await prepareDrainOutcomePublication({
+                const progressCommit = await commitDrainOutcome({
                     authority: runtimeSuccess, namespace: selected.value, stackId,
                 })
                 if (progressCommit.kind !== 'complete') throw new Error('runtime progress commit unavailable')
-                expect(finalizeDrainOutcome({ authority: runtimeSuccess, publication: progressCommit,
-                    address: selected.value.paths.coordination(stackId) })).toBe(true)
                 const recovered = await recoverDrainReservation({ namespace: selected.value, request })
                 if (recovered.kind !== 'complete') throw new Error('drain recovery unavailable')
                 const reclaimAttempt = await reserveDrainAttempt({ namespace: selected.value, authority: recovered.authority })
@@ -1010,12 +1008,10 @@ describe('reset planning', () => {
                     if (active.kind !== 'complete') throw new Error('active teardown attempt unavailable')
                     const failedValue = reduceDrainOutcome({ record: active.value, authority: failureAuthority })
                     if (!failedValue) throw new Error('teardown failure transition unavailable')
-                    const failedCommit = await prepareDrainOutcomePublication({
+                    const failedCommit = await commitDrainOutcome({
                         authority: failureAuthority, namespace: selected.value, stackId,
                     })
                     if (failedCommit.kind !== 'complete') throw new Error('teardown failure commit unavailable')
-                    expect(finalizeDrainOutcome({ authority: failureAuthority, publication: failedCommit,
-                        address: selected.value.paths.coordination(stackId) })).toBe(true)
                     vi.resetModules()
                     const freshReclaim = await import('./reclaim.js')
                     const freshClaims = await import('./claims.js')
@@ -1073,10 +1069,8 @@ describe('reset planning', () => {
                         expect(reconciled).toMatchObject({ kind: 'complete', continuation: expect.anything(), authority: expect.anything() })
                         if (reconciled.kind !== 'complete' || !reconciled.continuation) throw new Error('absent teardown continuation unavailable')
                         const success = reconciled.authority
-                        const published = await freshClaims.prepareDrainOutcomePublication({ authority: success, namespace: selected.value, stackId })
+                        const published = await freshClaims.commitDrainOutcome({ authority: success, namespace: selected.value, stackId })
                         if (published.kind !== 'complete') throw new Error(JSON.stringify(published))
-                        expect(freshClaims.finalizeDrainOutcome({ authority: success, publication: published,
-                            address: selected.value.paths.coordination(stackId) })).toBe(true)
                         const continued = await freshReclaim.planTeardown({ ...common, coordinationRecord: published.value,
                             discovery: post, executable: runtimeByDiscovery.get(post)!,
                             expectedDiscoveryDigest: preview.discoveryDigest, continuation: reconciled.continuation,
@@ -1121,12 +1115,10 @@ describe('reset planning', () => {
                     if (current.kind !== 'complete') throw new Error('teardown progress record unavailable')
                     const nextProgress = reduceDrainOutcome({ record: current.value, authority: success })
                     if (!nextProgress) throw new Error('teardown progress unavailable')
-                    const committed = await prepareDrainOutcomePublication({
+                    const committed = await commitDrainOutcome({
                         authority: success, namespace: selected.value, stackId,
                     })
                     if (committed.kind !== 'complete') throw new Error('teardown progress commit unavailable')
-                    expect(finalizeDrainOutcome({ authority: success, publication: committed,
-                        address: selected.value.paths.coordination(stackId) })).toBe(true)
                     // The discovery that reconciled the first removal plans the second, as `down` does;
                     // the other modes plan from a discovery taken after the publication.
                     const nextDiscovery = mode === 'two-action-success' ? postDiscovery : await authenticatedDiscovery(root, [remaining])
@@ -1157,12 +1149,10 @@ describe('reset planning', () => {
                         if (secondActive.kind !== 'complete') throw new Error('second active teardown attempt unavailable')
                         const failedValue = reduceDrainOutcome({ record: secondActive.value, authority: failureAuthority })
                         if (!failedValue) throw new Error('second teardown failure transition unavailable')
-                        const failedCommit = await prepareDrainOutcomePublication({
+                        const failedCommit = await commitDrainOutcome({
                             authority: failureAuthority, namespace: selected.value, stackId,
                         })
                         if (failedCommit.kind !== 'complete') throw new Error('second teardown failure commit unavailable')
-                        expect(finalizeDrainOutcome({ authority: failureAuthority, publication: failedCommit,
-                            address: selected.value.paths.coordination(stackId) })).toBe(true)
                         vi.resetModules()
                         const freshReclaim = await import('./reclaim.js')
                         const freshClaims = await import('./claims.js')
@@ -1326,12 +1316,10 @@ describe('reset planning', () => {
                 if (active.kind !== 'complete') throw new Error('active drain unavailable')
                 const progressed = reduceDrainOutcome({ record: active.value, authority: runtimeSuccess })
                 if (!progressed) throw new Error('runtime progress unavailable')
-                const publication = await prepareDrainOutcomePublication({
+                const publication = await commitDrainOutcome({
                     authority: runtimeSuccess, namespace: selected.value, stackId,
                 })
                 if (publication.kind !== 'complete') throw new Error('runtime progress commit unavailable')
-                expect(finalizeDrainOutcome({ authority: runtimeSuccess, publication,
-                    address: selected.value.paths.coordination(stackId) })).toBe(true)
                 const recovered = await recoverDrainReservation({ namespace: selected.value, request })
                 if (recovered.kind !== 'complete') throw new Error('drain recovery unavailable')
                 const reclaimAttempt = await reserveDrainAttempt({ namespace: selected.value, authority: recovered.authority })
@@ -1582,12 +1570,10 @@ describe('reset planning', () => {
             if (!runtimeSuccess) throw new Error('runtime success authority unavailable')
             const progressed = reduceDrainOutcome({ record: activeRecord.value, authority: runtimeSuccess })
             if (!progressed) throw new Error('runtime progress unavailable')
-            const progressCommit = await prepareDrainOutcomePublication({
+            const progressCommit = await commitDrainOutcome({
                 authority: runtimeSuccess, namespace: selected.value, stackId,
             })
             if (progressCommit.kind !== 'complete') throw new Error('runtime progress commit unavailable')
-            expect(finalizeDrainOutcome({ authority: runtimeSuccess, publication: progressCommit,
-                address: selected.value.paths.coordination(stackId) })).toBe(true)
             const recovered = await recoverDrainReservation({ namespace: selected.value, request: drainRequest })
             if (recovered.kind !== 'complete') throw new Error('drain recovery unavailable')
             const reclaimAttempt = await reserveDrainAttempt({ namespace: selected.value, authority: recovered.authority })
@@ -1628,12 +1614,10 @@ describe('reset planning', () => {
                     if (active.kind !== 'complete') throw new Error('failed attempt record unavailable')
                     const failedValue = reduceDrainOutcome({ record: active.value, authority: failureAuthority })
                     if (!failedValue) throw new Error('failed attempt transition unavailable')
-                    const failedCommit = await prepareDrainOutcomePublication({
+                    const failedCommit = await commitDrainOutcome({
                         authority: failureAuthority, namespace: selected.value, stackId,
                     })
                     if (failedCommit.kind !== 'complete') throw new Error('failed attempt commit unavailable')
-                    expect(finalizeDrainOutcome({ authority: failureAuthority, publication: failedCommit,
-                        address: selected.value.paths.coordination(stackId) })).toBe(true)
                     expect(reduceDrainOutcome({ record: failedCommit.value, authority: failureAuthority })).toBeUndefined()
                     if (coldRetryMode) {
                         vi.resetModules()
@@ -1724,10 +1708,8 @@ describe('reset planning', () => {
                             expect(completed).toMatchObject({ kind: 'complete', continuation: null, authority: expect.anything() })
                             if (completed.kind !== 'complete') throw new Error('absent reset completion unavailable')
                             const success = completed.authority
-                            const publication = await freshClaims.prepareDrainOutcomePublication({ authority: success, namespace: selected.value, stackId })
+                            const publication = await freshClaims.commitDrainOutcome({ authority: success, namespace: selected.value, stackId })
                             if (publication.kind !== 'complete') throw new Error(JSON.stringify(publication))
-                            expect(freshClaims.finalizeDrainOutcome({ authority: success, publication,
-                                address: selected.value.paths.coordination(stackId) })).toBe(true)
                             expect(publication.value.value).toMatchObject({ holders: [], lease: { released: true }, drain: null })
                             expect(await readState(selected.value.paths.lifecycle(stackId))).toMatchObject({ kind: 'missing' })
                             return
@@ -1814,12 +1796,10 @@ describe('reset planning', () => {
                 if (current.kind !== 'complete') throw new Error('reclaim progress record unavailable')
                 const nextProgress = reduceDrainOutcome({ record: current.value, authority: reclaimSuccess })
                 if (!nextProgress) throw new Error('reclaim progress unavailable')
-                const committed = await prepareDrainOutcomePublication({
+                const committed = await commitDrainOutcome({
                     authority: reclaimSuccess, namespace: selected.value, stackId,
                 })
                 if (committed.kind !== 'complete') throw new Error('reclaim progress commit unavailable')
-                expect(finalizeDrainOutcome({ authority: reclaimSuccess, publication: committed,
-                    address: selected.value.paths.coordination(stackId) })).toBe(true)
                 const nextDiscovery = await authenticatedDiscovery(root, [remainingVolume])
                 const nextPlan = await planReset({
                     ...base, coordinationRecord: committed.value, expectedCoordinationRevision: committed.value.revision,
@@ -1848,12 +1828,10 @@ describe('reset planning', () => {
                     if (secondActive.kind !== 'complete') throw new Error('second active reset attempt unavailable')
                     const failedValue = reduceDrainOutcome({ record: secondActive.value, authority: failureAuthority })
                     if (!failedValue) throw new Error('second reset failure transition unavailable')
-                    const failedCommit = await prepareDrainOutcomePublication({
+                    const failedCommit = await commitDrainOutcome({
                         authority: failureAuthority, namespace: selected.value, stackId,
                     })
                     if (failedCommit.kind !== 'complete') throw new Error('second reset failure commit unavailable')
-                    expect(finalizeDrainOutcome({ authority: failureAuthority, publication: failedCommit,
-                        address: selected.value.paths.coordination(stackId) })).toBe(true)
                     vi.resetModules()
                     const freshReclaim = await import('./reclaim.js')
                     const freshClaims = await import('./claims.js')

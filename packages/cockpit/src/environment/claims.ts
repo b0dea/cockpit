@@ -29,7 +29,6 @@ import { resolveExecutablePath, type ResolvedExecutable } from './executable.js'
 import {
     abortStateTransaction,
     authenticateStateNamespace,
-    authenticateStatePublication,
     inspectStateLock,
     parseCoordinationStateEntry,
     readState,
@@ -513,16 +512,7 @@ const drainExecutions = new WeakMap<object,
 const drainOutcomes = new WeakMap<object,
     | { readonly kind: 'success'; readonly authority: DrainAttemptSuccessAuthority; readonly provenance: DrainAttemptProvenance }
     | { readonly kind: 'failure'; readonly authority: DrainAttemptFailureAuthority; readonly provenance: DrainAttemptProvenance }>()
-const drainOutcomePublications = new WeakMap<object, {
-    readonly revision: number
-    readonly value: JsonSnapshot
-    readonly kind: 'coordination'
-    readonly cockpitId: CockpitId
-    readonly subjectId: string
-    readonly notBefore: string
-    readonly updatedAt: string
-    readonly address: StateAddress
-}>()
+
 const drainContinuationEvidence = new WeakMap<object,
     | { readonly kind: 'progress'; readonly authority: DrainProgressAuthority }
     | { readonly kind: 'failure'; readonly authority: DrainAttemptFailureAuthority }>()
@@ -1887,25 +1877,19 @@ function prepareDrainOutcomeRecord(input: {
     return coordinationStateRecord(namespace, stackId as StackId, current, updatedAt, value)
 }
 
-export async function prepareDrainOutcomePublication(input: {
+/**
+ * Publishes a settled drain outcome to the coordination record and, once it is durable, retires the
+ * outcome so it cannot be published again. An indeterminate publication keeps the outcome for repair.
+ */
+export async function commitDrainOutcome(input: {
     readonly authority: DrainOutcomeAuthority
     readonly namespace: StateNamespace
     readonly stackId: StackId
     readonly beforePublish?: StateTransactionOptions['beforePublish']
 }): Promise<StateResult<StateRecord> | ClaimMutationRefusal> {
-    let inputKeys: readonly string[] = []
-    try {
-        inputKeys = [
-            'authority', 'namespace', 'stackId',
-            ...(Object.getOwnPropertyDescriptor(input, 'beforePublish') ? ['beforePublish'] : []),
-        ]
-    } catch { /* malformed input is refused below */ }
-    const preparation = exactDataProperties(input, inputKeys)
-    const authority = preparation?.authority
-    const outcome = authority && typeof authority === 'object' ? drainOutcomes.get(authority) : undefined
-    const namespace = preparation ? snapshotStateNamespace(preparation.namespace as StateNamespace) : undefined
-    const stackId = preparation?.stackId
-    const beforePublish = preparation?.beforePublish
+    const { authority, stackId, beforePublish } = input
+    const outcome = drainOutcomes.get(authority)
+    const namespace = snapshotStateNamespace(input.namespace)
     const sealed = outcome?.kind === 'failure'
         ? drainAttemptFailureAuthorities.get(outcome.authority)
         : outcome?.kind === 'success'
@@ -1961,54 +1945,11 @@ export async function prepareDrainOutcomePublication(input: {
         },
     )
     if ('aborted' in publication) return publication.value as ClaimMutationRefusal
-    if (publication.kind === 'complete' || publication.kind === 'indeterminate') {
-        const value = snapshotJson(publication.value.value)
-        if (value === undefined) {
-            return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'published drain outcome is malformed', address.path)
-        }
-        drainOutcomePublications.set(authority as DrainOutcomeAuthority, Object.freeze({
-            revision: publication.value.revision,
-            value,
-            kind: outcome.provenance.kind,
-            cockpitId: outcome.provenance.cockpitId,
-            subjectId: outcome.provenance.subjectId,
-            notBefore,
-            updatedAt: publication.value.updatedAt,
-            address: outcome.provenance.address,
-        }))
+    if (publication.kind === 'complete') {
+        drainOutcomes.delete(authority as DrainOutcomeAuthority)
+        finalizeDrainAttemptOutcome(outcome.authority)
     }
     return publication
-}
-
-export function finalizeDrainOutcome(input: {
-    readonly authority: DrainOutcomeAuthority
-    readonly publication: StateResult<StateRecord>
-    readonly address: StateAddress
-}): boolean {
-    const finalization = exactDataProperties(input, ['authority', 'publication', 'address'])
-    if (finalization) {
-        const authority = finalization.authority
-        if (!authority || typeof authority !== 'object') return false
-        const outcome = drainOutcomes.get(authority)
-        const expected = drainOutcomePublications.get(authority)
-        if (!outcome || !expected) return false
-        const address = snapshotCoordinationAddress(finalization.address as StateAddress)
-        if (!address || !sameCoordinationAddress(address, expected.address)) return false
-        const publication = authenticateStatePublication({
-            publication: finalization.publication as StateResult<StateRecord>,
-            address: finalization.address as StateAddress,
-        })
-        const record = publication?.record
-        if (!record || record.revision !== expected.revision || record.kind !== expected.kind
-            || record.cockpitId !== expected.cockpitId || record.subjectId !== expected.subjectId
-            || record.updatedAt !== expected.updatedAt
-            || Date.parse(record.updatedAt) < Date.parse(expected.notBefore) || Date.parse(record.updatedAt) > Date.now()
-            || JSON.stringify(canonicalJsonValue(record.value)) !== JSON.stringify(canonicalJsonValue(expected.value))) return false
-        drainOutcomes.delete(authority)
-        drainOutcomePublications.delete(authority)
-        return finalizeDrainAttemptOutcome(outcome.authority)
-    }
-    return false
 }
 
 export function matchReclaimDrainContinuation(input: { readonly continuation: object; readonly record: StateRecord }): 'progressed' | 'failed' | 'unmatched' {

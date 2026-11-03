@@ -6,8 +6,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import { type CheckoutId, type CockpitId, type HolderId, type StackId } from './contract.js'
 import {
-    coordinationStateRecord, finalizeDrainOutcome, inspectDrainAttemptAuthority, openRuntimeDrainExecution,
-    prepareDrainOutcomePublication,
+    coordinationStateRecord, inspectDrainAttemptAuthority, openRuntimeDrainExecution,
+    commitDrainOutcome,
     recoverDrainReservation, reduceDrainOutcome, reserveDrain, reserveDrainAttempt, settleRuntimeDrainSuccess,
 } from './claims.js'
 import {
@@ -400,12 +400,10 @@ describe('teardown replay', () => {
             if (active.kind !== 'complete') throw new Error('active drain unavailable')
             const progress = reduceDrainOutcome({ record: active.value, authority: success })
             if (!progress) throw new Error('runtime progress unavailable')
-            const committed = await prepareDrainOutcomePublication({
+            const committed = await commitDrainOutcome({
                 authority: success, namespace: namespace.value, stackId,
             })
             if (committed.kind !== 'complete') throw new Error('runtime progress commit unavailable')
-            expect(finalizeDrainOutcome({ authority: success, publication: committed,
-                address: namespace.value.paths.coordination(stackId) })).toBe(true)
             const recovered = await recoverDrainReservation({ namespace: namespace.value, request: drainRequest })
             if (recovered.kind !== 'complete') throw new Error('drain recovery unavailable')
             const reclaimAttempt = await reserveDrainAttempt({ namespace: namespace.value, authority: recovered.authority })

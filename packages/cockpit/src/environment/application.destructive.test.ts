@@ -13,7 +13,7 @@ const executionFence = (id: string) => {
 const applicationOwners = vi.hoisted(() => ({
     lifecycle: {} as Partial<Pick<typeof import('./lifecycle.js'), 'consumeLifecycleIssuance' | 'planDown' | 'planResetLifecycle'>>,
     runtime: {} as Partial<Pick<typeof import('./runtime.js'), 'stopRuntime'>>,
-    claims: {} as Partial<Pick<typeof import('./claims.js'), 'discardDrainReservationAuthority' | 'finalizeDrainOutcome' | 'prepareDrainOutcomePublication' | 'recoverDrainReservation' | 'reserveDrain' | 'reserveDrainAttempt'>>,
+    claims: {} as Partial<Pick<typeof import('./claims.js'), 'discardDrainReservationAuthority' | 'commitDrainOutcome' | 'recoverDrainReservation' | 'reserveDrain' | 'reserveDrainAttempt'>>,
     reclaim: {} as Partial<Pick<typeof import('./reclaim.js'), 'executeReclaimAction' | 'keptTeardownResources' | 'planReset' | 'planTeardown' | 'reconcileReclaimAction'>>,
 }))
 vi.mock('./lifecycle.js', async (importOriginal) => {
@@ -37,8 +37,7 @@ vi.mock('./claims.js', async (importOriginal) => {
     return {
         ...actual,
         discardDrainReservationAuthority: (...args: Parameters<typeof actual.discardDrainReservationAuthority>) => applicationOwners.claims.discardDrainReservationAuthority?.(...args) ?? actual.discardDrainReservationAuthority(...args),
-        finalizeDrainOutcome: (...args: Parameters<typeof actual.finalizeDrainOutcome>) => applicationOwners.claims.finalizeDrainOutcome?.(...args) ?? actual.finalizeDrainOutcome(...args),
-        prepareDrainOutcomePublication: (...args: Parameters<typeof actual.prepareDrainOutcomePublication>) => applicationOwners.claims.prepareDrainOutcomePublication?.(...args) ?? actual.prepareDrainOutcomePublication(...args),
+        commitDrainOutcome: (...args: Parameters<typeof actual.commitDrainOutcome>) => applicationOwners.claims.commitDrainOutcome?.(...args) ?? actual.commitDrainOutcome(...args),
         recoverDrainReservation: (...args: Parameters<typeof actual.recoverDrainReservation>) => applicationOwners.claims.recoverDrainReservation?.(...args) ?? actual.recoverDrainReservation(...args),
         reserveDrain: (...args: Parameters<typeof actual.reserveDrain>) => applicationOwners.claims.reserveDrain?.(...args) ?? actual.reserveDrain(...args),
         reserveDrainAttempt: (...args: Parameters<typeof actual.reserveDrainAttempt>) => applicationOwners.claims.reserveDrainAttempt?.(...args) ?? actual.reserveDrainAttempt(...args),
@@ -454,13 +453,9 @@ describe('destructive application contracts', () => {
             await execute({ id: 'runtime-observe' } as never)
             return { kind: 'stopped', authority: Object.freeze({}), fence: executionFence('reset-stop') } as never
         }
-        applicationOwners.claims.prepareDrainOutcomePublication = async () => {
+        applicationOwners.claims.commitDrainOutcome = async () => {
             events.push('publication')
             return { kind: 'complete', value: Object.freeze({}) } as never
-        }
-        applicationOwners.claims.finalizeDrainOutcome = () => {
-            events.push('finalize')
-            return true
         }
         const adapters = {
             load: async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [], result: context }),
@@ -475,7 +470,7 @@ describe('destructive application contracts', () => {
         if (!('decide' in session)) throw new Error('operator reset session was not issued')
         const result = await session.decide('approve')
 
-        expect(events).toEqual(['reservation', 'attempt', 'runtime-stop', 'runtime-observe', 'publication', 'finalize'])
+        expect(events).toEqual(['reservation', 'attempt', 'runtime-stop', 'runtime-observe', 'publication'])
         expect(result).toMatchObject({ kind: 'complete', result: { stackId: context.stackId, change: 'reset', targets: session.preview.result.targets } })
     })
 
@@ -542,8 +537,7 @@ describe('destructive application contracts', () => {
         applicationOwners.reclaim.reconcileReclaimAction = () => ({
             kind: 'complete', continuation: null, authority: {},
         }) as never
-        applicationOwners.claims.prepareDrainOutcomePublication = async () => ({ kind: 'complete', value: {} }) as never
-        applicationOwners.claims.finalizeDrainOutcome = () => true
+        applicationOwners.claims.commitDrainOutcome = async () => ({ kind: 'complete', value: {} }) as never
         const result = await runDown({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
             observe: async () => resetObservation(instance, failedRecord),
@@ -642,8 +636,7 @@ describe('destructive application contracts', () => {
             reconciliations += 1
             return { kind: 'complete', continuation: reconciliations === 1 ? continuation : null, authority: {} } as never
         }
-        applicationOwners.claims.prepareDrainOutcomePublication = async () => ({ kind: 'complete', value: {} }) as never
-        applicationOwners.claims.finalizeDrainOutcome = () => true
+        applicationOwners.claims.commitDrainOutcome = async () => ({ kind: 'complete', value: {} }) as never
 
         const result = await runDown({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
@@ -685,8 +678,7 @@ describe('destructive application contracts', () => {
         applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', authority: {} }) as never
         applicationOwners.reclaim.executeReclaimAction = async () => ({ kind: 'executed', executed: { receipt: {}, fence: executionFence('never-started') } }) as never
         applicationOwners.reclaim.reconcileReclaimAction = () => ({ kind: 'complete', continuation: null, authority: {} }) as never
-        applicationOwners.claims.prepareDrainOutcomePublication = async () => ({ kind: 'complete', value: {} }) as never
-        applicationOwners.claims.finalizeDrainOutcome = () => true
+        applicationOwners.claims.commitDrainOutcome = async () => ({ kind: 'complete', value: {} }) as never
         const discovery = Object.freeze({ down: Object.freeze({ discovery: Object.freeze({}), coordinationRecord: null }) })
 
         const result = await runDown({ configPath }, {
@@ -797,11 +789,10 @@ describe('destructive application contracts', () => {
             events.push('reconcile')
             return { kind: 'complete', continuation: null, authority: {} } as never
         }
-        applicationOwners.claims.prepareDrainOutcomePublication = async () => {
+        applicationOwners.claims.commitDrainOutcome = async () => {
             events.push('publish')
             return { kind: 'complete', value: {} } as never
         }
-        applicationOwners.claims.finalizeDrainOutcome = () => true
         const adapters = {
             load: async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [], result: context }),
             observe: async () => resetObservation(instance, failedRecord),

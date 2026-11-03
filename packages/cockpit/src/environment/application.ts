@@ -166,12 +166,11 @@ import {
 } from './runtime.js'
 import { admitFailureLogs, failureLogExcerpt, planFailureLogs } from './logs.js'
 import {
-    finalizeDrainOutcome,
     discardDrainReservationAuthority,
     inspectDestructiveDrainRecovery,
     inspectSleepDrainRecovery,
     settleInterruptedDrainRepair,
-    prepareDrainOutcomePublication,
+    commitDrainOutcome,
     recoverDrainReservation,
     recoverSleepDrainReservation,
     reserveDrain,
@@ -3442,7 +3441,7 @@ async function publishDrainOutcomeRecord(
     context: LifecycleRunContext,
     authority: DrainOutcomeAuthority,
 ): Promise<Extract<SleepCommandResult, { kind: 'refusal' }> | undefined> {
-    const publication = await prepareDrainOutcomePublication({
+    const publication = await commitDrainOutcome({
         authority,
         namespace: context.namespace,
         stackId: context.stackId,
@@ -3460,12 +3459,6 @@ async function publishDrainOutcomeRecord(
             ? lifecycleRefusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'drain outcome publication returned no record', publication.path)
             : lifecycleRefusal(publication.code, publication.message, publication.target)
     }
-    const finalized = finalizeDrainOutcome({
-        authority,
-        publication,
-        address: context.namespace.paths.coordination(context.stackId),
-    })
-    if (!finalized) return repairRequired(context)
     return undefined
 }
 
