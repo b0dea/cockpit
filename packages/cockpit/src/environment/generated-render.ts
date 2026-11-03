@@ -267,6 +267,8 @@ function renderCompose(declaration: GeneratedEnvironmentDeclaration, input: Gene
         'dev.b0dea.cockpit.owner-id': '${COCKPIT_OWNER_ID:?cockpit runtime owner identity is unavailable}',
         'dev.b0dea.cockpit.generation-id': input.generation,
     }
+    // The running stack's work is bound to these bytes, so they carry no reasons, health properties
+    // or measurements: rewording one would otherwise demand a `down` before the next `up`.
     const services: Record<string, unknown> = {}
     for (const service of [...declaration.services].sort((left, right) => left.id.localeCompare(right.id))) {
         const projection = serviceEnvironment(declaration, service.id)
@@ -282,7 +284,6 @@ function renderCompose(declaration: GeneratedEnvironmentDeclaration, input: Gene
         const dependsOn = sortedRecord(service.dependencies.map((dependency) => [dependency.service, {
             condition: dependency.condition,
             required: true,
-            'x-cockpit-reason': dependency.reason,
         }]))
         const ports = [...service.ports].sort((left, right) => left.name.localeCompare(right.name)).map((port) => {
             const fallback = input.portDefaults[port.host_variable]
@@ -331,17 +332,10 @@ function renderCompose(declaration: GeneratedEnvironmentDeclaration, input: Gene
                 timeout: `${service.health.timeout_seconds}s`,
                 retries: service.health.retries,
                 start_period: `${service.health.start_period_seconds}s`,
-                'x-cockpit-property': service.health.property,
-                'x-cockpit-measurement': service.health.measurement
-                    ? `${service.health.measurement.duration_seconds}s; ${service.health.measurement.provenance.reason}`
-                    : 'unmeasured',
             },
             restart: service.role === 'one-shot' ? 'no' : 'unless-stopped',
             'x-cockpit-mount-contracts': service.mounts.map((mount) => `${mount.kind}:${mount.source}:${mount.target}:${mount.source_type ?? 'named-volume'}`).sort(),
-            ...(service.image ? {
-                'x-cockpit-image-reason': service.image.reason,
-                'x-cockpit-image-architectures': [...service.image.architectures].sort(),
-            } : {}),
+            ...(service.image ? { 'x-cockpit-image-architectures': [...service.image.architectures].sort() } : {}),
         }
     }
     const volumes = sortedRecord(declaration.volumes.map((volume) => [volume.id, {

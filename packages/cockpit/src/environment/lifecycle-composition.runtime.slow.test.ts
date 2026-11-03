@@ -944,6 +944,15 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
     it.each([
         ['a sibling purpose', (text: string) => text.replace('purpose = "Synthetic application"', 'purpose = "Synthetic application, described again"')],
         ['the guards', (text: string) => text.replace('[guards]\n', '[guards]\nprotected_branches = [ "main", "release" ]\n')],
+        ['a health property, reasons and provenance', (text: string) => text
+            .replace('property = "Application route returns its expected document"', 'property = "The application route answers"')
+            .replace('reason = "Pinned synthetic runtime"', 'reason = "Pinned runtime the product ships on"')
+            .replaceAll('reason = "Synthetic declaration"', 'reason = "Synthetic declaration, reworded"')],
+        ['the order of the mount tables', (text: string) => {
+            const data = '[[environment.generated.services.mounts]]\nkind = "volume"\nsource = "product-data"\ntarget = "/workspace/data"\n'
+            const source = '[[environment.generated.services.mounts]]\nkind = "bind"\nsource = "."\ntarget = "/workspace/source"\nsource_type = "directory"\n'
+            return text.replace(data, '\0').replace(source, data).replace('\0', source)
+        }],
     ])('keeps the running stack when only %s changes', async (_label, edit) => {
         const first = await runGeneratedScenario({ toolchain: 'none' })
         expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })

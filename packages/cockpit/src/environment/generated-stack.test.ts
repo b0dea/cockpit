@@ -559,7 +559,7 @@ describe('generated environment rendering', () => {
         if (result.kind !== 'complete') return
         const compose = parseYaml(result.compose) as { services: { job: { entrypoint: string[]; depends_on: { app: Record<string, unknown> }; profiles?: string[] } } }
         expect(compose.services.job.entrypoint[3]).toContain('parked for inspection')
-        expect(compose.services.job.depends_on.app).toEqual({ condition: 'service_healthy', required: true, 'x-cockpit-reason': 'The job consumes the application route' })
+        expect(compose.services.job.depends_on.app).toEqual({ condition: 'service_healthy', required: true })
         expect(compose.services.job).not.toHaveProperty('profiles')
         expect(result.observations).toContainEqual(expect.objectContaining({
             id: 'startup:job:launcher', kind: 'image-startup-launcher',
