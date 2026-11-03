@@ -43,6 +43,7 @@ import {
 } from './application.js'
 import { isProcessStart, observeProcessStart, processHost, releaseDeadSessionHolders, type HolderProcess } from './claims.js'
 import {
+    errorCause,
     RefusalError,
     DOCKER_CLIENT_ENVIRONMENT,
     ENVIRONMENT_CODES,
@@ -1244,13 +1245,9 @@ export function createLifecycleCommandAdapters(
         if (acquired.kind !== 'complete') return undefined
         let retainOnFailure = false
         const compensationFailure = (error: unknown, cleanup: unknown) => {
-            const detail = (value: unknown) => value instanceof Error
-                && value.message.length > 0 && value.message.length <= 512
-                ? value.message.split('\n', 1)[0]!
-                : 'unknown failure'
-            return new AggregateError(
-                [error, cleanup],
-                `downstream port preparation failed: ${detail(error)}; acquired-holder compensation failed: ${detail(cleanup)}`,
+            return new RefusalError(
+                `downstream port preparation failed: ${errorCause(error)}; acquired-holder compensation failed: ${errorCause(cleanup)}`,
+                { cause: new AggregateError([error, cleanup]) },
             )
         }
         try {

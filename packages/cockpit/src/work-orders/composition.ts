@@ -1008,7 +1008,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             return Object.freeze({ directory: anchors.at(-1)!.path, anchors: Object.freeze(anchors), close: closeAnchors })
         } catch (error) {
             try { await closeAnchors() } catch (cleanupError) {
-                throw new AggregateError([error, cleanupError], 'work-order transaction lock anchoring and cleanup both failed')
+                throw new RefusalError('work-order transaction lock anchoring and cleanup both failed', { cause: new AggregateError([error, cleanupError]) })
             }
             throw error
         }
@@ -1126,7 +1126,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             }
             try { await anchored.close() } catch (caught) { cleanupError ??= caught }
             if (cleanupError !== undefined) {
-                throw new AggregateError([error, cleanupError], 'work-order transaction contention and partial-lock cleanup both failed')
+                throw new RefusalError('work-order transaction contention and partial-lock cleanup both failed', { cause: new AggregateError([error, cleanupError]) })
             }
             const reason = errorCause(error)
             throw new RefusalError(`work-order transaction is contended: ${reason}`, { cause: error })
@@ -1162,7 +1162,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
                 const details = [cleanupError, anchorCleanupError].filter(error => error !== undefined)
                     .map(error => errorCause(error)).join('; ')
                 const contextual = new RefusalError(`work-order transaction lock cleanup failed: ${details}`)
-                if (failure !== undefined) throw new AggregateError([failure, contextual], 'work-order transaction and lock cleanup both failed')
+                if (failure !== undefined) throw new RefusalError('work-order transaction and lock cleanup both failed', { cause: new AggregateError([failure, contextual]) })
                 throw contextual
             }
         }
@@ -1485,7 +1485,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
                 await restoreTransaction(prepared, current)
                 await unlink(journalPath)
             } catch (caught) { cleanupError = caught }
-            if (cleanupError !== undefined) throw new AggregateError([error, cleanupError], 'durable transaction and rollback cleanup both failed')
+            if (cleanupError !== undefined) throw new RefusalError('durable transaction and rollback cleanup both failed', { cause: new AggregateError([error, cleanupError]) })
             throw error
         }
     }
@@ -2171,7 +2171,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
                         if (existsSync(target)) {
                             if (readdirSync(target).sort().join('\0') !== Object.keys(generation.files).sort().join('\0')
                                 || Object.entries(generation.files).some(([name, bytes]) => digest(readBounded(root, `${generationPath}/${name}`, MAX_PRIVATE_BYTES)) !== digest(bytes))) {
-                                throw new AggregateError([error], 'completion rollback retained a changed generation')
+                                throw new RefusalError('completion rollback retained a changed generation', { cause: new AggregateError([error]) })
                             }
                             await rm(target, { recursive: true })
                         }

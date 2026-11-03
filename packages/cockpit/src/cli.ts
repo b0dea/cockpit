@@ -3,7 +3,7 @@ import { installedPackageMetadata } from './package-metadata.js'
 import { validateTeamMetadata, type TeamMetadataResult } from './team-metadata.js'
 import { discoverReleaseFreshness, type ReleaseMetadataTransport } from './freshness.js'
 import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises'
-import { parse as parseToml } from 'smol-toml'
+import { parse as parseToml, TomlError } from 'smol-toml'
 import { basename, dirname, resolve } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { pathToFileURL } from 'node:url'
@@ -863,8 +863,9 @@ async function decodeUnattendedInit(values: {
             }
             answers = parseToml(text)
         } catch (error) {
+            const cause = error instanceof TomlError ? `invalid TOML at line ${error.line}, column ${error.column}` : errorCause(error)
             return usageOutcome('CLI_USAGE_INVALID',
-                `--answers ${path} could not be read as one bounded regular TOML file (${errorCause(error)}); replace it with a plain TOML file and retry`, '--answers')
+                `--answers ${path} could not be read as one bounded regular TOML file (${cause}); replace it with a plain TOML file and retry`, '--answers')
         }
     }
     return { value: { previewSha256, answers, ...(defaultsSha256 === undefined ? {} : { defaultsSha256 }) } }

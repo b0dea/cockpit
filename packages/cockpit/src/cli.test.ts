@@ -2613,9 +2613,13 @@ describe('init command admission', () => {
                 expect(await runCli(refused, io, { init: application })).toBe(2)
                 expect(application).not.toHaveBeenCalled()
             }
-            writeFileSync(answers, 'ports = [unclosed')
+            // The parser's own message quotes the bytes it stopped at; the refusal names only the position.
+            writeFileSync(answers, 'ports = [SECRET_CANARY')
+            stdout = ''
             expect(await runCli([...base, '--accept-preview', 'a'.repeat(64), '--answers', answers], io, { init: application })).toBe(2)
             expect(application).not.toHaveBeenCalled()
+            expect(stdout).toMatch(/invalid TOML at line 1, column \d+/)
+            expect(stdout).not.toContain('SECRET_CANARY')
         } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 
