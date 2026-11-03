@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto'
 import { isAbsolute, normalize } from 'node:path'
-import { isProxy } from 'node:util/types'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import {
     RefusalError,
@@ -232,38 +231,13 @@ const issuedCaptures = new WeakMap<AuthenticatedStabilityCapture, AuthenticatedS
 export type StabilityStepResult = ExecuteProbeOutcome
 
 function ownedResults(value: unknown): readonly StabilityStepResult[] | undefined {
-    try {
-        if (!Array.isArray(value) || isProxy(value) || Object.getPrototypeOf(value) !== Array.prototype) return undefined
-        const keys = Reflect.ownKeys(value)
-        const first = Object.getOwnPropertyDescriptor(value, '0')
-        const second = Object.getOwnPropertyDescriptor(value, '1')
-        const length = Object.getOwnPropertyDescriptor(value, 'length')
-        if (keys.length !== 3 || !keys.includes('0') || !keys.includes('1') || !keys.includes('length')
-            || first === undefined || !first.enumerable || !('value' in first)
-            || second === undefined || !second.enumerable || !('value' in second)
-            || length === undefined || length.enumerable || !('value' in length) || length.value !== 2) return undefined
-        return [first.value as StabilityStepResult, second.value as StabilityStepResult]
-    } catch {
-        // A throwing accessor or proxy trap means the result pair is malformed.
-        return undefined
-    }
+    return Array.isArray(value) && value.length === 2 ? [value[0], value[1]] : undefined
 }
 
 function captureAuthenticationInput(value: unknown): { readonly plan: unknown; readonly results: unknown } | undefined {
-    try {
-        if (value === null || typeof value !== 'object' || Array.isArray(value) || isProxy(value)
-            || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return undefined
-        const keys = Reflect.ownKeys(value)
-        const descriptors = Object.getOwnPropertyDescriptors(value)
-        const plan = descriptors.plan; const results = descriptors.results
-        if (keys.length !== 2 || !keys.includes('plan') || !keys.includes('results')
-            || plan === undefined || !plan.enumerable || !('value' in plan)
-            || results === undefined || !results.enumerable || !('value' in results)) return undefined
-        return { plan: plan.value, results: results.value }
-    } catch {
-        // A throwing accessor or proxy trap means the capture input is malformed.
-        return undefined
-    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value) || !exactKeys(value, ['plan', 'results'])) return undefined
+    const { plan, results } = value as Record<string, unknown>
+    return { plan, results }
 }
 
 export function authenticateStabilityCapture(input: {
@@ -284,7 +258,6 @@ export function authenticateStabilityCapture(input: {
     if (steps.length !== 2) {
         return unavailable('stability capture requires two complete planned execution results')
     }
-    try {
     const authenticatedResults = capturedResults.map((result, index) => authenticatedExecutionOutcome(result, steps[index]))
     if (authenticatedResults.some((result) => result === undefined)) {
         return unavailable('stability results do not authenticate against one planned execution cohort')
@@ -342,10 +315,6 @@ export function authenticateStabilityCapture(input: {
     const capture = { [authenticatedCaptureBrand]: true as const, ...payload }
     issuedCaptures.set(capture, payload)
     return capture
-    } catch {
-        // A throwing accessor or proxy trap means the capture input is not readable, which the message names.
-        return unavailable('stability capture input is not readable')
-    }
 }
 
 export interface RuntimeEvidenceInput {
@@ -389,23 +358,12 @@ function unavailable(reason: string, code: UnavailableRuntimeEvidence['code'] = 
 }
 
 export function captureRuntimeEvidence(input: RuntimeEvidenceInput): RuntimeEvidence {
-    let capture: AuthenticatedStabilityCapturePayload | undefined
-    try {
-        if (input === null || typeof input !== 'object' || Array.isArray(input) || isProxy(input)
-            || ![Object.prototype, null].includes(Object.getPrototypeOf(input))) {
-            return unavailable('runtime evidence capture is not readable')
-        }
-        const keys = Reflect.ownKeys(input)
-        const descriptor = Object.getOwnPropertyDescriptor(input, 'capture')
-        if (keys.length !== 1 || keys[0] !== 'capture' || descriptor === undefined || !descriptor.enumerable || !('value' in descriptor)
-            || descriptor.value === null || typeof descriptor.value !== 'object' || isProxy(descriptor.value)) {
-            return unavailable('runtime evidence capture is not readable')
-        }
-        capture = issuedCaptures.get(descriptor.value as AuthenticatedStabilityCapture)
-        if (capture === undefined) {
-            return unavailable('runtime evidence was not produced by an authenticated capture')
-        }
-    } catch { /* A throwing accessor or proxy trap means the capture is not readable, which the message names. */ return unavailable('runtime evidence capture is not readable') }
+    if (input === null || typeof input !== 'object' || Array.isArray(input) || !exactKeys(input, ['capture'])
+        || input.capture === null || typeof input.capture !== 'object') {
+        return unavailable('runtime evidence capture is not readable')
+    }
+    const capture = issuedCaptures.get(input.capture)
+    if (capture === undefined) return unavailable('runtime evidence was not produced by an authenticated capture')
     if (!validAuthenticatedCapture(capture)) return unavailable('runtime evidence provenance is invalid')
     const [processStepId, contentStepId] = capture.command.stepIds
     if (!STACK_ID.test(capture.stackId) || !SHA256.test(capture.configSha256)
