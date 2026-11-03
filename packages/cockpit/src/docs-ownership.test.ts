@@ -153,16 +153,6 @@ describe('effective documentation ownership', () => {
         )
     })
 
-    it('resolves a real tracked page through the existing repository wildcard', () => {
-        const paths = trackedDocumentation().filter((path) => classifyMarkdownPath(path) === 'human')
-        const codeOwners = readFileSync(new URL('../../../.github/CODEOWNERS', import.meta.url), 'utf8')
-
-        expect(paths.length, 'an ownership scan over no human documentation passes vacuously').toBeGreaterThan(0)
-        expect(resolveCodeOwners([paths[0]], codeOwners)).toEqual([
-            { owners: ['@b0dea'], path: paths[0] },
-        ])
-    })
-
     it('resolves every tracked page through its effective owner', () => {
         const paths = trackedDocumentation()
         const codeOwners = readFileSync(new URL('../../../.github/CODEOWNERS', import.meta.url), 'utf8')
