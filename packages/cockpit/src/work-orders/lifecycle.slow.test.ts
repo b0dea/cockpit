@@ -76,7 +76,7 @@ describe('work-order lifecycle', () => {
     })
 
     it('closes an order as checks-passed only after cockpit ran every check, failing changes outside scope and stale contracts', async () => {
-        const root = await cockpit('[work]\ngrading = "checks"\n\n[work.gates]\naccept = "agent"')
+        const root = await cockpit('[work]\ngrading = "checks"\n\n[work.gates]\naccept = "agent"\namend = "person"')
         writeFileSync(join(root, 'workorders/WO-1.md'), order('WO-1'))
         expect((await work(root, ['work', 'status'])).result).toMatchObject({ orders: [{ id: 'WO-1', state: 'draft' }], wip: { open: 0, cap: 3 } })
         expect((await work(root, ['work', 'accept', '--work-order', 'WO-1'])).result).toMatchObject({ state: 'accepted', by: 'agent' })
@@ -112,7 +112,7 @@ describe('work-order lifecycle', () => {
     }, 120_000)
 
     it('passes a person gate only for the digest a person types, and never weakens a criterion on an agent\'s word', async () => {
-        const root = await cockpit('[work]\ngrading = "checks"\n\n[work.gates]\namend = "agent"')
+        const root = await cockpit('[work]\ngrading = "checks"\n\n[work.gates]\naccept = "person"\namend = "agent"')
         writeFileSync(join(root, 'workorders/WO-3.md'), order('WO-3', '  - id: AC1\n    text: add(2, 3) returns 5.\n    check: [node, test/add.test.mjs]\n  - id: AC2\n    text: add(0, 0) returns 0.\n    check: [node, test/add.test.mjs]'))
         // The control: an agent's plain run, which has no terminal, is refused and records nothing.
         const refused = await work(root, ['work', 'accept', '--work-order', 'WO-3'])
