@@ -41,3 +41,4 @@ Each line gives the date and tool version of the run and what it showed.
 - Instruction loading in Grok Build: cockpit writes the files, but no run of the tool beside a broken control has shown that it loads them.
 - Skills in Claude Code (`.claude/skills`), Codex (`.agents/skills`) and OpenCode (`.opencode/skills`): a person has not yet reviewed whether the tool loads and triggers them as written.
 - Skills in Cursor (`.cursor/skills`) and Grok Build (`.grok/skills`): cockpit writes the files, but no run of the tool beside a broken control has shown that it loads them.
+- Browser native transports (the playwright MCP tools and the pinned Playwright CLI) in Claude Code, Codex and OpenCode: cockpit declares them and the browser skill says each still needs a person's paired call beside a broken control; no cockpit command runs or records that call, so the browser commands drive the browser through cockpit's own project client instead.
