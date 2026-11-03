@@ -2243,7 +2243,10 @@ export function admitRuntimeServiceRevalidation(input: {
     }
 }
 
-const CONTAINER_INSPECT_FORMAT = '{"ID":{{json .Id}},"State":{{json .State.Status}},"Health":{{with .State.Health}}{{json .Status}}{{else}}""{{end}},"Labels":{"dev.b0dea.cockpit.stack-id":{{json (index .Config.Labels "dev.b0dea.cockpit.stack-id")}},"dev.b0dea.cockpit.config-sha256":{{json (index .Config.Labels "dev.b0dea.cockpit.config-sha256")}},"com.docker.compose.project":{{json (index .Config.Labels "com.docker.compose.project")}},"com.docker.compose.service":{{json (index .Config.Labels "com.docker.compose.service")}}},"Mounts":{{json .Mounts}},"Ports":{{json .NetworkSettings.Ports}}}'
+// `.Id` is a key of the inspect JSON, not of Docker's typed result, so Docker runs this template on
+// the raw JSON. There a container without a healthcheck has no State.Health key, and a field access
+// on a missing key fails the whole inspect; `index` yields nothing instead.
+const CONTAINER_INSPECT_FORMAT = '{"ID":{{json .Id}},"State":{{json .State.Status}},"Health":{{with index .State "Health"}}{{json .Status}}{{else}}""{{end}},"Labels":{"dev.b0dea.cockpit.stack-id":{{json (index .Config.Labels "dev.b0dea.cockpit.stack-id")}},"dev.b0dea.cockpit.config-sha256":{{json (index .Config.Labels "dev.b0dea.cockpit.config-sha256")}},"com.docker.compose.project":{{json (index .Config.Labels "com.docker.compose.project")}},"com.docker.compose.service":{{json (index .Config.Labels "com.docker.compose.service")}}},"Mounts":{{json .Mounts}},"Ports":{{json .NetworkSettings.Ports}}}'
 
 function runtimeServiceInspectStep(
     topologyContract: TopologyEvidenceContract,

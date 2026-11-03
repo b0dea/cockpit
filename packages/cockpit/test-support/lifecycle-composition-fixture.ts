@@ -157,6 +157,7 @@ async function configureStackDocker(
     context: Readonly<{ stackId: string; cockpitId: string; runtimeSha256: string }>,
     // Further directories under the checkout that the app service bind-mounts.
     binds: readonly string[] = [],
+    healthcheck = true,
 ) {
     // sync publishes the ownership override up hands Compose; it reads the state root from HOME.
     const home = process.env.HOME
@@ -175,7 +176,7 @@ async function configureStackDocker(
         volumes: { 'product-data': { name: `${projectName}_product-data` } },
         services: { app: {
             image: STACK_IMAGE,
-            healthcheck: { test: ['CMD', 'true'] },
+            ...healthcheck ? { healthcheck: { test: ['CMD', 'true'] } } : {},
             labels,
             volumes: [
                 { type: 'bind', source: join(candidate.checkout, 'app'), target: '/workspace/source' },
@@ -185,7 +186,7 @@ async function configureStackDocker(
         } },
     }
     const psRow = JSON.stringify({ ID: containerId.slice(0, 12), Project: projectName, Service: 'app' })
-    const status = JSON.stringify({ ID: containerId, State: 'running', Health: 'healthy',
+    const status = JSON.stringify({ ID: containerId, State: 'running', Health: healthcheck ? 'healthy' : '',
         Mounts: [{ Type: 'bind', Source: join(candidate.checkout, 'app'), Destination: '/workspace/source' },
             ...binds.map((path) => ({ Type: 'bind', Source: join(candidate.checkout, path), Destination: `/workspace/${path}` }))],
         Ports: {}, Labels: { ...labels, 'com.docker.compose.project': projectName, 'com.docker.compose.service': 'app' } })
@@ -266,7 +267,12 @@ case "$1" in
                 esac
                 exit 0 ;;
             rm) : > ${shellQuote(removedPath)}; exit 0 ;;
-            inspect) printf '%s' ${shellQuote(status)}; exit 0 ;;
+            inspect)
+                # Docker 29.8.2 runs a template naming a key its typed result lacks, such as .Id,
+                # against the raw JSON, where a container without a healthcheck has no State.Health
+                # key and a field access on it fails; index returns nothing instead.
+                ${healthcheck ? '' : `case "$joined" in *'.State.Health}}'*) printf '%s\\n' 'template parsing error: map has no entry for key "Health"' >&2; exit 1 ;; esac`}
+                printf '%s' ${shellQuote(status)}; exit 0 ;;
         esac ;;
 esac
 exit 64
@@ -275,7 +281,7 @@ exit 64
     return { containerId }
 }
 
-async function runStackScenario(options: Readonly<{ seed?: readonly string[]; memoryMb?: number }> = {}) {
+async function runStackScenario(options: Readonly<{ seed?: readonly string[]; memoryMb?: number; healthcheck?: boolean }> = {}) {
     const candidate = await stackFixture(options)
     const steps: ExecutionStep[] = []
     const adapters = createLifecycleCommandAdapters({
@@ -296,7 +302,7 @@ async function runStackScenario(options: Readonly<{ seed?: readonly string[]; me
         observedAt: new Date().toISOString(),
     })
     if (started.kind === 'refusal') throw new Error(JSON.stringify(started))
-    const docker = await configureStackDocker(candidate, loaded.result)
+    const docker = await configureStackDocker(candidate, loaded.result, [], options.healthcheck)
     listenerProbeControl.enabled = true
     const result = await runUp({ configPath: candidate.configPath }, adapters)
     const recorded = await readState(loaded.result.namespace.paths.lifecycle(loaded.result.stackId))

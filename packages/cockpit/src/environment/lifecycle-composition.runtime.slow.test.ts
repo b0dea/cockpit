@@ -1003,6 +1003,14 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(steps.map(({ argv }) => argv.join(' ')).filter((line) => / up /.test(line))).toEqual([])
     })
 
+    // A small app's Compose file often declares no healthcheck; once its container runs it is ready.
+    it('starts a service that declares no healthcheck once its container runs', async () => {
+        const { result, steps } = await runStackScenario({ healthcheck: false })
+
+        expect(result, JSON.stringify(result)).toMatchObject({ kind: 'complete', status: 0 })
+        expect(steps.some(({ id }) => id === 'runtime:docker-container:health:app')).toBe(true)
+    })
+
     it('refuses an up after a runtime change with one recovery that removes the old stack and starts the new one', async () => {
         const first = await runStackScenario()
         expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
