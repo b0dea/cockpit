@@ -1,6 +1,6 @@
 ---
 name: cockpit-browser
-description: "Use when the visible behaviour of the running application must be checked or evidenced: exploring routes, signed-in views or screenshots. It reports findings and never edits code."
+description: "Use when what the running application shows must be checked or evidenced: its routes, its signed-in views, or screenshots of them. Fixes go to cockpit-fix."
 ---
 
 <!-- cockpit:verified version=0.0.0 -->
@@ -10,26 +10,45 @@ description: "Use when the visible behaviour of the running application must be 
 You look at the running product and report what you saw. You do not change code: a finding you fix
 yourself has nobody left to check it, so hand it to whoever owns the repository.
 
-1. **Orient before driving.** Read `cockpit.toml` for the application entry points (the routes), the
-   sign-in setup and the test users the product's seed creates. Run
-   `npx --no cockpit doctor --config cockpit.toml --json` and confirm the stack is up; a page that fails because the
-   stack is down is not a finding, and neither is a refusal that says nothing answered at a URL. Done when you can
-   list the routes, the roles and the sign-in state you will use.
-2. **Choose your own coverage.** Decide which routes, roles and states carry the risk and say why, so the
-   human can see what you skipped. A change under test sets the priority: its routes first, then the routes
-   that share its data. Done when the list is written down before the first page opens.
-3. **Drive with the real commands.** `npx --no cockpit browser drive --config cockpit.toml --json` visits every
-   declared route and `npx --no cockpit browser screenshot --config cockpit.toml --json` captures each surface. Add
-   `--role <role>` to either for a signed-in persona. Unless `cockpit.toml` sets
-   `browser.request_preapproval`, the guard asks a person before each one. Use the
-   browser tools below for anything the declared routes do not reach. For signed-in testing read
-   `../cockpit-setup/references/test-data-and-personas.md` first: it explains how state is minted per
-   persona, and why a stale or shared session looks like a product bug.
-4. **Every finding carries evidence:** the route, the action you took, the result you observed (quoted,
-   not paraphrased), and a screenshot or log line. A finding without them cannot be reproduced and gets
-   discarded. Say what you expected and why, and mark anything you could not reach as not run.
-5. **Never edit code.** Report findings in order of user impact and stop.
+Run cockpit from the cockpit root as `./node_modules/.bin/cockpit`, taking flags from each
+command's `--help`. When the guard asks before a command, the person decides in Claude Code; Codex
+and OpenCode deny it instead, so hand the person the exact command to run in a terminal. In Codex's
+sandbox the browser commands cannot reach the stack: ask the person to approve running them outside
+it.
 
-If `check` or the session-start report names drift, follow *On drift* in the cockpit-setup skill's procedure, `../cockpit-setup/procedures/setup.md`, first.
+1. **Orient before driving.** Read `cockpit.toml` for the application entry points (the routes),
+   `[browser.authentication]` (its policy and the saved sign-in state of each role) and
+   `[browser.data]` (whether the data is seeded, restored, or reaches production). Run
+   `./node_modules/.bin/cockpit doctor --config cockpit.toml --json` and confirm the stack is up;
+   when it is down, start it with `./node_modules/.bin/cockpit up --config cockpit.toml` or report
+   what stops it. A page that fails because the stack is down is not a finding, and neither is a
+   refusal that says nothing answered at a URL (`ERR_CONNECTION_REFUSED`,
+   `ERR_SOCKS_CONNECTION_FAILED`). Done when you can list the routes, the roles and the sign-in
+   state you will use.
+2. **Choose your own coverage.** Decide which routes, roles and states carry the risk and say why,
+   so the person can see what you skipped. A change under test sets the priority: its routes first,
+   then the routes that share its data. When the data is restored or reaches production, plan only
+   actions that read; anything that submits, deletes or pays waits for the person's yes. Done when
+   the list is written down before the first page opens.
+3. **Drive with the real commands.** `./node_modules/.bin/cockpit browser drive --config cockpit.toml --json`
+   visits every declared route and
+   `./node_modules/.bin/cockpit browser screenshot --config cockpit.toml --json` captures each
+   surface. Under real sign-in each run takes `--role <role>`, one of the roles
+   `[browser.authentication]` saves state for; with sign-in bypassed or absent, pass no role. Unless
+   `cockpit.toml` sets `browser.request_preapproval`, the guard asks a person before each run. Use
+   the browser tools below for anything the declared routes do not reach. For signed-in testing
+   read `../cockpit-setup/references/test-data-and-personas.md` first: it explains how state is
+   minted per persona, and why a stale or shared session looks like a product bug, so a refused or
+   expired session goes back to the person rather than into your findings. Done when every route on
+   your list has a record, or is marked not run with the refusal that stopped it.
+4. **Every finding carries evidence:** the route, the action you took, the result you observed
+   (quoted, not paraphrased), and a screenshot or log line. A finding without them cannot be
+   reproduced and gets discarded. Say what you expected and why, and mark anything you could not
+   reach as not run. Done when each finding has all four.
+5. **Never edit code.** Report findings in order of user impact, then what you did not run and why,
+   and stop.
+
+If `check` or the session-start report names drift, follow *On drift* in the cockpit-setup skill's
+procedure, `../cockpit-setup/procedures/setup.md`, first.
 
 {{browser}}

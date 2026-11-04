@@ -611,11 +611,11 @@ Agent tools load every skill's frontmatter into each session and its entry point
 
 | Skill entry point | Measured as | Limit | Detail moved to |
 | --- | --- | --- | --- |
-| `packages/cockpit/surfaces/skills/cockpit-setup.skill.md` | lines | 12 | `packages/cockpit/surfaces/skills/procedures/setup.md` |
-| `packages/cockpit/surfaces/skills/cockpit-explain.skill.md` | lines | 12 | `packages/cockpit/surfaces/skills/procedures/explain.md` |
-| `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 15 | `packages/cockpit/surfaces/skills/procedures/fix.md` |
-| `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 11 | `packages/cockpit/surfaces/skills/procedures/work.md` |
+| `packages/cockpit/surfaces/skills/cockpit-setup.skill.md` | lines | 14 | `packages/cockpit/surfaces/skills/procedures/setup.md` |
+| `packages/cockpit/surfaces/skills/cockpit-explain.skill.md` | lines | 7 | `packages/cockpit/surfaces/skills/procedures/explain.md` |
+| `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 12 | `packages/cockpit/surfaces/skills/procedures/fix.md` |
+| `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 9 | `packages/cockpit/surfaces/skills/procedures/work.md` |
 
-Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `d831cb92ebc03a9373f71a43f3aca220f672ed8d8ec29cd6cb8a013d4d080691`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `263e45cef7fe840349b87ef2642209f32a5f99a4b2b6dca4a183e1cb797e16a4`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `bea13e418e4c3ad968e36c9f5426d96664fcdecced3fc43d6b527ada5571936f`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `30a6f123e65bdb481a364c10a9744e4035269cb6d8b883785da338d253645a4d`).
+Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `0ef32e4d7d2304d5f9b150a59e90edbd825159386d89ee0ea19fe5142c06e366`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `dce839b290d2a584fc5592c895c20425414e9201a4c35c2460ff0539d545f2bb`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `a91365d5a79404d506e95a7d7a64fa50460dfc842265d1040402185767f527af`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `b3e6b8de3a249e73e65f84624c991416933086308073ff979f10632aae988791`).
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.

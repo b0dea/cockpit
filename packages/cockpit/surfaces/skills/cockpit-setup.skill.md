@@ -1,6 +1,6 @@
 ---
 name: cockpit-setup
-description: "Use when the user wants to add a repository to, upgrade, or diagnose a cockpit that is already installed, to make a repository's AGENTS.md and CLAUDE.md reach every agent tool, or to set up test users and signed-in browser state. A repository with no cockpit yet is adopt-cockpit's job."
+description: "Use when a repository or agent tool joins or leaves an installed cockpit, cockpit is upgraded, check or doctor reports drift or a gap to repair, a repository's AGENTS.md and CLAUDE.md must reach every agent tool, a repository has never run locally, or test users and signed-in browser state need setting up. A directory with no cockpit yet is adopt-cockpit's job."
 targets: ["*"]
 cockpit:
   tools: [shell]
@@ -13,7 +13,7 @@ cockpit:
   non-goals: [parsing registries, deciding environment policy, claiming an unproved installation]
   procedure: procedures/setup.md
   review: { mechanical: cockpit-skill-contract, judgment: pending }
-  entry-point-lines: 12
+  entry-point-lines: 14
 claudecode:
   allowed-tools: [Bash]
 codexcli:
@@ -28,10 +28,12 @@ opencode:
 # Set up and maintain an installed cockpit
 
 {{tool-equivalence}}
-Read the generated [procedures/setup.md](procedures/setup.md) beside this skill and follow the section that matches the request: **Add a repository** (`npx --no cockpit sibling add <slug> --config cockpit.toml`), **Add or remove an agent tool** (`npx --no cockpit tool add <tool> --config cockpit.toml`), **Make a repository's instructions reach every tool** (`npx --no cockpit setup --config cockpit.toml`), **After upgrading cockpit** (run `npx --no cockpit upgrade --config cockpit.toml` (`--dry-run` previews); or by hand, install the new release with `npm install --save-dev --save-exact @b00dea/cockpit@<version>`, then ask a human to run `npx --no cockpit sync --config cockpit.toml --interactive`), or **Diagnose** (`npx --no cockpit doctor --config cockpit.toml`, `npx --no cockpit check --config cockpit.toml`, `npx --no cockpit preflight --config cockpit.toml`).
-**Bootstrap** (`npx --no cockpit init . --target <tool>`, `npx --no cockpit up --config cockpit.toml`) is what the first install ran; a repository that has never run locally follows **Create a local setup**.
-For test users, roles and signed-in browser state, read `references/test-data-and-personas.md`.
-
-Preview every proposed mutation and obtain explicit confirmation before irreversible work.
-The init command resumes after an interruption and runs the final environment checks; show its actual result and anything still unconfirmed.
-If `check` or the session-start report names drift, follow **On drift** in its procedure first.
+Before running any command, read [procedures/setup.md](procedures/setup.md) beside this skill: its **Running cockpit** section, then the one section the request needs, followed step by step.
+- Drift named by `check` or the session-start report: **On drift**, before anything else.
+- A repository or an agent tool joins or leaves: **Add or remove a repository**, **Add or remove an agent tool**.
+- A repository's AGENTS.md and CLAUDE.md must reach every tool: **Make a repository's instructions reach every tool**.
+- A repository that has never run locally: **Create a local setup**; secrets and `.env.schema`: **Secret handling**.
+- A new cockpit release: **After upgrading cockpit**. A gap or refusal to repair: **Diagnose**.
+- An interrupted or unfinished `init`: **Bootstrap**, rerun with the same root and target. A directory with no cockpit yet is the adopt-cockpit skill's job.
+- Test users, roles and signed-in browser state: `references/test-data-and-personas.md`, a product change that needs the person's permission first.
+Show the person every proposed change and get their explicit yes before writing to `cockpit.toml` or a product repository, or accepting a digest.

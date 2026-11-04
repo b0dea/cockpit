@@ -1,6 +1,6 @@
 ---
 name: cockpit-explain
-description: "Use when someone asks what an installed cockpit does, why it refused or flagged something, or which command to run next, and nothing should change."
+description: "Use when someone asks what an installed cockpit does, what a diagnostic or refusal means, or which command to run next, and wants an answer rather than a change."
 targets: ["*"]
 cockpit:
   tools: [shell]
@@ -13,7 +13,7 @@ cockpit:
   non-goals: [editing configuration, starting services, repairing drift]
   procedure: procedures/explain.md
   review: { mechanical: cockpit-skill-contract, judgment: pending }
-  entry-point-lines: 12
+  entry-point-lines: 7
 claudecode:
   allowed-tools: [Bash]
 codexcli:
@@ -28,8 +28,5 @@ opencode:
 # Explain an installed cockpit
 
 {{tool-equivalence}}
-Read the generated [procedures/explain.md](procedures/explain.md) beside this skill and follow **Explain**.
-Choose only the question-relevant read-only command: `npx --no cockpit doctor --config cockpit.toml`, `npx --no cockpit check --config cockpit.toml`, or `npx --no cockpit preflight --config cockpit.toml`.
-
-This skill changes nothing.
-When `check` names drift, explain it and the fix *On drift* in the cockpit-setup skill's procedure, `../cockpit-setup/procedures/setup.md`, gives.
+Read [procedures/explain.md](procedures/explain.md) beside this skill and follow **Explain**: answer from what `doctor`, `check` or `preflight` reports now, quoting it.
+This skill changes nothing. When the answer is a change, name the command and who runs it, and leave the change to the person or to the skill that owns it: cockpit-setup for configuration and drift, cockpit-fix for a product defect.
