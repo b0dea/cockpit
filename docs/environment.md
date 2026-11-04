@@ -265,8 +265,10 @@ npx --no cockpit use api --clear --config cockpit.toml
 refused with `SIBLING_CHECKOUT_FOREIGN`. Name the checkout's own directory: a path that reaches it
 through a symbolic link is refused. The choice is recorded in `.cockpit/local/sibling-checkouts`,
 never in `cockpit.toml`, so it applies to this checkout of the cockpit alone. `up`, `logs`, the guard's
-allowed roots and protected instance files, and `doctor` and `preflight` all use the recorded
-checkout. `doctor` and `preflight` name each one (`SIBLING_CHECKOUT_OVERRIDDEN`) and warn with
+allowed roots and protected instance files, `doctor` and `preflight`, work orders (checks, grades,
+test gates and test-weakening detection) and `docs check` all use the recorded checkout, and each
+refuses with `SIBLING_CHECKOUT_UNAVAILABLE` once that checkout is gone. `doctor` and `preflight`
+name each one (`SIBLING_CHECKOUT_OVERRIDDEN`) and warn with
 `SIBLING_ENVIRONMENT_FILE_MISSING` for every declared environment file the worktree lacks: a fresh
 worktree has none of the ignored ones, and cockpit never copies them from another checkout.
 

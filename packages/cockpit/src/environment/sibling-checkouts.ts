@@ -93,7 +93,8 @@ export interface ServedSibling {
 }
 
 /** Every declared sibling with the directory that serves it; an override for an undeclared slug serves nothing. */
-export function servedSiblings(cockpitRoot: string, config: Pick<CockpitConfig, 'cockpit' | 'sibling'>,
+export function servedSiblings(cockpitRoot: string,
+    config: Readonly<{ cockpit: Readonly<{ siblings_root: string }>; sibling: readonly Readonly<{ slug: string; dir: string }>[] }>,
     checkouts: SiblingCheckoutRecord): ReadonlyMap<string, ServedSibling> {
     const siblingsRoot = resolve(cockpitRoot, config.cockpit.siblings_root)
     return new Map(config.sibling.map(sibling => {
@@ -147,12 +148,21 @@ export function servedSiblingVariables(config: Pick<CockpitConfig, 'sibling'>, s
     return Object.fromEntries(config.sibling.map(sibling => [sibling.var, served.get(sibling.slug)!.served]))
 }
 
-export type GitRun = Readonly<{ kind: 'complete'; stdout: string }> | Readonly<{ kind: 'failed'; exitCode: number; detail: string }>
+// `stderr` is Git's own text, kept for classifying the failure; it may carry a remote URL's
+// credentials, so callers print `detail` and never `stderr`.
+export type GitRun = Readonly<{ kind: 'complete'; stdout: string }>
+    | Readonly<{ kind: 'failed'; exitCode: number; code: string; detail: string; stderr: string }>
+
+/**
+ * `stdoutLimitBytes` replaces the default bound, which keeps only the tail of longer output, with a
+ * hard one: output past it fails with EXECUTION_STDOUT_LIMIT instead of arriving in part.
+ */
+export type GitRunOptions = Readonly<{ timeoutMs?: number; stdoutLimitBytes?: number }>
 
 /** Runs one Git command in a checkout through the authenticated executor and returns its text. */
 export interface GitRunner {
     readonly executable: ResolvedExecutable
-    run(cwd: string, id: string, args: readonly string[], timeoutMs?: number): Promise<GitRun>
+    run(cwd: string, id: string, args: readonly string[], options?: GitRunOptions): Promise<GitRun>
 }
 
 // Global and system configuration can carry aliases, credential helpers and fsmonitor commands that
@@ -167,24 +177,26 @@ export async function createGitRunner(
     const environment = gitEnvironment(env)
     return {
         executable,
-        async run(cwd, id, args, timeoutMs = 30_000) {
+        async run(cwd, id, args, { timeoutMs = 30_000, stdoutLimitBytes } = {}) {
             const step: ExecutionStep = {
                 id, argv: [executable.canonicalPath, '-C', cwd, ...args], argv0: executable.invocationPath,
-                cwd, env: environment, timeoutMs, stdoutLimitBytes: 65_536, stderrLimitBytes: 65_536,
-                outputOverflow: 'retain-tail', paths: [], ports: [], labels: { purpose: id }, expected: [],
+                cwd, env: environment, timeoutMs, stdoutLimitBytes: stdoutLimitBytes ?? 65_536, stderrLimitBytes: 65_536,
+                ...stdoutLimitBytes === undefined ? { outputOverflow: 'retain-tail' as const } : {},
+                paths: [], ports: [], labels: { purpose: id }, expected: [],
                 consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912,
                     argvIndexes: [0], executable: true, executionMode: executable.executionMode }],
                 filesystemChecks: [], compensation: [],
             }
             const outcome = authenticatedExecutionOutcome(await execute(step), step)
-            if (!outcome) return { kind: 'failed', exitCode: -1, detail: 'the execution outcome could not be authenticated' }
+            if (!outcome) return { kind: 'failed', exitCode: -1, code: 'unauthenticated', detail: 'the execution outcome could not be authenticated', stderr: '' }
             const text = (bytes: Buffer) => new TextDecoder('utf-8', { fatal: false }).decode(bytes).trim()
             if (outcome.kind === 'complete') return { kind: 'complete', stdout: text(outcome.stdout) }
             // Git's last line names the cause (an unreachable host, a file a merge would overwrite); a
             // remote URL in it may carry credentials, and a line that cannot be redacted is withheld.
             const line = text(outcome.stderr).replace(/(\w+:\/\/)[^/@\s]+@/g, '$1[redacted]@').split('\n').filter(Boolean).at(-1)
             const cause = line === undefined ? undefined : redactSensitiveMessage(line.slice(0, 240))
-            return { kind: 'failed', exitCode: outcome.execution.exitCode, detail: cause ? `${outcome.code}: ${cause}` : outcome.code }
+            return { kind: 'failed', exitCode: outcome.execution.exitCode, code: outcome.code,
+                detail: cause ? `${outcome.code}: ${cause}` : outcome.code, stderr: text(outcome.stderr) }
         },
     }
 }

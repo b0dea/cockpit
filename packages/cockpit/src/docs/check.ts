@@ -3,13 +3,11 @@
 import { lstatSync } from 'node:fs'
 import { posix, resolve } from 'node:path'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { readBoundedFile } from '../bounded-read.js'
 import { loadCockpitConfig } from '../config/load.js'
-import { ENVIRONMENT_CODES, errorCause, snapshotExecutionStep, type Diagnostic, type ExecutionStep } from '../environment/contract.js'
-import { resolveGitExecutable, type ResolvedExecutable } from '../environment/executable.js'
+import { ENVIRONMENT_CODES, errorCause, type Diagnostic, type ExecutionStep } from '../environment/contract.js'
 import { gitRepositoryRefusal } from '../environment/git-observation.js'
-import { loadServedSiblings, missingServedCheckout } from '../environment/sibling-checkouts.js'
+import { createGitRunner, loadServedSiblings, missingServedCheckout, type GitRunner } from '../environment/sibling-checkouts.js'
 import { refusalOutcome } from '../refusal.js'
 import { splitRepositoryPath } from '../repository-path.js'
 import { scopeMatcher } from '../work-orders/contract.js'
@@ -40,28 +38,18 @@ const MAKEFILE_PATHSPECS = [':(glob)**/GNUmakefile', ':(glob)**/Makefile', ':(gl
 
 class EvidenceUnavailable extends Error {}
 
-async function git(executable: ResolvedExecutable, root: string, args: readonly string[], execute: Execute): Promise<string> {
-    const step = snapshotExecutionStep({
-        id: `git:docs-check:${args[0]}`,
-        argv: [executable.canonicalPath, '-C', root, ...args], argv0: executable.invocationPath,
-        cwd: root, env: {}, timeoutMs: GIT_TIMEOUT_MS, stdoutLimitBytes: GIT_OUTPUT_LIMIT, stderrLimitBytes: 4_096,
-        paths: [root], ports: [], labels: { owner: 'docs-check' }, expected: [],
-        consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912,
-            argvIndexes: [0], executable: true, executionMode: executable.executionMode }],
-        filesystemChecks: [{ path: root, expected: 'directory' }], compensation: [],
-    })
+async function git(runner: GitRunner, root: string, args: readonly string[]): Promise<string> {
     const command = `git -C ${root} ${args.join(' ')}`
-    if (!step) throw new EvidenceUnavailable(`${command} could not be planned`)
-    const outcome = authenticatedExecutionOutcome(await execute(step), step)
-    if (outcome?.kind === 'complete') return outcome.stdout.toString('utf8')
-    if (outcome?.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED) {
+    const ran = await runner.run(root, `git:docs-check:${args[0]}`, args, { timeoutMs: GIT_TIMEOUT_MS, stdoutLimitBytes: GIT_OUTPUT_LIMIT })
+    if (ran.kind === 'complete') return ran.stdout
+    if (ran.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED) {
         // A repository made with `sibling add --create` has no commit yet, so it has no history to read.
-        if (args[0] === 'log' && /does not have any commits yet/.test(outcome.stderr.toString('utf8'))) return ''
-        const refused = gitRepositoryRefusal(outcome.stderr)
+        if (args[0] === 'log' && /does not have any commits yet/.test(ran.stderr)) return ''
+        const refused = gitRepositoryRefusal(Buffer.from(ran.stderr))
         throw new EvidenceUnavailable(refused.kind === 'not-a-repository' ? `${root} is not a Git repository` : `${command}: ${refused.reason}`)
     }
-    throw new EvidenceUnavailable(outcome?.code === ENVIRONMENT_CODES.EXECUTION_STDOUT_LIMIT
-        ? `${command} printed more than ${GIT_OUTPUT_LIMIT} bytes` : `${command} did not complete (${outcome?.code ?? 'unauthenticated outcome'})`)
+    throw new EvidenceUnavailable(ran.code === ENVIRONMENT_CODES.EXECUTION_STDOUT_LIMIT
+        ? `${command} printed more than ${GIT_OUTPUT_LIMIT} bytes` : `${command} did not complete (${ran.detail})`)
 }
 
 function read(root: string, path: string): string {
@@ -99,13 +87,12 @@ export async function runDocsCheck(input: DocsCheckInput, dependencies: Readonly
             `${source.path} has no [docs] table, so there are no living documents or decision records to check`, 'docs',
             'add a [docs] table to cockpit.toml: living = ["README.md", "docs/**/*.md"] lists the documents that must stay true, and the optional decisions = "docs/adr" and decisions_index = "docs/adr/README.md" name the decision records and their index; then rerun npx --no cockpit docs check --config <your cockpit.toml>')
     }
-    const resolution = await resolveGitExecutable(input.env)
-    if (resolution.state !== 'available') {
+    const runner = await createGitRunner(input.env, dependencies.execute)
+    if ('unavailable' in runner) {
         return refusalOutcome(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
-            `docs check reads repository history with Git, which is unavailable: ${resolution.reason}`, 'git',
+            `docs check reads repository history with Git, which is unavailable: ${runner.unavailable}`, 'git',
             'install Git or put it on PATH, then rerun npx --no cockpit docs check --config <your cockpit.toml>')
     }
-    const executable = resolution.value
     const cockpitRoot = posix.dirname(source.path)
     // A sibling `cockpit use` serves from another checkout is checked there, where the stack runs it.
     const served = await loadServedSiblings(cockpitRoot, config)
@@ -118,7 +105,7 @@ export async function runDocsCheck(input: DocsCheckInput, dependencies: Readonly
     const repositories = [...new Set([...living.map(entry => entry.repository), ...decisions ? [decisions.repository] : []])]
 
     const checked = await Promise.all(repositories.map(repository => checkRepository({
-        repository, root: rootOf(repository), execute: dependencies.execute, executable,
+        repository, root: rootOf(repository), runner,
         globs: living.filter(entry => entry.repository === repository).map(entry => entry.path),
         ...decisions?.repository === repository ? { decisions: { directory: decisions.path,
             ...docs.decisions_index === undefined ? {} : { index: split(docs.decisions_index).path } } } : {},
@@ -134,8 +121,7 @@ async function checkRepository(input: Readonly<{
     root: string
     globs: readonly string[]
     decisions?: Readonly<{ directory: string; index?: string }>
-    executable: ResolvedExecutable
-    execute: Execute
+    runner: GitRunner
 }>): Promise<Readonly<{ summary: Readonly<Record<string, unknown>>; findings: Diagnostic[] }>> {
     const { repository, root, globs } = input
     const prefix = repository === '' ? '' : `${repository}:`
@@ -152,10 +138,10 @@ async function checkRepository(input: Readonly<{
     try {
         // Untracked files that are not ignored count, so a document added in this change is checked before its commit.
         const [listed, history] = await Promise.all([
-            git(input.executable, root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], input.execute),
+            git(input.runner, root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']),
             globs.length > 0 ? Promise.all([
-                git(input.executable, root, ['log', '--relative', '--format=', '--name-status', '-z', '-M', '--diff-filter=DR'], input.execute),
-                git(input.executable, root, ['log', '--relative', '-p', '--format=', '--no-color', '--no-ext-diff', '--no-textconv', '--', ...MAKEFILE_PATHSPECS], input.execute),
+                git(input.runner, root, ['log', '--relative', '--format=', '--name-status', '-z', '-M', '--diff-filter=DR']),
+                git(input.runner, root, ['log', '--relative', '-p', '--format=', '--no-color', '--no-ext-diff', '--no-textconv', '--', ...MAKEFILE_PATHSPECS]),
             ]) : undefined,
         ])
         const all = listed.split('\0').filter(Boolean)

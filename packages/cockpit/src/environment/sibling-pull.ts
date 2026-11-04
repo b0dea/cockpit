@@ -56,7 +56,7 @@ export async function fastForwardCheckout(git: GitRunner, path: string): Promise
     if (before.revision === '(initial)') return skipped('it has no commits yet', `commit in it, or ignore it until it has a history`)
     if (before.branch === '(detached)') return skipped('HEAD is detached, so there is no branch to move', `check out a branch with ${shell('switch', '<branch>')} if it should follow one`, false)
     if (before.upstream === null) return skipped(`branch ${before.branch} tracks no upstream`, `set one with ${shell('branch', '--set-upstream-to', '<remote>/<branch>')} if it should follow one`, false)
-    const fetched = await git.run(path, 'pull:fetch', [...QUIET, 'fetch', '--quiet', '--prune'], 120_000)
+    const fetched = await git.run(path, 'pull:fetch', [...QUIET, 'fetch', '--quiet', '--prune'], { timeoutMs: 120_000 })
     if (fetched.kind !== 'complete') {
         return skipped(`fetching ${before.upstream} failed (${fetched.detail})`,
             `run ${shell('fetch')} yourself to see why; cockpit fetches without the global Git configuration, so a credential helper set only there is not used`)
@@ -75,7 +75,7 @@ export async function fastForwardCheckout(git: GitRunner, path: string): Promise
     if ('reason' in filters) return skipped(filters.reason, `inspect it with ${shell('check-attr', '-a', '--', '<path>')}`)
     if (filters.length > 0) return skipped(`it uses the Git filter ${filters.join(', ')} (Git LFS, for one), which is configured only outside the repository, `
         + 'so a fast-forward here would check out its placeholder files instead of their content', `run ${shell('pull', '--ff-only')} yourself`)
-    const merged = await git.run(path, 'pull:fast-forward', [...QUIET, 'merge', '--ff-only', '--quiet', '@{upstream}'], 120_000)
+    const merged = await git.run(path, 'pull:fast-forward', [...QUIET, 'merge', '--ff-only', '--quiet', '@{upstream}'], { timeoutMs: 120_000 })
     if (merged.kind !== 'complete') return skipped(`fast-forwarding ${after.branch} to ${upstream} failed (${merged.detail})`,
         `run ${shell('merge', '--ff-only', '@{upstream}')} yourself to see what is in the way`)
     const head = await git.run(path, 'pull:head', ['rev-parse', 'HEAD'])

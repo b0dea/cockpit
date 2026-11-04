@@ -3,7 +3,7 @@
 // a person's acknowledgement binds to. The detection itself is test-protection.ts.
 import { sha256Hex } from '../sha256.js'
 
-import { scopeMatches } from '../work-orders/contract.js'
+import { scopeMatcher } from '../work-orders/contract.js'
 import { classifyTestWeakening, type DiffFile, type TestRoles, type WeakeningFinding } from './test-protection.js'
 
 const DEFAULT_TEST_FILES: readonly string[] = Object.freeze([
@@ -30,7 +30,7 @@ export function testFilePatterns(declared: readonly string[] | undefined): TestF
 }
 
 export function weakeningFindings(files: readonly DiffFile[], patterns: TestFilePatterns): WeakeningFinding[] {
-    const roles: TestRoles = { isTest: path => scopeMatches(patterns.tests, path), isTestConfig: path => scopeMatches(patterns.configuration, path) }
+    const roles: TestRoles = { isTest: scopeMatcher(patterns.tests), isTestConfig: scopeMatcher(patterns.configuration) }
     return classifyTestWeakening(files, roles)
 }
 

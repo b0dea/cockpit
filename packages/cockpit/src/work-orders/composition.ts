@@ -39,7 +39,7 @@ import { readState } from '../environment/state.js'
 import { parseDiff } from '../testing/test-protection.js'
 import { testFilePatterns, weakeningFindings, type RepositoryWeakening, type TestFilePatterns } from '../testing/weakening.js'
 import { runGate, type GateDependencies, type GateRegistry, type GateRequest, type ProductGateInvocation } from '../testing/gates.js'
-import { readSiblingCheckouts, missingServedCheckout, type ServedSibling } from '../environment/sibling-checkouts.js'
+import { readSiblingCheckouts, missingServedCheckout, servedSiblings, type ServedSibling } from '../environment/sibling-checkouts.js'
 import { splitRepositoryPath } from '../repository-path.js'
 import { parseCriteriaFile, parseWorkOrder, scopeMatcher, WORK_ORDER_ID, type ParsedFile, type WorkOrder, type WorkOrderCheck } from './contract.js'
 import { createWorkStore, outputTail, WORK_RECORD_DIRECTORY, type CheckResult, type ContainerEvidence, type WorkStore } from './store.js'
@@ -1043,12 +1043,7 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
         // Work orders and gates read each sibling where `cockpit use` serves it, as the stack does.
         const recorded = await readSiblingCheckouts(config.cockpitRoot)
         if (recorded.kind !== 'complete') return { kind: 'refusal', reason: `${recorded.diagnostic.code}: ${recorded.diagnostic.message}; ${recorded.diagnostic.fix}` }
-        const configuredSiblingsRoot = resolve(config.cockpitRoot, config.siblingsRoot)
-        const served = new Map(config.siblings.map(row => {
-            const declared = resolve(configuredSiblingsRoot, row.dir)
-            const override = Object.hasOwn(recorded.checkouts, row.slug) ? recorded.checkouts[row.slug] : undefined
-            return [row.slug, { slug: row.slug, declared, served: override ?? declared, overridden: override !== undefined }] as const
-        }))
+        const served = servedSiblings(config.cockpitRoot, { cockpit: { siblings_root: config.siblingsRoot }, sibling: config.siblings }, recorded.checkouts)
         const gone = await missingServedCheckout(served)
         if (gone) return { kind: 'refusal', reason: `${gone.code}: ${gone.message}; ${gone.fix}` }
         const siblingRoots = config.siblings.map(row => ({ root: served.get(row.slug)!.served, environmentFiles: row.environmentFiles }))

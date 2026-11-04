@@ -438,8 +438,10 @@ export function createReadCommandAdapters(
     const services: ServiceCommandAdapters = {
         observe: observeServices,
         execute: (step: ExecutionStep) => execute(step, input?.signal ? { signal: input.signal } : undefined),
-        executeForeground: executeForeground ?? (async () => { throw new RefusalError('foreground execution is not bound') }),
-        ...(input?.signal ? { signal: input.signal } : {}),
+        executeForeground: async (planned) => {
+            if (!executeForeground) throw new RefusalError('foreground execution is not bound')
+            return executeForeground(planned, input?.signal ? { signal: input.signal } : {})
+        },
     }
 
     const logs: LogsCommandAdapters = {

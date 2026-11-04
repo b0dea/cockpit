@@ -297,16 +297,19 @@ export async function runDoctor(
     }
     const currentness = prepareGeneratedEnvironmentCurrentness(input)
     const mcpStartup = async (): Promise<readonly EnvironmentDiagnostic[]> => adapters.inspectMcpStartup?.((await currentness).mcpServers) ?? []
+    // The machine-wide state reads are independent of the configuration checks, so they run beside them.
+    const statePending = adapters.readUnreadableState?.()
+    const stacksPending = adapters.inspectStacks?.()
     const [outcome, guardHosts, unconfirmed, policyWeakened, testingGate, hookTrust, evaluator, readinessWarnings, servedSiblings, mcp] = await Promise.all([doctorHealth(input, adapters, config, currentness),
         doctorGuardHostDiagnostics(config), doctorUnconfirmedDiagnostics(config), doctorPolicyDiagnostics(config), doctorTestingGateDiagnostics(config), hookTrustFindings(),
         doctorEvaluatorDiagnostics(config, adapters), adapters.inspectReadiness?.() ?? [], config.then(async loaded => adapters.inspectServedSiblings?.(loaded.kind === 'complete' ? loaded : undefined) ?? []), mcpStartup()])
-    const stateInventory = await adapters.readUnreadableState?.()
+    const stateInventory = await statePending
     const unreadableState = stateInventory?.kind === 'refusal'
         // An inventory that cannot be read, such as one another command holds locked, is no clean one.
         ? stateInventory.diagnostics.map((diagnostic) => ({ ...diagnostic, severity: 'warning' as const,
             message: `doctor could not read this machine's cockpit state, so it did not check for other cockpits' state this version cannot read: ${diagnostic.message}` }))
         : [unreadableStateWarning(stateInventory?.skipped ?? [])].filter((warning) => warning !== undefined)
-    const orphanedStacks = await adapters.inspectStacks?.() ?? []
+    const orphanedStacks = await stacksPending ?? []
     const warnings = [...unconfirmed, ...policyWeakened, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...readinessWarnings, ...servedSiblings, ...mcp, ...unreadableState, ...orphanedStacks]
     const reported = warnings.length === 0 ? outcome
         : { ...outcome, diagnostics: [...outcome.diagnostics, ...warnings] }

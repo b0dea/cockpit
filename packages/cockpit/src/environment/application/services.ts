@@ -28,8 +28,7 @@ export interface ServiceObservation {
 export interface ServiceCommandAdapters {
     readonly observe: (input: { readonly configPath: string }) => Promise<ServiceObservation>
     readonly execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
-    readonly executeForeground: (input: ForegroundProcessInput, options: { readonly signal?: AbortSignal }) => Promise<ForegroundProcessOutcome>
-    readonly signal?: AbortSignal
+    readonly executeForeground: (input: ForegroundProcessInput) => Promise<ForegroundProcessOutcome>
 }
 
 async function observeStack(verb: string, configPath: string, adapters: ServiceCommandAdapters,
@@ -113,7 +112,7 @@ export async function runServiceExec(
     const planned = planRuntimeServiceExec({ topology: observed.topology, service: input.service, argv: input.argv, tty: input.tty })
     if (!planned) return lifecycleRefusal(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
         `the command for service ${input.service} could not be planned from the stack's topology`, input.service)
-    const child = await adapters.executeForeground(planned, adapters.signal ? { signal: adapters.signal } : {})
+    const child = await adapters.executeForeground(planned)
     if (child.kind === 'refusal') return { kind: 'refusal', status: child.code === ENVIRONMENT_CODES.EXECUTION_ABORTED ? 130 : 2, result: null,
         diagnostics: [{ severity: 'error', code: child.code, target: input.service,
             message: `the command in service ${input.service} could not be run to completion` }] }
