@@ -773,7 +773,7 @@ const STATED_BY: Readonly<Record<AnswerProvenance, string>> = {
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
 
 /** JSON with object keys sorted, so two values compare equal whatever order their keys were written in. */
-export const canonicalJson = (value: unknown): string => Array.isArray(value) ? `[${value.map(canonicalJson).join(',')}]`
+const canonicalJson = (value: unknown): string => Array.isArray(value) ? `[${value.map(canonicalJson).join(',')}]`
     : isRecord(value) ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`
         : JSON.stringify(value)
 

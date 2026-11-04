@@ -31,7 +31,7 @@ const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typ
     ['docs/contributing/testing.md', [developer, developer]],
     ['docs/docs-check.md', [operator]],
     ['docs/tutorial.md', [operator, operator, operator, operator, runtime, operator]],
-    ['docs/work-and-browser.md', [operator]],
+    ['docs/work-and-browser.md', [operator, operator]],
     ['packages/cockpit/README.md', [packageInstall]],
     ['examples/minimal/README.md', [executed, runtime]],
     ['examples/docs-only/README.md', [executed]],

@@ -4,6 +4,7 @@ import { sha256Hex } from '../sha256.js'
 import {
     closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, realpathSync, readdirSync,
 } from 'node:fs'
+import { appendFile, mkdir, open as openFile, rename, rm } from 'node:fs/promises'
 import { basename, delimiter, dirname, isAbsolute, join, parse as parsePath, relative, resolve, sep } from 'node:path'
 import { isProxy } from 'node:util/types'
 import { readBoundedFile } from '../bounded-read.js'
@@ -97,6 +98,14 @@ export interface WorkApplicationComposition {
     /** Test weakening in each checkout since `base`, over the files this cockpit treats as tests. */
     readonly testWeakening: (base: Readonly<Record<string, string>>) => Promise<TestWeakeningObservation>
     readonly browser: (kind: BrowserCommandKind, role?: string, route?: string) => Promise<BrowserCommandInput>
+    /** The [docs] table as declared; absent when the cockpit declares none. */
+    readonly docs?: Readonly<{ decisions?: string; decisionsIndex?: string }>
+    /** Each Markdown file in [docs] decisions, by reference, with its text; empty when the directory does not exist yet. */
+    readonly decisionRecords: () => Promise<ReadonlyMap<string, string>>
+    /** A decision record's or the index's text, or undefined when the file does not exist. */
+    readonly readDocsFile: (reference: string) => Promise<string | undefined>
+    /** Writes each record, a new one exclusively and an existing one replaced, then appends `indexLine` to [docs] decisions_index. */
+    readonly writeDecisionRecords: (writes: readonly Readonly<{ reference: string; text: string; create: boolean }>[], indexLine?: string) => Promise<void>
     readonly gate: (request: WorkApplicationGateRequest) => Promise<Readonly<{ registry: GateRegistry; request: GateRequest; dependencies: GateDependencies }>>
 }
 export type TestWeakeningObservation = Readonly<{ patterns: TestFilePatterns; findings: readonly RepositoryWeakening[] }>
@@ -116,6 +125,8 @@ const MAX_DOCUMENT_BYTES = 8 * 1_048_576
 const MAX_REPOSITORY_PATHS = 4_096
 const MAX_REPOSITORY_FILE_BYTES = 8 * 1_048_576
 const MAX_REPOSITORY_AGGREGATE_BYTES = 64 * 1_048_576
+const MAX_DECISION_RECORDS = 4_096
+const MAX_DECISION_RECORD_BYTES = 262_144
 // What the grader is shown of one changed file, and of the whole change.
 const MAX_DIFF_BYTES = 65_536
 const MAX_CHANGE_BYTES = 1_048_576
@@ -600,6 +611,59 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         try { return readBounded(repository.root, path, MAX_DOCUMENT_BYTES) }
         catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) throw new RefusalError(`${reference} does not exist`); throw error }
     }
+    const readDocsFile = async (reference: string): Promise<string | undefined> => {
+        const { repository, path } = located(reference)
+        try { return readBounded(repository.root, path, MAX_DECISION_RECORD_BYTES).toString('utf8') }
+        catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return undefined; throw error }
+    }
+    const decisionRecords = async (): Promise<ReadonlyMap<string, string>> => {
+        const declared = config.docs?.decisions
+        if (!declared) return new Map()
+        const { repository, path } = located(declared)
+        let names: string[]
+        try { names = readdirSync(contained(repository.root, path, true)) }
+        catch (error) { if (hasErrorCode(error, 'ENOENT')) return new Map(); throw error }
+        const records = names.filter(name => name.endsWith('.md') && lstatSync(join(repository.root, path, name)).isFile()).sort()
+        if (records.length > MAX_DECISION_RECORDS) throw new RefusalError(`[docs] decisions ${declared} holds more than ${MAX_DECISION_RECORDS} records, more than cockpit reads`)
+        return new Map(records.map(name => [`${declared}/${name}`, readBounded(repository.root, `${path}/${name}`, MAX_DECISION_RECORD_BYTES).toString('utf8')]))
+    }
+    // The only files cockpit writes outside .cockpit/: a decision record it scaffolds or marks superseded, and the index line.
+    const writeNew = async (path: string, text: string) => {
+        const handle = await openFile(path, 'wx', 0o644)
+        try { await handle.writeFile(text) } finally { await handle.close() }
+    }
+    const replace = async (target: string, text: string) => {
+        const staged = `${target}.${randomUUID()}.tmp`
+        try { await writeNew(staged, text); await rename(staged, target) } catch (error) { await rm(staged, { force: true }); throw error }
+    }
+    // A write that fails part way puts back what it changed, so a rerun does not number a second record or mark the old one twice.
+    const writeDecisionRecords = async (writes: readonly Readonly<{ reference: string; text: string; create: boolean }>[], indexLine?: string) => {
+        const undo: Array<() => Promise<void>> = []
+        try {
+            for (const { reference, text, create } of writes) {
+                const { repository, path } = located(reference)
+                await mkdir(dirname(contained(repository.root, path, true)), { recursive: true })
+                const target = contained(repository.root, path, true)
+                if (create) {
+                    try { await writeNew(target, text) }
+                    catch (error) { if (hasErrorCode(error, 'EEXIST')) throw new RefusalError(`${reference} already exists; rerun work decide, which takes the next free name`); throw error }
+                    undo.push(() => rm(target, { force: true }))
+                    continue
+                }
+                const previous = readBounded(repository.root, path, MAX_DECISION_RECORD_BYTES).toString('utf8')
+                await replace(target, text)
+                undo.push(() => replace(target, previous))
+            }
+            if (indexLine === undefined) return
+            if (!config.docs?.decisionsIndex) throw new RefusalError('an index line was given but [docs] decisions_index is not declared')
+            const index = located(config.docs.decisionsIndex)
+            const current = readBounded(index.repository.root, index.path, MAX_DECISION_RECORD_BYTES).toString('utf8')
+            await appendFile(contained(index.repository.root, index.path), `${current === '' || current.endsWith('\n') ? '' : '\n'}${indexLine}\n`)
+        } catch (error) {
+            for (const step of undo.reverse()) await step()
+            throw error
+        }
+    }
     const git = async (repository: typeof repositories[number], args: readonly string[]) => {
         const observed = await executeBounded(repository.root, ['git', ...args], directories)
         if (observed.kind !== 'executed' || observed.exitCode !== 0 || observed.truncated) throw new RefusalError(`${repository.identity}: ${probeFailure(`git ${args.join(' ')}`, observed)}`)
@@ -761,6 +825,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         sourceDigests: async (order: Pick<WorkOrder, 'criteria'>) => Object.fromEntries(order.criteria.flatMap(row => row.source ? [row.source] : [])
             .map(source => [source, sha256Hex(readSource(source))])),
         heads, runCheck, changes, evaluate: gradeIndependently, testWeakening, browser, gate,
+        ...config.docs ? { docs: config.docs } : {}, decisionRecords, readDocsFile, writeDecisionRecords,
     }
     issuedCompositions.add(composition)
     return composition

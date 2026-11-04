@@ -59,8 +59,10 @@ export const WorkRecord = z.object({
     attempts: z.number().int().min(0),
     checks: z.object({ at, digest: z.string().length(64), results: z.array(CheckResult).max(64) }).strict().optional(),
     grade: Grade.optional(),
-    notes: z.array(z.object({ at, by: z.enum(['agent', 'person', 'ci']), kind: z.enum(['note', 'question', 'answer']), text: note,
-        answers: z.number().int().min(1).optional() }).strict()).max(1_024),
+    // A decision is resolved by a later `resolution` note naming it in `resolves`: with `record`, the decision
+    // record it is written in; without, `text` says why it made no lasting decision. The latest resolution counts.
+    notes: z.array(z.object({ at, by: z.enum(['agent', 'person', 'ci']), kind: z.enum(['note', 'question', 'answer', 'decision', 'resolution']), text: note,
+        answers: z.number().int().min(1).optional(), resolves: z.number().int().min(1).optional(), record: z.string().max(1_100).optional() }).strict()).max(1_024),
     closure: z.object({ at, by, how: z.enum(['graded', 'checks-passed', 'self-reported', 'partial', 'abandoned']), note: note.optional() }).strict().optional(),
 }).strict()
 export type WorkRecord = z.infer<typeof WorkRecord>

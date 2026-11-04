@@ -85,7 +85,8 @@ at `work.attempt_cap` the order is blocked until a person amends or closes it.
   every changed file outside `scope` since the base commits; a change outside scope fails the grade, and
   so does [weakened tests](#test-protection).
 - **signoff** closes a graded order as done. `--partial --note <what is left>` or `--abandon --note <why>`
-  closes any open order without a passing grade.
+  closes any open order without a passing grade. Every closure first needs each
+  [decision](#decisions) recorded on the order to be resolved.
 - <!-- cockpit:ref command=work note --> <!-- cockpit:ref command=work answer --> **note** records a note; `--ask` records an open question, which blocks the order until
   `work answer --question <n> --text <answer>` answers it.
 - <!-- cockpit:ref command=work recover --> **recover** inspects the lock a crashed command left on an order; a person adds `--apply` once
@@ -120,7 +121,8 @@ person from a program driving a terminal. The only enforced human gate is `ci`: 
 `work verify` job behind a protected environment whose reviewers must approve it before it runs.
 
 <!-- cockpit:ref command=work verify --> `work verify` checks every record against its order: an open order whose contract changed since
-acceptance fails, and so does a done order without a passing grade of its accepted contract. Run in
+acceptance fails, and so does a done order without a passing grade of its accepted contract, and so
+does a [decision record](#decisions) an order cites that is gone or no longer names the order. Run in
 CI (where `CI` is set), it reports the steps gated on `ci` as confirmed; run locally it lists them as
 awaiting CI. A workflow job for it:
 
@@ -195,6 +197,58 @@ acknowledgement is recorded with who passed it. It covers exactly the findings i
 deleted or skipped later fails the grade again. `[work.gates] acknowledge` defaults to `person`, so an
 agent's run without a terminal is refused with `WORK_PERSON_REQUIRED`; setting it to `agent` lets an
 agent acknowledge, visibly, in the record and in `work status`.
+
+## Decisions
+
+<!-- cockpit:ref schema=docs.decisions --> <!-- cockpit:ref command=work decide --> A work order can record the lasting decisions it makes, and cockpit holds the order open until
+each one is written down. This needs a directory of decision records in `cockpit.toml`; without it,
+both commands refuse and name the setting:
+
+```toml
+[docs]
+decisions = "docs/adr"                  # or "<sibling slug>:docs/adr" in a sibling
+decisions_index = "docs/adr/README.md"  # optional; new records are appended to it
+```
+
+```sh
+npx --no cockpit work note   --config cockpit.toml --work-order WO-1 --decision --text "Cache by tenant"
+npx --no cockpit work decide --config cockpit.toml --work-order WO-1 --decision 3 --record
+```
+
+`work note --decision` records the decision on the order; `work status` lists it under
+`openDecisions` until `work decide` resolves it in one of three ways:
+
+- `--record` writes a new record, `NNNN-<slug>.md` with the next free number (a directory whose
+  records are named by date gets `YYYY-MM-DD-<slug>.md` instead). It holds the title,
+  `Status: accepted`, a `Work order: <id>` line and body sections whose placeholders the agent replaces.
+  It is appended to `decisions_index` when one is declared. `--supersedes <number>` adds a
+  `Supersedes:` line and sets that older record's status to `superseded by NNNN`.
+- `--record-file <path>` cites a record already under `decisions` that has a `Work order: <id>` line
+  (or a `work_order:` front-matter field).
+- `--none --reason <why>` says the decision is not a lasting one.
+
+`work signoff` refuses any closure, partial and abandoned too, while a decision is unresolved or its
+record is missing, no longer cites the order, or still holds the template's placeholders. A `--none`
+resolution and its reason are shown in the signoff prompt, so the signoff gate covers them. Record
+files under `decisions` and the index never count as outside `scope`. `work verify` checks each cited
+record still exists and names its order; it does not compare record bodies, because superseding a
+decision legitimately edits an older record.
+
+`work accept` and `work status` list, under `relatedDecisions`, the records whose text names a path
+inside the order's `scope`, so earlier decisions about that code are in front of the agent.
+
+When `[docs]` is declared, every grade under `independent` or `self` grading carries standing
+criteria. A model judges them: the evaluator in `independent` mode, the agent's own verdict in `self`.
+
+- `decisions-recorded`, when `decisions` is set: every lasting decision in the change is recorded on
+  the order or in a decision record.
+- `docs-updated`: documentation that describes behaviour the change alters is updated, or none
+  describes it.
+
+Under `checks` grading no model reads the change, so both are instructions in the work skill and are
+not enforced. Recording a decision at all is also instructed: an agent that never runs
+`work note --decision` is caught only by the `decisions-recorded` criterion, and only where a model
+grades.
 
 ## The independent evaluator
 

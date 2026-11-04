@@ -500,7 +500,7 @@ function unsatisfiedWorkDiagnostic(operation: WorkApplicationRequest['operation'
         fix: 'read result.results: fix the product for a check that failed, make one that did not run runnable from the cockpit root, then rerun npx --no cockpit work check --config <your cockpit.toml> --work-order <id>' }
     if (operation === 'work-verify') return { severity: 'error', message,
         code: 'WORK_VERIFY_FAILED' satisfies typeof ENVIRONMENT_CODES.WORK_VERIFY_FAILED,
-        fix: 'for an order changed since acceptance, run npx --no cockpit work accept --config <your cockpit.toml> --work-order <id> or revert the change; for a done order without a passing grade, regrade it with work grade' }
+        fix: 'for an order changed since acceptance, run npx --no cockpit work accept --config <your cockpit.toml> --work-order <id> or revert the change; for a done order without a passing grade, regrade it with work grade; for a decision record that is missing or no longer cites its order, restore it from git or put back its "Work order: <id>" line' }
     if (operation === 'grade-criteria') return { severity: 'error', message,
         code: 'WORK_GRADE_UNSATISFIED' satisfies typeof ENVIRONMENT_CODES.WORK_GRADE_UNSATISFIED,
         fix: 'read result.criteria, result.checks and result.outOfScope: fix the product for an unmet or unclear criterion, make a failed check pass, move or revert a change outside scope, then grade again with npx --no cockpit grade --config <your cockpit.toml> --criteria <file>' }
@@ -1022,7 +1022,19 @@ async function decodeRequest(
         else if (handler === 'work-note') {
             const note = text('text')
             if (!note) return usageOutcome('CLI_USAGE_INVALID', 'provide --text <note>', '--text')
-            request = { operation: handler, workOrderId: workOrderId!, text: note, question: values.ask === true }
+            if (values.ask === true && values.decision === true) return usageOutcome('CLI_USAGE_INVALID', 'pass at most one of --ask and --decision')
+            request = { operation: handler, workOrderId: workOrderId!, text: note, kind: values.ask === true ? 'question' : values.decision === true ? 'decision' : 'note' }
+        } else if (handler === 'work-decide') {
+            const decision = Number(text('decision')), file = text('record-file'), supersedes = text('supersedes'), reason = text('reason')
+            const record = values.record === true || file !== undefined
+            if (!Number.isSafeInteger(decision) || decision < 1 || record === (values.none === true)) {
+                return usageOutcome('CLI_USAGE_INVALID', 'provide --decision <number> and one of --record, --record-file <path> or --none --reason <why>')
+            }
+            if (values.record === true && file !== undefined) return usageOutcome('CLI_USAGE_INVALID', 'pass --record to write a new record or --record-file <path> to cite one, not both')
+            if (values.none === true && (!reason || supersedes !== undefined)) return usageOutcome('CLI_USAGE_INVALID', '--none needs --reason <why the decision is not lasting> and takes no --supersedes', '--reason')
+            if (record && reason !== undefined) return usageOutcome('CLI_USAGE_INVALID', '--reason goes with --none', '--reason')
+            request = { operation: handler, workOrderId: workOrderId!, decision, resolution: values.none === true ? { kind: 'none', reason: reason! }
+                : { kind: 'record', ...file !== undefined ? { path: file } : {}, ...supersedes !== undefined ? { supersedes } : {} } }
         } else if (handler === 'work-answer') {
             const answer = text('text'), question = Number(text('question'))
             if (!answer || !Number.isSafeInteger(question) || question < 1) return usageOutcome('CLI_USAGE_INVALID', 'provide --question <number> and --text <answer>')

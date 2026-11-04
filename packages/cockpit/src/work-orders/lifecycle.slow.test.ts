@@ -133,6 +133,41 @@ describe('work-order lifecycle', () => {
         expect((await work(root, ['work', 'signoff', '--work-order', 'WO-2'])).result).toMatchObject({ closedAs: 'self-reported' })
     }, 120_000)
 
+    it('holds an order with a recorded decision open until its record is written and filled in, and verifies the record still cites it', async () => {
+        const root = await cockpit('[work]\ngrading = "self"\n\n[docs]\ndecisions = "docs/adr"\ndecisions_index = "docs/adr/README.md"')
+        mkdirSync(join(root, 'docs/adr'), { recursive: true })
+        writeFileSync(join(root, 'docs/adr/README.md'), '# Decisions\n\n- [0001. Keep add pure](0001-keep-add-pure.md)\n')
+        writeFileSync(join(root, 'docs/adr/0001-keep-add-pure.md'), '# 0001. Keep add pure\n\nStatus: accepted\n\n`src/add.mjs` has no side effects.\n')
+        writeFileSync(join(root, 'docs/adr/0002-name-tests.md'), '# 0002. Name tests\n\nStatus: accepted\n\nTests live beside `lib/`.\n')
+        git(root, 'add', '-A'); git(root, 'commit', '-qm', 'decisions')
+        writeFileSync(join(root, 'workorders/WO-6.md'), order('WO-6'))
+        // Earlier decisions about the code an order may change are put in front of the agent.
+        expect((await work(root, ['work', 'accept', '--work-order', 'WO-6'])).result).toMatchObject({ relatedDecisions: ['docs/adr/0001-keep-add-pure.md'] })
+
+        expect((await work(root, ['work', 'note', '--work-order', 'WO-6', '--decision', '--text', 'Sum with the + operator'])).result).toMatchObject({ decision: 1 })
+        expect((await work(root, ['work', 'status'])).result).toMatchObject({ orders: [{ id: 'WO-6', openDecisions: [expect.stringContaining('decision 1 (Sum with the + operator) is unresolved')] }] })
+        expect((await work(root, ['work', 'grade', '--work-order', 'WO-6', '--verdict', 'met', '--note', 'read the diff'])).result).toMatchObject({ state: 'graded',
+            criteria: [{ id: 'AC1' }, { id: 'decisions-recorded', verdict: 'met' }, { id: 'docs-updated', verdict: 'met' }] })
+        const signoff = () => work(root, ['work', 'signoff', '--work-order', 'WO-6'])
+        expect((await signoff()).diagnostics[0]?.message).toMatch(/cannot close while decision 1 \(Sum with the \+ operator\) is unresolved/)
+
+        expect((await work(root, ['work', 'decide', '--work-order', 'WO-6', '--decision', '1', '--record', '--supersedes', '1'])).result)
+            .toMatchObject({ record: 'docs/adr/0003-sum-with-the-operator.md' })
+        const written = join(root, 'docs/adr/0003-sum-with-the-operator.md')
+        expect(readFileSync(written, 'utf8')).toMatch(/^# 0003\. Sum with the \+ operator\n\nStatus: accepted\nWork order: WO-6\nSupersedes: 0001\n/)
+        expect(readFileSync(join(root, 'docs/adr/0001-keep-add-pure.md'), 'utf8')).toContain('Status: superseded by 0003\n')
+        expect(readFileSync(join(root, 'docs/adr/README.md'), 'utf8')).toMatch(/\n- \[0003\. Sum with the \+ operator\]\(0003-sum-with-the-operator\.md\)\n$/)
+        // A record that is still the template does not resolve the decision.
+        expect((await signoff()).diagnostics[0]?.message).toMatch(/still holds the template's placeholders/)
+        writeFileSync(written, readFileSync(written, 'utf8').replace(/<!-- cockpit: replace this with ([^>]*) -->/g, 'Written: $1'))
+        expect((await signoff()).result).toMatchObject({ state: 'done', closedAs: 'self-reported' })
+
+        expect((await work(root, ['work', 'verify'])).status).toBe(0)
+        writeFileSync(written, readFileSync(written, 'utf8').replace('Work order: WO-6\n', ''))
+        expect(await work(root, ['work', 'verify'])).toMatchObject({ status: 2,
+            diagnostics: [{ code: 'WORK_VERIFY_FAILED', message: expect.stringContaining('WO-6 decision 1: its record docs/adr/0003-sum-with-the-operator.md does not cite WO-6') }] })
+    }, 120_000)
+
     it('passes a person gate only for the digest a person types, and never weakens a criterion on an agent\'s word', async () => {
         const root = await cockpit('[work]\ngrading = "checks"\n\n[work.gates]\naccept = "person"\namend = "agent"')
         writeFileSync(join(root, 'workorders/WO-3.md'), order('WO-3', '  - id: AC1\n    text: add(2, 3) returns 5.\n    check: [node, test/add.test.mjs]\n  - id: AC2\n    text: add(0, 0) returns 0.\n    check: [node, test/add.test.mjs]'))

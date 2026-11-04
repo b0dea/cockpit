@@ -872,16 +872,27 @@ export const UNCONFIRMABLE_ANSWERS = ['cockpit.name', 'sibling', 'estate.runnabl
     'environment.test_data', 'environment.compose_files', 'environment.machine', 'environment.posture',
     'testing', 'guards'] as const
 
-// `docs check` reads these. A path is in the cockpit's own repository, or `<sibling slug>:path` in a
-// sibling, spelt as a work order's scope is.
-const DocsPath = z.string().max(1_024).regex(REPOSITORY_PATH, 'a relative path, optionally <sibling slug>:path, without .. or a leading /')
-const DocsFile = DocsPath.refine(value => !/[*?]/.test(value), 'one path, without wildcards')
+// `path` in the cockpit's own repository, or `<sibling slug>:path` in a sibling, spelt as a work
+// order's scope is. Living documents may be globs; the decision paths name one file or directory.
+const DocsGlob = z.string().max(1_024).regex(REPOSITORY_PATH, 'a relative path, optionally <sibling slug>:path, without .. or a leading /')
+export const DOCS_PATH = /^(?!(?:[a-z0-9][a-z0-9-]{0,63}:)?(?:.*\/)?\.\.?(?:\/|$))(?:[a-z0-9][a-z0-9-]{0,63}:)?(?![/])[A-Za-z0-9._@+\-/]*[A-Za-z0-9._@+-]$/
+const DocsFile = z.string().max(1_024).regex(DOCS_PATH,
+    'one relative path without wildcards, optionally <sibling slug>:path, without . or .. segments or a leading or trailing /')
+const repositoryOf = (path: string) => /^([a-z0-9][a-z0-9-]{0,63}):/.exec(path)?.[1] ?? '.'
 export const Docs = z.object({
-    living: z.array(DocsPath).min(1).max(64)
+    living: z.array(DocsGlob).max(64).default([])
         .describe('Globs of the Markdown documents that must stay true; docs check reports the paths and make targets they cite that the repository has since removed.'),
-    decisions: DocsFile.optional().describe('Directory of decision records; docs check reports duplicate numbers, missing statuses and broken supersedes links.'),
-    decisions_index: DocsFile.optional().describe('Index file that links every decision record; docs check reports records it omits and links to records that do not exist.'),
-}).strict()
+    decisions: DocsFile.optional().describe('Directory of decision records, such as docs/adr. Work orders record their lasting decisions there, and docs check reports duplicate numbers, missing statuses and broken supersedes links.'),
+    decisions_index: DocsFile.optional().describe('Index file that links every decision record; a record cockpit writes is appended to it, and docs check reports records it omits and links to records that do not exist.'),
+}).strict().superRefine((docs, ctx) => {
+    // A [docs] table that names nothing would parse and do nothing.
+    if (docs.living.length === 0 && docs.decisions === undefined) ctx.addIssue({ code: 'custom', path: [], message: '[docs] declares neither living documents nor decisions' })
+    // An index with no records directory, or of another repository's records, would check nothing.
+    if (docs.decisions_index !== undefined && docs.decisions === undefined) ctx.addIssue({ code: 'custom', path: ['decisions_index'], message: 'decisions_index needs decisions, the directory it indexes' })
+    else if (docs.decisions_index !== undefined && repositoryOf(docs.decisions_index) !== repositoryOf(docs.decisions!)) {
+        ctx.addIssue({ code: 'custom', path: ['decisions_index'], message: 'decisions_index must be in the same repository as decisions, so its links resolve' })
+    }
+})
 
 export const CockpitConfig = z
     .object({
@@ -898,7 +909,7 @@ export const CockpitConfig = z
         testing: Testing.optional().describe('Test stages and gates.'),
         environment: Environment.prefault({}).describe('How the stack is reached, signed in to, built and kept.'),
         surfaces: Surfaces.prefault({}).describe('Instructions, skills and settings generated for agent tools.'),
-        docs: Docs.optional().describe('Living documents and decision records that docs check keeps true.'),
+        docs: Docs.optional().describe('Living documents and decision records: docs check keeps them true, and work orders record their decisions there.'),
     })
     .strict()
     .superRefine((cfg, ctx) => {
@@ -988,20 +999,14 @@ export const CockpitConfig = z
             })
         }
         if (cfg.docs) {
-            const repository = (path: string) => /^([a-z0-9][a-z0-9-]{0,63}):/.exec(path)?.[1]
             const paths = [...cfg.docs.living.map((path, index) => ({ path, at: ['docs', 'living', index] })),
                 ...cfg.docs.decisions === undefined ? [] : [{ path: cfg.docs.decisions, at: ['docs', 'decisions'] }],
                 ...cfg.docs.decisions_index === undefined ? [] : [{ path: cfg.docs.decisions_index, at: ['docs', 'decisions_index'] }]]
             for (const { path, at } of paths) {
-                const slug = repository(path)
-                if (slug !== undefined && !cfg.sibling.some(row => row.slug === slug)) {
+                const slug = repositoryOf(path)
+                if (slug !== '.' && !cfg.sibling.some(row => row.slug === slug)) {
                     ctx.addIssue({ code: 'custom', path: at, message: `${JSON.stringify(path)} names sibling "${slug}", which no [[sibling]] declares` })
                 }
-            }
-            // An index read without its records, or of another repository's records, would check nothing.
-            if (cfg.docs.decisions_index !== undefined && (cfg.docs.decisions === undefined
-                || repository(cfg.docs.decisions_index) !== repository(cfg.docs.decisions))) {
-                ctx.addIssue({ code: 'custom', path: ['docs', 'decisions_index'], message: 'decisions_index needs decisions set to the directory it indexes, in the same repository' })
             }
         }
         // Not checked here: that `environment.profiles` and each `profile:<name>` mount name a

@@ -22,7 +22,9 @@ describe('work-order file', () => {
         const problems = (text: string, id = 'WO-1') => { const parsed = parseWorkOrder(order(text), id); return parsed.ok ? [] : parsed.problems }
         expect(problems(valid, 'WO-2')).toEqual([expect.stringMatching(/^id: the file workorders\/WO-2.md declares id WO-1/)])
         expect(problems(`${valid}\nowner: someone`)).toEqual([expect.stringMatching(/unrecognized key/i)])
-        expect(problems(valid.replace('scope: [src/auth/, "tests/**", "web:src/routes/login.ts"]', 'scope: [../outside]'))).toEqual([expect.stringMatching(/^scope\.0: /)])
+        for (const outside of ['../outside', 'web:../outside', 'web:..', 'web:src/../../outside']) {
+            expect(problems(valid.replace('scope: [src/auth/, "tests/**", "web:src/routes/login.ts"]', `scope: ["${outside}"]`)), outside).toEqual([expect.stringMatching(/^scope\.0: /)])
+        }
         expect(problems(valid.replace('    check: [npm, test]', '    check: []'))).toEqual([expect.stringMatching(/^criteria\.1\.check/)])
         expect(problems(valid.replace('id: AC2', 'id: AC1'))).toEqual([expect.stringMatching(/each criterion id is used once/)])
         expect(problems(`${valid}\nid: WO-1`)).toEqual([expect.stringMatching(/^front-matter is not YAML/)])
