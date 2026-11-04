@@ -299,7 +299,7 @@ export async function runDoctor(
     const mcpStartup = async (): Promise<readonly EnvironmentDiagnostic[]> => adapters.inspectMcpStartup?.((await currentness).mcpServers) ?? []
     const [outcome, guardHosts, unconfirmed, policyWeakened, testingGate, hookTrust, evaluator, readinessWarnings, servedSiblings, mcp] = await Promise.all([doctorHealth(input, adapters, config, currentness),
         doctorGuardHostDiagnostics(config), doctorUnconfirmedDiagnostics(config), doctorPolicyDiagnostics(config), doctorTestingGateDiagnostics(config), hookTrustFindings(),
-        doctorEvaluatorDiagnostics(config, adapters), adapters.inspectReadiness?.() ?? [], adapters.inspectServedSiblings?.() ?? [], mcpStartup()])
+        doctorEvaluatorDiagnostics(config, adapters), adapters.inspectReadiness?.() ?? [], config.then(async loaded => adapters.inspectServedSiblings?.(loaded.kind === 'complete' ? loaded : undefined) ?? []), mcpStartup()])
     const stateInventory = await adapters.readUnreadableState?.()
     const unreadableState = stateInventory?.kind === 'refusal'
         // An inventory that cannot be read, such as one another command holds locked, is no clean one.

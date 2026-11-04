@@ -140,18 +140,16 @@ vi.mock('./executable.js', async (importOriginal) => ({
 
 vi.mock('node:fs/promises', () => ({
     realpath: vi.fn(async (path: string) => path),
-    // Only the sibling checkout record `cockpit use` writes is ever present.
-    lstat: vi.fn(async (path: string) => {
-        if (controls.siblingCheckouts !== undefined && path === '/synthetic/.cockpit/local/sibling-checkouts') {
-            return { isFile: () => true, isSymbolicLink: () => false, size: controls.siblingCheckouts.length }
-        }
-        throw Object.assign(new Error(`no such file: ${path}`), { code: 'ENOENT' })
-    }),
-    readFile: vi.fn(async () => Buffer.from(controls.siblingCheckouts ?? '')),
+    lstat: vi.fn(async (path: string) => { throw Object.assign(new Error(`no such file: ${path}`), { code: 'ENOENT' }) }),
 }))
 
+// Only the sibling checkout record `cockpit use` writes and the compose source are ever read.
 vi.mock('../bounded-read.js', () => ({
-    readBoundedFile: vi.fn(() => ({ kind: 'complete', bytes: Buffer.from(controls.composeSource ?? 'services: {}') })),
+    readBoundedFile: vi.fn((path: string) => {
+        if (!path.endsWith('/.cockpit/local/sibling-checkouts')) return { kind: 'complete', bytes: Buffer.from(controls.composeSource ?? 'services: {}') }
+        if (controls.siblingCheckouts === undefined) throw Object.assign(new Error(`no such file: ${path}`), { code: 'ENOENT' })
+        return { kind: 'complete', bytes: Buffer.from(controls.siblingCheckouts) }
+    }),
 }))
 
 vi.mock('./state.js', async (importOriginal) => ({

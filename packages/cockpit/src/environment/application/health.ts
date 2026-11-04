@@ -16,7 +16,7 @@ import { resolvedGitExecutable, type ResolvedExecutable } from '../executable.js
 import { declaresNothingToRun } from '../declaration.js'
 import { checkoutId as deriveCheckoutId, stackId as deriveStackId } from '../identity.js'
 import { consumeSetupCheckoutProjection, type SetupCheckoutProjection } from '../setup-observation.js'
-import type { LoadedConfigProjection } from '../../config/load.js'
+import { loadCockpitConfig, type LoadedConfigProjection } from '../../config/load.js'
 import {
     aggregateObservations,
     stoppedStackApplicability,
@@ -62,8 +62,11 @@ export interface HealthObservationProducers {
     readonly ports: () => Promise<readonly EnvironmentObservation[]>
     readonly runtime: () => Promise<readonly EnvironmentObservation[]>
     readonly state: () => Promise<readonly EnvironmentObservation[]>
+    readonly siblings: () => Promise<readonly EnvironmentObservation[]>
     readonly templates: () => Promise<readonly EnvironmentObservation[]>
 }
+
+export type LoadedCockpitConfigResult = Extract<Awaited<ReturnType<typeof loadCockpitConfig>>, { readonly kind: 'complete' }>
 
 export interface HealthObservationSourceInput {
     readonly checkout: SetupCheckoutProjection
@@ -96,8 +99,11 @@ export interface ObservationCommandAdapters {
         step: ExecutionStep,
         options: { readonly signal?: AbortSignal },
     ) => Promise<ExecuteProbeOutcome>
-    /** Which checkout serves each sibling, what a worktree lacks, and whether the running stack is stale. */
-    readonly inspectServedSiblings?: () => Promise<readonly EnvironmentDiagnostic[]>
+    /**
+     * Which checkout serves each sibling, what a worktree lacks, and whether the running stack is stale.
+     * Reads cockpit.toml again unless handed the loaded configuration or called after `load`.
+     */
+    readonly inspectServedSiblings?: (loaded?: LoadedCockpitConfigResult) => Promise<readonly EnvironmentDiagnostic[]>
 }
 
 export interface PreflightCommandInput {
@@ -173,7 +179,7 @@ interface PreparedHealthObservation {
 const issuedHealthObservationSources = new WeakMap<object, PreparedHealthObservation>()
 
 const healthProducerNames = Object.freeze([
-    'claims', 'git', 'host', 'lifecycle', 'ports', 'runtime', 'state', 'templates', 'envSchema', 'surfaces',
+    'claims', 'git', 'host', 'lifecycle', 'ports', 'runtime', 'state', 'templates', 'envSchema', 'siblings', 'surfaces',
 ] as const)
 
 export function applicationDiagnostic(
@@ -528,11 +534,14 @@ export async function runPreflight(
 ): Promise<PreflightCommandResult> {
     let health: HealthEvaluation
     let refused: readonly EnvironmentDiagnostic[] | undefined
+    let servedFindings: Promise<readonly EnvironmentDiagnostic[]> = Promise.resolve([])
     try {
         const source = await adapters.load(input, issueHealthObservationSource, (diagnostics) => { refused = diagnostics; return undefined }, 'preflight')
         if (!source) return unavailablePreflight('preflight observation source is unavailable', refused)
         const observed = prepareHealthObservation(input, source)
         if (!observed) return unavailablePreflight('preflight requires authenticated steady lifecycle evidence')
+        // Reports only and catches its own errors, so it runs beside the health evaluation.
+        servedFindings = adapters.inspectServedSiblings?.() ?? Promise.resolve([])
         health = await evaluateApplicationHealth(observed, adapters)
     } catch (error) {
         // A producer that refused (a configuration edited since `up`, for one) says why; its refusal
@@ -548,7 +557,7 @@ export async function runPreflight(
     // A stopped stack never passes the gate, whatever the rows observable without it say.
     const passed = health.verdict === 'pass' && health.stopped === null
     // Warnings only: a stale stack still answers, and whether a changed lockfile matters is the product's call.
-    const served = await adapters.inspectServedSiblings?.() ?? []
+    const served = await servedFindings
     return {
         kind: passed ? 'complete' : 'blocked',
         status: passed ? 0 : 2,
