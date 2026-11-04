@@ -44,6 +44,8 @@ const PINS_PATH = fileURLToPath(new URL('./supply-chain-pins.json', import.meta.
 // Only gates no file in this repository can prove.
 const OPERATOR_GAPS = Object.freeze(['package-scope-owner', 'trusted-publisher', 'superseded-minor-deprecation'])
 const MINIMUM_COOLDOWN_DAYS = 7
+// npm 11 and later hold back a release published less than this many days ago while resolving.
+const MINIMUM_RELEASE_AGE_DAYS = 2
 const STATIC_PACKAGE_FILES = Object.freeze([
     'CHANGELOG.md',
     'LICENSE',
@@ -268,6 +270,19 @@ function workflowDiagnostics(root: string, rootManifest: Json): SupplyChainDiagn
     return diagnostics
 }
 
+// The Dependabot cooldown covers only what Dependabot proposes; this covers a person or an agent
+// running npm install. Only the value is reported, because an .npmrc can also hold a registry token.
+function releaseAgeDiagnostic(root: string): SupplyChainDiagnostic | undefined {
+    let text: string
+    try { text = readScript(root, '.npmrc') } catch (error) {
+        return diagnostic('NPM_RELEASE_AGE_MISSING', '.npmrc', `could not be read (${errorCause(error)}); it must set min-release-age=${MINIMUM_RELEASE_AGE_DAYS}`)
+    }
+    // npm reads .npmrc as ini, where the last assignment of a key wins.
+    const days = text.split(/\r?\n/).flatMap(line => /^\s*min-release-age\s*=\s*(.*?)\s*$/.exec(line)?.[1] ?? []).at(-1)
+    if (days !== undefined && /^\d+$/.test(days) && Number(days) >= MINIMUM_RELEASE_AGE_DAYS) return undefined
+    return diagnostic('NPM_RELEASE_AGE_MISSING', '.npmrc', `min-release-age must be a whole number of days, at least ${MINIMUM_RELEASE_AGE_DAYS}`)
+}
+
 // The release workflow's publish safety and the dependency cooldown, read from the files that
 // implement them.
 function releaseDiagnostics(root: string): SupplyChainDiagnostic[] {
@@ -317,6 +332,8 @@ function releaseDiagnostics(root: string): SupplyChainDiagnostic[] {
             diagnostics.push(diagnostic('DEPENDABOT_COOLDOWN_MISSING', '.github/dependabot.yml', `update entry ${index} needs cooldown.default-days of at least ${MINIMUM_COOLDOWN_DAYS}`))
         }
     })
+    const releaseAge = releaseAgeDiagnostic(root)
+    if (releaseAge) diagnostics.push(releaseAge)
     return diagnostics
 }
 

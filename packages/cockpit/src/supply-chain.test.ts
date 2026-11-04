@@ -34,7 +34,7 @@ function fixture() {
     const root = mkdtempSync(join(tmpdir(), 'cockpit-supply-chain-'))
     scratch.push(root)
     for (const path of [
-        'package.json', 'package-lock.json', '.github/workflows/ci.yml', '.github/workflows/external-links.yml',
+        'package.json', 'package-lock.json', '.npmrc', '.github/workflows/ci.yml', '.github/workflows/external-links.yml',
         '.github/workflows/release.yml', '.github/workflows/dependabot-automerge.yml', '.github/dependabot.yml',
     ]) {
         mkdirSync(dirname(join(root, path)), { recursive: true })
@@ -202,6 +202,8 @@ describe('the supply-chain readiness detector', () => {
                 (text: string) => text.replace('    environment: npm\n', ''), 'RELEASE_ENVIRONMENT_MISSING'],
             ['an update entry without a cooldown', '.github/dependabot.yml', (text: string) => text.replace('    cooldown:\n      default-days: 7\n', ''), 'DEPENDABOT_COOLDOWN_MISSING'],
             ['a cooldown shorter than seven days', '.github/dependabot.yml', (text: string) => text.replace('default-days: 7', 'default-days: 6'), 'DEPENDABOT_COOLDOWN_MISSING'],
+            ['an npm config without a minimum release age', '.npmrc', (text: string) => text.replace('min-release-age=2', ''), 'NPM_RELEASE_AGE_MISSING'],
+            ['a later npm config line that lowers the release age', '.npmrc', (text: string) => `${text}min-release-age=1\n`, 'NPM_RELEASE_AGE_MISSING'],
         ])('refuses %s', (_name, path, update, code) => {
             const root = fixture()
             edit(root, path, update)

@@ -101,6 +101,16 @@ check passes; major updates wait for review. A new npm release is offered only a
 publish is usually pulled before it reaches the lockfile; see
 [.github/dependabot.yml](../../.github/dependabot.yml).
 
+The root `.npmrc` sets `min-release-age=2`, so npm resolves only versions published at least two
+days earlier when it picks one: `npm install`, `npm update` and `npm audit fix`, which exits
+non-zero when the window holds back a fix. npm 11.21.1 and 12.2.1 apply it. npm 10.9.9, the npm
+Node 22 bundles, ignores the key without a warning, so on Node 22 run any install that changes the
+lockfile with a newer npm. `npm ci` installs the exact versions in the lockfile and does not check
+their age; the cooldown is what keeps a new release out of the lockfile there. For an urgent fix
+younger than two days, pass `--min-release-age=0` to that one command and say so in the pull
+request. `lint:supply-chain` fails with `NPM_RELEASE_AGE_MISSING` when the setting is removed or
+lowered.
+
 Some versions are pinned by a check, so their update cannot pass CI as Dependabot opens it. They
 arrive together in the `pinned-by-hand` group, which auto-merge skips; the group's list is in
 [.github/dependabot.yml](../../.github/dependabot.yml). Finish that pull request as described in
