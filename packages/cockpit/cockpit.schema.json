@@ -1155,8 +1155,7 @@
           "description": "Statement about the data the browser touches; cockpit cannot observe it."
         },
         "request_preapproval": {
-          "default": false,
-          "description": "Run browser tools without prompts; allowed only on isolated, non-production, non-restored data.",
+          "description": "Run browser tools without prompts; allowed only on isolated, non-production, non-restored data. Defaults to true when data qualifies and false otherwise.",
           "type": "boolean"
         },
         "artifacts": {
