@@ -758,10 +758,45 @@ describe('operator-confirmed document completion', () => {
             answers: [...throughTesting(declaredTesting), confirmDefaults(testedDefaults.question!)] } })
         expect(parseToml(tested.artifact!)).toMatchObject({ testing: { ...declaredTesting, native_hooks: { install: 'inspect' } } })
 
-        const empty = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, answer(generated.question!, [])] } })
-        expect(empty).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-            message: expect.stringContaining('at least one path') }] })
+        const invalid = await draftFromRegistry({ ...input, configuration: {
+            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, answer(generated.question!, 'compose.yml')] } })
+        expect(invalid).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID' }] })
+    })
+
+    it.each(['operator-confirmed', 'agent-default'] as const)('retains %s provenance when a runnable product defers its runtime', async provenance => {
+        const { input } = sourceInput('X_SIBLINGS=(\n  "app|app|app|app|APP_DIR|Synthetic application"\n)\n')
+        const configuration = { sourceObservationSha256, answers: [] as DocumentConfigurationAnswer[] }
+        let pending = await draftFromRegistry({ ...input, configuration })
+        for (const value of ['app-cockpit', {}, generatedConfig.environment.install_policies]) {
+            configuration.answers.push(answer(pending.question!, value))
+            pending = await draftFromRegistry({ ...input, configuration })
+        }
+        expect(pending.question).toMatchObject({ field: 'environment.compose_files' })
+        configuration.answers.push({ ...answer(pending.question!, []), provenance })
+        pending = await draftFromRegistry({ ...input, configuration })
+        expect(pending).toMatchObject({ kind: 'gap-draft', question: { field: 'testing' } })
+        configuration.answers.push(answer(pending.question!, 'none'))
+        pending = await draftFromRegistry({ ...input, configuration })
+        expect(pending.question).toMatchObject({ field: 'guards' })
+        configuration.answers.push(answer(pending.question!, guardHosts))
+        pending = await draftFromRegistry({ ...input, configuration })
+        configuration.answers.push(confirmDefaults(pending.question!))
+        const complete = await draftFromRegistry({ ...input, configuration })
+        expect(complete).toMatchObject({ kind: 'complete', status: 0 })
+        const config = CockpitConfig.parse(parseToml(complete.artifact!))
+        expect(config.environment.compose_files).toEqual([])
+        expect(config.environment.install_policies).toEqual(generatedConfig.environment.install_policies)
+        expect(config.environment.machine).toBeUndefined()
+        expect(config.environment.addressing).toBeUndefined()
+        expect(config.guards).toMatchObject(guardHosts)
+        expect(config.unconfirmed).toEqual(provenance === 'agent-default' ? ['environment.compose_files'] : undefined)
+        expect(complete.artifact).toContain(provenance === 'agent-default'
+            ? 'the setup agent assumed, as a default, that runtime adoption is deferred'
+            : 'the operator stated that runtime adoption is deferred')
+        expect(complete.diagnostics).toContainEqual(expect.objectContaining({ code: 'DOCUMENT_RUNTIME_NOT_DECLARED',
+            message: expect.stringContaining('runtime adoption is deferred') }))
+        expect(complete.diagnostics.find(row => row.code === 'DOCUMENT_RUNTIME_NOT_DECLARED')!.message)
+            .not.toContain('no runnable product was observed')
     })
 
     it('asks only missing logical groups without a registry and accepts explicit empty ports', async () => {

@@ -356,9 +356,14 @@ async function interviewPlan(
     input: InitApplicationInput,
     adapters: InitApplicationAdapters,
     classification: EstateClassificationResult,
-    answered: number,
+    answers: GreenfieldResult['answers'],
 ): Promise<InterviewPlan> {
-    const planned = plannedGreenfieldQuestions({ root: input.root, classification: classification.classification, gaps: classification.gaps })
+    const questions = plannedGreenfieldQuestions({ root: input.root, classification: classification.classification, gaps: classification.gaps })
+    const composeIndex = questions.findIndex(row => row.field === 'environment.compose_files')
+    // Only an accepted empty JSON array defers runtime adoption; the estate still has runnable code.
+    const runtimeDeferred = /^\[\s*\]$/.test(answers[composeIndex]?.bytes ?? '')
+    const planned = runtimeDeferred ? questions.filter(row => row.field !== 'environment.machine' && row.field !== 'environment.posture') : questions
+    const answered = answers.length
     const outstanding = planned.slice(answered)
     const observedRoot = estateInput(input).root
     const inference = await adapters.infer?.({ root: observedRoot, configurationRoot: input.root,
@@ -698,7 +703,7 @@ async function initStagesFrom(
             && (stage === 'surface-previewed' || stage === 'surface-published' || current?.value.greenfield !== undefined)) {
             const classified = await adapters.classifyEstate(estateInput(boundInput))
             if (classified.kind === 'complete') {
-                interview = await interviewPlan(boundInput, adapters, classified.result, recorded.length)
+                interview = await interviewPlan(boundInput, adapters, classified.result, recorded)
                 if (recorded.length > 0) estate = greenfieldResult(classified.result,
                     (classified.result as IssuedEstateClassificationResult).sourceObservationSha256, recorded)
             } else diagnostics.push({ severity: 'warning', code: 'INIT_INTERVIEW_PREVIEW_UNAVAILABLE',
@@ -834,7 +839,7 @@ async function initStagesFrom(
             if (!proposed && expected && JSON.stringify(expected) !== JSON.stringify(question)) {
                 return refused('GREENFIELD_OBSERVATION_CHANGED', 'configuration question changed after it was persisted', address.path)
             }
-            const interview = classification ? await interviewPlan(boundInput, adapters, classification, answers.length) : undefined
+            const interview = classification ? await interviewPlan(boundInput, adapters, classification, answers) : undefined
             const estate = classification ? greenfieldResult(classification, sourceObservationSha256, answers) : undefined
             const pendingResult = result('surface-published', projection, undefined,
                 { ...(staleSourceObservationSha256 !== undefined && !input.accepted ? {} : { question: surfacedQuestion }),
@@ -875,7 +880,7 @@ async function initStagesFrom(
                 notice: classification.notice } : {}),
             questions: [...(state?.questions ?? [])], answers }
         if (!input.accepted && staleSourceObservationSha256 !== undefined) {
-            const interview = classification ? await interviewPlan(boundInput, adapters, classification, 0) : undefined
+            const interview = classification ? await interviewPlan(boundInput, adapters, classification, []) : undefined
             const estate = classification ? greenfieldResult(classification, sourceObservationSha256, []) : undefined
             return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: documented.diagnostics,
                 result: result('surface-published', projection, undefined,

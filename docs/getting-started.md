@@ -51,6 +51,13 @@ database and vendor hosts the guard must keep agents away from. Each accepted an
 it came from, and `init` writes a commented `[work.gates]` and `[autonomy]` block showing how to add
 human gates. The details are under [The init interview](#the-init-interview).
 
+To adopt the instructions and guards before the runtime, answer `environment.compose_files` with
+`[]`, even if the repository already runs or has Compose files. `init` keeps the product's runnable
+classification, install policies, testing and guard declarations, and skips the machine floor and
+runtime posture questions. It records the choice and who made it in `cockpit.toml`. Initialization
+can finish with no runtime declared; standalone `preflight` and runtime commands still refuse until
+you [add the Compose stack](#chapter-2-several-repositories-and-a-compose-stack).
+
 ### Generate, check and commit
 
 ```sh
@@ -316,9 +323,9 @@ vendor_endpoint_hosts = []
 | `ports.bases` | the host-published base port map; `{}` means none |
 | `environment.install_policies` | the build and test commands per toolchain and lockfile; `[]` for none |
 | `environment.test_data` | exactly the boolean keys `seeded_data` and `signed_in_users`; `false` states it is not needed |
-| `environment.compose_files` | the Compose files that run the product, relative to the cockpit root |
-| `environment.machine` | the runtime floor: `runtime_memory_mb`, `runtime_cpus`, `free_disk_mb`, `cold_start_seconds`; memory and CPUs are proposed, free disk and cold start never |
-| `environment.posture` | `addressing`, `authentication` and `posture_requirements` ([Declare environment postures](environment.md#declare-environment-postures)) |
+| `environment.compose_files` | the Compose files that run the product, relative to the cockpit root; `[]` defers runtime adoption as in [chapter 1](#chapter-1-one-repository-one-tool-no-docker) |
+| `environment.machine` | asked when Compose files are declared; the runtime floor: `runtime_memory_mb`, `runtime_cpus`, `free_disk_mb`, `cold_start_seconds`; memory and CPUs are proposed, free disk and cold start never |
+| `environment.posture` | asked when Compose files are declared; `addressing`, `authentication` and `posture_requirements` ([Declare environment postures](environment.md#declare-environment-postures)) |
 | `testing` | the product's `[testing]` stages and gates; `"none"` records that it has no tests yet, so no work can be graded PASS and `doctor` warns (`TESTING_GATE_UNDECLARED`) |
 | `guards` | `hosted_db_hosts` and `vendor_endpoint_hosts` of every non-local environment; `[]` for both records that none exists |
 | `provenance` | optional; `"human"` (the default), `"agent-default"` or `"derived"` per field. An `"agent-default"` answer stays under `unconfirmed` until `cockpit confirm` observes it or a person confirms it ([Mark the answers you chose](#mark-the-answers-you-chose)) |
