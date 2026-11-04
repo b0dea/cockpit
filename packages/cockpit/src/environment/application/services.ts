@@ -4,7 +4,7 @@
 import { constants as osConstants } from 'node:os'
 import type { ExecuteProbeOutcome, ForegroundProcessInput, ForegroundProcessOutcome } from '../../environment-exec/execute.js'
 import { cockpitCommand } from '../../fix-catalogue.js'
-import { ENVIRONMENT_CODES, errorCause, type EnvironmentCommandOutcome, type EnvironmentDiagnostic, type ExecutionStep, type LifecycleProgress } from '../contract.js'
+import { ENVIRONMENT_CODES, errorCause, forwardedRefusal, type EnvironmentCommandOutcome, type EnvironmentDiagnostic, type ExecutionStep, type LifecycleProgress } from '../contract.js'
 import { DeclarationRefusalError, serviceNotDeclared } from '../declaration.js'
 import {
     admitRuntimeServiceHealth,
@@ -32,22 +32,20 @@ export interface ServiceCommandAdapters {
     readonly signal?: AbortSignal
 }
 
-export type ServiceVerb = 'ps' | 'restart' | 'rebuild' | 'exec'
-
-async function observeStack(verb: ServiceVerb, configPath: string, adapters: ServiceCommandAdapters,
+async function observeStack(verb: string, configPath: string, adapters: ServiceCommandAdapters,
     service?: string): Promise<ServiceObservation | Extract<EnvironmentCommandOutcome<never>, { kind: 'refusal' }>> {
     let observed: ServiceObservation
     try {
         observed = await adapters.observe({ configPath })
     } catch (error) {
-        if (error instanceof DeclarationRefusalError) return { kind: 'refusal', status: 2, result: null, diagnostics: [error.diagnostic] }
+        if (error instanceof DeclarationRefusalError) return forwardedRefusal([error.diagnostic])
         return lifecycleRefusal(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
             `${verb} could not reach this checkout's running stack: ${errorCause(error)}`, verb,
             `start the stack with ${cockpitCommand('up', { config: configPath })}, then rerun ${verb}`)
     }
     const declared = observed.topology.services.map(({ id }) => id)
     if (service !== undefined && !declared.includes(service)) {
-        return { kind: 'refusal', status: 2, result: null, diagnostics: [serviceNotDeclared(service, declared)] }
+        return forwardedRefusal([serviceNotDeclared(service, declared)])
     }
     return observed
 }
@@ -81,16 +79,16 @@ export async function runServiceRestart(
     if (!evidence) {
         const logs = await collectFailureLogs(outcome.kind === 'observed' ? outcome.observation
             : outcome.kind === 'failure' ? outcome.logs : undefined, input.service, adapters)
-        return { kind: 'refusal', status: 2, result: null, diagnostics: [
+        return forwardedRefusal([
             { severity: 'error', code: ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, target: input.service,
                 message: `service ${input.service} did not become healthy after ${input.verb}`,
                 fix: `fix the error in the log excerpt, then rerun ${input.verb}` },
-            ...logs] }
+            ...logs])
     }
     const recorded = observed.completedServices.find(({ service }) => service === input.service)
     if (recorded && recorded.containerId !== evidence.containerId) {
         const refused = await observed.recordContainer(input.service, evidence.containerId)
-        if (refused.length > 0) return { kind: 'refusal', status: 2, result: null, diagnostics: refused }
+        if (refused.length > 0) return forwardedRefusal(refused)
     }
     return { kind: 'complete', status: 0, diagnostics: [],
         result: { service: input.service, containerId: evidence.containerId, change: input.verb === 'rebuild' ? 'rebuilt' : 'restarted' } }

@@ -1940,6 +1940,28 @@ describe('work command routing', () => {
         }
     })
 
+    it('exits 2 with the route-findings diagnostic when a clean browser route is asked for and the application finds problems', async () => {
+        // The application is the boundary: its outcome is faked, the mapping to exit status and diagnostic is the CLI's own.
+        vi.resetModules()
+        vi.doMock('./work-orders/composition.js', () => ({ createConfiguredWorkApplicationComposition: async () => ({ kind: 'complete', composition: {} }) }))
+        vi.doMock('./work-orders/application.js', async importOriginal => ({ ...await importOriginal<typeof import('./work-orders/application.js')>(),
+            runWorkApplication: async () => ({ kind: 'unsatisfied', operation: 'browser-drive',
+                value: { receipt: { verdict: 'findings' } }, reason: 'settings: 1 console error' }) }))
+        try {
+            const { runCli: isolatedRunCli } = await import('./cli.js')
+            let stdout = ''
+            const status = await isolatedRunCli(['browser', 'drive', '--config', 'cockpit.toml', '--route', 'settings', '--fail-on-findings', '--json'],
+                { stdout: { write: text => ((stdout += text), true) }, stderr: { write: () => true } }, {}, { env: {} })
+            expect(status).toBe(2)
+            expect(JSON.parse(stdout)).toMatchObject({ result: { receipt: { verdict: 'findings' } },
+                diagnostics: [{ code: 'BROWSER_ROUTE_FINDINGS', message: 'settings: 1 console error' }] })
+        } finally {
+            vi.doUnmock('./work-orders/composition.js')
+            vi.doUnmock('./work-orders/application.js')
+            vi.resetModules()
+        }
+    })
+
     it('refuses malformed selectors before dispatch', async () => {
         const cases = [
             ['work-check'], ['work-check', '--work-order', '../WO-1'], ['work-note', '--work-order', 'WO-1'], ['work-note', '--work-order', 'WO-1', '--ask', '--decision', '--text', 'x'],
