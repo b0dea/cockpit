@@ -426,7 +426,7 @@ describe('shipped skill contract', () => {
         ['copied registry logic', (bytes: string) => `${bytes}Parse the registry before continuing.\n`],
         ['copied policy table', (bytes: string) => `${bytes}| Tier | Verdict |\n| --- | --- |\n`],
         ['misspelled command identifier', (bytes: string) => bytes.replace('commands: [init,', 'commands: [innit,')],
-        ['absent command identifier', (bytes: string) => bytes.replace('  commands: [init, setup, sync, check, doctor, up, preflight, upgrade, sibling, tool]\n', '')],
+        ['absent command identifier', (bytes: string) => bytes.replace('  commands: [init, setup, sync, check, doctor, up, preflight, upgrade, sibling, tool, pull, use, stacks, rebuild, down]\n', '')],
         ['stale command identifier', (bytes: string) => bytes.replace('commands: [init,', 'commands: [bootstrap,')],
         ['unadmitted command identifier', (bytes: string) => bytes.replace('commands: [init,', 'commands: [publish,')],
         ['undeclared command', (bytes: string) => `${bytes}Run \`cockpit invent\`.\n`],
@@ -513,6 +513,8 @@ describe('shipped procedure commands', () => {
                 init: async input => { invoked = true; return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: [], result: { stage: 'surface-previewed', root: input.root, target: input.target, previewSha256: 'a'.repeat(64), files: [] } } },
                 // The documented work commands are the agent's; a gate the policy gives an agent needs no binding.
                 beginOperatorWorkApplication: async () => { invoked = true; return { status: 0, result: null, diagnostics: [] } },
+                // A prune reads the machine's stacks, which a routing check has none of.
+                beginStacksPrune: async () => { invoked = true; return { status: 0, result: null, diagnostics: [] } },
                 // The policy sync decides by, in place of a cockpit.toml on disk.
                 loadPolicy: async () => ({ current: effectivePolicy({ work: Work.parse({}), autonomy: Autonomy.parse({}) }), record: async () => {} }),
                 ...Object.fromEntries(commands.filter(command => command.handler !== 'init').map(command => [command.handler, handler])),

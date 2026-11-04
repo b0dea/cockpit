@@ -76,11 +76,12 @@ not the thinking: reuse the planning skills the harness already has.
    read those decision records before changing the code they name. When the work makes a lasting
    decision (a format, a boundary, a dependency, an option rejected), record it with
    `./node_modules/.bin/cockpit work note --config cockpit.toml --work-order WO-001 --decision --text "<title>"`
-   and resolve it with `work decide --decision <n> --record`, then replace every placeholder in the
-   record it writes; `--none --reason "<why>"` resolves one that turned out not to last. Update the
-   documentation that describes behaviour you change. This needs `[docs] decisions` in
-   `cockpit.toml`, and nothing enforces it under `[work] grading = "checks"`. Done when every
-   criterion has code and a test that passes.
+   and resolve it with `work decide --decision <n> --record` (adding `--supersedes <number>` when it
+   replaces an older record), then replace every placeholder in the record it writes;
+   `--record-file <path>` cites a record that already exists, and `--none --reason "<why>"` resolves
+   one that turned out not to last. Update the documentation that describes behaviour you change.
+   This needs `[docs] decisions` in `cockpit.toml`, and nothing enforces it under
+   `[work] grading = "checks"`. Done when every criterion has code and a test that passes.
 4. **Check** with `./node_modules/.bin/cockpit work check --config cockpit.toml --work-order WO-001 --json`.
    It runs every criterion's check and the order's gates; a failure (`WORK_CHECK_FAILED`) returns
    each result's outcome and the end of its output under `result.results`. Fix and rerun. While
@@ -89,8 +90,11 @@ not the thinking: reuse the planning skills the harness already has.
    faster feedback. Done when `work check` exits 0.
 5. **Before grading, review.** Run the harness's installed simplification and code-review skills,
    with security emphasis when the change touches authentication, secrets, guards or reach to
-   non-local hosts. Fix their blocking findings and rerun `work check`. Done when no blocking
-   finding is open and `work check` still exits 0.
+   non-local hosts. Fix their blocking findings and rerun `work check`. Where `cockpit.toml` declares
+   `[docs]`, also run `./node_modules/.bin/cockpit docs check --config cockpit.toml --json` and fix
+   each finding your change caused: a living document citing a path or `make` target you removed, or
+   a decision record out of step with its index. Done when no blocking finding is open, `work check`
+   still exits 0 and `docs check` reports nothing your change caused.
 6. **Grade** with `./node_modules/.bin/cockpit work grade --config cockpit.toml --work-order WO-001 --json`.
    Under the default `independent` grading a fresh read-only evaluator grades each criterion, in
    another listed agent tool when there is one; never grade your own work. When no evaluator can run
@@ -103,10 +107,11 @@ not the thinking: reuse the planning skills the harness already has.
    `result.outOfScope` and each flagged test file with why its change is needed; the checks still run
    and a failed one fails the grade. Cockpit adds standing criteria for changes outside scope
    (`scope-changes-necessary`), flagged test changes (`test-changes-justified`) and your amendments
-   (`amendments-hold-bar`). Anything short of passing (`WORK_GRADE_UNSATISFIED`) lists each
-   criterion's verdict and note under `result.criteria` and failed checks under `result.checks`: go
-   back to step 3 for each, reverting a change outside scope or a test change the grade calls
-   unneeded. `WORK_TEST_WEAKENED` means a test change was not accepted: restore the test, or under
+   (`amendments-hold-bar`), and with `[docs]` declared for recorded decisions
+   (`decisions-recorded`) and updated documentation (`docs-updated`). Anything short of passing
+   (`WORK_GRADE_UNSATISFIED`) lists each criterion's verdict and note under `result.criteria` and
+   failed checks under `result.checks`: go back to step 3 for each, reverting a change outside scope
+   or a test change the grade calls unneeded. `WORK_TEST_WEAKENED` means a test change was not accepted: restore the test, or under
    `checks` grading acknowledge a legitimate change with `work acknowledge --note <why>`. When
    `amendments-hold-bar` is unmet, the next amendment is a person's: report it. When the person names a grader ("use Codex to
    grade", "use Claude for everything"), pass `--evaluator <tool>` (`codexcli`, `claudecode` or

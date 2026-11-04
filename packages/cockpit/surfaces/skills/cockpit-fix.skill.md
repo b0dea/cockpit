@@ -8,7 +8,7 @@ cockpit:
     claudecode: [Bash]
     codexcli: [shell]
     opencode: [bash]
-  commands: [doctor, up, logs, check, test-run]
+  commands: [doctor, up, ps, logs, exec, rebuild, restart, use, sleep, check, test-run]
   changes: [the repository that owns the reproduced defect]
   non-goals: [scaffolding a cockpit, creating programme ceremony, copying environment policy]
   procedure: procedures/fix.md

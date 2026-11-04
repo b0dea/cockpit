@@ -8,7 +8,7 @@ cockpit:
     claudecode: [Bash]
     codexcli: [shell]
     opencode: [bash]
-  commands: [work status, work accept, work check, work note, work grade, work signoff, test-run]
+  commands: [work status, work accept, work check, work note, work decide, work answer, work acknowledge, work grade, work signoff, work recover, docs check, test-run]
   changes: [the files the accepted work order's scope names]
   non-goals: [grading its own work under independent grading, passing a gate the policy gives a person, editing the policy in cockpit.toml]
   procedure: procedures/work.md

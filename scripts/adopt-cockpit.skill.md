@@ -1,6 +1,6 @@
 ---
 name: adopt-cockpit
-description: "Set up or adopt cockpit for a project, bring a multi-repo product up for AI agents, or start a new product with cockpit. Use whenever the user wants cockpit set up, adopted or extended with another repository, or wants their repositories organised and their stack brought up for agents, even when they name no cockpit command. Routes by what is on disk to cockpit's non-interactive commands, asks before writing into product repositories, and never invents configuration values."
+description: "Set up or adopt cockpit for a project, bring a multi-repo product up for AI agents, or start a new product with cockpit. Use whenever the user wants cockpit set up, adopted or extended with another repository, or wants their repositories organised and their stack brought up for agents, even when they name no cockpit command. Routes by what is on disk to cockpit's non-interactive commands, keeps product-repository changes on a branch for review, and never invents configuration values."
 ---
 
 # Adopt cockpit
@@ -23,9 +23,11 @@ installed directory.
 A clean-looking configuration with invented values in it is the failure cockpit exists to prevent.
 Follow these rules throughout:
 
-1. Ask the human before writing into a product repository, creating a Git remote or hosted
-   repository, running a destructive command (`down`, `reset`, approving removals), running
-   `sync --adopt`, or accepting an `init` digest.
+1. Ask the human before creating a Git remote or hosted repository, running a destructive command
+   (`reset`, approving removals), running `sync --adopt`, accepting an `init` digest, or adopting a
+   test framework or dependency in a product repository. A Dockerfile, Compose file or `.env.schema`
+   the product needs goes on a new branch in that sibling's checkout, started with no uncommitted
+   changes; show its diff against the starting branch in your report. Nothing is pushed.
 2. Show the exact preview first: the `sync --dry-run` listing, the `init` preview and its
    `previewSha256`, the answers file, or the defaults digest. Consent binds to those bytes.
 3. Take every value (port, image, command, health check, purpose, name) from a file you read or
@@ -35,8 +37,8 @@ Follow these rules throughout:
    answer only on the human's word.
 5. Ask the human for the database and live vendor API hosts of every non-local environment
    (production, staging, shared) for the `guards` answer; env templates give variable names only.
-6. "Use sensible defaults" covers `init` answers only, never writing inside a product repository:
-   an **AGENTS.md** pointer, a Compose file or a `package.json` there needs the human's explicit
+6. "Use sensible defaults" covers `init` answers only, never another change inside a product
+   repository: an **AGENTS.md** pointer or a `package.json` change there needs the human's explicit
    yes to that change. Mark every answer you chose as `"agent-default"` in the answers file's
    `[provenance]` table, and end your report with every default you chose, its field and value.
 
@@ -97,8 +99,8 @@ has been cleared or reported to the human.
   The guide's *Chapter 2* says which runtimes are recognised.
 - **Daily:** `./node_modules/.bin/cockpit session --config cockpit.toml -- <agent command>`.
   `./node_modules/.bin/cockpit sleep --config cockpit.toml` releases this checkout's hold.
-  `./node_modules/.bin/cockpit down --config cockpit.toml` removes its runtime from the local
-  Docker daemon fixed at the start of the run; ask first.
+  `./node_modules/.bin/cockpit down --config cockpit.toml` removes its containers, keeping data
+  volumes, from the local Docker daemon fixed at the start of the run.
 - **Upgrade:** `./node_modules/.bin/cockpit upgrade --config cockpit.toml` does the move (`--dry-run`
   previews). By hand, install the new version, then run
   `./node_modules/.bin/cockpit check --config cockpit.toml`,

@@ -41,7 +41,10 @@ You answer a question about this cockpit from what its commands report now, and 
    `./node_modules/.bin/cockpit doctor --config cockpit.toml --json` for environment health, wiring
    and readiness gaps; `./node_modules/.bin/cockpit check --config cockpit.toml --json` for generated
    files that drift from `cockpit.toml`; `./node_modules/.bin/cockpit preflight --config cockpit.toml --json`
-   for whether the environment passes the gate work needs. Run two only when the question spans them.
+   for whether the environment passes the gate work needs;
+   `./node_modules/.bin/cockpit ps --config cockpit.toml --json` for which services of this
+   checkout's stack run; `./node_modules/.bin/cockpit stacks --config cockpit.toml --json` for every
+   stack on the machine. Run two only when the question spans them.
    A question about one diagnostic code, or a refusal the person pasted, may need no command: read
    what `./node_modules/@b00dea/cockpit/docs/troubleshooting.md` says about the code, and for a guard
    refusal, `./node_modules/@b00dea/cockpit/docs/safety-and-autonomy.md`. Done when you have the

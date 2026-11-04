@@ -8,7 +8,7 @@ cockpit:
     claudecode: [Bash]
     codexcli: [shell]
     opencode: [bash]
-  commands: [doctor, check, preflight]
+  commands: [doctor, check, preflight, ps, stacks]
   changes: [nothing]
   non-goals: [editing configuration, starting services, repairing drift]
   procedure: procedures/explain.md

@@ -77,11 +77,16 @@ started it, even where it lives outside this root.
      except for a directory name that is not a valid sibling slug, which refuses with
      `INIT_COCKPIT_ROOT_REQUIRED`.
    - **The test gates.** For a runnable product, `init` proposes `testing` stages and gates from the
-     test entry points it finds. Confirm which commands prove a change: the targeted gate agents
-     iterate with, and the full gate they run before handing back. A new product with no tests needs
-     the person to choose its test runner first; adding a test framework to a product repository
-     waits for their explicit yes. Answer `testing = "none"` only when they decide there are no
-     tests yet; `doctor` then reports `TESTING_GATE_UNDECLARED`.
+     test entry points it finds. Whether each proves anything is your judgement, made on evidence:
+     name the behaviours its tests exercise, break one of them on purpose, run the proposed command
+     and see it go red, then restore the file so the checkout is as you found it. That edit needs no
+     yes, because it is undone within the step. Write the behaviours into the gate's `changes` text
+     and keep the red run's output for your report; a gate that stays green on the break proves
+     nothing about that behaviour, so say so. The person confirms which gate agents iterate with and
+     which they run before handing back. A new product with no tests needs the person to choose its
+     test runner first; adopting a test framework in a product repository waits for their explicit
+     yes. Answer `testing = "none"` only when they decide there are no tests yet; `doctor` then
+     reports `TESTING_GATE_UNDECLARED`.
    - **The non-local hosts** for `guards`: the database and live vendor API hosts of every
      production, staging or shared environment. Env templates give variable names only; each host
      comes from the person.
@@ -127,11 +132,12 @@ started it, even where it lives outside this root.
    refused by the command that needs it), `needs` (why cockpit needs it) and `findings` (the
    diagnostic, its message and its fix); `noFinding` lists the ones no check reported, which is not
    proof, because a check that could not run reports nothing. Take the gaps one at a time, required
-   first: say what is missing, why cockpit needs it, and the exact change you propose. Ask before
-   touching any product repository; committing, installing cockpit, recording a remote, untracking
-   a file or adding a test changes it for everyone who works on it. Where a gap needs judgement
-   (which test runner to adopt, whether the existing tests prove anything, where characterization
-   tests for untested code should live), propose with what you read and let the person decide.
+   first: say what is missing, why cockpit needs it, and the exact change you propose. A change to a
+   product repository follows step 8: committing, installing cockpit, recording a remote, untracking
+   a file or adding a test changes it for everyone who works on it. Whether the existing tests prove
+   anything is yours to judge, as step 3 describes; where a gap needs the person's judgement (which
+   test runner to adopt, where characterization tests for untested code should live), propose with
+   what you read and let them decide.
    - The `cockpit-installed` gap clears first: `init` ran from a temporary copy, so run
      `npm install` in the cockpit root, then ask the person to run
      `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal so the guard hook runs
@@ -143,10 +149,14 @@ started it, even where it lives outside this root.
      asked, and choose **Trust all and continue** when Codex shows **Hooks need review**. `doctor`
      reports `CODEX_HOOK_UNTRUSTED` until it is done.
    Done when `doctor` reports no required gap and every other gap is cleared or reported.
-8. **Offer the product changes, one yes each.** "Use sensible defaults" never extends to writing
-   inside a product repository: an **AGENTS.md** pointer, a Compose file, a `package.json`, a
-   Dockerfile or a `.env.schema` in a sibling checkout each needs the person's explicit yes to that
-   exact change, because it changes the product for everyone who works on it.
+8. **Put product changes where the person reviews them.** A Dockerfile, Compose file or
+   `.env.schema` the product needs goes on a new branch in that sibling's checkout: start the branch
+   only when `git -C <sibling> status --short` prints nothing, write the files there, and put their
+   diff against the starting branch in your report. Nothing is pushed, so the person reviews it
+   before it reaches anyone else. Creating a hosted repository or a remote waits for their yes. Every
+   other product change (an **AGENTS.md** pointer, a `package.json`, a new test framework) needs the
+   person's explicit yes to that exact change, because it changes the product for everyone who works
+   on it; "use sensible defaults" never extends to it.
    - For a dedicated cockpit, offer an instruction pointer for each product repository. If the
      product has no **AGENTS.md**, show the exact proposed file as a draft; if it has one, show the
      marked block that would be appended without changing the team's text. After approval, set
@@ -159,10 +169,12 @@ started it, even where it lives outside this root.
      identities or create browser state.
    - For environment or secret adoption, follow **Secret handling** after sync has established its
      owned ignore boundary.
-   Done when each offer is applied or declined.
+   Done when each product file is on its branch with its diff in your report, and each other offer
+   is applied or declined.
 
-Report the actual result, every gap still named, and every default you chose, with its field and
-value, so the person can confirm or replace each.
+Report the actual result; every gap still named; every default you chose, with its field and
+value, so the person can confirm or replace each; your judgement of each test gate, with its red run;
+and the diff of every product branch.
 
 ## Create a local setup
 
@@ -190,10 +202,11 @@ guesses. So derive each value from what the repository shows, record it as infer
    answer is retained as a not-declared decision. A true answer is only a requirement: it remains unresolved
    until product-owned seed operations or browser authentication states are declared, and never proves that
    data or a login exists.
-5. Decide where the runnable pieces live. A Dockerfile or Compose file written into a product
-   repository is a product change, so ask the human first and show the exact path and contents.
-   Without that permission, declare an environment cockpit renders itself and leave the product
-   untouched. Done when either the human approved that specific file or no product file was written.
+5. Decide where the runnable pieces live. A Dockerfile or Compose file in the product is a product
+   change: write it on a branch in that repository's checkout, as step 8 of **Bootstrap** describes.
+   A `compose.yml` at the cockpit root that reaches the checkout through its sibling variable leaves
+   the product untouched. Done when each product file is on its branch with its diff in your report,
+   or no product file was written.
 6. Finish the configuration with the init flow in **Bootstrap**. On an existing cockpit, an edit to
    `cockpit.toml` makes the guard hold every tool call, so a person runs
    `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal; then run
@@ -360,6 +373,40 @@ never applied silently. Installing a new cockpit also makes the guard hold every
 5. **Commit together.** Ask the person to commit the lockfile and the regenerated files together.
    Done when `./node_modules/.bin/cockpit check --config cockpit.toml --json` exits 0.
 
+## Keep checkouts and stacks current
+
+Each checkout of the cockpit, a linked worktree included, runs its own stack from the sibling
+checkouts it mounts. These commands keep both current; run them yourself, except where a step
+gives one to the person.
+
+1. **Update the checkouts** with `./node_modules/.bin/cockpit pull --config cockpit.toml --json`. It
+   only fetches and fast-forwards the cockpit and every sibling. A checkout it skips (`PULL_SKIPPED`:
+   modified files, a diverged branch, a failed fetch) stays as it was; report it with the command
+   the finding names. Done when every checkout is current or reported.
+2. **Serve a sibling from a worktree** with
+   `./node_modules/.bin/cockpit use sibling-slug /absolute/path/to/worktree --config cockpit.toml`,
+   and go back with `use sibling-slug --clear`. The choice holds for this cockpit checkout only, and
+   a checkout outside the directories you may already write is the person's to choose. A running
+   stack keeps the checkout it mounted, so run `down` and `up` after it. A worktree lacks the
+   ignored environment files (`SIBLING_ENVIRONMENT_FILE_MISSING`), and cockpit never copies them:
+   ask the person. Done when `doctor` names the checkout under `SIBLING_CHECKOUT_OVERRIDDEN`.
+3. **A stale stack.** `STACK_INPUTS_CHANGED` from `doctor`, `preflight` or `pull` means a mounted
+   sibling's lockfile or declared `rebuild_inputs` changed under the running stack. While the stack
+   still runs, rebuild each service whose image installs those dependencies with
+   `./node_modules/.bin/cockpit rebuild --config cockpit.toml --service service-id`, then run
+   `./node_modules/.bin/cockpit down --config cockpit.toml` and
+   `./node_modules/.bin/cockpit up --config cockpit.toml`. When `down` refuses because another
+   holder still uses the stack (`CLAIM_CO_TENANT`), leave it and report who holds it. Done when
+   `doctor` no longer warns, or the holder is reported.
+4. **Orphaned stacks.** `STACKS_ORPHANED` from `doctor` means a stack lost its checkout, usually a
+   deleted worktree. `./node_modules/.bin/cockpit stacks --config cockpit.toml --json` lists every
+   stack with its checkout and verdict; `./node_modules/.bin/cockpit stacks prune --config cockpit.toml`
+   previews what would go, and
+   `./node_modules/.bin/cockpit stacks prune --config cockpit.toml --apply` removes it. A prune that
+   deletes volumes runs only where `[autonomy] reset = "agent"`; otherwise hand the person
+   `stacks prune --interactive` for a terminal. Done when `stacks` lists no orphaned stack, or the
+   person has the command.
+
 ## Diagnose
 
 1. Run `./node_modules/.bin/cockpit doctor --config cockpit.toml --json` first: it reports health,
@@ -368,8 +415,9 @@ never applied silently. Installing a new cockpit also makes the guard hold every
    pass the blocking gate.
 2. Follow the fix each diagnostic names, required gaps first. When the fix is a person's step
    (trusting a Codex hook, signing in to a provider, approving a digest), hand them the exact
-   command it names. Done when `doctor` reports each gap cleared, or you have reported the ones
-   only a person can clear.
+   command it names. A stale or orphaned stack is cleared by **Keep checkouts and stacks
+   current**. Done when `doctor` reports each gap cleared, or you have reported the ones only a
+   person can clear.
 
 For an account of the result without changing anything, use the cockpit-explain skill.
 

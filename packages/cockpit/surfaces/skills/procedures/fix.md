@@ -54,12 +54,18 @@ scope changes, not at hand-back.
 4. **Reproduce at the narrowest real boundary.** Extend the nearest behavior test through its
    public surface so it fails on this defect, and run it with the narrowest selector the gate takes.
    Start the stack with `./node_modules/.bin/cockpit up --config cockpit.toml` only when the
-   behavior needs a live process or integration; read
-   `./node_modules/.bin/cockpit logs --config cockpit.toml --service service-id`, naming the declared
-   service, and `./node_modules/.bin/cockpit doctor --config cockpit.toml --json` only for the runtime
-   output the defect needs. When the stack will not start (no Docker, another holder, an unmeasured
-   runtime), report the code `up` gives and its fix rather than proving the fix some other way. Done
-   when a test goes red on exactly the observed behavior.
+   behavior needs a live process or integration, adding `--profile <name>` for a service behind a
+   Compose profile. Read `./node_modules/.bin/cockpit ps --config cockpit.toml --json` for each
+   service's state, `./node_modules/.bin/cockpit logs --config cockpit.toml --service service-id`,
+   naming the declared service, and `./node_modules/.bin/cockpit doctor --config cockpit.toml --json`
+   only for the runtime output the defect needs; a `STACK_INPUTS_CHANGED` warning there goes to
+   *Keep checkouts and stacks current* in the cockpit-setup skill's procedure first. A command inside
+   a service, such as a migration or a query, runs through
+   `./node_modules/.bin/cockpit exec --config cockpit.toml --service service-id -- <command>`; the
+   guard asks unless a `[guards] allow` rule or a declared build or test command admits it. When the
+   stack will not start (no Docker, another holder, an unmeasured runtime), report the code `up`
+   gives and its fix rather than proving the fix some other way. Done when a test goes red on
+   exactly the observed behavior.
 5. **Then change the repository that owns the defect**, and nothing else. Leave uncommitted changes
    that were already in the checkout as you found them. If you change it in a worktree rather than
    the checkout `cockpit.toml` declares, first run
@@ -67,7 +73,10 @@ scope changes, not at hand-back.
    so the stack, the guard and the gates use that worktree, and `use sibling-slug --clear` at step 8. For an environment or credential defect,
    follow the *Secret handling* section of the cockpit-setup skill's procedure,
    `../../cockpit-setup/procedures/setup.md` from this file, before running the declared product
-   command. Done when the test from step 4 passes.
+   command. When the running stack must pick the change up, run
+   `./node_modules/.bin/cockpit rebuild --config cockpit.toml --service service-id` for a change baked
+   into its image, or `restart --service service-id` for one its process loads at start. Done when
+   the test from step 4 passes.
 6. **Prove it**: run the gate from step 3 again, complete and without a selector. Done when it
    reports PASS, or you can name the failure and its cause.
 7. **Review.** Once the change is stable, simplify it, then review it independently, with security
