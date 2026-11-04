@@ -5,6 +5,7 @@ import { ENVIRONMENT_CODES, type Diagnostic } from './contract.js'
 import { EXIT_CODES } from '../invocation.js'
 import { refusalOutcome as refusal } from '../refusal.js'
 import type { ResetCommandInput } from './application/lifecycle-context.js'
+import type { StacksPruneScope } from './stack-inventory-prune.js'
 import type {
     GeneratedEnvironmentCommandInput,
     GeneratedEnvironmentSyncInput,
@@ -135,7 +136,7 @@ export interface StacksPruneOperatorSession {
 }
 
 interface StacksPruneOperatorAdapters {
-    readonly begin: (input: Readonly<{ configPath: string }>) => Promise<StacksPruneOperatorSession | OperatorCommandOutcome>
+    readonly begin: (input: Readonly<{ configPath: string; scope: StacksPruneScope }>) => Promise<StacksPruneOperatorSession | OperatorCommandOutcome>
     /** Shows the preview to a person at a terminal and returns the digest they typed. */
     readonly confirm: (preview: OperatorCommandOutcome) => Promise<string | undefined>
     readonly policy: (configPath: string) => Promise<OperatorPolicy | OperatorCommandOutcome>
@@ -150,8 +151,10 @@ function pruneUnconfirmed(message: string): OperatorCommandOutcome {
 /**
  * `stacks prune`: a preview by default. Removing an orphan whose checkout is gone is housekeeping
  * anyone can undo by bringing the stack up again, so `--apply` passes for an agent; a prune that
- * deletes volumes deletes data, and passes only where `[autonomy] reset` lets this run reset.
- * `--interactive` is a person's approval of the exact preview by its digest.
+ * deletes volumes deletes data, and passes only where `[autonomy] reset` lets this run reset. That
+ * policy is this cockpit's, so an agent's `--apply` covers only this cockpit's stacks: another
+ * cockpit may require a person for the same removal. `--interactive` is a person's approval of the
+ * exact preview by its digest, and covers every stack on the machine.
  */
 export async function runStacksPruneOperatorApplication(
     input: Readonly<{ configPath: string }>,
@@ -162,7 +165,7 @@ export async function runStacksPruneOperatorApplication(
         return pruneUnconfirmed('interactive prune requires a human terminal outside CI and JSON modes')
     }
     if (admission.interactive && !admission.terminal) return pruneUnconfirmed('interactive prune requires terminal input')
-    const opened = await adapters.begin(input)
+    const opened = await adapters.begin({ configPath: input.configPath, scope: !admission.interactive && admission.apply ? 'this-cockpit' : 'machine' })
     if (!('apply' in opened)) return opened
     if (!admission.interactive && !admission.apply || opened.empty) return opened.preview
     if (admission.interactive) {

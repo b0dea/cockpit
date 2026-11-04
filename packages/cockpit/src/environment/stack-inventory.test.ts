@@ -8,7 +8,9 @@ import { readRootPortInventory } from './claims.js'
 import type { CockpitId, StackId } from './contract.js'
 import { checkoutId, cockpitId as deriveCockpitId, stackId as deriveStackId } from './identity.js'
 import { discoverMachineStacks } from './reclaim.js'
-import { inspectMachineStacksForDoctor, observeMachineStacks, openStacksPrune, type StacksContext, type StacksPruneSession } from './stack-inventory.js'
+import { inspectMachineStacksForDoctor, observeMachineStacks } from './stack-inventory.js'
+import { openStacksPrune, type StacksPruneSession } from './stack-inventory-prune.js'
+import type { StacksContext } from './stack-inventory-report.js'
 import { selectStateRoot } from './state.js'
 
 const sha = (value: string) => createHash('sha256').update(value).digest('hex')
@@ -160,7 +162,7 @@ describe('machine stack inventory', () => {
 
     it('removes exactly the previewed orphans and their port leases, and nothing when the orphans changed after the preview', async () => {
         const { cockpit, stacks, namespace, context, docker, legacy, newer, stray, rows } = await machine()
-        const opened = await openStacksPrune(context, { execute: executeProbe }) as StacksPruneSession
+        const opened = await openStacksPrune(context, 'machine', { execute: executeProbe }) as StacksPruneSession
         expect(opened).toMatchObject({ empty: false, deletesData: true, preview: { status: 0, result: { dryRun: true, kept: 4,
             stacks: [expect.objectContaining({ stackId: expect.any(String) }), expect.anything()],
             stateFolders: [{ path: legacy, reason: expect.any(String) }] } } })
@@ -173,7 +175,7 @@ describe('machine stack inventory', () => {
         expect(await readFile(join(docker, 'removed'), 'utf8').catch(() => '')).toBe('')
         await rows('network', [{ id: 'n-gone', ...gone }])
 
-        const approved = await openStacksPrune(context, { execute: executeProbe }) as StacksPruneSession
+        const approved = await openStacksPrune(context, 'machine', { execute: executeProbe }) as StacksPruneSession
         const applied = await approved.apply()
         expect(applied).toMatchObject({ status: 0, result: { digest: approved.digest, removedStateFolders: [legacy] } })
         // Containers go before the network they hold, and the network before the volume.
@@ -190,5 +192,61 @@ describe('machine stack inventory', () => {
         })
         if ('kind' in after) throw new Error('unreachable')
         expect(after.inventory.stateFolders.map(({ path }) => path)).toEqual([newer, stray])
+    })
+
+    it('keeps a stack whose checkout path is missing while Git still registers its worktree', async () => {
+        const { root, main, cockpit, namespace, context, rows } = await machine()
+        // Registered as Git leaves a worktree whose path is gone until `git worktree prune`; locked as for one on removable storage.
+        const register = async (name: string, locked: boolean) => {
+            const path = join(root, `my-app-${name}`)
+            const admin = join(main, '.git', 'worktrees', name)
+            await mkdir(admin, { recursive: true })
+            await writeFile(join(admin, 'gitdir'), `${path}/.git\n`)
+            await writeFile(join(admin, 'commondir'), '../..\n')
+            if (locked) await writeFile(join(admin, 'locked'), 'on a drive that is not always mounted\n')
+            return { path, stack: stackOf(cockpit, path) }
+        }
+        const unmounted = await register('unmounted', true)
+        const moved = await register('moved', false)
+        // One container says where it ran; the other says nothing, so only Git's registration speaks for its checkout.
+        await rows('container', [
+            { id: 'c-unmounted', name: 'my-app-ffffffffffff-api-1', state: 'exited', cockpit, stack: unmounted.stack, workingDir: join(unmounted.path, 'cockpit') },
+            { id: 'c-moved', name: 'my-app-999999999999-api-1', state: 'exited', cockpit, stack: moved.stack },
+        ])
+        const observed = await observeMachineStacks({ namespace, own: context.own, discovery: await discoverMachineStacks(context.docker, executeProbe) })
+        if ('kind' in observed) throw new Error(JSON.stringify(observed))
+        const row = (stack: StackId) => observed.inventory.stacks.find(({ stackId }) => stackId === stack)!
+        expect(row(unmounted.stack)).toMatchObject({ verdict: 'kept', reason: expect.stringContaining('git worktree unlock'),
+            checkout: { path: unmounted.path, status: 'unknown', source: `a worktree Git marks locked for ${main}, at a path that does not exist now` } })
+        expect(row(moved.stack)).toMatchObject({ verdict: 'kept', reason: expect.stringContaining('git worktree prune'),
+            checkout: { path: moved.path, status: 'unknown', source: `a worktree Git still registers for ${main}, at a path that does not exist now` } })
+    })
+
+    it('prunes only this cockpit\'s orphans for an agent\'s apply, and leaves another cockpit\'s to a person', async () => {
+        const { root, cockpit, other, stacks, context, docker, legacy, rows } = await machine()
+        const elsewhere = stackOf(other, join(root, 'other-app-gone'))
+        await rows('container', [
+            { id: 'c-gone', name: 'my-app-bbbbbbbbbbbb-api-1', state: 'exited', cockpit, stack: stacks.gone, workingDir: join(root, 'my-app-gone', 'cockpit') },
+            { id: 'c-elsewhere', name: 'other-app-ffffffffffff-api-1', state: 'exited', cockpit: other, stack: elsewhere, workingDir: join(root, 'other-app-gone', 'cockpit') },
+        ])
+        await rows('volume', [
+            { id: 'my-app-bbbbbbbbbbbb_data', name: 'my-app-bbbbbbbbbbbb_data', cockpit, stack: stacks.gone },
+            { id: 'other-app-ffffffffffff_data', name: 'other-app-ffffffffffff_data', cockpit: other, stack: elsewhere },
+        ])
+        const removed = async () => (await readFile(join(docker, 'removed'), 'utf8').catch(() => '')).trim().split('\n').filter(Boolean)
+
+        // The preview lists every orphan, marks whose it is, and says the other cockpit's needs a person.
+        const agent = await openStacksPrune(context, 'this-cockpit', { execute: executeProbe }) as StacksPruneSession
+        expect(agent).toMatchObject({ empty: false, preview: { result: { stacks: expect.arrayContaining([
+            expect.objectContaining({ stackId: stacks.gone, thisCockpit: true }), expect.objectContaining({ stackId: elsewhere, thisCockpit: false })]) },
+        diagnostics: [{ severity: 'warning', code: 'STACKS_PRUNE_UNCONFIRMED', message: expect.stringContaining(elsewhere) }] } })
+        expect(await agent.apply()).toMatchObject({ status: 0, result: { removedStateFolders: [legacy] },
+            diagnostics: [{ severity: 'warning', code: 'STACKS_PRUNE_UNCONFIRMED', fix: expect.stringContaining('--interactive') }] })
+        expect(await removed()).toEqual(['container c-gone', 'network n-gone', 'volume my-app-bbbbbbbbbbbb_data'])
+
+        // A person's approval covers the machine.
+        const person = await openStacksPrune(context, 'machine', { execute: executeProbe }) as StacksPruneSession
+        expect(await person.apply()).toMatchObject({ status: 0, diagnostics: [] })
+        expect(await removed()).toEqual(['container c-gone', 'network n-gone', 'volume my-app-bbbbbbbbbbbb_data', 'container c-elsewhere', 'volume other-app-ffffffffffff_data'])
     })
 })

@@ -115,7 +115,8 @@ import {
     type SurfaceSelftestProbeSpecificationsCandidate,
 } from './environment/selftest-application.js'
 import { loadOperatorPolicy, runResetOperatorApplication, runStacksPruneOperatorApplication, type StacksPruneOperatorSession } from './environment/operator-application.js'
-import { beginStacksPrune, runStacksInventory } from './environment/stack-inventory.js'
+import { beginStacksPrune, type StacksPruneScope } from './environment/stack-inventory-prune.js'
+import { runStacksInventory } from './environment/stack-inventory-report.js'
 
 import type { WorkApplicationOutcome, WorkApplicationRequest } from './work-orders/application.js'
 
@@ -219,7 +220,7 @@ interface OperatorWorkBinding { readonly digest: string; readonly prompt: string
 export type CliHandlerOverrides = Partial<CommandHandlers> & Readonly<{
     beginOperatorWorkApplication?: (input: WorkCommandInput) => Promise<OperatorWorkBinding | CommandOutcome>
     beginOperatorReset?: (input: ResetCommandInput) => Promise<OperatorResetBinding | CommandOutcome>
-    beginStacksPrune?: (input: Readonly<{ configPath: string }>) => Promise<StacksPruneOperatorSession | CommandOutcome>
+    beginStacksPrune?: (input: Readonly<{ configPath: string; scope: StacksPruneScope }>) => Promise<StacksPruneOperatorSession | CommandOutcome>
     // The autonomy policy sync and reset decide by, read from cockpit.toml and the recorded policy.
     loadPolicy?: typeof loadOperatorPolicy
     scaffoldCompose?: (input: ComposeScaffoldRequest) => Promise<CommandOutcome>
@@ -1536,7 +1537,7 @@ function defaultOperatorHandlers(runtime: CliRuntime): OperatorHandlers {
             return { digest: outcome.continuation.digest, prompt: outcome.continuation.prompt,
                 decide: async answer => workCommandOutcome(await outcome.continuation.decide(answer), runtime.env ?? process.env) }
         },
-        beginStacksPrune: (input) => beginStacksPrune({ configPath: resolve(input.configPath), env: runtime.env ?? process.env }, { execute: executeProbe }),
+        beginStacksPrune: (input) => beginStacksPrune({ configPath: resolve(input.configPath), env: runtime.env ?? process.env }, input.scope, { execute: executeProbe }),
         beginOperatorReset: async (input) => {
             if (sessionId === null) return operatorRefusal('COCKPIT_SESSION_ID must be a canonical UUID')
             const configPath = resolve(input.configPath)
