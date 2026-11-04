@@ -19,6 +19,7 @@ import {
 import { observeGeneratedApplicationSurfaces } from '../environment/generated-application/surface-observation.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './command.js'
 import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
+import { writeSiblingCheckouts } from '../environment/sibling-checkouts.js'
 import { stubComposeTopology } from '../../test-support/compose-topology-docker.js'
 
 const { roots, cleanup, surfaceConsumer, digest, runGeneratedGuard, bytes } = createGeneratedCommandFixture()
@@ -164,6 +165,13 @@ describe('public surface publication transaction', () => {
             })
             // OpenCode reads the absolute directory from the machine-local file the pattern names.
             expect(await readFile(join(fixture.root, '.cockpit/local/opencode-grant-external'), 'utf8')).toBe(await realpath(fixture.siblingDirectory))
+            // A checkout `use` serves from outside the declared one keeps its grant through a later sync;
+            // one inside the declared checkout is already covered by the declared grant.
+            const served = join(estate, 'external-feature')
+            expect(await writeSiblingCheckouts(fixture.root, { app: join(fixture.root, 'app/.worktrees/feature'), external: served })).toEqual({ kind: 'complete' })
+            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+            expect(await readFile(join(fixture.root, '.cockpit/local/opencode-grant-external'), 'utf8')).toBe(served)
+            expect(await readFile(join(fixture.root, '.cockpit/local/opencode-grant-app'), 'utf8')).toBe(await realpath(join(fixture.root, 'app')))
             // OpenCode's native read is denied the same paths; its patterns are worktree-relative and
             // its `*` crosses directories. OpenCode adds the exact `$schema` value when it is missing,
             // which once made every later check report a conflict, so cockpit writes it itself.

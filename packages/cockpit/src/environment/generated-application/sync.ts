@@ -20,6 +20,8 @@ import { syncCommandInput } from './prepare.js'
 import { inputSourcesCurrent, ownedInputOverlap, preparePublication } from './publication.js'
 import { checkCanonicalGeneratedEnvironment, issueRepairAuthority, issuedRepairs } from './check.js'
 import { openCodeGrantFile } from './surface-outputs.js'
+import { readSiblingCheckouts } from '../sibling-checkouts.js'
+import { openCodeGrantDirectory, openCodePatternUnsafe } from '../served-checkout-grants.js'
 
 async function prepareGeneratedEnvironmentSync(
     input: GeneratedEnvironmentSyncInput,
@@ -124,8 +126,17 @@ export async function applyGeneratedEnvironmentRepair(
             GUARD_LOCAL_PATHS.identity, 'fix the path, then run `npx --no cockpit sync --config <your cockpit.toml>` again in a terminal')
     }
     if (prepared.openCodeGrantRoots.length > 0 && settings.dryRun !== true) {
-        const local = await writeCockpitLocalFiles(prepared.root, prepared.openCodeGrantRoots.map(row => ({
-            name: basename(openCodeGrantFile(row.slug)), bytes: row.root })))
+        // A checkout `use` serves from outside the declared one is what OpenCode is granted, as `use` wrote it.
+        const recorded = await readSiblingCheckouts(prepared.root)
+        if (recorded.kind !== 'complete') return refuse(recorded.diagnostic.code,
+            `the committed OpenCode settings were published, but its grants were not written: ${recorded.diagnostic.message}`,
+            recorded.diagnostic.target, recorded.diagnostic.fix)
+        const grants = prepared.openCodeGrantRoots.map(row => ({ name: basename(openCodeGrantFile(row.slug)),
+            bytes: openCodeGrantDirectory(row.root, Object.hasOwn(recorded.checkouts, row.slug) ? recorded.checkouts[row.slug] : undefined) }))
+        const unsafe = grants.map(row => openCodePatternUnsafe(row.bytes)).find(reason => reason !== undefined)
+        if (unsafe) return refuse('GENERATED_PUBLICATION_FAILED', `the committed OpenCode settings were published, but its grants were not written: ${unsafe}`,
+            GUARD_LOCAL_PATHS.directory, 'serve the sibling from a checkout at a plain path with `npx --no cockpit use`, then run sync again')
+        const local = await writeCockpitLocalFiles(prepared.root, grants)
         if (local.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
             `the committed OpenCode settings were published, but ${local.message}; OpenCode refuses to start until it exists`,
             GUARD_LOCAL_PATHS.directory, 'fix the path, then run `npx --no cockpit sync --config <your cockpit.toml>` again in a terminal')
