@@ -24,6 +24,7 @@ import {
     prepareHealthObservation,
 } from './health.js'
 import { ownDataValues } from './shared.js'
+import { cockpitCommand } from '../../fix-catalogue.js'
 import { unreadableStateWarning } from './lifecycle-state.js'
 
 export interface DoctorCommandInput {
@@ -85,7 +86,7 @@ interface DoctorFreshness {
 }
 
 export interface DoctorDeclaration {
-    readonly subject: 'runtime' | 'reset-volumes' | 'seed'
+    readonly subject: 'runtime' | 'reset-volumes' | 'seed' | 'docs'
     readonly state: 'declared' | 'not-declared'
     readonly source: string
     readonly reason: string
@@ -121,6 +122,9 @@ async function doctorDeclarations(loading: Promise<LoadedDoctorConfig>): Promise
         row('reset-volumes', environment.resettable_volumes.length > 0, 'environment.resettable_volumes',
             'reset may delete and recreate these volumes'),
         row('seed', environment.seed !== undefined, 'environment.seed', 'up runs the seed when a resettable volume is new'),
+        // Docs rot is not environment health, so doctor names the check rather than running it.
+        ...loaded.result.config.docs === undefined ? [] : [{ subject: 'docs' as const, state: 'declared' as const, source: 'docs',
+            reason: `docs check reads the declared living documents and decision records; doctor does not run it: ${cockpitCommand('docs check', { config: loaded.result.source.path })}` }],
     ]
 }
 

@@ -8,6 +8,7 @@ import { GUARD_HOST_LIMITS, GUARD_HOST_PATTERN, normalizeGuardHost } from './gua
 import { ADOPTABLE_SURFACE_PATHS, ADOPTED_SURFACE_ROOT, SURFACE_BUNDLE_FORMATS, SURFACE_FEATURES, SURFACE_TARGETS, surfaceSourcesMatchFeature } from './surfaces/contract.js'
 import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS } from './surfaces/harness-registry.js'
 import { RefusalError, errorCause } from './environment/contract.js'
+import { REPOSITORY_PATH } from './work-orders/contract.js'
 
 export const STRUCTURED_INPUT_ENTRY_LIMIT = 4_096
 
@@ -864,6 +865,17 @@ export const UNCONFIRMABLE_ANSWERS = ['cockpit.name', 'sibling', 'estate.runnabl
     'environment.test_data', 'environment.compose_files', 'environment.machine', 'environment.posture',
     'testing', 'guards'] as const
 
+// `docs check` reads these. A path is in the cockpit's own repository, or `<sibling slug>:path` in a
+// sibling, spelt as a work order's scope is.
+const DocsPath = z.string().max(1_024).regex(REPOSITORY_PATH, 'a relative path, optionally <sibling slug>:path, without .. or a leading /')
+const DocsFile = DocsPath.refine(value => !/[*?]/.test(value), 'one path, without wildcards')
+export const Docs = z.object({
+    living: z.array(DocsPath).min(1).max(64)
+        .describe('Globs of the Markdown documents that must stay true; docs check reports the paths and make targets they cite that the repository has since removed.'),
+    decisions: DocsFile.optional().describe('Directory of decision records; docs check reports duplicate numbers, missing statuses and broken supersedes links.'),
+    decisions_index: DocsFile.optional().describe('Index file that links every decision record; docs check reports records it omits and links to records that do not exist.'),
+}).strict()
+
 export const CockpitConfig = z
     .object({
         unconfirmed: z.array(z.enum(UNCONFIRMABLE_ANSWERS)).min(1).max(UNCONFIRMABLE_ANSWERS.length)
@@ -879,6 +891,7 @@ export const CockpitConfig = z
         testing: Testing.optional().describe('Test stages and gates.'),
         environment: Environment.prefault({}).describe('How the stack is reached, signed in to, built and kept.'),
         surfaces: Surfaces.prefault({}).describe('Instructions, skills and settings generated for agent tools.'),
+        docs: Docs.optional().describe('Living documents and decision records that docs check keeps true.'),
     })
     .strict()
     .superRefine((cfg, ctx) => {
@@ -961,6 +974,23 @@ export const CockpitConfig = z
                 })
             })
         }
+        if (cfg.docs) {
+            const repository = (path: string) => /^([a-z0-9][a-z0-9-]{0,63}):/.exec(path)?.[1]
+            const paths = [...cfg.docs.living.map((path, index) => ({ path, at: ['docs', 'living', index] })),
+                ...cfg.docs.decisions === undefined ? [] : [{ path: cfg.docs.decisions, at: ['docs', 'decisions'] }],
+                ...cfg.docs.decisions_index === undefined ? [] : [{ path: cfg.docs.decisions_index, at: ['docs', 'decisions_index'] }]]
+            for (const { path, at } of paths) {
+                const slug = repository(path)
+                if (slug !== undefined && !cfg.sibling.some(row => row.slug === slug)) {
+                    ctx.addIssue({ code: 'custom', path: at, message: `${JSON.stringify(path)} names sibling "${slug}", which no [[sibling]] declares` })
+                }
+            }
+            // An index read without its records, or of another repository's records, would check nothing.
+            if (cfg.docs.decisions_index !== undefined && (cfg.docs.decisions === undefined
+                || repository(cfg.docs.decisions_index) !== repository(cfg.docs.decisions))) {
+                ctx.addIssue({ code: 'custom', path: ['docs', 'decisions_index'], message: 'decisions_index needs decisions set to the directory it indexes, in the same repository' })
+            }
+        }
         // Deliberately NOT checked here: that a `profile:<name>` lane names a profile in
         // `profiles.default`. A profile lane is opt-in by definition — it exists precisely to
         // stay off until EXTRA_PROFILES turns it on — so absence from the default set is the
@@ -982,6 +1012,7 @@ export type EntrypointDerivative = z.infer<typeof EntrypointDerivative>
 export type InstallPolicy = z.infer<typeof InstallPolicy>
 export type Browser = z.infer<typeof Browser>
 export type Testing = z.infer<typeof Testing>
+export type Docs = z.infer<typeof Docs>
 export type Provenance = z.infer<typeof Provenance>
 export type SurfaceSource = z.infer<typeof SurfaceSource>
 export type SurfaceOverrideReference = z.infer<typeof SurfaceOverrideReference>

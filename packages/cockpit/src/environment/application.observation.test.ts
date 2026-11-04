@@ -154,6 +154,23 @@ describe('observation application runners', () => {
         } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 
+    it('names docs check among its declarations only when [docs] is declared, without running it', async () => {
+        const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-doctor-docs-')))
+        try {
+            const doctorFor = async (body: string) => {
+                const configPath = join(directory, 'cockpit.toml')
+                writeFileSync(configPath, ['[cockpit]', 'name = "synthetic"', 'siblings_root = "."', '',
+                    '[[sibling]]', 'slug = "app"', 'dir = "."', 'mount = "none"', 'acquire = "none"', 'var = "APP_DIR"',
+                    'purpose = "Synthetic app"', '', '[ports]', 'bases = {}', '', body, ''].join('\n'))
+                const result = await runDoctor({ configPath }, { load: async () => undefined, execute: vi.fn() })
+                return result.result.declarations.filter(row => row.subject === 'docs')
+            }
+            expect(await doctorFor('[docs]\nliving = ["README.md"]')).toEqual([{ subject: 'docs', state: 'declared', source: 'docs',
+                reason: `docs check reads the declared living documents and decision records; doctor does not run it: npx --no cockpit docs check --config ${join(directory, 'cockpit.toml')}` }])
+            expect(await doctorFor('')).toEqual([])
+        } finally { rmSync(directory, { recursive: true, force: true }) }
+    })
+
     it('warns about declarations no person has confirmed until they are removed from unconfirmed', async () => {
         const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-doctor-unconfirmed-')))
         try {
@@ -172,7 +189,7 @@ describe('observation application runners', () => {
             expect(await doctorFor('')).toEqual([])
             // A policy the last sync recorded stronger than cockpit.toml now declares is reported, not silently weaker.
             mkdirSync(join(directory, '.cockpit'))
-            const person = { accept: 'person', amend: 'person', answer: 'person', signoff: 'person' }
+            const person = { accept: 'person', amend: 'person', answer: 'person', signoff: 'person', acknowledge: 'person' }
             writeFileSync(join(directory, '.cockpit/policy.json'), JSON.stringify({ format: 'cockpit-policy/v1', policy: {
                 grading: 'independent', gates: person, autonomy: { sync: 'person', stale_delete: 'person', reset: 'person', mcp_approve: 'person' } } }))
             const weakened = (await runDoctor({ configPath: join(directory, 'cockpit.toml') }, { load: async () => undefined, execute: vi.fn() }))

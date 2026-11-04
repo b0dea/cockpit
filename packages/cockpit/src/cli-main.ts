@@ -45,6 +45,7 @@ import {
     type UpCommandInput,
 } from './environment/application/lifecycle-context.js'
 import { runLogs as runLogsApplication } from './environment/application/logs.js'
+import { runDocsCheck } from './docs/check.js'
 import { executeForegroundProcess, executePlan, executeProbe } from './environment-exec/execute.js'
 import { createDestructiveCommandAdapters, selectDestructiveDaemon } from './environment/destructive-composition.js'
 import { createHealthCommandAdapters } from './environment/health-composition.js'
@@ -150,6 +151,7 @@ interface WorkCommandInput { readonly configPath: string; readonly request: Work
 
 interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInput> {
     check: GeneratedEnvironmentCommandInput
+    'docs-check': Readonly<{ configPath: string }>
     init: InitApplicationInput & Readonly<{ unattended?: UnattendedInit }>
     doctor: DoctorCommandInput
     down: DownCommandInput
@@ -735,6 +737,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         },
         runtime: (input) => runRuntimeMeasure({ ...input, env }, { execute: executeProbe, probe: probeInstalledRuntime }),
         stacks: (input) => runStacksInventory({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
+        'docs-check': (input) => runDocsCheck({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
         sibling: (request) => request.operation === 'add'
             ? runSiblingAdd({ ...request.input, env }, { execute: executeProbe })
             : runSiblingRemove({ ...request.input, env }),
@@ -770,8 +773,9 @@ function renderHelp(): string {
     const width = Math.max(...entries.map(entry => entry.name.length))
     const sections = commandStages.map(stage => [`${stage.title}:`,
         ...commandLines(entries.filter(entry => entry.stage === stage.id), width)].join('\n'))
+    const groups = commandGroups.map(group => `'cockpit ${group.name} --help'`)
     return ['Usage: cockpit <command> [options]', '', sections.join('\n\n'), '',
-        `Run 'cockpit <command> --help' for its options, and ${commandGroups.map(group => `'cockpit ${group.name} --help'`).join(' or ')} for its subcommands.`, ''].join('\n')
+        `Run 'cockpit <command> --help' for its options, and ${[groups.slice(0, -1).join(', '), ...groups.slice(-1)].filter(Boolean).join(' or ')} for its subcommands.`, ''].join('\n')
 }
 
 function renderGroupHelp(group: Readonly<{ name: string; summary: string }>): string {
@@ -1166,7 +1170,7 @@ async function decodeRequest(
     }
 
     if (handler === 'check' || handler === 'up' || handler === 'sleep' || handler === 'down' || handler === 'reset'
-        || handler === 'preflight' || handler === 'doctor') {
+        || handler === 'preflight' || handler === 'doctor' || handler === 'docs-check') {
         const values = parsed.values as { config?: string; json?: boolean }
         if (parsed.positionals.length > 0) {
             return usageOutcome('CLI_USAGE_INVALID', `${handler} accepts named inputs only`)
@@ -1380,6 +1384,7 @@ async function dispatchHandler(
     if (request.handler === 'setup') return handlers.setup?.(request.input) ?? unavailable()
     if (request.handler === 'sync') return runSyncOperatorCommand(request.input, options, io, handlers.sync ?? (async () => unavailable()), operators.loadPolicy ?? loadOperatorPolicy)
     if (request.handler === 'check') return handlers.check?.(request.input) ?? unavailable()
+    if (request.handler === 'docs-check') return handlers['docs-check']?.(request.input) ?? unavailable()
     if (request.handler === 'selftest') {
         const selftest = handlers.selftest ?? (async () => unavailable())
         return 'writeProbeSpecificationsPath' in request.input ? selftest(request.input)

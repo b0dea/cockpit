@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { parse as parseToml } from 'smol-toml'
 import { describe, expect, it } from 'vitest'
 import { repositoryIdentity } from './environment/repository-identity.js'
-import { walkMarkdownProse } from '../../../scripts/docs-lint.ts'
+import { walkMarkdownProse } from './docs/markdown.js'
 import { inventory } from '../test-support/example-inventory.js'
 
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
@@ -29,6 +29,7 @@ const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typ
     ['docs/contributing/releasing.md', [operator, operator, developer, developer]],
     ['docs/troubleshooting.md', [operator, operator]],
     ['docs/contributing/testing.md', [developer, developer]],
+    ['docs/docs-check.md', [operator]],
     ['docs/tutorial.md', [operator, operator, operator, operator, runtime, operator]],
     ['docs/work-and-browser.md', [operator]],
     ['packages/cockpit/README.md', [packageInstall]],

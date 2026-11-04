@@ -199,7 +199,7 @@ describe('closed ordinary invocation metadata', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
         expect(rows.map(row => row.name)).toEqual(['setup', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'sleep', 'down', 'reset', 'stacks', 'doctor',
             'test-run', 'work status', 'work accept', 'work check', 'work note', 'work answer', 'work acknowledge', 'work grade', 'work signoff', 'work recover', 'work verify', 'grade',
-            'browser drive', 'browser screenshot'])
+            'browser drive', 'browser screenshot', 'docs check'])
         for (const row of rows) {
             const argv = [...row.name.split(' '), ...(requiredWords[row.name] ?? [])]
             expect(ordinary(argv), `${row.name} missing config`).toBeUndefined()
@@ -480,8 +480,9 @@ describe('CLI help', () => {
             '  test-run          Run a declared product test gate and report which tests it selected\n' +
             '  work              Accept, check, grade and close work orders\n' +
             '  grade             Independently grade uncommitted work against a criteria file, with no work order\n' +
-            '  browser           Drive, inspect and capture the declared application in a browser\n\n' +
-            "Run 'cockpit <command> --help' for its options, and 'cockpit work --help' or 'cockpit browser --help' for its subcommands.\n",
+            '  browser           Drive, inspect and capture the declared application in a browser\n' +
+            '  docs              Check living documents and decision records against the repositories\n\n' +
+            "Run 'cockpit <command> --help' for its options, and 'cockpit work --help', 'cockpit browser --help' or 'cockpit docs --help' for its subcommands.\n",
         )
         expect(humanStderr(result.stderr)).toBe('')
     })
@@ -698,7 +699,7 @@ describe('generated environment process contract', () => {
             doctor: async () => ({ status: 0,
                 diagnostics: [{ severity: 'warning', code: 'GUARD_HOSTS_UNDECLARED', target: 'guards', message: 'synthetic warning' }],
                 result: { verdict: 'pass', checks: [{ verdict: 'pass' }, { verdict: 'pass' }, { verdict: 'not-applicable' }], comparisons: [], surfaceOverrides, freshness,
-                    declarations: [{ subject: 'runtime', state: 'declared' }, { subject: 'reset-volumes', state: 'not-declared' }] } }),
+                    declarations: [{ subject: 'runtime', state: 'declared' }, { subject: 'reset-volumes', state: 'not-declared' }, { subject: 'docs', state: 'declared' }] } }),
         })).toBe(0)
         const config = resolve('cockpit.toml')
         expect(capture.output().stdout).toBe([
@@ -706,7 +707,8 @@ describe('generated environment process contract', () => {
             'Checks: 2 pass, 1 not applicable.',
             'Generated files: 1 change pending.',
             'Surface overrides: 1 active (review).',
-            'Declared: runtime; not declared: reset volumes.',
+            'Declared: runtime, docs; not declared: reset volumes.',
+            `Documents: npx --no cockpit docs check --config ${config} checks them; doctor does not.`,
             'Release: 1.2.3 is published; 1.0.0 is installed.',
             `Full report: npx --no cockpit doctor --config ${config} --json`,
             `Generated file detail: npx --no cockpit check --config ${config}`,

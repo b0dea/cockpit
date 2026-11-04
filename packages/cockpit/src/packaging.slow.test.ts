@@ -7,7 +7,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { parseNpmPackJson, type NpmPackArtifact } from './test-support/npm-pack-json.js'
 import { cockpitPackageVersion } from './test-support/package-version.js'
 import { expectedPackageFiles } from '../../../scripts/supply-chain-check.ts'
-import { walkMarkdownProse } from '../../../scripts/docs-lint.ts'
+import { walkMarkdownProse } from './docs/markdown.js'
 
 // What a consumer installs is a different surface from what this repository contains, and
 // only one of them is checked by reading the tree. Without an allow-list npm ships every

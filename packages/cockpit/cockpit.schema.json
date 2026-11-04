@@ -2363,6 +2363,39 @@
         }
       },
       "additionalProperties": false
+    },
+    "docs": {
+      "description": "Living documents and decision records that docs check keeps true.",
+      "type": "object",
+      "properties": {
+        "living": {
+          "minItems": 1,
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1024,
+            "pattern": "^(?:[a-z0-9][a-z0-9-]{0,63}:)?(?![/])(?!.*(?:^|[/:])\\.\\.(?:\\/|$))[A-Za-z0-9._@+\\-/*?]+$"
+          },
+          "description": "Globs of the Markdown documents that must stay true; docs check reports the paths and make targets they cite that the repository has since removed."
+        },
+        "decisions": {
+          "description": "Directory of decision records; docs check reports duplicate numbers, missing statuses and broken supersedes links.",
+          "type": "string",
+          "maxLength": 1024,
+          "pattern": "^(?:[a-z0-9][a-z0-9-]{0,63}:)?(?![/])(?!.*(?:^|[/:])\\.\\.(?:\\/|$))[A-Za-z0-9._@+\\-/*?]+$"
+        },
+        "decisions_index": {
+          "description": "Index file that links every decision record; docs check reports records it omits and links to records that do not exist.",
+          "type": "string",
+          "maxLength": 1024,
+          "pattern": "^(?:[a-z0-9][a-z0-9-]{0,63}:)?(?![/])(?!.*(?:^|[/:])\\.\\.(?:\\/|$))[A-Za-z0-9._@+\\-/*?]+$"
+        }
+      },
+      "required": [
+        "living"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [
