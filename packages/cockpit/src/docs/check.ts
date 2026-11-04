@@ -1,6 +1,6 @@
 // `cockpit docs check`: the living documents and decision records [docs] declares, checked against
 // each repository's files and history. It reads and runs read-only Git; it writes nothing.
-import { lstatSync } from 'node:fs'
+import { lstatIfPresentSync } from '../environment/presence.js'
 import { posix, resolve } from 'node:path'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { readBoundedFile } from '../bounded-read.js'
@@ -62,8 +62,7 @@ function read(root: string, path: string): string {
 }
 
 function present(root: string, path: string): boolean {
-    try { lstatSync(resolve(root, path)); return true } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT' || (error as NodeJS.ErrnoException).code === 'ENOTDIR') return false
+    try { return lstatIfPresentSync(resolve(root, path)) !== undefined } catch (error) {
         throw new EvidenceUnavailable(`${path} could not be inspected (${errorCause(error)})`)
     }
 }

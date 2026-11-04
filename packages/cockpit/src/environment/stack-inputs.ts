@@ -8,6 +8,7 @@
  * It decides nothing: `up` records, `down` and a stopping `sleep` forget, and doctor and preflight
  * warn. The record is machine-local beside the sibling checkout record, under `.cockpit/local`.
  */
+import { lstatIfPresent } from './presence.js'
 import { createHash } from 'node:crypto'
 import { lstat, readdir, readFile, readlink, rm } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -72,8 +73,7 @@ async function digestPath(path: string): Promise<string | null> {
 }
 
 async function exists(path: string): Promise<boolean> {
-    try { await lstat(path); return true }
-    catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return false; throw error }
+    return await lstatIfPresent(path) !== undefined
 }
 
 /** The paths watched for one sibling and where each came from: its own list, then the toolchain's lockfiles. */

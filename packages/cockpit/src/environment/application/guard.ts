@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { lstatIfPresentSync } from '../presence.js'
 import { lstatSync, realpathSync, type Stats } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -438,8 +439,8 @@ export async function runGuardEvaluationApplication(
         // A hard link or another spelling of the configuration is the configuration.
         const isConfig = (path: string) => {
             if (foldGuardSpelling(path) === foldGuardSpelling(identity.configPath)) return true
-            try { const status = lstatSync(path); return status.dev === configStatus.dev && status.ino === configStatus.ino }
-            catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return false; throw error }
+            const status = lstatIfPresentSync(path)
+            return status !== undefined && status.dev === configStatus.dev && status.ino === configStatus.ino
         }
         const pinned = pinnedPolicyDenial(parsed, configRead.bytes.toString('utf8'), isConfig)
         if (pinned) return { decision: pinned, diagnostics: [{ severity: 'error', code: 'GUARD_REFUSED', message: pinned.reason, target: 'guard' }] }
@@ -499,8 +500,7 @@ function siblingRoots(config: CockpitConfig, siblingsRoot: string, served: Reado
     const recorded = declared.flatMap(({ sibling, index }) => {
         const entry = served.get(sibling.slug)
         if (!entry?.overridden) return []
-        try { if (!lstatSync(entry.served).isDirectory()) return [] }
-        catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return []; throw error }
+        if (!lstatIfPresentSync(entry.served)?.isDirectory()) return []
         return [{ sibling, index, root: entry.served }]
     })
     return [...declared, ...recorded]

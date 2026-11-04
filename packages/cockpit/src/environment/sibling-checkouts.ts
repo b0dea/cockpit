@@ -9,6 +9,7 @@
  * Without it, an agent working on a branch in a sibling's worktree had the stack, the checks and
  * every grade run against the main checkout's branch while reporting green.
  */
+import { lstatIfPresent } from './presence.js'
 import { lstat, realpath } from 'node:fs/promises'
 import { isAbsolute, join, normalize, resolve } from 'node:path'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
@@ -116,10 +117,7 @@ export async function loadServedSiblings(cockpitRoot: string, config: Pick<Cockp
 /** The overridden siblings whose recorded directory is gone, such as a removed worktree. */
 export async function vanishedServedCheckouts(served: ReadonlyMap<string, ServedSibling>): Promise<readonly ServedSibling[]> {
     const overridden = [...served.values()].filter(sibling => sibling.overridden)
-    const present = await Promise.all(overridden.map(async sibling => {
-        try { return (await lstat(sibling.served)).isDirectory() }
-        catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return false; throw error }
-    }))
+    const present = await Promise.all(overridden.map(async sibling => (await lstatIfPresent(sibling.served))?.isDirectory() === true))
     return overridden.filter((_, index) => !present[index])
 }
 
@@ -298,10 +296,7 @@ export async function inspectSiblingCheckout(input: Readonly<{
 
 /** The declared environment files the served checkout lacks; a fresh worktree has none of the ignored ones. */
 export async function missingEnvironmentFiles(served: ServedSibling, sibling: Pick<Sibling, 'environment_files'>): Promise<readonly Readonly<{ template: string; instance: string }>[]> {
-    const present = await Promise.all((sibling.environment_files ?? []).map(async file => {
-        try { await lstat(join(served.served, file.instance)); return true }
-        catch (error) { if (!hasErrorCode(error, 'ENOENT')) throw error; return false }
-    }))
+    const present = await Promise.all((sibling.environment_files ?? []).map(async file => await lstatIfPresent(join(served.served, file.instance)) !== undefined))
     return (sibling.environment_files ?? []).filter((_, index) => !present[index]).map(file => ({ template: file.template, instance: file.instance }))
 }
 
