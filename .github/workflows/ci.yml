@@ -25,7 +25,9 @@ permissions: {}
 # out of the push queue, where a newer pending run would replace an older one.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A newer push supersedes the run in progress: its commit contains everything the older one
+  # tested, and queued pushes to main otherwise wait for every earlier full run in turn.
+  cancel-in-progress: true
 
 jobs:
   # Decides which heavy jobs a change needs, inside the workflow. A workflow-level paths-ignore
@@ -158,7 +160,7 @@ jobs:
         run: npm test -- packages/cockpit/src/docs-ownership.test.ts packages/cockpit/src/docs-decisions.test.ts packages/cockpit/src/docs-lint.test.ts packages/cockpit/src/references.test.ts
 
   test:
-    name: test (${{ matrix.os }}, node ${{ matrix.node }}, ${{ matrix.gate }})
+    name: test (${{ matrix.os }}, node ${{ matrix.node }}, ${{ matrix.gate }}${{ matrix.shard && format(' {0}', matrix.shard) || '' }})
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
@@ -177,10 +179,12 @@ jobs:
         # - pull request: the full suite on Linux at the supported floor, plus macOS running
         #   only the tests adjacent to the change (`changed`).
         # - weekly: the full suite at the upper edge of the supported Node range.
+        # The Linux full suite is split into four shards that run in parallel: on one runner
+        # it took about 32 minutes, and one shard holds the platform-independent extras.
         # - push to main: the full suite on Linux and on macOS at the floor, and the
         #   launcher-level compatibility subset on the other supported Node lines, so a
         #   platform or Node regression a pull request missed is caught within one merge.
-        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"ubuntu-latest","node":"22.22.0","gate":"full","extras":true},{"os":"macos-latest","node":"22.22.0","gate":"changed"}]' || github.event_name == 'schedule' && '[{"os":"ubuntu-latest","node":"26","gate":"full"}]' || '[{"os":"ubuntu-latest","node":"22.22.0","gate":"full","extras":true},{"os":"macos-latest","node":"22.22.0","gate":"full"},{"os":"ubuntu-latest","node":"24","gate":"compatibility"},{"os":"ubuntu-latest","node":"26","gate":"compatibility"}]') }}
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"1/4","extras":true},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"2/4"},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"3/4"},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"4/4"},{"os":"macos-latest","node":"22.22.0","gate":"changed"}]' || github.event_name == 'schedule' && '[{"os":"ubuntu-latest","node":"26","gate":"full"}]' || '[{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"1/4","extras":true},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"2/4"},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"3/4"},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"4/4"},{"os":"macos-latest","node":"22.22.0","gate":"full"},{"os":"ubuntu-latest","node":"24","gate":"compatibility"},{"os":"ubuntu-latest","node":"26","gate":"compatibility"}]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -203,7 +207,9 @@ jobs:
       - run: npm run build
       - if: matrix.gate == 'full'
         timeout-minutes: 65
-        run: npm test
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: npm test -- ${SHARD:+--shard=$SHARD}
       # Both tiers, for the tests that own what the pull request changed. A selection error fails
       # the cell; it never narrows what runs.
       - if: matrix.gate == 'changed'

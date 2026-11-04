@@ -248,22 +248,24 @@ describe('clean-checkout controls', () => {
         // The matrix is one fromJSON expression with a pull-request, a weekly and a main list, so
         // each list is read as data rather than matched line by line.
         const [pullRequestCells, weeklyCells, mainCells] = [...supportedJob.matchAll(/'(\[\{[^']*\}\])'/g)]
-            .map((match) => (JSON.parse(match[1]) as { os: string; node: string; gate: string }[])
-                .map(({ os, node, gate }) => ({ os, node, gate })))
+            .map((match) => (JSON.parse(match[1]) as { os: string; node: string; gate: string; shard?: string }[])
+                .map(({ os, node, gate, shard }) => ({ os, node, gate, ...(shard === undefined ? {} : { shard }) })))
+        // The Linux full suite runs as four parallel shards; together they must cover it exactly once.
+        const linuxFull = ['1/4', '2/4', '3/4', '4/4'].map((shard) => ({ os: 'ubuntu-latest', node: '22.22.0', gate: 'full', shard }))
         expect(supportedJob).toContain("github.event_name == 'pull_request' && '[")
         expect(supportedJob).toContain("github.event_name == 'schedule' && '[")
         expect(workflow).toMatch(/\n  schedule:\n    - cron: '[^']+'\n/)
         // macOS minutes cost ten times Linux minutes, so a pull request runs only the tests
         // adjacent to its change there.
         expect(pullRequestCells).toEqual([
-            { os: 'ubuntu-latest', node: '22.22.0', gate: 'full' },
+            ...linuxFull,
             { os: 'macos-latest', node: '22.22.0', gate: 'changed' },
         ])
         expect(weeklyCells).toEqual([
             { os: 'ubuntu-latest', node: '26', gate: 'full' },
         ])
         expect(mainCells).toEqual([
-            { os: 'ubuntu-latest', node: '22.22.0', gate: 'full' },
+            ...linuxFull,
             { os: 'macos-latest', node: '22.22.0', gate: 'full' },
             { os: 'ubuntu-latest', node: '24', gate: 'compatibility' },
             { os: 'ubuntu-latest', node: '26', gate: 'compatibility' },
@@ -274,6 +276,7 @@ describe('clean-checkout controls', () => {
         expect(workflow).toContain('runtime-floor-negative:')
         expect(supportedJob).toContain('npm run build')
         expect(supportedJob).toContain("if: matrix.gate == 'full'")
+        expect(supportedJob).toContain('SHARD: ${{ matrix.shard }}\n        run: npm test -- ${SHARD:+--shard=$SHARD}\n')
         expect(supportedJob).toContain("if: matrix.gate == 'compatibility'")
         expect(supportedJob).toContain('run: npm test -- packages/cockpit/src/launcher.test.ts packages/cockpit/src/package-metadata.test.ts packages/cockpit/src/environment/runtime-probe.slow.test.ts')
         expect(supportedJob).not.toMatch(/\bnpx\s+vitest\b|--(?:maxWorkers|minWorkers|pool|fileParallelism)\b/)
