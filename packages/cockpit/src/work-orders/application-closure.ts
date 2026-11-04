@@ -34,7 +34,11 @@ export async function signoff(request: Extract<WorkRequest, { operation: 'work-s
     // Every closure, partial and abandoned too, settles the order's decisions: work that stops still made them.
     const open = await unresolvedDecisions(record, composition)
     if (open.length) return refusal(operation, `${request.workOrderId} cannot close while ${open.join('; ')}`)
-    return gated('signoff', policy.gates.signoff, [`Close ${request.workOrderId} as ${request.close} (${how})`, ...request.note ? [`Note: ${request.note}`] : [],
+    // A grade found the agent's own amendments lowered the bar; a re-grade must not let it close the order unseen.
+    const failedReview = record.amendmentsFailedReview
+    const decider = failedReview && policy.gates.signoff === 'agent' ? 'person' : policy.gates.signoff
+    return gated('signoff', decider, [`Close ${request.workOrderId} as ${request.close} (${how})`, ...request.note ? [`Note: ${request.note}`] : [],
+        ...failedReview ? [`A grade found the agent's amendments lower the bar: ${failedReview.note}`] : [],
         ...record.grade ? record.grade.criteria.map(row => `${row.id}: ${row.verdict} — ${row.note}`) : [],
         ...decisions(record).map(row => `Decision ${row.decision} (${row.title}): ${row.resolution!.record ? `recorded in ${row.resolution!.record}` : `no lasting decision — ${row.resolution!.text}`}`)],
     'signoff', async by => store.update(request.workOrderId, async existing => {

@@ -185,8 +185,8 @@ that may lower the bar, before and after:
 
 The next grade carries `amendments-hold-bar`, with the before and after of every amendment the agent
 made since a person or CI last accepted the contract; under `independent` the evaluator also sees them
-as the change to `workorders/<id>.md`. When it is not met the grade fails, and the next amendment is a
-person's: revert or rewrite the order, then a person runs `work accept --interactive`. The order
+as the change to `workorders/<id>.md`. When it is not met the grade fails, and the next amendment and
+any closure are a person's: revert or rewrite the order, then a person runs `work accept --interactive`. The order
 records the finding, so a later `work check` or grade does not clear it; only an amendment a person or
 CI accepts does.
 

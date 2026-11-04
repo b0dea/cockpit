@@ -318,6 +318,8 @@ describe('work-order lifecycle', () => {
         expect((await run(['work', 'grade', '--work-order', 'WO-10'])).result).toMatchObject({ criteria: expect.arrayContaining([{ id: 'amendments-hold-bar', verdict: 'unmet', note: expect.any(String) }]) })
         // A passing check replaces the failed grade; it does not settle what the grade found.
         expect((await run(['work', 'check', '--work-order', 'WO-10'])).result).toMatchObject({ state: 'checked' })
+        // Nor may the agent close the order around it.
+        expect((await run(['work', 'signoff', '--work-order', 'WO-10', '--abandon', '--note', 'stopping here'])).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
         writeFileSync(join(root, 'workorders/WO-10.md'), order('WO-10'))
         expect((await run(['work', 'accept', '--work-order', 'WO-10'])).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
         expect(await asPerson(root, ['work', 'accept', '--work-order', 'WO-10'], (prompt, digest) => prompt.includes('lower the bar') ? `amend ${digest}` : '')).toBe(0)
