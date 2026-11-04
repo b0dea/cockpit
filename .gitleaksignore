@@ -1,0 +1,9 @@
+# Reviewed gitleaks false positives, by fingerprint. Each is synthetic test material, not a credential:
+# a canary string proving errors never echo it, random UUID lock tokens, the RFC 6455 sample
+# WebSocket key, and the planted Stripe-shaped example the anonymisation scan must catch.
+0001be981590f08fda3c7b76236ec578efb8799e:packages/cockpit/src/environment/state.test.ts:generic-api-key:982
+e96fbd757c1f61189cb8a0b4df16848773d7979e:fixtures/hygiene/planted-identifiers.txt:stripe-access-token:17
+e96fbd757c1f61189cb8a0b4df16848773d7979e:packages/cockpit/src/environment/generated-render.test.ts:generic-api-key:216
+e96fbd757c1f61189cb8a0b4df16848773d7979e:packages/cockpit/src/environment/state.test.ts:generic-api-key:1143
+e96fbd757c1f61189cb8a0b4df16848773d7979e:packages/cockpit/src/environment/state.test.ts:generic-api-key:1236
+e96fbd757c1f61189cb8a0b4df16848773d7979e:packages/cockpit/src/environment/state.test.ts:generic-api-key:1280
