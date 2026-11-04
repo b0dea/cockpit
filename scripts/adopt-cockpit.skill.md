@@ -30,8 +30,9 @@ Follow these rules throughout:
    `previewSha256`, the answers file, or the defaults digest. Consent binds to those bytes.
 3. Take every value (port, image, command, health check, purpose, name) from a file you read or
    from the human. When neither has it, name the gap and ask.
-4. Show every inferred value with the file it came from, including what `init` proposes under
-   `provenance.kind = "inferred"`. It becomes an answer only on the human's word.
+4. Accept as read only a field `init` marks `confirmedBy = "agent"` (a `derived` proposal), by
+   marking it `"derived"`. Show every other proposal with the file it came from; it becomes an
+   answer only on the human's word.
 5. Ask the human for the database and live vendor API hosts of every non-local environment
    (production, staging, shared) for the `guards` answer; env templates give variable names only.
 6. "Use sensible defaults" covers `init` answers only, never writing inside a product repository:

@@ -104,8 +104,13 @@ The agent follows these rules for the whole setup:
    digest from anything but the latest pending run is refused.
 3. **Never invent a configuration value.** A port, image, command, health check, purpose or name
    comes from a file the agent read or from the human; otherwise it leaves a named gap and asks.
-4. **Inferred values need confirmation.** `init` proposes values with `provenance.kind = "inferred"`
-   and the file each came from; they become answers only on the human's word.
+4. **Only what init read exactly is the agent's to accept.** `init` labels each proposal with
+   `provenance.kind`: `derived` (the complete answer, read from the named file and line),
+   `measured` (observed on this machine) or `inferred` (a hint or guess). A field whose
+   `confirmedBy` is `"agent"` may be answered with `"derived"` (below); `init` checks the value
+   against what it read, and bring-up proves it. Every other field, and every security boundary
+   (the `guards` hosts, protected branches, guard and MCP allow-lists), becomes an answer only on the
+   human's word.
 5. **Ask for every non-local host.** The `guards` answer lists the database and live vendor API hosts
    of production, staging and shared environments. Variable names come from env templates, never
    values; each host comes from the human.
@@ -141,7 +146,20 @@ guards = "agent-default"
 Each such field is written under `unconfirmed` at the top of `cockpit.toml`, listed in
 `result.unconfirmed`, and reported by `doctor` as `DECLARATION_UNCONFIRMED` until a person confirms
 the value, deletes its `unconfirmed` entry and runs `cockpit sync`. An `environment.machine` floor
-the file does not attribute is recorded as unattributed, because cockpit never proposes one.
+the file does not attribute is recorded as unattributed, because no file records its free disk or
+cold start time.
+
+A field whose `interview.outstanding` entry says `confirmedBy = "agent"` can instead be marked
+`"derived"`, with or without a value: `init` answers it with the value it read, refuses
+(`DOCUMENT_CONFIGURATION_ANSWER_NOT_DERIVED`) a value that differs or a field it read no complete value
+for, and writes a `# Derived:` comment naming the source instead of an `unconfirmed` entry:
+
+```toml
+[provenance]
+"cockpit.name" = "derived"
+"ports.bases" = "derived"
+"environment.compose_files" = "derived"
+```
 
 ### Walk through readiness
 
@@ -182,14 +200,22 @@ depends on what it finds:
   `mount = "none"`).
 - **A declared runtime** adds questions about the machine floor and posture the product needs.
 
-Proposals come only from exact sources: a Dockerfile's `EXPOSE`, `CMD` and `ENTRYPOINT`, a
+Each outstanding field lists its `proposals`, and `confirmedBy` says who settles it: `"agent"` when a
+`derived` proposal answers the whole field (today `cockpit.name`, `ports.bases` and
+`environment.compose_files`, when the files leave no gap), `"person"` otherwise. A source `init`
+could not read, or two that disagree, such as a host port with no default or a memory limit set twice
+with different values, leaves the field to the person. Proposals come only from exact sources: a Dockerfile's `EXPOSE`, `CMD` and `ENTRYPOINT`, a
 `package.json` `start`, `serve` or `dev` script, the `node` toolchain a lockfile names, each
 repository's `origin` remote (a URL carrying credentials is skipped, never shown), variable names
 (never values) in env templates such as `.env.example`, an existing Compose file, the `services:` of
 GitHub workflows, and test entry points such as a Makefile `test` target, a `package.json` test script
 or `go.mod`. A name that suggests a database or vendor endpoint, such as `DATABASE_URL`, becomes a
-`guards` question about its host. Sources `init` could not use are listed in
-`interview.inferenceSkipped`.
+`guards` question about its host. For the machine floor, `init` sums the memory and CPU limits of the
+services the Compose file starts by default (`deploy.resources.limits` or `mem_limit` and `cpus`,
+times their replicas), and where no limit records one it measures this machine's container runtime
+(`measured`, which refuses a smaller machine until someone lowers it). Free disk and the cold start
+time have no source and are never proposed. Sources `init` could not use, including a runtime it
+could not measure, are listed in `interview.inferenceSkipped`.
 
 ### Without a terminal
 
@@ -197,12 +223,15 @@ An agent or CI job has no terminal, so `--interactive` refuses with `INIT_TERMIN
 consent and answers as arguments instead; there is no blanket `--yes`.
 
 1. Run the `--json` preview. It returns the `previewSha256` and, under `interview.outstanding`, every
-   field the interview will still ask, in order, each with a `why` and the values `init` could propose.
+   field the interview will still ask, in order, each with a `why`, its `proposals` and `confirmedBy`.
 2. Write the answers as TOML keyed by field, and show them to the human with the digest.
 3. Rerun with `--accept-preview <previewSha256>` and `--answers <file>`. The run stops at the first
    unanswered field, or at `configuration.defaults`, where `result.question.document` is the review
-   draft (an array of lines) and `result.question.expectedSha256` covers its values. The human reads
-   the draft before accepting that digest.
+   draft (an array of lines). Its provenance comments split the surfaced defaults in two: schema
+   defaults and the cockpit's own layout, which the agent accepts, and the security boundaries
+   (protected branches, guard allow and deny lists, approved MCP servers, resettable volumes,
+   generated host paths), which a person confirms. `result.question.expectedSha256` covers only the
+   second group, and the human reads it before accepting that digest.
 4. Rerun with `--accept-defaults <expectedSha256>` as well. A digest that is not the pending one is
    refused (`INIT_PREVIEW_NOT_ACCEPTED`, `INIT_DEFAULTS_NOT_ACCEPTED`).
 
@@ -243,11 +272,11 @@ vendor_endpoint_hosts = []
 | `environment.install_policies` | the build and test commands per toolchain and lockfile; `[]` for none |
 | `environment.test_data` | exactly the boolean keys `seeded_data` and `signed_in_users`; `false` states it is not needed |
 | `environment.compose_files` | the Compose files that run the product, relative to the cockpit root |
-| `environment.machine` | the runtime floor: `runtime_memory_mb`, `runtime_cpus`, `free_disk_mb`, `cold_start_seconds`; never proposed |
+| `environment.machine` | the runtime floor: `runtime_memory_mb`, `runtime_cpus`, `free_disk_mb`, `cold_start_seconds`; memory and CPUs are proposed, free disk and cold start never |
 | `environment.posture` | `addressing`, `authentication` and `posture_requirements` ([Declare environment postures](environment.md#declare-environment-postures)) |
 | `testing` | the product's `[testing]` stages and gates; `"none"` records that it has no tests yet, so no work can be graded PASS and `doctor` warns (`TESTING_GATE_UNDECLARED`) |
 | `guards` | `hosted_db_hosts` and `vendor_endpoint_hosts` of every non-local environment; `[]` for both records that none exists |
-| `provenance` | optional; `"human"` (the default) or `"agent-default"` per field |
+| `provenance` | optional; `"human"` (the default), `"agent-default"` or `"derived"` per field |
 
 A key that names no field is refused. Recorded answers are kept, so the same file can be passed on every
 run; a different value for a recorded field is refused (`INIT_ANSWER_CONFLICT`) before anything is

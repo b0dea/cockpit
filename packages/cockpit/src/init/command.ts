@@ -9,6 +9,7 @@ import {
     type InitApplicationOutcome,
 } from '../environment/init-application.js'
 import { refusalOutcome as refusal } from '../refusal.js'
+import { canonicalJson } from './draft.js'
 
 export interface InitCommandInput {
     readonly root: string
@@ -62,14 +63,16 @@ const ANSWER_FIELDS = ['cockpit.root', 'cockpit.name', 'sibling', 'estate.runnab
     'environment.machine', 'environment.posture', 'testing', 'guards'] as const
 
 /**
- * The answers file's optional [provenance] table says who chose an answer: "human" (the default) or
- * "agent-default" when the setup agent picked it because the person let it choose. Without it, every
- * value an agent invented was written into cockpit.toml as something the operator stated.
+ * The answers file's optional [provenance] table says who chose an answer: "human" (the default),
+ * "agent-default" when the setup agent picked it because the person let it choose, or "derived" when
+ * the setup agent accepts the value init read from exact sources. Without it, every value an agent
+ * invented was written into cockpit.toml as something the operator stated. A derived field needs no
+ * value in the file: init answers it with what it read, and the document owner checks it either way.
  */
 const PROVENANCE_TABLE = 'provenance'
-const PROVENANCE_VALUES: Readonly<Record<string, AnswerProvenance>> = { human: 'operator-confirmed', 'agent-default': 'agent-default' }
-// cockpit never proposes these, and the docs say they come from a person; an answers file that does
-// not attribute one is recorded as unattributed rather than as the person's.
+const PROVENANCE_VALUES: Readonly<Record<string, AnswerProvenance>> = { human: 'operator-confirmed', 'agent-default': 'agent-default', derived: 'derived' }
+// cockpit proposes at most part of the machine floor, since free disk and the cold start time have no
+// source; an answers file that does not attribute one is recorded as unattributed rather than as the person's.
 const UNATTRIBUTED_UNLESS_MARKED: readonly string[] = ['environment.machine']
 
 const isTable = (value: unknown): value is Record<string, unknown> =>
@@ -98,7 +101,7 @@ function answerProvenance(answers: Readonly<Record<string, unknown>>, answered: 
     const marks = new Map<string, AnswerProvenance>()
     const table = answers[PROVENANCE_TABLE]
     if (table === undefined) return { marks }
-    if (!isTable(table)) return { refusal: refusal('INIT_ANSWER_INVALID', `${PROVENANCE_TABLE} must be a table of answer field = "human" or "agent-default"`) }
+    if (!isTable(table)) return { refusal: refusal('INIT_ANSWER_INVALID', `${PROVENANCE_TABLE} must be a table of answer field = "human", "agent-default" or "derived"`) }
     const problems: string[] = []
     const walk = (current: Record<string, unknown>, prefix: string) => {
         for (const [key, value] of Object.entries(current)) {
@@ -107,8 +110,8 @@ function answerProvenance(answers: Readonly<Record<string, unknown>>, answered: 
             if (!(ANSWER_FIELDS as readonly string[]).includes(path) || path === 'cockpit.root') {
                 problems.push(`provenance names no recorded interview answer: ${path}`)
             } else if (typeof value !== 'string' || PROVENANCE_VALUES[value] === undefined) {
-                problems.push(`provenance.${path} must be "human" or "agent-default"`)
-            } else if (!answered.has(path)) {
+                problems.push(`provenance.${path} must be "human", "agent-default" or "derived"`)
+            } else if (!answered.has(path) && value !== 'derived') {
                 problems.push(`provenance names ${path}, which the answers file does not answer`)
             } else marks.set(path, PROVENANCE_VALUES[value]!)
         }
@@ -134,11 +137,25 @@ function noteInterview(asked: Set<string>, outcome: InitApplicationOutcome): voi
 
 type UnattendedAnswer = { kind: 'answer'; bytes: string } | { kind: 'missing' } | { kind: 'refusal'; outcome: InitApplicationOutcome }
 
+/**
+ * The value init read for a field from exact sources, as the pending run proposed it; "answered"
+ * when an earlier run already recorded the field, whose recorded answer stays in force.
+ */
+function derivedProposal(field: string, pending: InitApplicationOutcome): { value: unknown } | 'answered' | undefined {
+    const interview = pending.result?.interview
+    if (interview?.answered.includes(field)) return 'answered'
+    const proposal = interview?.outstanding.find(row => row.field === field)?.proposals
+        .find(row => row.target === field && row.provenance.kind === 'derived')
+    return proposal && { value: proposal.value }
+}
+
 function unattendedAnswer(
     field: string,
     expectedSha256: string | undefined,
     supplied: ReadonlyMap<string, unknown>,
     unattended: UnattendedInit,
+    marks: ReadonlyMap<string, AnswerProvenance>,
+    pending: InitApplicationOutcome,
 ): UnattendedAnswer {
     if (field === 'configuration.defaults') {
         if (unattended.defaultsSha256 === undefined) return { kind: 'missing' }
@@ -146,7 +163,14 @@ function unattendedAnswer(
             '--accept-defaults does not equal the digest of the surfaced defaults; rerun without it to read the current digest') }
         return { kind: 'answer', bytes: JSON.stringify({ confirmed: true, sha256: unattended.defaultsSha256 }) }
     }
-    const value = supplied.get(field)
+    let value = supplied.get(field)
+    if (value === undefined && marks.get(field) === 'derived') {
+        const derived = derivedProposal(field, pending)
+        if (derived === 'answered') return { kind: 'missing' }
+        if (derived === undefined) return { kind: 'refusal', outcome: refusal('INIT_ANSWER_INVALID',
+            `provenance.${field} is "derived", but init read no complete value for ${field} from an exact source; answer it in the answers file and mark it "human" once a person states it, or "agent-default" when you chose it`) }
+        value = derived.value
+    }
     if (value === undefined) return { kind: 'missing' }
     try { return { kind: 'answer', bytes: JSON.stringify(value) } }
     catch (error) {
@@ -154,10 +178,6 @@ function unattendedAnswer(
             `the answer for ${field} cannot be written as JSON (${error instanceof Error ? error.message : 'unknown error'})`) }
     }
 }
-
-const canonicalJson = (value: unknown): string => Array.isArray(value) ? `[${value.map(canonicalJson).join(',')}]`
-    : isTable(value) ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`
-        : JSON.stringify(value)
 
 /**
  * An answer an earlier run recorded stays in force, so a different value in the file must not be
@@ -179,7 +199,7 @@ function recordedAnswerConflict(
     for (const [index, field] of answered.entries()) {
         // The defaults are accepted by digest, not by the answers file, and are bound to the draft they confirmed.
         if (field === 'configuration.defaults') continue
-        const now = unattendedAnswer(field, undefined, supplied, unattended)
+        const now = unattendedAnswer(field, undefined, supplied, unattended, marks, preview)
         if (now.kind === 'refusal') return now.outcome
         if (now.kind !== 'answer' || recorded[index] === undefined) continue
         let same = false
@@ -317,7 +337,7 @@ async function drive(
         // A person typing at the terminal states their own answer.
         let answerProvenanceValue: AnswerProvenance = 'operator-confirmed'
         if (unattended && supplied) {
-            const resolved = unattendedAnswer(question.field, question.expectedSha256, supplied.fields, unattended)
+            const resolved = unattendedAnswer(question.field, question.expectedSha256, supplied.fields, unattended, marks, outcome)
             if (resolved.kind === 'refusal') return resolved.outcome
             // An unanswered field is not a failure: the pending result lists what is still outstanding.
             if (resolved.kind === 'missing') return outcome

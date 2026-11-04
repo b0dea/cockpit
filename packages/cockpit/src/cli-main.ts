@@ -50,7 +50,7 @@ import { runServiceExec, runServicePs, runServiceRestart } from './environment/a
 import { executeForegroundProcess, executePlan, executeProbe, foregroundTerminal } from './environment-exec/execute.js'
 import { createDestructiveCommandAdapters, selectDestructiveDaemon } from './environment/destructive-composition.js'
 import { createHealthCommandAdapters } from './environment/health-composition.js'
-import { inspectInitReadiness } from './environment/readiness-composition.js'
+import { inspectInitReadiness, measureInitMachine } from './environment/readiness-composition.js'
 import { createLifecycleCommandAdapters } from './environment/lifecycle-composition.js'
 import { isProcessStart, observeProcessStart, processHost, type HolderProcess } from './environment/claims.js'
 import { createReadCommandAdapters } from './environment/read-composition.js'
@@ -633,6 +633,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             infer: deriveInferredFacts,
             composeFindings,
             inspectReadiness: input => inspectInitReadiness(input, { env, timeoutMs: RUNTIME_STEP_TIMEOUT_MS, execute: executeProbe }),
+            measureMachine: input => measureInitMachine(input, { env, timeoutMs: RUNTIME_STEP_TIMEOUT_MS, execute: executeProbe }),
             observeDestination: async ({ path, byteLimit }) => {
                 const node = await nodeAuthority()
                 const read = node ? await readAnchoredBatches(dirname(path), [

@@ -5,13 +5,17 @@ import type { DocumentedSibling, Gap } from '../registry-resolve/registry.js'
 
 /**
  * Who gave an interview answer: a person, the setup agent choosing a default it was allowed to
- * choose, or no one said (an answers file that does not attribute a value cockpit never proposes).
- * Only a person's answer is written as stated; the others are listed under `unconfirmed`.
+ * choose, no one said (an answers file that does not attribute a value cockpit never proposes), or
+ * the setup agent accepting the value init read from exact sources, which init checks against what
+ * it reads. A person's answer is written as stated and a derived one with its source; the others
+ * are listed under `unconfirmed`.
  */
-export const ANSWER_PROVENANCES = ['operator-confirmed', 'agent-default', 'unattributed'] as const
+export const ANSWER_PROVENANCES = ['operator-confirmed', 'agent-default', 'unattributed', 'derived'] as const
 export type AnswerProvenance = typeof ANSWER_PROVENANCES[number]
 export type UnconfirmableAnswer = typeof UNCONFIRMABLE_ANSWERS[number]
-export type UnconfirmedAnswer = Readonly<{ field: UnconfirmableAnswer; provenance: Exclude<AnswerProvenance, 'operator-confirmed'> }>
+export type UnconfirmedAnswer = Readonly<{ field: UnconfirmableAnswer; provenance: 'agent-default' | 'unattributed' }>
+/** An answer accepted as read: the field and the file, as file:line where one line holds it, it was read from. */
+export type DerivedAnswer = Readonly<{ field: UnconfirmableAnswer; source: string }>
 
 export function unconfirmedReason(row: UnconfirmedAnswer): string {
     return row.provenance === 'agent-default'
@@ -24,6 +28,10 @@ export const UNCONFIRMED_FIX = 'confirm the value with whoever owns the product 
 function renderUnconfirmed(rows: readonly UnconfirmedAnswer[] = []): string {
     if (rows.length === 0) return ''
     return `${rows.map(row => `# Unconfirmed: ${unconfirmedReason(row)}.\n`).join('')}# To confirm: ${UNCONFIRMED_FIX}; until then doctor warns.\n`
+}
+
+function renderDerived(rows: readonly DerivedAnswer[]): string {
+    return rows.map(row => `# Derived: ${row.field} was read from ${row.source} and accepted by the setup agent; bring-up proves it.\n`).join('')
 }
 
 /** Every decision with its default, commented out: flip one to "person" to take that decision yourself. */
@@ -45,6 +53,20 @@ export interface Attribution {
     because: string
 }
 
+// A wrong value in one of these widens what an agent may do or delete, so a person confirms it.
+const PERSON_CONFIRMED_TARGETS: ReadonlySet<string> = new Set(['guards.protected_branches', 'guards.allow', 'guards.deny',
+    'mcp.approved', 'environment.resettable_volumes', 'environment.generated_host_paths'])
+
+/**
+ * Who confirms a surfaced value: the setup agent for a schema default or the cockpit's own layout,
+ * which bring-up proves, and a person for a security boundary or a value a registry dialect left
+ * to a guess.
+ */
+export function confirmedBy(attribution: Attribution): 'agent' | 'person' {
+    if (PERSON_CONFIRMED_TARGETS.has(attribution.target)) return 'person'
+    return attribution.from === 'default' || attribution.target === 'cockpit.siblings_root' ? 'agent' : 'person'
+}
+
 export interface DocumentModel {
     name?: string
     defaults: ReturnType<typeof configurationDefaults>
@@ -59,10 +81,11 @@ export interface DocumentModel {
 function renderAttributions(attributions: readonly Attribution[]): string {
     if (attributions.length === 0) return ''
     const lines = ['# Provenance — every unread value names its source and reason.']
-    for (const attribution of attributions) {
-        lines.push(
-            `# [${attribution.from}] ${attribution.target} = ${JSON.stringify(attribution.value)}: ${attribution.because}`,
-        )
+    for (const [by, heading] of [['agent', '# The setup agent accepts these: schema defaults and the cockpit\'s own layout, which bring-up proves.'],
+        ['person', '# A person confirms these, and the defaults digest covers only them: each bounds what an agent may do.']] as const) {
+        const rows = attributions.filter(row => confirmedBy(row) === by)
+        if (rows.length === 0) continue
+        lines.push(heading, ...rows.map(row => `# [${row.from}] ${row.target} = ${JSON.stringify(row.value)}: ${row.because}`))
     }
     return `${lines.join('\n')}\n`
 }
@@ -114,6 +137,7 @@ export function renderIncompleteDocument(
 /** Decisions are comments: the schema has no field for them, and the reader of the file needs them. */
 export function renderCompleteDocument(
     config: CockpitConfig, schemaDirective: string, decisions: readonly string[] = [], unconfirmed: readonly UnconfirmedAnswer[] = [],
+    derived: readonly DerivedAnswer[] = [],
 ): string {
-    return `#:schema ${schemaDirective}\n${decisions.map(decision => `# Decision: ${decision}\n`).join('')}${renderUnconfirmed(unconfirmed)}${emitToml(config)}${renderDecisionDefaults()}`
+    return `#:schema ${schemaDirective}\n${decisions.map(decision => `# Decision: ${decision}\n`).join('')}${renderDerived(derived)}${renderUnconfirmed(unconfirmed)}${emitToml(config)}${renderDecisionDefaults()}`
 }

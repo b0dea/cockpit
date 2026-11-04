@@ -7,7 +7,7 @@ import {
     isAnswerProvenance,
     plannedGreenfieldQuestions,
     type AnswerProvenance, type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult,
-    type UnconfirmedAnswer,
+    type DerivedAnswer, type UnconfirmedAnswer,
     type EstateObservationInput,
 } from '../init/draft.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from '../surfaces/contract.js'
@@ -150,14 +150,16 @@ export interface InitApplicationAdapters {
     readonly classifyEstate?: (input: EstateObservationInput) => Promise<EstateClassificationOutcome>
     /** Says whether root is a product repository, which makes init ask where the cockpit lives. */
     readonly observeRoot?: (input: Readonly<{ root: string }>) => Promise<'product-repository' | 'cockpit-root'>
-    /** Proposes answers from files the repositories already carry; every value comes back as inferred. */
+    /** Proposes answers from files the repositories already carry, each derived (exact and complete) or inferred. */
     readonly infer?: (input: Readonly<{ root: string; configurationRoot?: string;
         repositories: readonly Readonly<{ slug: string; path: string }>[] }>)
         => Promise<Readonly<{
             facts: readonly Readonly<{ fields: readonly string[]; target: string; value: unknown;
-                provenance: Readonly<{ kind: 'inferred'; source: string; reason: string }> }>[]
+                provenance: Readonly<{ kind: 'derived' | 'inferred'; source: string; reason: string }> }>[]
             skipped: readonly Readonly<{ source: string; reason: string }>[]
         }>>
+    /** What the container runtime on this machine offers, read when the interview will ask for the machine floor. */
+    readonly measureMachine?: (input: Readonly<{ root: string }>) => Promise<MachineMeasurement>
     /** What check would report about the Compose files a drafted cockpit.toml declares; init never edits them, so it shows the edit. */
     readonly composeFindings?: (input: Readonly<{ root: string; draft: string }>) => Promise<readonly Diagnostic[]>
     /**
@@ -195,17 +197,31 @@ export interface GreenfieldResult extends EstateClassificationResult {
     }>[]
 }
 
-/** One proposed value for an unanswered field. It stays a proposal until the operator confirms it in an answer. */
-export interface InferredItem {
+export type MachineMeasurement =
+    | Readonly<{ kind: 'complete'; memoryMb: number; cpus: number; observedAt: string }>
+    | Readonly<{ kind: 'unavailable'; reason: string }>
+
+/**
+ * One proposed value for an unanswered field, and how it was established: "derived" is the complete
+ * answer read exactly from the named file and line, "measured" was observed on this machine, and
+ * "inferred" is a hint or partial value that needs judgement.
+ */
+export interface Proposal {
     readonly target: string
     readonly value: unknown
-    readonly provenance: Readonly<{ kind: 'inferred'; source: string; reason: string }>
+    readonly provenance: Readonly<{ kind: 'derived' | 'measured' | 'inferred'; source: string; reason: string }>
 }
 
 export interface OutstandingField {
     readonly field: string
     readonly why: string
-    readonly inferred: readonly InferredItem[]
+    /**
+     * "agent" when a derived proposal answers the whole field: the setup agent may accept it with
+     * provenance "derived", and bring-up proves it. Everything else needs a person: security
+     * boundaries, and values that are inferred, measured or chosen.
+     */
+    readonly confirmedBy: 'agent' | 'person'
+    readonly proposals: readonly Proposal[]
 }
 
 /** Every field the interview will still ask, in order, so an unattended caller can answer them in one pass. */
@@ -232,6 +248,8 @@ export interface InitResult {
     readonly resetAnswer?: Readonly<{ field: string; revision: number; invalidatedFields: readonly string[]; previewSha256: string }>
     /** Answers in cockpit.toml no person stated; each stays listed there, and doctor warns, until someone confirms it. */
     readonly unconfirmed?: readonly UnconfirmedAnswer[]
+    /** Answers the setup agent accepted as read from exact sources, each with the file and line it came from. */
+    readonly derived?: readonly DerivedAnswer[]
     /** This run's findings grouped under the prerequisites cockpit depends on: what to do next. */
     readonly readiness?: ReadinessReport
 }
@@ -283,7 +301,8 @@ function result(
     projection: BootstrapProjection,
     ownerOutcome?: OwnerOutcome,
     greenfield?: Readonly<{ question?: GreenfieldQuestion; estate?: GreenfieldResult; interview?: InterviewPlan;
-        cockpitRoot?: CockpitRootQuestion; resetAnswer?: InitResult['resetAnswer']; unconfirmed?: InitResult['unconfirmed'] }>,
+        cockpitRoot?: CockpitRootQuestion; resetAnswer?: InitResult['resetAnswer']; unconfirmed?: InitResult['unconfirmed'];
+        derived?: InitResult['derived'] }>,
 ): InitResult {
     return { stage, root: projection.root, target: projection.target,
         previewSha256: projection.previewSha256, files: [...projection.files],
@@ -293,7 +312,8 @@ function result(
         ...(greenfield?.interview === undefined ? {} : { interview: greenfield.interview }),
         ...(greenfield?.cockpitRoot === undefined ? {} : { cockpitRoot: greenfield.cockpitRoot }),
         ...(greenfield?.resetAnswer === undefined ? {} : { resetAnswer: greenfield.resetAnswer }),
-        ...(greenfield?.unconfirmed === undefined ? {} : { unconfirmed: greenfield.unconfirmed }) }
+        ...(greenfield?.unconfirmed === undefined ? {} : { unconfirmed: greenfield.unconfirmed }),
+        ...(greenfield?.derived === undefined ? {} : { derived: greenfield.derived }) }
 }
 
 // The repository's directory name becomes the first sibling's slug and the cockpit's name stem.
@@ -339,25 +359,52 @@ async function interviewPlan(
     answered: number,
 ): Promise<InterviewPlan> {
     const planned = plannedGreenfieldQuestions({ root: input.root, classification: classification.classification, gaps: classification.gaps })
+    const outstanding = planned.slice(answered)
     const observedRoot = estateInput(input).root
     const inference = await adapters.infer?.({ root: observedRoot, configurationRoot: input.root,
         repositories: classification.runnable.map(row => ({ slug: row.slug, path: relative(observedRoot, resolve(observedRoot, row.path)) || '.' })) })
+    const skipped = [...inference?.skipped ?? []]
+    // Each proposal is listed under every field it helps answer.
+    const proposals: (Proposal & Readonly<{ field: string }>)[] = [...nameProposal(input.root).map(row => ({ ...row, field: 'cockpit.name' })),
+        ...(inference?.facts ?? []).flatMap(({ fields, ...row }) => fields.map(field => ({ ...row, field })))]
+    if (adapters.measureMachine && outstanding.some(row => row.field === 'environment.machine')) {
+        const measured = await adapters.measureMachine({ root: input.root })
+        if (measured.kind === 'unavailable') skipped.push({ source: 'container runtime', reason: `was not measured (${measured.reason}), so no machine floor is proposed from it` })
+        else proposals.push(...machineProposals(measured, proposals).map(row => ({ ...row, field: 'environment.machine' })))
+    }
     return {
         answered: planned.slice(0, answered).map(row => row.field),
-        outstanding: planned.slice(answered).map(({ field, why }) => ({ field, why,
-            inferred: [...field === 'cockpit.name' ? nameProposal(input.root) : [],
-                ...(inference?.facts ?? []).filter(fact => fact.fields.includes(field))
-                    .map(({ target, value, provenance }) => ({ target, value, provenance }))] })),
-        inferenceSkipped: inference?.skipped ?? [],
+        outstanding: outstanding.map(({ field, why }) => {
+            const own = proposals.filter(row => row.field === field).map(({ target, value, provenance }) => ({ target, value, provenance }))
+            return { field, why, confirmedBy: own.some(row => row.target === field && row.provenance.kind === 'derived') ? 'agent' as const : 'person' as const,
+                proposals: own }
+        }),
+        inferenceSkipped: skipped,
         ...(input.cockpitRoot === undefined ? {} : { cockpitRoot: input.cockpitRoot.kind }),
     }
 }
 
+/**
+ * This machine's runtime memory and CPUs, for each that no Compose limit records. It is what the
+ * machine offers, not what the product needs, so the reason says so; free disk is never proposed
+ * from a measurement, because what is free now shrinks with every image pulled and would make
+ * preflight refuse the next start.
+ */
+function machineProposals(measured: Extract<MachineMeasurement, { kind: 'complete' }>, proposals: readonly Proposal[]): Proposal[] {
+    const date = measured.observedAt.slice(0, 10)
+    return ([['runtime_memory_mb', measured.memoryMb, `${measured.memoryMb} MB of memory`],
+        ['runtime_cpus', measured.cpus, `${measured.cpus} CPUs`]] as const)
+        .filter(([key]) => !proposals.some(row => row.target === `environment.machine.${key}`))
+        .map(([key, value, offered]) => ({ target: `environment.machine.${key}`, value,
+            provenance: { kind: 'measured' as const, source: `container runtime, ${date}`,
+                reason: `the container runtime on this machine offered ${offered} on ${date}, and no Compose limit records what the product needs; a floor at this machine's capacity refuses a smaller machine until a person lowers it` } }))
+}
+
 // The cockpit root's directory name is the proposed cockpit name when it is a valid one.
-function nameProposal(root: string): readonly InferredItem[] {
+function nameProposal(root: string): readonly Proposal[] {
     const name = basename(root)
     return /^[a-z0-9][a-z0-9-]*$/.test(name) ? [{ target: 'cockpit.name', value: name,
-        provenance: { kind: 'inferred' as const, source: root, reason: 'the cockpit root directory name' } }] : []
+        provenance: { kind: 'derived' as const, source: root, reason: 'the cockpit root directory name' } }] : []
 }
 
 function commandDigest(input: InitApplicationInput): string {
@@ -972,8 +1019,8 @@ function resetUnavailableFix(input: InitApplicationInput, current: BootstrapStat
     }
 }
 
-/** The review items a finished interview leaves: answers the setup agent chose or no one attributed. */
-function unconfirmedOf(document: DocumentOutcome): { unconfirmed?: InitResult['unconfirmed'] } {
-    const rows = document.kind === 'complete' ? document.result.unconfirmed : undefined
-    return rows === undefined || rows.length === 0 ? {} : { unconfirmed: rows }
+/** How a finished interview's answers were established, beyond a person's word: chosen or unattributed, and derived. */
+function unconfirmedOf(document: DocumentOutcome): { unconfirmed?: InitResult['unconfirmed']; derived?: InitResult['derived'] } {
+    const { unconfirmed, derived } = document.kind === 'complete' ? document.result : {}
+    return { ...(unconfirmed?.length ? { unconfirmed } : {}), ...(derived?.length ? { derived } : {}) }
 }
