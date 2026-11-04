@@ -769,7 +769,7 @@
               ]
             },
             "amend": {
-              "description": "Who accepts a changed contract. Default agent. Removing or rewriting an accepted criterion always needs a person or ci.",
+              "description": "Who accepts a changed contract. Default agent. Removing an accepted criterion or gate always needs a person or ci; an agent's rewrite of a criterion, scope, non-goal or objective is judged at the next grade, and needs a person under checks grading.",
               "type": "string",
               "enum": [
                 "agent",
@@ -796,7 +796,7 @@
               ]
             },
             "acknowledge": {
-              "description": "Who acknowledges that an order weakened tests, which grading otherwise fails. Default person.",
+              "description": "Who acknowledges that an order weakened tests, which checks grading otherwise fails; under independent and self grading the acknowledgement is context for the verdict. Default agent.",
               "type": "string",
               "enum": [
                 "agent",
