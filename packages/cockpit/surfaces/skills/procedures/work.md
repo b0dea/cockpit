@@ -48,10 +48,11 @@ not the thinking: reuse the planning skills the harness already has.
    security emphasis when the change touches authentication, secrets, guards or reach to non-local hosts.
    Fix their blocking findings and rerun `work check`.
 6. **Grade** with `./node_modules/.bin/cockpit work grade --config cockpit.toml --work-order WO-001 --json`. Under the
-   default `independent` grading an evaluator in another agent tool grades each criterion; never grade
-   your own work. If it says no evaluator could run, report that cause to the person instead of
-   retrying. Under `checks`, the checks decide. Under `self`, pass `--verdict met` or `unmet` and a
-   `--note` saying what you checked. Anything short of passing lists each criterion's verdict and note
+   default `independent` grading a fresh read-only evaluator run grades each criterion, in another listed
+   agent tool when there is one; never grade your own work. If it says no evaluator could run, report
+   that cause to the person instead of retrying. Under `checks`, the checks decide. Under `self`, pass
+   `--verdict met` or `unmet` and a `--note` saying what you checked; the checks still run and a failed
+   one fails the grade. Anything short of passing lists each criterion's verdict and note
    under `result.criteria`, failed checks under `result.checks` and changes outside scope under
    `result.outOfScope`: go back to step 3 for each. When the person names a grader ("use Codex to grade",
    "use Claude for everything"), pass `--evaluator <tool>` (`codexcli`, `claudecode` or `opencode`) on every grade

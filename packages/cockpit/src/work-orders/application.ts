@@ -264,27 +264,25 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
             return refusal(operation, policy.grading === 'self' ? '[work] grading = "self": pass --verdict met|unmet and --note <what you checked>'
                 : `--verdict and --note apply only under [work] grading = "self"; this cockpit grades with ${policy.grading}`)
         }
-        let checks: readonly CheckResult[] = []
         let verdicts: readonly Verdict[]
-        let outOfScope: readonly string[] = []
         let evaluator: NonNullable<WorkRecord['grade']>['evaluator']
+        const unchecked = order.criteria.filter(criterion => !criterion.check).map(criterion => criterion.id)
+        if (policy.grading === 'checks' && unchecked.length) return refusal(operation, `[work] grading = "checks" closes an order only when cockpit ran a check for every criterion; ${unchecked.join(', ')} declare none`)
+        // Checks and scope bind in every mode, so an agent's own `met` covers neither a failed check nor a
+        // change outside scope. Changes are read after the checks, so files a check writes count too.
+        const checks = await runChecks(order)
+        const changes = await composition.changes(record.accepted.base)
+        const outOfScope = changes.map(change => change.path).filter(path => !scopeMatches(order.scope, path))
         if (policy.grading === 'self') {
             verdicts = order.criteria.map(criterion => ({ id: criterion.id, verdict: request.verdict!, note: request.note! }))
+        } else if (policy.grading === 'checks') {
+            verdicts = order.criteria.map(criterion => { const result = checks.find(row => row.criterion === criterion.id)!
+                return { id: criterion.id, verdict: result.passed ? 'met' : 'unmet', note: `cockpit ran the check: ${result.outcome}` } })
         } else {
-            const unchecked = order.criteria.filter(criterion => !criterion.check).map(criterion => criterion.id)
-            if (policy.grading === 'checks' && unchecked.length) return refusal(operation, `[work] grading = "checks" closes an order only when cockpit ran a check for every criterion; ${unchecked.join(', ')} declare none`)
-            checks = await runChecks(order)
-            const changes = await composition.changes(record.accepted.base)
-            outOfScope = changes.map(change => change.path).filter(path => !scopeMatches(order.scope, path))
-            if (policy.grading === 'checks') {
-                verdicts = order.criteria.map(criterion => { const result = checks.find(row => row.criterion === criterion.id)!
-                    return { id: criterion.id, verdict: result.passed ? 'met' : 'unmet', note: `cockpit ran the check: ${result.outcome}` } })
-            } else {
-                const graded = await composition.evaluate({ objective: order.objective, criteria: order.criteria, nonGoals: order.non_goals, scope: order.scope, checks, changes, outOfScope })
-                if ('refusal' in graded) return refusal(operation, `${graded.refusal.code}: ${graded.refusal.message}; ${graded.refusal.fix}`)
-                verdicts = graded.criteria
-                evaluator = { tool: graded.evaluator.tool, fallbacks: graded.evaluator.fallbacks.map(row => ({ ...row })) }
-            }
+            const graded = await composition.evaluate({ objective: order.objective, criteria: order.criteria, nonGoals: order.non_goals, scope: order.scope, checks, changes, outOfScope })
+            if ('refusal' in graded) return refusal(operation, `${graded.refusal.code}: ${graded.refusal.message}; ${graded.refusal.fix}`)
+            verdicts = graded.criteria
+            evaluator = { tool: graded.evaluator.tool, fallbacks: graded.evaluator.fallbacks.map(row => ({ ...row })) }
         }
         const passed = verdicts.every(row => row.verdict === 'met') && checks.every(row => row.passed) && outOfScope.length === 0
         const grade: NonNullable<WorkRecord['grade']> = { at: now(), digest: record.accepted.digest, mode: policy.grading, passed,

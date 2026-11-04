@@ -146,7 +146,7 @@ which way each order closed:
 | --- | --- | --- |
 | `independent` (default) | runs the checks, then an evaluator grades each criterion against them and the change | `graded` |
 | `checks` | runs the checks; every criterion needs one, and the grade passes only when cockpit ran each and all passed | `checks-passed` |
-| `self` | records the agent's `--verdict met` or `unmet` with a `--note` saying what it checked | `self-reported` |
+| `self` | runs the checks, then records the agent's `--verdict met` or `unmet` with a `--note` saying what it checked; a failed check or a change outside `scope` still fails it | `self-reported` |
 
 The signoff gate applies on top in every mode.
 

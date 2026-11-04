@@ -117,11 +117,18 @@ describe('work-order lifecycle', () => {
         expect((await work(root, ['work', 'verify'])).status).toBe(0)
     }, 120_000)
 
-    it('records a self-reported closure only with the agent\'s verdict and note', async () => {
+    it('records a self-reported closure only with the agent\'s verdict and note, and still fails a failed check or a change outside scope', async () => {
         const root = await cockpit('[work]\ngrading = "self"')
-        writeFileSync(join(root, 'workorders/WO-2.md'), order('WO-2', '  - id: AC1\n    text: The change reads well.'))
+        writeFileSync(join(root, 'workorders/WO-2.md'), order('WO-2', '  - id: AC1\n    text: The change reads well.\n  - id: AC2\n    text: add(2, 3) returns 5.\n    check: [node, test/add.test.mjs]'))
         expect((await work(root, ['work', 'accept', '--work-order', 'WO-2'])).status).toBe(0)
         expect((await work(root, ['work', 'grade', '--work-order', 'WO-2'])).diagnostics[0]?.message).toMatch(/pass --verdict met\|unmet and --note/)
+        // A check cockpit can run and the scope are facts, not the agent's judgement: its own `met` covers neither.
+        writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => a - b\n')
+        writeFileSync(join(root, 'README.md'), 'outside the scope\n')
+        expect(await work(root, ['work', 'grade', '--work-order', 'WO-2', '--verdict', 'met', '--note', 'read the diff'])).toMatchObject({ status: 2,
+            diagnostics: [{ code: 'WORK_GRADE_UNSATISFIED' }], result: { state: 'accepted', mode: 'self', checks: [{ criterion: 'AC2', passed: false }], outOfScope: ['README.md'] } })
+        writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => a + b\n')
+        rmSync(join(root, 'README.md'))
         expect((await work(root, ['work', 'grade', '--work-order', 'WO-2', '--verdict', 'met', '--note', 'read the diff'])).result).toMatchObject({ state: 'graded', mode: 'self' })
         expect((await work(root, ['work', 'signoff', '--work-order', 'WO-2'])).result).toMatchObject({ closedAs: 'self-reported' })
     }, 120_000)
