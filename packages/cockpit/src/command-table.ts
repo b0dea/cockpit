@@ -134,6 +134,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     'reset-answer': 'Preview clearing one recorded init answer field',
     remote: 'Repository remote URL recorded for the sibling',
     role: 'Declared browser role',
+    'fail-on-findings': 'Exit 2 when a route has console errors, uncaught errors or failed requests, for a criterion that wants a clean route',
     route: 'Declared browser route to visit, by name or path; every declared route when omitted',
     'scaffold-compose': 'Write a starting compose.yml for the app in this directory, relative to the root, once; it refuses when a Compose file exists',
     select: 'Optional subset of the gate to run',
@@ -180,7 +181,7 @@ export type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; re
     // grammar admits the spelling; the evaluator judges that command as it judges a host command,
     // because the container mounts the checkouts and may hold their credentials.
     trailing?: 'container'
-    // Admitted only where cockpit.toml grants it: browser.request_preapproval, which the schema allows
+    // Admitted only where cockpit.toml grants it: browser preapproval, on by default for and allowed
     // only on isolated data that cannot reach production, or an [autonomy] field set to agent.
     requires?: OrdinaryGrant
 }>
@@ -553,7 +554,8 @@ const sources = [
     // person wrote down as safe for that.
     { name: 'browser drive', handler: 'browser-drive', stage: 'test-and-grade', summary: 'Drive the declared application browser surfaces', visibility: 'public',
         ordinary: ordinary('browser-drive', browserAdmission),
-        flags: { ...configured, role: str(value('identifier')), route: str(value('route')) } },
+        // Findings are evidence by default; this makes them fail the command, for a criterion that wants a clean route.
+        flags: { ...configured, role: str(value('identifier')), route: str(value('route')), 'fail-on-findings': bool(flag) } },
     { name: 'browser screenshot', handler: 'browser-screenshot', stage: 'test-and-grade', summary: 'Capture the declared application surfaces', visibility: 'public',
         ordinary: ordinary('browser-screenshot', browserAdmission),
         flags: { ...configured, role: str(value('identifier')), route: str(value('route')) } },

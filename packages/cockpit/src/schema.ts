@@ -531,6 +531,13 @@ const BrowserArtifactRoots = z.object({
     }
 })
 
+/** The data posture that lets browser tools run without prompts: isolated, not restored, not reaching production. */
+export const browserDataQualifies = (data: Readonly<{ mode: string; isolated: boolean; reaches_production: boolean }>): boolean =>
+    data.mode !== 'restored' && data.isolated && !data.reaches_production
+/** An explicit request_preapproval wins; otherwise preapproval follows the declared data posture. */
+export const browserPreapprovalRequested = (browser: Readonly<{ request_preapproval?: boolean | undefined; data: Parameters<typeof browserDataQualifies>[0] }>): boolean =>
+    browser.request_preapproval ?? browserDataQualifies(browser.data)
+
 export const Browser = z.object({
     engine: z.enum(['chromium', 'firefox', 'webkit']).default('chromium').describe('Browser engine to drive.'),
     network_exposure: z.string().min(1).max(512).regex(/^[a-z0-9.*:<>\[\],-]+$/).refine((value) => {
@@ -582,7 +589,7 @@ export const Browser = z.object({
         isolated: z.boolean().describe('True when the data is separate from anyone else\'s.'),
         reaches_production: z.boolean().describe('True when browser actions can affect production.'),
     }).strict().describe('Statement about the data the browser touches; cockpit cannot observe it.'),
-    request_preapproval: z.boolean().default(false).describe('Run browser tools without prompts; allowed only on isolated, non-production, non-restored data.'),
+    request_preapproval: z.boolean().optional().describe('Run browser tools without prompts; allowed only on isolated, non-production, non-restored data. Defaults to true when data qualifies and false otherwise.'),
     artifacts: BrowserArtifactRoots.describe('Generated host paths for browser output.'),
 }).strict().superRefine((browser, ctx) => {
     try {
@@ -621,7 +628,7 @@ export const Browser = z.object({
     if (paths.some((path) => !path.startsWith(`${browser.artifacts.auth}/`))) {
         ctx.addIssue({ code: 'custom', path: ['authentication', 'states'], message: 'browser authentication state must stay inside the auth artifact root' })
     }
-    if (browser.request_preapproval && (browser.data.mode === 'restored' || !browser.data.isolated || browser.data.reaches_production)) {
+    if (browser.request_preapproval && !browserDataQualifies(browser.data)) {
         ctx.addIssue({ code: 'custom', path: ['request_preapproval'], message: 'browser preapproval requires isolated empty or seeded data without production reach' })
     }
 })

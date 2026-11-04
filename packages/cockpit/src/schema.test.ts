@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { ENTRYPOINT_KINDS } from './entrypoint-kinds.js'
-import { Autonomy, Browser, Docs, EntrypointDerivative, Environment, InstallPolicy, Sibling, Testing, Work } from './schema.js'
+import { Autonomy, Browser, browserPreapprovalRequested, Docs, EntrypointDerivative, Environment, InstallPolicy, Sibling, Testing, Work } from './schema.js'
 import { CockpitConfig, CustomHarness, Guards, SurfaceDeclaration, SurfaceOverlay } from './schema.js'
 import { renderCockpitSchema } from './schema-json.js'
 import { compileDraft04Schema } from '../test-support/draft04-validator.js'
@@ -556,6 +556,17 @@ describe('work and browser declarations', () => {
         expect(Browser.safeParse({ ...browser, project, proxy: { ...browser.proxy, host_variable: 'BROWSER_PORT' } }).success).toBe(true)
         expect(Browser.safeParse({ ...browser, project: { ...browser.project, manifest: 'package.json' } }).success).toBe(false)
         expect(Browser.safeParse({ ...browser, project: { ...browser.project, manifest_sha256: 'd'.repeat(64) } }).success).toBe(false)
+    })
+
+    it('derives browser preapproval from the data posture unless request_preapproval says otherwise', () => {
+        const { request_preapproval: _declared, ...undeclared } = browser
+        const requested = (patch: object) => browserPreapprovalRequested(Browser.parse({ ...undeclared, ...patch }))
+        expect(requested({})).toBe(true)
+        expect(requested({ data: { ...browser.data, mode: 'empty' } })).toBe(true)
+        for (const data of [{ ...browser.data, mode: 'restored' }, { ...browser.data, isolated: false }, { ...browser.data, reaches_production: true }]) {
+            expect(requested({ data }), JSON.stringify(data)).toBe(false)
+        }
+        expect(requested({ request_preapproval: false })).toBe(false)
     })
 
     it('rejects unsafe browser posture, artifact and authentication declarations', () => {

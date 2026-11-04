@@ -295,6 +295,7 @@ function operationStep(client: BrowserProjectClient, runtime: BrowserRuntimeProj
         '--control-ports', JSON.stringify(controlPorts),
         '--url', operation.surface.url, '--origin', origin, '--timeout', String(remaining),
         ...(statePath ? ['--state-proof', statePath] : []),
+        ...(operation.kind === 'drive' && runtime.dataQualifies ? ['--messages'] : []),
         ...(operation.output && artifactIdentity ? ['--output', operation.output, '--output-name', basename(operation.output),
             '--artifact-root', client.artifactRoot, '--artifact-dev', String(artifactIdentity.dev), '--artifact-ino', String(artifactIdentity.ino),
             '--artifact-birthtime-ns', artifactIdentity.birthtimeNs] : [])] as [string, ...string[]]

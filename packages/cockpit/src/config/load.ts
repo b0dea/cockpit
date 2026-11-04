@@ -13,7 +13,7 @@ import {
     snapshotJson,
 } from '../environment/contract.js'
 import { effectivePolicy, readRecordedPolicy, type EffectivePolicy } from '../autonomy.js'
-import { CockpitConfig, EVALUATOR_COMMANDS, runtimeDeclarationSha256, type EvaluatorTool } from '../schema.js'
+import { browserPreapprovalRequested, CockpitConfig, EVALUATOR_COMMANDS, runtimeDeclarationSha256, type EvaluatorTool } from '../schema.js'
 import { formatShellCommand } from '../fix-catalogue.js'
 import { readBoundedFile, type BoundedRead } from '../bounded-read.js'
 
@@ -110,7 +110,7 @@ function projectBrowserConfig(declaredBrowser: NonNullable<CockpitConfig['browse
             isolated: declaredBrowser.data.isolated,
             reachesProduction: declaredBrowser.data.reaches_production,
         },
-        requestPreapproval: declaredBrowser.request_preapproval,
+        requestPreapproval: browserPreapprovalRequested(declaredBrowser),
         artifacts: { ...declaredBrowser.artifacts },
     }
 }
