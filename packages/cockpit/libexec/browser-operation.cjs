@@ -53,7 +53,12 @@ function collectDiagnostics(page, origin, withMessages) {
     }
     const keep = (kind, value) => { if (withMessages && messages.length < MAX_MESSAGES) { const text = excerpt(value); if (text) messages.push({ kind, text }) } }
     const add = entry => { if (entries.length < MAX_ENTRIES) entries.push(entry); else omitted += 1 }
-    const parse = value => { try { const parsed = new URL(value); return ['http:', 'https:'].includes(parsed.protocol) ? parsed : undefined } catch { return undefined } }
+    // `new URL` throws TypeError for an address it cannot parse; anything else is a real fault.
+    const parse = value => {
+        let parsed
+        try { parsed = new URL(value) } catch (error) { if (error instanceof TypeError) return undefined; throw error }
+        return ['http:', 'https:'].includes(parsed.protocol) ? parsed : undefined
+    }
     const pathOf = parsed => parsed.pathname.slice(0, MAX_PATH)
     page.on('console', message => {
         if (message.type() === 'warning') counts.consoleWarnings += 1

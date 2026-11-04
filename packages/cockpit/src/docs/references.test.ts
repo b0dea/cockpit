@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -88,5 +88,17 @@ describe('docs check references', () => {
                 'DOCS_REFERENCE_REMOVED api:NOTES.md:1 cites scripts/seed.sh, which the repository history removed',
             ] })
         } finally { rmSync(join(root, '.cockpit/local/sibling-checkouts')) }
+    })
+
+    it('redacts token-shaped text in the Git failure a diagnostic quotes', async () => {
+        // Git echoes a bad configuration value in its fatal line, and agents run this command without a grant.
+        const config = join(root, 'api/.git/config')
+        const original = readFileSync(config, 'utf8')
+        writeFileSync(config, original.replace('repositoryformatversion = 0', 'repositoryformatversion = token=abc123leak'))
+        try {
+            const { findings } = await check('\n[docs]\nliving = ["api:*.md"]\n')
+            expect(findings).toEqual([expect.stringMatching(/^EVIDENCE_UNAVAILABLE/)])
+            expect(findings.join('\n')).not.toContain('abc123leak')
+        } finally { writeFileSync(config, original) }
     })
 })

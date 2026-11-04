@@ -7,6 +7,7 @@ import { readBoundedFile } from '../bounded-read.js'
 import { loadCockpitConfig } from '../config/load.js'
 import { ENVIRONMENT_CODES, errorCause, type Diagnostic, type ExecutionStep } from '../environment/contract.js'
 import { gitRepositoryRefusal } from '../environment/git-observation.js'
+import { redactSensitiveMessage } from '../environment/sensitive.js'
 import { createGitRunner, loadServedSiblings, missingServedCheckout, type GitRunner } from '../environment/sibling-checkouts.js'
 import { refusalOutcome } from '../refusal.js'
 import { splitRepositoryPath } from '../repository-path.js'
@@ -46,7 +47,7 @@ async function git(runner: GitRunner, root: string, args: readonly string[]): Pr
         // A repository made with `sibling add --create` has no commit yet, so it has no history to read.
         if (args[0] === 'log' && /does not have any commits yet/.test(ran.stderr)) return ''
         const refused = gitRepositoryRefusal(Buffer.from(ran.stderr))
-        throw new EvidenceUnavailable(refused.kind === 'not-a-repository' ? `${root} is not a Git repository` : `${command}: ${refused.reason}`)
+        throw new EvidenceUnavailable(refused.kind === 'not-a-repository' ? `${root} is not a Git repository` : `${command}: ${redactSensitiveMessage(refused.reason) ?? 'Git printed text that could not be redacted, so it is withheld'}`)
     }
     throw new EvidenceUnavailable(ran.code === ENVIRONMENT_CODES.EXECUTION_STDOUT_LIMIT
         ? `${command} printed more than ${GIT_OUTPUT_LIMIT} bytes` : `${command} did not complete (${ran.detail})`)

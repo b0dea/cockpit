@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import { loadCockpitConfig } from '../config/load.js'
 import { inspectServedSiblings, runPull, runUse } from './application/siblings.js'
-import { loadServedSiblings } from './sibling-checkouts.js'
+import { createGitRunner, loadServedSiblings } from './sibling-checkouts.js'
 import { forgetStackInputs, recordStackInputs, staleStackDiagnostics } from './stack-inputs.js'
 
 const roots: string[] = []
@@ -119,8 +119,8 @@ describe('serving a sibling from another checkout', () => {
 
 describe('pull', () => {
     it('fast-forwards clean checkouts without running hooks, and leaves dirty, diverged and filtered ones exactly as they were', async () => {
-        const { root, configPath } = await estate([['api', []], ['web', []], ['docs', []], ['assets', []]])
-        for (const slug of ['api', 'web', 'docs', 'assets']) {
+        const { root, configPath } = await estate([['api', []], ['web', []], ['docs', []], ['assets', []], ['proxied', []]])
+        for (const slug of ['api', 'web', 'docs', 'assets', 'proxied']) {
             git(root, 'clone', '--quiet', join(root, `${slug}.git`), `${slug}-upstream`)
             // A filter driver defined only outside the repository, as `git lfs install` leaves it.
             if (slug === 'assets') await commit(join(root, 'assets-upstream'), '.gitattributes', '*.bin filter=lfs diff=lfs merge=lfs -text\n', 'Track binaries')
@@ -132,21 +132,45 @@ describe('pull', () => {
         await chmod(hook, 0o755)
         await writeFile(join(root, 'web', 'README.md'), 'local edit\n')
         await commit(join(root, 'docs'), 'LOCAL.md', 'local\n', 'Local change')
+        // A command the checkout's own configuration names would run during the fetch.
+        git(join(root, 'proxied'), 'config', 'core.sshCommand', 'false')
         const head = (slug: string) => git(join(root, slug), 'rev-parse', 'HEAD')
-        const before = { web: head('web'), docs: head('docs') }
+        const before = { web: head('web'), docs: head('docs'), proxied: head('proxied') }
 
         const pulled = await runPull({ configPath, env }, deps)
 
         const rows = (pulled.result as { repositories: { label: string; state: string; reason?: string }[] }).repositories
-        expect(Object.fromEntries(rows.map(row => [row.label, row.state]))).toEqual({ cockpit: 'skipped', api: 'advanced', web: 'skipped', docs: 'skipped', assets: 'skipped' })
+        expect(Object.fromEntries(rows.map(row => [row.label, row.state]))).toEqual({ cockpit: 'skipped', api: 'advanced', web: 'skipped', docs: 'skipped', assets: 'skipped', proxied: 'skipped' })
         expect(head('api')).toBe(git(join(root, 'api-upstream'), 'rev-parse', 'HEAD'))
         expect(await exists(join(root, 'hook-ran'))).toBe(false)
         expect(rows.find(row => row.label === 'assets')?.reason).toContain('Git filter lfs')
-        expect({ web: head('web'), docs: head('docs') }).toEqual(before)
+        expect(rows.find(row => row.label === 'proxied')?.reason).toContain('core.sshcommand')
+        expect({ web: head('web'), docs: head('docs'), proxied: head('proxied') }).toEqual(before)
         expect(await readFile(join(root, 'web', 'README.md'), 'utf8')).toBe('local edit\n')
         expect(rows.find(row => row.label === 'docs')?.reason).toContain('diverged')
         expect(pulled.diagnostics.map(({ code, target }) => [code, target])).toEqual([['PULL_SKIPPED', join(root, 'web')], ['PULL_SKIPPED', join(root, 'docs')],
-            ['PULL_SKIPPED', join(root, 'assets')]])
+            ['PULL_SKIPPED', join(root, 'assets')], ['PULL_SKIPPED', join(root, 'proxied')]])
+    })
+})
+
+describe('git runner', () => {
+    it('does not run an fsmonitor command or hook the repository configuration names', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-runner-')))
+        roots.push(root)
+        git(root, 'init', '--quiet')
+        await commit(root, 'a.txt', 'a\n', 'Initial')
+        const marker = join(root, 'monitor-ran')
+        const monitor = join(root, 'monitor.sh')
+        await writeFile(monitor, `#!/bin/sh\ntouch ${marker}\n`)
+        await chmod(monitor, 0o755)
+        git(root, 'config', 'core.fsmonitor', monitor)
+        const runner = await createGitRunner(env, executeProbe)
+        if ('unavailable' in runner) throw new Error(runner.unavailable)
+
+        const status = await runner.run(root, 'test:status', ['status', '--porcelain'])
+
+        expect(status.kind).toBe('complete')
+        expect(await exists(marker)).toBe(false)
     })
 })
 

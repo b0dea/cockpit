@@ -165,6 +165,10 @@ export interface GitRunner {
     run(cwd: string, id: string, args: readonly string[], options?: GitRunOptions): Promise<GitRun>
 }
 
+// Repository-local `core.fsmonitor` and hooks run code on nearly any Git command. Agents cannot write under
+// `.git`, so this is defence in depth against a checkout whose configuration arrived some other way.
+export const GIT_CHILD_CONFIG = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'] as const
+
 // Global and system configuration can carry aliases, credential helpers and fsmonitor commands that
 // run code; cockpit's Git children read only the repository's own configuration, as setup's clone does.
 export async function createGitRunner(
@@ -179,7 +183,7 @@ export async function createGitRunner(
         executable,
         async run(cwd, id, args, { timeoutMs = 30_000, stdoutLimitBytes } = {}) {
             const step: ExecutionStep = {
-                id, argv: [executable.canonicalPath, '-C', cwd, ...args], argv0: executable.invocationPath,
+                id, argv: [executable.canonicalPath, '-C', cwd, ...GIT_CHILD_CONFIG, ...args], argv0: executable.invocationPath,
                 cwd, env: environment, timeoutMs, stdoutLimitBytes: stdoutLimitBytes ?? 65_536, stderrLimitBytes: 65_536,
                 ...stdoutLimitBytes === undefined ? { outputOverflow: 'retain-tail' as const } : {},
                 paths: [], ports: [], labels: { purpose: id }, expected: [],
