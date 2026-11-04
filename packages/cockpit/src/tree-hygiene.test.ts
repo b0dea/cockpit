@@ -88,9 +88,17 @@ describe('reachable history hygiene', () => {
             git('add', '--', 'clean.txt'); git('commit', '--quiet', '-m', 'Add clean content', '-m', 'Claude-' + 'Session: 01AbCdEf')
             const leaking = git('rev-parse', 'HEAD')
             git('commit', '--quiet', '--allow-empty', '-m', 'Keep ordinary history')
+            // Dependabot's own message links upstream release notes; the same text from anyone else is a finding.
+            const dependabotMessage = 'Bump synthetic from 1.0.0 to 1.0.1\n\n- [Release notes](https://github.com/example/synthetic/releases)'
+            git('commit', '--quiet', '--allow-empty', '--author', 'dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>', '-m', dependabotMessage)
+            git('commit', '--quiet', '--allow-empty', '--author', 'dependabot <bot@example.invalid>', '-m', dependabotMessage)
+            const impostor = git('rev-parse', 'HEAD')
             const report = scanGitHistory(root)
-            expect(report).toMatchObject({ complete: true, clean: false, commits: 2 })
-            expect(report.findings).toEqual([expect.objectContaining({ commit: leaking, path: '(commit)', kind: 'development-ceremony' })])
+            expect(report).toMatchObject({ complete: true, clean: false, commits: 4 })
+            expect(report.findings).toEqual([
+                expect.objectContaining({ commit: leaking, path: '(commit)', kind: 'development-ceremony' }),
+                expect.objectContaining({ commit: impostor, path: '(commit)', kind: 'development-ceremony' }),
+            ])
         } finally { rmSync(root, { recursive: true, force: true }) }
     })
 
@@ -104,6 +112,10 @@ describe('reachable history hygiene', () => {
             writeFileSync(join(root, '.git/shallow'), `${head}\n`)
             expect(scanGitHistory(root)).toMatchObject({ complete: false, clean: false, gaps: ['history is shallow'] })
             rmSync(join(root, '.git/shallow'))
+            // The reviewed logo is exempt only byte for byte; any other binary stays a gap.
+            writeFileSync(join(root, 'logo.png'), readFileSync(new URL('.github/assets/cockpit-logo.png', ROOT_URL)))
+            git('add', '--', 'logo.png'); git('commit', '--quiet', '-m', 'Reviewed binary')
+            expect(scanGitHistory(root)).toMatchObject({ complete: true, clean: true, gaps: [] })
             writeFileSync(join(root, 'binary.bin'), Buffer.from([0, 255, 1]))
             writeFileSync(join(root, 'oversized.txt'), Buffer.alloc(8 * 1024 * 1024 + 1, 65))
             git('add', '--', 'binary.bin', 'oversized.txt'); git('commit', '--quiet', '-m', 'Bounded coverage controls')

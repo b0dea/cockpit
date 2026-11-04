@@ -12,6 +12,12 @@ export const ROOT = fileURLToPath(ROOT_URL)
 
 /** Ignored, so a clone without the deployments simply has none. One term per line. */
 export const SITE_NEEDLES = 'internal/hygiene-needles.txt'
+// Binary objects a person inspected and found to carry nothing but their image data, keyed by Git
+// object id so that any change to the file is scanned as a new gap.
+const REVIEWED_BINARY_BLOBS: Readonly<Record<string, string>> = Object.freeze({
+    'c7208a70b49bb99ff2ef2ac8ed9ba14e91b27e30': '.github/assets/cockpit-logo.png: 512x512 RGBA PNG with no metadata chunks',
+})
+const DEPENDABOT_AUTHOR = Object.freeze({ name: 'dependabot[bot]', email: '49699333+dependabot[bot]@users.noreply.github.com' })
 /** Present only in a checkout that holds the real material. */
 export const INTERNAL = 'internal'
 /** Planted synthetic identifiers: the proof the scan can fire. */
@@ -372,6 +378,8 @@ export function scanGitHistory(root = ROOT): {
             if (body.length !== row.size || output[start + row.size] !== 0) throw new Error('hygiene-scan: history object is truncated')
             cursor = start + row.size + 1
             let text: string
+            // A reviewed binary is exempt only as the exact object a person inspected; any edit is a new gap.
+            if (row.path !== '(commit)' && row.path !== '(tag)' && Object.hasOwn(REVIEWED_BINARY_BLOBS, row.object)) continue
             try {
                 if (body.includes(0)) throw new Error('binary')
                 text = new TextDecoder('utf-8', { fatal: true }).decode(body)
@@ -386,7 +394,11 @@ export function scanGitHistory(root = ROOT): {
                 const headerEnd = text.indexOf('\n\n')
                 const headerLines = headerEnd < 0 ? text.split('\n').length : text.slice(0, headerEnd + 2).split('\n').length - 1
                 const message = headerEnd < 0 ? '' : text.slice(headerEnd + 2)
-                for (const line of scanPublicationPathText('commit-message', message)) {
+                // Dependabot writes its own messages, with upstream release-note links; they carry no
+                // development ceremony. Credentials and site names above are still scanned in them.
+                const author = /^author (.*) <([^>]*)> /m.exec(headerEnd < 0 ? text : text.slice(0, headerEnd))
+                const fromDependabot = author?.[1] === DEPENDABOT_AUTHOR.name && author[2] === DEPENDABOT_AUTHOR.email
+                for (const line of fromDependabot ? [] : scanPublicationPathText('commit-message', message)) {
                     found.push({ kind: 'development-ceremony', line: headerLines + line })
                 }
             }
