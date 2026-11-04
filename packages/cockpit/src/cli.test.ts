@@ -1870,6 +1870,8 @@ describe('work command routing', () => {
             ['work-verify', [], { operation: 'work-verify' }],
             ['grade-criteria', ['--criteria', 'criteria.md'], { operation: 'grade-criteria', criteriaFile: 'criteria.md' }],
             ['browser-drive', ['--role', 'qa_user'], { operation: 'browser-drive', role: 'qa_user' }],
+            ['browser-drive', ['--route', 'settings'], { operation: 'browser-drive', route: 'settings' }],
+            ['browser-drive', ['--route', '/settings?tab=billing'], { operation: 'browser-drive', route: '/settings?tab=billing' }],
             ['browser-screenshot', ['--role', '1worker'], { operation: 'browser-screenshot', role: '1worker' }],
             ['browser-screenshot', [], { operation: 'browser-screenshot' }],
             ['test-run', ['--gate', 'unit', '--mode', 'canonical', '--select', 'file:src/example.ts'], { operation: 'test-run', gate: 'unit', mode: 'canonical', select: { kind: 'file', value: 'src/example.ts' } }],
@@ -1899,7 +1901,7 @@ describe('work command routing', () => {
             ['test-run', '--gate', 'unit', '--select', 'unknown:value'],
             ['test-run', '--gate', 'unit', '--mode', 'arbitrary'],
             ['test-run', '--gate', 'unit', '--mode', 'canonical', '--select', 'test:' + 'é'.repeat(2049)],
-            ['browser-drive', '--role', 'bad\nrole'],
+            ['browser-drive', '--role', 'bad\nrole'], ['browser-drive', '--route', 'Not A Route'], ['browser-drive', '--route', '//outside.test/'],
             ...['Bad', 'bad role', '../outside', 'x'.repeat(65)].flatMap(value => [
                 ['browser-drive', '--role', value],
                 ['test-run', '--gate', value, '--mode', 'canonical'],

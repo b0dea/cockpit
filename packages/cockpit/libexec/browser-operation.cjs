@@ -7,7 +7,12 @@
 // argv: named flags (--operation, --engine, --connection, --url, --origin, --timeout, --module,
 // --module-proof, --control-authorities, --control-ports, --screenshot-limit, and the screenshot
 // artifact flags); see operationStep in surfaces.ts for the full set.
-// stdout on success: one JSON 'cockpit-browser-observation/v1' object.
+// stdout on success: one JSON 'cockpit-browser-observation/v1' object. A drive observation also carries
+// per-route diagnostics: counts of console errors, uncaught page errors and failed or >= 400 requests to
+// the application origin, a count of warnings, aborted requests and third-party traffic, and a capped
+// list of entries. Entries hold only identifiers: a request's method, URL path (no query) and status or
+// network error code; a console error's script path and line; an uncaught error's class name. Message
+// text, bodies, headers and cookies are never read.
 // stderr on failure: one JSON 'cockpit-browser-failure/v1' object naming the phase and its category,
 // and, when one is known, a fixed-vocabulary reason (a browser network error code such as
 // ERR_CONNECTION_REFUSED, HTTP_<status> or TIMEOUT), exit code 1. The failure deliberately carries no
@@ -25,6 +30,58 @@ const path = require('node:path')
 const args = process.argv.slice(2)
 const one = name => { const index = args.indexOf(name); if (index < 0 || index + 1 >= args.length) throw new Error('missing argument'); return args[index + 1] }
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
+const MAX_ENTRIES = 20
+const MAX_PATH = 200
+const SETTLE_MS = 1000
+// Records what the page did wrong, never what it said: see the stdout contract above.
+function collectDiagnostics(page, origin) {
+    const counts = { consoleErrors: 0, consoleWarnings: 0, pageErrors: 0, failedRequests: 0, abortedRequests: 0 }
+    const thirdParty = { requests: 0, failed: 0 }
+    const entries = []
+    let omitted = 0
+    const add = entry => { if (entries.length < MAX_ENTRIES) entries.push(entry); else omitted += 1 }
+    const parse = value => { try { const parsed = new URL(value); return ['http:', 'https:'].includes(parsed.protocol) ? parsed : undefined } catch { return undefined } }
+    const pathOf = parsed => parsed.pathname.slice(0, MAX_PATH)
+    page.on('console', message => {
+        if (message.type() === 'warning') counts.consoleWarnings += 1
+        if (message.type() !== 'error') return
+        counts.consoleErrors += 1
+        const location = message.location()
+        const parsed = location && typeof location.url === 'string' ? parse(location.url) : undefined
+        const own = parsed && parsed.origin === origin
+        add({ kind: 'console', ...(own ? { path: pathOf(parsed) } : {}),
+            ...(own && Number.isInteger(location.lineNumber) && location.lineNumber >= 0 ? { line: location.lineNumber } : {}) })
+    })
+    page.on('pageerror', error => {
+        counts.pageErrors += 1
+        add({ kind: 'pageerror', name: error && typeof error.name === 'string' && /^[A-Za-z0-9_$.]{1,64}$/.test(error.name) ? error.name : 'Error' })
+    })
+    page.on('request', request => { const parsed = parse(request.url()); if (parsed && parsed.origin !== origin) thirdParty.requests += 1 })
+    page.on('requestfailed', request => {
+        const parsed = parse(request.url())
+        if (!parsed) return
+        const failure = request.failure()
+        const code = failure && typeof failure.errorText === 'string' ? /net::(ERR_[A-Z0-9_]{1,64})\b/.exec(failure.errorText) : null
+        // A request the browser cancelled itself, such as one left behind by a navigation, is not a failure.
+        if (code && code[1] === 'ERR_ABORTED') { counts.abortedRequests += 1; return }
+        if (parsed.origin !== origin) { thirdParty.failed += 1; return }
+        counts.failedRequests += 1
+        add({ kind: 'request', method: request.method(), path: pathOf(parsed), failure: code ? code[1] : 'ERR_UNKNOWN' })
+    })
+    page.on('response', response => {
+        const status = response.status()
+        if (status < 400) return
+        const request = response.request()
+        // A main-document failure already refuses the drive, so it is not reported twice.
+        if (request.isNavigationRequest() && request.frame() === page.mainFrame()) return
+        const parsed = parse(response.url())
+        if (!parsed) return
+        if (parsed.origin !== origin) { thirdParty.failed += 1; return }
+        counts.failedRequests += 1
+        add({ kind: 'request', method: request.method(), path: pathOf(parsed), status })
+    })
+    return () => ({ ...counts, thirdParty, entries, omitted })
+}
 async function main() {
     const moduleProof = fs.readFileSync(one('--module-proof'))
     const modulePath = one('--module')
@@ -95,6 +152,7 @@ async function main() {
         })
         phase = 'navigation'
         page = await context.newPage()
+        const diagnostics = operation === 'drive' ? collectDiagnostics(page, origin) : undefined
         let documentEpoch = 0
         let documentResponse
         page.on('framenavigated', frame => { if (frame === page.mainFrame()) documentEpoch += 1 })
@@ -116,7 +174,13 @@ async function main() {
         if (!response || typeof response.ok !== 'function' || !response.ok()) throw new Error('navigation did not return a successful HTTP response')
         documentResponse = response
         const initialDocument = currentDocument()
-        if (operation === 'drive') observation = { schema: 'cockpit-browser-observation/v1', operation, finalUrl: initialDocument.url }
+        if (operation === 'drive') {
+            // Errors raised just after load are findings too. An application that polls never goes idle,
+            // so running out the short wait is not a failure; any other error still propagates.
+            try { await page.waitForLoadState('networkidle', { timeout: Math.min(remaining(), SETTLE_MS) }) }
+            catch (error) { if (!error || error.name !== 'TimeoutError') throw error }
+            observation = { schema: 'cockpit-browser-observation/v1', operation, finalUrl: initialDocument.url, diagnostics: diagnostics() }
+        }
         else if (operation === 'screenshot') {
             phase = 'screenshot'
             const displayedBefore = currentDocument()

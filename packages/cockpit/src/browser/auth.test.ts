@@ -28,7 +28,7 @@ exports.chromium = { connect: async () => ({
   newContext: async options => { log(['newContext', options ?? null]); let handler; return {
     route: async (_pattern, value) => { handler = value }, routeWebSocket: async () => undefined,
     newPage: async () => { let current = 'about:blank'; const frame = {}; return {
-    route: async () => { throw new Error('page route bypasses context guard') }, mainFrame: () => frame, on: () => undefined,
+    route: async () => { throw new Error('page route bypasses context guard') }, mainFrame: () => frame, on: () => undefined, waitForLoadState: async () => undefined,
     goto: async url => { current = url; ${mutatePath ? `fs.writeFileSync(${JSON.stringify(mutatePath)}, '{"changed":true}');` : ''}
       let fulfilled, aborted = false
       await handler({ continue: async () => { fulfilled = response(url) }, abort: async () => { aborted = true },

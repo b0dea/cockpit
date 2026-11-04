@@ -16,11 +16,29 @@ export interface BrowserRoutePolicy {
     readonly origin: string
     readonly surfaces: readonly Readonly<{ name: string; url: string }>[]
 }
+export type BrowserDiagnosticEntry =
+    | Readonly<{ kind: 'console'; path?: string; line?: number }>
+    | Readonly<{ kind: 'pageerror'; name: string }>
+    | Readonly<{ kind: 'request'; method: string; path: string; status: number } | { kind: 'request'; method: string; path: string; failure: string }>
+/** What a route's page did wrong. Identifiers and counts only: never message text, bodies, headers or cookies. */
+export interface BrowserRouteDiagnostics {
+    readonly consoleErrors: number
+    readonly consoleWarnings: number
+    readonly pageErrors: number
+    readonly failedRequests: number
+    readonly abortedRequests: number
+    readonly thirdParty: Readonly<{ requests: number; failed: number }>
+    readonly entries: readonly BrowserDiagnosticEntry[]
+    readonly omitted: number
+}
+export type BrowserRouteVerdict = 'clean' | 'findings'
 export interface BrowserCommandInput {
     readonly runtime: BrowserRuntimeProjection
     readonly client: BrowserProjectClient
     readonly policy: BrowserRoutePolicy
     readonly kind: BrowserCommandKind
+    /** A declared route's name or path; every declared route is driven when absent. */
+    readonly route?: string
     readonly role?: string
     readonly state?: Readonly<{ namespace: StateNamespace; stackId: StackId; ownerId: HolderId }>
 }
@@ -28,12 +46,16 @@ export interface BrowserCommandSurfaceReceipt {
     readonly name: string
     readonly url: string
     readonly screenshot?: Readonly<{ path: string; sha256: string; byteLength: number }>
+    readonly diagnostics?: BrowserRouteDiagnostics
+    readonly verdict?: BrowserRouteVerdict
 }
 export interface BrowserCommandReceipt {
     readonly kind: BrowserCommandKind
     readonly activation: 'application'
     readonly authentication: Readonly<{ posture: 'bypassed' | 'none' } | { posture: 'real'; role: string; policy: 'serialized' | 'per-worker' }>
     readonly surfaces: readonly Readonly<BrowserCommandSurfaceReceipt>[]
+    /** drive only: findings when any route has console errors, uncaught errors or failed own-origin requests. */
+    readonly verdict?: BrowserRouteVerdict
 }
 export type BrowserCommandResult = Readonly<{ kind: 'complete'; receipt: BrowserCommandReceipt }>
     | Readonly<{ kind: 'refusal'; reason: string }>
@@ -178,19 +200,66 @@ function publicAuthentication(value: NonNullable<ReturnType<typeof authenticatio
         : { posture: 'real' as const, role: value.role, policy: value.policy }
 }
 
-function parseObservation(value: Buffer, kind: BrowserCommandKind, origin: string): Readonly<{ finalUrl: string; evidence?: { sha256: string; byteLength: number } }> | undefined {
+const MAX_DIAGNOSTIC_ENTRIES = 20
+const isCount = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0
+const exactKeys = (row: Record<string, unknown>, keys: string[]) => Object.keys(row).sort().join(',') === keys.sort().join(',')
+const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
+const diagnosticPath = (value: unknown): value is string => typeof value === 'string' && value.length <= 200 && /^\/[^\s?#\x00-\x1f\x7f]*$/.test(value)
+
+function parseDiagnosticEntry(value: unknown): BrowserDiagnosticEntry | undefined {
+    if (!isRecord(value)) return undefined
+    if (value.kind === 'console') {
+        const keys = ['kind', ...value.path !== undefined ? ['path'] : [], ...value.line !== undefined ? ['line'] : []]
+        if (!exactKeys(value, keys) || value.path !== undefined && !diagnosticPath(value.path) || value.line !== undefined && !isCount(value.line)) return undefined
+        return { kind: 'console', ...value.path !== undefined ? { path: value.path as string } : {}, ...value.line !== undefined ? { line: value.line as number } : {} }
+    }
+    if (value.kind === 'pageerror') {
+        return exactKeys(value, ['kind', 'name']) && typeof value.name === 'string' && /^[A-Za-z0-9_$.]{1,64}$/.test(value.name)
+            ? { kind: 'pageerror', name: value.name } : undefined
+    }
+    if (value.kind !== 'request' || typeof value.method !== 'string' || !/^[A-Z]{1,16}$/.test(value.method) || !diagnosticPath(value.path)) return undefined
+    if (exactKeys(value, ['kind', 'method', 'path', 'status'])) {
+        return Number.isInteger(value.status) && (value.status as number) >= 400 && (value.status as number) <= 599
+            ? { kind: 'request', method: value.method, path: value.path, status: value.status as number } : undefined
+    }
+    return exactKeys(value, ['kind', 'method', 'path', 'failure']) && typeof value.failure === 'string' && /^ERR_[A-Z0-9_]{1,64}$/.test(value.failure)
+        ? { kind: 'request', method: value.method, path: value.path, failure: value.failure } : undefined
+}
+
+function parseDiagnostics(value: unknown): BrowserRouteDiagnostics | undefined {
+    if (!isRecord(value) || !exactKeys(value, ['consoleErrors', 'consoleWarnings', 'pageErrors', 'failedRequests', 'abortedRequests', 'thirdParty', 'entries', 'omitted'])) return undefined
+    const { consoleErrors, consoleWarnings, pageErrors, failedRequests, abortedRequests, thirdParty, entries, omitted } = value
+    if (![consoleErrors, consoleWarnings, pageErrors, failedRequests, abortedRequests, omitted].every(isCount)
+        || !isRecord(thirdParty) || !exactKeys(thirdParty, ['requests', 'failed']) || !isCount(thirdParty.requests) || !isCount(thirdParty.failed)
+        || !Array.isArray(entries) || entries.length > MAX_DIAGNOSTIC_ENTRIES) return undefined
+    const parsed = entries.map(parseDiagnosticEntry)
+    if (parsed.some(entry => entry === undefined)) return undefined
+    // Every finding is either listed or counted as omitted, so the listing can never hide one.
+    if (parsed.length + (omitted as number) !== (consoleErrors as number) + (pageErrors as number) + (failedRequests as number)) return undefined
+    return { consoleErrors: consoleErrors as number, consoleWarnings: consoleWarnings as number, pageErrors: pageErrors as number,
+        failedRequests: failedRequests as number, abortedRequests: abortedRequests as number,
+        thirdParty: { requests: thirdParty.requests, failed: thirdParty.failed }, entries: parsed as BrowserDiagnosticEntry[], omitted: omitted as number }
+}
+
+const routeVerdict = (diagnostics: BrowserRouteDiagnostics): BrowserRouteVerdict =>
+    diagnostics.consoleErrors + diagnostics.pageErrors + diagnostics.failedRequests > 0 ? 'findings' : 'clean'
+
+function parseObservation(value: Buffer, kind: BrowserCommandKind, origin: string): Readonly<{ finalUrl: string; diagnostics?: BrowserRouteDiagnostics; evidence?: { sha256: string; byteLength: number } }> | undefined {
     let parsed: unknown
     // Child stdout can be quoted by a parse error; the caller refuses with its own fixed message.
     try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(value)) } catch { return undefined }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
     const row = parsed as Record<string, unknown>
-    const expected = kind === 'drive' ? ['finalUrl', 'operation', 'schema'] : ['evidence', 'finalUrl', 'operation', 'schema']
+    const expected = kind === 'drive' ? ['diagnostics', 'finalUrl', 'operation', 'schema'] : ['evidence', 'finalUrl', 'operation', 'schema']
     if (Object.keys(row).sort().join(',') !== expected.sort().join(',') || row.schema !== 'cockpit-browser-observation/v1' || row.operation !== kind || typeof row.finalUrl !== 'string') return undefined
     let final: URL
     // A URL error quotes the child-reported address; the caller refuses with its own fixed message.
     try { final = new URL(row.finalUrl) } catch { return undefined }
     if (final.origin !== origin || final.username || final.password || final.hash) return undefined
-    if (kind === 'drive') return { finalUrl: final.href }
+    if (kind === 'drive') {
+        const diagnostics = parseDiagnostics(row.diagnostics)
+        return diagnostics ? { finalUrl: final.href, diagnostics } : undefined
+    }
     if (!row.evidence || typeof row.evidence !== 'object' || Array.isArray(row.evidence)) return undefined
     const evidence = row.evidence as Record<string, unknown>
     if (Object.keys(evidence).sort().join(',') !== 'byteLength,sha256' || typeof evidence.sha256 !== 'string' || !sha256.test(evidence.sha256)
@@ -242,7 +311,7 @@ function ensureArtifactRoot(root: string): string | undefined {
     return undefined
 }
 
-async function run(input: BrowserCommandInput, client: BrowserProjectClient, policy: BrowserRoutePolicy,
+async function run(input: BrowserCommandInput, client: BrowserProjectClient, surfaces: BrowserRoutePolicy['surfaces'], policy: BrowserRoutePolicy,
     auth: NonNullable<ReturnType<typeof authentication>>, deadline: number,
     authorization: BrowserProjectOperationAuthorization): Promise<BrowserCommandResult> {
     const receipts: BrowserCommandSurfaceReceipt[] = []
@@ -250,7 +319,7 @@ async function run(input: BrowserCommandInput, client: BrowserProjectClient, pol
         const unavailable = ensureArtifactRoot(client.artifactRoot)
         if (unavailable) return refusal(unavailable)
     }
-    for (const surface of policy.surfaces) {
+    for (const surface of surfaces) {
         // Only the runtime's own fixed-text TypeError escapes the revalidation (it replaces filesystem
         // errors with that text), so the refusal names the condition instead.
         try { assertBrowserStorageStateCurrent(input.runtime) } catch { return refusal('Browser seeded state changed before application driving') }
@@ -283,12 +352,26 @@ async function run(input: BrowserCommandInput, client: BrowserProjectClient, pol
             try { path = postcheckScreenshot(client.artifactRoot, client.cwd, output!, observation.evidence!) } catch (error) { cause = ` (${errorCause(error)})` }
             if (!path) return refusal(`Browser screenshot output failed its contained mode-600 postcheck for ${surface.name}${cause}`)
             receipts.push({ ...base, screenshot: { path, ...observation.evidence! } })
-        } else receipts.push(base)
+        } else receipts.push({ ...base, diagnostics: observation.diagnostics!, verdict: routeVerdict(observation.diagnostics!) })
     }
     const receipt = { kind: input.kind, activation: 'application' as const,
-        authentication: publicAuthentication(auth), surfaces: receipts }
+        authentication: publicAuthentication(auth), surfaces: receipts,
+        ...input.kind === 'drive' ? { verdict: receipts.some(row => row.verdict === 'findings') ? 'findings' as const : 'clean' as const } : {} }
     issuedReceipts.add(receipt)
     return { kind: 'complete', receipt }
+}
+
+// A route is chosen by its declared name or its declared path; anything else is refused with the choices.
+function selectRoutes(input: BrowserCommandInput): BrowserRoutePolicy['surfaces'] | string {
+    if (input.route === undefined) return input.policy.surfaces
+    const route = input.route
+    const origin = new URL(input.policy.origin)
+    let href: string | undefined
+    if (route.startsWith('/') && !route.startsWith('//')) { try { href = new URL(route, origin).href } catch { href = undefined } }
+    const surface = input.policy.surfaces.find(row => row.name === route || href !== undefined && row.url === href)
+    if (surface) return [surface]
+    // The route is the caller's own input, so it is safe to echo back.
+    return `Browser route ${JSON.stringify(route)} is not declared; declared routes are ${input.policy.surfaces.map(row => `${row.name} (${new URL(row.url).pathname + new URL(row.url).search})`).join(', ')}`
 }
 
 export async function executeBrowserCommand(value: BrowserCommandInput): Promise<BrowserCommandResult> {
@@ -305,11 +388,13 @@ export async function executeBrowserCommand(value: BrowserCommandInput): Promise
             + 'a remote browser reaches host addresses only through that exposure, so it would look for the application inside its own container. '
             + 'Use a 127.0.0.1, localhost or .localhost origin (an IPv6 literal is never tunnelled), or widen network_exposure with a network_exposure_reason')
     }
+    const selected = selectRoutes(input)
+    if (typeof selected === 'string') return refusal(selected)
     const auth = authentication(input)
     if (!auth) return refusal(input.runtime.authentication.posture === 'real'
         ? 'Browser command requires a declared seeded role and matching coordination authority' : 'Bypassed browser authentication cannot accept role or state input')
     const admitted = await withBrowserProjectOperationAdmission(client, input.runtime, {
         origin: input.policy.origin, ...(auth.posture === 'real' ? { role: auth.role } : {}), ...(input.state ? { state: input.state } : {}),
-    }, authorization => run(input, client!, input.policy, auth, deadline, authorization))
+    }, authorization => run(input, client!, selected, input.policy, auth, deadline, authorization))
     return admitted.kind === 'admitted' ? admitted.value : refusal(admitted.reason)
 }

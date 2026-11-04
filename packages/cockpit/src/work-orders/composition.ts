@@ -92,7 +92,7 @@ export interface WorkApplicationComposition {
     readonly runCheck: (criterion: string, check: WorkOrderCheck) => Promise<CheckResult>
     readonly changes: (base: Readonly<Record<string, string>>) => Promise<readonly ChangedFile[]>
     readonly evaluate: (subject: GradingSubject) => Promise<GradingResult>
-    readonly browser: (kind: BrowserCommandKind, role?: string) => Promise<BrowserCommandInput>
+    readonly browser: (kind: BrowserCommandKind, role?: string, route?: string) => Promise<BrowserCommandInput>
     readonly gate: (request: WorkApplicationGateRequest) => Promise<Readonly<{ registry: GateRegistry; request: GateRequest; dependencies: GateDependencies }>>
 }
 export interface WorkApplicationGateRequest {
@@ -614,11 +614,11 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         try { return await browserAuthority }
         catch (error) { browserAuthority = undefined; throw error }
     }
-    const browser = async (kind: BrowserCommandKind, role?: string): Promise<BrowserCommandInput> => {
+    const browser = async (kind: BrowserCommandKind, role?: string, route?: string): Promise<BrowserCommandInput> => {
         if (!config.browser) throw new RefusalError('browser application projection is unavailable')
         const authority = await resolveBrowser()
         return { runtime: authority.runtime, client: authority.client, policy: authority.policy, kind,
-            ...(authority.state ? { state: authority.state } : {}), ...(role ? { role } : {}) }
+            ...(authority.state ? { state: authority.state } : {}), ...(role ? { role } : {}), ...(route ? { route } : {}) }
     }
     const gate = async (request: WorkApplicationGateRequest) => {
         if (!authorities.testing || !config.testing) throw new RefusalError('testing gate projection is unavailable')

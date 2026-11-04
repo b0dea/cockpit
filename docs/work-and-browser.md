@@ -196,6 +196,21 @@ Declared application routes select the starting destinations for driving. Automa
 
 <!-- cockpit:ref path=packages/cockpit/src/browser/commands.ts --> A screenshot record holds the path of the saved image, which must be inside the project, and its digest. Every distinct declared application route is covered.
 
+`--route <name-or-path>` drives or captures one declared route instead of all of them. It takes a declared route's name or its declared path, and anything else is refused with the list of declared routes before a browser starts.
+
+### Route findings
+
+A page can answer 2xx and still be broken. `browser drive` also records, for each route, what the page did wrong while it loaded and for up to a second after:
+
+- **Console errors**, as a count and, for each, the script path and line when the script is from the application. Console warnings are only counted.
+- **Uncaught page errors**, as a count and the error's class name.
+- **Failed requests and HTTP responses of 400 or above to the application's own origin**, as a count and, for each, the method, the URL path with its query string removed, and the status or the browser's network error code. A request the browser cancelled itself (`ERR_ABORTED`, as a navigation leaves behind) is counted apart and is not a finding.
+- **Third-party traffic**, as a count of requests and a count of failures. It never fails a route. Requests to a loopback address outside the application are blocked and counted here.
+
+Each route gets a verdict, `clean` or `findings`, and the receipt carries `findings` when any route does. Per route, at most 20 entries are listed; the rest are counted in `omitted`, so a listing never hides a finding. Message text, response and request bodies, headers and cookies are never read, so what leaves the page is identifiers and counts. A route that does not load at all is still refused, as before, rather than reported as a finding.
+
+With findings, `browser drive` prints the receipt and exits 2 with `BROWSER_ROUTE_FINDINGS`, the same way a failed gate or work check does. That makes the command usable as a work-order criterion's `check`: the criterion is met only while every driven route is clean. To check one route, add `--route`. `browser screenshot` records no findings.
+
 When navigation fails, the refusal names the route's URL and the browser's own error code, never page text. `ERR_CONNECTION_REFUSED` or `ERR_SOCKS_CONNECTION_FAILED` means nothing answered at that URL, so check the stack with `doctor` before treating it as a product finding. A certificate error means the browser does not trust the issuer, and an HTTP status means the route answered but not with 2xx.
 
 ### Declare a browser

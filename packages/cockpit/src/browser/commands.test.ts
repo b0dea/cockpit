@@ -20,7 +20,7 @@ afterEach(async () => Promise.all(roots.splice(0).map(root => rm(root, { recursi
 
 type ModuleMode = 'connect' | 'context' | 'page' | 'goto' | 'screenshot' | 'http-error'
     | 'null-response' | 'redirect-return' | 'final-foreign' | 'same-origin-redirect' | 'popup-cross-origin' | 'control-plane-attempts'
-    | 'later-navigation' | 'refused'
+    | 'later-navigation' | 'refused' | 'findings' | 'flood'
     | 'oversize-screenshot' | 'preexisting-screenshot' | 'swap-root' | 'remove-screenshot' | 'cleanup' | null
 
 function playwrightModule(input: { logPath: string; serverPath: string; artifactRoot: string; outsideRoot: string; mode: ModuleMode }): string {
@@ -34,9 +34,11 @@ const browser = () => ({
       return { route: async (_pattern, value) => { contextHandler = value }, routeWebSocket: async (_pattern, value) => { webSocketHandler = value },
       newPage: async () => { log(['newPage']); ${input.mode === 'page' ? "throw new Error('synthetic page failure');" : ''}
         let current = 'about:blank', documentSource = 'about:blank', frameNavigatedHandler; const frame = { parentFrame: () => null }
+        const handlers = {}; const emit = (name, value) => { for (const handler of handlers[name] ?? []) handler(value) }
         return {
         route: async () => { throw new Error('page route bypasses context guard') }, mainFrame: () => frame,
-        on: (name, handler) => { if (name === 'framenavigated') frameNavigatedHandler = handler },
+        waitForLoadState: async () => undefined,
+        on: (name, handler) => { if (name === 'framenavigated') frameNavigatedHandler = handler; (handlers[name] ??= []).push(handler) },
         goto: async url => { log(['goto', url]); ${input.mode === 'goto' ? "throw new Error('synthetic goto failure');"
           : input.mode === 'refused' ? "throw new Error('page.goto: net::ERR_SOCKS_CONNECTION_FAILED at ' + url + ' synthetic page text');" : 'current = url'};
           if (${JSON.stringify(input.mode)} === 'control-plane-attempts') {
@@ -74,6 +76,23 @@ const browser = () => ({
             current = new URL('/redirected', url).href; documentSource = current; log(['network', current]); fulfilled = response(current)
           }
           if (native) frameNavigatedHandler?.(frame)
+          if (${JSON.stringify(input.mode)} === 'findings' && url.endsWith('/settings')) {
+            // Every sensitive part is present so a leak into the observation would show: query strings, console text, error messages, bodies, headers.
+            const own = (path, method = 'GET') => ({ url: () => 'http://app.localhost:4000' + path, method: () => method, isNavigationRequest: () => false, frame: () => frame,
+              failure: () => ({ errorText: 'net::ERR_CONNECTION_REFUSED' }) })
+            const reply = (request, status) => ({ url: request.url, status: () => status, request: () => request, text: async () => 'secret-body', headers: () => ({ authorization: 'secret-header' }) })
+            const message = (type, line) => ({ type: () => type, text: () => 'secret console text', location: () => ({ url: 'http://app.localhost:4000/assets/app.js?token=secret', lineNumber: line }) })
+            emit('console', message('error', 12)); emit('console', message('warning', 3)); emit('console', message('warning', 4)); emit('console', message('log', 5))
+            emit('pageerror', Object.assign(new TypeError('secret error message'), { stack: 'secret stack' }))
+            emit('response', reply(own('/api/items?token=secret'), 404)); emit('response', reply(own('/api/ok'), 200))
+            emit('requestfailed', own('/api/save', 'POST'))
+            emit('requestfailed', { ...own('/api/slow'), failure: () => ({ errorText: 'net::ERR_ABORTED' }) })
+            const foreign = path => ({ ...own(path), url: () => 'https://cdn.example.test' + path })
+            emit('request', foreign('/lib.js')); emit('request', foreign('/pixel.gif')); emit('request', own('/api/items'))
+            emit('response', reply(foreign('/lib.js'), 500)); emit('requestfailed', foreign('/pixel.gif'))
+            emit('response', reply({ ...own('/settings'), isNavigationRequest: () => true, frame: () => frame }, 404))
+          }
+          if (${JSON.stringify(input.mode)} === 'flood') for (let line = 0; line < 25; line++) emit('console', { type: () => 'error', location: () => ({ url: 'http://app.localhost:4000/app.js', lineNumber: line }) })
           ${input.mode === 'http-error' ? 'fulfilled = response(current, 503)' : ''}
           ${input.mode === 'null-response' ? 'return null' : 'return fulfilled'} },
         url: () => current,
@@ -175,6 +194,9 @@ async function fixture(options: { mode?: ModuleMode; engine?: 'chromium' | 'fire
     return { root, runtime, client: rendered.clients[0]!, policy, logPath, serverPath, outsideRoot, artifactRoot }
 }
 
+const cleanRoute = { verdict: 'clean', diagnostics: { consoleErrors: 0, consoleWarnings: 0, pageErrors: 0, failedRequests: 0, abortedRequests: 0,
+    thirdParty: { requests: 0, failed: 0 }, entries: [], omitted: 0 } }
+
 async function calls(path: string): Promise<unknown[]> {
     try { return (await readFile(path, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error }
@@ -191,9 +213,49 @@ describe('browser driving commands', () => {
             ['home', 'http://app.localhost:4000/'], ['settings', 'http://app.localhost:4000/settings'], ['dashboard', 'http://app.localhost:4000/dashboard'],
         ])
         expect(await calls(logPath)).toContainEqual(['browser.close'])
+        expect(result.receipt.surfaces.map(row => [row.verdict, row.diagnostics])).toEqual(Array(3).fill([cleanRoute.verdict, cleanRoute.diagnostics]))
+        expect(result.receipt.verdict).toBe('clean')
         expect(isIssuedBrowserCommandReceipt(result.receipt)).toBe(true)
         expect(isIssuedBrowserCommandReceipt({ ...result.receipt })).toBe(false)
         expect(evaluateUiGate({ activating: 'drive', receipts: [result.receipt] })).toEqual({ kind: 'satisfied', activating: 'drive', receipt: result.receipt })
+    })
+
+    it('reports per-route findings as identifiers and counts, keeps third parties apart and caps the entries', async () => {
+        const found = await fixture({ mode: 'findings' })
+        const result = await executeBrowserCommand({ runtime: found.runtime, client: found.client, policy: found.policy, kind: 'drive' })
+        expect(result.kind).toBe('complete')
+        if (result.kind !== 'complete') return
+        expect(result.receipt.verdict).toBe('findings')
+        expect(result.receipt.surfaces.map(row => [row.name, row.verdict])).toEqual([['home', 'clean'], ['settings', 'findings'], ['dashboard', 'clean']])
+        // Query strings, console and error text, bodies and headers never reach the receipt; warnings, aborted
+        // requests and third-party failures are counted but are not findings.
+        expect(result.receipt.surfaces[1]!.diagnostics).toEqual({
+            consoleErrors: 1, consoleWarnings: 2, pageErrors: 1, failedRequests: 2, abortedRequests: 1,
+            thirdParty: { requests: 2, failed: 2 }, omitted: 0,
+            entries: [{ kind: 'console', path: '/assets/app.js', line: 12 }, { kind: 'pageerror', name: 'TypeError' },
+                { kind: 'request', method: 'GET', path: '/api/items', status: 404 }, { kind: 'request', method: 'POST', path: '/api/save', failure: 'ERR_CONNECTION_REFUSED' }],
+        })
+        expect(JSON.stringify(result.receipt)).not.toMatch(/secret|token/)
+
+        const flood = await fixture({ mode: 'flood' })
+        const capped = await executeBrowserCommand({ runtime: flood.runtime, client: flood.client, policy: flood.policy, kind: 'drive' })
+        if (capped.kind !== 'complete') throw new Error('flood drive refused')
+        expect(capped.receipt.surfaces[0]!.diagnostics).toMatchObject({ consoleErrors: 25, omitted: 5 })
+        expect(capped.receipt.surfaces[0]!.diagnostics!.entries).toHaveLength(20)
+    })
+
+    it('drives only the route named by its declared name or path and refuses an undeclared one before launching', async () => {
+        const { runtime, client, policy, logPath } = await fixture()
+        for (const route of ['settings', '/settings']) {
+            const result = await executeBrowserCommand({ runtime, client, policy, kind: 'drive', route })
+            expect(result.kind === 'complete' && result.receipt.surfaces.map(row => row.name)).toEqual(['settings'])
+        }
+        expect((await calls(logPath)).filter(call => Array.isArray(call) && call[0] === 'goto')).toEqual([
+            ['goto', 'http://app.localhost:4000/settings'], ['goto', 'http://app.localhost:4000/settings']])
+        const before = (await calls(logPath)).length
+        expect(await executeBrowserCommand({ runtime, client, policy, kind: 'drive', route: 'billing' })).toEqual({ kind: 'refusal',
+            reason: 'Browser route "billing" is not declared; declared routes are home (/), settings (/settings), dashboard (/dashboard)' })
+        expect((await calls(logPath)).length).toBe(before)
     })
 
     it('uses the issued engine for remote connections and launches it locally when no endpoint is declared', async () => {
@@ -295,9 +357,9 @@ describe('browser driving commands', () => {
             policy: redirected.policy, kind: 'drive' })
         expect(result).toMatchObject({ kind: 'complete' })
         if (result.kind === 'complete') expect(result.receipt.surfaces).toEqual([
-            { name: 'home', url: 'http://app.localhost:4000/' },
-            { name: 'settings', url: 'http://app.localhost:4000/settings' },
-            { name: 'dashboard', url: 'http://app.localhost:4000/dashboard' },
+            { name: 'home', url: 'http://app.localhost:4000/', ...cleanRoute },
+            { name: 'settings', url: 'http://app.localhost:4000/settings', ...cleanRoute },
+            { name: 'dashboard', url: 'http://app.localhost:4000/dashboard', ...cleanRoute },
         ])
         expect(await calls(redirected.logPath)).toContainEqual(['network', 'https://outside.example.invalid/private'])
 
@@ -357,7 +419,7 @@ describe('browser driving commands', () => {
         const result = await executeBrowserCommand({ runtime: redirected.runtime, client: redirected.client, policy, kind: 'drive' })
         expect(result).toMatchObject({ kind: 'complete' })
         if (result.kind === 'complete') expect(result.receipt.surfaces).toEqual([
-            { name: 'start', url: 'http://app.localhost:4000/redirected' },
+            { name: 'start', url: 'http://app.localhost:4000/redirected', ...cleanRoute },
         ])
         expect(await calls(redirected.logPath)).toContainEqual(['network', 'http://app.localhost:4000/redirected'])
 
