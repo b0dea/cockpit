@@ -1,15 +1,25 @@
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { runCli, type CliIo } from '../cli.js'
+
+// The filesystem is the boundary: a case swaps a directory for a link around one open, as a concurrent writer could.
+const opening = vi.hoisted(() => ({ around: undefined as undefined | ((path: string) => (() => void) | undefined) }))
+vi.mock('node:fs/promises', async importOriginal => {
+    const real = await importOriginal<typeof import('node:fs/promises')>()
+    return { ...real, open: async (...args: Parameters<typeof real.open>) => {
+        const after = opening.around?.(String(args[0]))
+        try { return await real.open(...args) } finally { after?.() }
+    } }
+})
 
 // Each case is a real cockpit in a throwaway Git repository: sync publishes the work authority the
 // commands require, and the checks run as real processes. Only the person is simulated, by the
 // terminal answer `confirmWorkOrder` returns.
 const roots: string[] = []
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
+afterEach(() => { opening.around = undefined; for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=fixture@example.invalid', '-c', 'user.name=fixture', ...args], { cwd: root, stdio: 'pipe' })
 const order = (id: string, criteria = '  - id: AC1\n    text: add(2, 3) returns 5.\n    check: [node, test/add.test.mjs]') =>
@@ -162,6 +172,19 @@ describe('work-order lifecycle', () => {
             criteria: [{ id: 'AC1' }, { id: 'decisions-recorded', verdict: 'met' }, { id: 'docs-updated', verdict: 'met' }] })
         const signoff = () => work(root, ['work', 'signoff', '--work-order', 'WO-6'])
         expect((await signoff()).diagnostics[0]?.message).toMatch(/cannot close while decision 1 \(Sum with the \+ operator\) is unresolved/)
+
+        // A decisions directory swapped for a link while the record is opened does not redirect the write outside the repository.
+        const outside = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-work-outside-')))
+        roots.push(outside)
+        opening.around = path => {
+            if (!path.endsWith('0003-sum-with-the-operator.md')) return undefined
+            opening.around = undefined
+            renameSync(join(root, 'docs/adr'), join(root, 'docs/adr-held')); symlinkSync(outside, join(root, 'docs/adr'))
+            return () => { unlinkSync(join(root, 'docs/adr')); renameSync(join(root, 'docs/adr-held'), join(root, 'docs/adr')) }
+        }
+        expect((await work(root, ['work', 'decide', '--work-order', 'WO-6', '--decision', '1', '--record', '--supersedes', '1'])).diagnostics[0]?.message)
+            .toMatch(/changed while it was opened for writing; nothing was written/)
+        expect(readdirSync(outside).map(name => readFileSync(join(outside, name), 'utf8')).join('')).toBe('')
 
         expect((await work(root, ['work', 'decide', '--work-order', 'WO-6', '--decision', '1', '--record', '--supersedes', '1'])).result)
             .toMatchObject({ record: 'docs/adr/0003-sum-with-the-operator.md' })
