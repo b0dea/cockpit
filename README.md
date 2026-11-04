@@ -3,22 +3,44 @@
 <a href="https://github.com/b0dea/cockpit/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush"><img alt="CI status" src="https://github.com/b0dea/cockpit/actions/workflows/ci.yml/badge.svg?branch=main&amp;event=push"></a>
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 
-**One policy file that every coding agent on your team actually obeys, and a check that fails when
-it stops.**
+**Where coding agents work on your whole product: every repository in reach, the product running,
+the same rules in every tool, and a grade they do not give themselves.**
 
-cockpit turns one <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml` into the instructions, skills, permissions and guard hook that
-Claude Code, Codex CLI and OpenCode each expect, and checks that they still match.
+Start an agent through cockpit and it gets in with what it needs: the guides of every repository
+your product spans and cockpit's skills for driving it, your own Compose stack running on the
+checkouts it edits, the same guard in Claude Code, Codex and OpenCode, and work orders that a
+separate read-only run grades. All of it comes from one <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml` you review like code.
 
-- **Write it once.** Instructions, skills, hooks, permissions and MCP servers for every tool on the
-  team, from one file you review like code.
-- **Refusals that hold.** One guard denies pushes to protected branches, reads of secrets and
-  commands against the production hosts you declare, in all three tools, and sends anything it cannot
-  prove read-only to a person.
-- **Drift fails a check.** `cockpit check` goes red locally, at session start and in CI when a
-  generated file stops matching the policy.
+```sh
+npx --no cockpit session --config cockpit.toml -- claude
+```
 
-Sync, guard and check are the product, and you can adopt just that. A stack per agent and independent
-grading are [optional](#when-you-need-more) and off until you configure them.
+That brings the stack up on its own leased ports, starts the agent inside it and releases the
+stack when the agent exits.
+
+- **Every repository in reach.** Declare each repository once; `setup` clones or finds it, and
+  every agent session loads its guides and has access to its directory.
+- **The product running, per checkout.** `session` runs your Compose files on the live checkouts
+  and leases each checkout a port family, so parallel agents do not collide. `preflight` says when
+  the stack is healthy; seed data, logs, test gates and browser screenshots use the same
+  declarations.
+- **Work that stays in scope, graded by someone else.** A work order is an objective, the paths it
+  may change and acceptance criteria with checks. cockpit reruns the checks, fails the grade on any
+  change outside scope, and has a fresh read-only run grade each criterion, in a different agent
+  tool when you list two.
+- **One guard in every tool.** The same script refuses pushes to protected branches, reads of
+  secret files and commands aimed at the production hosts you declare, in Claude Code, OpenCode and
+  Codex (once a person trusts its hook). A command it cannot prove read-only goes to a person, or is
+  refused where the tool has no prompt.
+- **Checked, not assumed.** `cockpit check` fails in CI, and when a Claude Code or Codex session
+  starts, if a generated file stops matching `cockpit.toml`. The
+  [capability matrix](docs/capability-matrix.md) records what each tool actually enforced, from
+  dated runs of the real tool.
+
+Adopt it in steps: the instructions, skills and guard need only Git and Node.js on macOS or Linux;
+the [stack and work orders](#the-stack-and-work-orders) switch on when you declare Compose files
+(Docker) and have an agent tool on `PATH` to grade. cockpit is not a sandbox: the guard stops
+mistakes, not malicious code ([Status and limits](#status-and-limits)).
 
 ## A cockpit.toml
 
@@ -63,6 +85,8 @@ AGENTS.md  CLAUDE.md                 root instructions, one per tool family
 .cockpit/policy.json                 the policy `sync` last ran under
 ```
 
+A two-repository cockpit with its own stack is [examples/compose-first](examples/compose-first/README.md).
+
 ## See it
 
 After `cockpit init` in a fresh repository, the generated guard gets the same `git push origin main`
@@ -90,8 +114,9 @@ tools, through the same hook, and its Read tool, through generated deny rules (a
 Claude's Read refuses `.env.example` too; `cat .env.example` works). In OpenCode the plugin restates its
 native read, grep and glob as the shell command that reads the same paths.
 
-**What it does with a command it cannot prove read-only.** It asks a person. `ls`, `git status` and
-`cat src/x.ts` pass; `node --test` and `curl https://example.com` go to a person. `[guards] allow`
+**What it does with a command it cannot prove read-only.** In Claude Code it asks a person; Codex
+and OpenCode have no prompt tier, so there it is refused. `ls`, `git status` and
+`cat src/x.ts` pass; `node --test` and `curl https://example.com` do not. `[guards] allow`
 rules (and a declared build or test command run from its checkout) widen that. Input it cannot parse is
 refused.
 
@@ -102,7 +127,7 @@ cockpit holds none of your product code; it owns the environment the agents work
 | Tool | What it owns | Where cockpit differs |
 |---|---|---|
 | Hand-written `AGENTS.md` and per-tool settings | Instructions | cockpit writes those files too, adds the enforcement an instruction cannot give, and tells you when a copy drifts. |
-| [rulesync](https://github.com/dyoshikawa/rulesync), [Ruler](https://github.com/intellectronica/ruler) | One set of rules rendered for many agent tools | cockpit depends on rulesync and uses it to render each tool's files, and adds the guard hook, permissions, a drift check for all of it, and a dated record of what each tool enforces. |
+| [rulesync](https://github.com/dyoshikawa/rulesync), [Ruler](https://github.com/intellectronica/ruler) | One set of rules rendered for many agent tools | cockpit bundles rulesync and uses it to render each tool's files, and adds the guard hook, permissions, a drift check for all of it, and a dated record of what each tool enforces. |
 | Docker Compose, Tilt, Dev Containers | Running the services | cockpit runs your own `compose.yml` against the checkouts agents edit, with port leases so parallel agents do not collide. It does not replace them. |
 | OpenSpec, spec-kit | The plan: specs, tasks, prompts | cockpit owns the environment and the grading. They combine. |
 
@@ -140,7 +165,14 @@ what it wrote; an agent started in the repository then loads the same instructio
 tool, and the guard is live (in Codex once a person trusts it). [Getting started](docs/getting-started.md)
 walks through each step; several repositories and a Compose stack are its second chapter.
 
-## What you get
+## What needs only Git and Node.js
+
+### Every repository in reach
+
+`sibling add` declares a repository and `setup` clones or finds it. Its guides are copied into the
+root `AGENTS.md`, the one route that loaded in all three tools in the dated runs, and each tool is
+granted its directory. A changed guide shows as drift until a person runs `sync`, so an agent cannot
+quietly change what later agents load.
 
 ### A guard that fails closed
 
@@ -174,10 +206,9 @@ and `check` reports any weakening nobody has confirmed.
 - **Secrets stay out.** Varlock `.env.schema` files are validated without reading values.
 - **Upgrades.** `npx --no cockpit upgrade --config cockpit.toml` moves the pin and reruns `sync`.
 
-## When you need more
+## The stack and work orders
 
-Nothing below is needed for sync, guard and check. `browser drive` and `browser screenshot` also
-visit the application's declared routes.
+Nothing below is needed for sync, guard and check.
 
 ### A stack per agent
 
@@ -185,17 +216,21 @@ Optional, and the only part that needs Docker Compose.
 `npx --no cockpit session --config cockpit.toml -- claude` brings your Compose stack up on the live
 checkouts, holds it while the agent runs and releases it after. Each checkout leases a port family, so
 parallel agents do not collide. A `seed` command fills the data and `resettable_volumes` says what
-`reset` may wipe. See [Environment lifecycle](docs/environment.md).
+`reset` may wipe. `browser drive` and `browser screenshot` visit the application's declared routes
+for evidence. See [Environment lifecycle](docs/environment.md).
 
 ### Work graded by someone else
 
-Optional. Grading needs one agent tool on `PATH` and signed in; with a second one, grading is
-cross-tool by default. A work order lists acceptance criteria, each with a check. `work grade` reruns
-the checks, then an evaluator from `work.evaluators` grades each criterion in a fresh read-only run that starts outside the
-repository and never sees the writer's session. For a change without an order:
-`npx --no cockpit grade --config cockpit.toml --criteria criteria.md`. Grading can also be `checks`
-(cockpit's reruns decide) or `self`. From inside Claude Code the other listed tool grades first, and
-`--evaluator <tool>` picks one grader for a run. See [Work and browser](docs/work-and-browser.md).
+Optional. A work order is an objective, a `scope` of paths and acceptance criteria, each with a
+check. `work grade` reruns the checks and fails the grade on any change outside `scope`. Then an
+evaluator grades each criterion in a fresh read-only run that starts outside the repository and never
+sees the writer's session.
+
+Grading needs one agent tool on `PATH` and signed in; with a second one it is cross-tool by default,
+and `--evaluator <tool>` picks the grader for a run. Grading can also be `checks` (cockpit's reruns
+decide) or `self`. For a change without an order:
+`npx --no cockpit grade --config cockpit.toml --criteria criteria.md`. See
+[Work and browser](docs/work-and-browser.md).
 
 ## Status and limits
 

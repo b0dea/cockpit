@@ -1,8 +1,9 @@
 # Cockpit documentation
 
-cockpit gives every coding agent on a team the same instructions, skills and guard from one
-`cockpit.toml` and checks that the generated files still match; you can adopt just that. Optionally it
-also runs the product's stack for each agent and grades the finished work independently. New here: read [Getting started](getting-started.md)
+cockpit is the local environment coding agents work from: every repository of the product in reach,
+the product running on the checkouts they edit, the same instructions, skills and guard in every agent
+tool from one `cockpit.toml`, and work orders graded by a separate read-only run. The instructions and
+guard need only Git and Node.js; the stack and grading switch on when configured. New here: read [Getting started](getting-started.md)
 chapter 1, which needs one repository and no Docker.
 
 This index lists every page for people using cockpit on their own products, grouped by what you

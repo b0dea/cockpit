@@ -5,9 +5,9 @@ page with the detail.
 
 ## What is cockpit, in one sentence?
 
-A CLI that boots a multi-repository product from your local checkouts and gives Claude Code,
-Codex CLI and OpenCode the same generated instructions, skills, guards and permissions for it,
-and can hand finished work to an independent evaluator.
+The local environment coding agents work from: every repository of your product in reach, the
+product running on the checkouts they edit, the same instructions, skills, guard and permissions in
+Claude Code, Codex CLI and OpenCode, and work orders graded by a separate read-only run.
 
 ## When should I not use cockpit?
 

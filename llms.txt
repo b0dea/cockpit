@@ -1,6 +1,6 @@
 # cockpit
 
-> cockpit turns one `cockpit.toml` into the instructions, skills, permissions and guard hook that Claude Code, Codex CLI and OpenCode each expect: `cockpit sync` renders them and `cockpit check` fails on drift, and you can adopt just that. Optionally it also runs your Compose stack over the live checkouts with leased ports, and a separate evaluator grades finished work. Pre-1.0, macOS and Linux. The package is not yet published on npm; install it from source as Getting started describes.
+> cockpit is the local environment coding agents work from on a product of one or many repositories. One reviewed `cockpit.toml` gives Claude Code, Codex CLI and OpenCode the same instructions, skills, permissions and guard hook, including every repository's guides and directory access (`cockpit sync` writes them, `cockpit check` fails on drift). `cockpit session` runs the product's own Compose stack on the live checkouts with a leased port family per checkout and starts the agent inside it. Work orders (objective, scope, criteria with checks) are graded by a separate read-only agent run, in a different tool when two are listed, and a change outside scope fails the grade. The instructions and guard need only Git and Node.js; the stack needs Docker Compose. Not a sandbox. Pre-1.0, macOS and Linux. The package is not yet published on npm; install it from source as Getting started describes.
 
 ## Set cockpit up
 
