@@ -127,13 +127,13 @@ describe('invocation publication', () => {
 describe('closed ordinary invocation metadata', () => {
     const authority = { executable: '/workspace/bin/cockpit', canonicalRoot: '/workspace/product',
         allowedRoots: ['/workspace/product', '/workspace/app'], configPath: '/workspace/product/cockpit.toml', services: ['app'], gates: ['quick'],
-        grants: ['browser-preapproval', 'autonomy-sync', 'autonomy-reset'] as const }
+        grants: ['browser-preapproval', 'autonomy-sync', 'autonomy-reset'] as const, profiles: ['jobs', 'mail.v2'] }
     const ordinary = (argv: string[], patch = {}) => resolveOrdinaryInvocation({ executable: authority.executable, cwd: authority.canonicalRoot, argv, ...patch }, authority, () => true)
     // The words each available config-bearing row needs besides --config.
     const requiredWords: Readonly<Record<string, readonly string[]>> = {
         selftest: ['--probe-specifications', 'probes.json'], logs: ['--service', 'app'], runtime: ['measure', '--image', 'node:22-alpine'],
         restart: ['--service', 'app'], rebuild: ['--service', 'app'], exec: ['--service', 'app'],
-        'test-run': ['--gate', 'quick'], reset: ['--apply'], grade: ['--criteria', 'criteria.md'], use: ['app'],
+        'test-run': ['--gate', 'quick'], reset: ['--apply'], grade: ['--criteria', 'criteria.md'], use: ['app'], tool: ['add', 'codexcli'],
         ...Object.fromEntries(['accept', 'check', 'acknowledge', 'grade', 'signoff', 'recover'].map(sub => [`work ${sub}`, ['--work-order', 'WO-1']])),
         'work note': ['--work-order', 'WO-1', '--text', 'why'], 'work decide': ['--work-order', 'WO-1', '--decision', '1', '--record'], 'work answer': ['--work-order', 'WO-1', '--question', '1', '--text', 'because'],
         'work acknowledge': ['--work-order', 'WO-1', '--note', 'the deleted test is replaced'],
@@ -188,6 +188,8 @@ describe('closed ordinary invocation metadata', () => {
             ['browser', 'drive', '--json'], ['browser', 'drive', '--role', 'admin'], ['browser', 'drive', '--route', 'home', '--fail-on-findings'], ['browser', 'screenshot', '--role', 'admin', '--json'],
             // An agent points a sibling at its own worktree inside a root it may already write, and pulls.
             ['use', 'app', '/workspace/app/.worktrees/feature'], ['use', 'app', '--clear', '--json'], ['pull'], ['pull', '--json'],
+            // An added tool never widens what agents may do; the hold after it waits only for a sync.
+            ['tool', 'add', 'opencode'], ['tool', 'add', 'codexcli', '--dry-run', '--json'],
         ]
         for (const args of cases) {
             const argv = args[0] === 'registry-resolve' ? args : [...args, '--config', authority.configPath]
@@ -211,7 +213,7 @@ describe('closed ordinary invocation metadata', () => {
 
     it('requires the exact resolved config for every available config-bearing row', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
-        expect(rows.map(row => row.name)).toEqual(['setup', 'use', 'pull', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'ps', 'restart', 'rebuild', 'exec',
+        expect(rows.map(row => row.name)).toEqual(['setup', 'use', 'pull', 'tool', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'ps', 'restart', 'rebuild', 'exec',
             'sleep', 'down', 'reset', 'stacks', 'doctor',
             'test-run', 'work status', 'work accept', 'work check', 'work note', 'work decide', 'work answer', 'work acknowledge', 'work grade', 'work signoff', 'work recover', 'work verify', 'grade',
             'browser drive', 'browser screenshot', 'docs check'])
@@ -246,6 +248,8 @@ describe('closed ordinary invocation metadata', () => {
             ['logs'], ['logs', '--service', 'other'], ['logs', '--service', 'app', '--tail', '0'], ['logs', '--service', 'app', '--tail', '10001'],
             ['logs', '--service', 'app', '--tail', '1.5'], ['logs', '--service', 'app', '--since', '1m;id'], ['logs', '--service', 'app', '--since', 'x'.repeat(65)],
             ['up', '--profile', 'Jobs'], ['up', '--profile', '-jobs'], ['up', '--profile', 'x'.repeat(65)], ['ps', 'app'],
+            // A profile beyond the ones the guard was handed starts services no person declared for an agent.
+            ['up', '--profile', 'ops'], ['up', '--profile', 'jobs', '--profile', 'ops'],
             ['restart'], ['restart', '--service', 'other'], ['rebuild', 'app'], ['rebuild', '--service', 'app', '--profile', 'jobs'],
             // exec needs its command after `--`, and nothing of cockpit's own after it.
             ['exec', '--service', 'app'], ['exec', '--service', 'app', '--config', authority.configPath, '--'],
@@ -271,6 +275,8 @@ describe('closed ordinary invocation metadata', () => {
             // A checkout outside every allowed root would widen what the agent can write, so a person names it.
             ['use', 'app', '/outside/app-feature'], ['use', 'app', '../app-feature'], ['use', 'App', '--clear'], ['use'],
             ['use', 'app', '/workspace/app/feature', 'extra'], ['pull', 'app'],
+            // Removing a tool deletes its guard, so a person runs it.
+            ['tool', 'remove', 'codexcli'], ['tool', 'add', 'unknown'], ['tool', 'add'], ['tool', 'add', 'codexcli', 'opencode'],
         ]
         for (const args of cases) {
             const argv = args[0] === 'registry-resolve' || args.some(arg => arg === '--config') ? args : [...args, '--config', authority.configPath]

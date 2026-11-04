@@ -343,8 +343,10 @@ describe('shipped skill contract', () => {
         expect(body).toContain('cockpit sibling add billing --config cockpit.toml --remote <url> --purpose "<purpose>" --json')
         expect(body).toContain('Show the human the proposed sibling declaration before invoking the command')
         expect(body).toContain('The command writes cockpit.toml immediately; `--json` changes only its output format')
-        expect(body).toContain('as adding a repository inside the siblings root does, run `./node_modules/.bin/cockpit sync --config cockpit.toml` yourself')
-        expect(body).toContain('as removing one does, a person runs it in a terminal')
+        // A new repository is a new directory the agent may write, so its sync is a person's; an added tool is not, so the agent runs it.
+        expect(body).toContain('Adding or removing a repository widens what agents may do (a new repository is a new directory they may write), so the hold names the sibling and a person runs `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal')
+        expect(body).toContain('Adding a tool does not widen what agents may do, so you may run `tool add`')
+        expect(body).not.toContain('until a person runs `./node_modules/.bin/cockpit down')
         expect(body).not.toContain('--gate unit')
         expect(body).not.toContain('`work accept --interactive`')
         const explain = result.files.find(file => file.target === 'codexcli' && file.path === '.agents/skills/cockpit-explain/SKILL.md')

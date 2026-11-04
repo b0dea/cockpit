@@ -229,19 +229,21 @@ cockpit commands in
 | `npx --no cockpit check --config cockpit.toml`, and likewise `doctor`, `preflight`, `ps`, `logs --service <service>`, `stacks`, `stacks prune`, `docs check` and `sync --dry-run` | allowed | They read and report; nothing they do changes a file the guard relies on. |
 | `npx --no -- cockpit --help`, `npx --no cockpit up --help`, and the version | allowed | They print and exit before any command runs. |
 | `npx --no cockpit up --config cockpit.toml`, and likewise `sleep`, `down`, `restart --service <service>` and `rebuild --service <service>` | allowed | They act only on the stack cockpit declared and owns; `down` keeps data volumes, and deletes only from the local Docker daemon it fixes at the start of the run. |
+| `up --profile <profile>` | allowed for a profile in `environment.profiles` that mounts no sibling with `gate = "operator"`, otherwise a prompt | Another profile starts services no person declared for agents, and an operator-gated sibling touches live data or local hardware. |
 | `npx --no cockpit exec --config cockpit.toml --service <service> -- <command>` | allowed when a `[guards] allow` rule or a declared build or test command admits `<command>`, otherwise a prompt | The command runs in a container whose files the guard cannot see, so it is never proven read-only, and the name-based denials still apply to it. |
 | `npx --no cockpit pull --config cockpit.toml` | allowed | It only fetches and fast-forwards, and leaves a modified or diverged checkout as it was. |
 | `npx --no cockpit use <slug> <checkout> --config cockpit.toml`, and `use <slug> --clear` | allowed for a checkout inside a directory the agent may already write, otherwise a prompt | The choice is recorded for this checkout of the cockpit only, so it never widens what the agent can reach. |
 | `npx --no cockpit runtime measure --config cockpit.toml --image <local-image>` | allowed | The probe runs a disposable stack under its own project, removes it, and records the result only in this machine's git-ignored state; `cockpit.toml` never changes. |
-| `npx --no cockpit session --config cockpit.toml -- <command>` | the decision for `<command>` | A session runs its command as the agent could run it directly, so it never admits more. |
+| `npx --no cockpit session --config cockpit.toml -- <command>`, with a `--profile` that `up` admits | the decision for `<command>` | A session runs its command as the agent could run it directly, so it never admits more. |
 | `npx --no cockpit test-run --config cockpit.toml --gate <gate>`, with an optional `--mode` and a `--select <kind>:<value>` whose value does not start with `-` | allowed for a gate `cockpit.toml` declares | The gate runs only the stages a person declared in the reviewed configuration, the trust `up` already has. |
 | `npx --no cockpit work status --config cockpit.toml`, `work accept`, `work check`, `work note`, `work decide`, `work answer`, `work acknowledge`, `work grade`, `work signoff`, `work recover` (with or without `--apply`), `work verify` and `cockpit grade --criteria <file>`, each with its own options | allowed | They report, or take a step [`[work.gates]`](#who-decides) gives the agent; a step it gives a person waits for the digest typed after `--interactive`, which no agent invocation carries. Grading runs in a separate evaluator. `work recover --apply` removes a lock only once it has shown the holder gone on the lock's own host and among the containers cockpit labels. |
 | `npx --no cockpit sync --config cockpit.toml`, and `upgrade`, whose sync child writes | allowed where `[autonomy] sync = "agent"`, otherwise a prompt | It regenerates the files the configuration declares; after `cockpit.toml` changes, the guard admits it only when the edit [does not widen](#edits-the-guard-has-not-applied) what agents may do, so an agent's sync never publishes a widening of its own. |
+| `npx --no cockpit tool add <tool> --config cockpit.toml`, with an optional `--dry-run` | allowed | It edits only `[surfaces] tools`, and an added tool [does not widen](#edits-the-guard-has-not-applied) what agents may do, so the agent's sync applies it. |
 | `npx --no cockpit reset --config cockpit.toml --apply` | allowed where `[autonomy] reset = "agent"`, otherwise a prompt | It deletes stack data. |
 | `npx --no cockpit stacks prune --config cockpit.toml --apply` | allowed; the command itself refuses a prune that deletes volumes unless `[autonomy] reset = "agent"` | It removes only stacks whose checkout is gone, which bringing the stack up again recreates, and their data only where a reset could delete it. |
 | `npx --no cockpit browser drive --config cockpit.toml`, and likewise `screenshot`, with an optional `--role` | allowed where `browser.request_preapproval` is on, otherwise a prompt | They sign in and capture the declared application, so they run unprompted only on the isolated, non-production data the configuration declares. Preapproval is on by default exactly when `browser.data` is isolated, not restored and not reaching production, and off otherwise; an explicit `request_preapproval` wins, and `true` on a posture that does not qualify is refused. `drive` also accepts `--fail-on-findings`. |
 | `work accept`, `work answer`, `work acknowledge` and `work signoff` with `--interactive` | a prompt, which Codex and OpenCode turn into a denial | `--interactive` asks for a person at a terminal to type the digest of what it shows. |
-| `sync --adopt`, `sync --interactive`, `reset --interactive`, `stacks prune --interactive`, `sibling add` and every other command | a prompt, which Codex and OpenCode turn into a denial | They rewrite `cockpit.toml` or a team's own settings, ask for a person, or delete data. |
+| `sync --adopt`, `sync --interactive`, `reset --interactive`, `stacks prune --interactive`, `sibling add`, `sibling remove`, `tool remove` and every other command | a prompt, which Codex and OpenCode turn into a denial | They widen what agents may do through `cockpit.toml`, rewrite a team's own settings, ask for a person, or delete data. |
 
 A file such a command names, like `--criteria`, is checked as a read:
 the command may quote it in a refusal. A declared instance, a file below `.secrets` or a `.env` or
@@ -392,21 +394,26 @@ names each field that widens.
 
 An edit does not widen only when every difference is one of these:
 
-- descriptive or host-only fields: a sibling's `purpose`, `guides` and `host_reason`,
-  `cockpit.guide_cap`, `[ports]`, `environment.entrypoint_derivatives` and `environment.machine`;
-- a new sibling inside the siblings root, other than the root itself, that declares no
-  environment files and no derived MCP sources;
-- added `testing` stages and gates, `[[guards.deny]]` rules, guard hosts, protected branches,
-  agent tools, `unconfirmed` answers and sibling operator gates;
-- removed `[[guards.allow]]` rules, `[mcp.approved]` entries, Compose files and resettable volumes,
-  a lowered `attempt_cap` or `wip_cap`, an install policy that admits no command it did not, and an
-  `[autonomy]` or `[work]` decision or grading made no weaker.
+- descriptive or host-only fields: a sibling's `purpose`, `host_reason` and `rebuild_inputs`,
+  `cockpit.guide_cap`, `[ports]`, `environment.entrypoint_derivatives`, `environment.machine` and
+  `docs.living`;
+- added agent tools, `unconfirmed` answers and sibling operator gates;
+- removed Compose files, Compose profiles and resettable volumes, and an install policy that admits no
+  command it did not.
 
-Every other difference widens, including a field the classification has no rule for, so a field
-added to the schema is a person's decision until a rule says otherwise. A missing or mismatched
+Every other difference widens. That includes any change, in either direction, to `[guards]`,
+`[work]`, `[autonomy]`, `[mcp]`, `[testing]` (whose stages `test-run` runs unprompted) and `[browser]`;
+a new sibling, wherever its directory is; a sibling's changed `dir`, `guides` (sync copies each guide
+into the root `AGENTS.md`), environment files or derived MCP sources; and every command field, such
+as `environment.seed`. A field the classification has no rule for widens too, so a field added to
+the schema is a person's decision until a rule says otherwise. A missing or mismatched
 copy of the generated configuration cannot show an edit safe, so it holds as a widening edit does.
 `check` reports the same classification: `GUARD_CONFIG_UNSYNCED` as a warning, `GUARD_CONFIG_WIDENED`
 as an error naming the fields.
+
+Whoever runs it, sync refuses a guide that is, or links to, a `.env` or `.env.*` file, a file below a
+`.secrets` directory or a declared environment instance (`PROJECTION_GUIDE_SECRET`), so a guide never
+copies what the guard keeps from agents into the root `AGENTS.md`.
 
 ## Native adapter behavior
 

@@ -2,15 +2,17 @@
 // once the configuration differs from the one it was generated from; this classification decides
 // whether that hold needs a person (the edit widens) or only a sync an agent may run (it does not).
 // It fails closed: a field with no rule here widens whenever it changes, so a field added to the
-// schema later is a person's decision until someone writes down why it is not.
+// schema later is a person's decision until someone writes down why it is not. A rule exists only
+// for a field that cannot widen the guard's trust inputs (the commands agents run unprompted, the
+// roots they write, the secrets they are kept from, who passes a gate) in the direction it admits.
+// [guards], [work], [autonomy], [mcp], [testing], [browser] and every command field have none, so
+// any change to them is a person's.
 // The rules read the configuration rather than compare the guard policy each side would build: most
-// of what they judge (MCP approvals, Compose files and profiles, resettable volumes, test stages,
-// caps, the tools guarded, a sibling's operator gate) never reaches that policy, and building it
-// observes the checkouts on disk.
+// of what they judge (Compose files and profiles, resettable volumes, the tools guarded, a sibling's
+// operator gate) never reaches that policy, and building it observes the checkouts on disk.
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
-import { effectivePolicy, policyWeakening } from '../autonomy.js'
 import { UNSYNCED_ADMITTED_PROSE } from '../command-table.js'
 import { parseCockpitConfigBytes, readBoundedInput } from '../config/load.js'
 import type { ENVIRONMENT_CODES, EnvironmentDiagnostic } from '../environment/contract.js'
@@ -18,7 +20,6 @@ import { hasErrorCode } from '../environment/contract.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import type { CockpitConfig } from '../schema.js'
 import { sha256Hex } from '../sha256.js'
-import { normalizeGuardHost } from './host.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from './local-identity.js'
 
 type PolicyChange = Readonly<{ kind: 'non-widening' }> | Readonly<{ kind: 'widening'; fields: readonly string[] }>
@@ -29,17 +30,11 @@ type Rule = (before: never, after: never, at: string) => readonly string[]
 type Rules = Readonly<Record<string, Rule>>
 
 const safe: Rule = () => []
-/** A list that may lose rows but not gain one; `key` is what makes two rows the same grant. */
-function onlyRemoves<T>(key: (row: T) => unknown = row => row): Rule {
-    return (before: readonly T[] = [], after: readonly T[] = [], at: string) =>
-        after.some(row => !before.some(was => isDeepStrictEqual(key(was), key(row)))) ? [at] : []
-}
+const gains = (from: readonly unknown[], to: readonly unknown[]) => to.some(row => !from.some(was => isDeepStrictEqual(was, row)))
+/** A list that may lose rows but not gain one. */
+const onlyRemoves: Rule = (before: readonly unknown[] = [], after: readonly unknown[] = [], at: string) => gains(before, after) ? [at] : []
 /** A list that may gain rows but not lose one. */
-function onlyAdds<T>(key?: (row: T) => unknown): Rule {
-    const removes = onlyRemoves(key) as (before?: readonly T[], after?: readonly T[], at?: string) => readonly string[]
-    return (before: readonly T[] = [], after: readonly T[] = [], at: string) => removes(after, before, at)
-}
-const notRaised: Rule = (before: number, after: number, at: string) => after > before ? [at] : []
+const onlyAdds: Rule = (before: readonly unknown[] = [], after: readonly unknown[] = [], at: string) => gains(after, before) ? [at] : []
 
 function plainObject(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -56,50 +51,29 @@ function walk(before: unknown, after: unknown, rules: Rules, at: string, key = '
     return isDeepStrictEqual(before, after) ? [] : [at]
 }
 
-// A sibling's root is a directory the agent may write, and its environment files decide which
-// instances the guard protects and which templates it lets the agent read; its derived MCP sources
-// start processes outside the guard. The descriptive fields below say what the sibling is for.
+// The fields of an existing sibling that say what it is for. Everything else about a sibling decides
+// what the agent may write or read: its directory is a writable root, its environment files are the
+// instances the guard protects, its guides are copied into every agent's instructions, and its derived
+// MCP sources start processes outside the guard.
 const SIBLING_RULES: Rules = {
     purpose: safe,
-    guides: safe,
     host_reason: safe,
     // Only the stale-stack warning reads these.
     rebuild_inputs: safe,
     // An operator gate keeps a sibling out of default runs; adding one narrows, removing one widens.
     gate: (before, after, at) => before !== undefined && after === undefined ? [at] : [],
 }
-// A new sibling adds a writable root inside the siblings root, which this classification admits.
-// These are the fields such a row may carry; any other field, an environment file or a derived MCP
-// source among them, is reviewed by a person.
-const NEW_SIBLING_FIELDS: ReadonlySet<string> = new Set(['slug', 'dir', 'remote', 'branch', 'mount', 'acquire', 'var', 'toolchain',
-    'gate', 'host_reason', 'guides', 'instruction_pointer', 'purpose', 'rebuild_inputs'])
 
-const siblings: Rule = (before: CockpitConfig['sibling'], after: CockpitConfig['sibling'], at: string) => {
-    const fields: string[] = []
-    for (const row of before) {
+// A new sibling is a new root the agent may write, wherever its directory is, so only a removed or
+// described one is compared field by field.
+const siblings: Rule = (before: CockpitConfig['sibling'], after: CockpitConfig['sibling'], at: string) => [
+    ...before.flatMap(row => {
         const now = after.find(candidate => candidate.slug === row.slug)
         // A removed sibling takes its instance protection with it, and its directory leaves the guard's view.
-        if (!now) fields.push(`${at}.${row.slug}`)
-        else fields.push(...walk(row, now, SIBLING_RULES, `${at}.${row.slug}`))
-    }
-    for (const row of after) {
-        if (before.some(candidate => candidate.slug === row.slug)) continue
-        // `.` is the siblings root itself, which would make every directory beside the cockpit writable.
-        if (row.dir === '.') fields.push(`${at}.${row.slug}.dir`)
-        fields.push(...Object.keys(row).filter(field => !NEW_SIBLING_FIELDS.has(field)).map(field => `${at}.${row.slug}.${field}`))
-    }
-    return fields
-}
-
-// Stages and gates may be added, as the trust test-run gives a declared stage is the trust any test
-// the agent writes into an existing stage already has; changing or removing one is a person's.
-const testing: Rule = (before: CockpitConfig['testing'], after: CockpitConfig['testing'], at: string) => {
-    if (!after) return before ? [at] : []
-    const was = before ?? { stages: [], gates: [], native_hooks: { install: 'inspect' as const } }
-    const kept = (list: 'stages' | 'gates') => was[list].filter(row => !after[list].some(now => isDeepStrictEqual(now, row)))
-        .map(row => `${at}.${list}.${row.id}`)
-    return [...kept('stages'), ...kept('gates'), ...walk(was, after, { stages: safe, gates: safe }, at)]
-}
+        return now ? walk(row, now, SIBLING_RULES, `${at}.${row.slug}`) : [`${at}.${row.slug}`]
+    }),
+    ...after.filter(row => !before.some(candidate => candidate.slug === row.slug)).map(row => `${at}.${row.slug}`),
+]
 
 // A policy row admits its build and test commands in every sibling of its toolchain.
 const installPolicies: Rule = (before: CockpitConfig['environment']['install_policies'],
@@ -109,47 +83,27 @@ const installPolicies: Rule = (before: CockpitConfig['environment']['install_pol
         .map(kind => `${at}.${row.toolchain}:${row.lockfile}.${kind}`)
 })
 
-const approvals: Rule = (before: Readonly<Record<string, string>>, after: Readonly<Record<string, string>>, at: string) =>
-    Object.entries(after).filter(([name, digest]) => before[name] !== digest).map(([name]) => `${at}.${name}`)
-
-// Keyed by schema path from the configuration's root. `weakened` lists the [autonomy], [work.gates]
-// and grading fields that moved toward the agent, which the autonomy policy decides.
-function changeRules(weakened: readonly string[]): Rules {
-    const weakenedUnder = (prefix: string): Rule => () => weakened.filter(field => field.startsWith(`${prefix}.`) || field === prefix)
-    return {
-        // Removing an entry would claim a person stated an answer nobody stated.
-        unconfirmed: onlyAdds(),
-        'cockpit.guide_cap': safe,
-        sibling: siblings,
-        ports: safe,
-        'guards.hosted_db_hosts': onlyAdds<string>(normalizeGuardHost),
-        'guards.vendor_endpoint_hosts': onlyAdds<string>(normalizeGuardHost),
-        'guards.protected_branches': onlyAdds(),
-        // The reason is prose; the command prefix and directory are the grant.
-        'guards.allow': onlyRemoves<CockpitConfig['guards']['allow'][number]>(row => [row.argv, row.cwd ?? null]),
-        'guards.deny': onlyAdds<CockpitConfig['guards']['deny'][number]>(row => 'prefix' in row ? ['prefix', row.prefix] : ['contains', row.contains]),
-        'mcp.approved': approvals,
-        'work.grading': weakenedUnder('work.grading'),
-        'work.gates': weakenedUnder('work.gates'),
-        'work.attempt_cap': notRaised,
-        'work.wip_cap': notRaised,
-        autonomy: weakenedUnder('autonomy'),
-        testing,
-        'environment.compose_files': onlyRemoves(),
-        // A profile starts more of the Compose files' services, as a new Compose file does.
-        'environment.profiles': onlyRemoves(),
-        'environment.install_policies': installPolicies,
-        // Reset deletes exactly these volumes.
-        'environment.resettable_volumes': onlyRemoves(),
-        // Addresses derived from leased ports, and the floor the host is held to: neither reaches the guard.
-        'environment.entrypoint_derivatives': safe,
-        'environment.machine': safe,
-        // Removing a tool deletes its guard registration.
-        'surfaces.tools': onlyAdds(),
-        // Only docs check reads living documents. The decision paths stay a person's: work orders
-        // never count changes under them as out of scope.
-        'docs.living': safe,
-    }
+// Keyed by schema path from the configuration's root.
+const CHANGE_RULES: Rules = {
+    // Removing an entry would claim a person stated an answer nobody stated.
+    unconfirmed: onlyAdds,
+    'cockpit.guide_cap': safe,
+    sibling: siblings,
+    ports: safe,
+    'environment.compose_files': onlyRemoves,
+    // A profile starts more of the Compose files' services, as a new Compose file does.
+    'environment.profiles': onlyRemoves,
+    'environment.install_policies': installPolicies,
+    // Reset deletes exactly these volumes.
+    'environment.resettable_volumes': onlyRemoves,
+    // Addresses derived from leased ports, and the floor the host is held to: neither reaches the guard.
+    'environment.entrypoint_derivatives': safe,
+    'environment.machine': safe,
+    // Removing a tool deletes its guard registration.
+    'surfaces.tools': onlyAdds,
+    // Only docs check reads living documents. The decision paths stay a person's: work orders
+    // never count changes under them as out of scope.
+    'docs.living': safe,
 }
 
 /**
@@ -157,16 +111,15 @@ function changeRules(weakened: readonly string[]): Rules {
  * whose path was renamed away never matches, and its field silently falls back to the default.
  * Paths under `sibling[].` name a field of a sibling row.
  */
-export const POLICY_CHANGE_RULE_PATHS: readonly string[] = Object.freeze([...Object.keys(changeRules([])),
-    ...[...Object.keys(SIBLING_RULES), ...NEW_SIBLING_FIELDS].map(field => `sibling[].${field}`)])
+export const POLICY_CHANGE_RULE_PATHS: readonly string[] = Object.freeze([...Object.keys(CHANGE_RULES),
+    ...Object.keys(SIBLING_RULES).map(field => `sibling[].${field}`)])
 
 /**
  * Whether `after` lets agents do anything `before` did not, over the loaded configurations. Only a
  * difference a rule above proves safe is non-widening; every other difference widens.
  */
 export function policyChange(before: CockpitConfig, after: CockpitConfig): PolicyChange {
-    const rules = changeRules(policyWeakening(effectivePolicy(before), effectivePolicy(after)).map(row => row.field))
-    const fields = walk(before, after, rules, '')
+    const fields = walk(before, after, CHANGE_RULES, '')
     return fields.length ? { kind: 'widening', fields: [...new Set(fields)] } : { kind: 'non-widening' }
 }
 

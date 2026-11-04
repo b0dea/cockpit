@@ -66,12 +66,28 @@ describe('policyChange', () => {
         ['a removed sibling', config => { config.sibling.pop() }, ['sibling.api']],
         ['a moved sibling directory', config => { config.sibling[1].dir = 'service' }, ['sibling.api.dir']],
         ['a removed operator gate', config => { delete config.sibling[1].gate }, ['sibling.api.gate']],
-        ['a new sibling at the siblings root', config => config.sibling.push({ ...newSibling, dir: '.' }), ['sibling.docs.dir']],
-        ['a new sibling with an MCP source', config => config.sibling.push({ ...newSibling, derives: { mcp_sources: [{ path: '.mcp.json',
-            provenance: { source: 'cockpit.toml', kind: 'declared', reason: 'The docs server.' } }] } }), ['sibling.docs.derives']],
+        // Every new sibling is a new root the agent may write, inside the siblings root or not.
+        ['a new sibling inside the siblings root', config => config.sibling.push(newSibling), ['sibling.docs']],
+        ['a new sibling at the siblings root', config => config.sibling.push({ ...newSibling, dir: '.' }), ['sibling.docs']],
+        // Sync copies every guide into the root AGENTS.md, so a guide is a read of the sibling into every agent's context.
+        ['a new guide', config => { config.sibling[0].guides = ['AGENTS.md', 'notes/setup.md'] }, ['sibling.web.guides']],
         ['a moved siblings root', config => { config.cockpit.siblings_root = '../..' }, ['cockpit.siblings_root']],
         ['a removed guarded tool', config => { config.surfaces.tools = ['claudecode'] }, ['surfaces.tools']],
-        ['a changed test stage', config => { config.testing.stages[0].command = ['npm', 'run', 'anything'] }, ['testing.stages.unit']],
+        ['a changed test stage', config => { config.testing.stages[0].command = ['npm', 'run', 'anything'] }, ['testing.stages']],
+        // test-run runs a declared stage unprompted, so a new one is a new command.
+        ['an added test stage and gate', config => {
+            config.testing.stages.push({ id: 'e2e', command: ['npx', 'playwright', 'test'], requires_stack: true })
+            config.testing.gates.push({ id: 'full', tier: 'full', stages: ['unit', 'e2e'], changes: 'a release' })
+        }, ['testing.stages', 'testing.gates']],
+        // [guards], [work], [autonomy] and [mcp] are a person's in either direction.
+        ['an added deny rule, a removed allow rule and added hosts', config => {
+            config.guards.deny.push({ contains: ['--force'], reason: 'Forced writes are a person\'s.' })
+            config.guards.allow = []
+            config.guards.hosted_db_hosts.push('*.warehouse.example.test')
+            config.guards.protected_branches = ['main', 'master', 'release']
+        }, ['guards.hosted_db_hosts', 'guards.protected_branches', 'guards.allow', 'guards.deny']],
+        ['a decision moved toward a person', config => { config.autonomy = { sync: 'person' }; config.work.gates.amend = 'ci' }, ['work.gates.amend', 'autonomy.sync']],
+        ['a removed MCP approval', config => { config.mcp.approved = {} }, ['mcp.approved.docs']],
         ['a removed unconfirmed answer', config => { delete config.unconfirmed }, ['unconfirmed']],
         ['a seed command, which no rule covers', config => { config.environment.seed = { argv: ['make', 'seed'], timeout_seconds: 60 } }, ['environment.seed']],
     ])('widens on %s', (_name, edit, fields) => {
@@ -80,25 +96,13 @@ describe('policyChange', () => {
 
     it.each<[string, (config: Declared) => void]>([
         ['an unchanged configuration', () => {}],
-        ['a reworded purpose and new guides', config => { config.sibling[0].purpose = 'the storefront'; config.sibling[0].guides = ['AGENTS.md'] }],
-        ['a new sibling inside the siblings root', config => config.sibling.push(newSibling)],
+        ['a reworded purpose', config => { config.sibling[0].purpose = 'the storefront' }],
         ['a new derived route', config => { config.environment.entrypoint_derivatives = [{ name: 'app', kind: 'origin', port: 'WEB_PORT', path: '/' }] }],
-        ['an added test stage and gate', config => {
-            config.testing.stages.push({ id: 'e2e', command: ['npx', 'playwright', 'test'], requires_stack: true })
-            config.testing.gates.push({ id: 'full', tier: 'full', stages: ['unit', 'e2e'], changes: 'a release' })
-        }],
-        ['an added deny rule, a removed allow rule and added hosts', config => {
-            config.guards.deny.push({ contains: ['--force'], reason: 'Forced writes are a person\'s.' })
-            config.guards.allow = []
-            config.guards.hosted_db_hosts.push('*.warehouse.example.test')
-            config.guards.protected_branches = ['main', 'master', 'release']
-        }],
-        ['a decision moved toward a person', config => { config.autonomy = { sync: 'person' }; config.work.gates.amend = 'ci' }],
         ['a moved port base and a raised machine floor', config => {
             config.ports.bases.WEB_PORT = 4000
             config.environment.machine = { runtime_memory_mb: 4096, runtime_cpus: 2, free_disk_mb: 10_000, cold_start_seconds: 600 }
         }],
-        ['a removed MCP approval and an added operator gate', config => { config.mcp.approved = {}; config.sibling[0].gate = 'operator' }],
+        ['an added operator gate', config => { config.sibling[0].gate = 'operator' }],
         ['new living documents, rebuild inputs and a removed profile', config => {
             config.docs.living.push('docs/**/*.md')
             config.sibling[0].rebuild_inputs = ['migrations']
