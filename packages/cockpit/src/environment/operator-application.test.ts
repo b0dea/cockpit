@@ -157,14 +157,17 @@ describe('operator application admission', () => {
             const outcome = runStacksPruneOperatorApplication({ configPath: '/synthetic/cockpit.toml' },
                 { interactive: admission.interactive ?? false, apply: admission.apply ?? false, json: false, ci: undefined, terminal: true },
                 { begin, confirm: vi.fn(async () => admission.typed), policy: policyAdapter(policyOf({ reset })).load })
-            return { apply, outcome }
+            return { apply, begin, outcome }
         }
         const previewed = run(true, 'person', {})
         expect(await previewed.outcome).toBe(preview)
         expect(previewed.apply).not.toHaveBeenCalled()
+        expect(previewed.begin).toHaveBeenCalledWith({ configPath: '/synthetic/cockpit.toml', scope: 'machine' })
         const housekeeping = run(false, 'person')
         expect((await housekeeping.outcome).status).toBe(0)
         expect(housekeeping.apply).toHaveBeenCalledOnce()
+        // Another cockpit's [autonomy] is not this one's, so an agent's apply covers only this cockpit's stacks.
+        expect(housekeeping.begin).toHaveBeenCalledWith({ configPath: '/synthetic/cockpit.toml', scope: 'this-cockpit' })
         const data = run(true, 'person')
         expect((await data.outcome).diagnostics[0]?.code).toBe('AUTONOMY_PERSON_REQUIRED')
         expect(data.apply).not.toHaveBeenCalled()
@@ -175,6 +178,7 @@ describe('operator application admission', () => {
         expect(mistyped.apply).not.toHaveBeenCalled()
         const approved = run(true, 'person', { interactive: true, typed: 'b'.repeat(64) })
         expect((await approved.outcome).status).toBe(0)
+        expect(approved.begin).toHaveBeenCalledWith({ configPath: '/synthetic/cockpit.toml', scope: 'machine' })
     })
 
     it('removes stale generated files without a person only where [autonomy] stale_delete allows it', async () => {

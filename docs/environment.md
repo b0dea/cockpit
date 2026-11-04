@@ -465,7 +465,11 @@ A stack's checkout is proven, never guessed. Compose labels each container with 
 ran from, and the ancestor whose checkout identity derives the stack's own identity is its
 checkout; or the cockpit's main checkout is known and none of the checkouts Git records for it
 derives the stack. `checkout.source` says which. The checkout is `present`, `missing`, `replaced`
-(the path exists but is no longer a checkout of that cockpit) or `unknown`.
+(the path exists but is no longer a checkout of that cockpit) or `unknown`. A worktree whose path
+does not exist while Git still registers it, or marks it locked, is `unknown`, not `missing`: a
+drive or share that is not mounted, or a checkout moved without `git worktree repair`, looks exactly
+like that. Once such a checkout is really gone, `git worktree prune` in its main checkout (after
+`git worktree unlock` for a locked one) lets `stacks prune` remove its stack.
 
 A stack is `orphaned` only when its checkout is proven `missing`. Every other stack is kept: one
 whose checkout exists or cannot be found, one that a `down` or `reset` is still draining, the
@@ -492,7 +496,11 @@ again resumes. The result is reported only once a fresh inventory no longer list
 Removing an orphan is housekeeping, so `--apply` runs for an agent. A prune that deletes volumes
 deletes data, and follows the reset gate: it runs only where `[autonomy] reset` lets the caller
 reset, and otherwise a person runs `stacks prune --interactive` in a terminal and types the
-preview's digest. `doctor` warns with `STACKS_ORPHANED` when a stack of this cockpit has lost its
+preview's digest. That gate is the running cockpit's own policy and says nothing for another
+cockpit's, so `--apply` removes only this cockpit's orphans and the state folders an earlier build
+left. The preview still lists every orphan, marks each with `thisCockpit`, and warns with
+`STACKS_PRUNE_UNCONFIRMED` that another cockpit's are removed only by a person's
+`stacks prune --interactive`, which covers the whole machine. `doctor` warns with `STACKS_ORPHANED` when a stack of this cockpit has lost its
 checkout or a state record cannot be read, without asking Docker; `stacks` gives the full picture.
 
 ### Change a running stack

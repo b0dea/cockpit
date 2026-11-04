@@ -164,36 +164,51 @@ async function mainCheckoutOf(checkout: string): Promise<string | undefined> {
 }
 
 /**
- * The main checkout and every worktree Git records for it whose directory exists, or undefined when
- * any registration cannot be read: an incomplete list would make a live worktree's stack look orphaned.
+ * A checkout Git records. `missing` marks a registered worktree whose path does not exist now: Git keeps
+ * the registration until `git worktree prune` drops it, and never drops a locked one, so an unmounted
+ * drive or share, or a checkout moved without `git worktree repair`, reads exactly like this.
  */
-async function checkoutsOf(main: string): Promise<readonly string[] | undefined> {
+interface RecordedCheckout {
+    readonly path: string
+    readonly missing?: 'locked' | 'registered'
+}
+
+/**
+ * The main checkout and every worktree Git records for it, or undefined when any registration cannot
+ * be read: an incomplete list would make a live worktree's stack look orphaned.
+ */
+async function checkoutsOf(main: string): Promise<readonly RecordedCheckout[] | undefined> {
     const registry = join(main, '.git', 'worktrees')
     let names: string[]
     try { names = await readdir(registry) }
     catch (error) {
-        if (hasErrorCode(error, 'ENOENT')) return [main]
+        if (hasErrorCode(error, 'ENOENT')) return [{ path: main }]
         if (hasErrorCode(error, 'ENOTDIR', 'EACCES', 'EPERM')) return undefined
         throw error
     }
     if (names.length > WORKTREE_LIMIT) return undefined
     // Every registration is read at once; walking the results in name order keeps the outcome a
     // sequential walk would give, down to which failure, an unreadable entry or a throw, decides it.
-    const registered = await Promise.allSettled(names.sort().map(async (name): Promise<string | 'absent' | undefined> => {
+    const registered = await Promise.allSettled(names.sort().map(async (name): Promise<RecordedCheckout | undefined> => {
         const pointer = readPointer(join(registry, name, 'gitdir'))
         if (pointer === undefined) return undefined
         const target = resolve(registry, name, pointer)
         if (basename(target) !== '.git') return undefined
         const status = await statOf(dirname(target))
         if (status === 'unreadable') return undefined
-        if (status === 'absent') return 'absent'
-        return canonical(dirname(target))
+        if (status !== 'absent') {
+            const path = await canonical(dirname(target))
+            return path === undefined ? undefined : { path }
+        }
+        const locked = await statOf(join(registry, name, 'locked'))
+        if (locked === 'unreadable') return undefined
+        return { path: dirname(target), missing: locked === 'absent' ? 'registered' : 'locked' }
     }))
-    const checkouts = [main]
+    const checkouts: RecordedCheckout[] = [{ path: main }]
     for (const result of registered) {
-        const path = settledValue(result)
-        if (path === undefined) return undefined
-        if (path !== 'absent') checkouts.push(path)
+        const checkout = settledValue(result)
+        if (checkout === undefined) return undefined
+        checkouts.push(checkout)
     }
     return checkouts
 }
@@ -291,9 +306,11 @@ async function readStateStacks(namespace: StateNamespace): Promise<
     return refuse(read.code, read.message, read.target, read.recovery)
 }
 
-function verdictOf(input: Readonly<{ current: boolean; checkout: StackCheckout; malformed: boolean; draining: boolean }>): { verdict: StackVerdict; reason: string } {
+function verdictOf(input: Readonly<{ current: boolean; checkout: StackCheckout; malformed: boolean; draining: boolean; registered: RecordedCheckout['missing'] }>): { verdict: StackVerdict; reason: string } {
     if (input.current) return { verdict: 'current', reason: 'this is the stack of the checkout running the command' }
     if (input.draining) return { verdict: 'kept', reason: 'a down or reset of this stack is in progress, and only its own checkout may finish it' }
+    if (input.registered === 'locked') return { verdict: 'kept', reason: 'Git marks its worktree locked, as for one on a drive or share that is not mounted now; once the checkout is really gone, run git worktree unlock and git worktree prune in its main checkout' }
+    if (input.registered === 'registered') return { verdict: 'kept', reason: 'its checkout path does not exist but Git still registers the worktree, as for one on a drive or share that is not mounted now or one moved without git worktree repair; once the checkout is really gone, run git worktree prune in its main checkout' }
     if (input.checkout.status === 'present') return { verdict: 'kept', reason: 'its checkout exists' }
     if (input.checkout.status === 'replaced') return { verdict: 'kept', reason: 'its checkout path exists but is no longer a checkout of this cockpit; cockpit cannot prove nothing uses the stack' }
     if (input.checkout.status === 'missing') return { verdict: 'orphaned', reason: 'its checkout no longer exists' }
@@ -367,9 +384,9 @@ async function observe(input: Parameters<typeof observeMachineStacks>[0]): Promi
     // Every checkout a cockpit records, with the checkout and shared stack identity it derives, computed once per path.
     const checkouts = new Map(await Promise.all([...mains].map(async ([cockpitId, main]) => {
         const paths = await checkoutsOf(main)
-        return [cockpitId, paths?.map((path) => {
-            const checkoutId = deriveCheckoutId({ checkoutPath: path })
-            return { path, checkoutId, stackId: sharedStackOf(cockpitId, checkoutId) }
+        return [cockpitId, paths?.map((recorded) => {
+            const checkoutId = deriveCheckoutId({ checkoutPath: recorded.path })
+            return { ...recorded, checkoutId, stackId: sharedStackOf(cockpitId, checkoutId) }
         })] as const
     })))
 
@@ -380,10 +397,13 @@ async function observe(input: Parameters<typeof observeMachineStacks>[0]): Promi
         const known = checkouts.get(cockpitId)
         // A holder names its checkout's identity outright; the derivation covers a stack no one holds.
         const holders = new Set(stored?.record?.holders.map(({ checkoutId: id }) => id) ?? [])
-        const registered = known?.find((checkout) => checkout.stackId === stackId || holders.has(checkout.checkoutId))?.path
+        const registered = known?.find((checkout) => checkout.stackId === stackId || holders.has(checkout.checkoutId))
         const proven = proofs.get(id)
         const checkout: StackCheckout = registered !== undefined
-            ? { path: registered, status: 'present', source: `a checkout Git records for ${mains.get(cockpitId)}` }
+            ? registered.missing === undefined
+                ? { path: registered.path, status: 'present', source: `a checkout Git records for ${mains.get(cockpitId)}` }
+                : { path: registered.path, status: 'unknown',
+                    source: `a worktree Git ${registered.missing === 'locked' ? 'marks locked' : 'still registers'} for ${mains.get(cockpitId)}, at a path that does not exist now` }
             : proven !== undefined
                 ? { path: proven, status: await statusOf(proven, cockpitId), source: `the Compose working directory label of container ${owned.find((row) => row.workingDir !== null)!.name}` }
                 : known !== undefined
@@ -395,7 +415,7 @@ async function observe(input: Parameters<typeof observeMachineStacks>[0]): Promi
         const record = stored?.record
         const draining = record?.drain != null
         const decided = verdictOf({ current: cockpitId === input.own.cockpitId && stackId === input.own.stackId, checkout,
-            malformed: malformed !== undefined, draining })
+            malformed: malformed !== undefined, draining, registered: registered?.missing })
         const lease = record?.lease && !record.lease.released ? record.lease.ports : null
         stacks.push({
             namespace: stored?.namespace, files: stored?.files ?? [], resources: owned,
@@ -451,6 +471,12 @@ async function observe(input: Parameters<typeof observeMachineStacks>[0]): Promi
     }
 }
 
+/** What `cockpit stacks` and its prune are run with: the configuration and the caller's environment. */
+export interface StacksInput {
+    readonly configPath: string
+    readonly env: Readonly<Record<string, string | undefined>>
+}
+
 export interface StacksContext {
     readonly configPath: string
     readonly namespace: StateNamespace
@@ -460,7 +486,7 @@ export interface StacksContext {
 
 const STEP_TIMEOUT_MS = 10_000
 
-async function loadStacksContext(configPath: string, env: Readonly<Record<string, string | undefined>>, execute: Executor): Promise<StacksContext | Refusal> {
+async function loadStacksContext({ configPath, env }: StacksInput, execute: Executor): Promise<StacksContext | Refusal> {
     const loaded = await loadCockpitConfig(configPath)
     if (loaded.kind !== 'complete') return { kind: 'refusal', diagnostics: loaded.diagnostics as readonly EnvironmentDiagnostic[] }
     const source = loaded.result.source
@@ -512,9 +538,8 @@ function refusalStatus(refusal: Refusal): StacksOutcome {
 }
 
 /** `cockpit stacks`: lists every stack this machine knows about, and changes nothing. */
-export async function runStacksInventory(input: Readonly<{ configPath: string; env: Readonly<Record<string, string | undefined>> }>,
-    dependencies: Readonly<{ execute: Executor }>): Promise<StacksOutcome> {
-    const context = await loadStacksContext(input.configPath, input.env, dependencies.execute)
+export async function runStacksInventory(input: StacksInput, dependencies: Readonly<{ execute: Executor }>): Promise<StacksOutcome> {
+    const context = await loadStacksContext(input, dependencies.execute)
     if ('kind' in context) return refusalStatus(context)
     const observed = await observeWithDocker(context, dependencies.execute)
     if ('kind' in observed) return refusalStatus(observed)
@@ -547,8 +572,15 @@ function plannedRow({ row, resources, files }: ObservedStack): PlannedStack {
         containers: named('container'), networks: named('network'), volumes: named('volume'), stateFiles: files.map(({ path }) => path) }
 }
 
-function planOf(observed: Observation): Readonly<{ stacks: readonly ObservedStack[]; folders: Observation['folders']; digest: string; deletesData: boolean }> {
-    const stacks = observed.stacks.filter(({ row }) => row.verdict === 'orphaned')
+/**
+ * Whose orphans a prune removes. An agent's `--apply` passes this cockpit's `[autonomy]` policy, which
+ * says nothing for another cockpit's stacks, so it covers this cockpit's stacks and the state folders
+ * earlier builds left; a person who approved the preview covers the machine.
+ */
+export type StacksPruneScope = 'this-cockpit' | 'machine'
+
+function planOf(observed: Observation, inScope: (row: StackRow) => boolean): Readonly<{ stacks: readonly ObservedStack[]; folders: Observation['folders']; digest: string; deletesData: boolean }> {
+    const stacks = observed.stacks.filter(({ row }) => row.verdict === 'orphaned' && inScope(row))
     const folders = observed.folders.filter(({ row }) => row.verdict === 'orphaned')
     // The digest binds the exact resources and file bytes, so an approval covers only what was shown.
     const bound = {
@@ -560,10 +592,20 @@ function planOf(observed: Observation): Readonly<{ stacks: readonly ObservedStac
         deletesData: stacks.some(({ resources }) => resources.some(({ kind }) => kind === 'volume')) }
 }
 
+function otherCockpitsWarning(stacks: readonly ObservedStack[], configPath: string): readonly Diagnostic[] {
+    if (stacks.length === 0) return []
+    return [{ severity: 'warning', target: 'stacks',
+        code: 'STACKS_PRUNE_UNCONFIRMED' as const satisfies typeof ENVIRONMENT_CODES.STACKS_PRUNE_UNCONFIRMED,
+        message: `orphaned stacks of other cockpits are removed only with a person's approval, because this cockpit's [autonomy] policy does not speak for them; an agent's --apply leaves ${stacks.map(({ row }) => row.stackId).join(', ')}`,
+        fix: `a person runs ${cockpitCommand('stacks prune', { config: configPath, args: '--interactive' })} in a terminal outside CI, reads the preview and types its digest` }]
+}
+
 /** What a person or an agent approves: the exact prune a fresh observation shows, and how to apply it. */
 export interface StacksPruneSession {
     readonly preview: StacksOutcome
+    /** The digest of the whole preview, which a person types to approve it. */
     readonly digest: string
+    /** Whether the scope the session applies holds nothing to remove, and whether it deletes volumes. */
     readonly empty: boolean
     readonly deletesData: boolean
     apply(): Promise<StacksOutcome>
@@ -573,34 +615,40 @@ export interface StacksPruneSession {
 const PRUNE_ORDER: readonly MachineStackResource['kind'][] = ['container', 'network', 'volume']
 
 /**
- * Observes the machine and plans the prune of every orphaned stack and state folder. `apply` observes
- * again and acts only while the plan still has the previewed digest: containers first, then networks
- * and volumes, then the state that holds the port lease, then unreadable state folders. A failed step
- * stops the prune and keeps the state, so the stack stays listed and the next prune resumes it.
+ * Observes the machine and plans the prune of every orphaned stack and state folder. The preview lists
+ * them all; `apply` removes those in `scope`, after observing again and only while that part of the plan
+ * still has the digest it had at the preview: containers first, then networks and volumes, then the
+ * state that holds the port lease, then unreadable state folders. A failed step stops the prune and
+ * keeps the state, so the stack stays listed and the next prune resumes it.
  */
-export async function beginStacksPrune(input: Readonly<{ configPath: string; env: Readonly<Record<string, string | undefined>> }>,
+export async function beginStacksPrune(input: StacksInput, scope: StacksPruneScope,
     dependencies: Readonly<{ execute: Executor }>): Promise<StacksPruneSession | StacksOutcome> {
-    const context = await loadStacksContext(input.configPath, input.env, dependencies.execute)
-    return 'kind' in context ? refusalStatus(context) : openStacksPrune(context, dependencies)
+    const context = await loadStacksContext(input, dependencies.execute)
+    return 'kind' in context ? refusalStatus(context) : openStacksPrune(context, scope, dependencies)
 }
 
 /** The prune of an already identified checkout's machine: what `beginStacksPrune` opens once the context is loaded. */
-export async function openStacksPrune(context: StacksContext, dependencies: Readonly<{ execute: Executor }>): Promise<StacksPruneSession | StacksOutcome> {
+export async function openStacksPrune(context: StacksContext, scope: StacksPruneScope,
+    dependencies: Readonly<{ execute: Executor }>): Promise<StacksPruneSession | StacksOutcome> {
     const observed = await observeWithDocker(context, dependencies.execute)
     if ('kind' in observed) return refusalStatus(observed)
-    const plan = planOf(observed)
+    const thisCockpit = (row: StackRow) => row.cockpitId === context.own.cockpitId
+    const inScope = scope === 'machine' ? () => true : thisCockpit
+    const whole = planOf(observed, () => true)
+    const plan = planOf(observed, inScope)
     const kept = observed.inventory.stacks.filter(({ verdict }) => verdict !== 'orphaned').length
-    const summary = { digest: plan.digest, deletesData: plan.deletesData, stacks: plan.stacks.map(plannedRow),
-        stateFolders: plan.folders.map(({ row }) => ({ path: row.path, reason: row.reason })), kept }
-    const empty = plan.stacks.length === 0 && plan.folders.length === 0
+    const summary = { digest: whole.digest, deletesData: whole.deletesData,
+        stacks: whole.stacks.map((stack) => ({ ...plannedRow(stack), thisCockpit: thisCockpit(stack.row) })),
+        stateFolders: whole.folders.map(({ row }) => ({ path: row.path, reason: row.reason })), kept }
+    const wholeEmpty = whole.stacks.length === 0 && whole.folders.length === 0
     return {
-        digest: plan.digest, empty, deletesData: plan.deletesData,
-        preview: { status: 0, diagnostics: [], result: { dryRun: true, ...summary,
-            apply: empty ? null : cockpitCommand('stacks prune', { config: context.configPath, args: '--apply' }) } },
+        digest: whole.digest, empty: plan.stacks.length === 0 && plan.folders.length === 0, deletesData: plan.deletesData,
+        preview: { status: 0, diagnostics: otherCockpitsWarning(whole.stacks.filter(({ row }) => !thisCockpit(row)), context.configPath),
+            result: { dryRun: true, ...summary, apply: wholeEmpty ? null : cockpitCommand('stacks prune', { config: context.configPath, args: '--apply' }) } },
         apply: async () => {
             const again = await observeWithDocker(context, dependencies.execute)
             if ('kind' in again) return refusalStatus(again)
-            const current = planOf(again)
+            const current = planOf(again, inScope)
             if (current.digest !== plan.digest) return { status: 2, result: null, diagnostics: [{ severity: 'error', target: 'stacks',
                 code: 'STACKS_PRUNE_UNCONFIRMED' as const satisfies typeof ENVIRONMENT_CODES.STACKS_PRUNE_UNCONFIRMED,
                 message: 'the orphaned stacks changed between the preview and the removal, so nothing was removed',
@@ -638,12 +686,13 @@ export async function openStacksPrune(context: StacksContext, dependencies: Read
             // The removal is reported only once a fresh observation no longer lists what was removed.
             const after = await observeWithDocker(context, dependencies.execute)
             if ('kind' in after) return refusalStatus(after)
-            const left = planOf(after)
+            const left = planOf(after, inScope)
             const remaining = removed.filter(({ cockpitId, stackId }) => left.stacks.some(({ row }) => row.cockpitId === cockpitId && row.stackId === stackId))
             if (remaining.length > 0 || left.folders.some(({ row }) => folders.includes(row.path))) {
                 return incomplete(`a fresh inventory still lists ${remaining.map(({ stackId }) => stackId).join(', ') || 'a removed state folder'}`)
             }
-            return { status: 0, diagnostics: [], result: { digest: plan.digest, removed, removedStateFolders: folders } }
+            return { status: 0, diagnostics: otherCockpitsWarning(planOf(after, (row) => !inScope(row)).stacks, context.configPath),
+                result: { digest: plan.digest, removed, removedStateFolders: folders } }
         },
     }
 }
