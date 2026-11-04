@@ -1,4 +1,4 @@
-import { access, link, lstat, mkdir, open, opendir, readdir, realpath, rename, rmdir, unlink } from 'node:fs/promises'
+import { access, link, lstat, mkdir, open, opendir, readdir, realpath, rename, rm, rmdir, unlink } from 'node:fs/promises'
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, renameSync, type BigIntStats } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -2377,4 +2377,128 @@ export async function transactState<T>(
     }
     if (operationFailed) throw operationFailure
     return issueStatePublication(result, stableAddress)
+}
+
+/** One of a stack's own record files, by the SHA-256 of its exact bytes. */
+export type StackStateFile = Readonly<{ kind: 'coordination' | 'lifecycle' | 'lifecycle-history' | 'data-outcome'; path: string; sha256: string }>
+
+function stackStatePaths(value: StateNamespace, stackId: StackId): readonly Readonly<{ kind: StackStateFile['kind']; path: string }>[] {
+    return [
+        { kind: 'coordination', path: value.paths.coordination(stackId).path },
+        { kind: 'lifecycle', path: value.paths.lifecycle(stackId).path },
+        { kind: 'lifecycle-history', path: lifecycleHistoryAddress(value, stackId)!.path },
+        { kind: 'data-outcome', path: value.paths.dataOutcome(stackId).path },
+    ]
+}
+
+async function readStackStateFiles(value: StateNamespace, stackId: StackId): Promise<readonly StackStateFile[]> {
+    const files: StackStateFile[] = []
+    for (const { kind, path } of stackStatePaths(value, stackId)) {
+        let bytes: Buffer
+        // Bytes, not parsed records: a record this version cannot parse is still this stack's and is
+        // bound by its digest like any other.
+        try { bytes = await readRegularFileNoFollow(path, () => ownedPathIsSafe(value.root, path, 'file')) }
+        catch (error) {
+            if (hasErrorCode(error, 'ENOENT')) continue
+            throw error
+        }
+        files.push({ kind, path, sha256: createHash('sha256').update(bytes).digest('hex') })
+    }
+    return files
+}
+
+/** The record files a stack has under one cockpit's namespace, read as bytes so an unparseable record is listed too. */
+export async function inspectStackState(value: StateNamespace, stackId: StackId): Promise<StateResult<readonly StackStateFile[]>> {
+    const authenticated = authenticateStateNamespace(value)
+    if (!authenticated || !stackIdentity.test(stackId)) return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'stack state inspection requires an issued namespace and a stack id', 'stack state')
+    try { return { kind: 'complete', value: await readStackStateFiles(authenticated, stackId) } }
+    catch (error) {
+        return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, `stack state could not be read safely: ${errorCause(error)}`, authenticated.cockpitRoot)
+    }
+}
+
+/** What a guarded removal did: removed the named paths, or found them changed since the preview and left them. */
+export type StateRemoval = Readonly<{ kind: 'removed'; paths: readonly string[] }> | Readonly<{ kind: 'changed'; reason: string }>
+
+/**
+ * Deletes a stack's record files, which releases its port lease, only when each file still holds the
+ * exact bytes `expected` names and no other file has appeared. It runs under the root port lock, so
+ * no `up` leases ports from a view that still counts the lease, and under the cockpit's own state
+ * lock, so no transaction rewrites a record between the check and the removal.
+ */
+export async function removeStackState(value: StateNamespace, stackId: StackId, expected: readonly StackStateFile[],
+    options: Readonly<{ ownerId: HolderId }>): Promise<StateResult<StateRemoval>> {
+    const authenticated = authenticateStateNamespace(value)
+    if (!authenticated || !stackIdentity.test(stackId) || !holderIdentity.test(options.ownerId)) {
+        return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'stack state removal requires an issued namespace, a stack id and a holder', 'stack state')
+    }
+    const scope = { kind: 'state-scoped-lock' as const }
+    issuedScopedLocks.set(scope, Object.freeze({ namespace: authenticated, path: authenticated.paths.stateLock }))
+    const key = (files: readonly StackStateFile[]) => files.map(({ kind, path, sha256 }) => `${kind}\0${path}\0${sha256}`).sort().join('\n')
+    try {
+        const locked = await withStateRootPortLock(authenticated, { ownerId: options.ownerId, contentionTimeoutMs: 2_000 },
+            () => withStateScopedLock(authenticated, scope, { ownerId: options.ownerId, contentionTimeoutMs: 2_000 }, async (): Promise<StateRemoval> => {
+                const current = await readStackStateFiles(authenticated, stackId)
+                if (key(current) !== key(expected)) return { kind: 'changed', reason: `the state of ${stackId} changed since it was previewed` }
+                for (const { path } of current) await unlink(path)
+                for (const directory of new Set(current.map(({ path }) => dirname(path)))) await syncDirectory(directory)
+                return { kind: 'removed', paths: current.map(({ path }) => path) }
+            }))
+        return locked.kind === 'complete' ? locked.value : locked as StateResult<StateRemoval>
+    } catch (error) {
+        return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, `stack state could not be removed safely: ${errorCause(error)}`, authenticated.cockpitRoot)
+    }
+}
+
+const NAMESPACE_FINGERPRINT_ENTRIES = 4_096
+
+async function namespaceFingerprint(path: string): Promise<string> {
+    const hash = createHash('sha256')
+    let entries = 0
+    const walk = async (directory: string): Promise<void> => {
+        for (const name of (await readdir(directory)).sort()) {
+            if (++entries > NAMESPACE_FINGERPRINT_ENTRIES) throw new RefusalError('state folder exceeds its entry boundary')
+            const child = join(directory, name)
+            const status = await lstat(child, { bigint: true })
+            if (!privatelyOwned({ uid: Number(status.uid), mode: Number(status.mode) })) throw new RefusalError(`${child} is not privately owned`)
+            hash.update(`${relative(path, child)}\0${status.mode}\0${status.size}\0${status.mtimeNs}\n`)
+            if (status.isDirectory()) await walk(child)
+        }
+    }
+    const status = await lstat(path)
+    if (status.isSymbolicLink() || !status.isDirectory() || !privatelyOwned(status)) throw new RefusalError(`${path} is not a private directory`)
+    await walk(path)
+    return hash.digest('hex')
+}
+
+function otherNamespacePath(value: StateNamespace, path: string): boolean {
+    return typeof path === 'string' && isAbsolute(path) && dirname(path) === join(value.root, 'cockpits')
+        && path !== value.cockpitRoot && !basename(path).startsWith('.')
+}
+
+/** A digest of another cockpit's state folder that this version cannot read: every entry's path, mode, size and modification time. */
+export async function inspectStateNamespaceFolder(value: StateNamespace, path: string): Promise<StateResult<string>> {
+    const authenticated = authenticateStateNamespace(value)
+    if (!authenticated || !otherNamespacePath(authenticated, path)) return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'only another cockpit\'s state folder can be inspected for removal', String(path))
+    try { return { kind: 'complete', value: await namespaceFingerprint(path) } }
+    catch (error) { return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, `state folder could not be inspected: ${errorCause(error)}`, path) }
+}
+
+/** Deletes another cockpit's unreadable state folder, under the root port lock, only while it still matches `fingerprint`. */
+export async function removeStateNamespaceFolder(value: StateNamespace, path: string, fingerprint: string,
+    options: Readonly<{ ownerId: HolderId }>): Promise<StateResult<StateRemoval>> {
+    const authenticated = authenticateStateNamespace(value)
+    if (!authenticated || !otherNamespacePath(authenticated, path) || !digest.test(fingerprint) || !holderIdentity.test(options.ownerId)) {
+        return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'only another cockpit\'s previewed state folder can be removed', String(path))
+    }
+    try {
+        return await withStateRootPortLock(authenticated, { ownerId: options.ownerId, contentionTimeoutMs: 2_000 }, async (): Promise<StateRemoval> => {
+            if (await namespaceFingerprint(path) !== fingerprint) return { kind: 'changed', reason: `${path} changed since it was previewed` }
+            await rm(path, { recursive: true })
+            await syncDirectory(dirname(path))
+            return { kind: 'removed', paths: [path] }
+        })
+    } catch (error) {
+        return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, `state folder could not be removed safely: ${errorCause(error)}`, path)
+    }
 }

@@ -8,6 +8,7 @@ import { ENVIRONMENT_CODES, type CheckoutId, type CockpitId, type HolderId, type
 import { coordinationStateRecord, decodeCoordinationRecord, commitDrainOutcome, recoverDrainReservation, reduceDrainOutcome, reserveDrain, reserveDrainAttempt } from './claims.js'
 import {
     classifyReclaim,
+    discoverMachineStacks,
     discoverReclaim,
     executeReclaimAction,
     inspectionOverflow,
@@ -415,6 +416,38 @@ describe('runtime discovery authority', () => {
                 { id: 'network-stopped', ownership: 'current', action: 'report-only' },
             ])
         } finally { await rm(root, { recursive: true, force: true }) }
+    })
+
+    it('lists cockpit-labelled resources of every stack by label presence, and fails closed on a row it cannot read', async () => {
+        const root = await canonicalTemp('cockpit-machine-discovery-')
+        try {
+            const script = join(root, 'docker')
+            const bytes = '#!/bin/sh\nif [ "$1" = context ]; then /bin/cat -- "$PWD/selection.context"; exit; fi\n/bin/cat -- "$PWD/machine.$4"\n'
+            await writeFile(script, bytes, { mode: 0o700 })
+            await writeFile(join(root, 'selection.context'), `${JSON.stringify({ context: dockerContext, endpoint: dockerEndpoint })}\n`)
+            const row = (extra: Record<string, string> = {}) => `${JSON.stringify({ id: 'c1', name: 'synthetic-api-1', state: 'running', labels: {
+                ...labels, 'com.docker.compose.project': composeProject, 'com.docker.compose.project.working_dir': '/synthetic/checkout', ...extra } })}\n`
+            await writeFile(join(root, 'machine.ls'), row())
+            const steps: ExecutionStep[] = []
+            const input = { executable: { canonicalPath: script, invocationPath: script, sha256: sha(bytes), executionMode: 'verified-path' as const },
+                cwd: root, env: { PATH: '/usr/bin:/bin' }, timeoutMs: 5_000, context: dockerContext }
+            const discovery = await discoverMachineStacks(input, async (step) => { steps.push(step); return executeProbe(step) })
+            // `container ls`, `network ls` and `volume ls` all print machine.ls here; each is attributed by its own kind.
+            expect(discovery?.resources.map(({ kind, cockpitId: owner, stackId: stack, running, workingDir }) => ({ kind, owner, stack, running, workingDir })))
+                .toEqual(['container', 'network', 'volume'].map((kind) => ({ kind, owner: cockpitId, stack: stackId,
+                    running: kind === 'container', workingDir: kind === 'container' ? '/synthetic/checkout' : null })))
+            for (const kind of ['container', 'network', 'volume']) {
+                const listing = steps.find(({ id }) => id === `stacks:discover:${kind}`)!
+                expect(listing.argv.slice(1, 3)).toEqual(['--host', dockerEndpoint])
+                expect(listing.argv.slice(-4, -2)).toEqual(['--filter', 'label=dev.b0dea.cockpit.stack-id'])
+            }
+            await writeFile(join(root, 'machine.ls'), row({ 'com.example.unexpected': 'x' }))
+            expect(await discoverMachineStacks(input, executeProbe)).toBeUndefined()
+            await writeFile(join(root, 'machine.ls'), '{"id": "c1"\n')
+            expect(await discoverMachineStacks(input, executeProbe)).toBeUndefined()
+        } finally {
+            await rm(root, { recursive: true, force: true })
+        }
     })
 
     it('refuses malformed network inspection output', async () => {

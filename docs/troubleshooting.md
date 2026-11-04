@@ -202,7 +202,17 @@ progress per checkout. A state diagnostic's target names the exact directory.
 
 These records are how cockpit knows which containers and ports a stack owns. Do not edit them by
 hand, and do not delete them while the stack runs: its containers would keep running with nothing
-that knows about them. To clear one cockpit's state:
+that knows about them.
+
+A stack whose worktree was deleted, and state folders an earlier cockpit build left, are removed by
+`stacks prune`, which previews by default and removes only what no checkout can reach; see
+[List and prune stacks across the machine](environment.md#list-and-prune-stacks-across-the-machine).
+`doctor` warns with `STACKS_ORPHANED` when it finds such a stack, and with `STATE_RECORD_MALFORMED`
+for another cockpit's state folder this version cannot read; `up` and `sleep` ignore that folder's
+port leases.
+
+`stacks prune` keeps a stack whose checkout still exists. To clear the state of a checkout you still
+have:
 
 1. Stop the stack and release its claims from the cockpit directory:
    `./node_modules/.bin/cockpit down --config cockpit.toml`.
@@ -212,10 +222,7 @@ that knows about them. To clear one cockpit's state:
    `rm -rf "$HOME/Library/Application Support/cockpit/state/v1/cockpits/cockpit_duo_<hash>"`.
 
 When this cockpit's own state cannot be read, runtime commands refuse with
-`STATE_RECORD_MALFORMED` or `STATE_FORMAT_UNSUPPORTED` until you clear it. Unreadable state of
-another cockpit, such as a directory left by an earlier cockpit build, does not stop you: `up` and
-`sleep` ignore its port leases, and only `doctor` warns with `STATE_RECORD_MALFORMED`, naming that
-directory and the `rm -rf` command. Remove it with the same steps once no cockpit uses it.
+`STATE_RECORD_MALFORMED` or `STATE_FORMAT_UNSUPPORTED` until you clear it this way.
 
 <!-- cockpit:diagnostic-index:begin -->
 ## Codes with a fixed remedy

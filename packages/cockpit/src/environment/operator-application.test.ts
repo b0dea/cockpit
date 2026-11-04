@@ -3,6 +3,7 @@ import { effectivePolicy, weakeningDigest } from '../autonomy.js'
 import { Autonomy, Work } from '../schema.js'
 import {
     runResetOperatorApplication,
+    runStacksPruneOperatorApplication,
     runSyncOperatorApplication,
     type GeneratedEnvironmentSyncHandlerInput,
 } from './operator-application.js'
@@ -147,6 +148,33 @@ describe('operator application admission', () => {
         decide.mockClear()
         expect((await run('ci', 'true').outcome).status).toBe(0)
         expect(decide).toHaveBeenCalledExactlyOnceWith('approve')
+    })
+
+    it('prunes orphaned stacks for an agent, and asks the reset gate only when the prune deletes volumes', async () => {
+        const run = (deletesData: boolean, reset: string, admission: Partial<{ interactive: boolean; apply: boolean; typed: string }> = { apply: true }) => {
+            const apply = vi.fn(async () => Object.freeze({ status: 0, diagnostics: Object.freeze([]), result: { removed: [] } }))
+            const begin = vi.fn(async () => Object.freeze({ preview, digest: 'b'.repeat(64), empty: false, deletesData, apply }))
+            const outcome = runStacksPruneOperatorApplication({ configPath: '/synthetic/cockpit.toml' },
+                { interactive: admission.interactive ?? false, apply: admission.apply ?? false, json: false, ci: undefined, terminal: true },
+                { begin, confirm: vi.fn(async () => admission.typed), policy: policyAdapter(policyOf({ reset })).load })
+            return { apply, outcome }
+        }
+        const previewed = run(true, 'person', {})
+        expect(await previewed.outcome).toBe(preview)
+        expect(previewed.apply).not.toHaveBeenCalled()
+        const housekeeping = run(false, 'person')
+        expect((await housekeeping.outcome).status).toBe(0)
+        expect(housekeeping.apply).toHaveBeenCalledOnce()
+        const data = run(true, 'person')
+        expect((await data.outcome).diagnostics[0]?.code).toBe('AUTONOMY_PERSON_REQUIRED')
+        expect(data.apply).not.toHaveBeenCalled()
+        expect((await run(true, 'agent').outcome).status).toBe(0)
+        // A person's approval is the typed digest of the exact preview.
+        const mistyped = run(true, 'person', { interactive: true, typed: 'c'.repeat(64) })
+        expect((await mistyped.outcome).diagnostics[0]?.code).toBe('STACKS_PRUNE_UNCONFIRMED')
+        expect(mistyped.apply).not.toHaveBeenCalled()
+        const approved = run(true, 'person', { interactive: true, typed: 'b'.repeat(64) })
+        expect((await approved.outcome).status).toBe(0)
     })
 
     it('removes stale generated files without a person only where [autonomy] stale_delete allows it', async () => {

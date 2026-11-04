@@ -9,7 +9,7 @@ import type { Diagnostic } from './environment/contract.js'
 const CONFIG_PLACEHOLDER = '<your cockpit.toml>'
 
 export type ConfiguredCommand = 'setup' | 'sync' | 'check' | 'selftest' | 'upgrade' | 'up' | 'sleep' | 'session' | 'down'
-    | 'reset' | 'preflight' | 'doctor' | 'logs' | 'runtime measure' | 'sibling add' | 'sibling remove'
+    | 'reset' | 'preflight' | 'doctor' | 'logs' | 'runtime measure' | 'sibling add' | 'sibling remove' | 'stacks' | 'stacks prune'
 
 export interface FixContext {
     // Supplied by the command boundary from resolved configuration and its generated inventory,

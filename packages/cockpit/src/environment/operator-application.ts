@@ -126,6 +126,60 @@ export async function runResetOperatorApplication(
     return { status: EXIT_CODES.cancelled, diagnostics: [], result: null }
 }
 
+export interface StacksPruneOperatorSession {
+    readonly preview: OperatorCommandOutcome
+    readonly digest: string
+    readonly empty: boolean
+    readonly deletesData: boolean
+    apply(): Promise<OperatorCommandOutcome>
+}
+
+export interface StacksPruneOperatorAdapters {
+    readonly begin: (input: Readonly<{ configPath: string }>) => Promise<StacksPruneOperatorSession | OperatorCommandOutcome>
+    /** Shows the preview to a person at a terminal and returns the digest they typed. */
+    readonly confirm: (preview: OperatorCommandOutcome) => Promise<string | undefined>
+    readonly policy: (configPath: string) => Promise<OperatorPolicy | OperatorCommandOutcome>
+}
+
+function pruneUnconfirmed(message: string): OperatorCommandOutcome {
+    return { status: 2, result: null, diagnostics: [{ severity: 'error' as const, target: 'stacks',
+        code: 'STACKS_PRUNE_UNCONFIRMED' as const satisfies typeof ENVIRONMENT_CODES.STACKS_PRUNE_UNCONFIRMED,
+        message, fix: 'a person runs npx --no cockpit stacks prune --config <your cockpit.toml> --interactive in a terminal outside CI, reads the preview and types its digest' }] }
+}
+
+/**
+ * `stacks prune`: a preview by default. Removing an orphan whose checkout is gone is housekeeping
+ * anyone can undo by bringing the stack up again, so `--apply` passes for an agent; a prune that
+ * deletes volumes deletes data, and passes only where `[autonomy] reset` lets this run reset.
+ * `--interactive` is a person's approval of the exact preview by its digest.
+ */
+export async function runStacksPruneOperatorApplication(
+    input: Readonly<{ configPath: string }>,
+    admission: OperatorAdmission,
+    adapters: StacksPruneOperatorAdapters,
+): Promise<OperatorCommandOutcome> {
+    if (admission.interactive && (admission.json || admission.ci && admission.ci.length > 0)) {
+        return pruneUnconfirmed('interactive prune requires a human terminal outside CI and JSON modes')
+    }
+    if (admission.interactive && !admission.terminal) return pruneUnconfirmed('interactive prune requires terminal input')
+    const opened = await adapters.begin(input)
+    if (!('apply' in opened)) return opened
+    if (!admission.interactive && !admission.apply || opened.empty) return opened.preview
+    if (admission.interactive) {
+        if (await adapters.confirm(opened.preview) !== opened.digest) return pruneUnconfirmed('the typed digest did not match the prune preview; nothing was removed')
+        return opened.apply()
+    }
+    if (opened.deletesData) {
+        const policy = await adapters.policy(input.configPath)
+        if (!isPolicy(policy)) return policy
+        const weakened = policy.recorded ? policyWeakening(policy.recorded, policy.current).filter(row => row.field === 'autonomy.reset') : []
+        if (weakened.length) return weakeningRefusal(weakened, 'nothing was pruned')
+        const refused = autonomyRefusal('reset', policy.current.autonomy.reset, admission)
+        if (refused) return refused
+    }
+    return opened.apply()
+}
+
 function staleRemovalRefusal(message: string): OperatorCommandOutcome {
     return refusal('GENERATED_STALE_APPROVAL_REQUIRED', message, 'generated-environment')
 }

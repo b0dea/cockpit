@@ -62,6 +62,8 @@ export interface DoctorCommandAdapters extends ObservationCommandAdapters {
     /** Warnings about prerequisites the stack checks do not cover: the local install, sibling remotes, committed secrets. */
     readonly inspectReadiness?: () => Promise<readonly EnvironmentDiagnostic[]>
     /** Other cockpits' state namespaces this version skipped, or why the inventory could not be read; read after load has selected this cockpit's state root. */
+    /** Warnings about stacks on this machine that no checkout can reach, read after load has selected this cockpit's state root. */
+    readonly inspectStacks?: () => Promise<readonly EnvironmentDiagnostic[]>
     readonly readUnreadableState?: () => Promise<
         | Readonly<{ kind: 'complete'; skipped: readonly SkippedStateNamespace[] }>
         | Readonly<{ kind: 'refusal'; diagnostics: readonly EnvironmentDiagnostic[] }>>
@@ -295,7 +297,8 @@ export async function runDoctor(
         ? stateInventory.diagnostics.map((diagnostic) => ({ ...diagnostic, severity: 'warning' as const,
             message: `doctor could not read this machine's cockpit state, so it did not check for other cockpits' state this version cannot read: ${diagnostic.message}` }))
         : [unreadableStateWarning(stateInventory?.skipped ?? [])].filter((warning) => warning !== undefined)
-    const warnings = [...unconfirmed, ...policyWeakened, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...readinessWarnings, ...unreadableState]
+    const orphanedStacks = await adapters.inspectStacks?.() ?? []
+    const warnings = [...unconfirmed, ...policyWeakened, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...readinessWarnings, ...unreadableState, ...orphanedStacks]
     const reported = warnings.length === 0 ? outcome
         : { ...outcome, diagnostics: [...outcome.diagnostics, ...warnings] }
     // Doctor reports on a configuration; without one there is nothing to report on, and a zero
