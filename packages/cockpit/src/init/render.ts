@@ -1,4 +1,5 @@
 import { AUTONOMY_DEFAULTS, GATE_DEFAULTS } from '../autonomy.js'
+import { unconfirmedFix } from '../guards/answer-confirmation.js'
 import type { CockpitConfig, configurationDefaults, UNCONFIRMABLE_ANSWERS } from '../schema.js'
 import { emitGaps, emitToml, toSiblingRows } from '../emit.js'
 import type { DocumentedSibling, Gap } from '../registry-resolve/registry.js'
@@ -23,11 +24,9 @@ export function unconfirmedReason(row: UnconfirmedAnswer): string {
         : `${row.field} came from an answers file that did not say who chose it; no person is known to have stated it`
 }
 
-export const UNCONFIRMED_FIX = 'confirm the value with whoever owns the product and correct it in cockpit.toml if it is wrong, then delete its entry from unconfirmed and run npx --no cockpit sync --config <your cockpit.toml>'
-
 function renderUnconfirmed(rows: readonly UnconfirmedAnswer[] = []): string {
     if (rows.length === 0) return ''
-    return `${rows.map(row => `# Unconfirmed: ${unconfirmedReason(row)}.\n`).join('')}# To confirm: ${UNCONFIRMED_FIX}; until then doctor warns.\n`
+    return `${rows.map(row => `# Unconfirmed: ${unconfirmedReason(row)}.\n`).join('')}# To confirm: ${unconfirmedFix(rows.map(row => row.field))}; until then doctor warns.\n`
 }
 
 function renderDerived(rows: readonly DerivedAnswer[]): string {

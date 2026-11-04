@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { unconfirmedFix } from '../guards/answer-confirmation.js'
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path'
 import { parse as parseYaml } from 'yaml'
@@ -13,7 +14,7 @@ import { CockpitConfig, Guards, InstallPolicy, MachineFloor, Testing, configurat
 import { toSiblingRows } from '../emit.js'
 import { gaps, parseRegistry, type DocumentedSibling, type Gap } from '../registry-resolve/registry.js'
 import {
-    ANSWER_PROVENANCES, confirmedBy, renderCompleteDocument, renderIncompleteDocument, UNCONFIRMED_FIX, unconfirmedReason,
+    ANSWER_PROVENANCES, confirmedBy, renderCompleteDocument, renderIncompleteDocument, unconfirmedReason,
     type AnswerProvenance, type Attribution, type DerivedAnswer, type DocumentModel, type UnconfirmableAnswer, type UnconfirmedAnswer,
 } from './render.js'
 import { COMPOSE_NAMES, NODE_LOCKFILE_NAMES, deriveInferredFacts, readDockerfileFacts, type InferenceResult } from './derive.js'
@@ -1306,7 +1307,7 @@ async function completeConfigurationDocument(
     const diagnostics = diagnosticsFor(attributions, [])
     for (const row of unconfirmed) diagnostics.push({ severity: 'warning', code: 'DOCUMENT_ANSWER_UNCONFIRMED', target: row.field,
         message: `${unconfirmedReason(row)}, so cockpit.toml lists it under unconfirmed and doctor warns until a person confirms it`,
-        fix: UNCONFIRMED_FIX })
+        fix: unconfirmedFix([row.field]) })
     if (noGuardHosts) diagnostics.push({ severity: 'info', code: 'DOCUMENT_GUARD_HOSTS_NONE', target: 'guards',
         message: `${noGuardHostsDecision(guardRead.provenance)}, so the guard denies no command by host`,
         fix: 'list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists' })

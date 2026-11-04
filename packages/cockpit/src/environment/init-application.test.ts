@@ -506,6 +506,8 @@ describe('init application', () => {
             unconfirmed: [{ field: 'environment.machine', provenance: 'unattributed' }] } })
         expect(written).toContain('# Derived: ports.bases was read from app/compose.yml:4 and accepted by the setup agent; bring-up proves it.')
         expect(written).toContain('unconfirmed = [ "environment.machine" ]\n')
+        // An answer an observation can verify points the agent at the command that does, not at a person.
+        expect(written).toMatch(/# To confirm: run npx --no cockpit confirm environment\.machine\b/)
     })
 
     it('names the deferred greenfield dependency without fabricating a configuration', async () => {
