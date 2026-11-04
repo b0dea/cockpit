@@ -151,7 +151,9 @@ In the diff, read the changelog of each package whose version moved, and look in
 install script. When the lockfile holds an installer that `allowScripts` does not name at that
 exact version, such as a new esbuild, refresh exits non-zero with `ALLOW_SCRIPTS_REVIEW_NEEDED`,
 names the entry to add, and names the old entry to remove. Read what the install script runs, edit
-`allowScripts` in the root `package.json`, and run `npm run deps:refresh` again.
+`allowScripts` in the root `package.json`, and run `npm run deps:refresh` again. Until then
+`lint:supply-chain` fails with `ALLOW_SCRIPTS_APPROVAL_MISSING`, so a committed refresh cannot pass CI
+with the approval missing.
 
 Then run `npm run typecheck` and `npm test`, and commit the lockfile, the bundle, its notice, the
 adapter and the pins. A new Rulesync ships in the bundle, so it needs a patch changeset. Your push

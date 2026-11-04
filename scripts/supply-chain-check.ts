@@ -189,8 +189,13 @@ export function refreshedPins(root: string): Readonly<{ text: string; pending: r
         pending.push(`${key} has an install script that allowScripts in package.json does not approve: read what it runs, then add "${key}": true to allowScripts and rerun npm run deps:refresh`)
         return row
     })
-    for (const key of Object.keys(approved).sort(compareCodeUnits)) {
-        if (!allowed.has(key)) pending.push(`allowScripts in package.json approves ${key}, which is not an installer in package-lock.json: remove it`)
+    for (const [key, value] of Object.entries(approved).sort(([left], [right]) => compareCodeUnits(left, right))) {
+        // npm also accepts a bare name or false; cockpit reviews each installer version on its own.
+        if (value !== true || !/^(?:@[^/@]+\/)?[^/@]+@[^/@]+$/.test(key)) {
+            pending.push(`allowScripts in package.json lists ${key}, but cockpit approves an install script only as an exact "name@version": true entry: replace it`)
+        } else if (!allowed.has(key)) {
+            pending.push(`allowScripts in package.json approves ${key}, which is not an installer in package-lock.json: remove it`)
+        }
     }
     const runtimeDependencies = json(root, 'packages/cockpit/package.json').dependencies ?? {}
     const text = `{\n  "runtimeDependencies": ${JSON.stringify(runtimeDependencies)},\n  "executableLockNodes": [\n${
@@ -363,6 +368,9 @@ export function inspectSupplyChain(root: string, packFiles: unknown): Readonly<{
     if (packageManifest.types !== './dist/cli.d.ts' || JSON.stringify(packageManifest.exports) !== JSON.stringify({ '.': { types: './dist/cli.d.ts', import: './dist/cli.js' } })) {
         diagnostics.push(diagnostic('PACKAGE_EXPORTS_CHANGED', 'packages/cockpit/package.json', 'the public import and declaration targets must remain explicit'))
     }
+    // The pins file is rewritten even while an installer awaits approval, so the lockfile itself
+    // must prove every install script it would run is approved.
+    for (const line of refreshedPins(root).pending) diagnostics.push(diagnostic('ALLOW_SCRIPTS_APPROVAL_MISSING', 'package.json', line))
     if (JSON.stringify(sortedRecord(rootManifest.allowScripts)) !== JSON.stringify(reviewedAllowScripts(pins))) {
         diagnostics.push(diagnostic('ALLOW_SCRIPTS_POLICY_MISMATCH', 'package.json', 'allowScripts must exactly match the installers allowed in scripts/supply-chain-pins.json; run npm run deps:refresh, which names each entry to add or remove'))
     }

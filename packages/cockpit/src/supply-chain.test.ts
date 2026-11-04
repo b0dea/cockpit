@@ -153,8 +153,28 @@ describe('the supply-chain readiness detector', () => {
             expect.stringContaining('approves esbuild@0.28.2, which is not an installer in package-lock.json'),
         ])
 
+        // The command refuses too, not only the function: its exit status is what stops the procedure.
+        mkdirSync(join(root, 'scripts'))
+        for (const name of ['supply-chain-check.ts', 'supply-chain-pins.json', 'build-cockpit.ts']) {
+            cpSync(join(repositoryRoot, 'scripts', name), join(root, 'scripts', name))
+        }
+        symlinkSync(join(repositoryRoot, 'node_modules'), join(root, 'node_modules'))
+        // Real path: the script runs its command line only when argv names its own resolved file.
+        const command = spawnSync(process.execPath, [realpathSync(join(root, 'scripts/supply-chain-check.ts')), '--refresh-pins'], { encoding: 'utf8' })
+        expect(command.status, command.stderr).toBe(1)
+        expect(command.stderr).toContain('ALLOW_SCRIPTS_REVIEW_NEEDED esbuild@0.99.0 has an install script')
+        expect(readFileSync(join(root, 'scripts/supply-chain-pins.json'), 'utf8')).toBe(unapproved.text)
+
         mutate(root, 'package.json', value => {
             delete value.allowScripts['esbuild@0.28.2']
+            value.allowScripts.esbuild = true
+        })
+        expect(refreshedPins(root).pending).toEqual([
+            expect.stringContaining('esbuild@0.99.0 has an install script'),
+            expect.stringContaining('lists esbuild, but cockpit approves an install script only as an exact "name@version": true entry'),
+        ])
+        mutate(root, 'package.json', value => {
+            delete value.allowScripts.esbuild
             value.allowScripts['esbuild@0.99.0'] = true
         })
         const approved = refreshedPins(root)
@@ -167,6 +187,7 @@ describe('the supply-chain readiness detector', () => {
         ['lock mismatch', (root: string) => mutate(root, 'package-lock.json', value => { value.packages['packages/cockpit'].dependencies.zod = '4.4.2' }), PACK_FILES, 'LOCKFILE_MISMATCH'],
         ['lock-only direct dependency', (root: string) => mutate(root, 'package-lock.json', value => { value.packages['packages/cockpit'].dependencies.extra = '1.0.0' }), PACK_FILES, 'LOCKFILE_MISMATCH'],
         ['new transitive installer', (root: string) => mutate(root, 'package-lock.json', value => { value.packages['node_modules/synthetic-installer'] = { version: '1.0.0', hasInstallScript: true } }), PACK_FILES, 'LOCK_EXECUTABLE_POLICY_CHANGED'],
+        ['installer allowScripts does not approve', (root: string) => mutate(root, 'package-lock.json', value => { value.packages['node_modules/synthetic-installer'] = { version: '1.0.0', hasInstallScript: true } }), PACK_FILES, 'ALLOW_SCRIPTS_APPROVAL_MISSING'],
         ['new transitive binary', (root: string) => mutate(root, 'package-lock.json', value => { value.packages['node_modules/synthetic-binary'] = { version: '1.0.0', bin: { synthetic: 'bin/synthetic.js' } } }), PACK_FILES, 'LOCK_EXECUTABLE_POLICY_CHANGED'],
         ['changed transitive binary', (root: string) => mutate(root, 'package-lock.json', value => { value.packages['node_modules/yaml'].bin.yaml = 'bin/changed.mjs' }), PACK_FILES, 'LOCK_EXECUTABLE_POLICY_CHANGED'],
         ['allowScripts mismatch', (root: string) => mutate(root, 'package.json', value => { delete value.allowScripts['esbuild@0.28.2'] }), PACK_FILES, 'ALLOW_SCRIPTS_POLICY_MISMATCH'],
