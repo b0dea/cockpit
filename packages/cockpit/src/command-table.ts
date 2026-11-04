@@ -3,7 +3,7 @@ import type { ParseArgsConfig } from 'node:util'
 import { isAbsolute, normalize, resolve } from 'node:path'
 import { WORK_ORDER_ID } from './work-orders/contract.js'
 import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from './environment/contract.js'
-import type { GuardInvocationProfile } from './guards/evaluator.js'
+import { innerCommand, WRAPPING_COMMANDS, type GuardInvocationProfile } from './guards/evaluator.js'
 import { GUARD_HANDLER_ARGV } from './guards/harness-adapter.js'
 import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
 
@@ -177,10 +177,9 @@ export type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; re
     cwdRole: 'canonical-root'
     configuration: 'resolved' | 'none'
     forbidden: Readonly<{ presence: readonly string[] }>
-    // `container`: the words after `--` are a command that runs inside the product container. This
-    // grammar admits the spelling; the evaluator judges that command as it judges a host command,
-    // because the container mounts the checkouts and may hold their credentials.
-    trailing?: 'container'
+    // While cockpit.toml carries a non-widening edit the guards were not regenerated for, the guard
+    // holds every agent call except these commands, which apply or report that edit.
+    admittedWhileUnsynced?: true
     // Admitted only where cockpit.toml grants it: browser preapproval, on by default for and allowed
     // only on isolated data that cannot reach production, or an [autonomy] field set to agent.
     requires?: OrdinaryGrant
@@ -332,7 +331,8 @@ const sources = [
         // Adoption rewrites cockpit.toml and moves a team's harness settings, so it stays a person's. A
         // real sync rewrites the guard's own files from a configuration the guard already pins and
         // holds every call after an edit to, so it is an agent's only where [autonomy] sync = "agent".
-        ordinary: ordinary('sync', { forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'adopt']) }), requires: 'autonomy-sync' }),
+        ordinary: ordinary('sync', { forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'adopt']) }), requires: 'autonomy-sync',
+            admittedWhileUnsynced: true }),
         flags: { config: configFlag, 'dry-run': bool(flag), adopt: { type: 'string', multiple: true }, interactive: bool(), json: jsonFlag },
     },
     {
@@ -341,7 +341,7 @@ const sources = [
         summary: 'Report generated files that no longer match cockpit.toml',
         handler: 'check',
         visibility: 'public',
-        ordinary: ordinary('check'),
+        ordinary: ordinary('check', { admittedWhileUnsynced: true }),
         flags: configured,
     },
     {
@@ -444,7 +444,8 @@ const sources = [
         usage: '--service <name> [options] -- <command> [args...]',
         handler: 'exec',
         visibility: 'public',
-        ordinary: ordinary('exec', { trailing: 'container' }),
+        // The grammar admits the spelling; the evaluator judges the container command.
+        ordinary: ordinary('exec'),
         flags: { config: configFlag, service: serviceFlag },
     },
     {
@@ -618,6 +619,12 @@ function record(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
+/** The commands the guard admits while a non-widening edit of cockpit.toml waits for sync. */
+export const UNSYNCED_ADMITTED_COMMANDS: readonly string[] = Object.freeze(commands.flatMap(row =>
+    row.ordinary.availability === 'available' && row.ordinary.admittedWhileUnsynced ? [row.name] : []))
+/** The same commands as prose, for the hold that names them: "cockpit sync and check". */
+export const UNSYNCED_ADMITTED_PROSE = `cockpit ${new Intl.ListFormat('en', { type: 'conjunction' }).format(UNSYNCED_ADMITTED_COMMANDS)}`
+
 /**
  * The inner command of an exact `session --config <configured file> -- <command…>` run from the
  * cockpit root, or undefined. The guard admits the session only when it admits the inner command,
@@ -625,9 +632,9 @@ function record(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
  */
 export function ordinarySessionCommand(argv: readonly string[], cwd: string,
     authority: Readonly<{ canonicalRoot: string; configPath: string }>): readonly string[] | undefined {
-    const separator = argv.indexOf('--')
-    if (argv[0] !== 'session' || separator < 0 || separator === argv.length - 1 || cwd !== authority.canonicalRoot) return undefined
-    const options = argv.slice(1, separator)
+    const inner = innerCommand(argv)
+    if (argv[0] !== 'session' || !inner || cwd !== authority.canonicalRoot) return undefined
+    const options = argv.slice(1, argv.length - inner.words.length - 1)
     let config: string | undefined
     for (let index = 0; index < options.length; index++) {
         const [name, inline] = options[index]!.startsWith('--') && options[index]!.includes('=')
@@ -636,7 +643,7 @@ export function ordinarySessionCommand(argv: readonly string[], cwd: string,
         if (name === '--config' && config === undefined && inline !== undefined) config = inline
         else if (name !== '--profile' || inline === undefined || !COMPOSE_PROFILE.test(inline)) return undefined
     }
-    return config && resolve(cwd, config) === authority.configPath ? argv.slice(separator + 1) : undefined
+    return config && resolve(cwd, config) === authority.configPath ? inner.words : undefined
 }
 
 /** Classify one exact candidate; the caller authenticates filesystem and executable authority. */
@@ -678,9 +685,10 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
     const reads: string[] = []
     const positionals: string[] = []
     const options = new Map<string, string | true>()
-    const separator = grammar.trailing === 'container' ? spelling.rest.indexOf('--') : -1
-    // The container command is required and is the only thing after `--`.
-    if (grammar.trailing === 'container' && (separator < 0 || separator === spelling.rest.length - 1)) return undefined
+    const wraps = WRAPPING_COMMANDS.has(definition.name)
+    const separator = wraps ? spelling.rest.indexOf('--') : -1
+    // The wrapped command is required and is the only thing after `--`.
+    if (wraps && (separator < 0 || separator === spelling.rest.length - 1)) return undefined
     const words = separator < 0 ? spelling.rest : spelling.rest.slice(0, separator)
     for (let index = 0; index < words.length; index++) {
         const arg = words[index]!

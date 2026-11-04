@@ -9,7 +9,7 @@ import { posix } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 import { pinnedPolicyTables } from '../autonomy.js'
-import type { GuardDecision } from './evaluator.js'
+import { innerCommand, type GuardDecision } from './evaluator.js'
 import type { GuardFileContent, ParsedInvocation } from './invocation-parser.js'
 import { classifyReadOnlyInvocation, cockpitLauncherPrefix } from './read-only.js'
 
@@ -87,20 +87,22 @@ function recordsWithoutWriting(invocation: ParsedInvocation): boolean {
 }
 
 /**
- * The invocations the pin judges. A cockpit session runs the words after its `--` as a command of
- * its own, so that command is judged as one more invocation and the session by the words before it.
+ * The invocations the pin judges. A cockpit session or exec runs the words after its `--` as a
+ * command of its own, so that command is judged as one more invocation and the wrapper by the words
+ * before it. Exec's command runs in a product container, where neither a read-only spelling nor a
+ * cockpit launcher proves what the program is, so naming the configuration there is never excused.
  */
-function judgedInvocations(invocations: readonly ParsedInvocation[]): ParsedInvocation[] {
-    const judged: ParsedInvocation[] = []
-    const pending = [...invocations]
+function judgedInvocations(invocations: readonly ParsedInvocation[]): Array<ParsedInvocation & { readonly contained: boolean }> {
+    const judged: Array<ParsedInvocation & { readonly contained: boolean }> = []
+    const pending = invocations.map(invocation => ({ ...invocation, contained: false }))
     for (let invocation = pending.shift(); invocation; invocation = pending.shift()) {
         const prefix = invocation.executable === null ? undefined : cockpitLauncherPrefix(invocation.executable, invocation.argv)
-        const separator = prefix !== undefined && invocation.argv[prefix] === 'session' ? invocation.argv.indexOf('--', prefix) : -1
-        if (separator < 0) { judged.push(invocation); continue }
-        judged.push({ ...invocation, argv: invocation.argv.slice(0, separator) })
-        const command = invocation.argv.slice(separator + 1)
-        if (command.length) pending.push({ executable: command[0]!, argv: command.slice(1), cwd: invocation.cwd, wrapped: false, redirects: [],
-            words: command.map((value, index) => ({ role: index ? 'argument' as const : 'executable' as const, value })) })
+        const inner = prefix === undefined ? undefined : innerCommand(invocation.argv.slice(prefix))
+        if (!inner) { judged.push(invocation); continue }
+        judged.push({ ...invocation, argv: invocation.argv.slice(0, invocation.argv.length - inner.words.length - 1) })
+        pending.push({ executable: inner.words[0]!, argv: inner.words.slice(1), cwd: invocation.cwd, wrapped: false, redirects: [],
+            words: inner.words.map((value, index) => ({ role: index ? 'argument' as const : 'executable' as const, value })),
+            contained: invocation.contained || inner.runs === 'container' })
     }
     return judged
 }
@@ -122,12 +124,12 @@ export function pinnedPolicyDenial(input: Readonly<{
             if (!naming.length && !invocation.redirects.some(redirect => redirect.write && names(redirect.target))) continue
             // A proven read leaves the file as it is, and staging or committing it records the text the
             // guard already checked.
-            if (!writes && (classifyReadOnlyInvocation(invocation) || recordsWithoutWriting(invocation))) continue
+            if (!writes && !invocation.contained && (classifyReadOnlyInvocation(invocation) || recordsWithoutWriting(invocation))) continue
             // Installed cockpit reads the file it is given with --config, but a path or `node <script>`
             // spells any program as well as cockpit. Whether it starts cockpit is the evaluator's
             // launcher proof, so only the --config operand is left to it; naming the file anywhere
             // else is denied whatever the spelling starts.
-            const prefix = invocation.executable === null ? undefined : cockpitLauncherPrefix(invocation.executable, invocation.argv)
+            const prefix = invocation.executable === null || invocation.contained ? undefined : cockpitLauncherPrefix(invocation.executable, invocation.argv)
             const configOperand = (index: number) => prefix !== undefined && index >= prefix
                 && (invocation.argv[index]!.startsWith('--config=') || index > prefix && invocation.argv[index - 1] === '--config')
             if (!writes && naming.every(configOperand)) continue

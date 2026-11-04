@@ -3,10 +3,15 @@
 // whether that hold needs a person (the edit widens) or only a sync an agent may run (it does not).
 // It fails closed: a field with no rule here widens whenever it changes, so a field added to the
 // schema later is a person's decision until someone writes down why it is not.
+// The rules read the configuration rather than compare the guard policy each side would build: most
+// of what they judge (MCP approvals, Compose files and profiles, resettable volumes, test stages,
+// caps, the tools guarded, a sibling's operator gate) never reaches that policy, and building it
+// observes the checkouts on disk.
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 import { effectivePolicy, policyWeakening } from '../autonomy.js'
+import { UNSYNCED_ADMITTED_PROSE } from '../command-table.js'
 import { parseCockpitConfigBytes, readBoundedInput } from '../config/load.js'
 import type { ENVIRONMENT_CODES, EnvironmentDiagnostic } from '../environment/contract.js'
 import { hasErrorCode } from '../environment/contract.js'
@@ -107,14 +112,11 @@ const installPolicies: Rule = (before: CockpitConfig['environment']['install_pol
 const approvals: Rule = (before: Readonly<Record<string, string>>, after: Readonly<Record<string, string>>, at: string) =>
     Object.entries(after).filter(([name, digest]) => before[name] !== digest).map(([name]) => `${at}.${name}`)
 
-/**
- * Whether `after` lets agents do anything `before` did not, over the loaded configurations. Only a
- * difference a rule below proves safe is non-widening; every other difference widens.
- */
-export function policyChange(before: CockpitConfig, after: CockpitConfig): PolicyChange {
-    const weakened = policyWeakening(effectivePolicy(before), effectivePolicy(after)).map(row => row.field)
+// Keyed by schema path from the configuration's root. `weakened` lists the [autonomy], [work.gates]
+// and grading fields that moved toward the agent, which the autonomy policy decides.
+function changeRules(weakened: readonly string[]): Rules {
     const weakenedUnder = (prefix: string): Rule => () => weakened.filter(field => field.startsWith(`${prefix}.`) || field === prefix)
-    const rules: Rules = {
+    return {
         // Removing an entry would claim a person stated an answer nobody stated.
         unconfirmed: onlyAdds(),
         'cockpit.guide_cap': safe,
@@ -148,6 +150,22 @@ export function policyChange(before: CockpitConfig, after: CockpitConfig): Polic
         // never count changes under them as out of scope.
         'docs.living': safe,
     }
+}
+
+/**
+ * Every schema path a rule names, so a test can hold each to a field the schema still has: a rule
+ * whose path was renamed away never matches, and its field silently falls back to the default.
+ * Paths under `sibling[].` name a field of a sibling row.
+ */
+export const POLICY_CHANGE_RULE_PATHS: readonly string[] = Object.freeze([...Object.keys(changeRules([])),
+    ...[...Object.keys(SIBLING_RULES), ...NEW_SIBLING_FIELDS].map(field => `sibling[].${field}`)])
+
+/**
+ * Whether `after` lets agents do anything `before` did not, over the loaded configurations. Only a
+ * difference a rule above proves safe is non-widening; every other difference widens.
+ */
+export function policyChange(before: CockpitConfig, after: CockpitConfig): PolicyChange {
+    const rules = changeRules(policyWeakening(effectivePolicy(before), effectivePolicy(after)).map(row => row.field))
     const fields = walk(before, after, rules, '')
     return fields.length ? { kind: 'widening', fields: [...new Set(fields)] } : { kind: 'non-widening' }
 }
@@ -194,7 +212,7 @@ export async function inspectGuardConfigChange(root: string, configPath: string,
     if (change.kind === 'unchanged') return []
     if (change.kind === 'non-widening') return [{ severity: 'warning' as const, target: 'guard',
         code: 'GUARD_CONFIG_UNSYNCED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_UNSYNCED,
-        message: 'cockpit.toml changed since the guards were generated without widening what agents may do; the guard holds every agent tool call except cockpit sync and check until it is synced',
+        message: `cockpit.toml changed since the guards were generated without widening what agents may do; the guard holds every agent tool call except ${UNSYNCED_ADMITTED_PROSE} until it is synced`,
         fix: `run ${cockpitCommand('sync', { config: configPath })}; an agent may run it where [autonomy] sync = "agent"` }]
     return [{ severity: 'error' as const, target: 'guard',
         code: 'GUARD_CONFIG_WIDENED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_WIDENED,

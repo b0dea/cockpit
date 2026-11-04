@@ -55,7 +55,10 @@ describe('guard policy pin', () => {
             `/usr/bin/sed -i 's/reset = "person"/reset = "agent"/' cockpit.toml`, '/bin/cp other.toml cockpit.toml', 'node /tmp/w.js cockpit.toml',
             "npx --no cockpit session --config cockpit.toml -- sed -i '' 's/person/agent/' cockpit.toml",
             'npx --no cockpit session --config cockpit.toml -- npx --no cockpit session -- cp other.toml cockpit.toml',
-            'node /tmp/w.js --out=cockpit.toml', './git add cockpit.toml']) {
+            'node /tmp/w.js --out=cockpit.toml', './git add cockpit.toml',
+            // Exec's command is judged on its own, and in the container no spelling proves a reader or cockpit.
+            'npx --no cockpit exec --service app -- tool --config cockpit.toml', 'npx --no cockpit exec --service app -- tool --config=cockpit.toml',
+            'npx --no cockpit exec --service app -- cat cockpit.toml']) {
             expect(decide({ tool_name: 'Bash', tool_input: { command } }), command).toBe('deny')
         }
         for (const command of [`cat ${config}`, `git add ${config}`, 'git -C . diff -- cockpit.toml', 'printf x > notes.txt',

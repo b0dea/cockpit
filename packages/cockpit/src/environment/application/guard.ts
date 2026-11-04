@@ -29,7 +29,7 @@ import {
     type GuardInvocationProfile,
     type GuardProjectCommand,
 } from '../../guards/evaluator.js'
-import { ordinarySessionCommand, resolveOrdinaryInvocation, type OrdinaryGrant } from '../../command-table.js'
+import { commandSpelling, ordinarySessionCommand, resolveOrdinaryInvocation, UNSYNCED_ADMITTED_COMMANDS, UNSYNCED_ADMITTED_PROSE, type OrdinaryGrant } from '../../command-table.js'
 import { effectivePolicy } from '../../autonomy.js'
 import { GUARD_INPUT_LIMITS, parseGuardInput } from '../../guards/invocation-parser.js'
 import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../../generated-environment/transaction.js'
@@ -64,7 +64,7 @@ import {
 import { loadCockpitConfig, consumeLoadedConfigProjection, STRUCTURED_INPUT_BYTE_LIMIT, type LoadedConfigProjection } from '../../config/load.js'
 import { deriveRegistry } from '../../registry-derivation.js'
 import { confinedPath, lifecycleRefusal, ownDataValues, sameSource } from './shared.js'
-import { loadServedSiblings } from '../sibling-checkouts.js'
+import { readSiblingCheckouts, servedSiblings, type ServedSibling, type SiblingCheckoutRecordRead } from '../sibling-checkouts.js'
 
 export interface GuardEvaluationApplicationInput {
     readonly identity: unknown
@@ -131,7 +131,7 @@ function guardHeld(identity: GuardHandlerIdentity, what: string, why: string, fi
 // every other call waits for it, so no call is judged under a policy sync has not published.
 function unsyncedHold(identity: GuardHandlerIdentity, detail: string): GuardEvaluationApplicationResult {
     const sync = cockpitCommand('sync', { config: identity.configPath })
-    const reason = `${identity.configPath} changed since the guards were generated without widening what agents may do${detail}; every tool call except cockpit sync and check is held until it is synced. Fix: run \`${sync}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files.`
+    const reason = `${identity.configPath} changed since the guards were generated without widening what agents may do${detail}; every tool call except ${UNSYNCED_ADMITTED_PROSE} is held until it is synced. Fix: run \`${sync}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files.`
     return { decision: { decision: 'unavailable', reason }, diagnostics: [{ severity: 'error', target: 'guard', message: reason,
         code: 'GUARD_CONFIG_UNSYNCED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_UNSYNCED,
         fix: `run ${sync}; an agent may run it where [autonomy] sync = "agent"` }] }
@@ -229,6 +229,7 @@ export async function runGuardEvaluationApplication(
         const modulePending = settle(read(dirname(identity.module), basename(identity.module), 16_777_216))
         const configPending = settle(adapters.loadConfig(identity.configPath))
         const publicationPending = settle(readPublication())
+        const checkoutsPending = settle(readSiblingCheckouts(identity.root))
         const module = unwrap(await modulePending)
         if (module.sha256 !== identity.moduleSha256) return changed('the installed cockpit version changed (its handler bytes differ)')
         const loaded = unwrap(await configPending)
@@ -283,7 +284,7 @@ export async function runGuardEvaluationApplication(
         const parsed = parseGuardInput(data.payload)
         if (parsed.status !== 'parsed') return unavailable(parsed.reason)
         if (parsed.cwd !== data.cwd) return unavailable('Guard request cwd does not match its invocation authority.')
-        const prepared = await prepareGuardEvaluationPolicy({ configuration: loaded.result, checkout })
+        const prepared = await prepareGuardEvaluationPolicy({ configuration: loaded.result, checkout }, checkoutsPending.then(unwrap))
         if (prepared.kind !== 'complete') return unsynced
             ? unsyncedHold(identity, `, but the guard cannot build its policy from it (${prepared.diagnostics[0]?.message ?? 'no reason given'})`)
             : unavailable('Guard policy authority could not be authenticated.')
@@ -402,7 +403,7 @@ export async function runGuardEvaluationApplication(
         }
         if (unsynced && !(parsed.tool === 'Bash' && parsed.invocations.length > 0 && parsed.invocations.every(invocation => launched.some(entry =>
             entry.session && entry.executable === invocation.executable && entry.cwd === invocation.cwd
-            && isDeepStrictEqual(entry.argv, invocation.argv) && ['sync', 'check'].includes(entry.argv[entry.prefix]!))))) return unsyncedHold(identity, '')
+            && isDeepStrictEqual(entry.argv, invocation.argv) && UNSYNCED_ADMITTED_COMMANDS.some(name => name === commandSpelling(entry.argv.slice(entry.prefix)).name))))) return unsyncedHold(identity, '')
         let launcherSha256: string | undefined
         if (launched.length) {
             const status = lstatSync(launcher)
@@ -475,6 +476,29 @@ function ordinaryGrants(config: CockpitConfig): readonly OrdinaryGrant[] {
         ...policy.autonomy.sync === 'agent' ? ['autonomy-sync' as const] : [], ...policy.autonomy.reset === 'agent' ? ['autonomy-reset' as const] : []]
 }
 
+type SiblingRoot = Readonly<{ sibling: CockpitConfig['sibling'][number]; index: number; root: string }>
+
+/**
+ * Every checkout the guard grants for a sibling: each declared directory, then each checkout `use`
+ * recorded, which is where the agent works on that sibling. A recorded checkout that is gone grants
+ * nothing. Allowed roots, instance protection and project commands all come from this one list.
+ */
+function siblingRoots(config: CockpitConfig, siblingsRoot: string, served: ReadonlyMap<string, ServedSibling>): readonly SiblingRoot[] {
+    const declared = config.sibling.map((sibling, index) => {
+        const root = resolve(siblingsRoot, sibling.dir)
+        if (!confinedPath(siblingsRoot, root)) throw new RefusalError('guard policy sibling escapes its declared root')
+        return { sibling, index, root }
+    })
+    const recorded = declared.flatMap(({ sibling, index }) => {
+        const entry = served.get(sibling.slug)
+        if (!entry?.overridden) return []
+        try { if (!lstatSync(entry.served).isDirectory()) return [] }
+        catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return []; throw error }
+        return [{ sibling, index, root: entry.served }]
+    })
+    return [...declared, ...recorded]
+}
+
 class GuardFileMissing extends RefusalError {
     constructor(readonly path: string) { super(`${path} is missing`) }
 }
@@ -492,9 +516,14 @@ function guardPolicyRefusal(message: string): EnvironmentCommandOutcome<Prepared
     return lifecycleRefusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, message, 'guard-policy')
 }
 
-/** Source projections share authenticated authority; installed consumption is admitted separately. */
+/**
+ * Source projections share authenticated authority; installed consumption is admitted separately.
+ * `siblingCheckouts` is the configuration directory's sibling checkout record, when the caller
+ * started reading it already; it is read here otherwise.
+ */
 export async function prepareGuardEvaluationPolicy(
     input: GuardEvaluationPolicyInput,
+    siblingCheckouts?: Promise<SiblingCheckoutRecordRead>,
 ): Promise<EnvironmentCommandOutcome<PreparedGuardEvaluationPolicy>> {
     const inputData = ownDataValues(input, ['configuration', 'checkout'])
     const data = inputData && Object.hasOwn(inputData, 'configuration') && Object.hasOwn(inputData, 'checkout') ? inputData : undefined
@@ -508,19 +537,14 @@ export async function prepareGuardEvaluationPolicy(
     const derived = deriveRegistry(loaded.config)
     if (derived.kind !== 'complete') return guardPolicyRefusal(`guard policy registry refused (${derived.code}): ${derived.message}`)
     const guardConfig = CockpitConfig.parse(derived.result.config)
-    // A checkout `use` recorded is where the agent works on the sibling, so it is an allowed root with
-    // its own instance files protected. One that is gone grants nothing.
-    const served = await loadServedSiblings(dirname(loaded.source.path), guardConfig)
-    if (served.kind === 'refusal') return guardPolicyRefusal(served.diagnostic.message)
-    const overrides = [...served.siblings.values()].filter(entry => entry.overridden && (() => {
-        try { return lstatSync(entry.served).isDirectory() }
-        catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return false; throw error }
-    })())
+    const recorded = await (siblingCheckouts ?? readSiblingCheckouts(dirname(loaded.source.path)))
+    if (recorded.kind === 'refusal') return guardPolicyRefusal(recorded.diagnostic.message)
+    const served = servedSiblings(dirname(loaded.source.path), guardConfig, recorded.checkouts)
     const observed = snapshotJson(data.checkout) as SetupCheckoutObservation | undefined
     if (observed?.state !== 'available') return guardPolicyRefusal('guard policy checkout observation is unavailable')
     try {
         const identities = new Map<string, Stats>()
-        let siblingsRoot: string | undefined
+        let checkoutRoots: readonly SiblingRoot[] | undefined
         const result = await withSetupCheckoutProjection(data.checkout, {
             source: loaded.source, cockpitName: loaded.config.cockpit.name, evaluatedAt: Date.parse(observed.observedAt),
         }, (projection) => {
@@ -564,17 +588,11 @@ export async function prepareGuardEvaluationPolicy(
                 return path
             }
             const canonicalRoot = directory(dirname(loaded.source.path))
-            siblingsRoot = directory(resolve(canonicalRoot, config.cockpit.siblings_root))
+            checkoutRoots = siblingRoots(config, directory(resolve(canonicalRoot, config.cockpit.siblings_root)), served)
             const allowedRoots = new Set([canonicalRoot])
             const instances: Array<{ readonly name: string; readonly path: string }> = []
             const templates: string[] = []
-            const siblingRoots = config.sibling.map(sibling => {
-                const root = resolve(siblingsRoot!, sibling.dir)
-                if (!confinedPath(siblingsRoot!, root)) throw new RefusalError('guard policy sibling escapes its declared root')
-                return { sibling, root }
-            })
-            for (const entry of overrides) siblingRoots.push({ sibling: config.sibling.find(row => row.slug === entry.slug)!, root: entry.served })
-            for (const { sibling, root } of siblingRoots) {
+            for (const { sibling, root } of checkoutRoots) {
                 allowedRoots.add(directory(root))
                 for (const file of derived.result.secretPaths.filter(row => row.slug === sibling.slug)) {
                     const path = resolve(root, file.path)
@@ -626,17 +644,12 @@ export async function prepareGuardEvaluationPolicy(
             return { kind: 'complete' as const, status: 0 as const, diagnostics: [],
                 result: { policy } }
         })
-        if (!result || result.kind !== 'complete' || !siblingsRoot) {
+        if (!result || result.kind !== 'complete' || !checkoutRoots) {
             return result ?? guardPolicyRefusal('guard policy checkout authority is copied, changed, expired or already consumed')
         }
         const boundaries = result.result.policy
         const projectCommands: GuardProjectCommand[] = []
-        const commandRoots = [...guardConfig.sibling.entries()].map(([siblingIndex, sibling]) => ({ siblingIndex, sibling, checkoutRoot: resolve(siblingsRoot!, sibling.dir) }))
-        for (const entry of overrides) {
-            const siblingIndex = guardConfig.sibling.findIndex(row => row.slug === entry.slug)
-            commandRoots.push({ siblingIndex, sibling: guardConfig.sibling[siblingIndex]!, checkoutRoot: entry.served })
-        }
-        for (const { siblingIndex, sibling, checkoutRoot } of commandRoots) {
+        for (const { index: siblingIndex, sibling, root: checkoutRoot } of checkoutRoots) {
             const policies = guardConfig.environment.install_policies
             if (!policies.some(policy => policy.toolchain === sibling.toolchain && (policy.build || policy.test))) continue
             const checkoutId = deriveCheckoutId({ checkoutPath: checkoutRoot })

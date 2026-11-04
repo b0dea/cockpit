@@ -8,6 +8,26 @@ import { GUARD_LOCAL_PATHS } from './local-identity.js'
 import { classifyReadOnlyInvocation, cockpitLauncherPrefix, type ReadOnlyAccess } from './read-only.js'
 import { SURFACE_EXECUTION_CONTROL_PATHS } from '../surfaces/harness-registry.js'
 
+/**
+ * The cockpit commands that run the words after their `--` as a command of their own, and where it
+ * runs: a session's on the host, exec's inside a product container that mounts the checkouts and
+ * may hold their credentials. The guard judges that command as an invocation of its own, so
+ * wrapping a command never admits more than running it directly.
+ */
+export const WRAPPING_COMMANDS: ReadonlyMap<string, 'host' | 'container'> = new Map([['session', 'host'], ['exec', 'container']])
+
+/**
+ * The command a wrapping cockpit command runs, from its arguments after the launcher: the words
+ * after its first `--`, and where they run. Undefined when the command wraps none or names no
+ * command after `--`.
+ */
+export function innerCommand(argv: readonly string[]): Readonly<{ words: readonly string[]; runs: 'host' | 'container' }> | undefined {
+    const runs = argv.length ? WRAPPING_COMMANDS.get(argv[0]!) : undefined
+    if (!runs) return undefined
+    const separator = argv.indexOf('--')
+    return separator < 0 || separator === argv.length - 1 ? undefined : { words: argv.slice(separator + 1), runs }
+}
+
 export interface GuardInvocationProfile {
     readonly executable: string
     readonly cwd: string
@@ -965,12 +985,11 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     const containerCommands = new Set<ParsedInvocation>()
     const invocations = input.invocations.flatMap((invocation): ParsedInvocation[] => {
         const cockpit = provenCockpit(invocation)
-        const separator = cockpit?.[0] === 'session' || cockpit?.[0] === 'exec' ? cockpit.indexOf('--') : -1
-        const command = separator < 0 ? [] : cockpit!.slice(separator + 1)
-        if (!command.length) return [invocation]
-        const inner: ParsedInvocation = { executable: command[0]!, argv: command.slice(1), cwd: invocation.cwd, wrapped: false, redirects: [],
-            words: command.map((value, index) => ({ role: index ? 'argument' as const : 'executable' as const, value })) }
-        if (cockpit![0] === 'exec') containerCommands.add(inner)
+        const command = cockpit && innerCommand(cockpit)
+        if (!command) return [invocation]
+        const inner: ParsedInvocation = { executable: command.words[0]!, argv: command.words.slice(1), cwd: invocation.cwd, wrapped: false, redirects: [],
+            words: command.words.map((value, index) => ({ role: index ? 'argument' as const : 'executable' as const, value })) }
+        if (command.runs === 'container') containerCommands.add(inner)
         return [invocation, inner]
     })
     const accesses = new Map(invocations.map((invocation) => {

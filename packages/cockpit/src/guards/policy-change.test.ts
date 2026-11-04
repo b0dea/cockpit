@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
+import type { z } from 'zod'
+
 import { CockpitConfig } from '../schema.js'
-import { policyChange } from './policy-change.js'
+import { POLICY_CHANGE_RULE_PATHS, policyChange } from './policy-change.js'
 
 // A declaration as cockpit.toml spells it, edited freely and parsed again by each case.
 type Declared = Record<string, any>
@@ -110,5 +112,25 @@ describe('policyChange', () => {
     it('treats a field it has no rule for as widening', () => {
         const after = { ...before, cockpit: { ...before.cockpit, future: { enabled: true } } } as unknown as CockpitConfig
         expect(policyChange(before, after)).toEqual({ kind: 'widening', fields: ['cockpit.future'] })
+    })
+
+    it('names only schema fields in its rules, none hidden under another rule', () => {
+        // Descends through wrappers to the field a dotted path names; `[]` steps into an array's rows.
+        const field = (schema: z.ZodType, path: readonly string[]): z.ZodType | undefined => {
+            const def = (schema as unknown as { _zod: { def: Record<string, any> } })._zod.def
+            if (def.innerType) return field(def.innerType, path)
+            if (def.type === 'pipe') return field(def.in, path)
+            if (!path.length) return schema
+            const [step, ...rest] = path
+            if (def.type === 'array') return step === '[]' ? field(def.element, rest) : undefined
+            if (def.type === 'object') return Object.hasOwn(def.shape, step!) ? field(def.shape[step!], rest) : undefined
+            if (def.type === 'union') return def.options.map((option: z.ZodType) => field(option, path)).find(Boolean)
+            return undefined
+        }
+        const steps = (path: string) => path.replace('[]', '.[]').split('.')
+        expect(POLICY_CHANGE_RULE_PATHS.filter(path => !field(CockpitConfig, steps(path)))).toEqual([])
+        // The walk stops at the first rule on a path, so a rule beneath another is never consulted.
+        const root = POLICY_CHANGE_RULE_PATHS.filter(path => !path.startsWith('sibling[].'))
+        expect(root.filter(path => root.some(other => path.startsWith(`${other}.`)))).toEqual([])
     })
 })
