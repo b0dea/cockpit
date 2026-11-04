@@ -127,6 +127,65 @@ function unavailable(reason: string): GitObservationResult {
     return { kind: 'unavailable', reason }
 }
 
+export type GitBranchStatus = Readonly<{
+    kind: 'complete'
+    /** An object name, or `(initial)` while HEAD is unborn. */
+    revision: string
+    /** The branch name, or `(detached)` on a detached HEAD. */
+    branch: string
+    upstream: string | null
+    ahead: number
+    behind: number
+    /** False when Git names an upstream it cannot count against, because the upstream ref is gone. */
+    adjacencyReported: boolean
+    trackedDirtyCount: number
+    untrackedCount: number
+}>
+
+/** `git status --porcelain=v2 --branch` output as numbers and names, or why it cannot be read as such. */
+export function parseGitBranchStatus(source: string): GitBranchStatus | Readonly<{ kind: 'unavailable'; reason: string }> {
+    let revision: string | undefined
+    let branch: string | undefined
+    let upstream: string | null = null
+    let ahead = 0
+    let behind = 0
+    let trackedDirtyCount = 0
+    let untrackedCount = 0
+    const headers = new Set<string>()
+    const fail = (reason: string) => ({ kind: 'unavailable' as const, reason })
+    for (const line of source.split(/\r?\n/)) {
+        if (line === '') continue
+        if (line.startsWith('# branch.oid ')) {
+            if (headers.has('oid')) return fail('Git evidence contains a duplicate branch header')
+            headers.add('oid'); revision = line.slice(13)
+        } else if (line.startsWith('# branch.head ')) {
+            if (headers.has('head')) return fail('Git evidence contains a duplicate branch header')
+            headers.add('head'); branch = line.slice(14)
+        } else if (line.startsWith('# branch.upstream ')) {
+            if (headers.has('upstream')) return fail('Git evidence contains a duplicate branch header')
+            headers.add('upstream'); upstream = line.slice(18)
+        }
+        else if (line.startsWith('# branch.ab ')) {
+            if (headers.has('adjacency')) return fail('Git evidence contains a duplicate branch header')
+            headers.add('adjacency')
+            const match = /^# branch\.ab \+(\d+) -(\d+)$/.exec(line)
+            if (!match) return fail('Git adjacency evidence is malformed')
+            ahead = Number(match[1]); behind = Number(match[2])
+            if (!Number.isSafeInteger(ahead) || !Number.isSafeInteger(behind)) return fail('Git adjacency evidence exceeds exact integer bounds')
+        } else if (line.startsWith('? ')) untrackedCount += 1
+        else if (/^[12u] /.test(line)) trackedDirtyCount += 1
+        else if (!line.startsWith('! ')) return fail('Git status evidence contains an unknown record')
+    }
+    const validIdentity = (value: string) => Buffer.byteLength(value) <= 1_024 && !/[\x00-\x1f\x7f]/.test(value)
+    if (!revision || !branch || revision !== '(initial)' && !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(revision) || !validIdentity(branch)
+        || upstream !== null && !validIdentity(upstream)
+        || upstream === null && headers.has('adjacency')) {
+        return fail('Git evidence omitted or malformed repository identity')
+    }
+    return { kind: 'complete', revision, branch, upstream, ahead, behind, adjacencyReported: headers.has('adjacency'),
+        trackedDirtyCount, untrackedCount }
+}
+
 export function decodeGitObservation(
     bytes: Buffer,
     context: { readonly stackId: StackId; readonly observedAt: string; readonly source: string; readonly checkoutRoot: string },
@@ -145,52 +204,17 @@ export function decodeGitObservation(
         // Invalid UTF-8 is the only throw and is what the message names.
         return unavailable('Git evidence is not valid UTF-8')
     }
-    let revision: string | undefined
-    let branch: string | undefined
-    let upstream: string | null = null
-    let ahead = 0
-    let behind = 0
-    let trackedDirtyCount = 0
-    let untrackedCount = 0
-    const headers = new Set<string>()
-    for (const line of source.split(/\r?\n/)) {
-        if (line === '') continue
-        if (line.startsWith('# branch.oid ')) {
-            if (headers.has('oid')) return unavailable('Git evidence contains a duplicate branch header')
-            headers.add('oid'); revision = line.slice(13)
-        } else if (line.startsWith('# branch.head ')) {
-            if (headers.has('head')) return unavailable('Git evidence contains a duplicate branch header')
-            headers.add('head'); branch = line.slice(14)
-        } else if (line.startsWith('# branch.upstream ')) {
-            if (headers.has('upstream')) return unavailable('Git evidence contains a duplicate branch header')
-            headers.add('upstream'); upstream = line.slice(18)
-        }
-        else if (line.startsWith('# branch.ab ')) {
-            if (headers.has('adjacency')) return unavailable('Git evidence contains a duplicate branch header')
-            headers.add('adjacency')
-            const match = /^# branch\.ab \+(\d+) -(\d+)$/.exec(line)
-            if (!match) return unavailable('Git adjacency evidence is malformed')
-            ahead = Number(match[1]); behind = Number(match[2])
-            if (!Number.isSafeInteger(ahead) || !Number.isSafeInteger(behind)) return unavailable('Git adjacency evidence exceeds exact integer bounds')
-        } else if (line.startsWith('? ')) untrackedCount += 1
-        else if (/^[12u] /.test(line)) trackedDirtyCount += 1
-        else if (!line.startsWith('! ')) return unavailable('Git status evidence contains an unknown record')
-    }
-    const validIdentity = (value: string) => Buffer.byteLength(value) <= 1_024 && !/[\x00-\x1f\x7f]/.test(value)
-    // `git init` leaves HEAD unborn, and Git reports that as `(initial)` rather than an object name.
+    const parsed = parseGitBranchStatus(source)
+    if (parsed.kind !== 'complete') return unavailable(parsed.reason)
+    const { revision, branch, upstream, ahead, behind, trackedDirtyCount, untrackedCount, adjacencyReported } = parsed
     const unborn = revision === '(initial)'
-    if (!revision || !branch || !unborn && !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(revision) || !validIdentity(branch)
-        || upstream !== null && !validIdentity(upstream)
-        || upstream === null && headers.has('adjacency')) {
-        return unavailable('Git evidence omitted or malformed repository identity')
-    }
     const committed = unborn ? null : revision
     const workingTree = trackedDirtyCount > 0 && untrackedCount > 0 ? 'dirty-and-untracked'
         : trackedDirtyCount > 0 ? 'dirty' : untrackedCount > 0 ? 'untracked' : 'clean'
     // Git names an upstream without counting against it when the upstream ref no longer exists,
     // which is what a merged and deleted remote branch leaves behind.
     const adjacency = upstream === null ? 'untracked-upstream'
-        : !headers.has('adjacency') ? 'upstream-gone'
+        : !adjacencyReported ? 'upstream-gone'
             : ahead > 0 && behind > 0 ? 'diverged'
                 : ahead > 0 ? 'ahead' : behind > 0 ? 'behind' : 'aligned'
     const evidence: GitObservationEvidence = { revision: committed, branch, upstream, ahead, behind, trackedDirtyCount, untrackedCount, workingTree, adjacency }

@@ -10,6 +10,7 @@ import { type LogObservation, type LogsCommandAdapters } from './application/log
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { deriveEntrypoints, observeRetainedPortFamily, projectRetainedPortFamilyResult, type PortLeaseProjection } from './ports.js'
 import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, type ExecutionStep, type HolderId, type LifecycleProgress, type StackId, RefusalError } from './contract.js'
+import { loadServedSiblings, servedSiblingVariables } from './sibling-checkouts.js'
 import { DeclarationRefusalError, runtimeNotDeclared, serviceNotDeclared } from './declaration.js'
 import {
     admitRuntimeServiceHealth,
@@ -271,15 +272,15 @@ export function createReadCommandAdapters(
         if (!confirmedComposeFiles || JSON.stringify(confirmedComposeFiles) !== JSON.stringify(composeFiles)) {
             throw new RefusalError('compose artifacts changed during runtime observation')
         }
+        // The stack interpolates the checkout `use` recorded, so reading it must name the same one.
+        const served = await loadServedSiblings(checkoutRoot, configuration.config)
+        if (served.kind === 'refusal') throw new RefusalError(served.diagnostic.message)
         const ownComposeAuthority = {
             ownComposeFiles: true as const,
             cockpitId: context.cockpitId,
             stackId: context.stackId,
             portLeaseProjection: ports,
-            siblingDirectories: Object.fromEntries(configuration.config.sibling.map((sibling) => [
-                sibling.var,
-                resolve(checkoutRoot, configuration.config.cockpit.siblings_root, sibling.dir),
-            ])),
+            siblingDirectories: servedSiblingVariables(configuration.config, served.siblings),
         }
         return {
             ownComposeAuthority,

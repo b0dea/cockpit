@@ -312,6 +312,9 @@ export const Sibling = z
         // Printed when the checkout is missing, so it says what the absence costs.
         purpose: z.string().min(1).describe('What the sibling is for; printed when its checkout is missing.'),
         environment_files: z.array(EnvironmentFile).optional().describe('Template and instance environment file pairs the sibling needs.'),
+        // A running stack keeps the dependencies and schema it started with; a pulled lockfile or a new
+        // migration behind it fails like a product bug. Lockfiles are watched without this list.
+        rebuild_inputs: z.array(SafeRelativePath).max(64).optional().describe('Files or directories in the sibling, beyond its lockfiles, whose change leaves a running stack stale, such as a migrations directory.'),
         derives: SiblingDerives.optional().describe('Facts about the sibling that cockpit derives rows or MCP servers from.'),
     })
     .strict()
@@ -996,9 +999,9 @@ export function mounted(cfg: CockpitConfig, profiles: readonly string[]): Siblin
     )
 }
 
-// How a sibling is described, fetched, gated for agents or projected into guides. None of it reaches
-// a container, so editing it must leave a running stack alone.
-const SIBLING_NON_RUNTIME_FIELDS: ReadonlySet<string> = new Set(['purpose', 'guides', 'instruction_pointer', 'remote', 'branch', 'acquire', 'host_reason', 'gate'])
+// How a sibling is described, fetched, gated for agents, projected into guides or watched for a stale
+// stack. None of it reaches a container, so editing it must leave a running stack alone.
+const SIBLING_NON_RUNTIME_FIELDS: ReadonlySet<string> = new Set(['purpose', 'guides', 'instruction_pointer', 'remote', 'branch', 'acquire', 'host_reason', 'gate', 'rebuild_inputs'])
 
 // What the host checks or reports around the containers: the machine floor and cold-start budget
 // `up` and preflight hold the host to, the posture preflight reads, the volumes `reset` may delete,

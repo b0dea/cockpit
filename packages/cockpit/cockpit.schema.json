@@ -191,6 +191,15 @@
               "additionalProperties": false
             }
           },
+          "rebuild_inputs": {
+            "description": "Files or directories in the sibling, beyond its lockfiles, whose change leaves a running stack stale, such as a migrations directory.",
+            "maxItems": 64,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+            }
+          },
           "derives": {
             "description": "Facts about the sibling that cockpit derives rows or MCP servers from.",
             "type": "object",

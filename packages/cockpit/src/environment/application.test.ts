@@ -521,6 +521,31 @@ describe('guard policy construction', () => {
         expect((await prepareGuardEvaluationPolicy(input)).kind).toBe('refusal')
     })
 
+    it('admits the checkout use recorded as another root, with its own instances and project commands, while it exists', async () => {
+        const { root, configPath } = await observedPolicy()
+        const worktree = join(root, 'app-feature')
+        mkdirSync(join(worktree, 'config'), { recursive: true })
+        writeFileSync(join(worktree, 'package-lock.json'), '{}')
+        mkdirSync(join(root, '.cockpit/local'), { recursive: true })
+        writeFileSync(join(root, '.cockpit/local/sibling-checkouts'), JSON.stringify({ format: 'cockpit-sibling-checkouts/v1', checkouts: { app: worktree } }))
+        const policy = async () => {
+            const loaded = await loadCockpitConfig(configPath)
+            if (loaded.kind !== 'complete') throw new Error('guard fixture did not load')
+            const checkout = await observeSetupCheckout({ source: loaded.result.source, cockpitName: loaded.result.config.cockpit.name,
+                observedAt: new Date().toISOString(), env: {}, gitExecutable })
+            const result = await prepareGuardEvaluationPolicy({ configuration: loaded.result, checkout })
+            if (result.kind !== 'complete') throw new Error(JSON.stringify(result))
+            return result.result.policy
+        }
+        const served = await policy()
+        expect(served.allowedRoots).toEqual([root, join(root, 'app'), worktree])
+        expect(served.instances.map(item => item.path)).toEqual(expect.arrayContaining([join(worktree, '.env'), join(worktree, 'config/runtime.env')]))
+        expect(served.projectCommands.filter(row => row.checkoutRoot === worktree).map(row => row.kind)).toEqual(['build', 'test'])
+        // A recorded checkout that is gone grants nothing.
+        rmSync(worktree, { recursive: true })
+        expect((await policy()).allowedRoots).toEqual([root, join(root, 'app')])
+    })
+
     it('keeps absent vendor declarations empty despite local sinks and environment values', async () => {
         const { input } = await observedPolicy(false)
         expect(await prepareGuardEvaluationPolicy(input)).toMatchObject({ kind: 'complete', result: { policy: { vendorHosts: [], hostedDatabaseHosts: ['db.example.test'] } } })

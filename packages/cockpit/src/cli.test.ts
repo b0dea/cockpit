@@ -132,7 +132,7 @@ describe('closed ordinary invocation metadata', () => {
     // The words each available config-bearing row needs besides --config.
     const requiredWords: Readonly<Record<string, readonly string[]>> = {
         selftest: ['--probe-specifications', 'probes.json'], logs: ['--service', 'app'], runtime: ['measure', '--image', 'node:22-alpine'],
-        'test-run': ['--gate', 'quick'], reset: ['--apply'], grade: ['--criteria', 'criteria.md'],
+        'test-run': ['--gate', 'quick'], reset: ['--apply'], grade: ['--criteria', 'criteria.md'], use: ['app'],
         ...Object.fromEntries(['accept', 'check', 'grade', 'signoff', 'recover'].map(sub => [`work ${sub}`, ['--work-order', 'WO-1']])),
         'work note': ['--work-order', 'WO-1', '--text', 'why'], 'work answer': ['--work-order', 'WO-1', '--question', '1', '--text', 'because'],
     }
@@ -177,6 +177,8 @@ describe('closed ordinary invocation metadata', () => {
             ['work', 'signoff', '--work-order', 'WO-1'], ['work', 'signoff', '--work-order', 'WO-1', '--partial', '--note', 'AC3 left'],
             ['work', 'recover', '--work-order', 'WO-1'], ['work', 'verify'], ['grade', '--criteria', 'criteria.md', '--json'],
             ['browser', 'drive', '--json'], ['browser', 'drive', '--role', 'admin'], ['browser', 'screenshot', '--role', 'admin', '--json'],
+            // An agent points a sibling at its own worktree inside a root it may already write, and pulls.
+            ['use', 'app', '/workspace/app/.worktrees/feature'], ['use', 'app', '--clear', '--json'], ['pull'], ['pull', '--json'],
         ]
         for (const args of cases) {
             const argv = args[0] === 'registry-resolve' ? args : [...args, '--config', authority.configPath]
@@ -194,7 +196,7 @@ describe('closed ordinary invocation metadata', () => {
 
     it('requires the exact resolved config for every available config-bearing row', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
-        expect(rows.map(row => row.name)).toEqual(['setup', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'sleep', 'down', 'reset', 'doctor',
+        expect(rows.map(row => row.name)).toEqual(['setup', 'use', 'pull', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'sleep', 'down', 'reset', 'doctor',
             'test-run', 'work status', 'work accept', 'work check', 'work note', 'work answer', 'work grade', 'work signoff', 'work recover', 'work verify', 'grade',
             'browser drive', 'browser screenshot'])
         for (const row of rows) {
@@ -242,6 +244,9 @@ describe('closed ordinary invocation metadata', () => {
             ['work', 'grade', '--work-order', 'WO-1', '--evaluator', 'gemini'], ['work', 'status', '--evaluator', 'codexcli'],
             ['work', 'grade', '--work-order', '../WO-1'], ['grade', '--criteria', '../outside.md'], ['grade'],
             ['work', 'status', 'WO-1'], ['work', '--json'], ['work', 'unknown'], ['browser', 'drive', '--role', 'a/b'],
+            // A checkout outside every allowed root would widen what the agent can write, so a person names it.
+            ['use', 'app', '/outside/app-feature'], ['use', 'app', '../app-feature'], ['use', 'App', '--clear'], ['use'],
+            ['use', 'app', '/workspace/app/feature', 'extra'], ['pull', 'app'],
         ]
         for (const args of cases) {
             const argv = args[0] === 'registry-resolve' || args.some(arg => arg === '--config') ? args : [...args, '--config', authority.configPath]
@@ -452,6 +457,8 @@ describe('CLI help', () => {
             'Set up:\n' +
             '  init              Preview, then accept, a first cockpit setup for one or more agent tools\n' +
             '  setup             Clone or locate the declared sibling repositories and link them\n' +
+            '  use               Serve a sibling from another of its checkouts, such as a worktree\n' +
+            '  pull              Fast-forward the cockpit and its siblings to their upstreams\n' +
             '  sibling           Add or remove a repository in cockpit.toml (sibling add, sibling remove)\n' +
             '  tool              Add or remove an agent tool in cockpit.toml (tool add, tool remove)\n' +
             '  registry-resolve  Turn a validated shell registry into data shell scripts can source\n' +

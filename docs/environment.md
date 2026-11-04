@@ -222,6 +222,45 @@ stale key names. Restore the named checkout or bring its instance keys in line w
 then rerun `cockpit doctor --config cockpit.toml`. When no sibling declares an environment file,
 the instance-presence and key-freshness checks pass: there is nothing to seed or compare.
 
+## Serve a sibling from a worktree
+
+The stack mounts each sibling's declared checkout. When you work on a branch in another checkout of
+that repository, usually a linked worktree, point the sibling at it for this cockpit checkout:
+
+```sh
+cockpit use api /path/to/api/.worktrees/feature --config cockpit.toml
+cockpit use api --clear --config cockpit.toml
+```
+
+`use` accepts the root of a checkout that shares the declared checkout's object store, or whose
+`origin` names the same repository as the declared checkout or its `remote`; anything else is
+refused with `SIBLING_CHECKOUT_FOREIGN`. Name the checkout's own directory: a path that reaches it
+through a symbolic link is refused. The choice is recorded in `.cockpit/local/sibling-checkouts`,
+never in `cockpit.toml`, so it applies to this checkout of the cockpit alone. `up`, `logs`, the guard's
+allowed roots and protected instance files, and `doctor` and `preflight` all use the recorded
+checkout. `doctor` and `preflight` name each one (`SIBLING_CHECKOUT_OVERRIDDEN`) and warn with
+`SIBLING_ENVIRONMENT_FILE_MISSING` for every declared environment file the worktree lacks: a fresh
+worktree has none of the ignored ones, and cockpit never copies them from another checkout.
+
+A running stack keeps the checkout it mounted: run `down` and `up` after `use`. An agent may run
+`use` for a checkout inside a directory it may already write; any other path is a person's call. The
+directory grants `sync` writes for each agent tool cover the declared checkout, so a worktree kept
+inside it stays reachable without a prompt.
+
+## Bring checkouts up to date
+
+`cockpit pull --config cockpit.toml` fetches and fast-forwards the cockpit and every sibling
+checkout, including one `use` recorded, to the upstream of the branch each has checked out. It
+never merges, rebases, stashes or switches branch, and it runs no Git hooks. A checkout with
+modified tracked files, a branch that has diverged from its upstream, an upstream that is gone or a
+failed fetch is left exactly as it was and reported with `PULL_SKIPPED` and the command that
+resolves it; a detached HEAD or a branch that tracks nothing is listed and skipped without a
+warning. Like `setup`, its Git reads only each repository's own configuration, so a credential
+helper set only in your global Git configuration is not used, and a repository whose attributes name
+a filter defined only there, such as Git LFS, is skipped rather than checked out as placeholder
+files; run `git pull --ff-only` in it yourself. Because it can only fast-forward, an
+agent may run it without asking.
+
 ## Lifecycle and ownership
 
 `setup` gets the declared sibling checkouts onto disk and wires them up. `mount` controls how the
@@ -402,6 +441,22 @@ running stack in place. To apply such a change, for example a `[ports.bases]` ed
 Restoring `cockpit.toml` to the exact bytes `sync` last saw, for example with
 `git restore cockpit.toml`, clears the guard's hold without a `sync`: the guard compares the file's
 content, not which file holds it.
+
+### When a sibling changes under a running stack
+
+A bind mount follows a sibling's files at once, but installed dependencies usually live in an image
+or volume built earlier and the database keeps the schema it was migrated to. When `up` starts a
+stack it records a digest of each mounted sibling's lockfiles and of its `rebuild_inputs`, such as
+a migrations directory. Lockfiles come from the `environment.install_policies` rows for the
+sibling's toolchain, or, without one, from the common lockfile names present in the checkout; each
+finding names which source it came from. `doctor` and `preflight` warn with `STACK_INPUTS_CHANGED`
+when any of them, or the checkout serving the sibling, changed since, and `pull` warns after
+moving one. Run `down` and then `up` so every service starts on the current files; rebuild an image
+that installs the dependencies before `up`. A resumed `up` keeps the record, because resuming
+restarts nothing; `down`, or a `sleep` that stops the stack, drops it.
+
+It is a warning, not a refusal: whether a changed lockfile matters is the product's call, and
+`test-run` does not block on it.
 
 ## Choose the Docker daemon
 

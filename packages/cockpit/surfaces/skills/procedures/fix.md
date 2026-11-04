@@ -59,7 +59,10 @@ scope changes, not at hand-back.
    runtime), report the code `up` gives and its fix rather than proving the fix some other way. Done
    when a test goes red on exactly the observed behavior.
 5. **Then change the repository that owns the defect**, and nothing else. Leave uncommitted changes
-   that were already in the checkout as you found them. For an environment or credential defect,
+   that were already in the checkout as you found them. If you change it in a worktree rather than
+   the checkout `cockpit.toml` declares, first run
+   `./node_modules/.bin/cockpit use sibling-slug /absolute/path/to/worktree --config cockpit.toml`
+   so the stack, the guard and the gates use that worktree, and `use sibling-slug --clear` at step 8. For an environment or credential defect,
    follow the *Secret handling* section of the cockpit-setup skill's procedure,
    `../../cockpit-setup/procedures/setup.md` from this file, before running the declared product
    command. Done when the test from step 4 passes.

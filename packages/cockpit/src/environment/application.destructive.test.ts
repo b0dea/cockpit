@@ -663,6 +663,9 @@ describe('destructive application contracts', () => {
         applicationOwners.reclaim.reconcileReclaimAction = () => ({ kind: 'complete', continuation: null, outcome: {} }) as never
         applicationOwners.claims.commitDrainOutcome = async () => ({ kind: 'complete', value: {} }) as never
         const discovery = Object.freeze({ down: Object.freeze({ discovery: Object.freeze({}), coordinationRecord: null }) })
+        const stackInputs = join(dirname(configPath), '.cockpit/local/stack-inputs')
+        mkdirSync(dirname(stackInputs), { recursive: true })
+        writeFileSync(stackInputs, '{}')
 
         const result = await runDown({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
@@ -672,6 +675,8 @@ describe('destructive application contracts', () => {
         })
 
         expect(result, JSON.stringify(result)).toMatchObject({ kind: 'complete', result: { change: 'removed' } })
+        // Nothing runs that a later doctor could call stale.
+        expect(() => readFileSync(stackInputs)).toThrow()
         // A lifecycle record without lifecycle history reads as malformed, so the next up refused.
         expect(await readState(context.namespace.paths.lifecycle(context.stackId))).toMatchObject({ kind: 'missing' })
         expect(await resolveLifecycleStage({ namespace: context.namespace, stackId: context.stackId, observedAt: new Date().toISOString() }))

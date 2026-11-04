@@ -63,6 +63,7 @@ import {
 import { loadCockpitConfig, consumeLoadedConfigProjection, type LoadedConfigProjection } from '../../config/load.js'
 import { deriveRegistry } from '../../registry-derivation.js'
 import { confinedPath, lifecycleRefusal, ownDataValues, sameSource } from './shared.js'
+import { loadServedSiblings } from '../sibling-checkouts.js'
 
 export interface GuardEvaluationApplicationInput {
     readonly identity: unknown
@@ -479,6 +480,14 @@ export async function prepareGuardEvaluationPolicy(
     const derived = deriveRegistry(loaded.config)
     if (derived.kind !== 'complete') return guardPolicyRefusal(`guard policy registry refused (${derived.code}): ${derived.message}`)
     const guardConfig = CockpitConfig.parse(derived.result.config)
+    // A checkout `use` recorded is where the agent works on the sibling, so it is an allowed root with
+    // its own instance files protected. One that is gone grants nothing.
+    const served = await loadServedSiblings(dirname(loaded.source.path), guardConfig)
+    if (served.kind === 'refusal') return guardPolicyRefusal(served.diagnostic.message)
+    const overrides = [...served.siblings.values()].filter(entry => entry.overridden && (() => {
+        try { return lstatSync(entry.served).isDirectory() }
+        catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return false; throw error }
+    })())
     const observed = snapshotJson(data.checkout) as SetupCheckoutObservation | undefined
     if (observed?.state !== 'available') return guardPolicyRefusal('guard policy checkout observation is unavailable')
     try {
@@ -531,9 +540,13 @@ export async function prepareGuardEvaluationPolicy(
             const allowedRoots = new Set([canonicalRoot])
             const instances: Array<{ readonly name: string; readonly path: string }> = []
             const templates: string[] = []
-            for (const sibling of config.sibling) {
-                const root = resolve(siblingsRoot, sibling.dir)
-                if (!confinedPath(siblingsRoot, root)) throw new RefusalError('guard policy sibling escapes its declared root')
+            const siblingRoots = config.sibling.map(sibling => {
+                const root = resolve(siblingsRoot!, sibling.dir)
+                if (!confinedPath(siblingsRoot!, root)) throw new RefusalError('guard policy sibling escapes its declared root')
+                return { sibling, root }
+            })
+            for (const entry of overrides) siblingRoots.push({ sibling: config.sibling.find(row => row.slug === entry.slug)!, root: entry.served })
+            for (const { sibling, root } of siblingRoots) {
                 allowedRoots.add(directory(root))
                 for (const file of derived.result.secretPaths.filter(row => row.slug === sibling.slug)) {
                     const path = resolve(root, file.path)
@@ -590,10 +603,14 @@ export async function prepareGuardEvaluationPolicy(
         }
         const boundaries = result.result.policy
         const projectCommands: GuardProjectCommand[] = []
-        for (const [siblingIndex, sibling] of guardConfig.sibling.entries()) {
+        const commandRoots = [...guardConfig.sibling.entries()].map(([siblingIndex, sibling]) => ({ siblingIndex, sibling, checkoutRoot: resolve(siblingsRoot!, sibling.dir) }))
+        for (const entry of overrides) {
+            const siblingIndex = guardConfig.sibling.findIndex(row => row.slug === entry.slug)
+            commandRoots.push({ siblingIndex, sibling: guardConfig.sibling[siblingIndex]!, checkoutRoot: entry.served })
+        }
+        for (const { siblingIndex, sibling, checkoutRoot } of commandRoots) {
             const policies = guardConfig.environment.install_policies
             if (!policies.some(policy => policy.toolchain === sibling.toolchain && (policy.build || policy.test))) continue
-            const checkoutRoot = resolve(siblingsRoot, sibling.dir)
             const checkoutId = deriveCheckoutId({ checkoutPath: checkoutRoot })
             const evaluatedAt = Date.now()
             const observation = await observeInstallPolicyLockfiles({ source: loaded.source, siblingIndex, siblingSlug: sibling.slug,

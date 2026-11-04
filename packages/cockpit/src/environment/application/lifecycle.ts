@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { constants as osConstants } from 'node:os'
 import { isDeepStrictEqual } from 'node:util'
-import { basename, isAbsolute, join, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { cleanupFencedExecution, repairFencedExecution } from '../../environment-exec/execute.js'
 import {
     ENVIRONMENT_CODES,
@@ -92,6 +92,7 @@ import {
     unheldStack,
 } from './lifecycle-state.js'
 import { lifecycleRefusal, ownerDiagnostic, uniqueDiagnostics } from './shared.js'
+import { forgetStackInputs } from '../stack-inputs.js'
 
 function seconds(millis: number): string {
     return String(millis / 1_000)
@@ -685,6 +686,8 @@ async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAd
             if (data?.kind === 'refusal') return { kind: 'refusal', status: 2, result: null,
                 diagnostics: uniqueDiagnostics([...result.diagnostics, ...data.diagnostics]) }
             if (data?.kind === 'ran' || data?.kind === 'current') result = { ...result, result: { ...result.result, seed: data.kind } }
+            const unrecorded = await adapters.recordStackInputs?.(context, result.result.change) ?? []
+            if (unrecorded.length > 0) result = { ...result, diagnostics: uniqueDiagnostics([...result.diagnostics, ...unrecorded]) }
         }
         if (result.kind === 'refusal' && releasable()) {
             const compensation = await compensateAcquiredPortHolder({
@@ -862,7 +865,10 @@ export async function runSleep(
         )
     }
     const context = loaded.result
-    return withLifecycleRunNotices(context, await sleepWithContext(context, adapters))
+    const outcome = await sleepWithContext(context, adapters)
+    // A stopped stack runs nothing a later doctor could call stale.
+    const forgotten = outcome.kind === 'complete' && outcome.result.change === 'stopped' ? await forgetStackInputs(dirname(context.source.path)) : []
+    return withLifecycleRunNotices(context, forgotten.length === 0 ? outcome : { ...outcome, diagnostics: uniqueDiagnostics([...outcome.diagnostics, ...forgotten]) })
 }
 
 async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCommandAdapters): Promise<SleepCommandResult> {
