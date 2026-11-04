@@ -677,14 +677,14 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         }
     })
 
-    it('stays unpublishable until publication is decided, not defaulted', () => {
-        // The maintainer's explicit call: everything private through the internal trial on
-        // real consumer repositories, and public only by a deliberate flip. `private: true`
-        // is the one field npm itself refuses to publish past, which makes it the guard —
-        // and this assertion is what makes removing it a decision someone sees in a diff
-        // that fails CI, rather than a line lost in a release commit.
+    it('is published publicly, as decided', () => {
+        // Publication was a deliberate flip: the package stayed `private: true` until the
+        // repository went public. Pinning the decided state keeps reverting it (or Changesets
+        // falling back to restricted access) a change someone sees failing in a diff.
         const manifest = JSON.parse(read('packages/cockpit/package.json'))
-        expect(manifest.private).toBe(true)
+        const changesets = JSON.parse(read('.changeset/config.json'))
+        expect(manifest).not.toHaveProperty('private')
+        expect(changesets.access).toBe('public')
     })
 })
 
