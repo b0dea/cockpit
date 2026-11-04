@@ -39,7 +39,9 @@ import { readState } from '../environment/state.js'
 import { parseDiff } from '../testing/test-protection.js'
 import { testFilePatterns, weakeningFindings, type RepositoryWeakening, type TestFilePatterns } from '../testing/weakening.js'
 import { runGate, type GateDependencies, type GateRegistry, type GateRequest, type ProductGateInvocation } from '../testing/gates.js'
-import { parseCriteriaFile, parseWorkOrder, scopeMatches, WORK_ORDER_ID, type ParsedFile, type WorkOrder, type WorkOrderCheck } from './contract.js'
+import { readSiblingCheckouts, missingServedCheckout, type ServedSibling } from '../environment/sibling-checkouts.js'
+import { splitRepositoryPath } from '../repository-path.js'
+import { parseCriteriaFile, parseWorkOrder, scopeMatcher, WORK_ORDER_ID, type ParsedFile, type WorkOrder, type WorkOrderCheck } from './contract.js'
 import { createWorkStore, outputTail, WORK_RECORD_DIRECTORY, type CheckResult, type ContainerEvidence, type WorkStore } from './store.js'
 
 export type WorkEnvironmentApplicationConfig = ConsumedWorkEnvironmentConfig
@@ -95,10 +97,11 @@ export interface WorkApplicationComposition {
     readonly sourceDigests: (order: Pick<WorkOrder, 'criteria'>) => Promise<Readonly<Record<string, string>>>
     readonly heads: () => Promise<Readonly<Record<string, string>>>
     readonly runCheck: (criterion: string, check: WorkOrderCheck) => Promise<CheckResult>
-    readonly changes: (base: Readonly<Record<string, string>>) => Promise<readonly ChangedFile[]>
     readonly evaluate: (subject: GradingSubject) => Promise<GradingResult>
     /** Test weakening in each checkout since `base`, over the files this cockpit treats as tests. */
     readonly testWeakening: (base: Readonly<Record<string, string>>) => Promise<TestWeakeningObservation>
+    /** What changed in each checkout since `base` (committed, staged, unstaged and untracked, each with its diff), and its test weakening, from one listing of untracked files. */
+    readonly review: (base: Readonly<Record<string, string>>) => Promise<Readonly<{ changes: readonly ChangedFile[]; weakening: TestWeakeningObservation }>>
     readonly browser: (kind: BrowserCommandKind, role?: string, route?: string) => Promise<BrowserCommandInput>
     /** The [docs] table as declared; absent when the cockpit declares none. */
     readonly docs?: Readonly<{ decisions?: string; decisionsIndex?: string }>
@@ -462,12 +465,11 @@ function excludedRepositoryPath(path: string, excluded: ReadonlySet<string>): bo
         : path === candidate)
 }
 
-function repositoryEnvironmentInstancePaths(repositoryRoot: string, siblingsRoot: string,
-    siblings: ConsumedWorkEnvironmentConfig['siblings']): ReadonlySet<string> {
+function repositoryEnvironmentInstancePaths(repositoryRoot: string,
+    siblings: readonly Readonly<{ root: string; environmentFiles: ConsumedWorkEnvironmentConfig['siblings'][number]['environmentFiles'] }>[]): ReadonlySet<string> {
     const paths = new Set<string>()
     for (const sibling of siblings) {
-        const siblingRoot = resolve(siblingsRoot, sibling.dir)
-        const prefix = relative(repositoryRoot, siblingRoot)
+        const prefix = relative(repositoryRoot, sibling.root)
         if (isAbsolute(prefix) || prefix === '..' || prefix.startsWith(`..${sep}`)) continue
         for (const file of sibling.environmentFiles) paths.add(prefix ? join(prefix, file.instance) : file.instance)
     }
@@ -582,12 +584,14 @@ export function isWorkApplicationComposition(value: unknown): value is WorkAppli
 }
 
 
-function createWorkApplicationComposition(config: WorkEnvironmentApplicationConfig, authorities: WorkApplicationAuthorities): WorkApplicationComposition {
+function createWorkApplicationComposition(config: WorkEnvironmentApplicationConfig, authorities: WorkApplicationAuthorities,
+    served: ReadonlyMap<string, ServedSibling>): WorkApplicationComposition {
     if (!config || isProxy(config) || !boundedName(config.cockpitName) || !isAbsolute(config.cockpitRoot)
         || realpathSync(config.cockpitRoot) !== config.cockpitRoot || dirname(config.source.path) !== config.cockpitRoot
         || typeof config.siblingsRoot !== 'string' || !config.siblingsRoot || config.siblingsRoot.includes('\0')
         || !Array.isArray(config.siblings) || config.siblings.some(row => !boundedName(row?.slug) || typeof row?.dir !== 'string'
             || isAbsolute(row.dir) || row.dir !== '.' && row.dir.split(/[\\/]/).some((part: string) => !part || part === '.' || part === '..'))
+        || config.siblings.some(row => !isAbsolute(served.get(row.slug)?.served ?? ''))
         || !authorities || isProxy(authorities)) throw new RefusalError('work application composition requires admitted source-bound configuration')
     const root = config.cockpitRoot
     const siblingsRoot = resolve(root, config.siblingsRoot)
@@ -595,18 +599,20 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
     const directories = authorities.executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES
     const browserAuthenticationTargets = new Set((config.browser?.authentication.states ?? []).map(row => resolve(root, row.path)))
     // The cockpit's own repository is `.`; a sibling is named by its slug, and its paths read `<slug>:path`.
-    // A sibling checked out at the cockpit root is that same repository, under the cockpit's key.
-    const repositories = [{ key: '.', identity: config.cockpitName, root }, ...config.siblings.flatMap(row => resolve(siblingsRoot, row.dir) === root ? []
-        : [{ key: row.slug, identity: `siblings/${row.slug}`, root: resolve(siblingsRoot, row.dir) }])]
-        .map(repository => ({ ...repository, sensitivePaths: repositoryEnvironmentInstancePaths(repository.root, siblingsRoot, config.siblings) }))
-    const keyOf = (key: string) => config.siblings.some(row => row.slug === key && resolve(siblingsRoot, row.dir) === root) ? '.' : key
+    // A sibling is read where it is served, which `cockpit use` may have moved to a worktree, so a grade
+    // judges the code the stack runs. One served at the cockpit root is that same repository, under the cockpit's key.
+    const servedRoot = (slug: string) => served.get(slug)!.served
+    const siblingRoots = config.siblings.map(row => ({ root: servedRoot(row.slug), environmentFiles: row.environmentFiles }))
+    const repositories = [{ key: '.', identity: config.cockpitName, root }, ...config.siblings.flatMap(row => servedRoot(row.slug) === root ? []
+        : [{ key: row.slug, identity: `siblings/${row.slug}`, root: servedRoot(row.slug) }])]
+        .map(repository => ({ ...repository, sensitivePaths: repositoryEnvironmentInstancePaths(repository.root, siblingRoots) }))
+    const keyOf = (key: string) => config.siblings.some(row => row.slug === key && servedRoot(row.slug) === root) ? '.' : key
     const qualified = (key: string, path: string) => key === '.' ? path : `${key}:${path}`
     const located = (reference: string) => {
-        const colon = reference.indexOf(':')
-        const key = colon < 0 ? '.' : keyOf(reference.slice(0, colon))
+        const { slug, path } = splitRepositoryPath(reference)
+        const key = slug === undefined ? '.' : keyOf(slug)
         const repository = repositories.find(row => row.key === key)
         if (!repository) throw new RefusalError(`${reference} names no declared sibling ${key}`)
-        const path = colon < 0 ? reference : reference.slice(colon + 1)
         admitRepositoryPath(repository.root, repository.identity, path, repository.sensitivePaths, browserAuthenticationTargets)
         return { repository, path }
     }
@@ -742,9 +748,11 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         if (!/^[a-f0-9]{40,64}$/.test(head)) throw new RefusalError(`${repository.identity} at ${repository.root} has no commit yet; commit once there`)
         return [repository.key, head] as const
     })))
+    const untrackedFiles = async (): Promise<ReadonlyMap<string, readonly string[]>> => new Map(await Promise.all(repositories.map(async repository =>
+        [repository.key, (await git(repository, ['ls-files', '--others', '--exclude-standard', '-z'])).split('\0').filter(Boolean)] as const)))
     // What changed since the base: committed, staged, unstaged and untracked files, each with its diff
     // or new content. A credential-shaped or declared-instance path is listed but its content is withheld.
-    const changes = async (base: Readonly<Record<string, string>>): Promise<readonly ChangedFile[]> => {
+    const changesWith = async (base: Readonly<Record<string, string>>, untrackedPaths: ReadonlyMap<string, readonly string[]>): Promise<readonly ChangedFile[]> => {
         const files: ChangedFile[] = []
         let budget = MAX_CHANGE_BYTES
         // What sync generates is cockpit's, not the order's: the paths the ownership manifest lists.
@@ -761,7 +769,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             const tracked = (await git(repository, ['diff', '--name-status', '-z', '--no-renames', from, '--'])).split('\0').filter(Boolean)
             const rows: [status: string, path: string, untracked: boolean][] = []
             for (let index = 0; index + 1 < tracked.length; index += 2) rows.push([tracked[index]!, tracked[index + 1]!, false])
-            for (const path of (await git(repository, ['ls-files', '--others', '--exclude-standard', '-z'])).split('\0').filter(Boolean)) rows.push(['A', path, true])
+            for (const path of untrackedPaths.get(repository.key)!) rows.push(['A', path, true])
             for (const [status, path, untracked] of rows) {
                 if (repository.key === '.' && (excludedRepositoryPath(path, COCKPIT_WRITTEN) || generated.has(path))) continue
                 let diff: string
@@ -785,15 +793,15 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
     }
     // Test weakening since the base, per checkout: committed, staged and unstaged edits of tracked files,
     // and new untracked test files, which a diff against the base does not list.
-    const testWeakening = async (base: Readonly<Record<string, string>>): Promise<TestWeakeningObservation> => {
+    const weakeningWith = async (base: Readonly<Record<string, string>>, untracked: ReadonlyMap<string, readonly string[]>): Promise<TestWeakeningObservation> => {
         const patterns = testFilePatterns(config.testing?.testFiles)
-        const findings: RepositoryWeakening[] = []
-        for (const repository of repositories) {
+        const isTest = scopeMatcher(patterns.tests)
+        const perRepository = await Promise.all(repositories.map(async repository => {
             const from = base[repository.key] ?? 'HEAD'
             const diff = await git(repository, ['-c', 'core.quotePath=true', 'diff', '--no-ext-diff', '--no-textconv', '--no-color', '--text', '--find-renames', '--unified=0', from, '--'])
             const files = parseDiff(diff)
-            for (const path of (await git(repository, ['ls-files', '--others', '--exclude-standard', '-z'])).split('\0').filter(Boolean)) {
-                if (!scopeMatches(patterns.tests, path)) continue
+            for (const path of untracked.get(repository.key)!) {
+                if (!isTest(path)) continue
                 let content: string
                 try {
                     admitRepositoryPath(repository.root, repository.identity, path, repository.sensitivePaths, browserAuthenticationTargets)
@@ -801,9 +809,15 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
                 } catch (error) { if (error instanceof RefusalError) continue; throw error }
                 files.push({ old: '/dev/null', next: path, hunk: true, removed: false, removedLines: [], renamed: false, deleted: false, added: content.split('\n') })
             }
-            for (const row of weakeningFindings(files, patterns)) findings.push({ ...row, repository: repository.key })
-        }
-        return { patterns, findings }
+            return weakeningFindings(files, patterns).map(row => ({ ...row, repository: repository.key }))
+        }))
+        return { patterns, findings: perRepository.flat() }
+    }
+    const testWeakening = async (base: Readonly<Record<string, string>>) => weakeningWith(base, await untrackedFiles())
+    const review = async (base: Readonly<Record<string, string>>) => {
+        const untracked = await untrackedFiles()
+        const [changed, weakening] = await Promise.all([changesWith(base, untracked), weakeningWith(base, untracked)])
+        return { changes: changed, weakening }
     }
     const gradeIndependently = async (subject: GradingSubject): Promise<GradingResult> => {
         let evaluator: EvaluatorAuthority
@@ -840,7 +854,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         readCriteriaFile: async (path: string) => parseCriteriaFile(readBounded(root, path, 65_536)),
         sourceDigests: async (order: Pick<WorkOrder, 'criteria'>) => Object.fromEntries(order.criteria.flatMap(row => row.source ? [row.source] : [])
             .map(source => [source, sha256Hex(readSource(source))])),
-        heads, runCheck, changes, evaluate: gradeIndependently, testWeakening, browser, gate,
+        heads, runCheck, evaluate: gradeIndependently, testWeakening, review, browser, gate,
         ...config.docs ? { docs: config.docs } : {}, decisionRecords, readDocsFile, writeDecisionRecords, containers,
     }
     issuedCompositions.add(composition)
@@ -1026,14 +1040,25 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
                     namespace: browserAuthority.namespace, stackId: loaded.result.stackId, ownerId: record.value.holderId,
                 } } : {}) }
         }
+        // Work orders and gates read each sibling where `cockpit use` serves it, as the stack does.
+        const recorded = await readSiblingCheckouts(config.cockpitRoot)
+        if (recorded.kind !== 'complete') return { kind: 'refusal', reason: `${recorded.diagnostic.code}: ${recorded.diagnostic.message}; ${recorded.diagnostic.fix}` }
         const configuredSiblingsRoot = resolve(config.cockpitRoot, config.siblingsRoot)
+        const served = new Map(config.siblings.map(row => {
+            const declared = resolve(configuredSiblingsRoot, row.dir)
+            const override = Object.hasOwn(recorded.checkouts, row.slug) ? recorded.checkouts[row.slug] : undefined
+            return [row.slug, { slug: row.slug, declared, served: override ?? declared, overridden: override !== undefined }] as const
+        }))
+        const gone = await missingServedCheckout(served)
+        if (gone) return { kind: 'refusal', reason: `${gone.code}: ${gone.message}; ${gone.fix}` }
+        const siblingRoots = config.siblings.map(row => ({ root: served.get(row.slug)!.served, environmentFiles: row.environmentFiles }))
         const gateBrowserAuthenticationTargets = new Set((config.browser?.authentication.states ?? []).map(row => resolve(config.cockpitRoot, row.path)))
         const gateRepositories = [
             { identity: config.cockpitName, root: config.cockpitRoot,
-                sensitivePaths: repositoryEnvironmentInstancePaths(config.cockpitRoot, configuredSiblingsRoot, config.siblings),
+                sensitivePaths: repositoryEnvironmentInstancePaths(config.cockpitRoot, siblingRoots),
                 forbiddenTargets: gateBrowserAuthenticationTargets },
-            ...config.siblings.map(row => ({ identity: `siblings/${row.slug}`, root: resolve(configuredSiblingsRoot, row.dir),
-                sensitivePaths: repositoryEnvironmentInstancePaths(resolve(configuredSiblingsRoot, row.dir), configuredSiblingsRoot, config.siblings),
+            ...siblingRoots.map((row, index) => ({ identity: `siblings/${config.siblings[index]!.slug}`, root: row.root,
+                sensitivePaths: repositoryEnvironmentInstancePaths(row.root, siblingRoots),
                 forbiddenTargets: gateBrowserAuthenticationTargets })),
         ]
         const reads = createReadCommandAdapters({ configPath: captured.configPath, env: captured.env,
@@ -1060,7 +1085,7 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
             testing: { registry: authority.testing.registry,
                 dependencies: productGateDependencies(config.cockpitRoot, config.source, gateRepositories,
                     declaredEnvironment, executableDirectories), runtime: gateRuntime },
-        })
+        }, served)
         return { kind: 'complete', composition }
     } catch (error) {
         return { kind: 'refusal', reason: `Configured work application is unavailable: ${errorCause(error)}` }

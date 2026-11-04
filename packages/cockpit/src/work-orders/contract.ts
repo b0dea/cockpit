@@ -5,6 +5,7 @@
 import { createHash } from 'node:crypto'
 import { parseDocument } from 'yaml'
 import { z } from 'zod'
+import { REPOSITORY_PATH } from '../repository-path.js'
 
 // One inert word, never a path or an option: the CLI, the guard and the store each admit it before it names a file.
 export const WORK_ORDER_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
@@ -13,9 +14,6 @@ const WORK_ORDER_LIMITS = Object.freeze({ bytes: 65_536, criteria: 12, scope: 64
 const PRINTABLE = /^[^\x00-\x08\x0b-\x1f\x7f]*$/
 const text = z.string().trim().min(1).refine(value => Buffer.byteLength(value) <= WORK_ORDER_LIMITS.textBytes && PRINTABLE.test(value),
     `at most ${WORK_ORDER_LIMITS.textBytes} bytes without control characters`)
-// `path` in the cockpit's own repository, or `<sibling slug>:path` in a sibling; never absolute or climbing.
-// The climbing check looks past the sibling prefix, which would otherwise consume the `:` before `..`.
-export const REPOSITORY_PATH = /^(?!(?:[a-z0-9][a-z0-9-]{0,63}:)?(?:.*\/)?\.\.(?:\/|$))(?:[a-z0-9][a-z0-9-]{0,63}:)?(?![/])[A-Za-z0-9._@+\-/*?]+$/
 const repositoryPath = z.string().max(1_024).regex(REPOSITORY_PATH, 'a relative path, optionally <sibling slug>:path, without .. or a leading /')
 const sourcePath = repositoryPath.refine(value => !/[*?]/.test(value), 'a source names one file, without wildcards')
 const argument = z.string().min(1).refine(value => Buffer.byteLength(value) <= WORK_ORDER_LIMITS.argumentBytes && !/[\x00-\x1f\x7f]/.test(value), 'a bounded argument without control characters')
@@ -133,11 +131,19 @@ export function contractAmendment(accepted: WorkOrder, changed: WorkOrder): Cont
 export const checksBindsField = (field: string) => field === 'scope' || field.startsWith('criteria.')
 
 // `**` crosses directories, `*` and `?` stay within one; a plain entry also covers what is below it.
-export function scopeMatches(scope: readonly string[], path: string): boolean {
-    return scope.some(entry => {
-        if (!/[*?]/.test(entry)) return path === entry || path.startsWith(`${entry.replace(/\/$/, '')}/`)
+/** Whether a path falls in `scope`, with each glob compiled once for the many paths a caller tests. */
+export function scopeMatcher(scope: readonly string[]): (path: string) => boolean {
+    const tests = scope.map((entry): (path: string) => boolean => {
+        if (!/[*?]/.test(entry)) {
+            const directory = `${entry.replace(/\/$/, '')}/`
+            return path => path === entry || path.startsWith(directory)
+        }
         const pattern = entry.split(/(\*\*\/?|\*|\?)/).map(part => part === '**' || part === '**/' ? '(?:.*/)?' + (part === '**' ? '.*' : '')
             : part === '*' ? '[^/]*' : part === '?' ? '[^/]' : part.replace(/[.+^${}()|[\]\\]/g, '\\$&')).join('')
-        return new RegExp(`^${pattern}$`).test(path)
+        const compiled = new RegExp(`^${pattern}$`)
+        return path => compiled.test(path)
     })
+    return path => tests.some(test => test(path))
 }
+
+export const scopeMatches = (scope: readonly string[], path: string): boolean => scopeMatcher(scope)(path)

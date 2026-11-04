@@ -1,5 +1,6 @@
 // The Markdown reading shared by the repository's own docs lint and `cockpit docs check`: one walker,
 // so both agree on what counts as prose, code and a link.
+import { posix } from 'node:path'
 
 export interface ProseLine { readonly line: number; readonly prose: string; readonly comments: readonly string[] }
 export interface MarkdownLink { readonly line: number; readonly label: string; readonly target: string; readonly index: number; readonly end: number }
@@ -64,4 +65,18 @@ export function walkMarkdownProse(body: string): WalkedMarkdown {
     }
     if (comment) throw new Error(`HTML comment opened on line ${comment.line} is not closed`)
     return { lines, fences, fencedLines, links }
+}
+
+/**
+ * The repository path a link target or cited path names, resolved against `base`, the directory it
+ * is relative to ('' for the repository root): its fragment, query, `:line[:column]` suffix and
+ * trailing slashes dropped, and its percent escapes decoded. Undefined for an empty, absolute or
+ * external (`scheme:`) target. The result may still climb out with `../`; the caller decides.
+ */
+export function resolveLinkTarget(base: string, target: string): string | undefined {
+    let value = target.split(/[#?]/, 1)[0]!.replace(/:\d+(?::\d+)?$/, '').replace(/\/+$/, '')
+    // A `%` that starts no valid escape is part of the file name, as CommonMark reads it.
+    try { value = decodeURI(value) } catch (error) { if (!(error instanceof URIError)) throw error }
+    if (value === '' || value.startsWith('/') || /^[a-z][a-z0-9+.-]*:/i.test(value)) return undefined
+    return posix.normalize(posix.join(base, value))
 }

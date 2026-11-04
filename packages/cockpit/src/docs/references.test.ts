@@ -78,4 +78,15 @@ describe('docs check references', () => {
             'DOCS_DECLARATION_UNMATCHED [docs] decisions api:docs/adr holds no Markdown file, so it checks nothing',
         ] })
     })
+
+    it('checks a sibling where cockpit use serves it, not at its declared checkout', async () => {
+        git('api', 'worktree', 'add', '-q', '-b', 'feature', join(root, 'api-feature'))
+        write('api-feature/NOTES.md', 'Seed with `scripts/seed.sh`.\n')
+        write('.cockpit/local/sibling-checkouts', JSON.stringify({ format: 'cockpit-sibling-checkouts/v1', checkouts: { api: join(root, 'api-feature') } }))
+        try {
+            expect(await check('\n[docs]\nliving = ["api:NOTES.md"]\n')).toEqual({ status: 2, findings: [
+                'DOCS_REFERENCE_REMOVED api:NOTES.md:1 cites scripts/seed.sh, which the repository history removed',
+            ] })
+        } finally { rmSync(join(root, '.cockpit/local/sibling-checkouts')) }
+    })
 })

@@ -8,7 +8,7 @@ import { GUARD_HOST_LIMITS, GUARD_HOST_PATTERN, normalizeGuardHost } from './gua
 import { ADOPTABLE_SURFACE_PATHS, ADOPTED_SURFACE_ROOT, SURFACE_BUNDLE_FORMATS, SURFACE_FEATURES, SURFACE_TARGETS, surfaceSourcesMatchFeature } from './surfaces/contract.js'
 import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS } from './surfaces/harness-registry.js'
 import { RefusalError, errorCause } from './environment/contract.js'
-import { REPOSITORY_PATH } from './work-orders/contract.js'
+import { REPOSITORY_FILE, REPOSITORY_PATH, splitRepositoryPath } from './repository-path.js'
 
 export const STRUCTURED_INPUT_ENTRY_LIMIT = 4_096
 
@@ -882,10 +882,9 @@ export const UNCONFIRMABLE_ANSWERS = ['cockpit.name', 'sibling', 'estate.runnabl
 // `path` in the cockpit's own repository, or `<sibling slug>:path` in a sibling, spelt as a work
 // order's scope is. Living documents may be globs; the decision paths name one file or directory.
 const DocsGlob = z.string().max(1_024).regex(REPOSITORY_PATH, 'a relative path, optionally <sibling slug>:path, without .. or a leading /')
-export const DOCS_PATH = /^(?!(?:[a-z0-9][a-z0-9-]{0,63}:)?(?:.*\/)?\.\.?(?:\/|$))(?:[a-z0-9][a-z0-9-]{0,63}:)?(?![/])[A-Za-z0-9._@+\-/]*[A-Za-z0-9._@+-]$/
-const DocsFile = z.string().max(1_024).regex(DOCS_PATH,
+const DocsFile = z.string().max(1_024).regex(REPOSITORY_FILE,
     'one relative path without wildcards, optionally <sibling slug>:path, without . or .. segments or a leading or trailing /')
-const repositoryOf = (path: string) => /^([a-z0-9][a-z0-9-]{0,63}):/.exec(path)?.[1] ?? '.'
+const repositoryOf = (path: string) => splitRepositoryPath(path).slug ?? '.'
 export const Docs = z.object({
     living: z.array(DocsGlob).max(64).default([])
         .describe('Globs of the Markdown documents that must stay true; docs check reports the paths and make targets they cite that the repository has since removed.'),

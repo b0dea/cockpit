@@ -331,4 +331,30 @@ describe('work-order lifecycle', () => {
         rmSync(join(root, 'checks/one.mjs'))
         expect(await run()).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_TEST_WEAKENED', message: expect.stringContaining('checks/one.mjs: test-file-removed') }] })
     }, 120_000)
+
+    // The stack runs a sibling from the worktree `cockpit use` names; a grade that read the declared
+    // checkout instead passed work it never saw.
+    it('grades a sibling where cockpit use serves it, not at its declared checkout', async () => {
+        const estate = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-work-served-')))
+        roots.push(estate)
+        const root = join(estate, 'cockpit')
+        const app = join(estate, 'app')
+        mkdirSync(join(root, 'workorders'), { recursive: true }); mkdirSync(join(app, 'src'), { recursive: true })
+        writeFileSync(join(app, 'src/add.mjs'), 'export const add = (a, b) => a + b\n')
+        git(app, 'init', '-q', '-b', 'main'); git(app, 'add', '-A'); git(app, 'commit', '-qm', 'app')
+        const worktree = join(estate, 'app-feature')
+        git(app, 'worktree', 'add', '-q', '-b', 'feature', worktree)
+        writeFileSync(join(root, 'cockpit.toml'), ['[cockpit]', 'name = "served"', 'siblings_root = ".."', '', '[[sibling]]', 'slug = "app"', 'dir = "app"',
+            'mount = "none"', 'acquire = "none"', 'var = "APP_DIR"', 'purpose = "The product"', '', '[ports]', 'bases = {}', '', '[work]', 'grading = "checks"', ''].join('\n'))
+        git(root, 'init', '-q', '-b', 'main')
+        expect((await work(root, ['sync'])).status).toBe(0)
+        git(root, 'add', '-A'); git(root, 'commit', '-qm', 'cockpit')
+        expect((await work(root, ['use', 'app', worktree])).result).toMatchObject({ served: worktree })
+
+        writeFileSync(join(root, 'workorders/WO-9.md'), '---\nid: WO-9\nobjective: add sums two numbers.\nscope: ["app:src/"]\ncriteria:\n'
+            + '  - id: AC1\n    text: node runs.\n    check: [node, --version]\n---\n')
+        expect((await work(root, ['work', 'accept', '--work-order', 'WO-9'])).result).toMatchObject({ state: 'accepted' })
+        writeFileSync(join(worktree, 'README.md'), 'outside the scope\n')
+        expect(await work(root, ['work', 'grade', '--work-order', 'WO-9'])).toMatchObject({ status: 2, result: { outOfScope: ['app:README.md'] } })
+    }, 120_000)
 })
