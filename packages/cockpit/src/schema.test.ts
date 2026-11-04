@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { ENTRYPOINT_KINDS } from './entrypoint-kinds.js'
-import { Autonomy, Browser, EntrypointDerivative, Environment, InstallPolicy, Sibling, Testing, Work } from './schema.js'
+import { Autonomy, Browser, Docs, EntrypointDerivative, Environment, InstallPolicy, Sibling, Testing, Work } from './schema.js'
 import { CockpitConfig, CustomHarness, Guards, SurfaceDeclaration, SurfaceOverlay } from './schema.js'
 import { renderCockpitSchema } from './schema-json.js'
 import { compileDraft04Schema } from '../test-support/draft04-validator.js'
@@ -591,4 +591,23 @@ it('rejects the superseded stale age control as an unknown key', () => {
     const result = Work.safeParse({ stale_park_days: 14 })
     expect(result.success).toBe(false)
     if (!result.success) expect(result.error.issues).toContainEqual(expect.objectContaining({ code: 'unrecognized_keys', keys: ['stale_park_days'] }))
+})
+
+describe('[docs]', () => {
+    // A path cockpit would refuse at every read is refused when the configuration loads instead.
+    it('admits decision directories in the cockpit or a sibling, never a dot segment, and an index only beside its records', () => {
+        const config = (decisions: string) => ({ cockpit: { name: 'synthetic' }, sibling: [{ slug: 'app', dir: '.', mount: 'none', acquire: 'none', var: 'APP_DIR', purpose: 'The product' }],
+            ports: { bases: {} }, docs: { decisions } })
+        for (const decisions of ['docs/adr', 'app:docs/adr', 'docs/.adr']) {
+            expect(Docs.safeParse({ decisions }).success, decisions).toBe(true)
+            expect(publishedCockpitValidator(config(decisions)), JSON.stringify(publishedCockpitValidator.errors)).toBe(true)
+        }
+        for (const decisions of ['../adr', 'docs/../adr', './adr', 'docs/.', 'app:../adr', 'app:./adr', 'app:..', 'app:docs/../x', '/adr', 'docs/adr/']) {
+            expect(Docs.safeParse({ decisions }).success, decisions).toBe(false)
+            expect(publishedCockpitValidator(config(decisions)), decisions).toBe(false)
+        }
+        expect(Docs.safeParse({ decisions: 'app:docs/adr', decisions_index: 'app:docs/adr/README.md' }).success).toBe(true)
+        expect(Docs.safeParse({ decisions: 'app:docs/adr', decisions_index: 'docs/adr/README.md' }).success).toBe(false)
+        expect(Docs.safeParse({ decisions_index: 'docs/adr/README.md' }).success).toBe(false)
+    })
 })

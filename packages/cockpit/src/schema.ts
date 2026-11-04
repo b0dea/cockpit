@@ -833,6 +833,22 @@ const Surfaces = z.object({
     }
 })
 
+// `path` in the cockpit's own repository, or `<sibling slug>:path` in a sibling, as work-order scope names them.
+export const DOCS_PATH = /^(?!(?:[a-z0-9][a-z0-9-]{0,63}:)?(?:.*\/)?\.\.?(?:\/|$))(?:[a-z0-9][a-z0-9-]{0,63}:)?(?![/])[A-Za-z0-9._@+\-/]*[A-Za-z0-9._@+-]$/
+const DocsPath = z.string().max(1_024).regex(DOCS_PATH,
+    'a relative path, optionally <sibling slug>:path, without . or .. segments or a leading or trailing /')
+const repositoryOf = (path: string) => /^([a-z0-9][a-z0-9-]{0,63}):/.exec(path)?.[1] ?? '.'
+export const Docs = z.object({
+    decisions: DocsPath.optional().describe('Directory of decision records, such as docs/adr. Work orders record decisions only when it is set.'),
+    decisions_index: DocsPath.optional().describe('Markdown file listing the decision records; a record cockpit writes is appended to it.'),
+}).strict().superRefine((docs, ctx) => {
+    // An index with no records directory would parse and do nothing.
+    if (docs.decisions_index !== undefined && docs.decisions === undefined) ctx.addIssue({ code: 'custom', path: ['decisions_index'], message: 'decisions_index needs decisions, the directory it indexes' })
+    else if (docs.decisions_index !== undefined && repositoryOf(docs.decisions_index) !== repositoryOf(docs.decisions!)) {
+        ctx.addIssue({ code: 'custom', path: ['decisions_index'], message: 'decisions_index must be in the same repository as decisions, so its links resolve' })
+    }
+})
+
 export function configurationDefaults() {
     return {
         cockpit: CockpitMeta.omit({ name: true }).parse({}),
@@ -879,6 +895,7 @@ export const CockpitConfig = z
         testing: Testing.optional().describe('Test stages and gates.'),
         environment: Environment.prefault({}).describe('How the stack is reached, signed in to, built and kept.'),
         surfaces: Surfaces.prefault({}).describe('Instructions, skills and settings generated for agent tools.'),
+        docs: Docs.optional().describe('Where the product keeps its decision records.'),
     })
     .strict()
     .superRefine((cfg, ctx) => {

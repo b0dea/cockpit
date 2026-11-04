@@ -78,6 +78,7 @@ export interface ConsumedWorkEnvironmentConfig {
     readonly generatedHostPaths: readonly string[]
     readonly browser?: ReturnType<typeof projectBrowserConfig>
     readonly testing?: ReturnType<typeof projectTestingConfig>
+    readonly docs?: Readonly<{ decisions?: string; decisionsIndex?: string }>
 }
 const issuedWorkEnvironmentConfigProjections = new WeakMap<object, ConsumedWorkEnvironmentConfig>()
 
@@ -169,6 +170,9 @@ export function projectWorkEnvironmentConfig(
         generatedHostPaths: Object.freeze([...loaded.config.environment.generated_host_paths]),
         ...(browser === undefined ? {} : { browser }),
         ...(testing === undefined ? {} : { testing }),
+        ...(loaded.config.docs === undefined ? {} : { docs: Object.freeze({
+            ...(loaded.config.docs.decisions === undefined ? {} : { decisions: loaded.config.docs.decisions }),
+            ...(loaded.config.docs.decisions_index === undefined ? {} : { decisionsIndex: loaded.config.docs.decisions_index }) }) }),
     }))
     return result
 }

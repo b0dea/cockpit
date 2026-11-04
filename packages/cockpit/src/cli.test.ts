@@ -134,7 +134,7 @@ describe('closed ordinary invocation metadata', () => {
         selftest: ['--probe-specifications', 'probes.json'], logs: ['--service', 'app'], runtime: ['measure', '--image', 'node:22-alpine'],
         'test-run': ['--gate', 'quick'], reset: ['--apply'], grade: ['--criteria', 'criteria.md'],
         ...Object.fromEntries(['accept', 'check', 'acknowledge', 'grade', 'signoff', 'recover'].map(sub => [`work ${sub}`, ['--work-order', 'WO-1']])),
-        'work note': ['--work-order', 'WO-1', '--text', 'why'], 'work answer': ['--work-order', 'WO-1', '--question', '1', '--text', 'because'],
+        'work note': ['--work-order', 'WO-1', '--text', 'why'], 'work decide': ['--work-order', 'WO-1', '--decision', '1', '--record'], 'work answer': ['--work-order', 'WO-1', '--question', '1', '--text', 'because'],
         'work acknowledge': ['--work-order', 'WO-1', '--note', 'the deleted test is replaced'],
     }
     it('keeps public rows compatible and internal transport separately typed and closed', async () => {
@@ -173,6 +173,8 @@ describe('closed ordinary invocation metadata', () => {
             ['work', 'status', '--json'], ['work', 'status', '--work-order', 'WO-1'], ['work', 'accept', '--work-order', 'WO-1'],
             ['work', 'check', '--work-order', 'WO-1', '--json'], ['work', 'note', '--work-order', 'WO-1', '--ask', '--text', 'Which origin is canonical?'],
             ['work', 'answer', '--work-order', 'WO-1', '--question', '2', '--text', 'The first one'],
+            ['work', 'note', '--work-order', 'WO-1', '--decision', '--text', 'Cache by tenant'], ['work', 'decide', '--work-order', 'WO-1', '--decision', '1', '--record'],
+            ['work', 'decide', '--work-order', 'WO-1', '--decision', '1', '--none', '--reason', 'reverted before close'],
             ['work', 'grade', '--work-order', 'WO-1', '--evaluator', 'codexcli'], ['grade', '--criteria', 'criteria.md', '--evaluator=claudecode'],
             ['work', 'grade', '--work-order', 'WO-1'], ['work', 'grade', '--work-order', 'WO-1', '--verdict', 'met', '--note', 'ran the suite'],
             ['work', 'signoff', '--work-order', 'WO-1'], ['work', 'signoff', '--work-order', 'WO-1', '--partial', '--note', 'AC3 left'],
@@ -196,7 +198,7 @@ describe('closed ordinary invocation metadata', () => {
     it('requires the exact resolved config for every available config-bearing row', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
         expect(rows.map(row => row.name)).toEqual(['setup', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'sleep', 'down', 'reset', 'doctor',
-            'test-run', 'work status', 'work accept', 'work check', 'work note', 'work answer', 'work acknowledge', 'work grade', 'work signoff', 'work recover', 'work verify', 'grade',
+            'test-run', 'work status', 'work accept', 'work check', 'work note', 'work decide', 'work answer', 'work acknowledge', 'work grade', 'work signoff', 'work recover', 'work verify', 'grade',
             'browser drive', 'browser screenshot'])
         for (const row of rows) {
             const argv = [...row.name.split(' '), ...(requiredWords[row.name] ?? [])]
@@ -253,7 +255,7 @@ describe('closed ordinary invocation metadata', () => {
             const required = row.name === 'init' ? ['.', '--target', 'codexcli'] : row.name === 'registry-resolve' ? ['--registry', 'r', '--siblings-root', '.', '--adoption', 'a'] : ['--config', authority.configPath, ...(requiredWords[row.name] ?? [])]
             for (const [name, option] of Object.entries(row.ordinary.options)) {
                 const value = option.kind === 'flag' ? [] : [name === 'target' ? 'codexcli' : name === 'config' ? authority.configPath : name === 'service' ? 'app' : name === 'tail' ? '1' : name === 'since' ? '1m'
-                    : name === 'gate' ? 'quick' : name === 'mode' ? 'full' : name === 'select' ? 'test:refresh' : name === 'accept-reset' ? 'a'.repeat(64) : name === 'question' ? '1' : name === 'evaluator' ? 'codexcli' : 'path']
+                    : name === 'gate' ? 'quick' : name === 'mode' ? 'full' : name === 'select' ? 'test:refresh' : name === 'accept-reset' ? 'a'.repeat(64) : name === 'question' || name === 'decision' ? '1' : name === 'evaluator' ? 'codexcli' : 'path']
                 const baseline = required.filter((arg, i) => arg !== `--${name}` && required[i - 1] !== `--${name}`)
                 expect(ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value]), `${row.name} single ${name}`).toBeDefined()
                 expect(ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value, `--${name}`, ...value]), `${row.name} repeated ${name}`).toBeUndefined()
@@ -491,7 +493,8 @@ describe('CLI help', () => {
             '  status       Report each work order, its state and how it closed\n' +
             '  accept       Accept a work order, or a change to an accepted one, as [work.gates] allows\n' +
             "  check        Run every criterion's check and the order's gates\n" +
-            '  note         Record a note on an order, or with --ask an open question that blocks it\n' +
+            '  note         Record a note on an order, an open question with --ask, or a decision with --decision\n' +
+            '  decide       Resolve a recorded decision: write or cite its decision record, or say it is not lasting\n' +
             '  answer       Answer an open question on an order, as [work.gates] allows\n' +
             '  acknowledge  Acknowledge that an order weakened tests, as [work.gates] allows\n' +
             '  grade        Grade an accepted order the way [work] grading says\n' +
@@ -508,7 +511,7 @@ describe('CLI help', () => {
 
         const envelope = async (args: string[]) => JSON.parse((await runInProcess([...args, '--json'])).stdout)
         expect(await envelope(['work'])).toMatchObject({ invocation: { verb: 'work', exitCode: 2 }, diagnostics: [{ code: 'CLI_COMMAND_REQUIRED',
-            message: 'work requires a subcommand: status, accept, check, note, answer, acknowledge, grade, signoff, recover, verify' }] })
+            message: 'work requires a subcommand: status, accept, check, note, decide, answer, acknowledge, grade, signoff, recover, verify' }] })
         expect(await envelope(['work', 'bogus'])).toMatchObject({ invocation: { verb: 'unknown' }, diagnostics: [{ code: 'CLI_UNKNOWN_COMMAND', message: 'unknown command "work bogus"' }] })
         // There are no hyphenated aliases; the refusal names the spelling that runs.
         const hyphenated = await runInProcess(['work-grade', '--config', 'cockpit.toml'])
@@ -1861,8 +1864,12 @@ describe('work command routing', () => {
             ['work-status', [], { operation: 'work-status' }],
             ['work-status', ['--work-order', 'WO-1'], { operation: 'work-status', workOrderId: 'WO-1' }],
             ['work-check', ['--work-order', 'WO-1'], { operation: 'work-check', workOrderId: 'WO-1' }],
-            ['work-note', ['--work-order', 'WO-1', '--text', 'tried the cache first'], { operation: 'work-note', workOrderId: 'WO-1', text: 'tried the cache first', question: false }],
-            ['work-note', ['--work-order', 'WO-1', '--ask', '--text', 'Which origin?'], { operation: 'work-note', workOrderId: 'WO-1', text: 'Which origin?', question: true }],
+            ['work-note', ['--work-order', 'WO-1', '--text', 'tried the cache first'], { operation: 'work-note', workOrderId: 'WO-1', text: 'tried the cache first', kind: 'note' }],
+            ['work-note', ['--work-order', 'WO-1', '--ask', '--text', 'Which origin?'], { operation: 'work-note', workOrderId: 'WO-1', text: 'Which origin?', kind: 'question' }],
+            ['work-note', ['--work-order', 'WO-1', '--decision', '--text', 'Cache by tenant'], { operation: 'work-note', workOrderId: 'WO-1', text: 'Cache by tenant', kind: 'decision' }],
+            ['work-decide', ['--work-order', 'WO-1', '--decision', '2', '--record', '--supersedes', '0007'], { operation: 'work-decide', workOrderId: 'WO-1', decision: 2, resolution: { kind: 'record', supersedes: '0007' } }],
+            ['work-decide', ['--work-order', 'WO-1', '--decision', '2', '--record-file', 'app:docs/adr/0008-cache.md'], { operation: 'work-decide', workOrderId: 'WO-1', decision: 2, resolution: { kind: 'record', path: 'app:docs/adr/0008-cache.md' } }],
+            ['work-decide', ['--work-order', 'WO-1', '--decision', '2', '--none', '--reason', 'reverted later'], { operation: 'work-decide', workOrderId: 'WO-1', decision: 2, resolution: { kind: 'none', reason: 'reverted later' } }],
             ['work-grade', ['--work-order', 'WO-1'], { operation: 'work-grade', workOrderId: 'WO-1' }],
             ['work-grade', ['--work-order', 'WO-1', '--evaluator', 'codexcli'], { operation: 'work-grade', workOrderId: 'WO-1' }, 'codexcli'],
             ['grade-criteria', ['--criteria', 'criteria.md', '--evaluator', 'opencode'], { operation: 'grade-criteria', criteriaFile: 'criteria.md' }, 'opencode'],
@@ -1895,7 +1902,9 @@ describe('work command routing', () => {
 
     it('refuses malformed selectors before dispatch', async () => {
         const cases = [
-            ['work-check'], ['work-check', '--work-order', '../WO-1'], ['work-note', '--work-order', 'WO-1'],
+            ['work-check'], ['work-check', '--work-order', '../WO-1'], ['work-note', '--work-order', 'WO-1'], ['work-note', '--work-order', 'WO-1', '--ask', '--decision', '--text', 'x'],
+            ['work-decide', '--work-order', 'WO-1', '--decision', '1'], ['work-decide', '--work-order', 'WO-1', '--decision', '1', '--record', '--none', '--reason', 'x'],
+            ['work-decide', '--work-order', 'WO-1', '--decision', '1', '--none'], ['work-decide', '--work-order', 'WO-1', '--decision', '1', '--record', '--record-file', 'docs/adr/0001-x.md'],
             ['work-answer', '--work-order', 'WO-1', '--text', 'yes'], ['work-answer', '--work-order', 'WO-1', '--question', 'first', '--text', 'yes'],
             ['work-grade', '--work-order', 'WO-1', '--verdict', 'maybe'], ['work-grade', '--work-order', 'WO-1', '--evaluator', 'gemini'], ['work-grade', '--work-order', 'WO-1', '--work-order', 'WO-2'],
             ['work-signoff', '--work-order', 'WO-1', '--partial', '--abandon'], ['work-recover'],

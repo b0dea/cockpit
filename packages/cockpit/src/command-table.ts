@@ -12,7 +12,7 @@ export function isRecordedAnswerField(value: string): boolean {
 }
 
 export type WorkHandlerIdentifier =
-    | 'work-status' | 'work-accept' | 'work-check' | 'work-note' | 'work-answer' | 'work-acknowledge' | 'work-grade' | 'work-signoff' | 'work-recover' | 'work-verify' | 'grade-criteria'
+    | 'work-status' | 'work-accept' | 'work-check' | 'work-note' | 'work-decide' | 'work-answer' | 'work-acknowledge' | 'work-grade' | 'work-signoff' | 'work-recover' | 'work-verify' | 'grade-criteria'
     | 'browser-drive' | 'browser-screenshot' | 'test-run'
 
 export type HandlerIdentifier = WorkHandlerIdentifier
@@ -94,6 +94,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     command: 'With --scaffold-compose: the command that starts the app, as words separated by spaces',
     config: 'Path to cockpit.toml',
     create: 'Create a new local sibling repository',
+    decision: 'With work note: record the text as a decision the order made, resolved with work decide before signoff. With work decide: number of the decision to resolve, as work status lists it',
     criteria: 'Path to a file whose YAML front-matter lists the criteria to grade',
     dir: 'Directory for the sibling checkout',
     evaluator: 'Grade with only this agent tool (codexcli, claudecode or opencode), with no fallback to another',
@@ -114,6 +115,11 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     purpose: 'Short purpose of the sibling repository',
     question: 'Number of the open question to answer, as work status lists it',
     registry: 'Path to the legacy registry input',
+    reason: 'With --none: why the decision is not a lasting one',
+    record: 'Write a new decision record under [docs] decisions for the decision',
+    'record-file': 'An existing decision record under [docs] decisions that cites the order',
+    supersedes: 'With --record: the number of the decision record the new one supersedes, which is marked superseded',
+    none: 'Resolve the decision as not lasting; --reason says why',
     'reset-answer': 'Preview clearing one recorded init answer field',
     remote: 'Repository remote URL recorded for the sibling',
     role: 'Declared browser role',
@@ -415,9 +421,14 @@ const sources = [
     { name: 'work check', handler: 'work-check', stage: 'test-and-grade', summary: "Run every criterion's check and the order's gates", visibility: 'public',
         ordinary: ordinary('work-check'),
         flags: { ...configured, 'work-order': workOrderFlag } },
-    { name: 'work note', handler: 'work-note', stage: 'test-and-grade', summary: 'Record a note on an order, or with --ask an open question that blocks it', visibility: 'public',
+    { name: 'work note', handler: 'work-note', stage: 'test-and-grade', summary: 'Record a note on an order, an open question with --ask, or a decision with --decision', visibility: 'public',
         ordinary: ordinary('work-note'),
-        flags: { ...configured, 'work-order': workOrderFlag, text: str(value('label', true)), ask: bool(flag) } },
+        flags: { ...configured, 'work-order': workOrderFlag, text: str(value('label', true)), ask: bool(flag), decision: bool(flag) } },
+    // Resolving a decision passes no gate of its own: a --none resolution is shown in the signoff prompt, which the signoff gate covers.
+    { name: 'work decide', handler: 'work-decide', stage: 'test-and-grade', summary: 'Resolve a recorded decision: write or cite its decision record, or say it is not lasting', visibility: 'public',
+        ordinary: ordinary('work-decide'),
+        flags: { ...configured, 'work-order': workOrderFlag, decision: str(value('tail', true)), record: bool(flag), 'record-file': str(value('label')),
+            supersedes: str(value('label')), none: bool(flag), reason: str(value('label')) } },
     { name: 'work answer', handler: 'work-answer', stage: 'test-and-grade', summary: 'Answer an open question on an order, as [work.gates] allows', visibility: 'public',
         ordinary: ordinary('work-answer', personFlag),
         flags: { ...configured, 'work-order': workOrderFlag, question: str(value('tail', true)), text: str(value('label', true)), interactive: bool() } },

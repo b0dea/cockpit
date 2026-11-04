@@ -67,7 +67,15 @@ not the thinking: reuse the planning skills the harness already has.
    need a person's input, run
    `./node_modules/.bin/cockpit work note --config cockpit.toml --work-order WO-001 --ask --text "<question>"`
    and stop: the order is blocked until it is answered with `work answer`, which under `answer =
-   "person"` only a person can run. Done when every criterion has code and a test that passes.
+   "person"` only a person can run. When `work accept` or `work status` lists `relatedDecisions`,
+   read those decision records before changing the code they name. When the work makes a lasting
+   decision (a format, a boundary, a dependency, an option rejected), record it with
+   `./node_modules/.bin/cockpit work note --config cockpit.toml --work-order WO-001 --decision --text "<title>"`
+   and resolve it with `work decide --decision <n> --record`, then replace every placeholder in the
+   record it writes; `--none --reason "<why>"` resolves one that turned out not to last. Update the
+   documentation that describes behaviour you change. This needs `[docs] decisions` in
+   `cockpit.toml`, and nothing enforces it under `[work] grading = "checks"`. Done when every
+   criterion has code and a test that passes.
 4. **Check** with `./node_modules/.bin/cockpit work check --config cockpit.toml --work-order WO-001 --json`.
    It runs every criterion's check and the order's gates; a failure (`WORK_CHECK_FAILED`) returns
    each result's outcome and the end of its output under `result.results`. Fix and rerun. While
@@ -98,6 +106,7 @@ not the thinking: reuse the planning skills the harness already has.
    person, who amends the contract or closes the order. Done when the person has the cause and the order's state.
 8. **Close** with `./node_modules/.bin/cockpit work signoff --config cockpit.toml --work-order WO-001`
    once graded; under `signoff = "person"` it answers `WORK_PERSON_REQUIRED` as step 2 describes.
+   It refuses while a recorded decision is unresolved or its record still holds placeholders.
    An order that cannot be finished closes with `--partial --note <what is left>` or
    `--abandon --note <why>`. Done when `work status` names how it closed.
 

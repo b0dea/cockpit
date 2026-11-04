@@ -12,21 +12,27 @@ import { executeBrowserCommand, type BrowserCommandReceipt } from '../browser/co
 import { evaluateUiGate } from '../browser/ui-gate.js'
 import { errorCause, RefusalError } from '../environment/contract.js'
 import type { GradingSubject, Verdict } from '../grading/grade.js'
-import type { Decider } from '../schema.js'
+import { DOCS_PATH, type Decider } from '../schema.js'
 import { runGate } from '../testing/gates.js'
 import { describeWeakening, testWeakeningDigest } from '../testing/weakening.js'
-import { criteriaWeakening, scopeMatches, WORK_ORDER_ID, workOrderDigest, type WorkOrder } from './contract.js'
+import { criteriaWeakening, scopeMatches, WORK_ORDER_ID, workOrderDigest, type WorkOrder, type WorkOrderCriterion } from './contract.js'
+import { citedOrders, holdsPlaceholders, namesScope, nextRecordName, recordNumber, recordTitle, scaffoldRecord, withStatus } from './decisions.js'
 import type { CheckResult, WorkRecord } from './store.js'
 import { isWorkApplicationComposition, type WorkApplicationComposition } from './composition.js'
 
 const id = z.string().regex(WORK_ORDER_ID)
 const note = z.string().trim().min(1).max(4_096).regex(/^[^\x00-\x08\x0b-\x1f\x7f]*$/)
+const docsReference = z.string().max(1_024).regex(DOCS_PATH)
 const relativeFile = z.string().max(4_096).regex(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._@+\-/]+$/)
 const Request = z.discriminatedUnion('operation', [
     z.object({ operation: z.literal('work-status'), workOrderId: id.optional() }).strict(),
     z.object({ operation: z.literal('work-accept'), workOrderId: id }).strict(),
     z.object({ operation: z.literal('work-check'), workOrderId: id }).strict(),
-    z.object({ operation: z.literal('work-note'), workOrderId: id, text: note, question: z.boolean() }).strict(),
+    z.object({ operation: z.literal('work-note'), workOrderId: id, text: note, kind: z.enum(['note', 'question', 'decision']) }).strict(),
+    z.object({ operation: z.literal('work-decide'), workOrderId: id, decision: z.number().int().min(1), resolution: z.discriminatedUnion('kind', [
+        z.object({ kind: z.literal('record'), path: docsReference.optional(), supersedes: z.string().regex(/^\d{1,9}$/).optional() }).strict(),
+        z.object({ kind: z.literal('none'), reason: note }).strict(),
+    ]) }).strict(),
     z.object({ operation: z.literal('work-answer'), workOrderId: id, question: z.number().int().min(1), text: note }).strict(),
     z.object({ operation: z.literal('work-grade'), workOrderId: id, verdict: z.enum(['met', 'unmet']).optional(), note: note.optional() }).strict(),
     z.object({ operation: z.literal('work-signoff'), workOrderId: id, close: z.enum(['done', 'partial', 'abandoned']), note: note.optional() }).strict(),
@@ -81,6 +87,42 @@ function displayState(row: Observed, attemptCap: number): string {
 function openQuestions(record: WorkRecord): readonly number[] {
     return record.notes.flatMap((row, index) => row.kind === 'question' && !record.notes.some(answer => answer.answers === index + 1) ? [index + 1] : [])
 }
+// Decisions recorded on an order, each with its latest resolution.
+const DECISIONS_UNDECLARED = 'decision records need a directory: declare one in cockpit.toml, for example [docs] decisions = "docs/adr", '
+    + 'with decisions_index = "docs/adr/README.md" if the records have an index'
+function decisions(record: WorkRecord) {
+    return record.notes.flatMap((row, index) => row.kind !== 'decision' ? [] : [{ decision: index + 1, title: recordTitle(row.text),
+        resolution: record.notes.findLast(note => note.kind === 'resolution' && note.resolves === index + 1) }])
+}
+// Why a cited record no longer stands for its decision; `filled` also requires that the template's placeholders are gone.
+function recordProblem(text: string | undefined, reference: string, orderId: string, filled: boolean): string | undefined {
+    if (text === undefined) return `its record ${reference} does not exist`
+    if (!citedOrders(text).includes(orderId)) return `its record ${reference} does not cite ${orderId}; add the line "Work order: ${orderId}"`
+    return filled && holdsPlaceholders(text) ? `its record ${reference} still holds the template's placeholders; replace each "<!-- cockpit: replace this ... -->" comment` : undefined
+}
+async function unresolvedDecisions(record: WorkRecord, composition: WorkApplicationComposition): Promise<readonly string[]> {
+    const rows: string[] = []
+    for (const row of decisions(record)) {
+        const name = `decision ${row.decision} (${row.title})`
+        if (!row.resolution) rows.push(`${name} is unresolved; run npx --no cockpit work decide --config <your cockpit.toml> --work-order ${record.id} --decision ${row.decision} --record, or with --none --reason "<why>"`)
+        else if (row.resolution.record) {
+            const problem = recordProblem(await composition.readDocsFile(row.resolution.record), row.resolution.record, record.id, true)
+            if (problem) rows.push(`${name}: ${problem}`)
+        }
+    }
+    return rows
+}
+// Standing criteria every grade carries once [docs] is declared: a model judges them in independent and
+// self grading; under checks no model reads the change, so they stay instructions in the work skill.
+const STANDING = Object.freeze({ decisions: 'decisions-recorded', docs: 'docs-updated' } as const)
+function standingCriteria(docs: WorkApplicationComposition['docs'], record: WorkRecord): readonly WorkOrderCriterion[] {
+    if (!docs) return []
+    const recorded = decisions(record).map(row => `${row.decision} (${row.title})${row.resolution?.record ? ` in ${row.resolution.record}` : ''}`).join('; ')
+    return [...docs.decisions ? [{ id: STANDING.decisions, text: ('Every lasting decision this change makes (a choice a later change must know about, such as a format, a boundary, '
+        + `a dependency or a rejected option) is recorded on the work order or in a decision record under ${docs.decisions}. Recorded on this order: ${recorded || 'none'}.`).slice(0, 2_000) }] : [],
+    { id: STANDING.docs, text: 'Documentation that describes behaviour this change alters is updated in the change, or no documentation describes it.' }]
+}
+
 // The grade's criterion-level finding for tests weakened since the base. An acknowledgement covers exactly
 // the findings it was recorded for, so any further weakening fails again.
 const PROTECTION_ID = 'test-protection'
@@ -171,6 +213,19 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         return { id: orderId, order: parsed.value, problems: [], ...(record ? { record } : {}), digest: workOrderDigest(parsed.value, sources, base) }
     }
     const wip = async () => (await store.list()).filter(record => !TERMINAL.has(record.state)).length
+    // Decision records whose text names a path the order may change, so earlier decisions about that code are in front of the agent.
+    let records: Promise<ReadonlyMap<string, string>> | undefined
+    const relatedDecisions = async (order: WorkOrder): Promise<Readonly<{ relatedDecisions?: readonly string[]; relatedDecisionsUnavailable?: string }>> => {
+        const directory = composition.docs?.decisions
+        if (!directory) return {}
+        const prefix = /^[a-z0-9][a-z0-9-]{0,63}:/.exec(directory)?.[0] ?? ''
+        let read: ReadonlyMap<string, string>
+        // The listing is advice, so a directory cockpit cannot read is reported here and refused where a record is written.
+        try { read = await (records ??= composition.decisionRecords()) }
+        catch (error) { if (!(error instanceof RefusalError)) throw error; return { relatedDecisionsUnavailable: error.message } }
+        return { relatedDecisions: [...read.entries()]
+            .filter(([reference, text]) => reference !== composition.docs?.decisionsIndex && namesScope(text, order.scope, prefix)).map(([reference]) => reference) }
+    }
 
     // Who passed a gate: the agent; a person, after typing the digest of exactly what they were shown;
     // or CI, which locally records the step as awaiting the `work verify` job and passes it there.
@@ -215,7 +270,7 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         const closed = new Set(rows.filter(row => row.record?.state === 'done').map(row => row.id))
         return complete(operation, {
             grading: policy.grading, gates: policy.gates, wip: { open: await wip(), cap: composition.caps.wip },
-            orders: rows.map(row => ({
+            orders: await Promise.all(rows.map(async row => ({
                 id: row.id, state: displayState(row, composition.caps.attempts),
                 ...row.record?.closure ? { closedAs: row.record.closure.how, closedBy: row.record.closure.by } : {},
                 ...row.record ? { attempts: row.record.attempts, acceptedBy: row.record.accepted.by, openQuestions: openQuestions(row.record),
@@ -223,8 +278,10 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
                     awaitingCi: pendingCi(row.record), ...row.record.grade ? { grade: { mode: row.record.grade.mode, passed: row.record.grade.passed,
                         criteria: row.record.grade.criteria, outOfScope: row.record.grade.outOfScope, ...row.record.grade.evaluator ? { evaluator: row.record.grade.evaluator } : {} } } : {} } : {},
                 ...row.order ? { waitingOn: row.order.depends_on.filter(dependency => !closed.has(dependency)) } : {},
+                ...row.record && !TERMINAL.has(row.record.state) ? { openDecisions: await unresolvedDecisions(row.record, composition) } : {},
+                ...row.order && !TERMINAL.has(row.record?.state ?? 'accepted') ? await relatedDecisions(row.order) : {},
                 ...row.problems.length ? { problems: row.problems } : {},
-            })),
+            }))),
         })
     }
     if (request.operation === 'work-accept') {
@@ -243,7 +300,7 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
                 if (existing) throw new RefusalError(`${order.id} was accepted while this prompt was open; rerun work status`)
                 const record: WorkRecord = { format: 'cockpit-work-order/v1', id: order.id, state: 'accepted',
                     accepted: { at: now(), by, digest, order, sources, base }, amendments: [], acknowledgements: [], attempts: 0, notes: [] }
-                return { record, value: complete(operation, { id: order.id, state: 'accepted', by, digest, ...by === 'ci' ? { awaitingCi: ['accept'] } : {} }) }
+                return { record, value: complete(operation, { id: order.id, state: 'accepted', by, digest, ...by === 'ci' ? { awaitingCi: ['accept'] } : {}, ...await relatedDecisions(order) }) }
             }))
         }
         const record = row.record
@@ -260,7 +317,7 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
             const next: WorkRecord = { ...existing, state: 'accepted', attempts: 0, checks: undefined, grade: undefined,
                 accepted: { at: now(), by, digest, order, sources, base: existing.accepted.base },
                 amendments: [...existing.amendments, { at: now(), by, from: existing.accepted.digest, to: digest, weakened: [...weakened] }] }
-            return { record: next, value: complete(operation, { id: order.id, state: 'accepted', by, digest, amended: true, weakened }) }
+            return { record: next, value: complete(operation, { id: order.id, state: 'accepted', by, digest, amended: true, weakened, ...await relatedDecisions(order) }) }
         }))
     }
     if (request.operation === 'work-check') {
@@ -277,6 +334,7 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         return passed ? complete(operation, value) : unsatisfied(operation, value, `${results.filter(row => !row.passed).map(row => `${row.criterion}: ${row.outcome}`).join('; ')}`)
     }
     if (request.operation === 'work-note') {
+        if (request.kind === 'decision' && !composition.docs?.decisions) return refusal(operation, DECISIONS_UNDECLARED)
         await current(request.workOrderId).catch(async (error: unknown) => {
             // A note on a stale or blocked order is how its cause gets recorded, so only a closed or unaccepted one refuses.
             const record = await store.read(request.workOrderId)
@@ -284,9 +342,62 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         })
         const index = await store.update(request.workOrderId, async existing => {
             if (!existing) throw new RefusalError(`${request.workOrderId} is not accepted`)
-            return { record: { ...existing, notes: [...existing.notes, { at: now(), by: 'agent', kind: request.question ? 'question' : 'note', text: request.text }] }, value: existing.notes.length + 1 }
+            return { record: { ...existing, notes: [...existing.notes, { at: now(), by: 'agent', kind: request.kind, text: request.text }] }, value: existing.notes.length + 1 }
         })
-        return complete(operation, { id: request.workOrderId, note: index, ...request.question ? { question: index, state: 'blocked' } : {} })
+        return complete(operation, { id: request.workOrderId, note: index, ...request.kind === 'question' ? { question: index, state: 'blocked' } : {},
+            ...request.kind === 'decision' ? { decision: index, resolveWith: `npx --no cockpit work decide --config <your cockpit.toml> --work-order ${request.workOrderId} --decision ${index} --record` } : {} })
+    }
+    if (request.operation === 'work-decide') {
+        const directory = composition.docs?.decisions
+        if (!directory) return refusal(operation, DECISIONS_UNDECLARED)
+        const orderId = request.workOrderId
+        const record = await store.read(orderId)
+        if (!record || TERMINAL.has(record.state)) return refusal(operation, `${orderId} has no open record to resolve a decision on`)
+        const decision = record.notes[request.decision - 1]
+        if (decision?.kind !== 'decision') return refusal(operation, `note ${request.decision} on ${orderId} is not a decision; work status lists each order's open decisions`)
+        const resolve = (fields: Readonly<{ text: string; record?: string }>, writes?: () => Promise<void>) => store.update(orderId, async existing => {
+            if (!existing || TERMINAL.has(existing.state)) throw new RefusalError(`${orderId} closed while its decision was being resolved`)
+            await writes?.()
+            return { record: { ...existing, notes: [...existing.notes, { at: now(), by: 'agent', kind: 'resolution', resolves: request.decision, ...fields }] }, value: undefined }
+        })
+        const resolution = request.resolution
+        if (resolution.kind === 'none') {
+            await resolve({ text: resolution.reason })
+            return complete(operation, { id: orderId, decision: request.decision, resolution: 'none', reason: resolution.reason })
+        }
+        if (resolution.path !== undefined) {
+            if (!resolution.path.startsWith(`${directory}/`)) return refusal(operation, `${resolution.path} is not inside [docs] decisions ${directory}; write the record there`)
+            if (resolution.supersedes) return refusal(operation, '--supersedes applies when cockpit writes the record; with a path, write the Supersedes line and the old record\'s status yourself')
+            const problem = recordProblem(await composition.readDocsFile(resolution.path), resolution.path, orderId, false)
+            if (problem) return refusal(operation, `${resolution.path} cannot resolve decision ${request.decision}: ${problem}`)
+            await resolve({ text: `recorded in ${resolution.path}`, record: resolution.path })
+            return complete(operation, { id: orderId, decision: request.decision, record: resolution.path })
+        }
+        // Scaffold the record; the agent fills in its body, and signoff refuses while the template's placeholders remain.
+        const existing = await (records ??= composition.decisionRecords())
+        const names = [...existing.keys()].map(reference => reference.slice(directory.length + 1))
+        const title = recordTitle(decision.text)
+        const named = nextRecordName(names, title, now().slice(0, 10))
+        const reference = `${directory}/${named.name}`
+        const writes = [{ reference, create: true, text: '' }]
+        let supersedes: string | undefined
+        if (resolution.supersedes) {
+            if (!named.number) return refusal(operation, `the records in ${directory} are named by date, so none has a number to supersede`)
+            const old = names.filter(name => Number(recordNumber(name)) === Number(resolution.supersedes))
+            if (old.length !== 1) return refusal(operation, `${directory} has ${old.length ? `${old.length} records` : 'no record'} numbered ${resolution.supersedes}; pass the number of exactly one`)
+            supersedes = recordNumber(old[0]!)!
+            const marked = withStatus(existing.get(`${directory}/${old[0]}`)!, `superseded by ${named.number}`)
+            if (marked === undefined) return refusal(operation, `${directory}/${old[0]} has no Status line to mark superseded; add "Status: accepted" to it`)
+            writes.push({ reference: `${directory}/${old[0]}`, create: false, text: marked })
+        }
+        writes[0]!.text = scaffoldRecord({ title, workOrder: orderId, ...named.number ? { number: named.number } : {}, ...supersedes ? { supersedes } : {} })
+        const index = composition.docs?.decisionsIndex
+        if (index !== undefined && await composition.readDocsFile(index) === undefined) return refusal(operation, `[docs] decisions_index ${index} does not exist; create it, or remove decisions_index from cockpit.toml`)
+        const link = index === undefined ? undefined : posix.relative(posix.dirname(index.replace(/^[^:/]*:/, '')), reference.replace(/^[^:/]*:/, ''))
+        await resolve({ text: `recorded in ${reference}`, record: reference },
+            () => composition.writeDecisionRecords(writes, link === undefined ? undefined : `- [${named.number ? `${named.number}. ` : ''}${title}](${link})`))
+        return complete(operation, { id: orderId, decision: request.decision, record: reference, written: writes.map(row => row.reference),
+            next: `fill in ${reference}: signoff refuses while its "cockpit: replace this" placeholders remain` })
     }
     if (request.operation === 'work-answer') {
         const record = await store.read(request.workOrderId)
@@ -314,14 +425,19 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         // change outside scope. Changes are read after the checks, so files a check writes count too.
         const checks = await runChecks(order)
         const changes = await composition.changes(record.accepted.base)
-        const outOfScope = changes.map(change => change.path).filter(path => !scopeMatches(order.scope, path))
+        // The decision records an order is required to write are part of its work wherever scope points.
+        const decisionFiles = [composition.docs?.decisions, composition.docs?.decisionsIndex].filter((path): path is string => path !== undefined)
+        const outOfScope = changes.map(change => change.path).filter(path => !scopeMatches([...order.scope, ...decisionFiles], path))
+        const standing = policy.grading === 'checks' ? [] : standingCriteria(composition.docs, record)
+        const taken = standing.filter(row => order.criteria.some(criterion => criterion.id === row.id)).map(row => row.id)
+        if (taken.length) return refusal(operation, `${order.id} names a criterion ${taken.join(', ')}, which cockpit adds to every grade itself; rename it in workorders/${order.id}.md`)
         if (policy.grading === 'self') {
-            verdicts = order.criteria.map(criterion => ({ id: criterion.id, verdict: request.verdict!, note: request.note! }))
+            verdicts = [...order.criteria, ...standing].map(criterion => ({ id: criterion.id, verdict: request.verdict!, note: request.note! }))
         } else if (policy.grading === 'checks') {
             verdicts = order.criteria.map(criterion => { const result = checks.find(row => row.criterion === criterion.id)!
                 return { id: criterion.id, verdict: result.passed ? 'met' : 'unmet', note: `cockpit ran the check: ${result.outcome}` } })
         } else {
-            const graded = await composition.evaluate({ objective: order.objective, criteria: order.criteria, nonGoals: order.non_goals, scope: order.scope, checks, changes, outOfScope })
+            const graded = await composition.evaluate({ objective: order.objective, criteria: [...order.criteria, ...standing], nonGoals: order.non_goals, scope: order.scope, checks, changes, outOfScope })
             if ('refusal' in graded) return refusal(operation, `${graded.refusal.code}: ${graded.refusal.message}; ${graded.refusal.fix}`)
             verdicts = graded.criteria
             evaluator = { tool: graded.evaluator.tool, fallbacks: graded.evaluator.fallbacks.map(row => ({ ...row })) }
@@ -377,9 +493,16 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
             if (!request.note) return refusal(operation, `closing ${request.workOrderId} as ${request.close} needs --note saying what was and was not done`)
             how = request.close
         }
+        // Every closure, partial and abandoned too, settles the order's decisions: work that stops still made them.
+        const open = await unresolvedDecisions(record, composition)
+        if (open.length) return refusal(operation, `${request.workOrderId} cannot close while ${open.join('; ')}`)
         return gated('signoff', policy.gates.signoff, [`Close ${request.workOrderId} as ${request.close} (${how})`, ...request.note ? [`Note: ${request.note}`] : [],
-            ...record.grade ? record.grade.criteria.map(row => `${row.id}: ${row.verdict} — ${row.note}`) : []], 'signoff', async by => store.update(request.workOrderId, async existing => {
-            if (!existing || existing.state !== record.state || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${request.workOrderId} changed while this prompt was open`)
+            ...record.grade ? record.grade.criteria.map(row => `${row.id}: ${row.verdict} — ${row.note}`) : [],
+            ...decisions(record).map(row => `Decision ${row.decision} (${row.title}): ${row.resolution!.record ? `recorded in ${row.resolution!.record}` : `no lasting decision — ${row.resolution!.text}`}`)],
+        'signoff', async by => store.update(request.workOrderId, async existing => {
+            if (!existing || existing.state !== record.state || existing.accepted.digest !== record.accepted.digest || existing.notes.length !== record.notes.length) {
+                throw new RefusalError(`${request.workOrderId} changed while this prompt was open`)
+            }
             const state: WorkRecord['state'] = request.close
             return { record: { ...existing, state, closure: { at: now(), by, how, ...request.note ? { note: request.note } : {} } },
                 value: complete(operation, { id: request.workOrderId, state, closedAs: how, by }) }
@@ -393,6 +516,11 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
             const row = await observe(record.id)
             if (!TERMINAL.has(record.state) && row.digest !== record.accepted.digest) problems.push(`${record.id} changed since it was accepted; accept the change or revert it`)
             if (record.state === 'done' && (!record.grade?.passed || record.grade.digest !== record.accepted.digest || !record.closure)) problems.push(`${record.id} is done without a passing grade of its accepted contract`)
+            for (const row of decisions(record)) {
+                const cited = row.resolution?.record
+                const problem = cited && recordProblem(await composition.readDocsFile(cited), cited, record.id, false)
+                if (problem) problems.push(`${record.id} decision ${row.decision}: ${problem}`)
+            }
             awaiting.push(...pendingCi(record).map(step => `${record.id} ${step}`))
         }
         const ci = runningInCi(composition.env)
