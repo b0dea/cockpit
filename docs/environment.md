@@ -390,9 +390,12 @@ receive, gives the stack a new identity, and `up` refuses with `LIFECYCLE_PROGRE
 running stack in place. To apply such a change, for example a `[ports.bases]` edit:
 
 1. Edit `cockpit.toml`. This can happen while the stack runs.
-2. Have a person run `cockpit sync --config cockpit.toml` in a terminal. Until then, the agent
-   guard holds every tool call, because the configuration no longer matches what it was generated
-   for, and `sleep` and `down` refuse because they read the Compose files `sync` publishes.
+2. Run `cockpit sync --config cockpit.toml`. Until then, the agent guard holds every tool call
+   except that sync, because the configuration no longer matches what it was generated for, and
+   `sleep` and `down` refuse because they read the Compose files `sync` publishes. An agent may run
+   it where `[autonomy] sync = "agent"` and the edit does not
+   [widen what agents may do](safety-and-autonomy.md#edits-the-guard-has-not-applied), as a
+   `[ports.bases]` edit does not; otherwise a person runs it in a terminal.
 3. Run `cockpit down --config cockpit.toml`. It finds the stack and its port lease by the stack,
    not by the edited declaration, and removes the containers still running the old declaration.
    While another holder, such as a running `cockpit session`, still holds the stack, it refuses

@@ -20,9 +20,11 @@ budget: uncapped
   other user-guide pages cited here sit beside it.
 - When the guard asks before a command, the person decides in Claude Code; Codex and OpenCode deny
   instead, so hand the person the exact command to run in a terminal. A refusal that holds every
-  tool call (a guard message saying so, or `GUARD_AUTHORITY_UNAVAILABLE`) follows any
-  edit to `cockpit.toml` or reinstall of cockpit or Node, and clears only when a person runs
-  `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal. A refused command is the
+  tool call (a guard message saying so, `GUARD_AUTHORITY_UNAVAILABLE` or `GUARD_CONFIG_UNSYNCED`)
+  follows any edit to `cockpit.toml` or reinstall of cockpit or Node. `GUARD_CONFIG_UNSYNCED` means
+  the edit does not widen what agents may do, so run
+  `./node_modules/.bin/cockpit sync --config cockpit.toml` yourself where `[autonomy] sync =
+  "agent"`; any other hold clears only when a person runs it in a terminal. A refused command is the
   person's to run: never reword, wrap or re-spell it to get past the guard.
 - In Codex's sandbox only `check`, `sync --dry-run` and `--help` work. Every other cockpit command
   there cannot read cockpit's state or the Docker socket, so a failure it reports is not evidence:

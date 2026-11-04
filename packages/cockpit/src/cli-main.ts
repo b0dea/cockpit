@@ -77,6 +77,7 @@ import {
 import { refusalOutcome } from './refusal.js'
 import { loadAutonomyPolicy, loadCockpitConfig, observeConfigSource, readBoundedInput } from './config/load.js'
 import { policyWeakening, policyWeakeningDiagnostic } from './autonomy.js'
+import { inspectGuardConfigChange } from './guards/policy-change.js'
 import { gitEnvironment, planSetup } from './environment/setup.js'
 import { synchronizeInstructionPointer } from './environment/instruction-pointer.js'
 import { synchronizeSiblingInstructionFiles } from './environment/sibling-instructions.js'
@@ -637,13 +638,16 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             // A weakening sync would refuse is a failing check, so an agent's edit cannot sit unreported.
             const policy = await loadAutonomyPolicy(input.configPath)
             const weakened = 'recorded' in policy && policy.recorded ? policyWeakening(policy.recorded, policy.current) : []
+            // An edit the guards were not regenerated for holds the agent; one that widens them waits for a person.
+            const guardChange = await inspectGuardConfigChange(dirname(loaded.result.source.path), loaded.result.source.path,
+                { sha256: loaded.result.source.sha256, config: loaded.result.config })
             // Codex hook trust concerns a Codex user only; a leftover hooks.json of an unlisted Codex is stale, which check reports.
             const [outcome, hookTrust] = await Promise.all([checkGeneratedEnvironment(input),
                 loaded.result.config.surfaces.tools.includes('codexcli')
                     ? inspectCodexHookTrust({ root: dirname(resolve(input.configPath)), env }) : Promise.resolve([])])
-            if (weakened.length) return { kind: 'refusal', status: 2, result: null,
-                diagnostics: [policyWeakeningDiagnostic(weakened), ...outcome.diagnostics, ...hookTrust] }
-            return { ...outcome, diagnostics: [...outcome.diagnostics, ...hookTrust], result: outcome.report
+            if (weakened.length || guardChange.some(row => row.severity === 'error')) return { kind: 'refusal', status: 2, result: null,
+                diagnostics: [...weakened.length ? [policyWeakeningDiagnostic(weakened)] : [], ...guardChange, ...outcome.diagnostics, ...hookTrust] }
+            return { ...outcome, diagnostics: [...guardChange, ...outcome.diagnostics, ...hookTrust], result: outcome.report
                 ? outcome.kind === 'complete' ? { ...outcome.result, currentness: outcome.report } : outcome.report
                 : outcome.result }
         },

@@ -6,7 +6,7 @@
 import { exactKeys } from '../exact-keys.js'
 import { randomBytes } from 'node:crypto'
 import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 import { readBoundedInput } from '../config/load.js'
 import { errorCause, hasErrorCode } from '../environment/contract.js'
@@ -30,6 +30,8 @@ export interface GuardHandlerIdentity {
 export const GUARD_LOCAL_PATHS = Object.freeze({
     directory: '.cockpit/local',
     identity: '.cockpit/local/guard-identity',
+    // The exact configuration the guards were generated from, so a later edit can be compared with it.
+    generatedConfig: '.cockpit/local/guard-config',
     ignore: '.cockpit/local/.gitignore',
 } as const)
 
@@ -103,9 +105,13 @@ async function replaceFile(directory: string, name: string, bytes: string): Prom
     }
 }
 
-/** Publish the identity after the tracked surfaces it authenticates; the reason names what failed. */
-export async function writeGuardLocalIdentity(root: string, identity: GuardHandlerIdentity): Promise<{ readonly kind: 'complete' } | { readonly kind: 'refusal'; readonly message: string }> {
-    return writeCockpitLocalFiles(root, [{ name: 'guard-identity', bytes: encodeGuardLocalIdentity(identity) }])
+/**
+ * Publish the identity after the tracked surfaces it authenticates, with the configuration text it
+ * names written first; the reason names what failed.
+ */
+export async function writeGuardLocalIdentity(root: string, identity: GuardHandlerIdentity, configText: string): Promise<{ readonly kind: 'complete' } | { readonly kind: 'refusal'; readonly message: string }> {
+    return writeCockpitLocalFiles(root, [{ name: basename(GUARD_LOCAL_PATHS.generatedConfig), bytes: configText },
+        { name: basename(GUARD_LOCAL_PATHS.identity), bytes: encodeGuardLocalIdentity(identity) }])
 }
 
 /** Replace machine-local files under `.cockpit/local`, a directory that ignores itself; the reason names what failed. */

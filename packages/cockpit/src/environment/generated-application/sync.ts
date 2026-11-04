@@ -3,6 +3,7 @@ import { basename } from 'node:path'
 import { GUARD_LOCAL_PATHS, writeCockpitLocalFiles, writeGuardLocalIdentity } from '../../guards/local-identity.js'
 import { portablePublicationPaths, authorizePublicationPlan, runPublicationPlan } from '../../generated-environment/transaction.js'
 import { refusalOutcome as refuse } from '../../refusal.js'
+import { readBoundedInput } from '../../config/load.js'
 import {
     type GeneratedEnvironmentCommandAdapters,
     type GeneratedEnvironmentCommandOutcome,
@@ -111,7 +112,13 @@ export async function applyGeneratedEnvironmentRepair(
     })
     if (outcome.kind === 'refusal') return outcome
     if (prepared.guardHandler && settings.dryRun !== true) {
-        const local = await writeGuardLocalIdentity(prepared.root, prepared.guardHandler)
+        // The guard compares a later edit with exactly the text this identity names, so it is read
+        // again and must still be that text.
+        const configRead = await readBoundedInput(prepared.configPath)
+        if (configRead.kind !== 'complete' || sha256(configRead.bytes) !== prepared.guardHandler.configSha256) return refuse('GENERATED_SOURCE_CHANGED',
+            'the configuration changed after generated files were published, so the guard identity was not recorded; the guard refuses every agent tool call until it is',
+            prepared.configSource.path, 'run `npx --no cockpit sync --config <your cockpit.toml>` again')
+        const local = await writeGuardLocalIdentity(prepared.root, prepared.guardHandler, configRead.bytes.toString('utf8'))
         if (local.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
             `the committed guard files were published, but ${local.message}; the guard refuses every agent tool call until it exists`,
             GUARD_LOCAL_PATHS.identity, 'fix the path, then run `npx --no cockpit sync --config <your cockpit.toml>` again in a terminal')
