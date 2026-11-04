@@ -10,6 +10,7 @@
  * back, so a refused adoption does not silently leave the team's settings moved aside.
  */
 import { sha256Hex } from '../sha256.js'
+import { canonicalJson } from '../canonical-json.js'
 import { basename, dirname, resolve } from 'node:path'
 import { parse, TomlError } from 'smol-toml'
 
@@ -49,12 +50,6 @@ function tomlFailure(error: unknown): string {
 }
 
 const ADOPT_BY_HAND_FIX = 'move the settings file to cockpit/adopted/<the same path>, add its [[surfaces.adopted]] row to cockpit.toml by hand with the fields the configuration reference lists, then run npx --no cockpit sync --config <your cockpit.toml>'
-
-/** Key order must not matter when two parsed configurations are compared. */
-function canonical(value: unknown): string {
-    return JSON.stringify(value, (_key, item: unknown) => item !== null && typeof item === 'object' && !Array.isArray(item)
-        ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : 1)) : item)
-}
 
 function adoptionTable(row: SurfaceAdoption): string {
     return [
@@ -189,7 +184,7 @@ export async function runSyncAdoption(
     try { candidateConfig = CockpitConfig.safeParse(parse(nextText)) } catch (error) {
         return refused(ENVIRONMENT_CODES.CONFIG_PARSE_INVALID, `recording the adoption would leave cockpit.toml unparseable (${tomlFailure(error)}); nothing was moved`, configPath, ADOPT_BY_HAND_FIX)
     }
-    if (!candidateConfig.success || canonical(candidateConfig.data) !== canonical(expected)) {
+    if (!candidateConfig.success || canonicalJson(candidateConfig.data) !== canonicalJson(expected)) {
         return refused(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, 'recording the adoption would change more than the [[surfaces.adopted]] rows; nothing was moved', configPath, ADOPT_BY_HAND_FIX)
     }
 
@@ -217,7 +212,7 @@ export async function runSyncAdoption(
                 const restored = await writeVerifiedConfig({
                     path: configPath, expectedSha256: sha256Hex(nextText), temporaryTag: 'adopt',
                     edit: () => originalText,
-                    isExactChange: (value) => canonical(value) === canonical(config),
+                    isExactChange: (value) => canonicalJson(value) === canonicalJson(config),
                     messages: {
                         changedBefore: { message: 'cockpit.toml changed after the adoption was recorded, so its [[surfaces.adopted]] rows were left in place', fix },
                         changedDuring: { message: 'cockpit.toml changed while the adoption was being undone, so its [[surfaces.adopted]] rows were left in place', fix },
@@ -257,7 +252,7 @@ export async function runSyncAdoption(
         written = await writeVerifiedConfig({
             path: configPath, expectedSha256: loaded.result.source.sha256, temporaryTag: 'adopt',
             edit: () => nextText,
-            isExactChange: (value) => canonical(value) === canonical(expected),
+            isExactChange: (value) => canonicalJson(value) === canonicalJson(expected),
             messages: {
                 changedBefore: { message: 'cockpit.toml changed since it was read', fix: `let the other edit finish, then have a human approve ${rerun} again` },
                 changedDuring: { message: 'cockpit.toml changed while the adoption was being recorded', fix: `let the other edit finish, then have a human approve ${rerun} again` },

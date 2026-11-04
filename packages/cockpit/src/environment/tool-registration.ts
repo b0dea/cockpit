@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { parse, TomlError } from 'smol-toml'
 import { loadCockpitConfig } from '../config/load.js'
+import { canonicalJson } from '../canonical-json.js'
 import { setSurfaceTools } from '../config/surface-tools-toml.js'
 import { writeVerifiedConfig } from '../config/verified-write.js'
 import { cockpitCommand } from '../fix-catalogue.js'
@@ -26,12 +27,6 @@ export interface ToolChangeInput {
 }
 
 const EDIT_BY_HAND_FIX = 'edit the tools list under [surfaces] in cockpit.toml by hand, then run npx --no cockpit sync --config <your cockpit.toml> --dry-run'
-
-/** Key order must not matter when two parsed configurations are compared. */
-function canonical(value: unknown): string {
-    return JSON.stringify(value, (_key, item: unknown) => item !== null && typeof item === 'object' && !Array.isArray(item)
-        ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : 1)) : item)
-}
 
 function done(artifact: string, result: Record<string, unknown>): SiblingOutcome {
     return { status: 0, diagnostics: [], destination: null, artifact, result }
@@ -76,8 +71,8 @@ export async function runToolChange(input: ToolChangeInput): Promise<SiblingOutc
             `${input.operation === 'add' ? 'adding' : 'removing'} ${tool} would leave cockpit.toml invalid (${issue ? `${issue.path.join('.') || '(root)'}: ${issue.message}` : 'schema'}); nothing was written`,
             'surfaces.tools', 'change what the message names first, then run the command again')
     }
-    const expected = canonical({ ...config, surfaces: { ...config.surfaces, tools: after } })
-    const exact = (candidate: unknown) => canonical(candidate) === expected
+    const expected = canonicalJson({ ...config, surfaces: { ...config.surfaces, tools: after } })
+    const exact = (candidate: unknown) => canonicalJson(candidate) === expected
     if (!exact(parsed.data)) {
         return refused(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, 'the edit would change more than the tools list; nothing was written', 'surfaces.tools', EDIT_BY_HAND_FIX)
     }

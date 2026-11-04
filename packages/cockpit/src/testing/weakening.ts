@@ -1,7 +1,7 @@
 // Owns which files a checkout treats as tests and how a finding is identified: the patterns a
 // consumer declared under [testing] test_files or, failing that, the common layouts, plus the digest
 // a person's acknowledgement binds to. The detection itself is test-protection.ts.
-import { createHash } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 
 import { scopeMatches } from '../work-orders/contract.js'
 import { classifyTestWeakening, type DiffFile, type TestRoles, type WeakeningFinding } from './test-protection.js'
@@ -39,7 +39,7 @@ export interface RepositoryWeakening extends WeakeningFinding { readonly reposit
 /** The digest an acknowledgement binds: exactly these findings, and no others, are acknowledged. */
 export function testWeakeningDigest(findings: readonly RepositoryWeakening[]): string {
     const rows = findings.map(row => `${row.repository}\0${row.path}\0${row.kind}`).sort()
-    return createHash('sha256').update(JSON.stringify(rows)).digest('hex')
+    return sha256Hex(JSON.stringify(rows))
 }
 
 export const describeWeakening = (row: RepositoryWeakening): string =>

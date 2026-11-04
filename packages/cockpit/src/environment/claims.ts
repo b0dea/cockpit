@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, normalize } from 'node:path'
 import { createHash, randomBytes } from 'node:crypto'
 import { platform } from 'node:os'
 import { STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
+import { canonicalJson } from '../canonical-json.js'
 import {
     hasErrorCode,
     RefusalError,
@@ -154,18 +155,9 @@ const DrainAttemptSchema = z.object({
     }
 })
 
-function canonicalJsonValue(value: unknown): unknown {
-    if (Array.isArray(value)) return value.map(canonicalJsonValue)
-    if (value !== null && typeof value === 'object') {
-        return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
-            .map(([key, item]) => [key, canonicalJsonValue(item)]))
-    }
-    return value
-}
-
 function isCanonicalJson(body: string): boolean {
     try {
-        return JSON.stringify(canonicalJsonValue(JSON.parse(body))) === body
+        return canonicalJson(JSON.parse(body)) === body
     } catch {
         // Unparseable JSON is simply not canonical.
         return false
@@ -1187,7 +1179,7 @@ function exactRecordFingerprint(record: unknown): string | undefined {
         || typeof candidate.revision !== 'number' || !Number.isInteger(candidate.revision) || candidate.revision < 0
         || typeof candidate.updatedAt !== 'string' || !isCanonicalTimestamp(candidate.updatedAt)
         || !z.json().safeParse(candidate.value).success) return undefined
-    return JSON.stringify(canonicalJsonValue(snapshot))
+    return canonicalJson(snapshot)
 }
 
 export function isDrainActive(value: CoordinationRecord): boolean {

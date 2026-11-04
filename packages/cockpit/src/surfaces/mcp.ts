@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { z } from 'zod'
 import { parseDocument } from 'yaml'
@@ -167,7 +167,7 @@ function wrapper(launch: McpLaunch, envNames: readonly string[], cockpitDirector
 
 /** The committed path of a server's stdio wrapper, or of its headers helper wrapper. */
 export function mcpWrapperPath(name: string, kind: 'server' | 'headers'): string {
-    return `.cockpit/mcp/${createHash('sha256').update(name).digest('hex')}${kind === 'headers' ? '.headers' : ''}.sh`
+    return `.cockpit/mcp/${sha256Hex(name)}${kind === 'headers' ? '.headers' : ''}.sh`
 }
 
 type McpIdentity = Pick<McpStdioDeclaration, 'command' | 'args' | 'cwd' | 'envNames'>
@@ -197,7 +197,7 @@ function identity(declaration: McpIdentity, cockpitDirectory: string): string {
 
 /** The digest `[mcp.approved]` records for a server, so a changed declaration is no longer approved. */
 export function mcpApprovalDigest(declaration: McpIdentity, cockpitDirectory: string): string {
-    return createHash('sha256').update(identity(declaration, cockpitDirectory)).digest('hex')
+    return sha256Hex(identity(declaration, cockpitDirectory))
 }
 
 export function collectMcpDeclarations(input: unknown): McpCollectionOutcome {
@@ -263,7 +263,7 @@ export function collectMcpDeclarations(input: unknown): McpCollectionOutcome {
         if (launch === null || !targets.some(target => writes(server, target))) continue
         const path = mcpWrapperPath(server.name, isHttp(server) ? 'headers' : 'server')
         const bytes = wrapper(launch, isHttp(server) ? [] : server.envNames, cockpitDirectory)
-        wrappers.push({ path, bytes, sha256: createHash('sha256').update(bytes).digest('hex') })
+        wrappers.push({ path, bytes, sha256: sha256Hex(bytes) })
         launchers.set(server.name, path)
     }
     const result = {
@@ -348,7 +348,7 @@ export function parseMcpDeclarationFile(input: unknown): McpParseOutcome {
     const parsed = ParseInput.safeParse(snapshotJson(input))
     if (!parsed.success) return refuse('MCP_DECLARATION_INVALID', 'MCP source must be bounded authenticated declaration bytes')
     const { bytes, source, workingDirectory } = parsed.data
-    if (createHash('sha256').update(bytes).digest('hex') !== source.sha256) return refuse('MCP_DECLARATION_INVALID', 'MCP source digest does not match declaration bytes')
+    if (sha256Hex(bytes) !== source.sha256) return refuse('MCP_DECLARATION_INVALID', 'MCP source digest does not match declaration bytes')
     const value = tryParseJson(bytes)
     if (value === undefined) return refuse('MCP_DECLARATION_INVALID', 'MCP declaration is not valid JSON')
     const file = NativeFile.safeParse(value)

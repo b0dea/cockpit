@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, realpathSync, rmSync, symlinkSync, truncateSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { isResolvedDockerExecutable, isResolvedExecutable, isResolvedGitExecutable, resolveDiskCapacityExecutable, resolveDockerExecutable, resolveExecutable, resolveExecutablePath, resolveGitExecutable, resolvePathRemovalExecutable } from './executable.js'
+import { isResolvedDockerExecutable, isResolvedExecutable, isResolvedGitExecutable, locateExecutable, resolveDiskCapacityExecutable, resolveDockerExecutable, resolveExecutable, resolveExecutablePath, resolveGitExecutable, resolvePathRemovalExecutable } from './executable.js'
 
 const digest = 'a'.repeat(64)
 const scratch: string[] = []
@@ -228,5 +228,19 @@ describe('resolved executable identity', () => {
         ['oversized', () => { const root = directory(); const path = join(root, 'git'); writeFileSync(path, '', { mode: 0o700 }); truncateSync(path, 536_870_913); return { PATH: root } }],
     ] as const)('refuses %s Git resolution without invoking a process', async (_label, makeEnv) => {
         await expect(resolveGitExecutable(makeEnv())).resolves.toEqual(expect.objectContaining({ state: 'unavailable' }))
+    })
+})
+
+describe('executable presence', () => {
+    it('finds a command on PATH or relative to the working directory without reading it, and names why one is absent', async () => {
+        const root = directory()
+        writeFileSync(join(root, 'tool'), '#!/bin/sh\n')
+        chmodSync(join(root, 'tool'), 0o755)
+        writeFileSync(join(root, 'plain'), 'data')
+        expect(await locateExecutable('tool', { PATH: root }, '/')).toEqual({ state: 'present', path: join(root, 'tool'), canonicalPath: realpathSync(join(root, 'tool')) })
+        expect(await locateExecutable('./tool', { PATH: '' }, root)).toMatchObject({ state: 'present', path: join(root, 'tool') })
+        expect(await locateExecutable('plain', { PATH: root }, '/')).toEqual({ state: 'unavailable', reason: `Executable was not found in the supplied search path: plain` })
+        expect(await locateExecutable('tool', { PATH: 'relative' }, '/')).toEqual({ state: 'unavailable', reason: 'Executable search path must contain bounded absolute directories' })
+        expect(await locateExecutable('./absent', {}, root)).toMatchObject({ state: 'unavailable', reason: expect.stringContaining(`Executable is unavailable: ${join(root, 'absent')}`) })
     })
 })

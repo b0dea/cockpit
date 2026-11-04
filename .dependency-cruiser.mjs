@@ -52,7 +52,7 @@ export default {
             { path: COMMANDS }, { path: `^${SRC}/environment-exec/execute\\.ts$`, dependencyTypesNot: ['type-only'] }),
         forbid('init-command-imports', 'Init presentation reaches only the init application and leaf vocabularies.',
             { path: `^${SRC}/init/command\\.ts$` },
-            { pathNot: [exact(`${ENV}/init-application.ts`, `${SRC}/surfaces/contract.ts`, `${SRC}/fix-catalogue.ts`, `${SRC}/refusal.ts`), '^(?:node:)?crypto$'] }),
+            { pathNot: [exact(`${ENV}/init-application.ts`, `${SRC}/canonical-json.ts`, `${SRC}/surfaces/contract.ts`, `${SRC}/fix-catalogue.ts`, `${SRC}/refusal.ts`), '^(?:node:)?crypto$'] }),
         forbid('init-application-imports', 'The init application decides through its fixed owners and writes nothing directly.',
             { path: `^${ENV}/init-application\\.ts$` },
             { pathNot: [exact(...[
