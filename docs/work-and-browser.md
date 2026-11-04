@@ -186,7 +186,9 @@ that may lower the bar, before and after:
 The next grade carries `amendments-hold-bar`, with the before and after of every amendment the agent
 made since a person or CI last accepted the contract; under `independent` the evaluator also sees them
 as the change to `workorders/<id>.md`. When it is not met the grade fails, and the next amendment is a
-person's: revert or rewrite the order, then a person runs `work accept --interactive`.
+person's: revert or rewrite the order, then a person runs `work accept --interactive`. The order
+records the finding, so a later `work check` or grade does not clear it; only an amendment a person or
+CI accepts does.
 
 <!-- cockpit:ref command=grade --> For a change that needs no order, `cockpit grade --config cockpit.toml --criteria <file>` (a file inside the repository, relative or absolute) runs the
 checks and the independent evaluator against the uncommitted change, and records nothing. The file has
@@ -268,14 +270,18 @@ npx --no cockpit work decide --config cockpit.toml --work-order WO-1 --decision 
   `Status: accepted`, a `Work order: <id>` line and body sections whose placeholders the agent replaces.
   It is appended to `decisions_index` when one is declared. `--supersedes <number>` adds a
   `Supersedes:` line and sets that older record's status to `superseded by NNNN`.
-- `--record-file <path>` cites a record already under `decisions` that has a `Work order: <id>` line
-  (or a `work_order:` front-matter field).
+- `--record-file <path>` cites an existing record under `decisions` that has a `Work order: <id>` line
+  (or a `work_order:` front-matter field), such as one the agent wrote itself. `--record` takes no
+  path: it always writes a new record. `--supersedes` applies only with `--record`; a cited record
+  carries its own `Supersedes:` line, and the older record's status is the agent's to change.
 - `--none --reason <why>` says the decision is not a lasting one.
 
 `work signoff` refuses any closure, partial and abandoned too, while a decision is unresolved or its
 record is missing, no longer cites the order, or still holds the template's placeholders. A `--none`
-resolution and its reason are shown in the signoff prompt, so the signoff gate covers them. Record
-files under `decisions` and the index never count as outside `scope`. `work verify` checks each cited
+resolution and its reason are shown in the signoff prompt, so the signoff gate covers them. The
+`decisions` directory and `decisions_index` never count as outside an order's `scope`, whatever the
+order lists and under every grading mode, because writing records there is part of every order's
+work. A criteria file passed to `cockpit grade --criteria` has no such allowance. `work verify` checks each cited
 record still exists and names its order; it does not compare record bodies, because superseding a
 decision legitimately edits an older record.
 

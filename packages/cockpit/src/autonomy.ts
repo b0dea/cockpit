@@ -95,14 +95,28 @@ export function weakeningDigest(recorded: EffectivePolicy, current: EffectivePol
 const POLICY_RECORD_PATH = '.cockpit/policy.json'
 const RECORD_FORMAT = 'cockpit-policy/v1'
 
-function validPolicy(value: unknown): value is EffectivePolicy {
-    const row = value as EffectivePolicy
-    const deciders = (table: unknown, keys: readonly string[]) => typeof table === 'object' && table !== null && !Array.isArray(table)
-        && Object.keys(table).sort().join() === [...keys].sort().join()
-        && Object.values(table).every(entry => Object.hasOwn(DECIDER_RANK, entry as string))
-    return typeof value === 'object' && value !== null && Object.keys(value).sort().join() === 'autonomy,gates,grading'
-        && Object.hasOwn(GRADING_RANK, row.grading) && deciders(row.gates, Object.keys(GATE_DEFAULTS)) && deciders(row.autonomy, Object.keys(AUTONOMY_DEFAULTS))
+// A record written before a decision point existed lacks its key: the 0.1.0 record has no
+// `acknowledge`. The missing decider is read as `person`, so a default that now hands it to the agent
+// is reported as a weakening a person accepts once at sync, not refused for good nor passed unseen. An
+// unknown key or value was not written by cockpit and refuses.
+function recordedPolicy(value: unknown): EffectivePolicy | undefined {
+    const deciders = <K extends string>(table: unknown, defaults: Readonly<Record<K, Decider>>): Record<K, Decider> | undefined => {
+        if (typeof table !== 'object' || table === null || Array.isArray(table)) return undefined
+        if (Object.entries(table).some(([key, entry]) => !Object.hasOwn(defaults, key) || !Object.hasOwn(DECIDER_RANK, entry as string))) return undefined
+        const declared = table as Partial<Record<K, Decider>>
+        return Object.fromEntries(Object.keys(defaults).map(key => [key, declared[key as K] ?? 'person'])) as Record<K, Decider>
+    }
+    if (typeof value !== 'object' || value === null || Object.keys(value).sort().join() !== 'autonomy,gates,grading') return undefined
+    const row = value as Record<keyof EffectivePolicy, unknown>
+    const gates = deciders(row.gates, GATE_DEFAULTS)
+    const autonomy = deciders(row.autonomy, AUTONOMY_DEFAULTS)
+    return Object.hasOwn(GRADING_RANK, row.grading as string) && gates && autonomy ? { grading: row.grading as WorkGrading, gates, autonomy } : undefined
 }
+
+// Restoring the committed copy helps only where the damage is uncommitted; where the committed copy is the
+// damaged one, the record is a person's to remove, after which the next sync records cockpit.toml's policy.
+const DAMAGED_RECORD_REMEDY = `restore the committed copy with git restore -- ${POLICY_RECORD_PATH}, or if that copy is the damaged one, `
+    + `a person deletes ${POLICY_RECORD_PATH} and runs npx --no cockpit sync --config <your cockpit.toml> --interactive to record the policy cockpit.toml declares`
 
 /** The policy the last sync recorded, or undefined before the first; an unreadable record refuses. */
 export async function readRecordedPolicy(root: string): Promise<EffectivePolicy | undefined> {
@@ -121,13 +135,12 @@ export async function readRecordedPolicy(root: string): Promise<EffectivePolicy 
     try { parsed = JSON.parse(bytes.toString('utf8')) }
     catch (error) {
         if (!(error instanceof SyntaxError)) throw error
-        throw new RefusalError(`${POLICY_RECORD_PATH} is not JSON; restore it with git restore -- ${POLICY_RECORD_PATH}`)
+        throw new RefusalError(`${POLICY_RECORD_PATH} is not JSON; ${DAMAGED_RECORD_REMEDY}`)
     }
-    const record = parsed as { format?: unknown; policy?: unknown }
-    if (record?.format !== RECORD_FORMAT || !validPolicy(record.policy)) {
-        throw new RefusalError(`${POLICY_RECORD_PATH} is not a ${RECORD_FORMAT} record; restore it with git restore -- ${POLICY_RECORD_PATH}`)
-    }
-    return record.policy
+    const record = parsed as { format?: unknown; policy?: unknown } | null
+    const policy = record?.format === RECORD_FORMAT ? recordedPolicy(record.policy) : undefined
+    if (!policy) throw new RefusalError(`${POLICY_RECORD_PATH} is not a ${RECORD_FORMAT} record (an unknown format, table, key, decider or grading); ${DAMAGED_RECORD_REMEDY}`)
+    return policy
 }
 
 export async function writeRecordedPolicy(root: string, policy: EffectivePolicy): Promise<void> {

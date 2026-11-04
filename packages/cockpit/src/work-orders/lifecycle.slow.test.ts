@@ -1,15 +1,25 @@
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { runCli, type CliIo } from '../cli.js'
+
+// The filesystem is the boundary: a case swaps a directory for a link around one open, as a concurrent writer could.
+const opening = vi.hoisted(() => ({ around: undefined as undefined | ((path: string) => (() => void) | undefined) }))
+vi.mock('node:fs/promises', async importOriginal => {
+    const real = await importOriginal<typeof import('node:fs/promises')>()
+    return { ...real, open: async (...args: Parameters<typeof real.open>) => {
+        const after = opening.around?.(String(args[0]))
+        try { return await real.open(...args) } finally { after?.() }
+    } }
+})
 
 // Each case is a real cockpit in a throwaway Git repository: sync publishes the work authority the
 // commands require, and the checks run as real processes. Only the person is simulated, by the
 // terminal answer `confirmWorkOrder` returns.
 const roots: string[] = []
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
+afterEach(() => { opening.around = undefined; for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=fixture@example.invalid', '-c', 'user.name=fixture', ...args], { cwd: root, stdio: 'pipe' })
 const order = (id: string, criteria = '  - id: AC1\n    text: add(2, 3) returns 5.\n    check: [node, test/add.test.mjs]') =>
@@ -163,6 +173,19 @@ describe('work-order lifecycle', () => {
         const signoff = () => work(root, ['work', 'signoff', '--work-order', 'WO-6'])
         expect((await signoff()).diagnostics[0]?.message).toMatch(/cannot close while decision 1 \(Sum with the \+ operator\) is unresolved/)
 
+        // A decisions directory swapped for a link while the record is opened does not redirect the write outside the repository.
+        const outside = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-work-outside-')))
+        roots.push(outside)
+        opening.around = path => {
+            if (!path.endsWith('0003-sum-with-the-operator.md')) return undefined
+            opening.around = undefined
+            renameSync(join(root, 'docs/adr'), join(root, 'docs/adr-held')); symlinkSync(outside, join(root, 'docs/adr'))
+            return () => { unlinkSync(join(root, 'docs/adr')); renameSync(join(root, 'docs/adr-held'), join(root, 'docs/adr')) }
+        }
+        expect((await work(root, ['work', 'decide', '--work-order', 'WO-6', '--decision', '1', '--record', '--supersedes', '1'])).diagnostics[0]?.message)
+            .toMatch(/changed while it was opened for writing; nothing was written/)
+        expect(readdirSync(outside).map(name => readFileSync(join(outside, name), 'utf8')).join('')).toBe('')
+
         expect((await work(root, ['work', 'decide', '--work-order', 'WO-6', '--decision', '1', '--record', '--supersedes', '1'])).result)
             .toMatchObject({ record: 'docs/adr/0003-sum-with-the-operator.md' })
         const written = join(root, 'docs/adr/0003-sum-with-the-operator.md')
@@ -279,6 +302,28 @@ describe('work-order lifecycle', () => {
         writeFileSync(join(tools, 'verdict'), 'met')
         expect(((await run(['work', 'grade', '--work-order', 'WO-7'])).result?.criteria as { id: string }[]).map(row => row.id))
             .toEqual(['AC1', 'scope-changes-necessary', 'test-changes-justified'])
+    }, 120_000)
+
+    it('keeps the next amendment a person\'s after a grade finds the agent\'s amendments lower the bar, until a person amends', async () => {
+        const root = await cockpit('[work]\nevaluators = ["claudecode"]')
+        const tools = syntheticEvaluator()
+        const env = { ...process.env, CLAUDECODE: undefined, CODEX_THREAD_ID: undefined, PATH: [tools, ...(process.env.PATH ?? '').split(':')].join(':') }
+        const run = (args: readonly string[]) => work(root, args, env)
+        const reworded = order('WO-10', '  - id: AC1\n    text: add(2, 3) returns 5 for whole numbers.\n    check: [node, test/add.test.mjs]')
+        writeFileSync(join(root, 'workorders/WO-10.md'), order('WO-10'))
+        expect((await run(['work', 'accept', '--work-order', 'WO-10'])).status).toBe(0)
+        writeFileSync(join(root, 'workorders/WO-10.md'), reworded)
+        expect((await run(['work', 'accept', '--work-order', 'WO-10'])).result).toMatchObject({ amended: true, by: 'agent' })
+        writeFileSync(join(tools, 'verdict'), 'unmet')
+        expect((await run(['work', 'grade', '--work-order', 'WO-10'])).result).toMatchObject({ criteria: expect.arrayContaining([{ id: 'amendments-hold-bar', verdict: 'unmet', note: expect.any(String) }]) })
+        // A passing check replaces the failed grade; it does not settle what the grade found.
+        expect((await run(['work', 'check', '--work-order', 'WO-10'])).result).toMatchObject({ state: 'checked' })
+        writeFileSync(join(root, 'workorders/WO-10.md'), order('WO-10'))
+        expect((await run(['work', 'accept', '--work-order', 'WO-10'])).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
+        expect(await asPerson(root, ['work', 'accept', '--work-order', 'WO-10'], (prompt, digest) => prompt.includes('lower the bar') ? `amend ${digest}` : '')).toBe(0)
+        // A person's amendment settles it: the agent may reword its contract again.
+        writeFileSync(join(root, 'workorders/WO-10.md'), reworded)
+        expect((await run(['work', 'accept', '--work-order', 'WO-10'])).result).toMatchObject({ amended: true, by: 'agent' })
     }, 120_000)
 
     it('removes a crashed command\'s lock only once its holder is shown gone, and records what it checked', async () => {

@@ -4,7 +4,7 @@ import { sha256Hex } from '../sha256.js'
 import {
     closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, realpathSync, readdirSync,
 } from 'node:fs'
-import { appendFile, mkdir, open as openFile, rename, rm } from 'node:fs/promises'
+import { mkdir, open as openFile, rm, type FileHandle } from 'node:fs/promises'
 import { basename, delimiter, dirname, isAbsolute, join, parse as parsePath, relative, resolve, sep } from 'node:path'
 import { isProxy } from 'node:util/types'
 import { readBoundedFile } from '../bounded-read.js'
@@ -288,6 +288,27 @@ function readBounded(root: string, relativePath: string, maximum = MAX_DOCUMENT_
     const anchored = anchoredReadPath(root, relativePath)
     if (!anchored) throw new RefusalError('contained file is missing')
     return readAnchoredLeaf(anchored, maximum, 'contained file')
+}
+
+// Node has no openat, so a write cannot name its file relative to a directory descriptor. Every ancestor is
+// anchored by descriptor instead, the leaf is opened without following a link, and nothing is written until
+// the opened file is shown to be the single-link regular file at the confined name, under ancestors that are
+// still the anchored directories: one swapped for a link while the file was opened fails that check.
+async function openContainedForWrite(root: string, relativePath: string, flags: number): Promise<FileHandle> {
+    // No ancestor's contents are bound: the write itself changes the directory that holds the file.
+    const anchored = anchoredReadPath(root, relativePath, false, join(root, relativePath))
+    if (!anchored) throw new RefusalError('contained path is missing')
+    try {
+        const handle = await openFile(anchored.target, flags | constants.O_WRONLY | constants.O_NOFOLLOW, 0o644)
+        try {
+            const opened = await handle.stat({ bigint: true })
+            const named = lstatSync(anchored.target, { bigint: true, throwIfNoEntry: false })
+            if (!opened.isFile() || opened.nlink !== 1n || opened.dev !== named?.dev || opened.ino !== named.ino || !readAnchorsCurrent(anchored.anchors)) {
+                throw new RefusalError('contained file or an ancestor changed while it was opened for writing; nothing was written')
+            }
+            return handle
+        } catch (error) { await handle.close(); throw error }
+    } finally { closeReadAnchors(anchored.anchors) }
 }
 
 function readExactFile(path: string, maximum: number): Buffer {
@@ -638,13 +659,14 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         return new Map(records.map(name => [`${declared}/${name}`, readBounded(repository.root, `${path}/${name}`, MAX_DECISION_RECORD_BYTES).toString('utf8')]))
     }
     // The only files cockpit writes outside .cockpit/: a decision record it scaffolds or marks superseded, and the index line.
-    const writeNew = async (path: string, text: string) => {
-        const handle = await openFile(path, 'wx', 0o644)
-        try { await handle.writeFile(text) } finally { await handle.close() }
-    }
-    const replace = async (target: string, text: string) => {
-        const staged = `${target}.${randomUUID()}.tmp`
-        try { await writeNew(staged, text); await rename(staged, target) } catch (error) { await rm(staged, { force: true }); throw error }
+    // Each is written through a descriptor opened by openContainedForWrite; a replacement is written in place, as a
+    // rename would name its target by path again.
+    const writeContained = async (repository: typeof repositories[number], path: string, flags: number, text: string, replace = false) => {
+        const handle = await openContainedForWrite(repository.root, path, flags)
+        try {
+            if (replace) await handle.truncate(0)
+            await handle.writeFile(text)
+        } finally { await handle.close() }
     }
     // A write that fails part way puts back what it changed, so a rerun does not number a second record or mark the old one twice.
     const writeDecisionRecords = async (writes: readonly Readonly<{ reference: string; text: string; create: boolean }>[], indexLine?: string) => {
@@ -655,22 +677,29 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
                 await mkdir(dirname(contained(repository.root, path, true)), { recursive: true })
                 const target = contained(repository.root, path, true)
                 if (create) {
-                    try { await writeNew(target, text) }
+                    try { await writeContained(repository, path, constants.O_CREAT | constants.O_EXCL, text) }
                     catch (error) { if (hasErrorCode(error, 'EEXIST')) throw new RefusalError(`${reference} already exists; rerun work decide, which takes the next free name`); throw error }
                     undo.push(() => rm(target, { force: true }))
                     continue
                 }
                 const previous = readBounded(repository.root, path, MAX_DECISION_RECORD_BYTES).toString('utf8')
-                await replace(target, text)
-                undo.push(() => replace(target, previous))
+                // Queued before the write: an in-place write that fails after truncating has already changed the record.
+                undo.push(() => writeContained(repository, path, 0, previous, true))
+                await writeContained(repository, path, 0, text, true)
             }
             if (indexLine === undefined) return
             if (!config.docs?.decisionsIndex) throw new RefusalError('an index line was given but [docs] decisions_index is not declared')
             const index = located(config.docs.decisionsIndex)
             const current = readBounded(index.repository.root, index.path, MAX_DECISION_RECORD_BYTES).toString('utf8')
-            await appendFile(contained(index.repository.root, index.path), `${current === '' || current.endsWith('\n') ? '' : '\n'}${indexLine}\n`)
+            await writeContained(index.repository, index.path, constants.O_APPEND, `${current === '' || current.endsWith('\n') ? '' : '\n'}${indexLine}\n`)
         } catch (error) {
-            for (const step of undo.reverse()) await step()
+            // Every step is tried, so one that fails does not leave the files after it changed.
+            const failed: string[] = []
+            for (const step of undo.reverse()) {
+                try { await step() } catch (undoError) { failed.push(errorCause(undoError)) }
+            }
+            if (failed.length) throw new RefusalError(`${errorCause(error)}; putting back the decision records also failed (${failed.join('; ')}); `
+                + 'compare the [docs] decisions directory with git diff and restore what changed with git restore')
             throw error
         }
     }
