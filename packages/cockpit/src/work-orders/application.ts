@@ -401,16 +401,17 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         // only clarify: where a model grades, the next grade judges it; under checks nothing could, so a person does.
         // So does the amendment after a grade that found the agent's earlier ones lowered the bar.
         const unjudgeable = policy.grading === 'checks' ? review.filter(row => checksBindsField(row.field)) : []
-        const failedReview = record.grade?.criteria.find(row => row.id === AMENDMENTS_HOLD && row.verdict !== 'met')
+        const failedReview = record.amendmentsFailedReview
         const decider: Decider = policy.gates.amend === 'agent' && (weakened.length || unjudgeable.length || failedReview) ? 'person' : policy.gates.amend
         const sources = await composition.sourceDigests(order)
         const digest = workOrderDigest(order, sources, record.accepted.base)
         return gated('amend', decider, [`Amend ${order.id} (digest ${record.accepted.digest} -> ${digest})`,
             ...weakened.length ? [`This weakens the accepted contract: ${weakened.join('; ')}`] : [],
-            ...failedReview ? [`The last grade found the earlier amendments lower the bar: ${failedReview.note}`] : [],
+            ...failedReview ? [`A grade found the agent's earlier amendments lower the bar: ${failedReview.note}`] : [],
             ...review.map(row => `Changed ${row.field}: "${row.before}" -> "${row.after}"`), ...shownOrder], 'amend', async by => store.update(order.id, async existing => {
             if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while this prompt was open; rerun work accept`)
             const next: WorkRecord = { ...existing, state: 'accepted', attempts: 0, checks: undefined, grade: undefined,
+                ...by === 'agent' ? {} : { amendmentsFailedReview: undefined },
                 accepted: { at: now(), by, digest, order, sources, base: existing.accepted.base },
                 amendments: [...existing.amendments, { at: now(), by, from: existing.accepted.digest, to: digest, weakened: [...weakened], review: [...review] }] }
             return { record: next, value: complete(operation, { id: order.id, state: 'accepted', by, digest, amended: true, weakened,
@@ -558,9 +559,11 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         const passed = verdicts.every(row => row.verdict === 'met') && checks.every(row => row.passed) && (judged || outOfScope.length === 0)
         const grade: NonNullable<WorkRecord['grade']> = { at: now(), digest: record.accepted.digest, mode: policy.grading, passed,
             criteria: [...verdicts], outOfScope: [...outOfScope], ...evaluator ? { evaluator } : {}, ...request.note ? { note: request.note } : {} }
+        const loweredBar = verdicts.find(row => row.id === AMENDMENTS_HOLD && row.verdict !== 'met')
         await store.update(order.id, async existing => {
             if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while it was graded; rerun work grade`)
             return { record: { ...existing, state: passed ? 'graded' : 'accepted', attempts: existing.attempts + (passed ? 0 : 1), grade,
+                ...loweredBar ? { amendmentsFailedReview: { at: grade.at, note: loweredBar.note } } : {},
                 ...checks.length ? { checks: { at: now(), digest: record.accepted.digest, results: [...checks] } } : {} }, value: undefined }
         })
         const value = { id: order.id, state: passed ? 'graded' : 'accepted', mode: policy.grading, criteria: verdicts, checks, outOfScope, testProtection: guarded.value, ...evaluator ? { evaluator } : {} }

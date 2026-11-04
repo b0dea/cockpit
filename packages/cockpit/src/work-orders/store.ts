@@ -64,6 +64,9 @@ export const WorkRecord = z.object({
     attempts: z.number().int().min(0),
     checks: z.object({ at, digest: z.string().length(64), results: z.array(CheckResult).max(64) }).strict().optional(),
     grade: Grade.optional(),
+    // A grade found the agent's amendments lowered the bar. It outlives the grade a later check or grade
+    // replaces, and only an amendment a person or CI accepts clears it, so the next amendment stays theirs.
+    amendmentsFailedReview: z.object({ at, note: z.string().max(4_096) }).strict().optional(),
     // A decision is resolved by a later `resolution` note naming it in `resolves`: with `record`, the decision
     // record it is written in; without, `text` says why it made no lasting decision. The latest resolution counts.
     notes: z.array(z.object({ at, by: z.enum(['agent', 'person', 'ci']), kind: z.enum(['note', 'question', 'answer', 'decision', 'resolution']), text: note,

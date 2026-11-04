@@ -281,6 +281,28 @@ describe('work-order lifecycle', () => {
             .toEqual(['AC1', 'scope-changes-necessary', 'test-changes-justified'])
     }, 120_000)
 
+    it('keeps the next amendment a person\'s after a grade finds the agent\'s amendments lower the bar, until a person amends', async () => {
+        const root = await cockpit('[work]\nevaluators = ["claudecode"]')
+        const tools = syntheticEvaluator()
+        const env = { ...process.env, CLAUDECODE: undefined, CODEX_THREAD_ID: undefined, PATH: [tools, ...(process.env.PATH ?? '').split(':')].join(':') }
+        const run = (args: readonly string[]) => work(root, args, env)
+        const reworded = order('WO-10', '  - id: AC1\n    text: add(2, 3) returns 5 for whole numbers.\n    check: [node, test/add.test.mjs]')
+        writeFileSync(join(root, 'workorders/WO-10.md'), order('WO-10'))
+        expect((await run(['work', 'accept', '--work-order', 'WO-10'])).status).toBe(0)
+        writeFileSync(join(root, 'workorders/WO-10.md'), reworded)
+        expect((await run(['work', 'accept', '--work-order', 'WO-10'])).result).toMatchObject({ amended: true, by: 'agent' })
+        writeFileSync(join(tools, 'verdict'), 'unmet')
+        expect((await run(['work', 'grade', '--work-order', 'WO-10'])).result).toMatchObject({ criteria: expect.arrayContaining([{ id: 'amendments-hold-bar', verdict: 'unmet', note: expect.any(String) }]) })
+        // A passing check replaces the failed grade; it does not settle what the grade found.
+        expect((await run(['work', 'check', '--work-order', 'WO-10'])).result).toMatchObject({ state: 'checked' })
+        writeFileSync(join(root, 'workorders/WO-10.md'), order('WO-10'))
+        expect((await run(['work', 'accept', '--work-order', 'WO-10'])).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
+        expect(await asPerson(root, ['work', 'accept', '--work-order', 'WO-10'], (prompt, digest) => prompt.includes('lower the bar') ? `amend ${digest}` : '')).toBe(0)
+        // A person's amendment settles it: the agent may reword its contract again.
+        writeFileSync(join(root, 'workorders/WO-10.md'), reworded)
+        expect((await run(['work', 'accept', '--work-order', 'WO-10'])).result).toMatchObject({ amended: true, by: 'agent' })
+    }, 120_000)
+
     it('removes a crashed command\'s lock only once its holder is shown gone, and records what it checked', async () => {
         const root = await cockpit('[work]\ngrading = "checks"')
         writeFileSync(join(root, 'workorders/WO-8.md'), order('WO-8'))
