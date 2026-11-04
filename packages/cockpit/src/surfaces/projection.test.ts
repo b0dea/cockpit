@@ -290,6 +290,23 @@ describe('live sibling projection planner', () => {
         })).toMatchObject({ kind: 'refusal', diagnostic: { code: 'PROJECTION_GUIDE_ESCAPE' } })
     })
 
+    it('refuses a guide that is or resolves to a secret, whoever runs sync', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'cockpit-projection-secret-'))
+        roots.push(root)
+        await mkdir(join(root, '.secrets'))
+        await mkdir(join(root, 'config'))
+        await mkdir(join(root, 'docs'))
+        for (const path of ['.env', '.Env.local', '.secrets/notes.md', 'config/runtime.conf', 'docs/guide.md']) await writeFile(join(root, path), 'TOKEN=synthetic\n')
+        await symlink('.env', join(root, 'AGENTS.md'))
+        const observe = (guide: string) => observeSiblingGuides({ allowedRoots: [root], instances: [join(root, 'config/runtime.conf')],
+            requests: [{ slug: 'api', root, sourcePath: join(root, guide) }] })
+
+        for (const guide of ['.env', '.Env.local', '.env.missing', '.secrets/notes.md', 'config/runtime.conf', 'AGENTS.md']) {
+            expect(await observe(guide), guide).toMatchObject({ kind: 'refusal', diagnostic: { code: 'PROJECTION_GUIDE_SECRET', target: join(root, guide) } })
+        }
+        expect(await observe('docs/guide.md')).toMatchObject({ kind: 'complete', observations: [{ content: 'TOKEN=synthetic\n' }] })
+    })
+
     it('refuses aggregate guide observations beyond the snapshot bound', async () => {
         const root = await mkdtemp(join(tmpdir(), 'cockpit-projection-aggregate-'))
         roots.push(root)

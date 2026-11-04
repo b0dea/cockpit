@@ -394,7 +394,7 @@ export async function runGuardEvaluationApplication(
             launched.push(proven)
             return proven
         }
-        const configured = { canonicalRoot: identity.root, configPath: identity.configPath }
+        const configured = { canonicalRoot: identity.root, configPath: identity.configPath, profiles: agentProfiles(config) }
         for (const { executable, cwd, argv } of parsed.invocations) {
             const proven = prove(executable, cwd, argv, true)
             // The evaluator judges a session's command as one more invocation, so its spelling needs proof too.
@@ -474,6 +474,13 @@ function ordinaryGrants(config: CockpitConfig): readonly OrdinaryGrant[] {
     const policy = effectivePolicy(config)
     return [...config.browser && browserPreapprovalRequested(config.browser) ? ['browser-preapproval' as const] : [],
         ...policy.autonomy.sync === 'agent' ? ['autonomy-sync' as const] : [], ...policy.autonomy.reset === 'agent' ? ['autonomy-reset' as const] : []]
+}
+
+// `up --profile` and `session --profile` start that profile's services for one run. Only the default
+// set a person declared is theirs to name, and a profile that mounts an operator-gated sibling, which
+// touches live data or local hardware, never starts without a person.
+function agentProfiles(config: CockpitConfig): readonly string[] {
+    return config.environment.profiles.filter(profile => !config.sibling.some(row => row.gate === 'operator' && row.mount === `profile:${profile}`))
 }
 
 type SiblingRoot = Readonly<{ sibling: CockpitConfig['sibling'][number]; index: number; root: string }>

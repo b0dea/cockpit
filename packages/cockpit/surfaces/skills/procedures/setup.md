@@ -208,8 +208,10 @@ guesses. So derive each value from what the repository shows, record it as infer
    the product untouched. Done when each product file is on its branch with its diff in your report,
    or no product file was written.
 6. Finish the configuration with the init flow in **Bootstrap**. On an existing cockpit, an edit to
-   `cockpit.toml` makes the guard hold every tool call, so a person runs
-   `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal; then run
+   `cockpit.toml` makes the guard hold every tool call until it is synced. When the hold says the
+   edit does not widen what agents may do, run
+   `./node_modules/.bin/cockpit sync --config cockpit.toml` yourself where `[autonomy] sync =
+   "agent"`; when it names fields that widen, a person runs it in a terminal. Then run
    `./node_modules/.bin/cockpit check --config cockpit.toml --json`. Done when the check exits 0.
 7. Where a runtime is declared, measure it with
    `./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image>`, using an
@@ -255,9 +257,9 @@ report secure agent secret use as unavailable unless a sandbox that has been tes
 ## Add or remove an agent tool
 
 When the team starts or stops using an agent tool, the `tool` command edits only `[surfaces]
-tools` in `cockpit.toml`. The guard asks before every `tool` command, the preview included, and
-after the edit it holds every tool call until it is synced. Adding a tool does not widen what
-agents may do; removing one deletes that tool's guard, so the hold then names `surfaces.tools`
+tools` in `cockpit.toml`, and after the edit the guard holds every tool call until it is synced.
+Adding a tool does not widen what agents may do, so you may run `tool add`; removing one deletes
+that tool's guard, so the guard asks before `tool remove`, and the hold then names `surfaces.tools`
 and waits for a person.
 
 1. Preview with `./node_modules/.bin/cockpit tool add <tool> --config cockpit.toml --dry-run` (or
@@ -294,13 +296,11 @@ reached by path. The guard asks before every `sibling` command, and because the 
    which refuses and lists every reference while anything still uses the repository, and never
    deletes the checkout. The command writes cockpit.toml immediately; `--json` changes only its
    output format, so it is neither a preview nor an acceptance gate. While the stack is up, a
-   repository the stack uses is refused until a person runs
+   repository the stack uses is refused until the stack is stopped; you may stop it with
    `./node_modules/.bin/cockpit down --config cockpit.toml`. Done when the command exits 0.
-3. **Sync.** When the hold says the edit does not widen what agents may do, as adding a
-   repository inside the siblings root does, run
-   `./node_modules/.bin/cockpit sync --config cockpit.toml` yourself where `[autonomy] sync =
-   "agent"`. When it names the fields that widen, as removing one does, a person runs it in a
-   terminal. Then run
+3. **Sync.** Adding or removing a repository widens what agents may do (a new repository is a new
+   directory they may write), so the hold names the sibling and a person runs
+   `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal. Then run
    `./node_modules/.bin/cockpit check --config cockpit.toml --json`. Done when the check exits 0.
 4. **Instruction pointer, only on request.** When the person wants the repository's **AGENTS.md**
    to link to the cockpit instructions, add `--instruction-pointer` to the step 2 command; it opts

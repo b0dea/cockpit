@@ -172,7 +172,7 @@ type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; reason: s
     executableRole: 'installed-cockpit'
     command: HandlerIdentifier
     // An `operation` positional must be one of `operations`, the exact subcommand words.
-    positional: Readonly<{ min: number; max: number; roles: readonly ['confined-root'] | readonly ['operation'] | readonly ['version'] | readonly ['slug', 'confined-root'] | readonly []; operations?: readonly string[] }>
+    positional: Readonly<{ min: number; max: number; roles: readonly ['confined-root'] | readonly ['operation'] | readonly ['version'] | readonly ['slug', 'confined-root'] | readonly ['operation', 'surface-target'] | readonly []; operations?: readonly string[] }>
     options: Readonly<Record<string, OrdinaryOption>>
     cwdRole: 'canonical-root'
     configuration: 'resolved' | 'none'
@@ -296,9 +296,11 @@ const sources = [
         usage: `add|remove <${SURFACE_TARGETS.join('|')}> [options]`,
         handler: 'tool',
         visibility: 'public',
-        // Classified with sibling add and remove: both rewrite cockpit.toml.
-        ordinary: unavailable('tool add and remove rewrite cockpit.toml'),
-        flags: { config: str(), 'dry-run': bool(), json: bool() },
+        // tool add edits only [surfaces] tools, and an added tool never widens what agents may do, so the
+        // agent syncs it as [autonomy] sync allows. tool remove deletes that tool's guard, so it is a person's.
+        ordinary: ordinary('tool', { positional: Object.freeze({ min: 2, max: 2, roles: Object.freeze(['operation', 'surface-target'] as const),
+            operations: Object.freeze(['add']) }) }),
+        flags: { config: configFlag, 'dry-run': bool(flag), json: jsonFlag },
     },
     {
         name: 'registry-resolve',
@@ -598,13 +600,15 @@ interface OrdinaryInvocationAuthority {
     readonly gates: readonly string[]
     /** What the configuration grants an agent: browser preapproval, and the [autonomy] decisions set to agent. */
     readonly grants: readonly OrdinaryGrant[]
+    /** Compose profiles an agent may name with --profile; any other starts services no person declared for it. */
+    readonly profiles: readonly string[]
 }
 export type OrdinaryGrant = 'browser-preapproval' | 'autonomy-sync' | 'autonomy-reset'
 const ORDINARY_GRANTS: readonly OrdinaryGrant[] = ['browser-preapproval', 'autonomy-sync', 'autonomy-reset']
 
 // An image reference or ID as Docker spells it; the command itself refuses one that is not local.
 const LOCAL_IMAGE = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,255}$/
-// The spelling environment.profiles accepts; the command itself refuses a profile no service declares.
+// The spelling environment.profiles accepts.
 const COMPOSE_PROFILE = /^[a-z0-9][a-z0-9_.-]{0,63}$/
 // A selected value that starts with `-` would reach the product's tool as an option of its own.
 const GATE_SELECTOR = /^(?:spec|file|test|route):[^-]/
@@ -631,7 +635,7 @@ export const UNSYNCED_ADMITTED_PROSE = `cockpit ${new Intl.ListFormat('en', { ty
  * so a session never runs what the agent could not run directly.
  */
 export function ordinarySessionCommand(argv: readonly string[], cwd: string,
-    authority: Readonly<{ canonicalRoot: string; configPath: string }>): readonly string[] | undefined {
+    authority: Readonly<{ canonicalRoot: string; configPath: string; profiles: readonly string[] }>): readonly string[] | undefined {
     const inner = innerCommand(argv)
     if (argv[0] !== 'session' || !inner || cwd !== authority.canonicalRoot) return undefined
     const options = argv.slice(1, argv.length - inner.words.length - 1)
@@ -641,7 +645,7 @@ export function ordinarySessionCommand(argv: readonly string[], cwd: string,
             ? [options[index]!.slice(0, options[index]!.indexOf('=')), options[index]!.slice(options[index]!.indexOf('=') + 1)]
             : [options[index]!, options[++index]]
         if (name === '--config' && config === undefined && inline !== undefined) config = inline
-        else if (name !== '--profile' || inline === undefined || !COMPOSE_PROFILE.test(inline)) return undefined
+        else if (name !== '--profile' || inline === undefined || !authority.profiles.includes(inline)) return undefined
     }
     return config && resolve(cwd, config) === authority.configPath ? inner.words : undefined
 }
@@ -654,7 +658,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
     if (!record(candidate)
         || Object.keys(candidate).sort().join(',') !== 'argv,cwd,executable'
         || !record(captured)
-        || Object.keys(captured).sort().join(',') !== 'allowedRoots,canonicalRoot,configPath,executable,gates,grants,services') return undefined
+        || Object.keys(captured).sort().join(',') !== 'allowedRoots,canonicalRoot,configPath,executable,gates,grants,profiles,services') return undefined
     const source = captured as unknown as OrdinaryInvocationAuthority
     if (!canonicalPath(source.executable) || !canonicalPath(source.canonicalRoot) || !canonicalPath(source.configPath)
         || !Array.isArray(source.allowedRoots) || source.allowedRoots.length > GUARD_INPUT_LIMITS.paths
@@ -662,6 +666,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
         || !Array.isArray(source.services) || !source.services.every(service => typeof service === 'string' && /^[a-z0-9][a-z0-9_.-]{0,127}$/.test(service))
         || !Array.isArray(source.gates) || !source.gates.every(gate => typeof gate === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(gate))
         || !Array.isArray(source.grants) || !source.grants.every(grant => ORDINARY_GRANTS.includes(grant))
+        || !Array.isArray(source.profiles) || !source.profiles.every(profile => typeof profile === 'string' && COMPOSE_PROFILE.test(profile))
         || candidate.executable !== source.executable || candidate.cwd !== source.canonicalRoot
         || !Array.isArray(candidate.argv) || candidate.argv.length === 0 || candidate.argv.length > GUARD_INPUT_LIMITS.words
         || !candidate.argv.every(arg => typeof arg === 'string' && arg.length > 0
@@ -722,7 +727,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
             : option.role === 'surface-target' ? text.split(',').every(tool => SURFACE_TARGETS.some(target => target === tool))
             : option.role === 'evaluator-tool' ? EVALUATOR_TOOLS.includes(text)
             : option.role === 'local-image' ? LOCAL_IMAGE.test(text)
-            : option.role === 'compose-profile' ? COMPOSE_PROFILE.test(text)
+            : option.role === 'compose-profile' ? source.profiles.includes(text)
             : option.role === 'sha256' && /^[a-f0-9]{64}$/.test(text)
         if (!valid) return undefined
         options.set(name, text)
@@ -732,6 +737,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
             ? !grammar.positional.operations?.includes(word)
             : grammar.positional.roles[index] === 'version' ? !EXACT_VERSION.test(word)
             : grammar.positional.roles[index] === 'slug' ? !/^[a-z0-9][a-z0-9-]{0,62}$/.test(word)
+            : grammar.positional.roles[index] === 'surface-target' ? !SURFACE_TARGETS.some(target => target === word)
             : grammar.positional.roles[index] !== 'confined-root' || !confined(word))
         || Object.entries(grammar.options).some(([name, option]) => option.required && !options.has(name))
         // A dry run writes nothing, so no grant gates it.

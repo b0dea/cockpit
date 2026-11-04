@@ -641,6 +641,41 @@ describe('guard policy construction', () => {
         expect(await decide('app')).toBe('ask')
     }, 120_000)
 
+    it('admits --profile only for a declared default profile that mounts no operator-gated sibling', async () => {
+        const { configPath } = fixture()
+        const root = realpathSync(dirname(configPath))
+        const source = CockpitConfig.parse(parse(readFileSync(new URL('../../../../fixtures/registries/generated-environment.toml', import.meta.url), 'utf8')))
+        for (const directory of ['app', 'ops']) mkdirSync(join(root, directory), { recursive: true })
+        writeFileSync(join(root, 'app/package-lock.json'), '{}')
+        writeFileSync(join(root, 'compose.yml'), ['services:', ...['jobs', 'ops', 'mail'].flatMap(profile => [`  ${profile}:`, '    image: busybox', `    profiles: [${profile}]`])].join('\n') + '\n')
+        writeFileSync(configPath, stringify({ ...source, cockpit: { ...source.cockpit, name: 'synthetic-cockpit', siblings_root: root },
+            sibling: [...source.sibling, { slug: 'ops', dir: 'ops', mount: 'profile:ops', acquire: 'none', var: 'OPS_DIR', purpose: 'Synthetic live-data lane', gate: 'operator' }],
+            environment: { ...source.environment, compose_files: ['compose.yml'], profiles: ['jobs', 'ops'] } }))
+        const synced = await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })
+        expect(synced, JSON.stringify(synced)).toMatchObject({ kind: 'complete' })
+        const identity = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
+        const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')
+        const config = realpathSync(configPath)
+        const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
+            resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }),
+            resolveDocker: () => resolveDockerExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }) }
+        const decide = async (command: string) => (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'claudecode', cwd: root,
+            searchPath: '/usr/bin:/bin', payload: shellPayload(command, root) }, adapters)).decision.decision
+        // Docker is not a prerequisite of this suite; without it the guard cannot list services and admits no cockpit command.
+        const docker = await adapters.resolveDocker()
+        if (docker.state !== 'available' && docker.reason === 'Executable was not found in the supplied search path: docker') {
+            expect(await decide(`${launcher} up --config ${config} --profile jobs`)).toBe('unavailable')
+            return
+        }
+        expect(await decide(`${launcher} up --config ${config} --profile jobs`)).toBe('allow')
+        expect(await decide(`${launcher} session --config ${config} --profile jobs -- ${launcher} check --config ${config}`)).toBe('allow')
+        // An operator gate keeps a live-data lane a person's, and an undeclared profile was never theirs to give.
+        for (const profile of ['ops', 'mail']) {
+            expect(await decide(`${launcher} up --config ${config} --profile ${profile}`), profile).toBe('ask')
+            expect(await decide(`${launcher} session --config ${config} --profile ${profile} -- ${launcher} check --config ${config}`), profile).toBe('ask')
+        }
+    }, 120_000)
+
     it('does not infer absent project declarations and refuses missing, ambiguous or symlinked lockfiles', async () => {
         for (const change of ['absent', 'missing', 'ambiguous', 'symlink'] as const) {
             const { root, configPath } = await observedPolicy()

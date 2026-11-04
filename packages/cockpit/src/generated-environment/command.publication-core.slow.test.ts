@@ -1,7 +1,7 @@
 import { readFile, rm, writeFile, mkdir, lstat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { stringify } from 'smol-toml'
+import { parse, stringify } from 'smol-toml'
 
 import { executeProbe } from '../environment-exec/execute.js'
 import { cockpitId } from '../environment/identity.js'
@@ -55,6 +55,20 @@ describe('generated environment command', () => {
             diagnostics: [expect.objectContaining({ code: 'GUIDE_CAP_EXCEEDED', target: 'AGENTS.md', message: expect.stringContaining('the first 32768 bytes') })] })
         await writeFile(join(fixture.siblingDirectory, 'AGENTS.md'), `${'x'.repeat(199)}\n`.repeat(100))
         expect(await syncGeneratedEnvironment({ configPath: fixture.configPath, dryRun: true })).toMatchObject({ kind: 'complete' })
+    })
+
+    // Sync copies every guide into the root AGENTS.md, so a guide naming a declared instance would
+    // hand its values to every agent session, whoever ran the sync.
+    it('refuses a guide that is a declared environment instance before copying it', async () => {
+        const fixture = await surfaceConsumer('guide-instance')
+        const config = parse(await readFile(fixture.configPath, 'utf8')) as { sibling: Array<{ guides: string[]; environment_files?: unknown[] }> }
+        config.sibling[0]!.guides.push('config/runtime.conf')
+        config.sibling[0]!.environment_files = [...config.sibling[0]!.environment_files ?? [], { template: 'config/runtime.example', instance: 'config/runtime.conf' }]
+        await writeFile(fixture.configPath, stringify(config))
+        await mkdir(join(fixture.siblingDirectory, 'config'))
+        await writeFile(join(fixture.siblingDirectory, 'config/runtime.conf'), 'TOKEN=synthetic\n')
+        expect(await syncGeneratedEnvironment({ configPath: fixture.configPath, dryRun: true })).toMatchObject({ kind: 'refusal',
+            diagnostics: [expect.objectContaining({ code: 'PROJECTION_GUIDE_SECRET', target: join(fixture.siblingDirectory, 'config/runtime.conf') })] })
     })
 
     it('writes a rules overlay with Rulesync frontmatter into the always-loaded guide and refuses a scoped one by name', async () => {

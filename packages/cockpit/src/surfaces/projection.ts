@@ -7,6 +7,7 @@ import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
 import { GUARD_SURFACE_TARGETS as INSTRUCTION_TARGETS, HARNESS_REGISTRY, type HarnessRegistryRow } from './harness-registry.js'
 import { INSTRUCTION_POINTER_MARKERS } from '../environment/instruction-pointer.js'
 import { exactKeys } from '../exact-keys.js'
+import { foldGuardSpelling } from '../guards/evaluator.js'
 
 const GUIDE_BYTE_LIMIT = 65_536
 const GUIDE_COUNT_LIMIT = 256
@@ -73,7 +74,7 @@ interface LoadCostCharacterization {
 
 interface ProjectionDiagnostic {
     readonly code: 'PROJECTION_INPUT_INVALID' | 'PROJECTION_GUIDE_UNAVAILABLE' | 'PROJECTION_GUIDE_CHANGED'
-        | 'PROJECTION_GUIDE_ESCAPE' | 'PROJECTION_GUIDE_READ_FAILED' | 'PROJECTION_GUIDE_CLOSE_FAILED'
+        | 'PROJECTION_GUIDE_ESCAPE' | 'PROJECTION_GUIDE_SECRET' | 'PROJECTION_GUIDE_READ_FAILED' | 'PROJECTION_GUIDE_CLOSE_FAILED'
         | 'PROJECTION_ROOT_AMBIGUOUS' | 'PROJECTION_RESULT_BOUNDS'
         | 'PROJECTION_MOUNT_MISMATCH' | 'PROJECTION_GRANT_MISMATCH'
     readonly message: string
@@ -187,13 +188,29 @@ function contained(root: string, path: string): boolean {
     return fromRoot === '' || !fromRoot.startsWith('..') && !isAbsolute(fromRoot)
 }
 
-function snapshotRequests(input: unknown): { readonly requests: readonly GuideObservationRequest[]; readonly allowedRoots: readonly string[] } | undefined {
+// A guide is copied into every agent's instructions, so it never reaches what the guard keeps out of
+// their context: a `.env` or `.env.*` file, anything below a `.secrets` directory, or a declared
+// environment instance. `fromRoot` is the path inside its sibling root; `instances` are folded.
+function secretGuide(fromRoot: string, path: string, instances: ReadonlySet<string>): string | undefined {
+    const segments = foldGuardSpelling(fromRoot).split('/')
+    const name = segments.at(-1)!
+    if (instances.has(foldGuardSpelling(path))) return 'a declared environment instance'
+    if (segments.includes('.secrets')) return 'below a .secrets directory'
+    if (name === '.env' || name.startsWith('.env.')) return 'an environment file'
+    return undefined
+}
+
+function snapshotRequests(input: unknown): {
+    readonly requests: readonly GuideObservationRequest[]; readonly allowedRoots: readonly string[]; readonly instances: readonly string[]
+} | undefined {
     const snapshot = snapshotJson(input)
-    if (!isObject(snapshot) || !exactKeys(snapshot, ['allowedRoots', 'requests']) || !Array.isArray(snapshot.requests)
+    if (!isObject(snapshot) || !exactKeys(snapshot, ['allowedRoots', 'requests'], ['instances']) || !Array.isArray(snapshot.requests)
         || snapshot.requests.length > GUIDE_COUNT_LIMIT) return undefined
     const allowedRoots = stringArray(snapshot.allowedRoots)
     if (!allowedRoots || allowedRoots.length === 0 || allowedRoots.length > GUIDE_COUNT_LIMIT
         || new Set(allowedRoots).size !== allowedRoots.length || allowedRoots.some(root => !isAbsolute(root))) return undefined
+    const instances = snapshot.instances === undefined ? [] : stringArray(snapshot.instances)
+    if (!instances || instances.length > GUIDE_COUNT_LIMIT || instances.some(path => !isAbsolute(path))) return undefined
     const result: GuideObservationRequest[] = []
     const identities = new Set<string>()
     for (const request of snapshot.requests) {
@@ -208,7 +225,7 @@ function snapshotRequests(input: unknown): { readonly requests: readonly GuideOb
         identities.add(identity)
         result.push({ slug: request.slug, root: request.root, sourcePath })
     }
-    return { requests: result, allowedRoots }
+    return { requests: result, allowedRoots, instances }
 }
 
 interface FileIdentity {
@@ -332,10 +349,19 @@ async function pathIdentity(sourcePath: string): Promise<PathIdentity> {
     return { entry, entryType, ...(linkTarget === undefined ? {} : { linkTarget }), contentPath, target }
 }
 
+function secretGuideDiagnostic(request: GuideObservationRequest, reason: string, resolved?: string): ProjectionDiagnostic {
+    return diagnostic('PROJECTION_GUIDE_SECRET', `guide ${request.sourcePath} ${resolved === undefined ? 'is' : `resolves to ${resolved},`} ${reason}, `
+        + 'which the guard keeps out of agent context, and sync would copy it into the root AGENTS.md; '
+        + `${resolved === undefined ? '' : 'replace the link with a file of guidance, or '}remove it from the guides of sibling ${request.slug} in cockpit.toml`, { target: request.sourcePath })
+}
+
 async function readGuide(
     request: GuideObservationRequest,
     requestRoot: RootAuthority,
+    instances: ReadonlySet<string>,
 ): Promise<GuideObservation | 'missing' | ProjectionDiagnostic> {
+    const named = secretGuide(relative(request.root, request.sourcePath), request.sourcePath, instances)
+    if (named) return secretGuideDiagnostic(request, named)
     if (!await rootAuthorityStable(requestRoot)) {
         return diagnostic('PROJECTION_GUIDE_CHANGED', `declared sibling root changed before guide observation: ${request.root}`, { target: request.root })
     }
@@ -354,6 +380,9 @@ async function readGuide(
             target: request.sourcePath, expected: requestRoot.canonical, actual: pathBefore.contentPath,
         })
     }
+    // A link spelled like a guide reaches its target's bytes.
+    const resolved = secretGuide(relative(requestRoot.canonical, pathBefore.contentPath), pathBefore.contentPath, instances)
+    if (resolved) return secretGuideDiagnostic(request, resolved, pathBefore.contentPath)
 
     let handle: Awaited<ReturnType<typeof open>> | undefined
     let result: GuideObservation | ProjectionDiagnostic | undefined
@@ -460,6 +489,11 @@ export async function observeSiblingGuides(input: unknown): Promise<GuideObserva
     if (new Set(allowedRoots.map(root => root.canonical)).size !== allowedRoots.length) {
         return finishRootObservation(allowedRoots, observedOutcome({ kind: 'refusal', diagnostic: diagnostic('PROJECTION_ROOT_AMBIGUOUS', 'declared sibling roots resolve to the same canonical authority') }))
     }
+    // Each instance under every spelling a guide can reach it by: as declared, and below its root's real path.
+    const instances = new Set(captured.instances.flatMap(path => {
+        const root = allowedRoots.find(candidate => contained(candidate.declared, path))
+        return root ? [path, join(root.canonical, relative(root.declared, path))] : [path]
+    }).map(foldGuardSpelling))
     const observations: GuideObservation[] = []
     const missing: string[] = []
     let contentBytes = 0
@@ -474,10 +508,10 @@ export async function observeSiblingGuides(input: unknown): Promise<GuideObserva
             return finishRootObservation(allowedRoots, observedOutcome({ kind: 'refusal', diagnostic: diagnostic('PROJECTION_INPUT_INVALID', `guide request is not bound to its most-specific sibling root: ${request.sourcePath}`, { target: request.sourcePath }) }))
         }
         const requestRoot = allowedRoots.find(root => root.declared === request.root)!
-        const observed = await readGuide(request, requestRoot)
+        const observed = await readGuide(request, requestRoot, instances)
         if (observed === 'missing') missing.push(request.sourcePath)
         else if ('code' in observed) {
-            const refusal = ['PROJECTION_GUIDE_CHANGED', 'PROJECTION_GUIDE_ESCAPE', 'PROJECTION_GUIDE_READ_FAILED',
+            const refusal = ['PROJECTION_GUIDE_CHANGED', 'PROJECTION_GUIDE_ESCAPE', 'PROJECTION_GUIDE_SECRET', 'PROJECTION_GUIDE_READ_FAILED',
                 'PROJECTION_GUIDE_CLOSE_FAILED', 'PROJECTION_RESULT_BOUNDS'].includes(observed.code)
             return finishRootObservation(allowedRoots, observedOutcome({ kind: refusal ? 'refusal' : 'unavailable', diagnostic: observed }))
         } else {

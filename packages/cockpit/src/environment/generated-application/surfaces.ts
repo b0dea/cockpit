@@ -140,7 +140,8 @@ export async function prepareSurfaces(
     }))).sort((left, right) => compareCodeUnits(left.sourcePath, right.sourcePath))
     const observedGuides = guideRequests.length === 0
         ? { kind: 'complete' as const, observations: [] as readonly GuideObservation[], missing: [] as readonly string[] }
-        : await observeSiblingGuides({ allowedRoots: selected.map(row => siblingRoots.get(row.slug)!), requests: guideRequests })
+        : await observeSiblingGuides({ allowedRoots: selected.map(row => siblingRoots.get(row.slug)!), requests: guideRequests,
+            instances: prepared.registry.secretPaths.flatMap(row => siblingRoots.has(row.slug) ? [resolve(siblingRoots.get(row.slug)!, row.path)] : []) })
     if (observedGuides.kind !== 'complete') return refuse(observedGuides.diagnostic.code, observedGuides.diagnostic.message, observedGuides.diagnostic.target)
     for (const sibling of selected) for (const guide of projectionGuides(sibling)) {
         const sourcePath = resolve(siblingRoots.get(sibling.slug)!, guide)
