@@ -167,6 +167,8 @@ describe('closed ordinary invocation metadata', () => {
             ['logs', '--service', 'app'], ['logs', '--service', 'app', '--tail', '1', '--since', '15m', '--follow'],
             ['logs', '--service=app', '--tail=10000', '--since=2026-10-22T10:00:00Z', '--json'],
             ['runtime', 'measure', '--image', 'node:22-alpine'], ['runtime', 'measure', '--image', `sha256:${'c'.repeat(64)}`, '--json'],
+            // The inventory and the prune preview change nothing; an applied prune that deletes volumes is gated by the command.
+            ['stacks'], ['stacks', '--json'], ['stacks', 'prune'], ['stacks', 'prune', '--apply', '--json'],
             // The documented agent steps of the test, work-order and browser loops.
             ['test-run', '--gate', 'quick', '--json'], ['test-run', '--gate=quick', '--mode', 'staged', '--select', 'file:src/cache.test.ts'],
             ['work', 'status', '--json'], ['work', 'status', '--work-order', 'WO-1'], ['work', 'accept', '--work-order', 'WO-1'],
@@ -194,7 +196,7 @@ describe('closed ordinary invocation metadata', () => {
 
     it('requires the exact resolved config for every available config-bearing row', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
-        expect(rows.map(row => row.name)).toEqual(['setup', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'sleep', 'down', 'reset', 'doctor',
+        expect(rows.map(row => row.name)).toEqual(['setup', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'sleep', 'down', 'reset', 'stacks', 'doctor',
             'test-run', 'work status', 'work accept', 'work check', 'work note', 'work answer', 'work grade', 'work signoff', 'work recover', 'work verify', 'grade',
             'browser drive', 'browser screenshot'])
         for (const row of rows) {
@@ -231,6 +233,7 @@ describe('closed ordinary invocation metadata', () => {
             ['runtime', '--image', 'node:22-alpine'], ['runtime', 'other', '--image', 'node:22-alpine'], ['runtime', 'measure'],
             ['runtime', 'measure', 'extra', '--image', 'node:22-alpine'], ['runtime', 'measure', '--image', 'node 22'],
             ['runtime', 'measure', '--image', 'node:22-alpine', '--write'],
+            ['stacks', 'prune', '--interactive'], ['stacks', 'remove'], ['stacks', 'prune', 'extra'],
             ['check', 'extra'], ['check', '--unknown'], ['check', '--config', '/outside/cockpit.toml'], ['check', '--config', 'other.toml'],
             ['check', '--json=false'], ['check', '--'], ['check', '--config'], ['check', '-c', 'cockpit.toml'],
             // A person types the displayed digest, takes a lock whose holder only looks dead.
@@ -468,7 +471,8 @@ describe('CLI help', () => {
             '  logs              Show recent logs for one declared service\n' +
             '  sleep             Release this checkout and stop the stack if no other holder remains\n' +
             '  down              Stop and remove the stack (on the active local Docker context)\n' +
-            '  reset             Preview a reset, then approve it interactively or apply it as [autonomy] reset allows (on the active local Docker context)\n\n' +
+            '  reset             Preview a reset, then approve it interactively or apply it as [autonomy] reset allows (on the active local Docker context)\n' +
+            '  stacks            List every stack on this machine, or preview and remove those whose checkout is gone (stacks prune)\n\n' +
             'Diagnose:\n' +
             '  doctor            Report environment problems without changing anything\n\n' +
             'Test and grade:\n' +

@@ -26,10 +26,11 @@ describe('diagnostic envelope', () => {
         const sources = readdirSync(new URL('.', import.meta.url), { recursive: true, encoding: 'utf8' })
             .filter(path => path.endsWith('.ts') && !path.endsWith('.test.ts'))
             .map(path => readFileSync(new URL(path, import.meta.url), 'utf8'))
-        const deletions = sources.flatMap(source => [...source.matchAll(/\bfix: (`[^`]*`|'[^']*')/g)].map(match => match[1]!))
+        const deletions = (source: string) => [...source.matchAll(/\bfix: (`[^`]*`|'[^']*')/g)].map(match => match[1]!)
             .filter(fix => /\brm -r/.test(fix))
-        expect(deletions.length).toBeGreaterThan(0)
-        for (const fix of deletions) expect(fix).toMatch(/\bask the person\b/)
+        // The scan must still see a recursive delete written beside its code, whether or not one ships today.
+        expect(deletions("fix: 'stop the stack, then rm -rf /synthetic/state'")).toHaveLength(1)
+        for (const fix of sources.flatMap(deletions)) expect(fix).toMatch(/\bask the person\b/)
     })
 
     it('prints the runtime measure remedy bare, since a wrapped command prompts and some agents treat a prompt as a denial', () => {

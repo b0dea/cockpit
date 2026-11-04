@@ -14,7 +14,7 @@ import { abortStateTransaction, readState, transactState, type StateRecord, type
 import { decodeLifecycleRecord, resolveLifecycleStage, type CurrentLifecycleRecord, type LifecycleRecordValue } from '../lifecycle-stage.js'
 import { inspectPortLeaseTransfer, revalidatePortLeaseProjection, type PortLeaseProjection } from '../ports.js'
 import { commitDrainOutcome, decodeCoordinationRecord, type DrainOutcome } from '../claims.js'
-import { lifecycleRefusal, ownerDiagnostic, shellQuote } from './shared.js'
+import { lifecycleRefusal, ownerDiagnostic } from './shared.js'
 import { type LifecycleRunContext, type SleepCommandResult, type UpCommandResult, withLifecycleConfiguration } from './lifecycle-context.js'
 
 export function lifecycleSuggestion(context: LifecycleRunContext, command: 'up' | 'down'): string {
@@ -119,7 +119,7 @@ export async function publishLifecycleRecord(
 // Port leases are machine-wide, so up reads every cockpit's state. Another cockpit's namespace this
 // version cannot read is skipped there rather than refused; this cockpit's own unreadable state still
 // refuses in the command itself. The skipped ones are named in a single warning with one cleanup
-// command, and only by doctor: the folders belong to other cockpits, usually ones an earlier version
+// command (`stacks prune`), and only by doctor: the folders belong to other cockpits, usually ones an earlier version
 // left behind, and repeating them on every up (and so every session) buried each result under lines
 // about cockpits the person was not working on. A port they still hold fails up on its own.
 export function unreadableStateWarning(skipped: readonly SkippedStateNamespace[]): EnvironmentDiagnostic | undefined {
@@ -132,7 +132,7 @@ export function unreadableStateWarning(skipped: readonly SkippedStateNamespace[]
         code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
         message: `${count} under ${directory} cannot be read by this cockpit version (${reasons}), so their claims and port leases were ignored`,
         target: directory,
-        fix: `ask the person who owns this machine whether any cockpit still uses them; if none does, stop any stack they started (docker compose ls lists them), then delete them: rm -rf ${skipped.map(({ path }) => shellQuote(path)).join(' ')}`,
+        fix: `preview their removal with ${cockpitCommand('stacks prune')}, which removes those an earlier cockpit build left once none of their stacks is kept, then apply it with --apply`,
     }
 }
 

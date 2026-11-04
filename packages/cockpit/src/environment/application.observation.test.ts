@@ -182,15 +182,17 @@ describe('observation application runners', () => {
         } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 
-    it('names every other cockpit state folder it cannot read in one doctor warning with one cleanup command', async () => {
+    it('names every other cockpit state folder it cannot read, and every orphaned stack, with the prune that removes them', async () => {
         const cockpits = '/synthetic/state/v1/cockpits'
         const skipped = [{ path: `${cockpits}/one`, reason: 'format is not supported' }, { path: `${cockpits}/two`, reason: 'format is not supported' }]
+        const orphaned = { severity: 'warning' as const, code: 'STACKS_ORPHANED' as const, target: cockpits, message: 'this machine has stacks that no checkout can reach' }
         const result = await runDoctor({ configPath: '/synthetic/cockpit.toml' }, { load: async () => undefined, execute: vi.fn(),
-            readUnreadableState: async () => ({ kind: 'complete', skipped }) })
+            readUnreadableState: async () => ({ kind: 'complete', skipped }), inspectStacks: async () => [orphaned] })
         expect(result.diagnostics.filter(row => row.code === 'STATE_RECORD_MALFORMED')).toEqual([{ severity: 'warning',
             code: 'STATE_RECORD_MALFORMED', target: cockpits,
             message: `2 state folders of other cockpits under ${cockpits} cannot be read by this cockpit version (format is not supported), so their claims and port leases were ignored`,
-            fix: `ask the person who owns this machine whether any cockpit still uses them; if none does, stop any stack they started (docker compose ls lists them), then delete them: rm -rf '${cockpits}/one' '${cockpits}/two'` }])
+            fix: 'preview their removal with npx --no cockpit stacks prune --config <your cockpit.toml>, which removes those an earlier cockpit build left once none of their stacks is kept, then apply it with --apply' }])
+        expect(result.diagnostics.filter(row => row.code === 'STACKS_ORPHANED')).toEqual([orphaned])
 
         // An inventory that cannot be read is said, not taken for one with nothing in it.
         const locked = await runDoctor({ configPath: '/synthetic/cockpit.toml' }, { load: async () => undefined, execute: vi.fn(),

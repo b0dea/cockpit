@@ -16,7 +16,9 @@ import {
     refreshBootstrapPublication,
     resetBootstrapAnswer,
     inspectStateLock,
+    inspectStackState,
     issueStateScopedLock,
+    removeStackState,
     SERIALIZED_RECORD_BYTE_LIMIT,
     selectBootstrapStateRoot,
     selectStateRoot,
@@ -967,6 +969,28 @@ describe('transactState', () => {
         await expect(first).resolves.toEqual({ kind: 'complete', value: 'first' })
         await expect(withStateScopedLock(namespace, sameScope, { ownerId: holderB }, () => 'later'))
             .resolves.toEqual({ kind: 'complete', value: 'later' })
+    })
+
+    it('removes a stack\'s records, even one it cannot parse, only while each still holds its previewed bytes', async () => {
+        const { namespace, address } = await selectedNamespace()
+        await transactState(namespace, address, { ownerId: holderA }, () => lifecycleRecord(0, 1))
+        const coordination = namespace.paths.coordination(stackId).path
+        await mkdir(dirname(coordination), { recursive: true })
+        await writeFile(coordination, '{"written by": "an earlier cockpit"')
+        const previewed = await inspectStackState(namespace, stackId)
+        if (previewed.kind !== 'complete') throw new Error(JSON.stringify(previewed))
+        expect(previewed.value.map(({ kind }) => kind).sort()).toEqual(['coordination', 'lifecycle'])
+
+        await transactState(namespace, address, { ownerId: holderA }, (current) => lifecycleRecord(current!.revision + 1, 2))
+        expect(await removeStackState(namespace, stackId, previewed.value, { ownerId: holderB })).toEqual({ kind: 'complete',
+            value: { kind: 'changed', reason: `the state of ${stackId} changed since it was previewed` } })
+        expect((await readState(address)).kind).toBe('complete')
+
+        const current = await inspectStackState(namespace, stackId)
+        if (current.kind !== 'complete') throw new Error(JSON.stringify(current))
+        expect(await removeStackState(namespace, stackId, current.value, { ownerId: holderB })).toEqual({ kind: 'complete',
+            value: { kind: 'removed', paths: current.value.map(({ path }) => path) } })
+        expect(await inspectStackState(namespace, stackId)).toEqual({ kind: 'complete', value: [] })
     })
 
     it('rethrows a scoped operation failure unchanged after releasing the lock', async () => {

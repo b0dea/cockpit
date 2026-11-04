@@ -31,6 +31,7 @@ export type HandlerIdentifier = WorkHandlerIdentifier
     | 'tool'
     | 'session'
     | 'sleep'
+    | 'stacks'
     | 'sync'
     | 'up'
     | 'upgrade'
@@ -386,6 +387,21 @@ const sources = [
         // Reset deletes stack data, so an agent applies one only where [autonomy] reset = "agent".
         ordinary: ordinary('reset', { requires: 'autonomy-reset' }),
         flags: { config: configFlag, interactive: bool(), apply: bool(Object.freeze({ ...flag, required: true as const })), json: jsonFlag },
+    },
+    {
+        name: 'stacks',
+        stage: 'run-the-stack',
+        summary: 'List every stack on this machine, or preview and remove those whose checkout is gone (stacks prune)',
+        usage: '[prune] [options]',
+        handler: 'stacks',
+        visibility: 'public',
+        // Listing and the prune preview change nothing. --apply removes only stacks whose checkout is
+        // gone; the command itself refuses one that deletes volumes unless [autonomy] reset allows it.
+        ordinary: ordinary('stacks', {
+            positional: Object.freeze({ min: 0, max: 1, roles: Object.freeze(['operation'] as const), operations: Object.freeze(['prune']) }),
+            ...personFlag,
+        }),
+        flags: { config: configFlag, apply: bool(flag), interactive: bool(), json: jsonFlag },
     },
     {
         name: 'doctor',

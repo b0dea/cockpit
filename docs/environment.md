@@ -375,6 +375,57 @@ identity, control socket or stop confirmation did not match; cockpit then keeps 
 refuses any overlapping cleanup. Do not remove its state or runtime resources by hand: that
 destroys the records cockpit needs to repair it safely.
 
+### List and prune stacks across the machine
+
+Each checkout gets its own stack, port lease and state, so deleting a worktree leaves its containers,
+network, volumes and lease behind with no checkout left to run `down` from. `stacks` lists every
+stack this machine knows about, whichever cockpit and checkout started it, and changes nothing:
+
+```sh
+npx --no cockpit stacks --config cockpit.toml --json
+```
+
+It reads cockpit's state root and the containers, networks and volumes on the local Docker daemon
+that carry cockpit's ownership labels, and attributes a resource to a stack only when all of them
+are present and well formed; nothing is attributed by its name. Each row gives the cockpit, the stack,
+its Compose project, its checkout, the state record and whether this version can read it, running
+and stopped containers, networks, volumes, the port lease it still holds, its last recorded
+activity, and a verdict with the reason.
+
+A stack's checkout is proven, never guessed. Compose labels each container with the directory it
+ran from, and the ancestor whose checkout identity derives the stack's own identity is its
+checkout; or the cockpit's main checkout is known and none of the checkouts Git records for it
+derives the stack. `checkout.source` says which. The checkout is `present`, `missing`, `replaced`
+(the path exists but is no longer a checkout of that cockpit) or `unknown`.
+
+A stack is `orphaned` only when its checkout is proven `missing`. Every other stack is kept: one
+whose checkout exists or cannot be found, one that a `down` or `reset` is still draining, the
+current checkout's own, and one whose state this cockpit version cannot read, because a newer
+version may still use it for a checkout that exists. A state folder this version cannot read is
+listed with the stacks; one in the colon spelling an earlier build used is orphaned once none of its
+stacks is kept, and one named as current versions name their state is kept for a version that reads
+it.
+
+`stacks prune` shows exactly what it would remove and a digest of it, and removes nothing:
+
+```sh
+npx --no cockpit stacks prune --config cockpit.toml
+npx --no cockpit stacks prune --config cockpit.toml --apply
+```
+
+`--apply` observes the machine again and removes only while the plan still has the previewed digest:
+each orphan's containers, then its networks and labelled volumes, then the state records that hold
+its port lease, then the orphaned state folders. State is removed only while every file still holds
+the bytes the preview read, under the lock `up` takes to lease ports. A step that fails stops the
+prune with `STACKS_PRUNE_INCOMPLETE`; what it had not removed stays listed, and running `--apply`
+again resumes. The result is reported only once a fresh inventory no longer lists what was removed.
+
+Removing an orphan is housekeeping, so `--apply` runs for an agent. A prune that deletes volumes
+deletes data, and follows the reset gate: it runs only where `[autonomy] reset` lets the caller
+reset, and otherwise a person runs `stacks prune --interactive` in a terminal and types the
+preview's digest. `doctor` warns with `STACKS_ORPHANED` when a stack of this cockpit has lost its
+checkout or a state record cannot be read, without asking Docker; `stacks` gives the full picture.
+
 ### Change a running stack
 
 A stack's identity, carried in its ownership labels and saved progress, is a digest of the Compose
@@ -406,12 +457,13 @@ content, not which file holds it.
 ## Choose the Docker daemon
 
 Every command uses the daemon Docker itself would select: a `DOCKER_HOST` when set, otherwise the
-context `DOCKER_CONTEXT` names, otherwise the active context `docker context show` reports. Three
+context `DOCKER_CONTEXT` names, otherwise the active context `docker context show` reports. Four
 commands fix that daemon once, before their first step, and address only it:
 
 | Command | Why it fixes the daemon |
 |---|---|
 | `down`, `reset` | they delete; reading the context per step could list one daemon and delete from another if `docker context use` ran mid-command |
+| `stacks` | `stacks prune` deletes, for the same reason |
 | `runtime measure` | the measurement must describe the daemon `up` will use, not one selected while the probe ran |
 
 None of them needs a prefix, so they run as printed:

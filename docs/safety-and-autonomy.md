@@ -220,7 +220,7 @@ cockpit commands in
 
 | Command | Decision | Why |
 | --- | --- | --- |
-| `npx --no cockpit check --config cockpit.toml`, and likewise `doctor`, `preflight`, `logs --service <service>` and `sync --dry-run` | allowed | They read and report; nothing they do changes a file the guard relies on. |
+| `npx --no cockpit check --config cockpit.toml`, and likewise `doctor`, `preflight`, `logs --service <service>`, `stacks`, `stacks prune` and `sync --dry-run` | allowed | They read and report; nothing they do changes a file the guard relies on. |
 | `npx --no -- cockpit --help`, `npx --no cockpit up --help`, and the version | allowed | They print and exit before any command runs. |
 | `npx --no cockpit up --config cockpit.toml`, and likewise `sleep` and `down` | allowed | They act only on the stack cockpit declared and owns; `down` keeps data volumes, and deletes only from the local Docker daemon it fixes at the start of the run. |
 | `npx --no cockpit runtime measure --config cockpit.toml --image <local-image>` | allowed | The probe runs a disposable stack under its own project, removes it, and records the result only in this machine's git-ignored state; `cockpit.toml` never changes. |
@@ -229,10 +229,11 @@ cockpit commands in
 | `npx --no cockpit work status --config cockpit.toml`, `work accept`, `work check`, `work note`, `work answer`, `work grade`, `work signoff`, `work recover` without `--apply`, `work verify` and `cockpit grade --criteria <file>`, each with its own options | allowed | They report, or take a step [`[work.gates]`](#who-decides) gives the agent; a step it gives a person waits for the digest typed after `--interactive`, which no agent invocation carries. Grading runs in a separate evaluator. |
 | `npx --no cockpit sync --config cockpit.toml`, and `upgrade`, whose sync child writes | allowed where `[autonomy] sync = "agent"`, otherwise a prompt | It regenerates the files the configuration already declares; the guard holds every call after `cockpit.toml` changes until a person syncs, so an agent's sync never publishes an edit of its own. |
 | `npx --no cockpit reset --config cockpit.toml --apply` | allowed where `[autonomy] reset = "agent"`, otherwise a prompt | It deletes stack data. |
+| `npx --no cockpit stacks prune --config cockpit.toml --apply` | allowed; the command itself refuses a prune that deletes volumes unless `[autonomy] reset = "agent"` | It removes only stacks whose checkout is gone, which bringing the stack up again recreates, and their data only where a reset could delete it. |
 | `npx --no cockpit browser drive --config cockpit.toml`, and likewise `screenshot`, with an optional `--role` | allowed where `browser.request_preapproval` is set, otherwise a prompt | They sign in and capture the declared application, so they run unprompted only on the isolated, non-production data the configuration must declare before it can set preapproval. |
 | `work accept`, `work answer` and `work signoff` with `--interactive` | a prompt, which Codex and OpenCode turn into a denial | `--interactive` asks for a person at a terminal to type the digest of what it shows. |
 | `work recover --apply` | a prompt, which Codex and OpenCode turn into a denial | It deletes a lock once a process probe calls its holder dead, and that probe sees only this machine's processes: a holder in a container or on another host that shares the checkout looks dead to it. |
-| `sync --adopt`, `sync --interactive`, `reset --interactive`, `sibling add` and every other command | a prompt, which Codex and OpenCode turn into a denial | They rewrite `cockpit.toml` or a team's own settings, ask for a person, or delete data. |
+| `sync --adopt`, `sync --interactive`, `reset --interactive`, `stacks prune --interactive`, `sibling add` and every other command | a prompt, which Codex and OpenCode turn into a denial | They rewrite `cockpit.toml` or a team's own settings, ask for a person, or delete data. |
 
 A file such a command names, like `--criteria`, is checked as a read:
 the command may quote it in a refusal. A declared instance, a file below `.secrets` or a `.env` or
@@ -339,7 +340,7 @@ templates too, which `cat` in a shell still reads.
 | --- | --- | --- |
 | `sync` | whether the guard lets an agent run a writing `sync`; under `ci` a writing sync runs only where `CI` is set | `agent` |
 | `stale_delete` | whether `sync` removes a file it generated before and no longer generates without a person typing the stale-removal digest | `agent` |
-| `reset` | whether `reset --apply` deletes stack data without a person; otherwise a person approves the preview with `--interactive` | `person` |
+| `reset` | whether `reset --apply`, and a `stacks prune --apply` that deletes volumes, delete stack data without a person; otherwise a person approves the preview with `--interactive` | `person` |
 | `mcp_approve` | `person`: sync enables only the MCP servers whose digest a person recorded in `[mcp.approved]`, and `MCP_NOT_APPROVED` names the rest; `agent`: sync enables every declared server as declared now, which lets an agent start processes outside the guard, because a sibling's MCP source is a file the agent can write and each harness starts an enabled server outside every guard boundary | `person` |
 
 <!-- cockpit:ref path=packages/cockpit/src/guards/policy-pin.ts --> The guard pins the policy: an agent's edit, write or patch that would change `[work]`,

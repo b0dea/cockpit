@@ -327,7 +327,7 @@ describe('printed cockpit commands', () => {
         let reached = false
         const stop = () => { reached = true; throw new Error('stopped before work') }
         const stubs = Object.fromEntries([...new Set(cliCommands.map(command => command.handler)),
-            'beginOperatorWorkApplication', 'beginOperatorReset', 'loadPolicy', 'scaffoldCompose'].map(name => [name, stop])) as CliHandlerOverrides
+            'beginOperatorWorkApplication', 'beginOperatorReset', 'beginStacksPrune', 'loadPolicy', 'scaffoldCompose'].map(name => [name, stop])) as CliHandlerOverrides
         // Relative paths in a printed command resolve against the reader's cockpit root.
         const cwd = process.cwd()
         process.chdir(root)

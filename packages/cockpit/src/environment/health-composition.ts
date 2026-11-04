@@ -23,6 +23,7 @@ import {
 } from './contract.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
 import { resolveDockerExecutable, resolveGitExecutable } from './executable.js'
+import { inspectMachineStacksForDoctor, type OwnCheckout } from './stack-inventory.js'
 import { createGitObservationStep, observeGit, observeRunningCheckout } from './git-observation.js'
 import { inspectProjectReadiness } from './readiness-composition.js'
 import { stackId } from './identity.js'
@@ -449,6 +450,7 @@ export function createHealthCommandAdapters(
 ): HealthCommandAdapterComposition {
     const input = captureInput(rawInput)
     let selectedNamespace: StateNamespace | undefined
+    let selectedOwn: (OwnCheckout & Readonly<{ configPath: string }>) | undefined
     const load: HealthCommandAdapterComposition['load'] = async (command, issue, refuse, purpose) => {
         const requestedPath = commandConfigPath(command)
         if (!input || typeof execute !== 'function' || typeof issue !== 'function'
@@ -486,6 +488,8 @@ export function createHealthCommandAdapters(
             checkoutId: checkout.checkoutId,
             variant: { kind: 'shared' },
         })
+        selectedOwn = { cockpitId: checkout.cockpitId, stackId: currentStack, mainCheckoutPath: checkout.mainCheckoutPath,
+            configPath: loaded.result.source.path }
         let stopped: EnvironmentDiagnostic | null = notDeclared ?? null
         const refreshPreflight = async (previous?: PreflightContext): Promise<PreflightContext | undefined> => {
             const observedAt = new Date().toISOString()
@@ -641,7 +645,9 @@ export function createHealthCommandAdapters(
         const inventory = await readRootPortInventory(selectedNamespace)
         return inventory.kind === 'complete' ? { kind: 'complete', skipped: inventory.skipped } : inventory
     }
+    const inspectStacks: NonNullable<HealthCommandAdapterComposition['inspectStacks']> = async () =>
+        selectedNamespace && selectedOwn ? inspectMachineStacksForDoctor({ namespace: selectedNamespace, own: selectedOwn, configPath: selectedOwn.configPath }) : []
     return { load, inspectSurfaceOverrides, ...(inspectHookTrust ? { inspectHookTrust } : {}),
-        ...(inspectEvaluator ? { inspectEvaluator } : {}), ...(inspectReadiness ? { inspectReadiness } : {}), readUnreadableState,
+        ...(inspectEvaluator ? { inspectEvaluator } : {}), ...(inspectReadiness ? { inspectReadiness } : {}), readUnreadableState, inspectStacks,
         execute: (step: ExecutionStep) => execute(step) }
 }

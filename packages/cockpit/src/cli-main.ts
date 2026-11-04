@@ -109,7 +109,8 @@ import {
     type SurfaceSelftestExecutableCandidate,
     type SurfaceSelftestProbeSpecificationsCandidate,
 } from './environment/selftest-application.js'
-import { loadOperatorPolicy, runResetOperatorApplication } from './environment/operator-application.js'
+import { loadOperatorPolicy, runResetOperatorApplication, runStacksPruneOperatorApplication, type StacksPruneOperatorSession } from './environment/operator-application.js'
+import { beginStacksPrune, runStacksInventory } from './environment/stack-inventory.js'
 
 import type { WorkApplicationOutcome, WorkApplicationRequest } from './work-orders/application.js'
 
@@ -126,6 +127,7 @@ export interface CliIo {
         candidate: SurfaceSelftestProbeSpecificationsCandidate,
     ) => Promise<string | undefined>
     confirmStaleRemoval?: (request: GeneratedStaleRemovalApprovalRequest) => Promise<string | undefined>
+    confirmStacksPrune?: (preview: CommandOutcome) => Promise<string | undefined>
 }
 
 export interface CliRuntime {
@@ -177,6 +179,7 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
     }> | SurfaceSelftestDraftInput
     session: Readonly<{ configPath: string; argv: readonly [string, ...string[]]; sessionId: string }>
     sleep: SleepCommandInput
+    stacks: Readonly<{ configPath: string; operation: 'list' | 'prune' }>
     sync: GeneratedEnvironmentCommandInput & Readonly<{
         dryRun?: boolean
         adopt?: readonly string[]
@@ -204,6 +207,7 @@ interface OperatorWorkBinding { readonly digest: string; readonly prompt: string
 export type CliHandlerOverrides = Partial<CommandHandlers> & Readonly<{
     beginOperatorWorkApplication?: (input: WorkCommandInput) => Promise<OperatorWorkBinding | CommandOutcome>
     beginOperatorReset?: (input: ResetCommandInput) => Promise<OperatorResetBinding | CommandOutcome>
+    beginStacksPrune?: (input: Readonly<{ configPath: string }>) => Promise<StacksPruneOperatorSession | CommandOutcome>
     // The autonomy policy sync and reset decide by, read from cockpit.toml and the recorded policy.
     loadPolicy?: typeof loadOperatorPolicy
     scaffoldCompose?: (input: ComposeScaffoldRequest) => Promise<CommandOutcome>
@@ -218,7 +222,7 @@ export interface ComposeScaffoldRequest {
     readonly with: readonly ScaffoldBackingService[]
 }
 
-type OperatorHandlers = Pick<CliHandlerOverrides, 'beginOperatorReset' | 'beginOperatorWorkApplication' | 'loadPolicy'>
+type OperatorHandlers = Pick<CliHandlerOverrides, 'beginOperatorReset' | 'beginOperatorWorkApplication' | 'beginStacksPrune' | 'loadPolicy'>
 
 type HandlerRequest = {
     [Identifier in HandlerIdentifier]: {
@@ -716,6 +720,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             })
         },
         runtime: (input) => runRuntimeMeasure({ ...input, env }, { execute: executeProbe, probe: probeInstalledRuntime }),
+        stacks: (input) => runStacksInventory({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
         sibling: (request) => request.operation === 'add'
             ? runSiblingAdd({ ...request.input, env }, { execute: executeProbe })
             : runSiblingRemove({ ...request.input, env }),
@@ -1191,6 +1196,20 @@ async function decodeRequest(
         return { handler, input: { configPath: values.config, image: values.image } }
     }
 
+    if (handler === 'stacks') {
+        const values = parsed.values as { config?: string; apply?: boolean; interactive?: boolean }
+        const [operation, ...extra] = parsed.positionals
+        if (operation !== undefined && operation !== 'prune' || extra.length > 0) {
+            return usageOutcome('CLI_USAGE_INVALID', 'stacks takes no operation, or prune: npx --no cockpit stacks --config <your cockpit.toml>, or npx --no cockpit stacks prune --config <your cockpit.toml> [--apply | --interactive]')
+        }
+        if (operation === undefined && (values.apply || values.interactive)) {
+            return usageOutcome('CLI_USAGE_INVALID', '--apply and --interactive belong to stacks prune; stacks alone only lists', values.apply ? '--apply' : '--interactive')
+        }
+        if (values.apply && values.interactive) return usageOutcome('CLI_USAGE_INVALID', 'choose --apply or --interactive, not both', '--apply')
+        if (!values.config) return missingConfig()
+        return { handler, input: { configPath: values.config, operation: operation === 'prune' ? 'prune' : 'list' } }
+    }
+
     if (handler === 'sibling') {
         const values = parsed.values as { config?: string; create?: boolean; from?: string; remote?: string; dir?: string; var?: string; purpose?: string; mount?: string; 'instruction-pointer'?: boolean }
         const [operation, slug, ...extra] = parsed.positionals
@@ -1364,6 +1383,23 @@ async function dispatchHandler(
     if (request.handler === 'doctor') return handlers.doctor?.(request.input) ?? unavailable()
     if (request.handler === 'logs') return handlers.logs?.(request.input) ?? unavailable()
     if (request.handler === 'runtime') return handlers.runtime?.(request.input) ?? unavailable()
+    if (request.handler === 'stacks') {
+        if (request.input.operation === 'list') return handlers.stacks?.(request.input) ?? unavailable()
+        return runStacksPruneOperatorApplication({ configPath: request.input.configPath }, {
+            ...options,
+            terminal: io.confirmStacksPrune !== undefined || io.stdin?.isTTY === true,
+        }, {
+            policy: operators.loadPolicy ?? loadOperatorPolicy,
+            begin: operators.beginStacksPrune ?? (async () => unavailable()),
+            confirm: async (preview) => {
+                if (io.confirmStacksPrune) return io.confirmStacksPrune(preview)
+                if (!io.stdin) return undefined
+                io.stderr.write(renderHumanValue(preview.result))
+                const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
+                try { return (await prompt.question('Type the exact prune digest to remove these stacks: ')).trim() } finally { prompt.close() }
+            },
+        })
+    }
     if (request.handler === 'sibling') return handlers.sibling?.(request.input) ?? unavailable()
     if (request.handler === 'tool') return handlers.tool?.(request.input) ?? unavailable()
     return unavailable()
@@ -1395,6 +1431,7 @@ function defaultOperatorHandlers(runtime: CliRuntime): OperatorHandlers {
             return { digest: outcome.continuation.digest, prompt: outcome.continuation.prompt,
                 decide: async answer => workCommandOutcome(await outcome.continuation.decide(answer), runtime.env ?? process.env) }
         },
+        beginStacksPrune: (input) => beginStacksPrune({ configPath: resolve(input.configPath), env: runtime.env ?? process.env }, { execute: executeProbe }),
         beginOperatorReset: async (input) => {
             if (sessionId === null) return operatorRefusal('COCKPIT_SESSION_ID must be a canonical UUID')
             const configPath = resolve(input.configPath)

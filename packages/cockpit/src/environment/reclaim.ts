@@ -710,7 +710,7 @@ function boundedExecutor(execute: Executor, concurrency: number): Executor {
 }
 
 async function selectDocker(
-    input: ReclaimDiscoveryInput,
+    input: Pick<ReclaimDiscoveryInput, 'context' | 'host' | 'cwd' | 'timeoutMs'>,
     executable: ResolvedExecutable,
     env: Readonly<Record<string, string>>,
     execute: Executor,
@@ -960,6 +960,136 @@ export async function discoverReclaim(input: ReclaimDiscoveryInput, execute: Exe
         || !validExecutionInput(executable, input.cwd, input.env, input.timeoutMs)) return undefined
     return await discoverReclaimRound(input, executable, env, execute)
         ?? await discoverReclaimRound(input, executable, env, execute)
+}
+
+/** One container, network or volume that carries every cockpit ownership label, attributed by them alone. */
+export interface MachineStackResource {
+    readonly kind: 'container' | 'network' | 'volume'
+    readonly id: string
+    readonly name: string
+    readonly cockpitId: CockpitId
+    readonly stackId: StackId
+    /** Containers only: Docker reports it running, restarting or paused. */
+    readonly running: boolean
+    readonly composeProject: string | null
+    /** Containers only: the directory Compose ran the project from, as Compose itself labelled it. */
+    readonly workingDir: string | null
+}
+
+export interface MachineStackDiscovery {
+    readonly selection: DockerSelection
+    readonly observedAt: string
+    readonly resources: readonly MachineStackResource[]
+    /** Resources carrying the stack label whose other ownership labels are missing or malformed: never attributed. */
+    readonly unattributed: number
+}
+
+export type MachineStackDiscoveryInput = Omit<ReclaimDiscoveryInput, 'stackId' | 'cockpitId'>
+
+const MACHINE_KINDS = ['container', 'network', 'volume'] as const
+const COMPOSE_WORKING_DIR = 'com.docker.compose.project.working_dir'
+const MACHINE_LABELS = [...Object.values(REQUIRED_LABELS), COMPOSE_LABELS.project, COMPOSE_WORKING_DIR] as const
+const RUNNING_STATES = new Set(['running', 'restarting', 'paused'])
+
+function machineListing(kind: typeof MACHINE_KINDS[number], selection: DockerSelection): readonly string[] {
+    const label = (key: string) => `"${key}":{{json (.Label "${key}")}}`
+    const id = kind === 'volume' ? '{{json .Name}}' : '{{json .ID}}'
+    const name = kind === 'container' ? '{{json .Names}}' : '{{json .Name}}'
+    const state = kind === 'container' ? '{{json .State}}' : '""'
+    const format = `{"id":${id},"name":${name},"state":${state},"labels":{${MACHINE_LABELS.map(label).join(',')}}}`
+    // The presence filter keeps the listing to cockpit's own resources on a shared daemon.
+    const filter = ['--filter', `label=${REQUIRED_LABELS.stack}`]
+    const command = kind === 'container' ? ['container', 'ls', '--all', '--no-trunc'] : kind === 'network' ? ['network', 'ls', '--no-trunc'] : ['volume', 'ls']
+    return ['--host', selection.endpoint, ...command, ...filter, '--format', format]
+}
+
+function machineRows(text: string, kind: typeof MACHINE_KINDS[number]): { resources: MachineStackResource[]; unattributed: number } | undefined {
+    const resources: MachineStackResource[] = []
+    let unattributed = 0
+    for (const line of text.split('\n')) {
+        if (line.length === 0) continue
+        // Unparseable docker output is unproven; the discovery fails closed.
+        const row = tryParseJson(line)
+        if (row === null || typeof row !== 'object' || Array.isArray(row) || !exactKeys(row, ['id', 'name', 'state', 'labels'])) return undefined
+        const { id, name, state, labels } = row as Record<string, unknown>
+        if (typeof id !== 'string' || !RESOURCE_ID.test(id) || typeof name !== 'string' || name.length === 0 || name.length > 512
+            || typeof state !== 'string' || state.length > 64
+            || labels === null || typeof labels !== 'object' || Array.isArray(labels) || !exactKeys(labels, MACHINE_LABELS)) return undefined
+        const values = labels as Record<string, unknown>
+        if (Object.values(values).some((value) => typeof value !== 'string' || value.length > 4_096 || value.includes('\0'))) return undefined
+        const stack = values[REQUIRED_LABELS.stack] as string
+        const owner = values[REQUIRED_LABELS.owner] as string
+        const config = values[REQUIRED_LABELS.config] as string
+        if (!STACK_ID.test(stack) || !COCKPIT_ID.test(owner) || !SHA256.test(config)) {
+            unattributed += 1
+            continue
+        }
+        const project = values[COMPOSE_LABELS.project] as string
+        const workingDir = values[COMPOSE_WORKING_DIR] as string
+        resources.push({
+            kind, id, name, cockpitId: owner as CockpitId, stackId: stack as StackId,
+            running: kind === 'container' && RUNNING_STATES.has(state),
+            composeProject: project === '' ? null : project,
+            workingDir: kind === 'container' && workingDir !== '' && isAbsolute(workingDir) ? normalize(workingDir) : null,
+        })
+    }
+    return { resources, unattributed }
+}
+
+/**
+ * Lists every container, network and volume on the selected daemon that carries cockpit's stack
+ * label, whichever cockpit or checkout started it, for the machine-wide stack inventory. Ownership
+ * comes from the labels alone; nothing is attributed by its name. The selection is read before and
+ * after the listings, as `discoverReclaim` does, so the listings describe one daemon.
+ */
+export async function discoverMachineStacks(input: MachineStackDiscoveryInput, execute: Executor): Promise<MachineStackDiscovery | undefined> {
+    const executable = resolvedDockerExecutable(input.executable)
+    const env = safeEnvironment(input.env)
+    if (executable === undefined || env === undefined || !DOCKER_SELECTOR.test(input.context)
+        || input.host !== undefined && (admitLocalDockerEndpoint(input.host) === undefined || input.context !== 'default')
+        || !validExecutionInput(executable, input.cwd, input.env, input.timeoutMs)) return undefined
+    const planned = await selectDocker(input, executable, env, execute)
+    if (planned === undefined) return undefined
+    const listed = await Promise.all(MACHINE_KINDS.map(async (kind) => {
+        const step = exactStep(`stacks:discover:${kind}`, [executable.canonicalPath, ...machineListing(kind, planned.value)],
+            executable, input.cwd, env, input.timeoutMs, [], {
+                resourceKind: kind, dockerContext: planned.value.context, dockerEndpoint: planned.value.endpoint,
+            }, [], OUTPUT_LIMIT)
+        const outcome = step === undefined ? undefined : cleanOutput(await execute(step))
+        const text = outcome === undefined ? undefined : utf8(outcome.stdout)
+        return text === undefined ? undefined : { rows: machineRows(text, kind), finishedAt: outcome!.receipt.finishedAt }
+    }))
+    if (listed.some((value) => value?.rows === undefined)) return undefined
+    const lists = listed as { rows: NonNullable<ReturnType<typeof machineRows>>; finishedAt: string }[]
+    const listedAt = lists.map(({ finishedAt }) => finishedAt).sort(lexical).at(-1)!
+    const confirmed = await selectDocker(input, executable, env, execute)
+    if (confirmed === undefined || !sameSelection(confirmed.value, planned.value)
+        || Date.parse(confirmed.startedAt) < Date.parse(listedAt)) return undefined
+    const resources = lists.flatMap(({ rows }) => rows.resources)
+    if (resources.length > MAX_RESOURCES) return undefined
+    return {
+        selection: planned.value, observedAt: listedAt,
+        resources: resources.sort((left, right) => lexical(`${left.kind}:${left.id}`, `${right.kind}:${right.id}`)),
+        unattributed: lists.reduce((sum, { rows }) => sum + rows.unattributed, 0),
+    }
+}
+
+/** The one Docker removal prune runs for a resource the machine discovery attributed to an orphaned stack. */
+export function machineStackRemovalStep(
+    input: Pick<MachineStackDiscoveryInput, 'executable' | 'cwd' | 'env' | 'timeoutMs'>,
+    selection: DockerSelection,
+    resource: MachineStackResource,
+): ExecutionStep | undefined {
+    const executable = resolvedDockerExecutable(input.executable)
+    const env = safeEnvironment(input.env)
+    if (executable === undefined || env === undefined || admitLocalDockerEndpoint(selection.endpoint) === undefined
+        || !RESOURCE_ID.test(resource.id) || !validExecutionInput(executable, input.cwd, input.env, input.timeoutMs)) return undefined
+    const command = resource.kind === 'container' ? ['container', 'rm', '--force', '--', resource.id]
+        : resource.kind === 'network' ? ['network', 'rm', '--', resource.id] : ['volume', 'rm', '--', resource.id]
+    return exactStep(`stacks:prune:${resource.kind}:${digestValue(resource.id).slice(0, 16)}`,
+        [executable.canonicalPath, '--host', selection.endpoint, ...command],
+        executable, input.cwd, env, input.timeoutMs, [],
+        { stackId: resource.stackId, cockpitId: resource.cockpitId, resourceKind: resource.kind, resourceId: resource.id })
 }
 
 export interface ResetTargetInput {
