@@ -4,7 +4,7 @@ import { parseDocument } from 'yaml'
 import { SURFACE_TARGETS, type SurfaceFeature, type SurfaceSourceFile, type SurfaceTarget } from '../../surfaces/contract.js'
 import { harnessFact, isGuardSurfaceTarget } from '../../surfaces/harness-registry.js'
 import { RULESYNC_VERSION, type SurfaceGenerationOutcome } from '../../surfaces/generator-adapter.js'
-import { hasTargetMcpServers, type McpCollectionOutcome } from '../../surfaces/mcp.js'
+import { hasTargetMcpServers, type McpCollectionOutcome, type McpHarnessServer } from '../../surfaces/mcp.js'
 import { codexWritableRoot, shippedInstructionCapabilities } from '../../surfaces/projection.js'
 import { surfaceModelSha256, type NativeFragmentSet } from '../../surfaces/render.js'
 import { GUARD_LOCAL_PATHS } from '../../guards/local-identity.js'
@@ -259,15 +259,25 @@ export function nativeSources(
     instances: readonly { slug: string; path: string }[],
 ): readonly SurfaceSourceFile[] {
     const sources: SurfaceSourceFile[] = []
-    if (mcp.result.servers.length > 0) {
-        const transports = mcp.result.harnesses.flatMap(row => row.servers)
-        const servers = Object.fromEntries(mcp.result.servers.map(model => transports.find(server => server.name === model.name)!).map(server => [server.name, {
-            type: 'stdio', command: server.command, args: server.args, disabled: !server.enabled,
-        }]))
+    const transports = mcp.result.harnesses.flatMap(row => row.servers)
+    // A remote server no listed tool can carry is left out of the source entirely.
+    const written = mcp.result.servers.flatMap(model => transports.filter(server => server.name === model.name).slice(0, 1))
+    if (written.length > 0) {
+        const native = (server: McpHarnessServer, helperKey: 'headersHelper' | 'http_headers_helper') => 'url' in server
+            ? { type: 'http', url: server.url, ...(Object.keys(server.headers).length > 0 ? { headers: server.headers } : {}),
+                ...(server.headersHelper === null ? {} : { [helperKey]: server.headersHelper }), disabled: !server.enabled }
+            : { type: 'stdio', command: server.command, args: server.args, disabled: !server.enabled }
+        const servers = Object.fromEntries(written.map(server => [server.name, native(server, 'headersHelper')]))
         const targets = Object.fromEntries(mcp.result.harnesses.flatMap(row => {
-            const removed = mcp.result.servers.filter(server => !row.servers.some(transport => transport.name === server.name))
-            return removed.length ? [[harnessFact(row.target).rulesyncTarget, {
-                mcpServers: Object.fromEntries(removed.map(server => [server.name, null])),
+            const removed = written.filter(server => !row.servers.some(transport => transport.name === server.name))
+                .map(server => [server.name, null] as const)
+            // Codex spells Claude Code's headersHelper http_headers_helper; Rulesync passes an unknown
+            // key through to config.toml unchanged.
+            const respelled = row.target === 'codexcli'
+                ? row.servers.filter(server => 'url' in server && server.headersHelper !== null).map(server => [server.name, native(server, 'http_headers_helper')] as const)
+                : []
+            return removed.length + respelled.length > 0 ? [[harnessFact(row.target).rulesyncTarget, {
+                mcpServers: Object.fromEntries([...removed, ...respelled]),
             }]] : []
         }))
         sources.push({ path: 'mcp.jsonc', bytes: `${JSON.stringify({ mcpServers: servers, ...targets }, null, 2)}\n` })

@@ -422,7 +422,10 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         mcpHarnesses.add(harness.target)
         if (harness.servers.length > 0) mcpTargets.add(harness.target)
     }
-    if (captured.mcp.result.servers.length > 0 && mcpTargets.size === 0) return refuse('SURFACE_INPUT_INVALID', 'MCP model has no matching native transport')
+    // A remote server may fit none of the listed tools, and says so; a local one fits every tool.
+    if (captured.mcp.result.servers.some(server => object(server) && server.transport !== 'http') && mcpTargets.size === 0) {
+        return refuse('SURFACE_INPUT_INVALID', 'MCP model has no matching native transport')
+    }
     const mcpModelDigest = surfaceModelSha256(captured.mcp.result)
     if (!mcpModelDigest) return refuse('SURFACE_BOUNDS', 'MCP model cannot be captured for native binding')
     const mcpNative = captured.mcp.result.servers.length === 0 && object(captured.nativeMcp)
@@ -510,8 +513,9 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     for (const fragment of [...mcpNative, ...grantNative]) native.set(fragment.path, [...native.get(fragment.path) ?? [], fragment])
     for (const wrapper of captured.mcp.result.wrappers) {
         if (!validFile(wrapper)) return refuse('SURFACE_INPUT_INVALID', 'MCP wrapper output is malformed')
+        // A local server's wrapper starts it; a remote server's wrapper runs its headers helper.
         const server = captured.mcp.result.servers.find(row => object(row) && typeof row.name === 'string'
-            && wrapper.path === `.cockpit/mcp/${sha256Hex(row.name)}.sh`)
+            && wrapper.path === `.cockpit/mcp/${sha256Hex(row.name)}${row.transport === 'http' ? '.headers' : ''}.sh`)
         const harnesses = object(server) ? captured.mcp.result.harnesses.filter(row => object(row)
             && Array.isArray(row.servers) && row.servers.some(transport => object(transport) && transport.name === server.name))
             .map(row => (row as JsonSnapshotObject).target as string) : []

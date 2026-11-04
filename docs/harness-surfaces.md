@@ -248,6 +248,52 @@ environment and pass `PATH`, the same non-secret variables product test stages r
 `USER`, `LOGNAME`, `TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`) and the declared environment
 names.
 
+### Remote servers
+
+A remote (streamable HTTP) server is declared in the same file, in Claude Code's spelling:
+
+```json
+{ "mcpServers": {
+  "tracker": { "type": "http", "url": "https://mcp.example.test/mcp",
+               "headers": { "Authorization": "Bearer ${TRACKER_TOKEN}" } },
+  "docs": { "type": "http", "url": "https://docs.example.test/mcp", "headersHelper": "bin/mcp-headers docs" }
+} }
+```
+
+The URL must use `https`, or `http` only to a loopback host, and may carry no user information,
+credential-named query parameter or `${...}` reference. Each header value is exactly `${NAME}`, or
+`Bearer ${NAME}` in `Authorization`; a literal is refused, so no credential enters a tracked file.
+`headersHelper` is a command and plain arguments, relative to the sibling, that prints a JSON object
+of headers when the tool connects; it runs without a shell, so quoting and expansion belong in the
+script. SSE servers are refused because Codex cannot connect to them. The approval digest covers the
+URL, the header references and the helper's command, arguments and directory, so changing any of
+them needs a new approval. Like a local server's command, the helper script's content is not in the
+digest.
+
+| Tool | Header references | Headers helper |
+| --- | --- | --- |
+| Claude Code | `headers` in `.mcp.json`, expanded from its environment | `headersHelper` |
+| Codex | `bearer_token_env_var` and `env_http_headers` in `.codex/config.toml` | `http_headers_helper` |
+| OpenCode | `{env:NAME}` in the `headers` of a `remote` server | none: the server is not written |
+| Cursor, Grok Build | not written | not written |
+
+A tool that cannot carry a server's credential gets nothing for that server, rather than a server
+that starts and fails to authenticate; `sync` and `check` report `MCP_TRANSPORT_UNAVAILABLE` with the
+tools it was left out of. The [capability matrix](capability-matrix.md) records the run behind each
+cell. Claude Code runs a `headersHelper` from the project `.mcp.json` only after a person trusts the
+workspace; until then it connects without those headers.
+
+A header reference resolves from the environment the agent tool was launched in, so a tool started
+from a desktop launcher may not see a variable set in a shell profile. A helper reads the credential
+when the tool connects instead, wherever it keeps it. The helper runs through a generated wrapper,
+`.cockpit/mcp/<id>.headers.sh`, started from the cockpit root like a local server's wrapper: it
+changes to the sibling and passes the same inherited variables, without the header names.
+
+`doctor` checks each approved server without starting it or using the network: a local server's
+command and a remote server's helper must resolve (`MCP_COMMAND_UNRESOLVED`), and every environment
+name it reads must be set where doctor runs (`MCP_ENVIRONMENT_UNSET`). It names variables, never
+values.
+
 Browser transport is published only for harnesses that can use it. A harness with no applicable
 MCP server receives no MCP-only output; its instructions, skills and permissions still publish.
 Verify the result with `./node_modules/.bin/cockpit check --config cockpit.toml --json` after

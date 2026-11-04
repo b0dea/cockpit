@@ -128,7 +128,7 @@ function replaceRegion(document: string, bytes: string): string {
 
 // --- Capability matrix ------------------------------------------------------------------------
 
-const CAPABILITY_COLUMNS = [['guard-firing', 'Guard firing'], ['instruction-loading', 'Instruction loading'], ['skill-parity', 'Skills'], ['session-start', 'Session-start check']] as const
+const CAPABILITY_COLUMNS = [['guard-firing', 'Guard firing'], ['instruction-loading', 'Instruction loading'], ['skill-parity', 'Skills'], ['session-start', 'Session-start check'], ['remote-mcp', 'Remote MCP servers']] as const
 interface CapabilityCell {
     readonly target: SurfaceTarget
     readonly capability: typeof CAPABILITY_COLUMNS[number][0]
@@ -199,6 +199,11 @@ async function capabilityCells(sources: ReferenceSources) {
         cells.push({ target, capability: 'session-start', state: start.state, evidence: start.evidence, provenance: start.provenance,
             measuredOn: start.state === 'unavailable' ? NEVER_PROBED : start.measuredOn, measuredVersion: start.measuredVersion, location: null })
     }
+    for (const target of SURFACE_TARGETS) {
+        const remote = harnessFact(target).remoteMcp
+        cells.push({ target, capability: 'remote-mcp', state: remote.state, evidence: remote.evidence, provenance: remote.provenance,
+            measuredOn: remote.state === 'unavailable' ? NEVER_PROBED : remote.measuredOn, measuredVersion: remote.measuredVersion, location: null })
+    }
     // The rendered skill digests stay out of the table but in the manifest, so editing a skill
     // still changes the page.
     const manifest = digest(JSON.stringify({ cells, renderedSkills: skills.files.map(file => [file.target, file.path, file.sha256]),
@@ -221,7 +226,7 @@ function renderCapabilityMatrix(cells: readonly CapabilityCell[], manifestSha256
         + SURFACE_TARGETS.map(target => `| ${cell(name(target))} (${code(target)}) | ${rendered(target)} | ${CAPABILITY_COLUMNS.map(([capability]) => cell(state(at(target, capability)))).join(' | ')} |\n`).join('')
     const entries = CAPABILITY_COLUMNS.flatMap(([capability, label]) => SURFACE_TARGETS.map(target => ({ label, row: at(target, capability) })))
     const measured = entries.filter(({ row }) => row.measuredOn !== NEVER_PROBED).map(({ label, row }) =>
-        `- ${cell(name(row.target))}, ${label.toLowerCase()} (${row.measuredOn}, version ${cell(row.measuredVersion ?? 'not recorded')}): ${cell(row.provenance)}.\n`)
+        `- ${cell(name(row.target))}, ${label[0]!.toLowerCase()}${label.slice(1)} (${row.measuredOn}, version ${cell(row.measuredVersion ?? 'not recorded')}): ${cell(row.provenance)}.\n`)
     // Cells nobody has run are grouped by their shared reason, so several harnesses with one gap read as one line.
     const pending = new Map<string, { label: string; provenance: string; targets: string[] }>()
     for (const { label, row } of entries.filter(({ row }) => row.measuredOn === NEVER_PROBED)) {
@@ -242,7 +247,7 @@ function renderCapabilityMatrix(cells: readonly CapabilityCell[], manifestSha256
         + `<!-- Source manifest: ${manifestSha256} -->\n\n`
         + 'This generated page is for users checking what cockpit actually enforces in each agent tool. ' + MATRIX_STATES
         + `Written says whether \`sync\` writes the tool's files for a cockpit.toml that lists no tools: the tools whose guard firing is measured are the default \`[surfaces] tools\`, and any other tool is written only once listed (\`npx --no cockpit tool add <tool> --config <your cockpit.toml>\`).\n\n`
-        + `Guard firing is the generated hook refusing a protected operation. Instruction loading is the tool reading the guidance cockpit writes for it, including the guides of sibling repositories. Skills are the tool loading the skills cockpit renders: ${listed(skills.map(code))}. The session-start check is the tool running \`cockpit check\` as a session starts and showing its drift report to the agent.\n\n`
+        + `Guard firing is the generated hook refusing a protected operation. Instruction loading is the tool reading the guidance cockpit writes for it, including the guides of sibling repositories. Skills are the tool loading the skills cockpit renders: ${listed(skills.map(code))}. The session-start check is the tool running \`cockpit check\` as a session starts and showing its drift report to the agent. Remote MCP servers are the tool connecting to an approved streamable HTTP server with the credential cockpit spells for it: an environment reference or a headers helper.\n\n`
         + grid
         + '\n## Measurements\n\nEach line gives the date and tool version of the run and what it showed.\n\n' + measured.join('')
         + '\n## Without a measurement\n\n' + unmeasured.join('')

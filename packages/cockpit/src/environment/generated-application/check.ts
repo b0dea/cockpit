@@ -75,6 +75,7 @@ export async function prepareGeneratedEnvironmentCurrentness(
             sourceRevision: installedPackageMetadata.cockpitSourceRevision },
         fixContext: { resolvedConfigPath: prepared?.configPath ?? null,
             generatedTargets: prepared ? [...prepared.owned, ...prepared.surfaces].map(row => row.path) : [] },
+        mcpServers: prepared?.mcpServers ?? [],
         ...(authority ? { repairAuthority: authority } : {}),
         ...('status' in publication ? { repairRefusal: publication }
             : 'refusal' in publication ? { repairRefusal: publication.refusal } : {}),

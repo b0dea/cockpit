@@ -45,6 +45,16 @@ const codexSessionStart = Object.freeze({
     provenance: 'only after a person trusts the hook, as for the guard: a trusted SessionStart hook in .codex/hooks.json ran under codex exec and the agent quoted its stdout back, while a hook under a misspelled event name never ran',
 })
 const noSessionStart = (reason: string) => ({ state: 'unavailable' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-03', measuredVersion: null, provenance: reason })
+// What each tool's native MCP file can say for a remote (streamable HTTP) server. A header must come
+// from an environment reference or a headers helper, never a literal; a tool that cannot express a
+// server's credential gets nothing for that server, because a server written without it would start,
+// fail to authenticate and read as configured. Each run connected the tool to a loopback server that
+// recorded the request headers, beside a control spelled the way the tool does not read.
+const remoteMcpMeasured = (fact: { evidence: 'not_applicable' | 'human_needed'; measuredVersion: string; helper: boolean; provenance: string }) =>
+    Object.freeze({ state: 'instructed' as const, headers: true, measuredOn: '2026-11-04', ...fact })
+const noRemoteMcp = Object.freeze({ state: 'unavailable' as const, evidence: 'not_applicable' as const, headers: false, helper: false,
+    measuredOn: '2026-11-04', measuredVersion: null,
+    provenance: 'cockpit writes no remote MCP server for this tool: its remote transport and header spelling have not been checked' })
 const completeRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const)
 const nonPermissionRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks'] as const)
 
@@ -54,12 +64,16 @@ export const HARNESS_REGISTRY = Object.freeze([
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'CLAUDE.md', skills: '.claude/skills', mcp: '.mcp.json', permissions: Object.freeze(['.claude/settings.json']) }),
         guard: Object.freeze({ capability: 'instructed' as const, firing: claudeFiring }), native: reviewedNative, sessionStart: claudeSessionStart,
+        remoteMcp: remoteMcpMeasured({ evidence: 'human_needed', measuredVersion: '2.1.318', helper: true,
+            provenance: 'from a project .mcp.json, Claude Code sent the Authorization header a ${NAME} reference named while a $NAME control went out literally; it ran a headersHelper given with --mcp-config, but refused to run one from the project file until a person trusts the workspace, and a misspelled headerHelper sent nothing' }),
     }),
     Object.freeze({
         target: 'codexcli', type: 'agent' as const, displayName: 'Codex', rulesyncTarget: 'codexcli',
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.agents/skills', mcp: '.codex/config.toml', permissions: Object.freeze(['.codex/config.toml']) }),
         guard: Object.freeze({ capability: 'instructed' as const, firing: codexFiring }), native: reviewedNative, sessionStart: codexSessionStart,
+        remoteMcp: remoteMcpMeasured({ evidence: 'not_applicable', measuredVersion: '0.166.0', helper: true,
+            provenance: 'from a project .codex/config.toml in a directory Codex had not been told to trust, codex exec sent the bearer_token_env_var and env_http_headers values and the http_headers_helper output, named a misspelled http_header_helper as ignored, and sent a ${NAME} written in http_headers literally' }),
     }),
     Object.freeze({
         target: 'opencode', type: 'agent' as const, displayName: 'OpenCode', rulesyncTarget: 'opencodev1',
@@ -69,6 +83,8 @@ export const HARNESS_REGISTRY = Object.freeze([
         // OpenCode 1.19.5 delivered session.created to a project plugin beside a misspelled hook that
         // never ran, but its model call failed, so no plugin hook was shown to put text in the agent's context.
         sessionStart: noSessionStart('OpenCode 1.19.5 delivers session.created to a plugin, but no run has shown a plugin putting text in the agent\'s context, so cockpit generates no session-start check'),
+        remoteMcp: remoteMcpMeasured({ evidence: 'not_applicable', measuredVersion: '1.19.5', helper: false,
+            provenance: 'opencode mcp list sent headers expanded from {env:NAME} in a project opencode.jsonc while a ${NAME} control went out literally; its remote server schema has no headers helper, so a server that declares one is not written for it' }),
     }),
     Object.freeze({
         target: 'cursor', type: 'agent' as const, displayName: 'Cursor', rulesyncTarget: 'cursor',
@@ -76,12 +92,14 @@ export const HARNESS_REGISTRY = Object.freeze([
         // Rules overlays only: cockpit's own instructions reach Cursor through the root AGENTS.md.
         outputs: Object.freeze({ instruction: '.cursor/rules', skills: '.cursor/skills', mcp: '.cursor/mcp.json', permissions: Object.freeze(['.cursor/cli.json']) }),
         guard: noGuardAdapter, native: generatedNative, sessionStart: noSessionStart('cockpit generates no hook for this tool'),
+        remoteMcp: noRemoteMcp,
     }),
     Object.freeze({
         target: 'grokcli', type: 'agent' as const, displayName: 'Grok Build', rulesyncTarget: 'grokcli',
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.grok/skills', mcp: '.grok/config.toml', permissions: Object.freeze(['.grok/config.toml']) }),
         guard: noGuardAdapter, native: generatedNative, sessionStart: noSessionStart('cockpit generates no hook for this tool'),
+        remoteMcp: noRemoteMcp,
     }),
 ] as const)
 

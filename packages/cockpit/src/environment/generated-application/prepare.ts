@@ -287,6 +287,8 @@ export async function prepare(input: unknown, adapters: GeneratedEnvironmentComm
         surfaceAssets: [],
         warnings: [],
         unapprovedMcpServers: [],
+        mcpTransportGaps: [],
+        mcpServers: [],
         registry: derived.result,
         siblingRoots,
         workEnvironment,

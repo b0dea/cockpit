@@ -15,7 +15,7 @@ import type { SurfaceFeature, SurfaceSourceFile, SurfaceTarget } from '../../sur
 import type { SurfaceGenerationWarning } from '../../surfaces/generator-adapter.js'
 import type { ActiveSurfaceOverride, SurfaceUpgradeFinding } from '../../surfaces/merge.js'
 import { CORE_EVALUATOR_ASSET as EVALUATOR_ASSET, CORE_SKILL_ASSETS as SKILL_ASSETS } from '../../surfaces/core-declarations.js'
-import type { McpDeclaration, McpDiagnostic } from '../../surfaces/mcp.js'
+import type { McpDiagnostic, McpServer, McpStdioDeclaration } from '../../surfaces/mcp.js'
 import {
     encodeOwnershipManifest,
     projectGeneratedPathFacts,
@@ -169,6 +169,10 @@ export interface PreparedEnvironment {
     readonly warnings: readonly SurfaceGenerationWarning[]
     // Declared MCP servers left out of `[mcp].approved`: rendered disabled, and said so on every sync and check.
     readonly unapprovedMcpServers: readonly Readonly<{ name: string; sources: readonly string[]; sha256: string }>[]
+    // Declared remote servers a listed tool cannot carry the credential of: left out of that tool's file.
+    readonly mcpTransportGaps: readonly Readonly<{ name: string; targets: readonly string[]; reason: string }>[]
+    // Every declared MCP server as rendered, so doctor can check what each one needs to start.
+    readonly mcpServers: readonly McpServer[]
     readonly registry: DerivedRegistry
     readonly siblingRoots: AuthenticatedSiblingRoots
     readonly workEnvironment: ConsumedWorkEnvironmentConfig
@@ -376,7 +380,7 @@ export interface ConsumedWorkApplicationAuthorities {
     readonly browser?: Readonly<{
         readonly runtime: BrowserRuntimeProjection
         readonly namespace: StateNamespace
-        readonly mcp: McpDeclaration
+        readonly mcp: McpStdioDeclaration
         readonly skillTemplate: Readonly<{
             readonly path: string
             readonly bytes: string
@@ -640,8 +644,13 @@ export function complete(
                 })),
             ...prepared.unapprovedMcpServers.map(server => ({
                 severity: 'warning' as const, code: 'MCP_NOT_APPROVED' as const satisfies McpDiagnostic['code'], target: server.name,
-                message: `MCP server ${server.name}, declared in ${server.sources.join(', ')}, has no approval in [mcp.approved] for its current command, arguments, working directory and environment names (sha256 ${server.sha256}), so every harness keeps it disabled`,
+                message: `MCP server ${server.name}, declared in ${server.sources.join(', ')}, has no approval in [mcp.approved] for its current declaration (command, arguments, working directory and environment names for a local server; URL, header references and headers helper for a remote one) (sha256 ${server.sha256}), so every harness keeps it disabled`,
                 fix: 'a person reviews its declaration, sets its name to the sha256 in this message under [mcp.approved] in cockpit.toml and runs npx --no cockpit sync --config <your cockpit.toml>; while [autonomy] mcp_approve is person, the default, the guard refuses an agent\'s edit of [mcp]. To keep it off, nothing is needed',
+            })),
+            ...prepared.mcpTransportGaps.map(gap => ({
+                severity: 'warning' as const, code: 'MCP_TRANSPORT_UNAVAILABLE' as const satisfies McpDiagnostic['code'], target: gap.name,
+                message: `${gap.reason}, so sync writes nothing for it there and the server is unavailable in those tools`,
+                fix: 'nothing is needed if the server is not wanted in those tools; otherwise declare it with credentials the tool can carry (an environment reference in headers rather than a headersHelper for OpenCode), or remove those tools from [surfaces] tools, then run npx --no cockpit sync --config <your cockpit.toml>',
             })),
             // Real sync and check refuse a changed original; a preview reports it so it can be reviewed.
             ...prepared.changedOverrideOriginals.map(finding => overrideChanged(finding, 'warning')),
@@ -717,4 +726,6 @@ export interface GeneratedEnvironmentCurrentness {
     readonly fixContext: FixContext
     readonly repairAuthority?: GeneratedEnvironmentRepairAuthority
     readonly repairRefusal?: RefusalOutcome
+    /** Every declared MCP server as rendered; empty when the environment could not be prepared. */
+    readonly mcpServers: readonly McpServer[]
 }
