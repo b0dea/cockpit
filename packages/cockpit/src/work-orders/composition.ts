@@ -683,8 +683,9 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
                     continue
                 }
                 const previous = readBounded(repository.root, path, MAX_DECISION_RECORD_BYTES).toString('utf8')
-                await writeContained(repository, path, 0, text, true)
+                // Queued before the write: an in-place write that fails after truncating has already changed the record.
                 undo.push(() => writeContained(repository, path, 0, previous, true))
+                await writeContained(repository, path, 0, text, true)
             }
             if (indexLine === undefined) return
             if (!config.docs?.decisionsIndex) throw new RefusalError('an index line was given but [docs] decisions_index is not declared')
@@ -692,7 +693,13 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             const current = readBounded(index.repository.root, index.path, MAX_DECISION_RECORD_BYTES).toString('utf8')
             await writeContained(index.repository, index.path, constants.O_APPEND, `${current === '' || current.endsWith('\n') ? '' : '\n'}${indexLine}\n`)
         } catch (error) {
-            for (const step of undo.reverse()) await step()
+            // Every step is tried, so one that fails does not leave the files after it changed.
+            const failed: string[] = []
+            for (const step of undo.reverse()) {
+                try { await step() } catch (undoError) { failed.push(errorCause(undoError)) }
+            }
+            if (failed.length) throw new RefusalError(`${errorCause(error)}; putting back the decision records also failed (${failed.join('; ')}); `
+                + 'compare the [docs] decisions directory with git diff and restore what changed with git restore')
             throw error
         }
     }
