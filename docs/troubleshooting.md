@@ -237,6 +237,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | --- | --- |
 | `AUTONOMY_CI_ONLY` | push the change and let the CI job run the command, or have a person change the field in cockpit.toml and accept the change at sync |
 | `AUTONOMY_PERSON_REQUIRED` | a person runs the same command with --interactive in a terminal outside CI, or a person changes the field in cockpit.toml and accepts the change at sync |
+| `BROWSER_ROUTE_FINDINGS` | this run asked for a clean route (--fail-on-findings). Read result.receipt.surfaces[].diagnostics, including excerpt.messages where present: fix the product for each console error, uncaught page error and failed request that matters, then rerun npx --no cockpit browser drive --config <your cockpit.toml> --route <name> --fail-on-findings; third-party traffic never counts |
 | `CLAIM_CO_TENANT` | [see above](#common-refusal-guidance) |
 | `COCKPIT_LAUNCHER_UNPROVEN` | run cockpit as ./node_modules/.bin/cockpit <command> --config <your cockpit.toml> from the cockpit root, or remove what stops npx from proving it: a .npmrc in the cockpit root, a bin or directories.bin in its package.json, or a node_modules/.bin/cockpit that npm install did not link to the installed package |
 | `COCKPIT_REVISION_UNSTAMPED` | install a released @b00dea/cockpit when the resolved data must name the exact cockpit source commit |
@@ -244,7 +245,14 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `COMPOSE_FILE_UNREADABLE` | make environment.compose_files name a readable Compose file inside the cockpit root, then run npx --no cockpit check --config <your cockpit.toml> |
 | `CONFIG_ENCODING_INVALID` | save the configuration as UTF-8, then retry |
 | `DATA_SEED_UNAVAILABLE` | make sure the Docker daemon this stack runs on answers docker volume ls, then rerun npx --no cockpit up --config <your cockpit.toml> |
+| `DECISION_INDEX_ENTRY_MISSING` | correct the link to the record's current file name, or remove the entry if the record was deleted on purpose |
+| `DECISION_LINK_UNRESOLVED` | correct the number or link to name an existing record, or restore the record it names |
+| `DECISION_NUMBER_REUSED` | renumber the later record to the next free number, then update the index and every supersedes line that cites it |
+| `DECISION_UNINDEXED` | add a line linking the record to the decision index |
 | `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `DOCS_NOT_DECLARED` | add a [docs] table to cockpit.toml: living = ["README.md", "docs/**/*.md"] lists the documents that must stay true, and the optional decisions = "docs/adr" and decisions_index = "docs/adr/README.md" name the decision records and their index; then rerun npx --no cockpit docs check --config <your cockpit.toml> |
+| `DOCS_REFERENCE_REMOVED` | cite the path that replaced it (a rename is named in the message), or rewrite or delete the sentence if what it described is gone; then rerun npx --no cockpit docs check --config <your cockpit.toml> |
+| `DOCS_TARGET_REMOVED` | cite the target or command that replaced it, or rewrite or delete the sentence if the step is gone; then rerun npx --no cockpit docs check --config <your cockpit.toml> |
 | `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` | declare one sibling for each repository the message says init observed, with that slug and dir, and no other; add any other repository after init with npx --no cockpit sibling add <slug> --config <your cockpit.toml> |
 | `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
 | `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files and run npx --no cockpit sync --config <your cockpit.toml> |
@@ -268,9 +276,11 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
 | `MCP_APPROVAL_UNKNOWN` | [see above](#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [see above](#mcp-and-restrictions) |
+| `MCP_COMMAND_UNRESOLVED` | install the command or correct it in the sibling's MCP declaration, then run npx --no cockpit sync --config <your cockpit.toml>; a changed declaration needs a person to approve its new sha256 under [mcp.approved] |
 | `MCP_DECLARATION_INVALID` | [see above](#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [see above](#mcp-and-restrictions) |
 | `MCP_NOT_APPROVED` | [see above](#mcp-and-restrictions) |
+| `MCP_TRANSPORT_UNAVAILABLE` | [see above](#mcp-and-restrictions) |
 | `OUTPUT_EXISTS` | choose a new path; replacement requires a future explicit option |
 | `PORT_FAMILY_COLLISION` | [see above](#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [see above](#common-refusal-guidance) |
@@ -324,6 +334,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SKILL_RENDER_INVENTORY_INVALID` | [see above](#sibling-projection-and-skills) |
 | `SKILL_STANDING_COST_EXCEEDED` | [see above](#sibling-projection-and-skills) |
 | `SKILL_TOOL_EQUIVALENCE_MISSING` | [see above](#sibling-projection-and-skills) |
+| `STACKS_ORPHANED` | [see above](#clear-cockpit-state) |
 | `STATE_FORMAT_UNSUPPORTED` | [see above](#clear-cockpit-state) |
 | `STATE_RECORD_MALFORMED` | [see above](#clear-cockpit-state) |
 | `SURFACE_ADOPTION_REFUSED` | [see above](#merge-ownership-and-generation) |
@@ -368,5 +379,5 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `UPGRADE_VERSION_INVALID` | give a full version such as 1.2.3, not a range or tag |
 | `WORK_CHECK_FAILED` | read result.results: fix the product for a check that failed, make one that did not run runnable from the cockpit root, then rerun npx --no cockpit work check --config <your cockpit.toml> --work-order <id> |
 | `WORK_PERSON_REQUIRED` | stop and ask a person to run the same command with --interactive in a terminal outside CI, read what it shows, and type the digest; never type it for them |
-| `WORK_VERIFY_FAILED` | for an order changed since acceptance, run npx --no cockpit work accept --config <your cockpit.toml> --work-order <id> or revert the change; for a done order without a passing grade, regrade it with work grade |
+| `WORK_VERIFY_FAILED` | for an order changed since acceptance, run npx --no cockpit work accept --config <your cockpit.toml> --work-order <id> or revert the change; for a done order without a passing grade, regrade it with work grade; for a decision record that is missing or no longer cites its order, restore it from git or put back its "Work order: <id>" line |
 <!-- cockpit:diagnostic-index:end -->

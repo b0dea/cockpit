@@ -54,6 +54,7 @@ The values cockpit uses for a key the configuration leaves out.
     "resettable_volumes": [],
     "generated_host_paths": [],
     "compose_files": [],
+    "profiles": [],
     "entrypoint_derivatives": [],
     "install_policies": []
   },
@@ -91,6 +92,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `testing` | Test stages and gates. | table: [`[testing]`](#testing) |  |  |
 | `environment` | How the stack is reached, signed in to, built and kept. | table: [`[environment]`](#environment) | `{}` |  |
 | `surfaces` | Instructions, skills and settings generated for agent tools. | table: [`[surfaces]`](#surfaces) | `{}` |  |
+| `docs` | Living documents and decision records: docs check keeps them true, and work orders record their decisions there. | table: [`[docs]`](#docs) |  |  |
 
 ### `[cockpit]`
 
@@ -118,6 +120,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `instruction_pointer` | Let setup add a pointer to the cockpit guide in this sibling, when the command line also approves it. | boolean | `false` |  |
 | `purpose` | What the sibling is for; printed when its checkout is missing. | string |  | required; at least 1 character |
 | `environment_files` | Template and instance environment file pairs the sibling needs. | array of table: [`[[sibling.environment_files]]`](#siblingenvironment_files) |  |  |
+| `rebuild_inputs` | Files or directories in the sibling, beyond its lockfiles, whose change leaves a running stack stale, such as a migrations directory. | array of string |  | at most 64 items; each item: pattern [P1](#patterns) |
 | `derives` | Facts about the sibling that cockpit derives rows or MCP servers from. | table: [`[sibling.derives]`](#siblingderives) |  |  |
 
 - Must match `{"oneOf":[{"properties":{"acquire":{"enum":["none"]}},"not":{"required":["remote"]}},{"properties":{"acquire":{"enum":["auto","manual"]}},"required":["remote"]}]}`.
@@ -209,9 +212,10 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
 | `accept` | Who accepts a draft work order: agent, person or ci. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
-| `amend` | Who accepts a changed contract. Default agent. Removing or rewriting an accepted criterion always needs a person or ci. | string |  | one of `"agent"`, `"person"`, `"ci"` |
+| `amend` | Who accepts a changed contract. Default agent. Removing an accepted criterion or gate always needs a person or ci; an agent's rewrite of a criterion, scope, non-goal or objective is judged at the next grade, and needs a person under checks grading. | string |  | one of `"agent"`, `"person"`, `"ci"` |
 | `answer` | Who answers an open question on an order. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
 | `signoff` | Who closes a graded order. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
+| `acknowledge` | Who acknowledges that an order weakened tests, which checks grading otherwise fails; under independent and self grading the acknowledgement is context for the verdict. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
 
 ### `[autonomy]`
 
@@ -238,7 +242,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `resolver` | Fixed host name to address mappings the browser uses. | array of table: [`[[browser.resolver]]`](#browserresolver) | `[]` | at most 64 items |
 | `authentication` | How browser sessions sign in to the application. | table: [`[browser.authentication]`](#browserauthentication) |  | required |
 | `data` | Statement about the data the browser touches; cockpit cannot observe it. | table: [`[browser.data]`](#browserdata) |  | required |
-| `request_preapproval` | Run browser tools without prompts; allowed only on isolated, non-production, non-restored data. | boolean | `false` |  |
+| `request_preapproval` | Run browser tools without prompts; allowed only on isolated, non-production, non-restored data. Defaults to true when data qualifies and false otherwise. | boolean |  |  |
 | `artifacts` | Generated host paths for browser output. | table: [`[browser.artifacts]`](#browserartifacts) |  | required |
 
 - Must match at least one of `[{"properties":{"request_preapproval":{"enum":[false]}}},{"properties":{"data":{"required":["mode","isolated","reaches_production"],"properties":{"mode":{"enum":["empty","seeded"]},"isolated":{"enum":[true]},"reaches_production":{"enum":[false]}}}}}]`.
@@ -324,6 +328,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
+| `test_files` | Paths and globs, relative to each checkout, that hold tests. Grading fails an order that deletes, skips or loosens what they match. Defaults to common layouts. | array of string |  | 1–64 items; each item: pattern `^(?!\/)(?!.*(?:^\|\/)\.\.(?:\/\|$))[A-Za-z0-9._@+\-/*?]+$`, 1–512 characters |
 | `stages` | Commands that make up the test gates. | array of table: [`[[testing.stages]]`](#testingstages) |  | required; 1–128 items |
 | `gates` | Named gates that run stages before handing back changes. | array of table: [`[[testing.gates]]`](#testinggates) |  | required; 1–128 items |
 | `native_hooks` | How the repository's own git hooks are handled. | table: [`[testing.native_hooks]`](#testingnative_hooks) | `{"install":"inspect"}` |  |
@@ -383,6 +388,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `resettable_volumes` | Compose volumes that reset may delete and recreate, named by their Compose key. | array of string | `[]` | unique items; each item: pattern `^[a-z0-9][a-z0-9_.-]*$` |
 | `generated_host_paths` | Host paths cockpit generates and owns, relative to the cockpit. | array of string | `[]` | unique items; each item: pattern [P1](#patterns) |
 | `compose_files` | Compose files, relative to the cockpit, that make up the stack; cockpit runs them as written. | array of string | `[]` | unique items; each item: pattern [P1](#patterns), pattern `^[^:]+$` |
+| `profiles` | Compose profiles every up and session activates; up --profile adds more for one run. | array of string | `[]` | at most 64 items; each item: pattern `^[a-z0-9][a-z0-9_.-]*$`, at most 64 characters |
 | `entrypoint_derivatives` | Addresses derived from leased ports, such as application origins and callback URLs. | array of table: [`[[environment.entrypoint_derivatives]]`](#environmententrypoint_derivatives) | `[]` |  |
 | `install_policies` | The build and test commands the guard admits for each toolchain and lockfile. | array of table: [`[[environment.install_policies]]`](#environmentinstall_policies) | `[]` |  |
 | `seed` | Command up runs once the stack is healthy, whenever a resettable volume was created since the last successful seed. | table: [`[environment.seed]`](#environmentseed) |  |  |
@@ -523,6 +529,14 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `adopted_on` | Date the file was adopted. | string |  | required; format `date`; pattern [P2](#patterns) |
 | `provenance` | Where the adoption came from; its kind must be declared. | table: [`provenance` shape](#provenance-shape) |  | required |
 
+### `[docs]`
+
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `living` | Globs of the Markdown documents that must stay true; docs check reports the paths and make targets they cite that the repository has since removed. | array of string | `[]` | at most 64 items; each item: pattern `^(?!(?:[a-z0-9][a-z0-9-]{0,63}:)?(?:.*\/)?\.\.(?:\/\|$))(?:[a-z0-9][a-z0-9-]{0,63}:)?(?![/])[A-Za-z0-9._@+\-/*?]+$`, at most 1024 characters |
+| `decisions` | Directory of decision records, such as docs/adr. Work orders record their lasting decisions there, and docs check reports duplicate numbers, missing statuses and broken supersedes links. | string |  | pattern [P7](#patterns); at most 1024 characters |
+| `decisions_index` | Index file that links every decision record; a record cockpit writes is appended to it, and docs check reports records it omits and links to records that do not exist. | string |  | pattern [P7](#patterns); at most 1024 characters |
+
 ## Shapes
 
 These tables recur in several places; each place links here instead of repeating the keys.
@@ -558,6 +572,7 @@ Long patterns that several keys share, cited by name in the tables.
 | P4 | `^[^\x00-\x1f\x7f-\x9f\uD800-\uDFFF]{1,128}(?![\s\S])` |
 | P5 | `^(?:0\|[1-9]\d*)\.(?:0\|[1-9]\d*)\.(?:0\|[1-9]\d*)(?:-(?:0\|[1-9]\d*\|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0\|[1-9]\d*\|\d*[A-Za-z-][0-9A-Za-z-]*))*)?$` |
 | P6 | `^(?!.*(?:^\|\/)(?:\.git\|internal\|node_modules)(?:\/\|$)).+$` |
+| P7 | `^(?!(?:[a-z0-9][a-z0-9-]{0,63}:)?(?:.*\/)?\.\.?(?:\/\|$))(?:[a-z0-9][a-z0-9-]{0,63}:)?(?![/])[A-Za-z0-9._@+\-/]*[A-Za-z0-9._@+-]$` |
 
 ## Checks beyond the schema
 
@@ -616,6 +631,6 @@ Agent tools load every skill's frontmatter into each session and its entry point
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 12 | `packages/cockpit/surfaces/skills/procedures/fix.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 9 | `packages/cockpit/surfaces/skills/procedures/work.md` |
 
-Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `0ef32e4d7d2304d5f9b150a59e90edbd825159386d89ee0ea19fe5142c06e366`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `dce839b290d2a584fc5592c895c20425414e9201a4c35c2460ff0539d545f2bb`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `a91365d5a79404d506e95a7d7a64fa50460dfc842265d1040402185767f527af`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `b3e6b8de3a249e73e65f84624c991416933086308073ff979f10632aae988791`).
+Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `d6c6351441f0b56dda7247ddd96196d055ec39d62aa42006c56a68074c8ef257`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `9cba241eb8d169eb43dc40bd44c29d576cf346785e576def9f065a0ea479445a`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `6af711bcfc20f1bfb8cf470118140b13d5ddb7dddcbd02ac9b96efc72e485c27`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `002f6f6c638e54f257e0a33eb2d875399412376800472a1ffac258ab9fc35417`).
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.

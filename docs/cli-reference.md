@@ -53,6 +53,41 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
+## cockpit use
+
+Serve a sibling from another of its checkouts, such as a worktree.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--clear` | boolean | `false` |
+| `--json` | boolean | `false` |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
+## cockpit pull
+
+Fast-forward the cockpit and its siblings to their upstreams.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--json` | boolean | `false` |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
 ## cockpit sibling
 
 Add or remove a repository in cockpit.toml (sibling add, sibling remove).
@@ -217,6 +252,7 @@ Reads `cockpit.toml` from `--config`.
 | --- | --- | --- |
 | `--config` | string | unset |
 | `--json` | boolean | `false` |
+| `--profile` | string | unset |
 
 | Exit | Meaning |
 | --- | --- |
@@ -250,6 +286,7 @@ Reads `cockpit.toml` from `--config`.
 | Flag | Type | Default |
 | --- | --- | --- |
 | `--config` | string | unset |
+| `--profile` | string | unset |
 
 | Exit | Meaning |
 | --- | --- |
@@ -271,6 +308,76 @@ Reads `cockpit.toml` from `--config`.
 | `--since` | string | `"15m"` |
 | `--follow` | boolean | `false` |
 | `--json` | boolean | `false` |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
+## cockpit ps
+
+Show the state and health of each service in this checkout's stack.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--json` | boolean | `false` |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
+## cockpit restart
+
+Restart one service of this checkout's stack and wait until it is healthy.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--json` | boolean | `false` |
+| `--service` | string | unset |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
+## cockpit rebuild
+
+Rebuild one service's image, replace its container and wait until it is healthy.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--json` | boolean | `false` |
+| `--service` | string | unset |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
+## cockpit exec
+
+Run a command inside one service's container of this checkout's stack.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--service` | string | unset |
 
 | Exit | Meaning |
 | --- | --- |
@@ -323,6 +430,25 @@ Reads `cockpit.toml` from `--config`.
 | `--config` | string | unset |
 | `--interactive` | boolean | `false` |
 | `--apply` | boolean | `false` |
+| `--json` | boolean | `false` |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
+## cockpit stacks
+
+List every stack on this machine, or preview and remove those whose checkout is gone (stacks prune).
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--apply` | boolean | `false` |
+| `--interactive` | boolean | `false` |
 | `--json` | boolean | `false` |
 
 | Exit | Meaning |
@@ -425,7 +551,7 @@ Reads `cockpit.toml` from `--config`.
 
 ## cockpit work note
 
-Record a note on an order, or with --ask an open question that blocks it.
+Record a note on an order, an open question with --ask, or a decision with --decision.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -436,6 +562,31 @@ Reads `cockpit.toml` from `--config`.
 | `--work-order` | string | unset |
 | `--text` | string | unset |
 | `--ask` | boolean | `false` |
+| `--decision` | boolean | `false` |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
+## cockpit work decide
+
+Resolve a recorded decision: write or cite its decision record, or say it is not lasting.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--json` | boolean | `false` |
+| `--work-order` | string | unset |
+| `--decision` | string | unset |
+| `--record` | boolean | `false` |
+| `--record-file` | string | unset |
+| `--supersedes` | string | unset |
+| `--none` | boolean | `false` |
+| `--reason` | string | unset |
 
 | Exit | Meaning |
 | --- | --- |
@@ -456,6 +607,26 @@ Reads `cockpit.toml` from `--config`.
 | `--work-order` | string | unset |
 | `--question` | string | unset |
 | `--text` | string | unset |
+| `--interactive` | boolean | `false` |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
+## cockpit work acknowledge
+
+Acknowledge that an order weakened tests, as [work.gates] allows.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--json` | boolean | `false` |
+| `--work-order` | string | unset |
+| `--note` | string | unset |
 | `--interactive` | boolean | `false` |
 
 | Exit | Meaning |
@@ -573,6 +744,8 @@ Reads `cockpit.toml` from `--config`.
 | `--config` | string | unset |
 | `--json` | boolean | `false` |
 | `--role` | string | unset |
+| `--route` | string | unset |
+| `--fail-on-findings` | boolean | `false` |
 
 | Exit | Meaning |
 | --- | --- |
@@ -591,6 +764,24 @@ Reads `cockpit.toml` from `--config`.
 | `--config` | string | unset |
 | `--json` | boolean | `false` |
 | `--role` | string | unset |
+| `--route` | string | unset |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
+## cockpit docs check
+
+Report removed paths and make targets living docs still cite, and broken decision records.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--json` | boolean | `false` |
 
 | Exit | Meaning |
 | --- | --- |

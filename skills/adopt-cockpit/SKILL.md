@@ -32,8 +32,9 @@ Follow these rules throughout:
    `previewSha256`, the answers file, or the defaults digest. Consent binds to those bytes.
 3. Take every value (port, image, command, health check, purpose, name) from a file you read or
    from the human. When neither has it, name the gap and ask.
-4. Show every inferred value with the file it came from, including what `init` proposes under
-   `provenance.kind = "inferred"`. It becomes an answer only on the human's word.
+4. Accept as read only a field `init` marks `confirmedBy = "agent"` (a `derived` proposal), by
+   marking it `"derived"`. Show every other proposal with the file it came from; it becomes an
+   answer only on the human's word.
 5. Ask the human for the database and live vendor API hosts of every non-local environment
    (production, staging, shared) for the `guards` answer; env templates give variable names only.
 6. "Use sensible defaults" covers `init` answers only, never writing inside a product repository:
@@ -137,11 +138,13 @@ started it, even where it lives outside this root.
 2. **Preview.** Run `./node_modules/.bin/cockpit init . --target <tool> --json`, adding
    `--registry` only when adopting an existing registry. The preview writes nothing. Read
    `result.stage`, `result.question` and `result.interview.outstanding`: every field the interview
-   will ask, each with its inferred values and the file each came from. Done when you hold
+   will ask, each with its `proposals` (each with `provenance.kind` `derived`, `measured` or
+   `inferred`, and the file it came from) and `confirmedBy`. Done when you hold
    `result.previewSha256` and the outstanding fields.
 3. **Explore, then ask in one small round.** Read the repositories for each outstanding field
-   before asking, ask only for what the files and CLI output cannot answer, and present each
-   inferred value with its source for confirmation. Always settle these with the person:
+   before asking, ask only for what the files and CLI output cannot answer. A field with
+   `confirmedBy = "agent"` is yours to accept as read (step 4); present every other proposal with
+   its source for confirmation. Always settle these with the person:
    - **The name.** `init` proposes the cockpit root's directory name for `cockpit.name`. It scopes
      the cockpit's Compose projects, state and generated files, so changing it after the first sync
      means following the *Rename a cockpit* section of
@@ -170,12 +173,15 @@ started it, even where it lives outside this root.
    "proceed without asking" covers interview answers only. Mark every answer you chose yourself in
    the file's `[provenance]` table, for example `"environment.machine" = "agent-default"`: init then
    writes the field under `unconfirmed` in `cockpit.toml` with a comment saying the setup agent
-   chose it, and `doctor` reports `DECLARATION_UNCONFIRMED` until a person confirms it. An unmarked
-   answer is recorded as the person's. Done when the file holds every answer and marks each one you
+   chose it, and `doctor` reports `DECLARATION_UNCONFIRMED` until a person confirms it. Mark a
+   field with `confirmedBy = "agent"` as `"derived"` instead, with no value needed: init answers it
+   with what it read, refuses one that differs (`DOCUMENT_CONFIGURATION_ANSWER_NOT_DERIVED`), and
+   records the file it came from. An unmarked answer is recorded as the person's. Done when the file holds every answer and marks each one you
    chose.
 5. **Accept.** Show the person the answers file and the preview digest, then rerun with
    `--accept-preview <previewSha256> --answers <file>`. The run stops at `configuration.defaults`:
-   once the person has read the draft in `result.question.document`, rerun adding
+   once the person has read the values the draft in `result.question.document` lists under
+   "A person confirms these" (the digest covers only those), rerun adding
    `--accept-defaults` with `result.question.expectedSha256`. Each digest binds consent to the bytes
    the person saw, so take it only from the latest pending run; any other is refused
    (`INIT_PREVIEW_NOT_ACCEPTED`, `INIT_DEFAULTS_NOT_ACCEPTED`). A different value for an answer
