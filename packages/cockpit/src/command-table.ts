@@ -117,6 +117,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     'reset-answer': 'Preview clearing one recorded init answer field',
     remote: 'Repository remote URL recorded for the sibling',
     role: 'Declared browser role',
+    route: 'Declared browser route to visit, by name or path; every declared route when omitted',
     'scaffold-compose': 'Write a starting compose.yml for the app in this directory, relative to the root, once; it refuses when a Compose file exists',
     select: 'Optional subset of the gate to run',
     service: 'Declared service whose logs are collected',
@@ -141,7 +142,7 @@ export function describePublicOption(name: string): string {
 }
 
 type OrdinaryValueRole = 'confined-path' | 'resolved-config' | 'declared-service' | 'declared-gate' | 'gate-mode' | 'gate-selector'
-    | 'identifier' | 'label' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target' | 'local-image' | 'evaluator-tool'
+    | 'identifier' | 'route' | 'label' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target' | 'local-image' | 'evaluator-tool'
 export interface OrdinaryOption {
     readonly kind: 'flag' | 'value'
     readonly role: 'boolean' | OrdinaryValueRole
@@ -165,6 +166,8 @@ export type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; re
 
 // Mirrors EvaluatorTool in schema.ts, which this data table may not import.
 const EVALUATOR_TOOLS: readonly string[] = ['codexcli', 'claudecode', 'opencode']
+// A declared route's name or its path; the command checks it against the declared routes.
+const ROUTE_SELECTOR = /^(?:[a-z0-9][a-z0-9_-]{0,63}|\/(?!\/)[^\s#\x00-\x1f\x7f]{0,511})$/
 const EXACT_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
 const flag: OrdinaryOption = Object.freeze({ kind: 'flag', role: 'boolean', repetition: 'singleton' })
 function value(role: OrdinaryValueRole, required = false): OrdinaryOption {
@@ -442,10 +445,10 @@ const sources = [
     // person wrote down as safe for that.
     { name: 'browser drive', handler: 'browser-drive', stage: 'test-and-grade', summary: 'Drive the declared application browser surfaces', visibility: 'public',
         ordinary: ordinary('browser-drive', browserAdmission),
-        flags: { ...configured, role: str(value('identifier')) } },
+        flags: { ...configured, role: str(value('identifier')), route: str(value('route')) } },
     { name: 'browser screenshot', handler: 'browser-screenshot', stage: 'test-and-grade', summary: 'Capture the declared application surfaces', visibility: 'public',
         ordinary: ordinary('browser-screenshot', browserAdmission),
-        flags: { ...configured, role: str(value('identifier')) } },
+        flags: { ...configured, role: str(value('identifier')), route: str(value('route')) } },
 ] as const satisfies readonly CommandSource[]
 
 export const commands: readonly CommandDefinition[] = sources.map(({ flags, ...command }): CommandDefinition => {
@@ -578,6 +581,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
             : option.role === 'gate-mode' ? ['canonical', 'full', 'staged'].includes(text)
             : option.role === 'gate-selector' ? GATE_SELECTOR.test(text)
             : option.role === 'identifier' ? WORK_ORDER_ID.test(text)
+            : option.role === 'route' ? ROUTE_SELECTOR.test(text)
             : option.role === 'label' ? true
             : option.role === 'field' ? isRecordedAnswerField(text)
             : option.role === 'tail' ? /^[1-9]\d{0,4}$/.test(text) && Number(text) <= 10_000

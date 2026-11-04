@@ -79,7 +79,7 @@ async function fixture(authentication: 'real' | 'bypassed' = 'bypassed', preappr
     const moduleBytes = localHostname ? `module.exports = { chromium: { launch: async options => {
   if (JSON.stringify(options.args) !== JSON.stringify(['--host-resolver-rules=MAP app.example.invalid 127.0.0.1'])) throw new Error('resolver rules missing')
   let handler; const frame = {}; const response = url => ({ url: () => url, status: () => 200, headers: () => ({}), ok: () => true })
-  const page = { route: async () => { throw new Error('page route bypasses context guard') }, mainFrame: () => frame, on: () => undefined,
+  const page = { route: async () => { throw new Error('page route bypasses context guard') }, mainFrame: () => frame, on: () => undefined, waitForLoadState: async () => undefined,
     goto: async url => { let fulfilled; await handler({ continue: async () => { fulfilled = response(url) }, abort: async () => {},
       fetch: async options => response(options.url), fulfill: async options => { fulfilled = options.response ?? response(url, options.status) } },
       { isNavigationRequest: () => true, frame: () => frame, url: () => url }); return fulfilled },

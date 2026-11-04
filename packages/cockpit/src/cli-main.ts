@@ -477,6 +477,9 @@ function unsatisfiedWorkDiagnostic(operation: WorkApplicationRequest['operation'
     if (operation === 'test-run') return { severity: 'error', message,
         code: 'TEST_GATE_UNSATISFIED' satisfies typeof ENVIRONMENT_CODES.TEST_GATE_UNSATISFIED,
         fix: 'the message gives the verdict and its reasons. FAIL: a check a stage ran failed, so fix the product. DEGRADED: start the stack with npx --no cockpit up --config <your cockpit.toml> for a stage that needs it, make a stage command that could not start runnable from the cockpit root, raise testing.stages[].timeout_seconds for a stage that timed out, or declare testing.stages[].select.<kind> for a --select a stage lacks. VOID: stop changing the checkouts and run the gate again. PARTIAL: only the complete gate can PASS, so run it without --select or --mode staged' }
+    if (operation === 'browser-drive') return { severity: 'error', message,
+        code: 'BROWSER_ROUTE_FINDINGS' satisfies typeof ENVIRONMENT_CODES.BROWSER_ROUTE_FINDINGS,
+        fix: 'read result.receipt.surfaces[].diagnostics: fix the product for each console error, uncaught page error and failed request on the route named, then rerun npx --no cockpit browser drive --config <your cockpit.toml> --route <name>; third-party traffic never counts' }
     if (operation === 'work-check') return { severity: 'error', message,
         code: 'WORK_CHECK_FAILED' satisfies typeof ENVIRONMENT_CODES.WORK_CHECK_FAILED,
         fix: 'read result.results: fix the product for a check that failed, make one that did not run runnable from the cockpit root, then rerun npx --no cockpit work check --config <your cockpit.toml> --work-order <id>' }
@@ -986,7 +989,9 @@ async function decodeRequest(
         } else {
             const role = text('role')
             if (values.role !== undefined && !role) return usageOutcome('CLI_USAGE_INVALID', '--role requires a bounded identifier')
-            request = { operation: handler as 'browser-drive' | 'browser-screenshot', ...(role ? { role } : {}) }
+            const route = text('route')
+            if (values.route !== undefined && !route) return usageOutcome('CLI_USAGE_INVALID', '--route requires a declared route name or path', '--route')
+            request = { operation: handler as 'browser-drive' | 'browser-screenshot', ...(role ? { role } : {}), ...(route ? { route } : {}) }
         }
         const { captureWorkApplicationRequest } = await import('./work-orders/application.js')
         const captured = captureWorkApplicationRequest(request)
