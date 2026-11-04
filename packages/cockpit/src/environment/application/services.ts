@@ -95,7 +95,7 @@ export async function runServiceRestart(
 
 // Like a session, a completed exec exits with its command's own status (128 plus the signal number
 // when a signal ended it); a refused one exits 2, or 130 when cancelled.
-export type ServiceExecResult =
+type ServiceExecResult =
     | Readonly<{ kind: 'complete'; status: number; diagnostics: readonly EnvironmentDiagnostic[]; result: Readonly<{ exitCode: number; signal: NodeJS.Signals | null }> }>
     | Readonly<{ kind: 'refusal'; status: number; diagnostics: readonly EnvironmentDiagnostic[]; result: null }>
 

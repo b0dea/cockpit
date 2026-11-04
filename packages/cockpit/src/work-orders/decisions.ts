@@ -9,7 +9,7 @@ import { scopeMatcher, WORK_ORDER_ID } from './contract.js'
 // Every placeholder the template writes carries this, so a record nobody filled in is detectable.
 const PLACEHOLDER = 'cockpit: replace this'
 
-export type RecordName = Readonly<{ name: string; number?: string }>
+type RecordName = Readonly<{ name: string; number?: string }>
 
 /** The next record's file name: the next free number, at least four digits wide, unless the directory names records by date. */
 export function nextRecordName(existing: readonly string[], title: string, today: string): RecordName {

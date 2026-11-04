@@ -86,10 +86,10 @@ const Input = z.object({
     targets: z.array(z.enum(SURFACE_TARGETS)).min(1).max(SURFACE_TARGETS.length).refine(targets => new Set(targets).size === targets.length),
 }).strict()
 
-export type McpSource = z.infer<typeof Source>
+type McpSource = z.infer<typeof Source>
 export type McpStdioDeclaration = z.infer<typeof StdioDeclaration>
 export type McpHttpDeclaration = z.infer<typeof HttpDeclaration>
-export type McpDeclaration = McpStdioDeclaration | McpHttpDeclaration
+type McpDeclaration = McpStdioDeclaration | McpHttpDeclaration
 
 export interface McpDiagnostic {
     readonly code: 'MCP_INPUT_INVALID' | 'MCP_DECLARATION_INVALID' | 'MCP_COMMAND_CONFLICT' | 'MCP_NOT_APPROVED' | 'MCP_APPROVAL_UNKNOWN'
@@ -130,7 +130,7 @@ export type McpCollectionOutcome =
     | Readonly<{ kind: 'complete'; result: McpCollection; diagnostics: readonly McpDiagnostic[] }>
     | Readonly<{ kind: 'refusal'; diagnostic: McpDiagnostic }>
 
-export type McpParseOutcome =
+type McpParseOutcome =
     | Readonly<{ kind: 'complete'; declarations: readonly McpDeclaration[] }>
     | Readonly<{ kind: 'refusal'; diagnostic: McpDiagnostic }>
 
@@ -166,7 +166,7 @@ function wrapper(launch: McpLaunch, envNames: readonly string[], cockpitDirector
 }
 
 /** The committed path of a server's stdio wrapper, or of its headers helper wrapper. */
-export function mcpWrapperPath(name: string, kind: 'server' | 'headers'): string {
+function mcpWrapperPath(name: string, kind: 'server' | 'headers'): string {
     return `.cockpit/mcp/${sha256Hex(name)}${kind === 'headers' ? '.headers' : ''}.sh`
 }
 

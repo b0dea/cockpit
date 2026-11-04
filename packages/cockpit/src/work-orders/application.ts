@@ -56,7 +56,7 @@ export function captureWorkApplicationRequest(value: unknown): WorkApplicationRe
     return parsed.success ? parsed.data : undefined
 }
 
-export interface WorkApplicationContinuation { readonly digest: string; readonly prompt: string; readonly decide: (answer: string) => Promise<WorkApplicationOutcome> }
+interface WorkApplicationContinuation { readonly digest: string; readonly prompt: string; readonly decide: (answer: string) => Promise<WorkApplicationOutcome> }
 export type WorkApplicationOutcome =
     | Readonly<{ kind: 'complete'; operation: Operation; value: unknown }>
     | Readonly<{ kind: 'human-needed'; operation: Operation; continuation: WorkApplicationContinuation }>

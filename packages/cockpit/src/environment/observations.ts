@@ -56,7 +56,7 @@ export interface DoctorCheck extends EvaluatedObservation {
     readonly evidence: string
 }
 
-export interface DoctorProjection {
+interface DoctorProjection {
     readonly verdict: PreflightEvaluation['verdict']
     readonly checks: readonly DoctorCheck[]
 }

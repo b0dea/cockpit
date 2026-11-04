@@ -60,9 +60,9 @@ export interface InitApplicationInput {
     readonly cockpitRoot?: Readonly<{ kind: 'in-repo' }> | Readonly<{ kind: 'dedicated'; firstSibling: string }>
 }
 
-export type CockpitRootAnswer = 'dedicated' | 'in-repo'
+type CockpitRootAnswer = 'dedicated' | 'in-repo'
 
-export interface CockpitRootOption {
+interface CockpitRootOption {
     readonly answer: CockpitRootAnswer
     readonly root: string
     /** Directories init creates before it writes anything else; each is outside the directory init ran in. */
@@ -121,7 +121,7 @@ type ResumedBootstrapOutcome =
         canonicalOwnership: false }>
     | Readonly<{ kind: 'refusal'; status: 2; diagnostics: readonly Diagnostic[]; result: null }>
 
-export type DestinationObservation =
+type DestinationObservation =
     | Readonly<{ kind: 'absent' }>
     | Readonly<{ kind: 'available'; sha256: string }>
     | Readonly<{ kind: 'refusal'; diagnostics: readonly Diagnostic[] }>
@@ -176,7 +176,7 @@ export interface InitApplicationAdapters {
     }>) => Promise<Readonly<{ state: ReadinessReport['state']; findings: readonly Diagnostic[] }>>
 }
 
-export interface GreenfieldQuestion {
+interface GreenfieldQuestion {
     readonly id: string
     readonly field: string
     readonly source: string
@@ -190,14 +190,14 @@ type IssuedEstateClassificationResult = EstateClassificationResult & Readonly<{
     sourceObservationSha256: string
 }>
 
-export interface GreenfieldResult extends EstateClassificationResult {
+interface GreenfieldResult extends EstateClassificationResult {
     readonly sourceObservationSha256: string
     readonly answers: readonly Readonly<{
         questionId: string; bytes: string; sha256: string; provenance: AnswerProvenance
     }>[]
 }
 
-export type MachineMeasurement =
+type MachineMeasurement =
     | Readonly<{ kind: 'complete'; memoryMb: number; cpus: number; observedAt: string }>
     | Readonly<{ kind: 'unavailable'; reason: string }>
 
@@ -206,13 +206,13 @@ export type MachineMeasurement =
  * answer read exactly from the named file and line, "measured" was observed on this machine, and
  * "inferred" is a hint or partial value that needs judgement.
  */
-export interface Proposal {
+interface Proposal {
     readonly target: string
     readonly value: unknown
     readonly provenance: Readonly<{ kind: 'derived' | 'measured' | 'inferred'; source: string; reason: string }>
 }
 
-export interface OutstandingField {
+interface OutstandingField {
     readonly field: string
     readonly why: string
     /**
@@ -225,7 +225,7 @@ export interface OutstandingField {
 }
 
 /** Every field the interview will still ask, in order, so an unattended caller can answer them in one pass. */
-export interface InterviewPlan {
+interface InterviewPlan {
     /** Fields an earlier run already answered; their answers are kept. */
     readonly answered: readonly string[]
     readonly outstanding: readonly OutstandingField[]

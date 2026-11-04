@@ -2,8 +2,8 @@
 // so both agree on what counts as prose, code and a link.
 import { posix } from 'node:path'
 
-export interface ProseLine { readonly line: number; readonly prose: string; readonly comments: readonly string[] }
-export interface MarkdownLink { readonly line: number; readonly label: string; readonly target: string; readonly index: number; readonly end: number }
+interface ProseLine { readonly line: number; readonly prose: string; readonly comments: readonly string[] }
+interface MarkdownLink { readonly line: number; readonly label: string; readonly target: string; readonly index: number; readonly end: number }
 export interface WalkedMarkdown {
     readonly lines: readonly ProseLine[]
     readonly fences: readonly Readonly<{ line: number; info: string }>[]

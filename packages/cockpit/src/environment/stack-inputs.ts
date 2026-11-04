@@ -30,13 +30,13 @@ const DIRECTORY_ENTRY_LIMIT = 20_000
 const DIGEST_CONCURRENCY = 16
 
 // The lockfiles the common toolchains write, watched when no install policy names the sibling's.
-export const COMMON_LOCKFILES: readonly string[] = Object.freeze([
+const COMMON_LOCKFILES: readonly string[] = Object.freeze([
     'package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb',
     'poetry.lock', 'uv.lock', 'Pipfile.lock', 'pdm.lock', 'Gemfile.lock', 'go.sum', 'Cargo.lock',
     'composer.lock', 'packages.lock.json', 'mix.lock',
 ])
 
-export type StackInputSource = 'rebuild_inputs' | 'environment.install_policies' | 'common lockfile names'
+type StackInputSource = 'rebuild_inputs' | 'environment.install_policies' | 'common lockfile names'
 
 interface InputDigest { readonly path: string; readonly source: StackInputSource; readonly sha256: string | null }
 interface SiblingInputs { readonly slug: string; readonly served: string; readonly inputs: readonly InputDigest[] }
@@ -77,7 +77,7 @@ async function exists(path: string): Promise<boolean> {
 }
 
 /** The paths watched for one sibling and where each came from: its own list, then the toolchain's lockfiles. */
-export async function watchedInputs(config: Pick<CockpitConfig, 'environment'>,
+async function watchedInputs(config: Pick<CockpitConfig, 'environment'>,
     sibling: Pick<Sibling, 'toolchain' | 'rebuild_inputs'>, served: string): Promise<readonly Readonly<{ path: string; source: StackInputSource }>[]> {
     const declared = (sibling.rebuild_inputs ?? []).map(path => ({ path, source: 'rebuild_inputs' as const }))
     const policies = config.environment.install_policies.filter(policy => policy.toolchain === sibling.toolchain)

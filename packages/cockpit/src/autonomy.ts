@@ -13,7 +13,7 @@ import { type EnvironmentDiagnostic, type ENVIRONMENT_CODES, hasErrorCode, Refus
 import type { CockpitConfig, Decider, WorkGrading } from './schema.js'
 
 export type WorkGate = 'accept' | 'amend' | 'answer' | 'signoff' | 'acknowledge'
-export type AutonomyDecision = 'sync' | 'stale_delete' | 'reset' | 'mcp_approve'
+type AutonomyDecision = 'sync' | 'stale_delete' | 'reset' | 'mcp_approve'
 export interface EffectivePolicy {
     readonly grading: WorkGrading
     readonly gates: Readonly<Record<WorkGate, Decider>>

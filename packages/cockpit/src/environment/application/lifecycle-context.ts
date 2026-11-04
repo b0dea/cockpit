@@ -98,7 +98,7 @@ interface LifecycleCommandAdapters {
     withRuntimeReadiness<T>(context: LifecycleRunContext, use: (runtime: RuntimeReadiness) => Promise<T>, ports?: PortLeaseProjection, refuse?: ReadinessRefusal<T>, purpose?: RuntimeReadinessPurpose): Promise<T | undefined>
 }
 
-export type SeedOutcome =
+type SeedOutcome =
     | Readonly<{ kind: 'none' | 'current' | 'ran' }>
     | Readonly<{ kind: 'refusal'; diagnostics: readonly EnvironmentDiagnostic[] }>
 
@@ -165,7 +165,7 @@ export type DownCommandResult = EnvironmentCommandOutcome<Readonly<{
     change: 'removed' | 'unchanged'
 }>>
 
-export interface ResetPreviewResult {
+interface ResetPreviewResult {
     readonly stackId: StackId
     readonly planDigest: string
     readonly targets: readonly ResetTargetInput[]
@@ -188,7 +188,7 @@ export interface OperatorResetSession {
     decide(decision: 'approve' | 'decline'): Promise<OperatorResetResult>
 }
 
-export interface DestructiveRunContextInput {
+interface DestructiveRunContextInput {
     readonly lifecycle: LifecycleRunContext
     readonly instance: SelectDestructiveInstanceInput
     /** The holder claim the load took on a stack no session held, so this run could read it. */

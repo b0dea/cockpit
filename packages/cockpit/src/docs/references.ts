@@ -7,7 +7,7 @@ import { posix } from 'node:path'
 import type { Diagnostic, ENVIRONMENT_CODES } from '../environment/contract.js'
 import { resolveLinkTarget, type WalkedMarkdown } from './markdown.js'
 
-export interface RepositoryHistory {
+interface RepositoryHistory {
     /** Each path a commit deleted or renamed away, newest first, mapped to its new name for a rename. */
     readonly removed: ReadonlyMap<string, string | undefined>
     /** Every make target any version of a Makefile defined. */

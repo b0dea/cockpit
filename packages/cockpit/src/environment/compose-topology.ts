@@ -25,7 +25,7 @@ export function composeProjectDirectory(root: string, references: readonly strin
     return dirname(resolve(root, references[0]!))
 }
 
-export interface ComposeTopologyInput {
+interface ComposeTopologyInput {
     /** Canonical absolute cockpit root. */
     readonly root: string
     /** The declared `environment.compose_files`, relative to `root`. */
@@ -38,7 +38,7 @@ export interface ComposeTopologyInput {
     readonly env: Readonly<Record<string, string | undefined>>
 }
 
-export interface ComposePublishedPort {
+interface ComposePublishedPort {
     /** The host side exactly as written, `null` when Compose picks an ephemeral host port. */
     readonly published: string | null
     /** The host interface exactly as written, `null` when none is given, so Docker binds every interface. */
@@ -64,14 +64,14 @@ export interface ComposeServiceTopology {
 }
 
 /** A `[[sibling]]` row as the mount detector needs it: its absolute checkout path and variable. */
-export interface ComposeSiblingMount {
+interface ComposeSiblingMount {
     readonly slug: string
     readonly var: string
     readonly mount: string
     readonly path: string
 }
 
-export type ComposeTopologyObservation =
+type ComposeTopologyObservation =
     | Readonly<{ kind: 'complete'; services: readonly ComposeServiceTopology[] }>
     | Readonly<{ kind: 'unavailable'; reason: string }>
 
@@ -357,7 +357,7 @@ export async function redirectedBindSources(binds: readonly string[], declared: 
     return redirected.sort((left, right) => left.bind.localeCompare(right.bind))
 }
 
-export interface ComposeTopologyDeclarations {
+interface ComposeTopologyDeclarations {
     /** From composeProjectDirectory; a relative bind source, or a variable's relative default, resolves against it. */
     readonly projectDirectory: string
     readonly portVariables: readonly string[]

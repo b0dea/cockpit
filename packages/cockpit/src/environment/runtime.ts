@@ -184,9 +184,9 @@ export function observeRuntimeExecution(input: {
     return observations
 }
 
-export type RuntimeOperation = 'validate' | 'up' | 'down'
+type RuntimeOperation = 'validate' | 'up' | 'down'
 
-export interface RuntimeAdapterInput {
+interface RuntimeAdapterInput {
     runtime: { name: 'docker'; version: string; executableSha256: string }
     composeVersion: string
     executable: ResolvedExecutable
@@ -204,7 +204,7 @@ export interface RuntimeAdapterInput {
     expectedMountSources?: readonly string[]
 }
 
-export interface RuntimePlanResult {
+interface RuntimePlanResult {
     runtime: 'docker'
     operation: RuntimeOperation
     projectName: string
@@ -218,7 +218,7 @@ export interface ComposeArtifact {
 }
 
 /** Each `[[sibling]] var` and the absolute sibling directory it names. */
-export type SiblingDirectoryVariables = Readonly<Record<string, string>>
+type SiblingDirectoryVariables = Readonly<Record<string, string>>
 
 export type RuntimeAdapterAuthority =
     /** A stack's own Compose files, which interpolate the lease, the sibling directories and their own defaults. */
@@ -343,7 +343,7 @@ function refusal<T = RuntimePlanResult>(
     }
 }
 
-export type MachineFloorPlanInput = {
+type MachineFloorPlanInput = {
     readonly runtimeExecutable: ResolvedExecutable
     readonly diskExecutable: ResolvedExecutable
     readonly cwd: string
@@ -356,7 +356,7 @@ export type MachineFloorPlanInput = {
     readonly timeoutMs: number
     readonly authority?: MachineFloorAuthority
 }
-export interface MachineFloorThresholds {
+interface MachineFloorThresholds {
     readonly memoryBytes: number
     readonly cpuMillis: number
     readonly freeDiskBytes: number
@@ -454,16 +454,16 @@ function machineFloorEnvironment(value: Readonly<Record<string, string>>): Reado
     )
 }
 
-export interface DockerRuntimeObservationInput {
+interface DockerRuntimeObservationInput {
     readonly executable: ResolvedExecutable
     readonly cwd: string
     readonly env: Readonly<Record<string, string>>
     readonly timeoutMs: number
 }
 
-export type RuntimeIdentity = 'docker-desktop' | 'orbstack' | 'colima' | 'rancher-desktop' | 'docker-engine'
+type RuntimeIdentity = 'docker-desktop' | 'orbstack' | 'colima' | 'rancher-desktop' | 'docker-engine'
 
-export interface DockerInfoIdentityInput {
+interface DockerInfoIdentityInput {
     readonly operatingSystem: string
     readonly name: string
     readonly osType: string
@@ -506,7 +506,7 @@ function dockerIdentityFields(text: string): readonly [string, string, string] |
         ? ([operatingSystem, name, osType] as const) : undefined
 }
 
-export type DockerRuntimeObservation =
+type DockerRuntimeObservation =
     | Readonly<{
         kind: 'complete'
         runtime: { readonly name: 'docker'; readonly version: string; readonly executableSha256: string }
@@ -559,7 +559,7 @@ export function runtimeMeasurementProbeObservation(
         && age >= 0 && age <= 300_000 ? issued : undefined
 }
 
-export type RuntimeMeasurementAdmission =
+type RuntimeMeasurementAdmission =
     | Readonly<{ kind: 'admitted'; runtimeIdentity: string; measurement: string }>
     | Readonly<{ kind: 'unavailable'; code: typeof ENVIRONMENT_CODES.RUNTIME_UNMEASURED; reason: string }>
 
@@ -805,7 +805,7 @@ function machineFloorPlanInput(value: unknown): OwnedMachineFloorPlanInput | und
     }
 }
 
-export type MachineFloorMeasurement =
+type MachineFloorMeasurement =
     | { readonly kind: 'complete'; readonly evidence: MachineFloorEvidence }
     | MachineFloorRefusal
     | { readonly kind: 'unavailable' }
@@ -1188,7 +1188,7 @@ export interface RuntimeObservationWindow {
     readonly expiresAt: string
 }
 
-export interface RuntimeTopologyService {
+interface RuntimeTopologyService {
     readonly id: string
     readonly dependsOn: readonly string[]
     readonly bindMountSources: readonly string[]
@@ -1209,7 +1209,7 @@ export interface RuntimeTopologyEvidence {
     readonly services: readonly RuntimeTopologyService[]
 }
 
-export type RuntimeTopologyObservation =
+type RuntimeTopologyObservation =
     | { readonly kind: 'complete'; readonly step: ExecutionStep; readonly topology: RuntimeTopologyEvidence; readonly observations: readonly EnvironmentObservation[] }
     | { readonly kind: 'unavailable'; readonly reason: string; readonly mounts?: RuntimeMountMismatch; readonly undefinedProfiles?: readonly string[] }
 
@@ -1732,7 +1732,7 @@ export function projectRuntimeExecutionEnvironment(
         : undefined
 }
 
-export type RuntimeContainerIdSlot = Readonly<{ kind: 'runtime-container-id'; service: string }>
+type RuntimeContainerIdSlot = Readonly<{ kind: 'runtime-container-id'; service: string }>
 
 export interface RuntimeLifecycleExecutionSemantics {
     readonly argv: readonly [string | RuntimeContainerIdSlot, ...(string | RuntimeContainerIdSlot)[]]
@@ -1750,7 +1750,7 @@ export interface RuntimeLifecycleExecutionSemantics {
     readonly compensation: readonly RuntimeLifecycleExecutionSemantics[]
 }
 
-export interface RuntimeLifecycleServiceSemantics {
+interface RuntimeLifecycleServiceSemantics {
     readonly id: string
     readonly start: RuntimeLifecycleExecutionSemantics
     readonly status: RuntimeLifecycleExecutionSemantics
@@ -2850,7 +2850,7 @@ export function consumeRuntimeServiceFailureForLogs(evidence: RuntimeServiceFail
     return context
 }
 
-export interface RuntimeServiceFailureContext {
+interface RuntimeServiceFailureContext {
     readonly observation: RuntimeServiceObservation
     readonly executable: ResolvedExecutable
     readonly cwd: string
@@ -2882,7 +2882,7 @@ export function consumeRuntimeServiceObservationForFailureLogs(value: RuntimeSer
     }
 }
 
-export type RuntimeStopOutcome =
+type RuntimeStopOutcome =
     /** Compose stopped the stack and a fresh `ps` found nothing running. */
     | { readonly kind: 'stopped'; readonly outcome: DrainOutcome; readonly fence: ExecutionFence }
     /** The stop never started, so the drain attempt is settled as failed and nothing changed. */

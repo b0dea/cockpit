@@ -7,9 +7,9 @@ import { ENVIRONMENT_CODES, type Diagnostic } from '../environment/contract.js'
 import { leadingWord, parseDecisionRecord, recordNumber, type ParsedRecord } from './decision-record.js'
 import { resolveLinkTarget, walkMarkdownProse } from './markdown.js'
 
-export const DECISION_STATUSES = ['proposed', 'accepted', 'superseded', 'deprecated', 'rejected'] as const
+const DECISION_STATUSES = ['proposed', 'accepted', 'superseded', 'deprecated', 'rejected'] as const
 
-export interface DecisionRecordSet {
+interface DecisionRecordSet {
     /** Prefixed onto every reported path: '' in the cockpit's own repository, `<slug>:` in a sibling. */
     readonly repository: string
     /** The records' directory, relative to the repository root. */

@@ -264,7 +264,7 @@ const CoordinationValueSchema = z.object({
     }
 })
 
-export interface ClaimHolder {
+interface ClaimHolder {
     readonly holderId: HolderId
     readonly checkoutId: CheckoutId
     readonly claimedAt: string
@@ -292,9 +292,9 @@ export interface CoordinationRecord {
     readonly drain?: DrainReservation | null
 }
 
-export type DrainPurpose = 'sleep' | 'down' | 'reset'
+type DrainPurpose = 'sleep' | 'down' | 'reset'
 
-export type DrainAction =
+type DrainAction =
     | { readonly stage: 'runtime-stop'; readonly targetId: string; readonly validForMs: number }
     | { readonly stage: 'reclaim'; readonly targetId: string; readonly validForMs: number; readonly targetCommitment: DrainTargetCommitment }
 
@@ -327,7 +327,7 @@ export interface DrainReservation extends DrainReservationRequest {
     readonly attempt: DrainAttempt | null
 }
 
-export interface DrainAttempt {
+interface DrainAttempt {
     readonly attemptId: string
     readonly reservationId: string
     readonly purpose: DrainPurpose
@@ -344,7 +344,7 @@ export interface DrainAttempt {
     readonly failedAt: string | null
 }
 
-export interface FailedReclaimRecoveryTarget {
+interface FailedReclaimRecoveryTarget {
     readonly targetId: string
     readonly targetCommitment: DrainTargetCommitment
 }
@@ -414,7 +414,7 @@ type ClaimMutationRefusal = {
     readonly diagnostics: readonly EnvironmentDiagnostic[]
 }
 
-export type ReleaseClaimResult =
+type ReleaseClaimResult =
     | {
           readonly kind: 'complete'
           readonly change: 'released' | 'unchanged'
@@ -577,7 +577,7 @@ export function liveHolderMessage(holders: readonly ClaimHolder[]): string {
         + `let its command finish${pids.length > 0 ? ` or stop it with \`kill ${pids.join(' ')}\`` : ''}, then retry`
 }
 
-export type ReleaseDeadSessionHoldersResult =
+type ReleaseDeadSessionHoldersResult =
     | {
           readonly kind: 'complete'
           readonly released: readonly ClaimHolder[]
@@ -1186,7 +1186,7 @@ export function isDrainActive(value: CoordinationRecord): boolean {
     return value.drain != null
 }
 
-export type DrainReservationResult =
+type DrainReservationResult =
     | { readonly kind: 'complete'; readonly reservation: DrainReservation }
     | ClaimMutationRefusal
 
@@ -1546,7 +1546,7 @@ function reduceDrainAttemptFailure(record: StateRecord, reservation: DrainReserv
     }
 }
 
-export type SleepDrainRecoveryInspection =
+type SleepDrainRecoveryInspection =
     | { readonly kind: 'none' }
     | { readonly kind: 'repairable'; readonly fence: ExecutionFence; readonly record: StateRecord }
     | {
@@ -1558,7 +1558,7 @@ export type SleepDrainRecoveryInspection =
       }
     | ClaimMutationRefusal
 
-export type DestructiveDrainRecoveryInspection =
+type DestructiveDrainRecoveryInspection =
     | { readonly kind: 'none' }
     | { readonly kind: 'repairable'; readonly fence: ExecutionFence; readonly record: StateRecord }
     | { readonly kind: 'recoverable'; readonly request: DrainReservationRequest }

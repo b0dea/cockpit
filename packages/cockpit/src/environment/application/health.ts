@@ -39,7 +39,7 @@ import type { CapturedRuntimeEvidence, EnvironmentSnapshot } from '../evidence.j
 import { type ReadinessRefusal, consumeEffectiveConfiguration } from './lifecycle-context.js'
 import { confinedPath, exactEnvironment, sameSource } from './shared.js'
 
-export interface ComparisonRemoteInput {
+interface ComparisonRemoteInput {
     readonly executable: ResolvedExecutable
     readonly checkoutRoot: string
     readonly env: Readonly<Record<string, string>>
@@ -117,14 +117,14 @@ export interface ComparisonRemoteEvaluation {
     readonly result: ComparisonRemoteResult
 }
 
-export interface ApplicationPreflightEvaluation {
+interface ApplicationPreflightEvaluation {
     readonly verdict: PreflightEvaluation['verdict']
     readonly revision: string
     readonly checks: readonly EvaluatedObservation[]
     readonly comparisons: readonly ComparisonRemoteEvaluation[]
 }
 
-export type PreflightCommandResult =
+type PreflightCommandResult =
     | Readonly<{
         kind: 'complete'
         status: 0

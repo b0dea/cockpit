@@ -79,7 +79,7 @@ export function parseWorkOrder(bytes: Uint8Array, fileId: string): ParsedFile<Wo
 }
 
 /** The quick-path file `cockpit grade --criteria` reads: front-matter with criteria, and optionally scope and gates. */
-export const CriteriaFile = z.object({ criteria: Criteria, scope: z.array(repositoryPath).max(WORK_ORDER_LIMITS.scope).default([]),
+const CriteriaFile = z.object({ criteria: Criteria, scope: z.array(repositoryPath).max(WORK_ORDER_LIMITS.scope).default([]),
     gates: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)).max(16).default([]), objective: text.optional() }).strict()
 export function parseCriteriaFile(bytes: Uint8Array): ParsedFile<z.infer<typeof CriteriaFile>> {
     const read = frontMatter(bytes)
@@ -101,7 +101,7 @@ export function workOrderDigest(order: WorkOrder, sources: Readonly<Record<strin
 
 /** One part of a contract an amendment changed in a way that may lower the bar, as it read before and after. */
 export type AmendmentReview = Readonly<{ field: string; before: string; after: string }>
-export type ContractAmendment = Readonly<{ removed: readonly string[]; review: readonly AmendmentReview[] }>
+type ContractAmendment = Readonly<{ removed: readonly string[]; review: readonly AmendmentReview[] }>
 
 const criterionText = (row: WorkOrderCriterion) =>
     `${row.text}${row.check ? ` [check: ${JSON.stringify(row.check)}]` : ''}${row.source ? ` [source: ${row.source}]` : ''}`

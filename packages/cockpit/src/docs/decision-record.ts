@@ -29,10 +29,10 @@ export function leadingWord(value: string): string {
     return value.replace(/[*_`[\]]/g, '').trim().split(/[\s,.;:()]/, 1)[0]!.toLowerCase()
 }
 
-export type SupersedesReference = Readonly<{ line: number; text: string; full: boolean; number?: number; file?: string }>
+type SupersedesReference = Readonly<{ line: number; text: string; full: boolean; number?: number; file?: string }>
 
 /** Where a status is stated: a front-matter field, a `Status:` line, or the line under a `## Status` heading. */
-export type RecordStatus = Readonly<{ line: number; value: string; form: 'front-matter' | 'line' | 'heading' }>
+type RecordStatus = Readonly<{ line: number; value: string; form: 'front-matter' | 'line' | 'heading' }>
 
 export interface ParsedRecord {
     readonly status?: RecordStatus

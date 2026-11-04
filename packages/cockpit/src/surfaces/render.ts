@@ -28,7 +28,7 @@ export type SurfaceInputEvidence =
           module: string; export: string; sourceSha256: string; resultSha256: string
       }>
 
-export interface NativeSurfaceFragment {
+interface NativeSurfaceFragment {
     readonly target: SurfaceTarget
     readonly path: string
     readonly baseSha256: string
@@ -48,7 +48,7 @@ export interface CustomSurfaceReceipt {
     readonly files: readonly Readonly<{ path: string; bytes: string; sha256: string; scope: 'always' | 'scoped' }>[]
 }
 
-export type SurfaceRenderResult =
+type SurfaceRenderResult =
     | Readonly<{ kind: 'complete'; entries: readonly SurfaceDesiredEntry[]; inputs: readonly SurfaceInputEvidence[]; warnings: readonly SurfaceGenerationWarning[] }>
     | Readonly<{ kind: 'refusal'; diagnostic: SurfaceDiagnostic }>
 
@@ -65,9 +65,9 @@ export interface NativeFragmentSet {
 }
 
 /** A reference file pulled on demand by one shipped skill; rendered beside that skill's entry point on every built-in harness. */
-export interface SkillReference { readonly skill: string; readonly path: string; readonly bytes: string }
+interface SkillReference { readonly skill: string; readonly path: string; readonly bytes: string }
 
-export interface SurfaceRenderInput {
+interface SurfaceRenderInput {
     readonly configuredHarnesses: readonly string[]
     readonly merge: Extract<SurfaceMergeResult, { kind: 'complete' }>
     readonly generated: Extract<SurfaceGenerationOutcome, { kind: 'complete' }>
@@ -147,7 +147,7 @@ function frontmatter(base: string, fragment: string): string | undefined {
     return `${base.slice(0, close)}\n${fragment}${base.slice(close + 1)}`
 }
 
-export type HookSettingsComposition =
+type HookSettingsComposition =
     | Readonly<{ kind: 'complete'; value: Record<string, unknown> }>
     | Readonly<{ kind: 'refusal'; key: string; reason: 'malformed' | 'divergent' }>
 

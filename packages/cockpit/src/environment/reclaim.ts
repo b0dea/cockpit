@@ -81,7 +81,7 @@ const DISCOVERY_KINDS = ['container', 'network', 'volume', 'image', 'build-cache
 
 type Executor = (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
 
-export interface DockerSelection {
+interface DockerSelection {
     readonly context: string
     readonly endpoint: string
 }
@@ -94,7 +94,7 @@ export interface ReclaimDiscovery extends ReclaimDiscoverySnapshot {
 }
 
 /** What a person or the planner itself approved: the digest, and the discovery it was read from. */
-export interface ReclaimConsent {
+interface ReclaimConsent {
     readonly digest: string
     readonly observedAt: string
 }
@@ -104,7 +104,7 @@ export interface ReclaimConsent {
  * to the next. `drain` is the attempt the action ran under, which the next plan matches against
  * the record its outcome published; null until the action runs.
  */
-export interface ReclaimContinuation {
+interface ReclaimContinuation {
     readonly purpose: 'down' | 'reset'
     readonly digest: string
     readonly completedTargetId: string
@@ -118,7 +118,7 @@ export interface ReclaimContinuation {
 }
 
 /** The one removal a plan permits, executed only by `executeReclaimAction` under a reserved attempt. */
-export interface PlannedReclaimAction {
+interface PlannedReclaimAction {
     readonly stackId: StackId
     readonly configSha256: string
     /** Null when the interrupted target is already absent and only its removal is recorded. */
@@ -130,7 +130,7 @@ export interface PlannedReclaimAction {
     readonly remainingTargets?: (discovery: ReclaimDiscovery) => Promise<readonly string[] | undefined>
 }
 
-export type ReclaimTargetIdentity = ResetVolumeTargetIdentity | TeardownRuntimeTargetIdentity | PathTargetIdentity
+type ReclaimTargetIdentity = ResetVolumeTargetIdentity | TeardownRuntimeTargetIdentity | PathTargetIdentity
 
 interface ResetVolumeTargetIdentity {
     readonly medium: 'runtime'
@@ -171,10 +171,10 @@ interface PathTargetIdentity {
     readonly ancestors: readonly FilesystemAncestorIdentity[]
 }
 
-export type ReclaimResourceKind = 'container' | 'network' | 'volume' | 'image' | 'build-cache' | 'cache'
-export type OwnershipEvidence = 'current' | 'stale-config' | 'foreign' | 'unknown' | 'malformed' | 'partial' | 'unlabelled'
-export type Reversibility = 'runtime' | 'regenerable-cache' | 'data-bearing'
-export type ReclaimAction = 'teardown' | 'reclaim' | 'reset-required' | 'report-only'
+type ReclaimResourceKind = 'container' | 'network' | 'volume' | 'image' | 'build-cache' | 'cache'
+type OwnershipEvidence = 'current' | 'stale-config' | 'foreign' | 'unknown' | 'malformed' | 'partial' | 'unlabelled'
+type Reversibility = 'runtime' | 'regenerable-cache' | 'data-bearing'
+type ReclaimAction = 'teardown' | 'reclaim' | 'reset-required' | 'report-only'
 
 export interface ReclaimResource {
     readonly id: string
@@ -193,7 +193,7 @@ export interface ReclaimDiscoverySnapshot {
     readonly resources: readonly ReclaimResource[]
 }
 
-export interface ClassifiedReclaimResource extends ReclaimResource {
+interface ClassifiedReclaimResource extends ReclaimResource {
     readonly ownership: OwnershipEvidence
     readonly reversibility: Reversibility
     readonly action: ReclaimAction
@@ -202,7 +202,7 @@ export interface ClassifiedReclaimResource extends ReclaimResource {
     readonly suggestion?: { readonly command: string; readonly risk: string }
 }
 
-export interface ClassifyReclaimInput {
+interface ClassifyReclaimInput {
     readonly stackId: StackId
     readonly cockpitId: CockpitId
     readonly configSha256: string
@@ -211,7 +211,7 @@ export interface ClassifyReclaimInput {
     readonly discovery: ReclaimDiscoverySnapshot
 }
 
-export type ReclaimResult =
+type ReclaimResult =
     | { readonly kind: 'complete'; readonly noop: boolean; readonly resources: readonly ClassifiedReclaimResource[] }
     | { readonly kind: 'refusal'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
 
@@ -400,7 +400,7 @@ export function classifyReclaim(rawInput: ClassifyReclaimInput): ReclaimResult {
     return { kind: 'complete', noop: resources.length === 0, resources }
 }
 
-export interface KeptTeardownResource {
+interface KeptTeardownResource {
     readonly kind: ReclaimResourceKind
     readonly id: string
     readonly name: string
@@ -656,7 +656,7 @@ function holderRows(stdout: Buffer): readonly { readonly id: string; readonly ne
     return rows.length > MAX_RESOURCES || new Set(rows.map(({ id }) => id)).size !== rows.length ? undefined : rows
 }
 
-export interface ReclaimDiscoveryInput {
+interface ReclaimDiscoveryInput {
     readonly executable: ResolvedExecutable
     readonly cwd: string
     readonly env: Readonly<Record<string, string>>
@@ -1017,7 +1017,7 @@ export interface MachineStackDiscovery {
     readonly unattributed: number
 }
 
-export type MachineStackDiscoveryInput = Omit<ReclaimDiscoveryInput, 'stackId' | 'cockpitId'>
+type MachineStackDiscoveryInput = Omit<ReclaimDiscoveryInput, 'stackId' | 'cockpitId'>
 
 const MACHINE_KINDS = ['container', 'network', 'volume'] as const
 const COMPOSE_WORKING_DIR = 'com.docker.compose.project.working_dir'
@@ -1136,7 +1136,7 @@ interface HostPathEvidence {
     readonly ancestors?: readonly FilesystemAncestorIdentity[]
 }
 
-export interface DependencyCacheDeclaration {
+interface DependencyCacheDeclaration {
     readonly cacheId: string
     readonly root: string
     readonly path: string
@@ -1971,7 +1971,7 @@ export async function planTeardown(input: PlanTeardownInput): Promise<TeardownPl
     }
 }
 
-export interface ReclaimTargetCommitment extends DrainTargetCommitment {
+interface ReclaimTargetCommitment extends DrainTargetCommitment {
     readonly targetId: string
 }
 
@@ -2302,7 +2302,7 @@ function reclaimCompletionFact(
 }
 
 /** A removal the attempt admitted, with the attempt it ran under and what it observed. */
-export interface ExecutedReclaimAction {
+interface ExecutedReclaimAction {
     readonly action: PlannedReclaimAction
     readonly reservation: DrainReservation
     readonly attempt: NonNullable<DrainReservation['attempt']>
@@ -2312,7 +2312,7 @@ export interface ExecutedReclaimAction {
     readonly fence: ExecutionFence | null
 }
 
-export type ReclaimActionExecution =
+type ReclaimActionExecution =
     | { readonly kind: 'executed'; readonly executed: ExecutedReclaimAction }
     /** The removal provably never started; its failure is settled and ready to publish, and the same target may be retried. */
     | {
@@ -2390,7 +2390,7 @@ export async function executeReclaimAction(input: {
     return executedWith(outcome.receipt, fence)
 }
 
-export type ReconcileReclaimActionResult =
+type ReconcileReclaimActionResult =
     | { readonly kind: 'complete'; readonly outcome: DrainOutcome; readonly continuation: ReclaimContinuation | null }
     | { readonly kind: 'refusal'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
 

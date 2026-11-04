@@ -265,7 +265,7 @@ export type ForegroundProcessOutcome = Readonly<{
     terminationConfirmed: boolean
 }>
 
-export interface StepExecution {
+interface StepExecution {
     id: string
     exitCode: number
     signal: NodeJS.Signals | null
@@ -273,7 +273,7 @@ export interface StepExecution {
     stderrBytes: number
 }
 
-export interface ProbeStepExecution extends StepExecution {
+interface ProbeStepExecution extends StepExecution {
     started: boolean
     stdoutObservedBytes: number
     stderrObservedBytes: number
@@ -281,7 +281,7 @@ export interface ProbeStepExecution extends StepExecution {
     stderrRetainedBytes: number
 }
 
-export interface CompensationFailure {
+interface CompensationFailure {
     id: string
     code: ExecutionFailureCode
 }

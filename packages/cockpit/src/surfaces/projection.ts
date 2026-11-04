@@ -36,11 +36,11 @@ export interface GuideObservation {
     readonly contentIdentity: string
 }
 
-export type GuideObservationResult =
+type GuideObservationResult =
     | { readonly kind: 'complete'; readonly observations: readonly GuideObservation[]; readonly missing: readonly string[] }
     | { readonly kind: 'refusal' | 'unavailable'; readonly diagnostic: ProjectionDiagnostic }
 
-export interface ProjectionSiblingInput {
+interface ProjectionSiblingInput {
     slug: string
     mount: Mount
     directoryAuthority: string
@@ -64,14 +64,14 @@ export interface ProjectionPlannerInput {
     targets?: readonly SurfaceTarget[]
 }
 
-export interface LoadCostCharacterization {
+interface LoadCostCharacterization {
     measuredOn: string
     provenance: string
     metric: 'lines'
     scopeSemantics: 'conditional' | 'full'
 }
 
-export interface ProjectionDiagnostic {
+interface ProjectionDiagnostic {
     readonly code: 'PROJECTION_INPUT_INVALID' | 'PROJECTION_GUIDE_UNAVAILABLE' | 'PROJECTION_GUIDE_CHANGED'
         | 'PROJECTION_GUIDE_ESCAPE' | 'PROJECTION_GUIDE_READ_FAILED' | 'PROJECTION_GUIDE_CLOSE_FAILED'
         | 'PROJECTION_ROOT_AMBIGUOUS' | 'PROJECTION_RESULT_BOUNDS'
@@ -83,7 +83,7 @@ export interface ProjectionDiagnostic {
 }
 
 /** A sibling guide copied into the region of the root AGENTS.md that cockpit owns. */
-export interface ProjectedGuide {
+interface ProjectedGuide {
     readonly sibling: string
     /** The guide's path inside its sibling, as declared. */
     readonly guide: string
@@ -94,7 +94,7 @@ export interface ProjectedGuide {
     readonly bytes: string
 }
 
-export interface ShippedInstructionCapability {
+interface ShippedInstructionCapability {
     readonly target: SurfaceTarget
     readonly mechanism: 'root-agents-guide' | 'rulesync-rules'
     readonly capability: 'instructed' | 'generated'

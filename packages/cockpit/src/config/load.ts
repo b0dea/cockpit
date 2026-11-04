@@ -19,7 +19,7 @@ import { readBoundedFile, type BoundedRead } from '../bounded-read.js'
 
 export const STRUCTURED_INPUT_BYTE_LIMIT = 1_048_576
 
-export type BoundedInputRead = BoundedRead
+type BoundedInputRead = BoundedRead
 
 export async function readBoundedInput(path: string): Promise<BoundedInputRead> {
     return readBoundedFile(path, STRUCTURED_INPUT_BYTE_LIMIT)
@@ -52,7 +52,7 @@ export interface LoadedCockpitConfig {
 const issuedConfigProjections = new WeakMap<object, ConsumedLoadedConfig>()
 
 export interface MachineFloorConfigProjection { readonly kind: 'machine-floor-config-projection' }
-export interface ConsumedMachineFloorConfig {
+interface ConsumedMachineFloorConfig {
     readonly cockpitName: string
     readonly source: SourceProvenance
     readonly runtimeSha256: string
@@ -60,7 +60,7 @@ export interface ConsumedMachineFloorConfig {
 }
 const issuedMachineFloorConfigProjections = new WeakMap<object, ConsumedMachineFloorConfig>()
 
-export interface WorkEnvironmentConfigProjection { readonly kind: 'work-environment-config-projection' }
+interface WorkEnvironmentConfigProjection { readonly kind: 'work-environment-config-projection' }
 export interface ConsumedWorkEnvironmentConfig {
     readonly cockpitName: string
     readonly cockpitRoot: string

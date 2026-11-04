@@ -16,7 +16,7 @@ import { isPackageDescendant } from './package-paths.js'
 import { assertBrowserStorageStateCurrent, browserRuntimeControlAuthorities, browserRuntimeControlPorts, browserRuntimeCoordination, type BrowserRuntimeProjection } from './runtime.js'
 import { readBoundedFile } from '../bounded-read.js'
 
-export type BrowserTestPackage = Readonly<{
+type BrowserTestPackage = Readonly<{
     directory: string
     manifest: { readonly bytes: string; readonly sha256: string }
     cli: { readonly path: string; readonly bytes: string; readonly sha256: string }
@@ -35,7 +35,7 @@ export interface BrowserSurfaceInput {
     readonly skillTemplate: string
 }
 
-export interface BrowserTransportRow {
+interface BrowserTransportRow {
     readonly target: GuardSurfaceTarget
     readonly version: string
     readonly transport: 'mcp' | 'cli'
@@ -61,7 +61,7 @@ export interface BrowserProjectClient {
     readonly lock: Readonly<{ path: string; sha256: string; maxBytes: number }>
 }
 
-export interface BrowserProjectOperation {
+interface BrowserProjectOperation {
     readonly kind: 'drive' | 'screenshot'
     readonly surface: Readonly<{ name: string; url: string }>
     readonly deadline: number
@@ -73,7 +73,7 @@ export interface BrowserProjectOperationAuthorization {
     readonly kind: 'browser-project-operation-authorization'
 }
 
-export interface BrowserProjectOperationAdmissionInput {
+interface BrowserProjectOperationAdmissionInput {
     readonly origin: string
     readonly role?: string
     readonly state?: Readonly<{ namespace: StateNamespace; stackId: StackId; ownerId: HolderId }>
@@ -323,7 +323,7 @@ function operationStep(client: BrowserProjectClient, runtime: BrowserRuntimeProj
 
 // A prerequisite the operation could not inspect; errorCause keeps the operation and path of a system
 // error and only the class of anything else.
-export type BrowserProjectOperationNotAdmitted = Readonly<{ kind: 'unadmitted'; cause: string }>
+type BrowserProjectOperationNotAdmitted = Readonly<{ kind: 'unadmitted'; cause: string }>
 
 function notAdmitted(what: string, error: unknown): BrowserProjectOperationNotAdmitted {
     return { kind: 'unadmitted', cause: `${what}: ${errorCause(error)}` }

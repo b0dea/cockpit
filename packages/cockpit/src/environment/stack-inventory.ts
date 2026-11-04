@@ -34,24 +34,23 @@ import {
     removeStateNamespaceFolder,
     selectStateRoot,
     withStateNamespaceInventory,
-    type SkippedStateNamespace,
     type StackStateFile,
     type StateNamespace,
 } from './state.js'
 
 type Executor = (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
 
-export type CheckoutStatus = 'present' | 'replaced' | 'missing' | 'unknown'
-export type StackVerdict = 'current' | 'kept' | 'orphaned'
+type CheckoutStatus = 'present' | 'replaced' | 'missing' | 'unknown'
+type StackVerdict = 'current' | 'kept' | 'orphaned'
 
-export interface StackCheckout {
+interface StackCheckout {
     readonly path: string | null
     readonly status: CheckoutStatus
     /** Where the path, or the proof that no checkout exists, was read from. */
     readonly source: string
 }
 
-export interface StackRow {
+interface StackRow {
     readonly cockpitId: CockpitId
     readonly stackId: StackId
     readonly composeProject: string
@@ -68,7 +67,7 @@ export interface StackRow {
 }
 
 /** Another cockpit's state folder this version cannot read. */
-export interface StateFolderRow {
+interface StateFolderRow {
     readonly path: string
     readonly cockpitId: CockpitId | null
     readonly reason: string
@@ -76,7 +75,7 @@ export interface StateFolderRow {
     readonly why: string
 }
 
-export interface MachineStackInventory {
+interface MachineStackInventory {
     readonly stacks: readonly StackRow[]
     readonly stateFolders: readonly StateFolderRow[]
     /** Docker resources with the stack label whose other ownership labels are missing or malformed. */
@@ -502,7 +501,7 @@ async function observeWithDocker(context: StacksContext, execute: Executor): Pro
     return observeMachineStacks({ namespace: context.namespace, own: context.own, discovery })
 }
 
-export interface StacksOutcome {
+interface StacksOutcome {
     readonly status: number
     readonly result: unknown
     readonly diagnostics: readonly Diagnostic[]
@@ -649,36 +648,32 @@ export async function openStacksPrune(context: StacksContext, dependencies: Read
     }
 }
 
-/** What doctor reads of this machine's cockpit state in one walk of the state namespace. */
-export type DoctorMachineState =
+/** What doctor reads of this machine's stacks in one walk of the state namespace. */
+type DoctorMachineState =
     | Readonly<{
         kind: 'complete'
-        /** Other cockpits' state folders the namespace walk skipped as unreadable by this version. */
-        unreadableFolders: readonly SkippedStateNamespace[]
         /** A STACKS_ORPHANED warning when stacks of this machine have a checkout that is gone or state this version cannot read. */
         orphanedStacks: readonly EnvironmentDiagnostic[]
     }>
     | Refusal
 
 /**
- * Doctor's view of the machine's stacks without asking Docker: stacks whose checkout is gone, state
- * this version cannot read, and the other cockpits' state folders it skipped. The full inventory is
- * `cockpit stacks`.
+ * Doctor's view of the machine's stacks without asking Docker: stacks whose checkout is gone and
+ * state this version cannot read. The full inventory is `cockpit stacks`.
  */
-export async function inspectMachineStateForDoctor(input: Readonly<{ namespace: StateNamespace; own: OwnCheckout; configPath: string }>): Promise<DoctorMachineState> {
+async function inspectMachineStateForDoctor(input: Readonly<{ namespace: StateNamespace; own: OwnCheckout; configPath: string }>): Promise<DoctorMachineState> {
     const observed = await observeMachineStacks({ namespace: input.namespace, own: input.own })
     if ('kind' in observed) return observed
-    const unreadableFolders = observed.inventory.stateFolders.map(({ path, reason }) => ({ path, reason }))
     const gone = observed.inventory.stacks.filter(({ checkout }) => checkout.status === 'missing')
     // Other cockpits' unreadable state folders have doctor's own warning; these are unreadable records.
     const unreadable = observed.inventory.stacks.filter(({ state }) => state.status === 'malformed' && state.path !== null
         && !observed.inventory.stateFolders.some(({ path }) => path === state.path)).length
-    if (gone.length + unreadable === 0) return { kind: 'complete', unreadableFolders, orphanedStacks: [] }
+    if (gone.length + unreadable === 0) return { kind: 'complete', orphanedStacks: [] }
     const parts = [
         ...gone.length > 0 ? [`${gone.length} whose checkout no longer exists`] : [],
         ...unreadable > 0 ? [`${unreadable} whose state this cockpit version cannot read`] : [],
     ]
-    return { kind: 'complete', unreadableFolders, orphanedStacks: [{ severity: 'warning', target: dirname(input.namespace.cockpitRoot),
+    return { kind: 'complete', orphanedStacks: [{ severity: 'warning', target: dirname(input.namespace.cockpitRoot),
         code: 'STACKS_ORPHANED' as const satisfies typeof ENVIRONMENT_CODES.STACKS_ORPHANED,
         message: `this machine has stacks that no checkout can reach (${parts.join('; ')}); they keep their containers, volumes, port leases and state`,
         fix: `list them with ${cockpitCommand('stacks', { config: input.configPath })}, preview the removal with ${cockpitCommand('stacks prune', { config: input.configPath })}, then apply it with --apply` }] }

@@ -11,7 +11,7 @@ import {
 } from '../environment/init-application.js'
 import { refusalOutcome as refusal } from '../refusal.js'
 
-export interface InitCommandInput {
+interface InitCommandInput {
     readonly root: string
     readonly target: SurfaceTarget
     /** Every chosen tool, target first; just the target when only one was given. */
@@ -35,7 +35,7 @@ export interface UnattendedInit {
     readonly defaultsSha256?: string
 }
 
-export interface InitCommandOptions {
+interface InitCommandOptions {
     readonly interactive: boolean
     readonly json: boolean
     readonly unattended?: UnattendedInit
@@ -53,7 +53,7 @@ export interface InitCommandIo {
 
 type AnswerProvenance = NonNullable<InitApplicationInput['greenfieldAnswer']>['provenance']
 
-export type InitApplicationHandler = (input: InitApplicationInput) => Promise<InitApplicationOutcome>
+type InitApplicationHandler = (input: InitApplicationInput) => Promise<InitApplicationOutcome>
 
 // Real interviews ask up to eleven questions; the bound only stops an application that never converges from looping forever.
 const MAX_INTERVIEW_ANSWERS = 64

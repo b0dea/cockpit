@@ -22,7 +22,7 @@ import { staleStackDiagnostics } from '../stack-inputs.js'
 
 type Execute = (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
 
-export interface SiblingCommandOutcome {
+interface SiblingCommandOutcome {
     readonly status: number
     readonly diagnostics: readonly Diagnostic[]
     readonly result: unknown

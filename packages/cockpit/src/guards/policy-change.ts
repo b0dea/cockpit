@@ -21,7 +21,7 @@ import { sha256Hex } from '../sha256.js'
 import { normalizeGuardHost } from './host.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from './local-identity.js'
 
-export type PolicyChange = Readonly<{ kind: 'non-widening' }> | Readonly<{ kind: 'widening'; fields: readonly string[] }>
+type PolicyChange = Readonly<{ kind: 'non-widening' }> | Readonly<{ kind: 'widening'; fields: readonly string[] }>
 
 // Each rule returns the field paths that widen; `at` is the path as cockpit.toml spells it. A rule
 // declares the shape it reads, and the walk hands it the values found at its path.
@@ -170,7 +170,7 @@ export function policyChange(before: CockpitConfig, after: CockpitConfig): Polic
     return fields.length ? { kind: 'widening', fields: [...new Set(fields)] } : { kind: 'non-widening' }
 }
 
-export type GuardConfigChange = Readonly<{ kind: 'unchanged' | 'unrecorded' }> | PolicyChange
+type GuardConfigChange = Readonly<{ kind: 'unchanged' | 'unrecorded' }> | PolicyChange
 
 /**
  * How the current configuration differs from the one the guards were generated from. `recorded` is

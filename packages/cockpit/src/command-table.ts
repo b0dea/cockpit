@@ -43,7 +43,7 @@ export type HandlerIdentifier = WorkHandlerIdentifier
     | 'use'
     | 'pull'
 
-export type CommandStage = 'set-up' | 'generate-and-verify' | 'run-the-stack' | 'diagnose' | 'test-and-grade'
+type CommandStage = 'set-up' | 'generate-and-verify' | 'run-the-stack' | 'diagnose' | 'test-and-grade'
 
 /** The order a newcomer meets the commands in, as the README's "Commands at a glance" table names it. */
 export const commandStages: readonly Readonly<{ id: CommandStage; title: string }>[] = Object.freeze([
@@ -161,13 +161,13 @@ export function describePublicOption(name: string): string {
 
 type OrdinaryValueRole = 'confined-path' | 'resolved-config' | 'declared-service' | 'declared-gate' | 'gate-mode' | 'gate-selector'
     | 'identifier' | 'route' | 'label' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target' | 'local-image' | 'evaluator-tool' | 'compose-profile'
-export interface OrdinaryOption {
+interface OrdinaryOption {
     readonly kind: 'flag' | 'value'
     readonly role: 'boolean' | OrdinaryValueRole
     readonly repetition: 'singleton' | 'repeated'
     readonly required?: true
 }
-export type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; reason: string }> | Readonly<{
+type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; reason: string }> | Readonly<{
     availability: 'available'
     executableRole: 'installed-cockpit'
     command: HandlerIdentifier
@@ -574,7 +574,7 @@ export const commands: readonly CommandDefinition[] = sources.map(({ flags, ...c
             : command.ordinary }
 })
 
-export interface InternalCommandDefinition {
+interface InternalCommandDefinition {
     readonly name: 'guard-evaluate'
     readonly handler: 'guard-evaluate'
     readonly visibility: 'internal'
@@ -588,7 +588,7 @@ export const internalCommands: readonly InternalCommandDefinition[] = Object.fre
     argv: GUARD_HANDLER_ARGV, options: Object.freeze({ harness: Object.freeze({ type: 'string' }) }),
 })])
 
-export interface OrdinaryInvocationAuthority {
+interface OrdinaryInvocationAuthority {
     readonly executable: string
     readonly canonicalRoot: string
     readonly allowedRoots: readonly string[]

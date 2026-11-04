@@ -94,7 +94,7 @@ export type ContainerEvidence =
     | Readonly<{ state: 'listed'; context: string; containers: readonly Readonly<{ id: string; name: string; running: boolean }>[] }>
     | Readonly<{ state: 'no-docker'; reason: string }>
     | Readonly<{ state: 'unavailable'; reason: string }>
-export type LockRecovery = Readonly<{ id: string; lock: 'none' | 'live' | 'unknown' | 'dead' | 'removed'; holder?: string; checked?: readonly string[]; recorded?: boolean }>
+type LockRecovery = Readonly<{ id: string; lock: 'none' | 'live' | 'unknown' | 'dead' | 'removed'; holder?: string; checked?: readonly string[]; recorded?: boolean }>
 
 // A lock names its writer: pid and start, so a reused pid never keeps a dead writer's lock alive, and
 // the host and whether it ran in a container, because a pid means nothing outside the process table

@@ -81,7 +81,7 @@ export interface CurrentLifecycleRecord {
 const lifecycleDigest = /^[a-f0-9]{64}$/
 const lifecycleService = /^[a-z0-9][a-z0-9_.-]*$/
 
-export type EarlierNameResult =
+type EarlierNameResult =
     | Readonly<{ kind: 'complete'; name: string | undefined }>
     | Readonly<{ kind: 'refusal'; code: EnvironmentDiagnostic['code']; message: string; target: string }>
 
@@ -206,12 +206,12 @@ export interface LifecycleStageProjection {
     readonly [lifecycleStageProjectionBrand]: true
 }
 
-export interface LifecycleStageEvidence {
+interface LifecycleStageEvidence {
     readonly stackId: StackId
     readonly stage: ObservationLifecycleStage
 }
 
-export type LifecycleStageResolution =
+type LifecycleStageResolution =
     | { readonly kind: 'complete'; readonly authority: LifecycleStageAuthority; readonly observation: EnvironmentObservation }
     | { readonly kind: 'refusal'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
 

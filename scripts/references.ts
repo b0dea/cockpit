@@ -41,7 +41,7 @@ export interface ReferenceSources {
     /** Each shipped skill procedure's source bytes, by its packaged path. */
     readonly procedures: ReadonlyMap<string, string>
 }
-export interface ReferenceFile { readonly path: string; readonly bytes: string }
+interface ReferenceFile { readonly path: string; readonly bytes: string }
 
 export async function readReferenceSources(root: string): Promise<ReferenceSources> {
     const read = (path: string) => readFile(join(root, path), 'utf8')

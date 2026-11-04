@@ -20,14 +20,14 @@ import { redactSensitiveText } from '../environment/sensitive.js'
 import { formatShellCommand, initCommand } from '../fix-catalogue.js'
 import { deriveSiblingVariable, TestingName } from '../schema.js'
 
-export interface InferredProvenance {
+interface InferredProvenance {
     readonly kind: 'derived' | 'inferred'
     /** The file the value was read from, as file:line where one line holds it. */
     readonly source: string
     readonly reason: string
 }
 
-export interface InferredFact {
+interface InferredFact {
     /** Interview fields this fact helps answer. */
     readonly fields: readonly string[]
     readonly target: string
@@ -35,7 +35,7 @@ export interface InferredFact {
     readonly provenance: InferredProvenance
 }
 
-export interface SkippedInference {
+interface SkippedInference {
     readonly source: string
     readonly reason: string
 }
@@ -45,7 +45,7 @@ export interface InferenceResult {
     readonly skipped: readonly SkippedInference[]
 }
 
-export interface InferenceInput {
+interface InferenceInput {
     /** Files must stay under this observed authority root. */
     readonly root: string
     /** Paths surfaced for confirmation are relative to the cockpit that will store them. */
@@ -152,7 +152,7 @@ function instructionArgv(argument: string): string[] | undefined {
     } catch { return shellForm } // Docker itself reads an instruction that is not a JSON array as shell form.
 }
 
-export interface DockerfileFacts {
+interface DockerfileFacts {
     readonly command?: string[]
     readonly ports: number[]
 }

@@ -32,10 +32,10 @@ export interface EstateObservationInput {
     readonly rootIsRepository?: true
 }
 type ObservationScope = Readonly<{ root: string; repositories?: readonly string[]; rootIsRepository?: true }>
-export interface EstateObservationAdapters {
+interface EstateObservationAdapters {
     readonly observe: (input: EstateObservationInput) => Promise<unknown>
 }
-export type EstateClassification = 'one-sibling' | 'incomplete-multi-repository'
+type EstateClassification = 'one-sibling' | 'incomplete-multi-repository'
     | 'no-runnable-product' | 'ready-multi-repository'
 export interface EstateClassificationResult {
     readonly classification: EstateClassification
@@ -63,26 +63,26 @@ interface OutcomeBase {
     question?: DocumentConfigurationQuestion | null
 }
 
-export interface CompleteDocumentOutcome extends OutcomeBase {
+interface CompleteDocumentOutcome extends OutcomeBase {
     kind: 'complete'
     artifact: string
     result: { document: string; unconfirmed?: readonly UnconfirmedAnswer[]; derived?: readonly DerivedAnswer[] }
     status: 0
 }
 
-export interface GapDraftOutcome extends OutcomeBase {
+interface GapDraftOutcome extends OutcomeBase {
     kind: 'gap-draft'
     artifact: string
     result: { document: string }
 }
 
-export interface SkippedScopeOutcome extends OutcomeBase {
+interface SkippedScopeOutcome extends OutcomeBase {
     kind: 'skipped-scope'
     artifact: null
     result: null
 }
 
-export interface RefusedDocumentOutcome extends OutcomeBase {
+interface RefusedDocumentOutcome extends OutcomeBase {
     kind: 'refusal'
     artifact: null
     result: null
@@ -104,10 +104,10 @@ export interface DocumentCommandInput {
     estate?: EstateObservationInput
 }
 
-export type DocumentConfigurationField = 'cockpit.name' | 'sibling' | 'estate.runnable' | 'ports.bases'
+type DocumentConfigurationField = 'cockpit.name' | 'sibling' | 'estate.runnable' | 'ports.bases'
     | 'environment.install_policies' | 'environment.test_data' | 'environment.compose_files' | 'environment.machine'
     | 'environment.posture' | 'testing' | 'guards' | 'configuration.defaults'
-export interface DocumentConfigurationQuestion {
+interface DocumentConfigurationQuestion {
     readonly id: `question:${string}`
     readonly field: DocumentConfigurationField
     readonly source: string
@@ -125,7 +125,7 @@ export interface DocumentConfigurationAnswer {
     readonly sha256: string
     readonly provenance: AnswerProvenance
 }
-export interface DocumentConfigurationInput {
+interface DocumentConfigurationInput {
     readonly sourceObservationSha256: string
     readonly classification?: EstateClassification
     readonly answers: readonly DocumentConfigurationAnswer[]

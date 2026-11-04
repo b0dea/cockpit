@@ -20,7 +20,7 @@ export interface WeakeningFinding {
     readonly reason: string
 }
 
-export type WeakeningKind = 'test-file-removed' | 'test-skipped' | 'check-suppressed' | 'tests-removed' | 'assertions-removed'
+type WeakeningKind = 'test-file-removed' | 'test-skipped' | 'check-suppressed' | 'tests-removed' | 'assertions-removed'
     | 'assertions-loosened' | 'assertion-vacuous' | 'test-selection-narrowed'
 
 function gitPath(value: string): string {

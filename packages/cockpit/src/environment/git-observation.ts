@@ -46,7 +46,7 @@ function observationIssuedAt(value: unknown): number | undefined {
     return value !== null && typeof value === 'object' ? issuedObservations.get(value) : undefined
 }
 
-export interface GitObservationEvidence {
+interface GitObservationEvidence {
     // null while HEAD is unborn: the repository was initialised and nothing is committed yet.
     readonly revision: string | null
     readonly branch: string
@@ -59,7 +59,7 @@ export interface GitObservationEvidence {
     readonly adjacency: 'aligned' | 'ahead' | 'behind' | 'diverged' | 'untracked-upstream' | 'upstream-gone'
 }
 
-export type GitObservationResult =
+type GitObservationResult =
     | { readonly kind: 'complete'; readonly evidence: GitObservationEvidence; readonly observations: readonly EnvironmentObservation[] }
     | { readonly kind: 'unavailable'; readonly reason: string }
 
@@ -302,15 +302,15 @@ export type ComparisonRemoteResult =
     | Readonly<{ kind: 'not-applicable'; code: ComparisonRemoteCode; reason: string }>
     | Readonly<{ kind: 'unavailable'; code: ComparisonRemoteCode; reason: string; remoteName?: string }>
 
-export type ComparisonRemoteRefStage =
+type ComparisonRemoteRefStage =
     | Readonly<{ kind: 'probe'; step: ExecutionStep }>
     | Extract<ComparisonRemoteResult, { kind: 'not-applicable' | 'unavailable' }>
 
-export type ComparisonRemoteUrlStage =
+type ComparisonRemoteUrlStage =
     | Readonly<{ kind: 'probe'; step: ExecutionStep; remoteName: string }>
     | Extract<ComparisonRemoteResult, { kind: 'unavailable' }>
 
-export type ComparisonRemoteRevalidationStage =
+type ComparisonRemoteRevalidationStage =
     | Readonly<{ kind: 'probe'; step: ExecutionStep; remoteName: string }>
     | Extract<ComparisonRemoteResult, { kind: 'unavailable' }>
 
@@ -531,7 +531,7 @@ export function observeComparisonRemoteRevalidation(
         }
 }
 
-export type RunningCheckoutObservationResult =
+type RunningCheckoutObservationResult =
     | { readonly kind: 'complete'; readonly observation: EnvironmentObservation }
     | { readonly kind: 'unavailable'; readonly reason: string }
 

@@ -79,7 +79,7 @@ export interface GuardEvaluationApplicationInput {
     readonly searchPath?: string
 }
 
-export interface GuardEvaluationApplicationAdapters {
+interface GuardEvaluationApplicationAdapters {
     readonly loadConfig: typeof loadCockpitConfig
     readonly observeCheckout: typeof observeSetupCheckout
     readonly resolveGit: () => Promise<import('../executable.js').ExecutableResolution>
@@ -109,7 +109,7 @@ async function guardServiceIds(
     return topology.kind === 'complete' ? topology.services.map(service => service.id) : topology.reason
 }
 
-export interface GuardEvaluationApplicationResult {
+interface GuardEvaluationApplicationResult {
     readonly decision: GuardDecision
     readonly diagnostics: readonly import('../contract.js').Diagnostic[]
     readonly fixContext?: FixContext
@@ -503,11 +503,11 @@ class GuardFileMissing extends RefusalError {
     constructor(readonly path: string) { super(`${path} is missing`) }
 }
 
-export interface PreparedGuardEvaluationPolicy {
+interface PreparedGuardEvaluationPolicy {
     readonly policy: GuardEvaluationPolicy
 }
 
-export interface GuardEvaluationPolicyInput {
+interface GuardEvaluationPolicyInput {
     readonly configuration: LoadedConfigProjection
     readonly checkout: SetupCheckoutObservation
 }

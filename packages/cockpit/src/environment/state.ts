@@ -129,7 +129,7 @@ const StateLockSchema = z.object({
 }).strict()
 
 export type StateRecord = z.infer<typeof StateRecordSchema>
-export type StateRecordKind = typeof RECORD_KINDS[number]
+type StateRecordKind = typeof RECORD_KINDS[number]
 
 const BootstrapDigestRowSchema = z.object({
     path: BootstrapPathSchema,
@@ -296,7 +296,7 @@ export type StateResult<T> =
           readonly recovery?: string
       }
 
-export interface SelectStateRootInput {
+interface SelectStateRootInput {
     readonly platform: 'darwin' | 'linux'
     readonly home: string | undefined
     readonly xdgStateHome?: string
@@ -317,7 +317,7 @@ export interface SelectBootstrapStateRootInput {
 
 type LockHolderState = 'live' | 'dead' | 'unknown'
 
-export interface StateLockInspection {
+interface StateLockInspection {
     readonly holderState: LockHolderState | 'invalid'
     readonly description: string
     readonly recovery: string
@@ -336,7 +336,7 @@ export interface StateTransactionOptions {
     readonly contentionTimeoutMs?: number
 }
 
-export interface StateScopedLock {
+interface StateScopedLock {
     readonly kind: 'state-scoped-lock'
 }
 
@@ -598,7 +598,7 @@ export function authenticateStateNamespace(value: unknown): StateNamespace | und
         : undefined
 }
 
-export function authenticateBootstrapStateNamespace(value: unknown): BootstrapStateNamespace | undefined {
+function authenticateBootstrapStateNamespace(value: unknown): BootstrapStateNamespace | undefined {
     return value !== null && typeof value === 'object' && issuedBootstrapNamespaces.has(value)
         ? value as BootstrapStateNamespace
         : undefined
@@ -1275,14 +1275,14 @@ function validateRecordForAddress(
     return record
 }
 
-export interface BootstrapAnswerResetPreview {
+interface BootstrapAnswerResetPreview {
     readonly revision: number
     readonly field: string
     readonly invalidatedFields: readonly string[]
     readonly previewSha256: string
 }
 
-export type BootstrapAnswerResetResult =
+type BootstrapAnswerResetResult =
     | Readonly<{ kind: 'pending'; preview: BootstrapAnswerResetPreview }>
     | Readonly<{ kind: 'complete'; preview: BootstrapAnswerResetPreview; record: BootstrapStateRecord }>
     | Readonly<{ kind: 'refusal'; code: string; message: string; target: string }>
@@ -1368,7 +1368,7 @@ type BootstrapObservationRefreshRefusal = Readonly<{
     message: string
 }>
 
-export type BootstrapObservationRefreshResult = StateResult<BootstrapStateRecord> | BootstrapObservationRefreshRefusal
+type BootstrapObservationRefreshResult = StateResult<BootstrapStateRecord> | BootstrapObservationRefreshRefusal
 
 function observationRefreshRefusal(
     reason: BootstrapObservationRefreshRefusal['reason'],
@@ -1430,7 +1430,7 @@ type BootstrapPublicationRefreshRefusal = Readonly<{
     message: string
 }>
 
-export type BootstrapPublicationRefreshResult = StateResult<BootstrapStateRecord> | BootstrapPublicationRefreshRefusal
+type BootstrapPublicationRefreshResult = StateResult<BootstrapStateRecord> | BootstrapPublicationRefreshRefusal
 
 function publicationRefreshRefusal(
     reason: BootstrapPublicationRefreshRefusal['reason'],
@@ -2415,7 +2415,7 @@ async function readStackStateFiles(value: StateNamespace, stackId: StackId): Pro
 }
 
 /** A stack's record files, and its coordination record decoded from the very bytes its file digest binds. */
-export type StackStateRead = Readonly<{
+type StackStateRead = Readonly<{
     files: readonly StackStateFile[]
     /** Undefined when the stack has no coordination file. */
     coordination: StateResult<StateRecord> | undefined
@@ -2438,7 +2438,7 @@ export async function inspectStackRecords(value: StateNamespace, stackId: StackI
 }
 
 /** What a guarded removal did: removed the named paths, or found them changed since the preview and left them. */
-export type StateRemoval = Readonly<{ kind: 'removed'; paths: readonly string[] }> | Readonly<{ kind: 'changed'; reason: string }>
+type StateRemoval = Readonly<{ kind: 'removed'; paths: readonly string[] }> | Readonly<{ kind: 'changed'; reason: string }>
 
 /**
  * Deletes a stack's record files, which releases its port lease, only when each file still holds the

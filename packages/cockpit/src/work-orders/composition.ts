@@ -44,7 +44,7 @@ import { splitRepositoryPath } from '../repository-path.js'
 import { parseCriteriaFile, parseWorkOrder, scopeMatcher, WORK_ORDER_ID, type ParsedFile, type WorkOrder, type WorkOrderCheck } from './contract.js'
 import { createWorkStore, outputTail, WORK_RECORD_DIRECTORY, type CheckResult, type ContainerEvidence, type WorkStore } from './store.js'
 
-export type WorkEnvironmentApplicationConfig = ConsumedWorkEnvironmentConfig
+type WorkEnvironmentApplicationConfig = ConsumedWorkEnvironmentConfig
 
 type BrowserAuthority = Readonly<{
     runtime: BrowserRuntimeProjection
@@ -63,7 +63,7 @@ type EvaluatorAuthority = Readonly<{
     environment?: Readonly<Record<string, string | undefined>>
 }>
 
-export interface WorkApplicationAuthorities {
+interface WorkApplicationAuthorities {
     readonly browser?: BrowserAuthority
     readonly resolveBrowser?: () => Promise<BrowserAuthority>
     readonly testing?: Readonly<{
@@ -82,7 +82,7 @@ export interface WorkApplicationAuthorities {
     readonly env: Readonly<Record<string, string | undefined>>
 }
 
-export type GradingResult = Readonly<{ criteria: readonly Verdict[]; evaluator: Readonly<{ tool: string; fallbacks: readonly Readonly<{ tool: string; code: string; message: string }>[] }> }>
+type GradingResult = Readonly<{ criteria: readonly Verdict[]; evaluator: Readonly<{ tool: string; fallbacks: readonly Readonly<{ tool: string; code: string; message: string }>[] }> }>
     | Readonly<{ refusal: Readonly<{ code: string; message: string; fix: string }> }>
 
 export interface WorkApplicationComposition {
@@ -115,14 +115,14 @@ export interface WorkApplicationComposition {
     /** The containers cockpit labels on this machine's local Docker daemon, where a lock's holder may run unseen by a pid probe. */
     readonly containers: () => Promise<ContainerEvidence>
 }
-export type TestWeakeningObservation = Readonly<{ patterns: TestFilePatterns; findings: readonly RepositoryWeakening[] }>
-export interface WorkApplicationGateRequest {
+type TestWeakeningObservation = Readonly<{ patterns: TestFilePatterns; findings: readonly RepositoryWeakening[] }>
+interface WorkApplicationGateRequest {
     readonly operation: 'test-run'
     readonly gate: string
     readonly mode: 'canonical' | 'full' | 'staged'
     readonly select?: Readonly<{ kind: 'spec' | 'file' | 'test' | 'route'; value: string }>
 }
-export type VerificationObservation =
+type VerificationObservation =
     | Readonly<{ kind: 'executed'; exitCode: number; stdout: string; stderr: string; truncated: boolean }>
     | Readonly<{ kind: 'error' | 'unavailable'; reason: string }>
 type RepositorySubject = Readonly<{ path: string; revision: string; worktreeDigest: string }>
@@ -861,7 +861,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
     return composition
 }
 
-export type ConfiguredWorkApplicationCompositionResult =
+type ConfiguredWorkApplicationCompositionResult =
     | Readonly<{ kind: 'complete'; composition: WorkApplicationComposition }>
     | Readonly<{ kind: 'refusal'; reason: string }>
 

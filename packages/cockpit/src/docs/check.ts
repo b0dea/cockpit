@@ -15,12 +15,12 @@ import { inspectDecisionRecords } from './decisions.js'
 import { walkMarkdownProse } from './markdown.js'
 import { historicalMakeTargets, makeTargets, parseRemovedPaths, staleReferences, type LivingDocument } from './references.js'
 
-export interface DocsCheckInput {
+interface DocsCheckInput {
     readonly configPath: string
     readonly env: Readonly<Record<string, string | undefined>>
 }
 
-export interface DocsCheckOutcome {
+interface DocsCheckOutcome {
     readonly status: number
     readonly diagnostics: readonly Diagnostic[]
     readonly result: unknown

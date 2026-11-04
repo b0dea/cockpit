@@ -29,7 +29,7 @@ const RECORD_MAX_BYTES = 65_536
 const SLUG = /^[a-z0-9][a-z0-9-]*$/
 
 /** Each overridden sibling's slug and the canonical absolute directory that serves it. */
-export type SiblingCheckoutRecord = Readonly<Record<string, string>>
+type SiblingCheckoutRecord = Readonly<Record<string, string>>
 
 export type SiblingCheckoutRecordRead =
     | Readonly<{ kind: 'complete'; checkouts: SiblingCheckoutRecord }>
@@ -104,7 +104,7 @@ export function servedSiblings(cockpitRoot: string,
     }))
 }
 
-export type ServedSiblingsRead =
+type ServedSiblingsRead =
     | Readonly<{ kind: 'complete'; siblings: ReadonlyMap<string, ServedSibling> }>
     | Readonly<{ kind: 'refusal'; diagnostic: EnvironmentDiagnostic }>
 
@@ -150,14 +150,14 @@ export function servedSiblingVariables(config: Pick<CockpitConfig, 'sibling'>, s
 
 // `stderr` is Git's own text, kept for classifying the failure; it may carry a remote URL's
 // credentials, so callers print `detail` and never `stderr`.
-export type GitRun = Readonly<{ kind: 'complete'; stdout: string }>
+type GitRun = Readonly<{ kind: 'complete'; stdout: string }>
     | Readonly<{ kind: 'failed'; exitCode: number; code: string; detail: string; stderr: string }>
 
 /**
  * `stdoutLimitBytes` replaces the default bound, which keeps only the tail of longer output, with a
  * hard one: output past it fails with EXECUTION_STDOUT_LIMIT instead of arriving in part.
  */
-export type GitRunOptions = Readonly<{ timeoutMs?: number; stdoutLimitBytes?: number }>
+type GitRunOptions = Readonly<{ timeoutMs?: number; stdoutLimitBytes?: number }>
 
 /** Runs one Git command in a checkout through the authenticated executor and returns its text. */
 export interface GitRunner {
@@ -233,7 +233,7 @@ function spelled(identity: RepositoryIdentity | undefined): string {
     return identity === undefined ? 'no recognisable origin remote' : `${identity.host}/${identity.owner}/${identity.repository}`
 }
 
-export type SiblingCheckoutInspection =
+type SiblingCheckoutInspection =
     | Readonly<{ kind: 'same-repository'; directory: string; evidence: 'object-store' | 'remote' }>
     | Readonly<{ kind: 'refusal'; diagnostic: EnvironmentDiagnostic }>
 

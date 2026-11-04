@@ -41,7 +41,7 @@ import { readBoundedFile } from '../bounded-read.js'
 const COMPOSE_BYTE_LIMIT = 1_048_576
 const DEFAULT_OUTPUT_LIMIT = 1_048_576
 
-export interface ReadCommandCompositionInput {
+interface ReadCommandCompositionInput {
     readonly configPath: string
     readonly env: Readonly<Record<string, string | undefined>>
     readonly sessionId: string
@@ -51,7 +51,7 @@ export interface ReadCommandCompositionInput {
     readonly runtimeMeasurementProbeAuthority?: RuntimeMeasurementProbeAuthority
 }
 
-export interface ReadCommandAdapterComposition {
+interface ReadCommandAdapterComposition {
     readonly logs: LogsCommandAdapters
     readonly services: ServiceCommandAdapters
     readonly environment: Readonly<{ observe: (input: { readonly configPath: string }) => Promise<RuntimeEvidenceObservation> }>

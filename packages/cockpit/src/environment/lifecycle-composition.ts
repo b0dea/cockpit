@@ -164,7 +164,7 @@ function undefinedProfileDiagnostics(
     })
 }
 
-export interface LifecycleCommandCompositionInput {
+interface LifecycleCommandCompositionInput {
     readonly configPath: string
     readonly env: Readonly<Record<string, string | undefined>>
     readonly sessionId: string
@@ -176,7 +176,7 @@ export interface LifecycleCommandCompositionInput {
     readonly holderProcess?: HolderProcess
 }
 
-export type LifecycleCommandAdapterComposition = Omit<UpCommandAdapters & SleepCommandAdapters, 'withRuntimeReadiness' | 'seed' | 'recordStackInputs'> & {
+type LifecycleCommandAdapterComposition = Omit<UpCommandAdapters & SleepCommandAdapters, 'withRuntimeReadiness' | 'seed' | 'recordStackInputs'> & {
     seed: NonNullable<UpCommandAdapters['seed']>
     recordStackInputs: NonNullable<UpCommandAdapters['recordStackInputs']>
     withMachineFloorReadiness<T>(

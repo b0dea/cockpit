@@ -13,7 +13,7 @@ export interface Diagnostic<Code extends string = string> {
 }
 
 export type JsonSnapshot = null | boolean | number | string | JsonSnapshotArray | JsonSnapshotObject
-export interface JsonSnapshotArray extends ReadonlyArray<JsonSnapshot> {}
+interface JsonSnapshotArray extends ReadonlyArray<JsonSnapshot> {}
 export interface JsonSnapshotObject { readonly [key: string]: JsonSnapshot }
 
 const JSON_LIMITS = { bytes: 1_048_576, nodes: 65_536, entries: 4_096, scalarBytes: 65_536, depth: 64 } as const
@@ -464,7 +464,7 @@ export function isCanonicalTimestamp(value: unknown): value is string {
     return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value
 }
 
-export type ExpectedObservation =
+type ExpectedObservation =
     | { kind: 'path'; target: string; state: 'absent' | 'directory' | 'repository' }
     | { kind: 'remote'; target: string; name: string; url: string }
 
@@ -601,21 +601,21 @@ export interface ExecutionPlan {
     steps: readonly ExecutionStep[]
 }
 
-export type LifecycleResumeBoundary = Readonly<{
+type LifecycleResumeBoundary = Readonly<{
     completedStepIds: readonly string[]
     nextStepId: string | null
 }>
 
 type LifecycleStepBase = Readonly<{ id: string }>
 
-export interface LifecycleEntrypoint {
+interface LifecycleEntrypoint {
     readonly name: string
     readonly kind: EntrypointKind
     readonly port: string
     readonly value: string
 }
 
-export interface LifecycleCompletedService {
+interface LifecycleCompletedService {
     readonly service: string
     readonly containerId: string
 }
@@ -626,7 +626,7 @@ export interface LifecycleProgress {
     readonly completedServices: readonly LifecycleCompletedService[]
 }
 
-export type LifecycleStep =
+type LifecycleStep =
     | LifecycleStepBase & Readonly<{ kind: 'preflight' }>
     | LifecycleStepBase & Readonly<{ kind: 'claim'; action: 'acquire' | 'release' }>
     | LifecycleStepBase & Readonly<{ kind: 'prepare'; execution: ExecutionStep }>
@@ -898,15 +898,15 @@ export type ObservationExpectation =
     | { readonly kind: 'maximum'; readonly value: number }
     | { readonly kind: 'present' }
 
-export type ObservationApplicability =
+type ObservationApplicability =
     | { readonly state: 'required'; readonly posture: string }
     | { readonly state: 'not-applicable'; readonly posture: string; readonly reason: string }
 
-export type ObservationFreshness =
+type ObservationFreshness =
     | { readonly state: 'current' }
     | { readonly state: 'stale' | 'missing'; readonly reason: string }
 
-export type EnvironmentObservedValue =
+type EnvironmentObservedValue =
     | { readonly state: 'available'; readonly value: JsonSnapshot; readonly observedAt: string }
     | { readonly state: 'unavailable' | 'failed'; readonly reason: string; readonly observedAt: string }
 

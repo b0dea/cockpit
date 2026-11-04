@@ -19,7 +19,7 @@ import { inspectSiblingInstructions } from './sibling-instructions.js'
 import { DEFAULT_SURFACE_TOOLS } from '../surfaces/harness-registry.js'
 import type { ReadinessReport } from '../readiness.js'
 
-export interface ProjectReadinessInput {
+interface ProjectReadinessInput {
     /** The cockpit root, where cockpit.toml is or will be written. */
     readonly root: string
     /** Present once cockpit.toml exists; its siblings are the repositories asked. */

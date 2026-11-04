@@ -60,13 +60,13 @@ import { observeTemplateHealth } from './templates.js'
 import { inspectServedSiblings } from './application/siblings.js'
 import { observeServedCheckouts } from './sibling-observation.js'
 
-export interface HealthCommandCompositionInput {
+interface HealthCommandCompositionInput {
     readonly configPath: string
     readonly env: Readonly<Record<string, string | undefined>>
     readonly timeoutMs: number
 }
 
-export type HealthCommandAdapterComposition = PreflightCommandAdapters & DoctorCommandAdapters
+type HealthCommandAdapterComposition = PreflightCommandAdapters & DoctorCommandAdapters
 
 interface CapturedInput {
     readonly configPath: string

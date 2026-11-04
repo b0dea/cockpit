@@ -12,7 +12,7 @@ import type {
     GeneratedStaleRemovalApprovalRequest,
 } from './generated-application/shared.js'
 
-export interface OperatorAdmission {
+interface OperatorAdmission {
     readonly interactive: boolean
     readonly json: boolean
     readonly ci: string | undefined
@@ -22,20 +22,20 @@ export interface OperatorAdmission {
 }
 
 /** The autonomy policy a gated command reads, or the refusal that it could not be read. */
-export type OperatorPolicy = Readonly<{ current: EffectivePolicy; recorded?: EffectivePolicy; record: () => Promise<void> }>
+type OperatorPolicy = Readonly<{ current: EffectivePolicy; recorded?: EffectivePolicy; record: () => Promise<void> }>
 
-export interface OperatorCommandOutcome {
+interface OperatorCommandOutcome {
     readonly status: number
     readonly diagnostics: readonly Diagnostic[]
     readonly result: unknown
 }
 
-export interface OperatorSession {
+interface OperatorSession {
     readonly preview: OperatorCommandOutcome
     decide(decision: 'approve' | 'decline'): Promise<OperatorCommandOutcome>
 }
 
-export interface ResetOperatorApplicationAdapters {
+interface ResetOperatorApplicationAdapters {
     readonly preview: (input: ResetCommandInput) => Promise<OperatorCommandOutcome>
     readonly begin: (input: ResetCommandInput) => Promise<OperatorSession | OperatorCommandOutcome>
     readonly confirm: (preview: OperatorCommandOutcome) => Promise<boolean>
@@ -48,7 +48,7 @@ export type GeneratedEnvironmentSyncHandlerInput = GeneratedEnvironmentSyncInput
     ) => Promise<GeneratedStaleRemovalApproval | undefined>
 }>
 
-export interface SyncOperatorApplicationAdapters {
+interface SyncOperatorApplicationAdapters {
     readonly synchronize: (input: GeneratedEnvironmentSyncHandlerInput) => Promise<OperatorCommandOutcome>
     readonly confirmStaleRemoval: (request: GeneratedStaleRemovalApprovalRequest) => Promise<string | undefined>
     readonly policy: (configPath: string) => Promise<OperatorPolicy | OperatorCommandOutcome>
@@ -134,7 +134,7 @@ export interface StacksPruneOperatorSession {
     apply(): Promise<OperatorCommandOutcome>
 }
 
-export interface StacksPruneOperatorAdapters {
+interface StacksPruneOperatorAdapters {
     readonly begin: (input: Readonly<{ configPath: string }>) => Promise<StacksPruneOperatorSession | OperatorCommandOutcome>
     /** Shows the preview to a person at a terminal and returns the digest they typed. */
     readonly confirm: (preview: OperatorCommandOutcome) => Promise<string | undefined>

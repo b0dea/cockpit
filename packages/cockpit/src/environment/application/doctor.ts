@@ -31,19 +31,19 @@ import { unreadableStateWarning } from './lifecycle-state.js'
 export interface DoctorCommandInput {
     readonly configPath: string
 }
-export interface DoctorSurfaceOverrideInspectionComplete {
+interface DoctorSurfaceOverrideInspectionComplete {
     readonly kind: 'complete'
     readonly activeOverrides: readonly ActiveSurfaceOverride[]
     readonly changedOverrideOriginals: readonly SurfaceUpgradeFinding[]
 }
 
-export interface DoctorSurfaceOverrideInspectionUnavailable {
+interface DoctorSurfaceOverrideInspectionUnavailable {
     readonly kind: 'unavailable'
     readonly code: string
     readonly reason: string
 }
 
-export interface DoctorSurfaceOverrideInspectionRefusal {
+interface DoctorSurfaceOverrideInspectionRefusal {
     readonly kind: 'refusal'
     readonly code: string
     readonly reason: string
@@ -88,14 +88,14 @@ interface DoctorFreshness {
     readonly repair?: ReturnType<typeof proposeGeneratedEnvironmentRepair>
 }
 
-export interface DoctorDeclaration {
+interface DoctorDeclaration {
     readonly subject: 'runtime' | 'reset-volumes' | 'seed' | 'docs'
     readonly state: 'declared' | 'not-declared'
     readonly source: string
     readonly reason: string
 }
 
-export interface ApplicationDoctorEvaluation {
+interface ApplicationDoctorEvaluation {
     readonly verdict: PreflightEvaluation['verdict']
     readonly checks: readonly DoctorCheck[]
     readonly comparisons: readonly ComparisonRemoteEvaluation[]
@@ -200,7 +200,7 @@ async function doctorPolicyDiagnostics(loading: Promise<LoadedDoctorConfig>): Pr
     return weakened.length ? [{ ...policyWeakeningDiagnostic(weakened), severity: 'warning' as const }] : []
 }
 
-export type DoctorCommandResult = Readonly<{
+type DoctorCommandResult = Readonly<{
     kind: 'complete'
     status: 0
     diagnostics: readonly EnvironmentDiagnostic[]

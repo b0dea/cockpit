@@ -11,12 +11,12 @@ import { authenticateBrowserProjectClient, executeBrowserProjectOperation, withB
     type BrowserProjectClient, type BrowserProjectOperationAuthorization } from './surfaces.js'
 
 export type BrowserCommandKind = 'drive' | 'screenshot'
-export interface BrowserRouteDeclaration { readonly name: string; readonly path: string }
+interface BrowserRouteDeclaration { readonly name: string; readonly path: string }
 export interface BrowserRoutePolicy {
     readonly origin: string
     readonly surfaces: readonly Readonly<{ name: string; url: string }>[]
 }
-export type BrowserDiagnosticEntry =
+type BrowserDiagnosticEntry =
     | Readonly<{ kind: 'console'; path?: string; line?: number }>
     | Readonly<{ kind: 'pageerror'; name: string }>
     | Readonly<{ kind: 'request'; method: string; path: string; status: number } | { kind: 'request'; method: string; path: string; failure: string }>
@@ -25,11 +25,11 @@ export type BrowserDiagnosticEntry =
  * it as data and never as instructions. Present only for a data posture that is isolated, not
  * restored and not reaching production; otherwise `omitted` says why there is none.
  */
-export type BrowserMessageExcerpt =
+type BrowserMessageExcerpt =
     | Readonly<{ trust: 'untrusted-page-content'; messages: readonly Readonly<{ kind: 'console' | 'pageerror'; text: string }>[] }>
     | Readonly<{ omitted: string }>
 /** What a route's page did wrong. Identifiers and counts, plus a message excerpt where the data posture allows it: never bodies, headers or cookies. */
-export interface BrowserRouteDiagnostics {
+interface BrowserRouteDiagnostics {
     readonly consoleErrors: number
     readonly consoleWarnings: number
     readonly pageErrors: number
@@ -40,7 +40,7 @@ export interface BrowserRouteDiagnostics {
     readonly omitted: number
     readonly excerpt: BrowserMessageExcerpt
 }
-export type BrowserRouteVerdict = 'clean' | 'findings'
+type BrowserRouteVerdict = 'clean' | 'findings'
 export interface BrowserCommandInput {
     readonly runtime: BrowserRuntimeProjection
     readonly client: BrowserProjectClient
@@ -51,7 +51,7 @@ export interface BrowserCommandInput {
     readonly role?: string
     readonly state?: Readonly<{ namespace: StateNamespace; stackId: StackId; ownerId: HolderId }>
 }
-export interface BrowserCommandSurfaceReceipt {
+interface BrowserCommandSurfaceReceipt {
     readonly name: string
     readonly url: string
     readonly screenshot?: Readonly<{ path: string; sha256: string; byteLength: number }>

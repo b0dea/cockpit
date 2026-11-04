@@ -47,12 +47,12 @@ export interface GuardProtectedIdentity {
     readonly identity: string | null
     readonly ancestors: readonly string[]
 }
-export interface GuardDeclaredAllow {
+interface GuardDeclaredAllow {
     readonly argv: readonly string[]
     readonly reason: string
     readonly cwd?: string
 }
-export interface GuardDeclaredDeny {
+interface GuardDeclaredDeny {
     readonly match: 'prefix' | 'contains'
     readonly argv: readonly string[]
     readonly reason: string
@@ -95,7 +95,7 @@ export interface GuardEvaluationPolicy {
     readonly cockpitLaunchers: readonly GuardInvocationProfile[]
     readonly projectCommands: readonly GuardProjectCommand[]
 }
-export interface PathInspectionRequest {
+interface PathInspectionRequest {
     readonly path: string
     readonly cwd: string
     /**

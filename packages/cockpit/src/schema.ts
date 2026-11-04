@@ -532,7 +532,7 @@ const BrowserArtifactRoots = z.object({
 })
 
 /** The data posture that lets browser tools run without prompts: isolated, not restored, not reaching production. */
-export const browserDataQualifies = (data: Readonly<{ mode: string; isolated: boolean; reaches_production: boolean }>): boolean =>
+const browserDataQualifies = (data: Readonly<{ mode: string; isolated: boolean; reaches_production: boolean }>): boolean =>
     data.mode !== 'restored' && data.isolated && !data.reaches_production
 /** An explicit request_preapproval wins; otherwise preapproval follows the declared data posture. */
 export const browserPreapprovalRequested = (browser: Readonly<{ request_preapproval?: boolean | undefined; data: Parameters<typeof browserDataQualifies>[0] }>): boolean =>
@@ -1024,7 +1024,7 @@ export const CockpitConfig = z
 export type CockpitConfig = z.infer<typeof CockpitConfig>
 export type Sibling = z.infer<typeof Sibling>
 export type Acquire = z.infer<typeof Acquire>
-export type Toolchain = z.infer<typeof Toolchain>
+type Toolchain = z.infer<typeof Toolchain>
 export type AddressingPosture = z.infer<typeof AddressingPosture>
 export type AuthPosture = z.infer<typeof AuthPosture>
 export type EnvironmentFile = z.infer<typeof EnvironmentFile>
@@ -1037,12 +1037,12 @@ export type Browser = z.infer<typeof Browser>
 export type Testing = z.infer<typeof Testing>
 export type Docs = z.infer<typeof Docs>
 export type Provenance = z.infer<typeof Provenance>
-export type SurfaceSource = z.infer<typeof SurfaceSource>
-export type SurfaceOverrideReference = z.infer<typeof SurfaceOverrideReference>
+type SurfaceSource = z.infer<typeof SurfaceSource>
+type SurfaceOverrideReference = z.infer<typeof SurfaceOverrideReference>
 export type SurfaceDeclaration = z.infer<typeof SurfaceDeclaration>
 export type SurfaceOverlay = z.infer<typeof SurfaceOverlay>
 export type SurfaceAdoption = z.infer<typeof SurfaceAdoption>
-export type CustomHarnessCapability = z.infer<typeof CustomHarnessCapability>
+type CustomHarnessCapability = z.infer<typeof CustomHarnessCapability>
 export type CustomHarness = z.infer<typeof CustomHarness>
 export type Surfaces = z.infer<typeof Surfaces>
 

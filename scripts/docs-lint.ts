@@ -37,7 +37,7 @@ export interface Authority {
     readonly schemaFields: ReadonlySet<string>
 }
 
-export function repositoryAuthority(root: string): Authority {
+function repositoryAuthority(root: string): Authority {
     // Untracked files that are not ignored count, so a check run before the commit sees what it will hold.
     const files = new Set(execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
         .split('\0').filter(Boolean))
