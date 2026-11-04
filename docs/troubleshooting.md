@@ -121,7 +121,8 @@ the harness enforces anything.
 ### MCP and restrictions
 
 For `MCP_INPUT_INVALID` or `MCP_DECLARATION_INVALID`, correct the declaration, digest,
-same-name environment reference, or confined working directory named by the message.
+same-name environment reference, confined working directory, or remote server URL, header
+reference or `headersHelper` named by the message.
 `MCP_COMMAND_CONFLICT` means two sources give one server name different commands; make them agree or give them distinct names. `MCP_NOT_APPROVED` leaves a declared
 server disabled because `[mcp.approved]` has no entry for it, or its declaration changed since it
 was approved; a person, only after reviewing its command, arguments, working directory, environment
@@ -129,6 +130,9 @@ names and sources, sets its name to the sha256 in the message under `[mcp.approv
 While `[autonomy] mcp_approve` is `person`, the default, the guard refuses an agent's edit of `[mcp]`. `MCP_APPROVAL_UNKNOWN` means the allowlist names no
 declaration. `MCP_EXECUTABLE_UNAVAILABLE` comes from the generated wrapper when its declared
 executable is absent or not executable; restore that executable rather than changing the wrapper.
+`MCP_TRANSPORT_UNAVAILABLE` names a remote server left out of the tools that cannot carry its
+credential, such as OpenCode for a server with a `headersHelper`; see
+[Remote servers](harness-surfaces.md#remote-servers) for what each tool can carry.
 
 For `RESTRICTION_INPUT_INVALID`, `RESTRICTION_ADAPTER_INVALID`, `RESTRICTION_EVENT_UNADAPTED`,
 `RESTRICTION_TEMPLATE_INVALID` or `RESTRICTION_OUTPUT_LIMIT`, correct the named guard policy,

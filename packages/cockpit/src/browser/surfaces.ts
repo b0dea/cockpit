@@ -11,7 +11,7 @@ import { abortStateTransaction, authenticateStateNamespace, issueStateScopedLock
 import { GeneratedHostPath } from '../schema.js'
 import type { RenderedSurfaceFile } from '../surfaces/contract.js'
 import { GUARD_SURFACE_TARGETS, type GuardSurfaceTarget } from '../surfaces/harness-registry.js'
-import { collectMcpDeclarations, mcpApprovalDigest, type McpDeclaration } from '../surfaces/mcp.js'
+import { collectMcpDeclarations, mcpApprovalDigest, type McpStdioDeclaration } from '../surfaces/mcp.js'
 import { isPackageDescendant } from './package-paths.js'
 import { assertBrowserStorageStateCurrent, browserRuntimeControlAuthorities, browserRuntimeControlPorts, browserRuntimeCoordination, type BrowserRuntimeProjection } from './runtime.js'
 import { readBoundedFile } from '../bounded-read.js'
@@ -29,7 +29,7 @@ export interface BrowserSurfaceInput {
     readonly runtime: BrowserRuntimeProjection
     readonly cockpitDirectory: string
     readonly harnesses: readonly { readonly target: GuardSurfaceTarget; readonly version: string }[]
-    readonly mcp: McpDeclaration
+    readonly mcp: McpStdioDeclaration
     readonly approved: boolean
     readonly testPackage: BrowserTestPackage | null
     readonly skillTemplate: string
@@ -505,12 +505,13 @@ export function renderBrowserSurfaces(input: BrowserSurfaceInput) {
     assertBrowserStorageStateCurrent(runtime)
     const cli = pinnedCli(data.testPackage, runtime, data.cockpitDirectory)
     // `approved` says the caller matched the declared server against [mcp.approved]; this one may carry a bound endpoint.
-    const approval = { playwright: mcpApprovalDigest(data.mcp as McpDeclaration, data.cockpitDirectory) }
+    const approval = { playwright: mcpApprovalDigest(data.mcp as McpStdioDeclaration, data.cockpitDirectory) }
     const collected = collectMcpDeclarations({ cockpitDirectory: data.cockpitDirectory, declarations: [data.mcp],
         approved: data.approved ? approval : {}, targets: data.harnesses.map(row => row.target) })
     if (collected.kind !== 'complete') throw new RefusalError(`browser MCP declaration refused: ${collected.diagnostic.code}`)
     const server = collected.result.servers[0]!
     if (server.name !== 'playwright') throw new RefusalError('browser MCP declaration must be the playwright server')
+    if (!('command' in server)) throw new RefusalError('the playwright MCP server must be a local command, not a remote URL')
     if (server.cwd !== data.cockpitDirectory) {
         throw new RefusalError('the playwright MCP declaration must come from a sibling whose dir is the cockpit directory itself (dir = "."), so the server starts there')
     }
@@ -544,6 +545,7 @@ export function renderBrowserSurfaces(input: BrowserSurfaceInput) {
         if (ownRows.every(row => row.declaration === 'unavailable')) continue
         if (ownRows.some(row => row.transport === 'mcp' && row.declaration === 'instructed')) {
             const native = collected.result.harnesses.find(row => row.target === harness.target)!.servers[0]!
+            if (!('command' in native)) throw new RefusalError('the playwright MCP server must be a local command, not a remote URL')
             files.push(nativeMcp(harness.target, native.command, native.args))
         }
         files.push(renderSkill(data.skillTemplate, harness.target, ownRows, runtime))

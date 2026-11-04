@@ -192,6 +192,8 @@ export async function prepareSurfaces(
     const unapprovedMcpServers = mcp.diagnostics.filter(row => row.code === 'MCP_NOT_APPROVED' && row.server !== undefined)
         .map(row => ({ name: row.server!, sha256: row.sha256!, sources: (row.sources ?? []).map(source =>
             source.kind === 'sibling' ? `${source.slug}:${source.path}` : source.path) }))
+    const mcpTransportGaps = mcp.diagnostics.filter(row => row.code === 'MCP_TRANSPORT_UNAVAILABLE' && row.server !== undefined)
+        .map(row => ({ name: row.server!, targets: row.targets ?? [], reason: row.message }))
     if (mcp.diagnostics.some(row => row.code === 'MCP_APPROVAL_UNKNOWN')) {
         const row = mcp.diagnostics.find(candidate => candidate.code === 'MCP_APPROVAL_UNKNOWN')!
         return refuse(row.code, row.message, row.server)
@@ -215,10 +217,11 @@ export async function prepareSurfaces(
         if (!checkout) return refuse('SURFACE_INPUT_INVALID', 'browser checkout identity is unavailable', prepared.configPath)
         const browserConfiguration = prepared.workEnvironment.browser
         const playwright = declarations.filter(row => row.name === 'playwright')
-        if (playwright.length !== 1) {
+            .flatMap(row => 'command' in row ? [row] : [])
+        if (playwright.length !== 1 || declarations.filter(row => row.name === 'playwright').length !== 1) {
             return refuse('MCP_DECLARATION_INVALID',
-                `[browser] requires exactly one MCP server named playwright, and the declared MCP sources hold ${playwright.length}`, 'playwright',
-                'declare one playwright server in a JSON file with an mcpServers object, listed in a sibling\'s derives.mcp_sources, then run npx --no cockpit sync --config <your cockpit.toml>')
+                `[browser] requires exactly one local-command MCP server named playwright, and the declared MCP sources hold ${declarations.filter(row => row.name === 'playwright').length} servers by that name, ${playwright.length} of them local`, 'playwright',
+                'declare one playwright server with a command (not a url) in a JSON file with an mcpServers object, listed in a sibling\'s derives.mcp_sources, then run npx --no cockpit sync --config <your cockpit.toml>')
         }
         const playwrightDigest = mcpApprovalDigest(playwright[0]!, prepared.root)
         if (config.mcp.approved.playwright !== playwrightDigest) {
@@ -669,7 +672,7 @@ export async function prepareSurfaces(
     if (unsafeGrant) return refuse('SURFACE_INPUT_INVALID',
         `the directory of sibling ${unsafeGrant.slug} contains *, ?, a quote, a backslash or a control character, which OpenCode would read as part of its access pattern; move the checkout to a plain path`,
         unsafeGrant.slug)
-    return { ...prepared, guardHandler, openCodeGrantRoots, unapprovedMcpServers,
+    return { ...prepared, guardHandler, openCodeGrantRoots, unapprovedMcpServers, mcpTransportGaps, mcpServers: mcp.result.servers,
         surfaces: surfaceEntries, compactSurfacePaths, configuredHarnesses,
         activeSurfaceOverrides: merge.overrides, changedOverrideOriginals: merge.findings,
         surfaceSelftest,

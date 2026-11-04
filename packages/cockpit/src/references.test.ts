@@ -327,12 +327,13 @@ describe('reference pages', () => {
         // run of the real tool showed a refusal, and Codex's holds only once a person trusts the hook.
         // Every tool stays in the matrix; the unmeasured ones are written only when listed. The session-start
         // check is generated only where a dated run saw the hook fire and reach the agent.
-        expect(matrix).toContain('| Tool | Written | Guard firing | Instruction loading | Skills | Session-start check |\n| --- | --- | --- | --- | --- | --- |\n'
-            + '| Claude Code (`claudecode`) | by default | enforced | instructed | instructed | instructed |\n'
-            + '| Codex (`codexcli`) | by default | enforced (needs a person) | instructed | instructed | instructed (needs a person) |\n'
-            + '| OpenCode (`opencode`) | by default | enforced | instructed | instructed | unavailable |\n'
-            + '| Cursor (`cursor`) | when listed | unavailable | generated | generated | unavailable |\n'
-            + '| Grok Build (`grokcli`) | when listed | unavailable | generated | generated | unavailable |\n')
+        expect(matrix).toContain('| Tool | Written | Guard firing | Instruction loading | Skills | Session-start check | Remote MCP servers |\n| --- | --- | --- | --- | --- | --- | --- |\n'
+            + '| Claude Code (`claudecode`) | by default | enforced | instructed | instructed | instructed | instructed (needs a person) |\n'
+            + '| Codex (`codexcli`) | by default | enforced (needs a person) | instructed | instructed | instructed (needs a person) | instructed |\n'
+            + '| OpenCode (`opencode`) | by default | enforced | instructed | instructed | unavailable | instructed |\n'
+            + '| Cursor (`cursor`) | when listed | unavailable | generated | generated | unavailable | unavailable |\n'
+            + '| Grok Build (`grokcli`) | when listed | unavailable | generated | generated | unavailable | unavailable |\n')
+        expect(section('Without a measurement')).toContain('- Remote MCP servers in Cursor and Grok Build: cockpit writes no remote MCP server for this tool')
         expect(section('Measurements')).toMatch(/^- Codex, guard firing \(\d{4}-\d{2}-\d{2}, version [^)]+\): only after a person trusts the hook: [^\n]+\.$/m)
         expect(section('Measurements')).not.toMatch(/Cursor|Grok Build|skills/)
         // A date reads as a run of the tool, so cells nobody ran carry none.

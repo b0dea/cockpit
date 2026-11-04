@@ -8,6 +8,7 @@ import * as generatedCurrentnessOwner from './generated-application/check.js'
 import { RefusalError } from './contract.js'
 import { ObservationProducerRefusal } from './application/health.js'
 import { cockpitPackageVersion } from '../test-support/package-version.js'
+import { observeMcpStartup } from './mcp-observation.js'
 const applicationOwners = vi.hoisted(() => ({
     logs: {} as Partial<Pick<typeof import('./logs.js'), 'collectLogs' | 'planLogs'>>,
     observations: {} as Partial<Pick<typeof import('./observations.js'), 'aggregateObservations' | 'projectDoctor'>>,
@@ -108,6 +109,35 @@ describe('observation application runners', () => {
             // The full check envelope lists every owned path; doctor keeps only whether files are current.
             expect(Object.keys(result.result.freshness.local).sort()).toEqual(['diagnostics', 'kind', 'status'])
         } finally { prepare.mockRestore() }
+    })
+
+    it('names what each approved MCP server lacks to start without starting it or printing a value', async () => {
+        const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-doctor-mcp-')))
+        const original = generatedCurrentnessOwner.prepareGeneratedEnvironmentCurrentness
+        const source = { kind: 'sibling', slug: 'app', path: '.mcp.json', sha256: 'a'.repeat(64) } as const
+        mkdirSync(join(directory, 'bin'))
+        writeFileSync(join(directory, 'bin/headers'), '#!/bin/sh\nexit 0\n', { mode: 0o700 })
+        const servers = [
+            { name: 'local', command: 'bin/absent', args: [], cwd: directory, envNames: ['LOCAL_TOKEN'], enabled: true, sources: [source] },
+            { name: 'remote', transport: 'http', url: 'https://mcp.example.test/mcp', headers: { Authorization: 'Bearer ${REMOTE_TOKEN}' },
+                helper: { command: 'bin/headers', args: [], cwd: directory }, envNames: ['REMOTE_TOKEN'], enabled: true, sources: [source] },
+            { name: 'off', command: 'bin/absent', args: [], cwd: directory, envNames: ['OFF_TOKEN'], enabled: false, sources: [source] },
+        ] as const
+        const prepare = vi.spyOn(generatedCurrentnessOwner, 'prepareGeneratedEnvironmentCurrentness')
+            .mockImplementation(async input => ({ ...await original(input), mcpServers: servers }))
+        try {
+            const doctorWith = async (env: Record<string, string>) => (await runDoctor(commandInput, { load: async () => undefined, execute: vi.fn(),
+                inspectMcpStartup: rows => observeMcpStartup(rows, { PATH: '/usr/bin:/bin', ...env }) }))
+                .diagnostics.filter(row => row.code.startsWith('MCP_'))
+            const reported = await doctorWith({ REMOTE_TOKEN: 'synthetic-credential-canary' })
+            expect(reported.map(row => [row.code, row.target])).toEqual([['MCP_COMMAND_UNRESOLVED', 'local'], ['MCP_ENVIRONMENT_UNSET', 'local']])
+            expect(reported[1]!.message).toContain('LOCAL_TOKEN')
+            expect(await doctorWith({ LOCAL_TOKEN: 'synthetic-credential-canary' })).toEqual([
+                expect.objectContaining({ code: 'MCP_COMMAND_UNRESOLVED', target: 'local' }),
+                expect.objectContaining({ code: 'MCP_ENVIRONMENT_UNSET', target: 'remote', message: expect.stringContaining('REMOTE_TOKEN') }),
+            ])
+            expect(JSON.stringify(reported)).not.toContain('synthetic-credential-canary')
+        } finally { prepare.mockRestore(); rmSync(directory, { recursive: true, force: true }) }
     })
 
     it('warns that the guard denies no host when a declared runtime leaves both guard host lists empty', async () => {

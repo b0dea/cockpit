@@ -47,16 +47,22 @@ describe('public surface publication transaction', () => {
             declaration.surfaces.tools = [...SURFACE_TARGETS]
             // A person approves each server here, so only the one whose digest is recorded is enabled.
             declaration.autonomy.mcp_approve = 'person'
+            const remoteHeaders = { Authorization: 'Bearer ${SYNTHETIC_TOKEN}', 'X-Workspace': '${SYNTHETIC_WORKSPACE}' }
+            declaration.mcp.approved['remote-headers'] = mcpApprovalDigest({ transport: 'http', url: 'https://mcp.example.test/mcp', headers: remoteHeaders, helper: null }, fixture.root)
+            declaration.mcp.approved['remote-helper'] = mcpApprovalDigest({ transport: 'http', url: 'https://helper.example.test/mcp', headers: {},
+                helper: { command: 'bin/headers', args: ['remote-helper'], cwd: outside } }, fixture.root)
             await writeFile(fixture.configPath, stringifyToml(CockpitConfig.parse(declaration)))
             await writeFile(join(outside, '.mcp.json'), JSON.stringify({ mcpServers: {
                 'approved-server': { command: '/usr/bin/printenv', env: { SYNTHETIC_TOKEN: '${SYNTHETIC_TOKEN}' } },
                 'unapproved-server': { command: '/usr/bin/true' },
+                'remote-headers': { type: 'http', url: 'https://mcp.example.test/mcp', headers: remoteHeaders },
+                'remote-helper': { type: 'http', url: 'https://helper.example.test/mcp', headersHelper: 'bin/headers remote-helper' },
             } }))
 
             const synchronized = await syncGeneratedEnvironment({ configPath: fixture.configPath })
             expect(synchronized, JSON.stringify(synchronized.diagnostics)).toMatchObject({ kind: 'complete' })
             const claude = JSON.parse(await readFile(join(fixture.root, '.mcp.json'), 'utf8')) as {
-                mcpServers: Record<string, { command: string; args: string[] }>
+                mcpServers: Record<string, { command: string; args: string[]; headersHelper?: string }>
             }
             const settings = JSON.parse(await readFile(join(fixture.root, '.claude/settings.json'), 'utf8')) as {
                 enabledMcpjsonServers: string[]
@@ -64,7 +70,7 @@ describe('public surface publication transaction', () => {
                 permissions: { deny?: string[]; allow?: string[] }
             }
             const codex = parseToml(await readFile(join(fixture.root, '.codex/config.toml'), 'utf8')) as {
-                mcp_servers: Record<string, { enabled?: boolean }>
+                mcp_servers: Record<string, { enabled?: boolean; http_headers_helper?: string }>
                 sandbox_mode?: string
                 sandbox_workspace_write?: { writable_roots?: string[] }
                 default_permissions?: unknown
@@ -92,11 +98,30 @@ describe('public surface publication transaction', () => {
                 .replace(`/* cockpit:owner:${ownerId}:start */`, '')
                 .replace(`/* cockpit:owner:${ownerId}:end */`, '')) as {
                 $schema: string
-                mcp: Record<string, { enabled: boolean }>
+                mcp: Record<string, { enabled: boolean; headers?: Record<string, string> }>
                 permission: { external_directory: Record<string, 'allow'>; read: Record<string, 'deny'> }
             }
-            expect(Object.keys(claude.mcpServers).sort()).toEqual(['approved-server', 'unapproved-server'])
-            expect(settings.enabledMcpjsonServers).toEqual(['approved-server'])
+            expect(Object.keys(claude.mcpServers).sort()).toEqual(['approved-server', 'remote-headers', 'remote-helper', 'unapproved-server'])
+            // Each tool gets its own spelling of a remote server's credential, and none gets a literal.
+            const helperCommand = claude.mcpServers['remote-helper']!.headersHelper!
+            expect(helperCommand).toMatch(/^\/bin\/sh \.cockpit\/mcp\/[a-f0-9]{64}\.headers\.sh$/)
+            expect(claude.mcpServers['remote-headers']).toMatchObject({ type: 'http', url: 'https://mcp.example.test/mcp', headers: remoteHeaders })
+            expect(codex.mcp_servers['remote-headers']).toEqual({ url: 'https://mcp.example.test/mcp',
+                bearer_token_env_var: 'SYNTHETIC_TOKEN', env_http_headers: { 'X-Workspace': 'SYNTHETIC_WORKSPACE' } })
+            expect(codex.mcp_servers['remote-helper']).toEqual({ url: 'https://helper.example.test/mcp', http_headers_helper: helperCommand })
+            expect(openCode.mcp['remote-headers']).toEqual({ type: 'remote', url: 'https://mcp.example.test/mcp', enabled: true,
+                headers: { Authorization: 'Bearer {env:SYNTHETIC_TOKEN}', 'X-Workspace': '{env:SYNTHETIC_WORKSPACE}' } })
+            // OpenCode has no headers helper, and neither remote server is spelled for Cursor or Grok Build.
+            expect(openCode.mcp).not.toHaveProperty('remote-helper')
+            const cursorMcp = await readFile(join(fixture.root, '.cursor/mcp.json'), 'utf8')
+            const grokMcp = await readFile(join(fixture.root, '.grok/config.toml'), 'utf8')
+            expect([cursorMcp, grokMcp].filter(bytes => bytes.includes('remote-'))).toEqual([])
+            expect(synchronized.diagnostics.filter(row => row.code === 'MCP_TRANSPORT_UNAVAILABLE').map(row => row.target)).toEqual(['remote-headers', 'remote-helper'])
+            await mkdir(join(outside, 'bin'))
+            await writeFile(join(outside, 'bin/headers'), '#!/bin/sh\nprintf \'{"X-Server":"%s"}\' "$1"\n', { mode: 0o700 })
+            expect(spawnSync('/bin/sh', ['-c', helperCommand], { cwd: fixture.root, env: { PATH: '/usr/bin:/bin' }, encoding: 'utf8' }))
+                .toMatchObject({ status: 0, stdout: '{"X-Server":"remote-helper"}', stderr: '' })
+            expect(settings.enabledMcpjsonServers).toEqual(['approved-server', 'remote-headers', 'remote-helper'])
             // Claude Code ignores `disabled` in `.mcp.json`; only this list keeps the server off.
             expect(settings.disabledMcpjsonServers).toEqual(['unapproved-server'])
             expect(synchronized.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'MCP_NOT_APPROVED', target: 'unapproved-server' }))
@@ -112,7 +137,7 @@ describe('public surface publication transaction', () => {
                 'Bash(npx --no cockpit work accept *)', 'Bash(npx --no cockpit reset * --apply)',
             ]))
             expect(settings.permissions.allow!.filter(rule => /cockpit (down|init|sibling|session)\b/.test(rule))).toEqual([])
-            expect(Object.keys(codex.mcp_servers).sort()).toEqual(['approved-server', 'unapproved-server'])
+            expect(Object.keys(codex.mcp_servers).sort()).toEqual(['approved-server', 'remote-headers', 'remote-helper', 'unapproved-server'])
             expect([codex.mcp_servers['approved-server']?.enabled !== false, codex.mcp_servers['unapproved-server']?.enabled]).toEqual([true, false])
             expect(codex).toMatchObject({
                 sandbox_mode: 'workspace-write',
@@ -130,7 +155,7 @@ describe('public surface publication transaction', () => {
             expect(codex).not.toHaveProperty('default_permissions')
             expect(codex).not.toHaveProperty('permissions')
             expect(Object.fromEntries(Object.entries(openCode.mcp).map(([name, server]) => [name, server.enabled]))).toEqual({
-                'approved-server': true, 'unapproved-server': false,
+                'approved-server': true, 'remote-headers': true, 'unapproved-server': false,
             })
             expect(openCode.permission.external_directory).toEqual({
                 '{file:.cockpit/local/opencode-grant-app}/**': 'allow',

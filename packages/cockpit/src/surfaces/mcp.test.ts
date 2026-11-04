@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path'
 
 import { expect, it } from 'vitest'
 
-import { collectMcpDeclarations, mcpApprovalDigest, parseMcpDeclarationFile } from './mcp.js'
+import { collectMcpDeclarations, mcpApprovalDigest, parseMcpDeclarationFile, type McpHttpDeclaration } from './mcp.js'
 
 const source = { kind: 'sibling', slug: 'service', path: '.mcp.json', sha256: 'a'.repeat(64) } as const
 const declaration = {
@@ -15,6 +15,10 @@ const declaration = {
 }
 const targets = ['claudecode', 'codexcli', 'opencode'] as const
 const approval = { synthetic: mcpApprovalDigest(declaration, '/synthetic/cockpit') }
+const remote: McpHttpDeclaration & { helper: NonNullable<McpHttpDeclaration['helper']> } = {
+    name: 'remote', transport: 'http', url: 'https://mcp.example.test/mcp', headers: { Authorization: 'Bearer ${REMOTE_TOKEN}', 'X-Workspace': '${REMOTE_WORKSPACE}' },
+    helper: { command: 'bin/headers', args: ['remote'], cwd: '/synthetic/service' }, source,
+}
 
 it('collects one sibling server disabled across all targets with a named-env wrapper', () => {
     const outcome = collectMcpDeclarations({ cockpitDirectory: '/synthetic/cockpit', declarations: [declaration], approved: {}, targets })
@@ -55,6 +59,16 @@ it('approves a server only at the declaration whose digest was recorded, the sam
             sha256: mcpApprovalDigest(changed, '/synthetic/cockpit') })])
     }
     expect(collectMcpDeclarations({ cockpitDirectory: '/synthetic/cockpit', declarations: [declaration], approved: { synthetic: 'not-a-digest' }, targets }).kind).toBe('refusal')
+    // A remote server's identity is where it connects and what it sends: a new URL or helper would
+    // send the credential somewhere a person has not reviewed.
+    const approvedRemote = { remote: mcpApprovalDigest(remote, '/synthetic/cockpit') }
+    expect(mcpApprovalDigest({ ...remote, helper: { ...remote.helper, cwd: '/another/clone/service' } }, '/another/clone/cockpit')).toBe(approvedRemote.remote)
+    for (const difference of [{ url: 'https://other.example.test/mcp' }, { headers: { Authorization: 'Bearer ${OTHER_TOKEN}' } },
+        { helper: { ...remote.helper, command: 'bin/other' } }, { helper: { ...remote.helper, args: ['other'] } }, { helper: null }]) {
+        const outcome = collectMcpDeclarations({ cockpitDirectory: '/synthetic/cockpit', declarations: [{ ...remote, ...difference }], approved: approvedRemote, targets })
+        if (outcome.kind !== 'complete') throw new Error(JSON.stringify(outcome))
+        expect(outcome.result.servers.map(server => server.enabled), JSON.stringify(difference)).toEqual([false])
+    }
 })
 
 it('keeps case-distinct identities on distinct wrapper paths', () => {
@@ -86,6 +100,7 @@ it('launches a wrapper from any clone of the cockpit into its sibling with PATH 
         mkdirSync(join(workspace, 'service/bin'), { recursive: true })
         writeFileSync(join(workspace, 'service/bin/server'), '#!/usr/bin/env sh\npwd -P\nenv | sort\n', { mode: 0o700 })
         const server = outcome.result.harnesses[0]!.servers[0]!
+        if (!('command' in server)) throw new Error('expected a local server')
         // CDPATH must not pick a decoy directory and print it into the JSON-RPC stream, and a root
         // reached through a link resolves `..` from its real location, as the relative path was computed.
         mkdirSync(join(workspace, 'decoy/service/bin'), { recursive: true })
@@ -134,6 +149,15 @@ it('parses standard sibling declarations without carrying environment values', (
     const outcome = collectMcpDeclarations({ cockpitDirectory: '/synthetic/cockpit', declarations: parsed.declarations, approved: {}, targets })
     expect(outcome.kind).toBe('complete')
     expect(JSON.stringify(outcome)).not.toContain('"env":')
+    const remoteBytes = JSON.stringify({ mcpServers: {
+        remote: { type: 'http', url: remote.url, headers: remote.headers, headersHelper: './bin/headers remote' },
+        local: { type: 'http', url: 'http://127.0.0.1:8932/mcp' },
+    } })
+    const remoteParsed = parseMcpDeclarationFile({ bytes: remoteBytes, source: { ...source, sha256: createHash('sha256').update(remoteBytes).digest('hex') }, workingDirectory: '/synthetic/service' })
+    expect(remoteParsed).toEqual({ kind: 'complete', declarations: [
+        { ...remote, helper: { command: './bin/headers', args: ['remote'], cwd: '/synthetic/service' }, source: expect.anything() },
+        { name: 'local', transport: 'http', url: 'http://127.0.0.1:8932/mcp', headers: {}, helper: null, source: expect.anything() },
+    ] })
 })
 
 it('refuses literal credentials, foreign aliases and unsafe commands without disclosing values', () => {
@@ -143,6 +167,19 @@ it('refuses literal credentials, foreign aliases and unsafe commands without dis
         { command: 'node', env: { SYNTHETIC_TOKEN: '${OTHER_TOKEN}' } },
         { command: 'node', args: ['--token', canary] },
         { command: 'node$(touch forbidden)', args: [] },
+        { type: 'http', url: remote.url, headers: { Authorization: `Bearer ${canary}` } },
+        { type: 'http', url: remote.url, headers: { 'X-Token': '${SYNTHETIC_TOKEN}', 'x-token': '${SYNTHETIC_TOKEN}' } },
+        { type: 'http', url: remote.url, headers: { 'X-Token': 'Bearer ${SYNTHETIC_TOKEN}' } },
+        { type: 'http', url: `https://user:${canary}@mcp.example.test/mcp` },
+        { type: 'http', url: `https://mcp.example.test/mcp?api_key=${canary}` },
+        { type: 'http', url: 'http://mcp.example.test/mcp' },
+        { type: 'http', url: 'https://mcp.example.test/${SYNTHETIC_TOKEN}' },
+        { type: 'http', url: 'https://mcp.example.test/mcp?d={env:SYNTHETIC_TOKEN}' },
+        { type: 'http', url: 'https://mcp.example.test/{file:.env}' },
+        { type: 'http', url: remote.url, headersHelper: `bin/headers; echo ${canary}` },
+        { type: 'http', url: remote.url, headersHelper: `bin/headers --token ${canary}` },
+        { type: 'http', url: remote.url, env: { SYNTHETIC_TOKEN: '${SYNTHETIC_TOKEN}' } },
+        { type: 'sse', url: remote.url },
     ]) {
         const bytes = JSON.stringify({ mcpServers: { synthetic: server } })
         const outcome = parseMcpDeclarationFile({ bytes, source: { ...source, sha256: createHash('sha256').update(bytes).digest('hex') }, workingDirectory: '/synthetic/service' })
@@ -163,4 +200,49 @@ it('refuses non-own, oversized and stale-source input before returning servers',
     expect(reads).toBe(0)
     expect(collectMcpDeclarations({ ...input, declarations: [{ ...declaration, args: ['x'.repeat(65_537)] }] }).kind).toBe('refusal')
     expect(parseMcpDeclarationFile({ bytes: '{}', source, workingDirectory: '/synthetic/service' }).kind).toBe('refusal')
+})
+
+it('writes a remote server only for the tools that can carry its credential, and says which it skipped', () => {
+    const everyTool = ['claudecode', 'codexcli', 'opencode', 'cursor', 'grokcli'] as const
+    const headersOnly = { ...remote, name: 'headers-only', helper: null }
+    const outcome = collectMcpDeclarations({ cockpitDirectory: '/synthetic/cockpit', declarations: [remote, headersOnly],
+        approved: { remote: mcpApprovalDigest(remote, '/synthetic/cockpit') }, targets: everyTool })
+    if (outcome.kind !== 'complete') throw new Error(JSON.stringify(outcome))
+    expect(Object.fromEntries(outcome.result.harnesses.map(row => [row.target, row.servers.map(server => server.name)]))).toEqual({
+        claudecode: ['headers-only', 'remote'], codexcli: ['headers-only', 'remote'], opencode: ['headers-only'], cursor: [], grokcli: [],
+    })
+    const claude = outcome.result.harnesses[0]!.servers.find(server => server.name === 'remote')!
+    expect(claude).toEqual({ name: 'remote', url: remote.url, headers: remote.headers, enabled: true,
+        headersHelper: `/bin/sh ${outcome.result.wrappers[0]!.path}` })
+    expect(outcome.result.wrappers.map(row => row.path)).toEqual([expect.stringMatching(/^\.cockpit\/mcp\/[a-f0-9]{64}\.headers\.sh$/)])
+    expect(outcome.diagnostics.filter(row => row.code === 'MCP_TRANSPORT_UNAVAILABLE')).toEqual([
+        expect.objectContaining({ server: 'headers-only', targets: ['cursor', 'grokcli'] }),
+        expect.objectContaining({ server: 'remote', targets: ['opencode', 'cursor', 'grokcli'], message: expect.stringContaining('no headers helper') }),
+    ])
+    expect(outcome.result.servers.find(server => server.name === 'remote')).toMatchObject({ envNames: ['REMOTE_TOKEN', 'REMOTE_WORKSPACE'] })
+    // A helper no listed tool runs gets no wrapper, which would otherwise be published for nothing.
+    const openCodeOnly = collectMcpDeclarations({ cockpitDirectory: '/synthetic/cockpit', declarations: [remote], approved: {}, targets: ['opencode'] })
+    expect(openCodeOnly).toMatchObject({ kind: 'complete', result: { wrappers: [], harnesses: [{ target: 'opencode', servers: [] }] } })
+})
+
+it('runs a headers helper in its sibling with only the inherited environment and prints its headers', () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'mcp-helper-'))
+    try {
+        const root = join(workspace, 'cockpit')
+        const helper = { ...remote.helper, cwd: join(workspace, 'service') }
+        const outcome = collectMcpDeclarations({ cockpitDirectory: root, declarations: [{ ...remote, helper }], approved: {}, targets })
+        if (outcome.kind !== 'complete') throw new Error(JSON.stringify(outcome))
+        const wrapper = outcome.result.wrappers[0]!
+        mkdirSync(join(root, dirname(wrapper.path)), { recursive: true })
+        writeFileSync(join(root, wrapper.path), wrapper.bytes, { mode: 0o600 })
+        mkdirSync(join(workspace, 'service/bin'), { recursive: true })
+        writeFileSync(join(workspace, 'service/bin/headers'), '#!/bin/sh\nprintf \'{"X-Directory":"%s","X-Argument":"%s","X-Leak":"%s"}\' "$(pwd -P)" "$1" "${REMOTE_TOKEN-}"\n', { mode: 0o700 })
+        const server = outcome.result.harnesses[0]!.servers[0]!
+        if (!('url' in server) || server.headersHelper === null) throw new Error('expected a remote server with a helper')
+        // Claude Code and Codex run the helper with `sh -c` from the directory the agent was launched in.
+        const child = spawnSync('/bin/sh', ['-c', server.headersHelper], { cwd: root, encoding: 'utf8',
+            env: { PATH: '/usr/bin:/bin', REMOTE_TOKEN: 'synthetic-runtime-value' } })
+        expect(child).toMatchObject({ status: 0, stderr: '' })
+        expect(JSON.parse(child.stdout)).toEqual({ 'X-Directory': realpathSync(join(workspace, 'service')), 'X-Argument': 'remote', 'X-Leak': '' })
+    } finally { rmSync(workspace, { recursive: true, force: true }) }
 })

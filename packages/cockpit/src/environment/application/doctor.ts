@@ -5,6 +5,7 @@ import { effectivePolicy, policyWeakening, policyWeakeningDiagnostic, readRecord
 import type { SkippedStateNamespace } from '../state.js'
 import { prepareGeneratedEnvironmentCurrentness } from '../generated-application/check.js'
 import { type GeneratedEnvironmentCurrentness } from '../generated-application/shared.js'
+import type { McpServer } from '../../surfaces/mcp.js'
 import { declaredRuntime, declaresNothingToRun } from '../declaration.js'
 import { readinessReport, type ReadinessReport } from '../../readiness.js'
 import type { ReleaseFreshness } from '../../freshness.js'
@@ -60,6 +61,8 @@ export interface DoctorCommandAdapters extends ObservationCommandAdapters {
     readonly inspectHookTrust?: () => Promise<readonly EnvironmentDiagnostic[]>
     /** A warning when work orders exist but their independent evaluator cannot run on this machine. */
     readonly inspectEvaluator?: (evaluators: readonly EvaluatorTool[]) => Promise<readonly EnvironmentDiagnostic[]>
+    /** Warnings about what each approved MCP server needs before a tool can start it; never starts one. */
+    readonly inspectMcpStartup?: (servers: readonly McpServer[]) => Promise<readonly EnvironmentDiagnostic[]>
     /** Warnings about prerequisites the stack checks do not cover: the local install, sibling remotes, committed secrets. */
     readonly inspectReadiness?: () => Promise<readonly EnvironmentDiagnostic[]>
     /** Other cockpits' state namespaces this version skipped, or why the inventory could not be read; read after load has selected this cockpit's state root. */
@@ -292,9 +295,11 @@ export async function runDoctor(
         return loaded.kind === 'complete' && loaded.result.config.surfaces.tools.includes('codexcli')
             ? adapters.inspectHookTrust?.() ?? [] : []
     }
-    const [outcome, guardHosts, unconfirmed, policyWeakened, testingGate, hookTrust, evaluator, readinessWarnings, servedSiblings] = await Promise.all([doctorHealth(input, adapters, config),
+    const currentness = prepareGeneratedEnvironmentCurrentness(input)
+    const mcpStartup = async (): Promise<readonly EnvironmentDiagnostic[]> => adapters.inspectMcpStartup?.((await currentness).mcpServers) ?? []
+    const [outcome, guardHosts, unconfirmed, policyWeakened, testingGate, hookTrust, evaluator, readinessWarnings, servedSiblings, mcp] = await Promise.all([doctorHealth(input, adapters, config, currentness),
         doctorGuardHostDiagnostics(config), doctorUnconfirmedDiagnostics(config), doctorPolicyDiagnostics(config), doctorTestingGateDiagnostics(config), hookTrustFindings(),
-        doctorEvaluatorDiagnostics(config, adapters), adapters.inspectReadiness?.() ?? [], adapters.inspectServedSiblings?.() ?? []])
+        doctorEvaluatorDiagnostics(config, adapters), adapters.inspectReadiness?.() ?? [], adapters.inspectServedSiblings?.() ?? [], mcpStartup()])
     const stateInventory = await adapters.readUnreadableState?.()
     const unreadableState = stateInventory?.kind === 'refusal'
         // An inventory that cannot be read, such as one another command holds locked, is no clean one.
@@ -302,7 +307,7 @@ export async function runDoctor(
             message: `doctor could not read this machine's cockpit state, so it did not check for other cockpits' state this version cannot read: ${diagnostic.message}` }))
         : [unreadableStateWarning(stateInventory?.skipped ?? [])].filter((warning) => warning !== undefined)
     const orphanedStacks = await adapters.inspectStacks?.() ?? []
-    const warnings = [...unconfirmed, ...policyWeakened, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...readinessWarnings, ...servedSiblings, ...unreadableState, ...orphanedStacks]
+    const warnings = [...unconfirmed, ...policyWeakened, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...readinessWarnings, ...servedSiblings, ...mcp, ...unreadableState, ...orphanedStacks]
     const reported = warnings.length === 0 ? outcome
         : { ...outcome, diagnostics: [...outcome.diagnostics, ...warnings] }
     // Doctor reports on a configuration; without one there is nothing to report on, and a zero
@@ -324,11 +329,12 @@ async function doctorHealth(
     input: DoctorCommandInput,
     adapters: DoctorCommandAdapters,
     config: Promise<LoadedDoctorConfig>,
+    currentness: Promise<GeneratedEnvironmentCurrentness>,
 ): Promise<DoctorCommandResult> {
     const surfaceOverrides = inspectDoctorSurfaceOverrides(input.configPath, adapters)
     const declarations = doctorDeclarations(config)
     const freshness = Promise.all([
-        prepareGeneratedEnvironmentCurrentness(input),
+        currentness,
         adapters.discoverReleaseFreshness?.() ?? Promise.resolve({ kind: 'unknown' as const, reason: 'release discovery is not bound' }),
     ]).then(([currentness, release]): DoctorFreshness => ({
         local: { kind: currentness.outcome.kind, status: currentness.outcome.status, diagnostics: currentness.outcome.diagnostics },

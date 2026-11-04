@@ -4,6 +4,7 @@ import { installedPackageMetadata } from './package-metadata.js'
 import { validateTeamMetadata, type TeamMetadataResult } from './team-metadata.js'
 import { renderComposeScaffold, SCAFFOLD_BACKING_SERVICES, writeComposeScaffold, type ScaffoldBackingService } from './init/scaffold.js'
 import { discoverReleaseFreshness, type ReleaseMetadataTransport } from './freshness.js'
+import { observeMcpStartup } from './environment/mcp-observation.js'
 import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises'
 import { parse as parseToml, TomlError } from 'smol-toml'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
@@ -748,6 +749,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
                 ...healthAdapters(configPath),
                 discoverReleaseFreshness: () => discoverReleaseFreshness({ verb: 'doctor', env,
                     ...(runtime.createReleaseMetadataTransport ? { createTransport: runtime.createReleaseMetadataTransport } : {}) }),
+                inspectMcpStartup: servers => observeMcpStartup(servers, env),
             })
         },
         runtime: (input) => runRuntimeMeasure({ ...input, env }, { execute: executeProbe, probe: probeInstalledRuntime }),
