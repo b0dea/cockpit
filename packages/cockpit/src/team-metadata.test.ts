@@ -46,7 +46,7 @@ describe('team metadata', () => {
         expect(manifest).toEqual({ private: true, scripts: { test: 'vitest', 'cockpit:setup': 'cockpit setup --config cockpit.toml',
             'cockpit:sync': 'cockpit sync --config cockpit.toml', 'cockpit:check': 'cockpit check --config cockpit.toml' },
         devDependencies: { [installedPackageMetadata.name]: installedPackageMetadata.version } })
-        expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('operator-owned\n# cockpit:ignore:start sha256=3c9b045f924e82c1\n/node_modules/\n/.cockpit/local/\n/env/.secrets/*\n!/env/.secrets/.gitignore\n/repositories/\n# cockpit:ignore:end\n')
+        expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('operator-owned\n# cockpit:ignore:start sha256=1df8e5da6b53377d\n/node_modules/\n/.cockpit/local/\n/.claude/settings.local.json\n/env/.secrets/*\n!/env/.secrets/.gitignore\n/repositories/\n# cockpit:ignore:end\n')
         expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toEqual({ kind: 'complete', changed: false, changes: [] })
     })
 

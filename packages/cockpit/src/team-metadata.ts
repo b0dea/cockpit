@@ -248,7 +248,8 @@ async function verifiedLocalPin(authority: RootAuthority, packageBytes: string |
 async function ignoreBlock(root: string, config: Pick<CockpitConfig, 'cockpit' | 'sibling' | 'environment'>): Promise<string | undefined> {
     const siblingsRoot = config.cockpit.siblings_root
     if (/[\0\r\n]/.test(siblingsRoot)) return undefined
-    const patterns = ['/node_modules/', '/.cockpit/local/', '/env/.secrets/*', '!/env/.secrets/.gitignore']
+    // Claude Code's machine-local settings, where `cockpit use` grants a served checkout.
+    const patterns = ['/node_modules/', '/.cockpit/local/', '/.claude/settings.local.json', '/env/.secrets/*', '!/env/.secrets/.gitignore']
     const inside = (path: string, kind: 'directory' | 'any' = 'directory'): string | undefined => {
         const local = relative(root, path)
         if (local === '' || local === '..' || local.startsWith(`..${sep}`) || isAbsolute(local)) return undefined
