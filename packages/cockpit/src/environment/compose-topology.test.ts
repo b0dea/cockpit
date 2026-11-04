@@ -15,7 +15,7 @@ function product(): string {
 }
 
 const service = (mountSources: readonly string[]): ComposeServiceTopology =>
-    ({ id: 'api', ports: [], healthcheck: true, image: null, build: true, mountSources })
+    ({ id: 'api', ports: [], healthcheck: true, image: null, build: true, containerName: null, mountSources })
 
 const mountCodes = async (root: string, mountSources: readonly string[], mount = 'always') =>
     (await assessComposeTopology([service(mountSources)], {
@@ -69,7 +69,7 @@ describe('compose topology mount posture', () => {
 
 describe('compose topology port exposure', () => {
     const publishing = (hostIp: string | null, published: string | null = '${API_HOST_PORT}'): ComposeServiceTopology =>
-        ({ id: 'api', ports: [{ published, hostIp, target: '3000' }], healthcheck: true, image: null, build: true, mountSources: [] })
+        ({ id: 'api', ports: [{ published, hostIp, target: '3000' }], healthcheck: true, image: null, build: true, containerName: null, mountSources: [] })
     const exposure = async (...ports: ComposeServiceTopology[]) => (await assessComposeTopology(ports, {
         projectDirectory: '/unused', portVariables: ['API_HOST_PORT'], hostPaths: [], siblings: [],
     })).map(row => [row.severity, row.code, row.target])
@@ -82,5 +82,19 @@ describe('compose topology port exposure', () => {
         expect(await exposure(publishing('127.0.0.1'))).toEqual([])
         expect(await exposure(publishing('::1'))).toEqual([])
         expect(await exposure(publishing('0.0.0.0'))).toEqual([])
+    })
+})
+
+describe('compose topology container names', () => {
+    const named = (containerName: string | null): ComposeServiceTopology =>
+        ({ id: 'api', ports: [], healthcheck: true, image: null, build: true, containerName, mountSources: [] })
+    const findings = async (api: ComposeServiceTopology) => (await assessComposeTopology([api], {
+        projectDirectory: '/unused', portVariables: [], hostPaths: [], siblings: [],
+    })).map(row => [row.severity, row.code, row.target])
+
+    // Docker refuses a second container of one name, so a second checkout's stack would fail at `up`.
+    it('refuses a fixed container_name and accepts a service Compose names itself', async () => {
+        expect(await findings(named('fixed-api'))).toEqual([['error', 'COMPOSE_CONTAINER_NAME_FIXED', 'compose:api']])
+        expect(await findings(named(null))).toEqual([])
     })
 })

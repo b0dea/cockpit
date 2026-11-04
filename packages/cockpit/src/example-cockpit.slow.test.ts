@@ -246,6 +246,17 @@ describe('the compose-first and docs-only example cockpits', () => {
             severity: 'error', code: 'COMPOSE_PORT_NOT_LEASED', target: 'compose:web:3000' }))
     })
 
+    it('fails check on a service that sets a fixed container_name', () => {
+        const root = syncedComposeFirst('compose-first-container-name')
+        const path = join(root, 'compose.yml')
+        writeFileSync(path, readFileSync(path, 'utf8').replace(/^( {2}web:\n)/m, '$1    container_name: fixed-web\n'))
+        const check = run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
+        if (!readsTopology(check)) return
+        expect(check.status).toBe(2)
+        expect(check.response.diagnostics).toContainEqual(expect.objectContaining({
+            severity: 'error', code: 'COMPOSE_CONTAINER_NAME_FIXED', target: 'compose:web' }))
+    })
+
     it('reports the unleased port in doctor, not the surface evidence it makes unavailable', () => {
         const root = syncedComposeFirst('compose-first-doctor-port')
         const path = join(root, 'compose.yml')

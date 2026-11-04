@@ -294,18 +294,21 @@ describe('inferred interview answers', () => {
 })
 
 describe('Compose findings for a drafted cockpit.toml', () => {
-    it('reports check\'s port and healthcheck findings with its fix, and nothing for a leased, healthy service', async () => {
+    it('reports check\'s port, container name and healthcheck findings with its fix, and nothing for a leased, healthy service', async () => {
         const root = estate({ 'compose.yml': [
             'services:',
             '  web:', '    image: synthetic.invalid/web:1', '    ports: ["127.0.0.1:3000:3000"]',
             '  api:', '    image: synthetic.invalid/api:1', '    ports: ["127.0.0.1:${API_HOST_PORT:-4200}:4200"]',
-            '    healthcheck: { test: ["CMD", "true"] }', ''].join('\n') })
+            '    healthcheck: { test: ["CMD", "true"] }',
+            '  db:', '    image: synthetic.invalid/db:1', '    container_name: fixed-db', '    healthcheck: { test: ["CMD", "true"] }', ''].join('\n') })
         const draft = (bases: string) => `[environment]\ncompose_files = ["compose.yml"]\n[ports.bases]\n${bases}\n`
         const found = await composeFindings({ root, draft: draft('API_HOST_PORT = 4200') })
         expect(found).toEqual([
             expect.objectContaining({ severity: 'warning', code: 'COMPOSE_PORT_NOT_LEASED', target: 'compose:web:3000',
                 fix: 'publish it as "${WEB_HOST_PORT}:3000" in the Compose file and declare WEB_HOST_PORT under [ports.bases]' }),
-            expect.objectContaining({ severity: 'warning', code: 'COMPOSE_HEALTHCHECK_MISSING', target: 'compose:web' })])
+            expect.objectContaining({ severity: 'warning', code: 'COMPOSE_HEALTHCHECK_MISSING', target: 'compose:web' }),
+            expect.objectContaining({ severity: 'warning', code: 'COMPOSE_CONTAINER_NAME_FIXED', target: 'compose:db',
+                fix: 'remove container_name from service db and address it by its Compose service name, or with docker compose exec db' })])
         // The same file is unleased for api until its variable is declared.
         expect((await composeFindings({ root, draft: draft('') })).map(row => row.target)).toContain('compose:api:4200')
         // A draft that declares no Compose file has none to judge.
