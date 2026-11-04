@@ -278,11 +278,11 @@ describe('init operator command', () => {
             expect(marked.outcome.kind).toBe('complete')
             expect(marked.recorded).toEqual(['operator-confirmed', 'operator-confirmed', 'operator-confirmed', 'operator-confirmed',
                 'agent-default', 'operator-confirmed', 'operator-confirmed', 'agent-default', 'operator-confirmed'])
-            // cockpit never proposes a machine floor, so an unmarked one is not attributed to the human.
+            // cockpit proposes at most part of a machine floor, so an unmarked one is not attributed to the human.
             expect((await provenances(answers)).recorded[5]).toBe('unattributed')
 
             for (const [provenance, message] of [
-                [{ guards: 'person' }, 'provenance.guards must be "human" or "agent-default"'],
+                [{ guards: 'person' }, 'provenance.guards must be "human", "agent-default" or "derived"'],
                 [{ cockpit: { root: 'agent-default' } }, 'provenance names no recorded interview answer: cockpit.root'],
                 [{ 'cockpit.name': 'agent-default' }, 'provenance names cockpit.name, which the answers file does not answer'],
             ] as const) {

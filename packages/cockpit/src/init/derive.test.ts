@@ -77,10 +77,32 @@ describe('inferred interview answers', () => {
         })
         const { facts } = await deriveInferredFacts({ root, repositories: api })
         expect(byTarget(facts, 'environment.compose_files')).toMatchObject({ value: ['api/compose.yml'],
-            provenance: { kind: 'inferred', source: 'api/compose.yml' } })
+            provenance: { kind: 'derived', source: 'api/compose.yml' } })
         expect(byTarget(facts, 'services.postgres')).toMatchObject({ value: { image: 'postgres:16' },
             provenance: { source: '.github/workflows/ci.yml' } })
         expect(byTarget(facts, 'services.cache')).toMatchObject({ value: { image: 'redis:7' } })
+    })
+
+    it('derives the port map and the memory and CPU floor from one Compose file, naming each line, and asks when two limits disagree', async () => {
+        const root = estate({ 'compose.yml': ['services:', '  web:', '    image: synthetic.invalid/web:1',
+            '    ports: ["${WEB_PORT:-3000}:3000"]', '    deploy:', '      replicas: 2',
+            '      resources: { limits: { memory: 512M, cpus: "0.5" } }',
+            '  db:', '    image: synthetic.invalid/db:1', '    mem_limit: 1g', '    cpus: 1.25',
+            // A service behind a profile does not start by default, so its limits are not part of the floor.
+            '  debug:', '    image: synthetic.invalid/debug:1', '    profiles: [debug]', '    mem_limit: 64g', ''].join('\n') })
+        const { facts } = await deriveInferredFacts({ root, repositories: [] })
+        expect(byTarget(facts, 'ports.bases')).toMatchObject({ value: { WEB_PORT: 3000 }, provenance: { kind: 'derived', source: 'compose.yml:4' } })
+        expect(byTarget(facts, 'environment.machine.runtime_memory_mb')).toMatchObject({ fields: ['environment.machine'], value: 2048,
+            provenance: { kind: 'derived', source: 'compose.yml:7, compose.yml:10', reason: expect.stringContaining('web 512M x2, db 1g') } })
+        expect(byTarget(facts, 'environment.machine.runtime_cpus')).toMatchObject({ value: 2.25,
+            provenance: { kind: 'derived', source: 'compose.yml:7, compose.yml:11' } })
+
+        // Two spellings of one limit that disagree are reported, not guessed between; a service with
+        // no CPU limit leaves the CPUs unrecorded.
+        const disagreeing = estate({ 'compose.yml': 'services:\n  db:\n    image: synthetic.invalid/db:1\n    mem_limit: 1g\n    deploy: { resources: { limits: { memory: 2g } } }\n' })
+        const conflicted = await deriveInferredFacts({ root: disagreeing, repositories: [] })
+        expect(conflicted.facts.filter(fact => fact.target.startsWith('environment.machine.'))).toEqual([])
+        expect(conflicted.skipped).toContainEqual({ source: 'compose.yml:5', reason: expect.stringContaining('service db sets its memory limit twice') })
     })
 
     it('proposes no compose_files when Compose files sit in several repositories, and points at a cockpit-root compose.yml', async () => {
@@ -198,7 +220,8 @@ describe('inferred interview answers', () => {
             provenance: { reason: expect.stringContaining('compose.yml bind-mounts') } })
         expect(byTarget(facts, 'ports.bases')).toEqual({ fields: ['ports.bases'], target: 'ports.bases',
             value: { API_HOST_PORT: 4200, DEBUG_HOST_PORT: 9229 },
-            provenance: expect.objectContaining({ kind: 'inferred', source: 'compose.yml' }) })
+            // WEB_HOST_PORT has no default, so the map is incomplete: a hint, not an answer the agent may accept.
+            provenance: expect.objectContaining({ kind: 'inferred', source: 'compose.yml:4' }) })
         expect(skipped).toContainEqual({ source: 'compose.yml',
             reason: expect.stringContaining('publishes a host port from ${WEB_HOST_PORT} with no default') })
         // A literal host port is the same port in every stack; a container-only port gets an ephemeral one.
@@ -210,7 +233,7 @@ describe('inferred interview answers', () => {
             'web/compose.yml': 'services:\n  web:\n    ports: ["${WEB_PORT:-4000}:80", "${API_PORT:-3000}:3000", "${DB_PORT:-5433}:5432"]\n' })
         const merged = await deriveInferredFacts({ root: several, repositories: [{ slug: 'api', path: 'api' }, { slug: 'web', path: 'web' }] })
         expect(byTarget(merged.facts, 'ports.bases')).toMatchObject({ value: { API_PORT: 3000, WEB_PORT: 4000 },
-            provenance: { source: 'api/compose.yml, web/compose.yml',
+            provenance: { kind: 'inferred', source: 'api/compose.yml:3, web/compose.yml:3',
                 reason: expect.stringMatching(/^api\/compose\.yml publishes API_PORT; web\/compose\.yml publishes API_PORT, WEB_PORT from variables/) } })
         expect(merged.skipped).toContainEqual({ source: 'api/compose.yml, web/compose.yml',
             reason: expect.stringContaining('publishes ${DB_PORT} with different defaults') })
@@ -219,7 +242,8 @@ describe('inferred interview answers', () => {
         const unmounted = estate({ 'shop/compose.yml': 'services:\n  db:\n    image: synthetic.invalid/db:1\n    volumes: ["data:/var/lib/db", "../elsewhere:/x"]\n' })
         const proposed = await deriveInferredFacts({ root: join(unmounted, 'shop'), repositories: [{ slug: 'shop', path: '.' }] })
         expect(byTarget(proposed.facts, 'sibling.shop')).toMatchObject({ value: { mount: 'none' } })
-        expect(byTarget(proposed.facts, 'ports.bases')).toBeUndefined()
+        // A Compose file that publishes no host port is read as needing no base port.
+        expect(byTarget(proposed.facts, 'ports.bases')).toMatchObject({ value: {}, provenance: { kind: 'derived', source: 'compose.yml' } })
 
         // A Compose file in another repository names `.` relative to that repository, not the root.
         const beside = estate({ 'shop/api/compose.yml': 'services:\n  api:\n    build: .\n    volumes: [".:/app"]\n' })

@@ -660,8 +660,8 @@ describe('operator-confirmed document completion', () => {
         const machine = await draftFromRegistry({ ...input, configuration: {
             ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer],
         } })
-        // Nothing reads a floor from the product, so the question must not claim one was looked for.
-        expect(machine.question).toMatchObject({ field: 'environment.machine', why: expect.stringContaining('a person states: cockpit never proposes them') })
+        // Free disk and the cold start time have no source, so the question says who supplies them.
+        expect(machine.question).toMatchObject({ field: 'environment.machine', why: expect.stringContaining('nothing records free disk or the cold start time, so a person states those') })
         const machineAnswer = answer(machine.question!, machineFloor)
         const posture = await draftFromRegistry({ ...input, configuration: {
             ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer],

@@ -1,7 +1,9 @@
 // Proposes interview answers from files a repository already carries. It owns reading those files
-// and attributing each proposed value to its source; it must not decide or write anything. Every
-// fact is inferred: init surfaces it with its source and the operator confirms it, because a
-// config that looks complete but holds guesses is the failure cockpit exists to prevent.
+// and attributing each proposed value to its source; it must not decide or write anything. A fact
+// is "derived" when it is the complete answer to an interview field read exactly from its source,
+// which the setup agent may accept and bring-up then proves; every other fact is "inferred": a hint
+// or a partial value that needs judgement, because a config that looks complete but holds guesses
+// is the failure cockpit exists to prevent.
 // Deliberately cheap and exact: Dockerfile, env template variable names, Compose files and CI
 // service containers, test entry points and run scripts from build and package manifests, Node
 // lockfiles, and each repository's origin remote from .git/config. It starts no process. Orchestrator
@@ -9,7 +11,7 @@
 import { lstat, readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, relative as pathRelative, resolve, sep } from 'node:path'
 import { parse as parseToml } from 'smol-toml'
-import { parse as parseYaml } from 'yaml'
+import { LineCounter, parse as parseYaml, parseDocument } from 'yaml'
 import { readBoundedInput } from '../config/load.js'
 import { errorCause, hasErrorCode, type Diagnostic } from '../environment/contract.js'
 import { assessComposeTopology, bindHolder, composeBindPath, composeProjectDirectory, composePublishedPorts, splitComposeShort, type ComposeServiceTopology } from '../environment/compose-topology.js'
@@ -19,7 +21,8 @@ import { formatShellCommand, initCommand } from '../fix-catalogue.js'
 import { deriveSiblingVariable, TestingName } from '../schema.js'
 
 export interface InferredProvenance {
-    readonly kind: 'inferred'
+    readonly kind: 'derived' | 'inferred'
+    /** The file the value was read from, as file:line where one line holds it. */
     readonly source: string
     readonly reason: string
 }
@@ -255,35 +258,51 @@ function entries(value: unknown): readonly unknown[] {
     return Array.isArray(value) ? value : []
 }
 
+type ComposeFile = Readonly<{ source: string; document: unknown; line: (path: readonly (string | number)[]) => number | undefined }>
+type ComposeBase = { base: number; files: string[]; at: string[] }
+
+const at = (file: ComposeFile, path: readonly (string | number)[]) => {
+    const line = file.line(path)
+    return line === undefined ? file.source : `${file.source}:${line}`
+}
+
+function services(file: ComposeFile): readonly (readonly [string, Record<string, unknown>])[] {
+    const value = (file.document as { services?: unknown } | null)?.services
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+    return Object.entries(value as Record<string, unknown>)
+        .filter((entry): entry is [string, Record<string, unknown>] => !!entry[1] && typeof entry[1] === 'object' && !Array.isArray(entry[1]))
+}
+
 /**
  * Reads the bind sources and published host-port variables of the Compose files init proposes.
  * Bind sources resolve as `up` resolves them: against the first file's directory, with each
  * proposed sibling variable set to its directory and any other variable to its own default.
+ * The bases are complete only when every published host port was read; otherwise the map is a
+ * partial proposal that needs the person.
  */
 function composeFacts(
-    files: readonly Readonly<{ source: string; document: unknown }>[],
+    files: readonly ComposeFile[],
     root: string,
     variables: Readonly<Record<string, string>>,
     skipped: SkippedInference[],
-): Readonly<{ binds: readonly Readonly<{ source: string; path: string }>[]; bases: ReadonlyMap<string, Readonly<{ base: number; sources: readonly string[] }>> }> {
+): Readonly<{ binds: readonly Readonly<{ source: string; path: string }>[]; bases: ReadonlyMap<string, Readonly<ComposeBase>>; basesComplete: boolean }> {
     const binds: { source: string; path: string }[] = []
-    // Each base keeps every file that publishes it, so the proposal names where each value came from.
-    const bases = new Map<string, { base: number; sources: string[] }>()
+    // Each base keeps every file and line that publishes it, so the proposal names where each value came from.
+    const bases = new Map<string, ComposeBase>()
     const conflicting = new Set<string>()
-    for (const { source, document } of files) {
-        const services = (document as { services?: unknown } | null)?.services
-        if (!services || typeof services !== 'object' || Array.isArray(services)) continue
-        for (const service of Object.values(services as Record<string, unknown>)) {
-            if (!service || typeof service !== 'object') continue
-            for (const volume of entries((service as { volumes?: unknown }).volumes)) {
+    let basesComplete = true
+    for (const file of files) {
+        const { source } = file
+        for (const [name, service] of services(file)) {
+            for (const volume of entries(service.volumes)) {
                 const segments = typeof volume === 'string' ? splitComposeShort(volume) : undefined
                 const raw = segments && segments.length >= 2 ? segments[0]
                     : volume && typeof volume === 'object' && (volume as { type?: unknown }).type === 'bind'
                         ? (volume as { source?: unknown }).source : undefined
-                const path = typeof raw === 'string' ? composeBindPath(raw, composeProjectDirectory(root, files.map(file => file.source)), variables) : undefined
+                const path = typeof raw === 'string' ? composeBindPath(raw, composeProjectDirectory(root, files.map(row => row.source)), variables) : undefined
                 if (path !== undefined && path !== 'volume') binds.push({ source, path })
             }
-            for (const port of entries((service as { ports?: unknown }).ports)) {
+            for (const [index, port] of entries(service.ports).entries()) {
                 const segments = typeof port === 'string' ? splitComposeShort(port) : undefined
                 const published = segments && segments.length >= 2 ? segments[segments.length - 2]
                     : port && typeof port === 'object' ? (port as { published?: unknown }).published : undefined
@@ -291,27 +310,96 @@ function composeFacts(
                 if (published === undefined || published === '') continue
                 const match = typeof published === 'string' ? PORT_VARIABLE.exec(published) : null
                 if (!match) {
+                    basesComplete = false
                     skipped.push({ source, reason: `publishes host port ${String(published)} that is not read from a variable with a default, so every stack would bind the same host port and check refuses it; publish it as \${NAME:-<port>} and declare NAME under [ports.bases]` })
                     continue
                 }
-                const name = (match[1] ?? match[4])!
+                const variable = (match[1] ?? match[4])!
                 const base = match[3] === undefined ? undefined : Number(match[3])
                 if (base === undefined || base < 1 || base > 65_535) {
-                    skipped.push({ source, reason: `publishes a host port from \${${name}} with no default, so its base port cannot be read; declare ${name} under [ports.bases]` })
+                    basesComplete = false
+                    skipped.push({ source, reason: `publishes a host port from \${${variable}} with no default, so its base port cannot be read; declare ${variable} under [ports.bases]` })
                     continue
                 }
-                const known = bases.get(name)
-                if (known && known.base !== base) conflicting.add(name)
-                if (!known) bases.set(name, { base, sources: [source] })
-                else if (!known.sources.includes(source)) known.sources.push(source)
+                const known = bases.get(variable)
+                if (known && known.base !== base) conflicting.add(variable)
+                const where = at(file, ['services', name, 'ports', index])
+                if (!known) bases.set(variable, { base, files: [source], at: [where] })
+                else {
+                    if (!known.files.includes(source)) known.files.push(source)
+                    known.at.push(where)
+                }
             }
         }
     }
-    for (const name of conflicting) {
-        skipped.push({ source: bases.get(name)!.sources.join(', '), reason: `publishes \${${name}} with different defaults, so its base port cannot be read; declare ${name} under [ports.bases]` })
-        bases.delete(name)
+    for (const variable of conflicting) {
+        basesComplete = false
+        skipped.push({ source: bases.get(variable)!.files.join(', '), reason: `publishes \${${variable}} with different defaults, so its base port cannot be read; declare ${variable} under [ports.bases]` })
+        bases.delete(variable)
     }
-    return { binds, bases }
+    return { binds, bases, basesComplete }
+}
+
+const BYTE_UNITS: Readonly<Record<string, number>> = { '': 1, b: 1, k: 1024, kb: 1024, m: 1024 ** 2, mb: 1024 ** 2, g: 1024 ** 3, gb: 1024 ** 3 }
+
+/** Compose's byte notation, as Docker reads it: a byte count, or a number with a binary b, k, m or g unit. */
+function composeBytes(value: unknown): number | undefined {
+    if (typeof value === 'number') return Number.isFinite(value) && value > 0 ? value : undefined
+    const match = typeof value === 'string' ? /^(\d+(?:\.\d+)?)\s*([a-z]*)$/i.exec(value.trim()) : null
+    const unit = match ? BYTE_UNITS[match[2]!.toLowerCase()] : undefined
+    return match && unit !== undefined && Number(match[1]) > 0 ? Number(match[1]) * unit : undefined
+}
+
+function composeCpus(value: unknown): number | undefined {
+    const cpus = typeof value === 'number' ? value : typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value.trim()) ? Number(value) : NaN
+    return Number.isFinite(cpus) && cpus > 0 ? cpus : undefined
+}
+
+/**
+ * The memory and CPU floor the one proposed Compose file records: each default service's limit
+ * times its replicas, summed, because the runtime must hold every service at its limit at once.
+ * A service with no limit leaves that resource unrecorded, and a service whose two spellings of a
+ * limit disagree is reported instead of guessed between.
+ */
+function composeLimits(file: ComposeFile, skipped: SkippedInference[]): InferredFact[] {
+    // A service behind a profile does not start unless that profile is activated.
+    const started = services(file).filter(([, service]) => service.profiles === undefined)
+    if (started.length === 0) return []
+    const resources = [
+        { key: 'runtime_memory_mb', label: 'memory', long: 'memory', short: 'mem_limit', read: composeBytes,
+            total: (sum: number) => Math.ceil(sum / 1024 ** 2) },
+        { key: 'runtime_cpus', label: 'CPU', long: 'cpus', short: 'cpus', read: composeCpus,
+            total: (sum: number) => Math.round(sum * 1000) / 1000 },
+    ] as const
+    const facts: InferredFact[] = []
+    for (const resource of resources) {
+        let sum = 0
+        const parts: string[] = []
+        const lines: string[] = []
+        let complete = true
+        for (const [name, service] of started) {
+            const deployPath = ['services', name, 'deploy', 'resources', 'limits', resource.long]
+            const deployed = field(field(field(service.deploy, 'resources'), 'limits'), resource.long)
+            const short = service[resource.short]
+            const [declared, path] = deployed !== undefined ? [deployed, deployPath] : [short, ['services', name, resource.short]]
+            const amount = resource.read(declared)
+            if (deployed !== undefined && short !== undefined && resource.read(short) !== amount) {
+                skipped.push({ source: at(file, deployPath), reason: `service ${name} sets its ${resource.label} limit twice, as ${resource.short} and as deploy.resources.limits.${resource.long}, with different values, so no ${resource.key} is proposed; keep one of them` })
+                complete = false
+                continue
+            }
+            if (amount === undefined) { complete = false; continue }
+            const replicas = field(service.deploy, 'replicas') ?? service.scale ?? 1
+            const count = typeof replicas === 'number' && Number.isInteger(replicas) && replicas >= 0 ? replicas : 1
+            sum += amount * count
+            parts.push(`${name} ${String(declared)}${count === 1 ? '' : ` x${count}`}`)
+            lines.push(at(file, path))
+        }
+        if (complete && sum > 0) facts.push({ fields: ['environment.machine'], target: `environment.machine.${resource.key}`, value: resource.total(sum),
+            provenance: { kind: 'derived', source: lines.join(', '),
+                reason: `the ${resource.label} limits of every service ${file.source} starts by default (${parts.join(', ')}), summed: the runtime must hold each service at its limit at once` } })
+    }
+    return facts
 }
 
 async function detectTestEntry(
@@ -436,7 +524,21 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             return undefined
         }
     }
-    const composeFiles: { source: string; document: unknown }[] = []
+    const composeFiles: ComposeFile[] = []
+    // Compose files are read with their line positions, so a derived value names the line it came from.
+    const parseCompose = (source: string, text: string): ComposeFile | undefined => {
+        const lineCounter = new LineCounter()
+        const parsed = parseDocument(text, { lineCounter })
+        const error = parsed.errors[0]
+        if (error) {
+            skipped.push({ source, reason: `is not valid YAML (${error.name})` })
+            return undefined
+        }
+        return { source, document: parsed.toJS(), line: path => {
+            const offset = (parsed.getIn(path, true) as { range?: readonly number[] } | undefined)?.range?.[0]
+            return offset === undefined ? undefined : lineCounter.linePos(offset).line
+        } }
+    }
     const seenServices = new Set<string>()
     const readOrigin = async (directory: string): Promise<Readonly<{ kind: 'url'; url: string; source: string } | { kind: 'none'; reason: string }>> => {
         const marker = relative(directory, '.git')
@@ -562,12 +664,12 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             const source = relative(directory.path, name)
             const text = await read(directory.path, name)
             if (text === undefined) continue
-            const document = parseYamlText(source, text)
-            if (document !== undefined) {
+            const file = parseCompose(source, text)
+            if (file !== undefined) {
                 if (source === '..' || source.startsWith('../') || isAbsolute(source)) {
                     skipped.push({ source,
                         reason: `is outside the cockpit root, so environment.compose_files cannot represent it; write a compose.yml at the cockpit root that reaches each checkout through its sibling variable${slug === undefined ? '' : ` (such as \${${deriveSiblingVariable(slug)}})`} and answer environment.compose_files = ["compose.yml"]; then rerun ${initCommand({ root: configurationRoot })} with the options you ran it with` })
-                } else composeFiles.push({ source, document })
+                } else composeFiles.push(file)
             }
             break
         }
@@ -643,19 +745,25 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
                     ? `${placed}; acquire "auto" with its origin remote, so setup clones it where a checkout is absent; add its purpose`
                     : `${placed}; acquire "none" because ${origin.reason}; add its purpose` } })
     }
-    if (compose.bases.size > 0) {
-        const sources = [...new Set([...compose.bases.values()].flatMap(row => row.sources))]
-        const publishers = sources.map(source => `${source} publishes ${[...compose.bases].filter(([, row]) => row.sources.includes(source)).map(([name]) => name).join(', ')}`)
+    if (composeFiles.length > 0 && (compose.bases.size > 0 || compose.basesComplete)) {
+        const files = [...new Set([...compose.bases.values()].flatMap(row => row.files))]
+        const publishers = files.map(file => `${file} publishes ${[...compose.bases].filter(([, row]) => row.files.includes(file)).map(([name]) => name).join(', ')}`)
         facts.push({ fields: ['ports.bases'], target: 'ports.bases', value: Object.fromEntries([...compose.bases].map(([name, row]) => [name, row.base])),
-            provenance: { kind: 'inferred', source: sources.join(', '),
-                reason: `${publishers.join('; ')} from variables with these defaults; check requires every published host port to come from a [ports.bases] variable, so each stack leases its own` } })
+            provenance: compose.bases.size === 0
+                ? { kind: 'derived', source: composeFiles.map(file => file.source).join(', '),
+                    reason: 'no service publishes a host port, so no stack needs a base port' }
+                : { kind: compose.basesComplete ? 'derived' : 'inferred', source: [...new Set([...compose.bases.values()].flatMap(row => row.at))].join(', '),
+                    reason: `${publishers.join('; ')} from variables with these defaults; check requires every published host port to come from a [ports.bases] variable, so each stack leases its own${
+                        compose.basesComplete ? '' : '; a published host port could not be read (see inferenceSkipped), so this map is incomplete'}` } })
     }
     // compose-first resolves every relative path against the first listed file's directory, so one
     // product Compose file can be run in place but several cannot be listed together.
-    if (composeFiles.length === 1) facts.unshift({ fields: ['environment.compose_files'], target: 'environment.compose_files', value: [composeFiles[0]!.source],
-        provenance: { kind: 'inferred', source: composeFiles[0]!.source,
-            reason: 'a Compose file already exists, so cockpit can run it as written' } })
-    else if (composeFiles.length > 1) skipped.push({ source: composeFiles.map(file => file.source).join(', '),
+    if (composeFiles.length === 1) {
+        facts.unshift({ fields: ['environment.compose_files'], target: 'environment.compose_files', value: [composeFiles[0]!.source],
+            provenance: { kind: 'derived', source: composeFiles[0]!.source,
+                reason: 'a Compose file already exists, so cockpit can run it as written' } })
+        facts.push(...composeLimits(composeFiles[0]!, skipped))
+    } else if (composeFiles.length > 1) skipped.push({ source: composeFiles.map(file => file.source).join(', '),
         reason: `are Compose files in different repositories, and compose-first resolves every relative path against the first listed file's directory, so they cannot be listed together; write one compose.yml at the cockpit root that runs their services, reaching each checkout through its sibling variable (${[...siblingPaths.keys()].map(name => `\${${name}}`).join(', ')}), and answer environment.compose_files = ["compose.yml"]` })
     return { facts, skipped }
 }

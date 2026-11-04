@@ -10,8 +10,9 @@ import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { inspectTeamReadiness } from '../team-metadata.js'
 import { guardSearchPathRelativeEntry } from '../guards/protected-locations.js'
-import { ENVIRONMENT_CODES, snapshotExecutionStep, type EnvironmentDiagnostic, type ExecutionStep, RefusalError, isMissing } from './contract.js'
-import { resolveGitExecutable } from './executable.js'
+import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, snapshotExecutionStep, type EnvironmentDiagnostic, type ExecutionStep, RefusalError, isMissing } from './contract.js'
+import { resolveDiskCapacityExecutable, resolveDockerExecutable, resolveGitExecutable } from './executable.js'
+import { measureMachineFloor } from './runtime.js'
 import { gitRepositoryRefusal, inspectTrackedSecretFiles } from './git-observation.js'
 import { declaresNothingToRun } from './declaration.js'
 import { inspectSiblingInstructions } from './sibling-instructions.js'
@@ -141,4 +142,25 @@ export async function inspectInitReadiness(
         ? declaresNothingToRun(loaded.result.config.environment) ? 'surfaces-only' : 'runtime'
         : classification === undefined ? 'undetermined' : classification === 'no-runnable-product' ? 'surfaces-only' : 'runtime'
     return { state, findings }
+}
+
+/**
+ * What the container runtime on this machine offers, measured by the same collector preflight
+ * compares the machine floor with, so init can propose a floor where no Compose limit records one.
+ */
+export async function measureInitMachine(
+    input: Readonly<{ root: string }>,
+    binding: Readonly<{ env: ProjectReadinessInput['env']; timeoutMs: number; execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome> }>,
+): Promise<Readonly<{ kind: 'complete'; memoryMb: number; cpus: number; observedAt: string }> | Readonly<{ kind: 'unavailable'; reason: string }>> {
+    const [docker, disk] = await Promise.all([resolveDockerExecutable(binding.env), resolveDiskCapacityExecutable()])
+    if (docker.state !== 'available') return { kind: 'unavailable', reason: docker.reason }
+    if (disk.state !== 'available') return { kind: 'unavailable', reason: disk.reason }
+    const env = Object.fromEntries(Object.entries(binding.env)
+        .filter((entry): entry is [string, string] => DOCKER_CLIENT_ENVIRONMENT.has(entry[0]) && typeof entry[1] === 'string'))
+    const measured = await measureMachineFloor({ runtimeExecutable: docker.value, diskExecutable: disk.value, cwd: input.root,
+        env, timeoutMs: binding.timeoutMs }, binding.execute)
+    if (measured.kind !== 'complete') return { kind: 'unavailable', reason: measured.kind === 'refusal'
+        ? measured.diagnostics.map(row => row.message).join('; ') : 'docker info did not report the runtime\'s memory and CPUs' }
+    return { kind: 'complete', memoryMb: Math.floor(measured.evidence.memoryBytes / 1024 ** 2),
+        cpus: measured.evidence.cpuMillis / 1_000, observedAt: measured.evidence.observedAt }
 }

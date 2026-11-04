@@ -380,11 +380,12 @@ describe('init application', () => {
                     reason: expect.stringContaining('not valid YAML') }),
             ]),
             outstanding: expect.arrayContaining([
-                expect.objectContaining({ field: 'ports.bases', inferred: [expect.objectContaining({
+                expect.objectContaining({ field: 'ports.bases', proposals: [expect.objectContaining({
                     target: 'checkout.container_ports', value: [3000],
                     provenance: expect.objectContaining({ source: '../checkout/Dockerfile' }),
-                })] }),
-                expect.objectContaining({ field: 'environment.compose_files', inferred: expect.arrayContaining([
+                }), expect.objectContaining({ target: 'ports.bases', value: {},
+                    provenance: expect.objectContaining({ kind: 'derived', source: 'compose.yml' }) })] }),
+                expect.objectContaining({ field: 'environment.compose_files', proposals: expect.arrayContaining([
                     expect.objectContaining({ target: 'environment.compose_files', value: ['compose.yml'],
                         provenance: expect.objectContaining({ source: 'compose.yml' }) }),
                     expect.objectContaining({ target: 'checkout.command', value: ['node', 'server.mjs'],
@@ -423,7 +424,7 @@ describe('init application', () => {
         expect(outcome).toMatchObject({ kind: 'pending', result: {
             estate: { classification: 'one-sibling', runnable: [{ slug: 'app', disposition: 'confirmed' }] },
             interview: { outstanding: expect.arrayContaining([
-                expect.objectContaining({ field: 'environment.compose_files', inferred: expect.arrayContaining([
+                expect.objectContaining({ field: 'environment.compose_files', proposals: expect.arrayContaining([
                     expect.objectContaining({ target: inferredTarget }),
                 ]) }),
                 expect.objectContaining({ field: 'environment.machine' }),
@@ -432,6 +433,79 @@ describe('init application', () => {
         expect(outcome.result?.interview?.outstanding).not.toEqual(expect.arrayContaining([
             expect.objectContaining({ field: 'estate.runnable' }),
         ]))
+    })
+
+    it('lets the setup agent accept what init read from exact sources, and keeps security boundaries and guesses with a person', async () => {
+        const f = fixture()
+        mkdirSync(join(f.root, 'app'))
+        await writeFile(join(f.root, 'app', 'compose.yml'), ['services:', '  web:', '    image: synthetic.invalid/web:1',
+            '    ports: ["${APP_PORT:-4100}:4100"]', '    mem_limit: 768m', ''].join('\n'))
+        let written = ''
+        const adapters: InitApplicationAdapters = { ...f.adapters,
+            classifyEstate: input => classifyEstateObservation(input, { observe: observePublicEstate }),
+            document: draftFromEstate, infer: deriveInferredFacts,
+            measureMachine: async () => ({ kind: 'complete', memoryMb: 8192, cpus: 4, observedAt: '2026-10-25T00:00:00.000Z' }) }
+        const io: InitCommandIo = { terminal: false, confirm: async () => undefined, writeArtifact: async (_path, artifact) => {
+            written = artifact
+            f.setDestination({ kind: 'available', sha256: createHash('sha256').update(artifact).digest('hex') })
+        } }
+        const run = (answers: Record<string, unknown>, defaultsSha256?: string) => runInitOperatorCommand({ root: f.root, target: 'codexcli',
+            sessionId: 'synthetic-session', platform: 'linux', home: f.input.home, xdgStateHome: f.input.xdgStateHome },
+        { interactive: false, json: true, unattended: { previewSha256: digest('3'), answers, ...(defaultsSha256 ? { defaultsSha256 } : {}) } }, io,
+        input => runInitApplication(input, adapters))
+
+        const preview = await runInitApplication({ ...f.input, registry: undefined }, adapters)
+        const outstanding = preview.result!.interview!.outstanding
+        expect(Object.fromEntries(outstanding.map(row => [row.field, row.confirmedBy]))).toEqual({ 'cockpit.name': 'agent', sibling: 'person',
+            'ports.bases': 'agent', 'environment.install_policies': 'person', 'environment.test_data': 'person',
+            'environment.compose_files': 'agent', 'environment.machine': 'person', 'environment.posture': 'person', testing: 'person',
+            guards: 'person', 'configuration.defaults': 'person' })
+        expect(outstanding.find(row => row.field === 'ports.bases')!.proposals).toEqual([{ target: 'ports.bases', value: { APP_PORT: 4100 },
+            provenance: { kind: 'derived', source: 'app/compose.yml:4', reason: expect.stringContaining('app/compose.yml publishes APP_PORT') } }])
+        // Memory comes from the Compose limit; nothing records the CPUs, so this machine's runtime is measured for them.
+        expect(outstanding.find(row => row.field === 'environment.machine')!.proposals).toEqual([
+            { target: 'environment.machine.runtime_memory_mb', value: 768, provenance: expect.objectContaining({ kind: 'derived', source: 'app/compose.yml:5' }) },
+            { target: 'environment.machine.runtime_cpus', value: 4, provenance: expect.objectContaining({ kind: 'measured', source: 'container runtime, 2026-10-25' }) }])
+
+        const answers = {
+            sibling: [{ slug: 'app', dir: 'app', mount: 'always', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic application' }],
+            environment: { install_policies: [], test_data: { seeded_data: false, signed_in_users: false },
+                machine: { runtime_memory_mb: 768, runtime_cpus: 4, free_disk_mb: 2048, cold_start_seconds: 120 },
+                posture: { addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] } },
+            testing: 'none', guards: { hosted_db_hosts: [], vendor_endpoint_hosts: [] },
+            // A derived field needs no value: init answers it with what it read.
+            provenance: { cockpit: { name: 'derived' }, 'ports.bases': 'derived', 'environment.compose_files': 'derived' },
+        }
+        // A value marked derived is checked against what init read, never taken on the file's word.
+        expect(await run({ ...answers, ports: { bases: { APP_PORT: 4200 } } })).toMatchObject({ kind: 'refusal', diagnostics: [
+            { code: 'GREENFIELD_ANSWER_INVALID' }, { code: 'DOCUMENT_CONFIGURATION_ANSWER_NOT_DERIVED',
+                message: expect.stringContaining('the value init read from app/compose.yml:4') }] })
+        // A security boundary has no derived value: marked derived, it is refused whether or not the file gives one.
+        const { guards: _guards, ...unanswered } = answers
+        expect(await run({ ...answers, provenance: { ...answers.provenance, guards: 'derived' } })).toMatchObject({ kind: 'refusal',
+            diagnostics: [{ code: 'GREENFIELD_ANSWER_INVALID' }, { code: 'DOCUMENT_CONFIGURATION_ANSWER_NOT_DERIVED',
+                message: 'the guards answer is marked derived, but init read no complete value for it from an exact source' }] })
+        expect(await run({ ...unanswered, provenance: { ...answers.provenance, guards: 'derived' } })).toMatchObject({ kind: 'refusal',
+            diagnostics: [{ code: 'INIT_ANSWER_INVALID', message: expect.stringContaining('provenance.guards is "derived", but init read no complete value') }] })
+
+        const defaults = await run(answers)
+        expect(defaults).toMatchObject({ kind: 'pending', result: { question: { field: 'configuration.defaults' } } })
+        const draft = defaults.result!.question!.document!
+        const line = (prefix: string) => draft.findIndex(row => row.startsWith(prefix))
+        // The defaults digest is what a person accepts, so the draft shows which values it covers.
+        const order = [line('# The setup agent accepts these'), line('# [default] ports.step'), line('# A person confirms these'),
+            line('# [default] guards.protected_branches')]
+        expect(order[0]).toBeGreaterThanOrEqual(0)
+        expect([...order].sort((left, right) => left - right)).toEqual(order)
+
+        const complete = await run(answers, defaults.result!.question!.expectedSha256)
+        expect(complete, JSON.stringify(complete.diagnostics)).toMatchObject({ kind: 'complete', result: {
+            derived: [{ field: 'cockpit.name', source: 'the cockpit root directory name' }, { field: 'ports.bases', source: 'app/compose.yml:4' },
+                { field: 'environment.compose_files', source: 'app/compose.yml' }],
+            // The machine floor holds a free disk and cold start no file records, so it stays the person's to confirm.
+            unconfirmed: [{ field: 'environment.machine', provenance: 'unattributed' }] } })
+        expect(written).toContain('# Derived: ports.bases was read from app/compose.yml:4 and accepted by the setup agent; bring-up proves it.')
+        expect(written).toContain('unconfirmed = [ "environment.machine" ]\n')
     })
 
     it('names the deferred greenfield dependency without fabricating a configuration', async () => {
@@ -741,11 +815,11 @@ describe('init application', () => {
         // afterwards, and a rename after sync is a migration, not an edit.
         expect(planned.map(row => row.field)).toEqual(['cockpit.name', 'sibling', 'ports.bases', 'environment.install_policies',
             'environment.test_data', 'environment.compose_files', 'environment.machine', 'environment.posture', 'testing', 'guards', 'configuration.defaults'])
-        expect(planned.find(row => row.field === 'cockpit.name')!.inferred).toEqual([{ target: 'cockpit.name', value: 'checkout',
-            provenance: { kind: 'inferred', source: f.root, reason: 'the cockpit root directory name' } }])
-        expect(planned.find(row => row.field === 'ports.bases')!.inferred).toEqual([{ target: 'app.container_ports', value: [3000],
+        expect(planned.find(row => row.field === 'cockpit.name')!.proposals).toEqual([{ target: 'cockpit.name', value: 'checkout',
+            provenance: { kind: 'derived', source: f.root, reason: 'the cockpit root directory name' } }])
+        expect(planned.find(row => row.field === 'ports.bases')!.proposals).toEqual([{ target: 'app.container_ports', value: [3000],
             provenance: { kind: 'inferred', source: 'app/Dockerfile', reason: 'the Dockerfile EXPOSEs this port' } }])
-        expect(planned.find(row => row.field === 'sibling')!.inferred).toEqual([])
+        expect(planned.find(row => row.field === 'sibling')!.proposals).toEqual([])
         expect(f.calls).not.toContain('apply')
 
         const accepted = { ...input, accepted: true, acceptedPreviewSha256: preview.result!.previewSha256 }
