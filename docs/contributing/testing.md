@@ -82,7 +82,7 @@ Follow the named diagnostic and its recovery procedure.
 |---|---|
 | Rendering, inspection, publication and recovery | `packages/cockpit/src/environment/generated-application/` |
 | `sync` and `check` command adapter | `packages/cockpit/src/generated-environment/command.ts` |
-| Stack rendering | `packages/cockpit/src/environment/generated-stack.ts` |
+| `compose.cockpit.yml` rendering | `packages/cockpit/src/environment/compose-ownership.ts` |
 
 One test covers the full `sync`/`check` path:
 
