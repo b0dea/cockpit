@@ -56,6 +56,7 @@ import { createReadCommandAdapters } from './environment/read-composition.js'
 import { probeInstalledRuntime, runRuntimeMeasure } from './environment/runtime-measurement.js'
 import { initializeLocalGitRepository, runSiblingAdd, runSiblingRemove, type SiblingAddInput, type SiblingRemoveInput } from './environment/sibling-registration.js'
 import { runToolChange, type ToolChangeInput } from './environment/tool-registration.js'
+import { runPull, runUse, type PullCommandInput, type UseCommandInput } from './environment/application/siblings.js'
 import { issueSetupRunContext, setupEnvironment, type SetupCommandAdapters, type SetupRunContext } from './environment/application/setup.js'
 import {
     consumeSetupCheckoutProjection,
@@ -191,6 +192,8 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
     }>
     up: UpCommandInput
     upgrade: Readonly<{ configPath: string; version?: string; dryRun: boolean }>
+    use: Omit<UseCommandInput, 'env'>
+    pull: Omit<PullCommandInput, 'env'>
 }
 
 export type CommandHandlers = {
@@ -742,6 +745,8 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             ? runSiblingAdd({ ...request.input, env }, { execute: executeProbe })
             : runSiblingRemove({ ...request.input, env }),
         tool: runToolChange,
+        use: (input) => runUse({ ...input, env }, { execute: executeProbe }),
+        pull: (input) => runPull({ ...input, env }, { execute: executeProbe }),
         logs: (input) => {
             if (ordinarySessionId === null) return Promise.resolve(usageOutcome(
                 'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
@@ -1257,6 +1262,25 @@ async function decodeRequest(
         } } }
     }
 
+    if (handler === 'use') {
+        const values = parsed.values as { config?: string; clear?: boolean }
+        const [slug, checkout, ...extra] = parsed.positionals
+        const shape = 'npx --no cockpit use <slug> <checkout> --config <your cockpit.toml>, or npx --no cockpit use <slug> --clear --config <your cockpit.toml>'
+        if (!slug || extra.length > 0 || (checkout === undefined) === (values.clear !== true)) {
+            return usageOutcome('CLI_USAGE_INVALID', `use takes a sibling slug and either one checkout directory or --clear: ${shape}`)
+        }
+        if (!values.config) return missingConfig()
+        return { handler, input: { configPath: values.config, slug, clear: values.clear === true,
+            ...(checkout === undefined ? {} : { checkout: resolve(checkout) }) } }
+    }
+
+    if (handler === 'pull') {
+        const values = parsed.values as { config?: string }
+        if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'pull accepts named inputs only')
+        if (!values.config) return missingConfig()
+        return { handler, input: { configPath: values.config } }
+    }
+
     if (handler === 'tool') {
         const values = parsed.values as { config?: string; 'dry-run'?: boolean }
         const [operation, tool, ...extra] = parsed.positionals
@@ -1427,6 +1451,8 @@ async function dispatchHandler(
     }
     if (request.handler === 'sibling') return handlers.sibling?.(request.input) ?? unavailable()
     if (request.handler === 'tool') return handlers.tool?.(request.input) ?? unavailable()
+    if (request.handler === 'use') return handlers.use?.(request.input) ?? unavailable()
+    if (request.handler === 'pull') return handlers.pull?.(request.input) ?? unavailable()
     return unavailable()
 }
 

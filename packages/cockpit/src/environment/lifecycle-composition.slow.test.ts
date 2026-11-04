@@ -163,10 +163,14 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
             expect(decodeLifecycleRecord(rebound.value, sessionContext.result)?.value.holderId)
                 .toBe(sessionContext.result.holderId)
         }
+        const inputs = join(scenario.candidate.checkout, '.cockpit/local/stack-inputs')
+        expect(JSON.parse(await readFile(inputs, 'utf8'))).toMatchObject({ siblings: [{ slug: 'app' }] })
         const final = await runSleep({ configPath: scenario.candidate.configPath }, sessionAdapters)
         expect(final, JSON.stringify(final)).toMatchObject({
             kind: 'complete', result: { stackId: scenario.context.stackId, change: 'stopped' },
         })
+        // A released hold leaves the record; the stop that ends the stack drops it.
+        await expect(readFile(inputs, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
         expect(sessionSteps.filter(({ id }) => id.includes(':stop:'))).toHaveLength(1)
     }, 120_000)
 
@@ -178,10 +182,23 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const log = join(scenario.candidate.checkout, 'seeded.log')
         const port = scenario.result.kind === 'complete' ? scenario.result.result.ports.APP_HOST_PORT : undefined
         expect(await readFile(log, 'utf8')).toBe(`${port}\n`)
+        // The started stack records what its siblings looked like; a resume restarts nothing, so the record stays.
+        const inputs = join(scenario.candidate.checkout, '.cockpit/local/stack-inputs')
+        const recorded = await readFile(inputs, 'utf8')
+        expect(JSON.parse(recorded)).toMatchObject({ siblings: [{ slug: 'app', served: join(scenario.candidate.checkout, 'app') }] })
 
         const current = await runUp({ configPath: scenario.candidate.configPath }, scenario.adapters)
         expect(current, JSON.stringify(current)).toMatchObject({ kind: 'complete', result: { seed: 'current' } })
         expect(await readFile(log, 'utf8')).toBe(`${port}\n`)
+        expect(await readFile(inputs, 'utf8')).toBe(recorded)
+
+        // Docker would create a vanished bind source as an empty directory, so up refuses to mount it.
+        const gone = join(scenario.candidate.root, 'removed-worktree')
+        await writeFile(join(scenario.candidate.checkout, '.cockpit/local/sibling-checkouts'),
+            JSON.stringify({ format: 'cockpit-sibling-checkouts/v1', checkouts: { app: gone } }))
+        expect(await runUp({ configPath: scenario.candidate.configPath }, scenario.adapters))
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'SIBLING_CHECKOUT_UNAVAILABLE', target: gone }] })
+        await rm(join(scenario.candidate.checkout, '.cockpit/local/sibling-checkouts'))
 
         // Reset removes the volume and the next start creates it again, after the recorded seed.
         await writeFile(join(scenario.candidate.root, 'volume-created-at'), new Date(Date.now() + 5_000).toISOString())

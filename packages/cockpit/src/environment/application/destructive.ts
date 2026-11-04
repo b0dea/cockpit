@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { cleanupFencedExecution, repairFencedExecution } from '../../environment-exec/execute.js'
 import { ENVIRONMENT_CODES, type EnvironmentCommandOutcome, type EnvironmentDiagnostic, type ExecutionFence, forwardedRefusal } from '../contract.js'
 import { readState } from '../state.js'
@@ -54,6 +54,7 @@ import {
     publishDrainOutcomeRecord,
 } from './lifecycle-state.js'
 import { lifecycleRefusal, uniqueDiagnostics } from './shared.js'
+import { forgetStackInputs } from '../stack-inputs.js'
 
 type DestructivePlan = Extract<TeardownPlanResult | ResetPlanResult, { kind: 'complete' }>
 
@@ -366,7 +367,10 @@ export async function runDown(
 ): Promise<DownCommandResult> {
     const loaded = await loadDestructiveContext(input, adapters)
     if (loaded.kind !== 'complete') return loaded as DownCommandResult
-    return withLifecycleRunNotices(loaded.result, await settleProvisionalClaim(loaded.result, await downWithContext(loaded.result, adapters)))
+    const outcome = await settleProvisionalClaim(loaded.result, await downWithContext(loaded.result, adapters))
+    // A removed stack runs nothing a later doctor could call stale.
+    const forgotten = outcome.kind === 'complete' && outcome.result.change === 'removed' ? await forgetStackInputs(dirname(loaded.result.source.path)) : []
+    return withLifecycleRunNotices(loaded.result, forgotten.length === 0 ? outcome : { ...outcome, diagnostics: uniqueDiagnostics([...outcome.diagnostics, ...forgotten]) })
 }
 
 async function downWithContext(context: DestructiveRunContext, adapters: DownCommandAdapters): Promise<DownCommandResult> {

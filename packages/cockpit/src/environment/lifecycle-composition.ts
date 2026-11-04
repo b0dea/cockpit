@@ -70,6 +70,8 @@ import {
 } from './setup-observation.js'
 import { selectStateRoot } from './state.js'
 import { readBoundedFile } from '../bounded-read.js'
+import { loadServedSiblings, missingServedCheckout, servedSiblingVariables, type ServedSibling } from './sibling-checkouts.js'
+import { recordStackInputs } from './stack-inputs.js'
 
 const OWNER = 'lifecycle-adapter-composition'
 
@@ -88,9 +90,19 @@ function runtimeUnavailable(reason: string, target: string): readonly Environmen
 function mountMismatchDiagnostics(
     mismatch: RuntimeMountMismatch,
     config: CockpitConfig,
-    siblingsRoot: string,
+    served: ReadonlyMap<string, ServedSibling>,
 ): readonly EnvironmentDiagnostic[] {
-    const bySource = new Map(config.sibling.map((sibling) => [resolve(siblingsRoot, sibling.dir), sibling]))
+    const bySource = new Map(config.sibling.map((sibling) => [served.get(sibling.slug)!.served, sibling]))
+    // After `use` the running stack still mounts the checkout it started with: the sibling's served
+    // directory is missing and another one is mounted in its place. Compose is fine; the stack is old.
+    const switched = mismatch.unexpected.length === 0 ? undefined
+        : config.sibling.find((sibling) => mismatch.missing.includes(served.get(sibling.slug)!.served))
+    if (switched) return [{
+        severity: 'error' as const, code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, target: `sibling:${switched.slug}`,
+        message: `sibling ${switched.slug} is served from ${served.get(switched.slug)!.served}, but the running stack mounts ${mismatch.unexpected.join(', ')} instead`,
+        fix: `if the stack started before use changed the checkout, run ${cockpitCommand('down')} and then ${cockpitCommand('up')}; `
+            + `otherwise bind-mount \${${switched.var}} in a Compose service and run ${cockpitCommand('check')}`,
+    }]
     return [
         ...mismatch.missing.map((source) => {
             const sibling = bySource.get(source)
@@ -117,9 +129,9 @@ function mountMismatchDiagnostics(
 function redirectedMountDiagnostics(
     redirected: readonly Readonly<{ bind: string; holder: string }>[],
     config: CockpitConfig,
-    siblingsRoot: string,
+    served: ReadonlyMap<string, ServedSibling>,
 ): readonly EnvironmentDiagnostic[] {
-    const bySource = new Map(config.sibling.map((sibling) => [resolve(siblingsRoot, sibling.dir), sibling]))
+    const bySource = new Map(config.sibling.map((sibling) => [served.get(sibling.slug)!.served, sibling]))
     return redirected.map(({ bind, holder }) => {
         const sibling = bySource.get(holder)
         return {
@@ -142,8 +154,9 @@ export interface LifecycleCommandCompositionInput {
     readonly holderProcess?: HolderProcess
 }
 
-export type LifecycleCommandAdapterComposition = Omit<UpCommandAdapters & SleepCommandAdapters, 'withRuntimeReadiness' | 'seed'> & {
+export type LifecycleCommandAdapterComposition = Omit<UpCommandAdapters & SleepCommandAdapters, 'withRuntimeReadiness' | 'seed' | 'recordStackInputs'> & {
     seed: NonNullable<UpCommandAdapters['seed']>
+    recordStackInputs: NonNullable<UpCommandAdapters['recordStackInputs']>
     withMachineFloorReadiness<T>(
         context: LifecycleRunContext,
         use: (observations: readonly import('./contract.js').EnvironmentObservation[]) => Promise<T>,
@@ -170,6 +183,8 @@ interface CompositionBinding {
     readonly config: ConsumedLoadedConfig['config']
     readonly checkoutRoot: string
     readonly siblingsRoot: string
+    /** The checkout serving each sibling: declared, or recorded by `use` for this cockpit checkout. */
+    readonly served: ReadonlyMap<string, ServedSibling>
     readonly machineFloorAuthority?: MachineFloorAuthority
 }
 
@@ -367,6 +382,8 @@ export function createLifecycleCommandAdapters(
         if (loaded.kind === 'refusal') return loaded
         if (declaresNothingToRun(loaded.result.config.environment)) return { kind: 'refusal' as const,
             status: 2 as const, result: null, diagnostics: [runtimeNotDeclared(loaded.result.source.path)] }
+        const served = await loadServedSiblings(dirname(loaded.result.source.path), loaded.result.config)
+        if (served.kind === 'refusal') return { kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: [served.diagnostic] }
         const setupEnvironment = Object.fromEntries(Object.entries(input.env)
             .filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
         const git = await resolveGitExecutable(input.env)
@@ -439,6 +456,7 @@ export function createLifecycleCommandAdapters(
             config: loaded.result.config,
             checkoutRoot: dirname(loaded.result.source.path),
             siblingsRoot: resolve(dirname(loaded.result.source.path), loaded.result.config.cockpit.siblings_root),
+            served: served.siblings,
             ...(projected && 'authority' in projected ? { machineFloorAuthority: projected.authority } : {}),
         })
         return { ...issued, diagnostics: loaded.diagnostics }
@@ -538,6 +556,11 @@ export function createLifecycleCommandAdapters(
                 'cockpit.toml declares no [environment.machine] table; runtime commands need its runtime_memory_mb, runtime_cpus, free_disk_mb and cold_start_seconds',
                 'environment.machine'))
         }
+        // Teardown must reach a stack whatever it mounts; anything else would mount a directory that is gone.
+        if (purpose !== 'teardown') {
+            const gone = await missingServedCheckout(currentBinding.served)
+            if (gone) return refuse?.([gone])
+        }
         const env = runtimeEnvironment(input.env)
         const docker = await resolveDockerExecutable(input.env)
         if (docker.state !== 'available') return refuse?.(runtimeUnavailable(docker.reason, context.stackId))
@@ -590,14 +613,13 @@ export function createLifecycleCommandAdapters(
         expectedMountSources = [...new Set([
             ...currentBinding.config.sibling
                 .filter((sibling) => sibling.mount === 'always')
-                .map((sibling) => resolve(currentBinding.siblingsRoot, sibling.dir)),
+                .map((sibling) => currentBinding.served.get(sibling.slug)!.served),
             ...currentBinding.config.environment.generated_host_paths
                 .map((path) => resolve(currentBinding.checkoutRoot, path)),
         ])].sort()
         if (!artifacts || artifacts.length === 0) return undefined
         if (resolvedMounts) expectedMountSources = resolvedMounts
-        const siblingDirectories = Object.fromEntries(currentBinding.config.sibling
-            .map((sibling) => [sibling.var, resolve(currentBinding.siblingsRoot, sibling.dir)]))
+        const siblingDirectories = servedSiblingVariables(currentBinding.config, currentBinding.served)
         const batchId = randomBytes(32).toString('hex')
         const runtime = createRuntimeAdapter({
             runtime: observed.runtime,
@@ -640,12 +662,12 @@ export function createLifecycleCommandAdapters(
                 const resolved = [...expectedMountSources.filter((source) => !mismatch.missing.includes(source)), ...mismatch.unexpected].sort()
                 return runtimeReadiness(context, use, ports, refuse, purpose, resolved)
             }
-            return refuse?.(mountMismatchDiagnostics(mismatch, currentBinding.config, currentBinding.siblingsRoot))
+            return refuse?.(mountMismatchDiagnostics(mismatch, currentBinding.config, currentBinding.served))
         }
         if (purpose !== 'teardown') {
             const redirected = await redirectedBindSources(
                 topology.topology.services.flatMap(({ bindMountSources }) => bindMountSources), expectedMountSources)
-            if (redirected.length > 0) return refuse?.(redirectedMountDiagnostics(redirected, currentBinding.config, currentBinding.siblingsRoot))
+            if (redirected.length > 0) return refuse?.(redirectedMountDiagnostics(redirected, currentBinding.config, currentBinding.served))
         }
         const disk = await resolveDiskCapacityExecutable()
         if (disk.state !== 'available') return undefined
@@ -766,5 +788,10 @@ export function createLifecycleCommandAdapters(
         }
     }
 
-    return { load, execute, seed, withRuntimeReadiness, withMachineFloorReadiness, withLifecycleStage, withAcquiredPorts }
+    const recordInputs: LifecycleCommandAdapterComposition['recordStackInputs'] = async (context, change) => {
+        const binding = bindings.get(context)
+        return binding ? recordStackInputs(binding.checkoutRoot, binding.config, binding.served, { keepExisting: change !== 'started' }) : []
+    }
+
+    return { load, execute, seed, recordStackInputs: recordInputs, withRuntimeReadiness, withMachineFloorReadiness, withLifecycleStage, withAcquiredPorts }
 }

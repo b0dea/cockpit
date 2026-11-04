@@ -96,6 +96,8 @@ export interface ObservationCommandAdapters {
         step: ExecutionStep,
         options: { readonly signal?: AbortSignal },
     ) => Promise<ExecuteProbeOutcome>
+    /** Which checkout serves each sibling, what a worktree lacks, and whether the running stack is stale. */
+    readonly inspectServedSiblings?: () => Promise<readonly EnvironmentDiagnostic[]>
 }
 
 export interface PreflightCommandInput {
@@ -545,10 +547,12 @@ export async function runPreflight(
     }
     // A stopped stack never passes the gate, whatever the rows observable without it say.
     const passed = health.verdict === 'pass' && health.stopped === null
+    // Warnings only: a stale stack still answers, and whether a changed lockfile matters is the product's call.
+    const served = await adapters.inspectServedSiblings?.() ?? []
     return {
         kind: passed ? 'complete' : 'blocked',
         status: passed ? 0 : 2,
-        diagnostics: healthDiagnostics(health),
+        diagnostics: [...healthDiagnostics(health), ...served],
         result,
     } as PreflightCommandResult
 }

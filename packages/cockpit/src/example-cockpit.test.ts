@@ -21,7 +21,7 @@ const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typ
     ['CONTRIBUTING.md', [developer, developer, developer]],
     ['README.md', [packageInstall, operator, runtime]],
     ['docs/contributing/style.md', [developer]],
-    ['docs/environment.md', [operator, runtime, runtime, runtime, runtime, runtime]],
+    ['docs/environment.md', [operator, operator, runtime, runtime, runtime, runtime, runtime]],
     ['docs/getting-started.md', [packageInstall, operator, operator, operator, runtime, operator, operator, operator, operator, operator, operator,
         runtime, runtime, runtime, operator, developer]],
     ['docs/harness-surfaces.md', [operator, operator, operator, operator, operator]],
@@ -101,7 +101,7 @@ describe('the public example cockpits', () => {
         const planted = new Map(documents)
         planted.set('docs/environment.md', `${planted.get('docs/environment.md')}\n\`\`\`sh\ncockpit unknown-command\n\`\`\`\n`)
         expect(publicShellInventory(planted).filter(row => row.kind === 'unclassified')).toContainEqual({
-            path: 'docs/environment.md', block: 7, kind: 'unclassified', reason: 'shell block and classification table differ',
+            path: 'docs/environment.md', block: 8, kind: 'unclassified', reason: 'shell block and classification table differ',
         })
     })
 })

@@ -61,6 +61,7 @@ const controls = vi.hoisted(() => ({
     readinessPorts: [] as unknown[],
     executePreparation: false,
     readinessRefusal: undefined as undefined | readonly Record<string, unknown>[],
+    siblingCheckouts: undefined as string | undefined,
 }))
 
 vi.mock('../config/load.js', async (importOriginal) => ({
@@ -68,7 +69,7 @@ vi.mock('../config/load.js', async (importOriginal) => ({
     loadCockpitConfig: vi.fn(async () => ({ kind: 'complete', result: {
         source: { ...source, sha256: controls.configSha256 ?? source.sha256 },
         runtimeSha256: controls.configSha256 ?? source.sha256,
-        config: { cockpit: { siblings_root: '.' }, sibling: [{ var: 'APP_DIR', dir: 'app' }], environment: { compose_files: ['compose.yml'] } },
+        config: { cockpit: { siblings_root: '.' }, sibling: [{ slug: 'app', var: 'APP_DIR', dir: 'app' }], environment: { compose_files: ['compose.yml'] } },
     } })),
     consumeLoadedConfigProjection: vi.fn((value) => value),
 }))
@@ -139,6 +140,14 @@ vi.mock('./executable.js', async (importOriginal) => ({
 
 vi.mock('node:fs/promises', () => ({
     realpath: vi.fn(async (path: string) => path),
+    // Only the sibling checkout record `cockpit use` writes is ever present.
+    lstat: vi.fn(async (path: string) => {
+        if (controls.siblingCheckouts !== undefined && path === '/synthetic/.cockpit/local/sibling-checkouts') {
+            return { isFile: () => true, isSymbolicLink: () => false, size: controls.siblingCheckouts.length }
+        }
+        throw Object.assign(new Error(`no such file: ${path}`), { code: 'ENOENT' })
+    }),
+    readFile: vi.fn(async () => Buffer.from(controls.siblingCheckouts ?? '')),
 }))
 
 vi.mock('../bounded-read.js', () => ({
@@ -212,6 +221,7 @@ vi.mock('./evidence.js', async (importOriginal) => {
 
 describe('production read command composition', () => {
     beforeEach(() => {
+        controls.siblingCheckouts = undefined
         controls.composeSource = undefined
         controls.lifecycleHolderId = undefined
         controls.incomplete = false
@@ -342,6 +352,11 @@ describe('production read command composition', () => {
             portLeaseProjection: { lease: { ports: { APP_HOST_PORT: 4100 } } },
             siblingDirectories: { APP_DIR: '/synthetic/app' },
         })
+
+        // A worktree `use` recorded serves the sibling, so logs read the stack that mounts it.
+        controls.siblingCheckouts = JSON.stringify({ format: 'cockpit-sibling-checkouts/v1', checkouts: { app: '/synthetic/app-feature' } })
+        const served = await adapters.logs.observe({ configPath: source.path, service: 'api' })
+        expect(served.ownComposeAuthority).toMatchObject({ siblingDirectories: { APP_DIR: '/synthetic/app-feature' } })
     })
 
     it('derives the log authority from configuration, topology, and persisted lifecycle state', async () => {

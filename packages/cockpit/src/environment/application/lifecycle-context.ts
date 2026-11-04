@@ -103,6 +103,11 @@ export type SeedOutcome =
 export interface UpCommandAdapters extends LifecycleCommandAdapters {
     /** Runs environment.seed once the stack is healthy, when a resettable volume is newer than the last seed. */
     seed?(context: LifecycleRunContext, up: Extract<UpCommandResult, { kind: 'complete' }>['result']): Promise<SeedOutcome>
+    /**
+     * Records the siblings' lockfiles and rebuild inputs the stack runs on; warnings when it cannot.
+     * A resumed stack keeps the record of its start, because resuming restarts nothing.
+     */
+    recordStackInputs?(context: LifecycleRunContext, change: 'started' | 'resumed' | 'unchanged'): Promise<readonly EnvironmentDiagnostic[]>
     withLifecycleStage<T>(context: LifecycleRunContext, use: (stage: LifecycleStageProjection) => Promise<T>, refuse?: ReadinessRefusal<T>): Promise<T | undefined>
     withAcquiredPorts<T>(context: LifecycleRunContext, use: (ports: AcquiredPorts) => Promise<T>, refuse?: ReadinessRefusal<T>): Promise<T | undefined>
 }

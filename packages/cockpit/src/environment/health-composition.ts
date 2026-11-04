@@ -57,6 +57,7 @@ import {
 } from './setup-observation.js'
 import { observeConfiguration, readState, selectStateRoot, type StateNamespace } from './state.js'
 import { observeTemplateHealth } from './templates.js'
+import { inspectServedSiblings } from './application/siblings.js'
 
 export interface HealthCommandCompositionInput {
     readonly configPath: string
@@ -647,7 +648,8 @@ export function createHealthCommandAdapters(
     }
     const inspectStacks: NonNullable<HealthCommandAdapterComposition['inspectStacks']> = async () =>
         selectedNamespace && selectedOwn ? inspectMachineStacksForDoctor({ namespace: selectedNamespace, own: selectedOwn, configPath: selectedOwn.configPath }) : []
-    return { load, inspectSurfaceOverrides, ...(inspectHookTrust ? { inspectHookTrust } : {}),
+    const inspectServed = input ? () => inspectServedSiblings({ configPath: input.configPath, env: input.env }, { execute }) : undefined
+    return { load, inspectSurfaceOverrides, ...(inspectHookTrust ? { inspectHookTrust } : {}), ...(inspectServed ? { inspectServedSiblings: inspectServed } : {}),
         ...(inspectEvaluator ? { inspectEvaluator } : {}), ...(inspectReadiness ? { inspectReadiness } : {}), readUnreadableState, inspectStacks,
         execute: (step: ExecutionStep) => execute(step) }
 }

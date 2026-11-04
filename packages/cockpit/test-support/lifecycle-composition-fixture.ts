@@ -92,7 +92,8 @@ async function stackFixture(options: Readonly<{ seed?: readonly string[]; memory
     const home = join(root, 'home')
     await Promise.all([mkdir(checkout), mkdir(home)])
     await run('git', ['init', '--quiet', checkout])
-    await mkdir(join(checkout, 'app'))
+    // A synced cockpit has its .cockpit directory, where up records the inputs the stack started on.
+    await Promise.all([mkdir(join(checkout, 'app')), mkdir(join(checkout, '.cockpit'))])
     const configPath = join(checkout, 'cockpit.toml')
     await writeFile(configPath, [
         '[cockpit]',

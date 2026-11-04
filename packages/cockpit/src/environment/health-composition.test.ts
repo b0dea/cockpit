@@ -334,7 +334,7 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         await writeFile(join(candidate.checkout, '.cockpit/work-orders/WO-1.json'), JSON.stringify({ format: 'cockpit-work-order/v1', id: 'WO-1', state: 'done',
             accepted: { at, by: 'agent', digest, sources: {}, base: { '.': 'b'.repeat(40) },
                 order: { id: 'WO-1', objective: 'One outcome.', scope: ['src/'], depends_on: [], gates: [], criteria: [{ id: 'AC1', text: 'It holds.' }], non_goals: [] } },
-            amendments: [], attempts: 0, notes: [], closure: { at, by: 'agent', how: 'checks-passed' } }))
+            amendments: [], acknowledgements: [], attempts: 0, notes: [], closure: { at, by: 'agent', how: 'checks-passed' } }))
         expect((await doctor()).diagnostics).toContainEqual(expect.objectContaining({ severity: 'info', code: 'WORK_ORDER_CLOSED',
             target: 'workorders/WO-1.md', message: 'WO-1 closed as checks-passed, signed off by agent' }))
     })

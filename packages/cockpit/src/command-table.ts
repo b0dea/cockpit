@@ -36,6 +36,8 @@ export type HandlerIdentifier = WorkHandlerIdentifier
     | 'sync'
     | 'up'
     | 'upgrade'
+    | 'use'
+    | 'pull'
 
 export type CommandStage = 'set-up' | 'generate-and-verify' | 'run-the-stack' | 'diagnose' | 'test-and-grade'
 
@@ -89,6 +91,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     'accept-preview': 'Accept the displayed init preview with its exact SHA-256 digest',
     'accept-reset': 'Accept the displayed answer reset with its exact SHA-256 digest',
     abandon: 'Close the order as abandoned; --note says why',
+    clear: 'Serve the sibling from its declared checkout again',
     adopt: 'Move one existing harness settings path under cockpit ownership',
     adoption: 'Path to the legacy adoption shell data',
     answers: 'Path to the init answers file',
@@ -157,7 +160,7 @@ export type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; re
     executableRole: 'installed-cockpit'
     command: HandlerIdentifier
     // An `operation` positional must be one of `operations`, the exact subcommand words.
-    positional: Readonly<{ min: number; max: number; roles: readonly ['confined-root'] | readonly ['operation'] | readonly ['version'] | readonly []; operations?: readonly string[] }>
+    positional: Readonly<{ min: number; max: number; roles: readonly ['confined-root'] | readonly ['operation'] | readonly ['version'] | readonly ['slug', 'confined-root'] | readonly []; operations?: readonly string[] }>
     options: Readonly<Record<string, OrdinaryOption>>
     cwdRole: 'canonical-root'
     configuration: 'resolved' | 'none'
@@ -235,6 +238,28 @@ const sources = [
         visibility: 'public',
         ordinary: ordinary('setup', { forbidden: Object.freeze({ presence: Object.freeze(['write-instruction-pointers', 'write-instruction-files']) }) }),
         flags: { config: configFlag, 'write-instruction-pointers': bool(), 'write-instruction-files': bool(), json: jsonFlag },
+    },
+    {
+        name: 'use',
+        stage: 'set-up',
+        summary: 'Serve a sibling from another of its checkouts, such as a worktree',
+        usage: '<slug> <checkout> | <slug> --clear [options]',
+        handler: 'use',
+        visibility: 'public',
+        // The checkout must already lie inside a directory the guard lets the agent write, so an agent
+        // can point the stack at its own worktree but never widen its reach to a new directory.
+        ordinary: ordinary('use', { positional: Object.freeze({ min: 1, max: 2, roles: Object.freeze(['slug', 'confined-root'] as const) }) }),
+        flags: { config: configFlag, clear: bool(flag), json: jsonFlag },
+    },
+    {
+        name: 'pull',
+        stage: 'set-up',
+        summary: 'Fast-forward the cockpit and its siblings to their upstreams',
+        handler: 'pull',
+        visibility: 'public',
+        // Fetch and a fast-forward only: it never merges, rebases, stashes or touches a modified checkout.
+        ordinary: ordinary('pull'),
+        flags: configured,
     },
     {
         name: 'sibling',
@@ -623,6 +648,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
         || positionals.some((word, index) => grammar.positional.roles[index] === 'operation'
             ? !grammar.positional.operations?.includes(word)
             : grammar.positional.roles[index] === 'version' ? !EXACT_VERSION.test(word)
+            : grammar.positional.roles[index] === 'slug' ? !/^[a-z0-9][a-z0-9-]{0,62}$/.test(word)
             : grammar.positional.roles[index] !== 'confined-root' || !confined(word))
         || Object.entries(grammar.options).some(([name, option]) => option.required && !options.has(name))
         // A dry run writes nothing, so no grant gates it.

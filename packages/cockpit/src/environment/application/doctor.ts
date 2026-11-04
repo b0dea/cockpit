@@ -292,9 +292,9 @@ export async function runDoctor(
         return loaded.kind === 'complete' && loaded.result.config.surfaces.tools.includes('codexcli')
             ? adapters.inspectHookTrust?.() ?? [] : []
     }
-    const [outcome, guardHosts, unconfirmed, policyWeakened, testingGate, hookTrust, evaluator, readinessWarnings] = await Promise.all([doctorHealth(input, adapters, config),
+    const [outcome, guardHosts, unconfirmed, policyWeakened, testingGate, hookTrust, evaluator, readinessWarnings, servedSiblings] = await Promise.all([doctorHealth(input, adapters, config),
         doctorGuardHostDiagnostics(config), doctorUnconfirmedDiagnostics(config), doctorPolicyDiagnostics(config), doctorTestingGateDiagnostics(config), hookTrustFindings(),
-        doctorEvaluatorDiagnostics(config, adapters), adapters.inspectReadiness?.() ?? []])
+        doctorEvaluatorDiagnostics(config, adapters), adapters.inspectReadiness?.() ?? [], adapters.inspectServedSiblings?.() ?? []])
     const stateInventory = await adapters.readUnreadableState?.()
     const unreadableState = stateInventory?.kind === 'refusal'
         // An inventory that cannot be read, such as one another command holds locked, is no clean one.
@@ -302,7 +302,7 @@ export async function runDoctor(
             message: `doctor could not read this machine's cockpit state, so it did not check for other cockpits' state this version cannot read: ${diagnostic.message}` }))
         : [unreadableStateWarning(stateInventory?.skipped ?? [])].filter((warning) => warning !== undefined)
     const orphanedStacks = await adapters.inspectStacks?.() ?? []
-    const warnings = [...unconfirmed, ...policyWeakened, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...readinessWarnings, ...unreadableState, ...orphanedStacks]
+    const warnings = [...unconfirmed, ...policyWeakened, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...readinessWarnings, ...servedSiblings, ...unreadableState, ...orphanedStacks]
     const reported = warnings.length === 0 ? outcome
         : { ...outcome, diagnostics: [...outcome.diagnostics, ...warnings] }
     // Doctor reports on a configuration; without one there is nothing to report on, and a zero
