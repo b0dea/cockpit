@@ -452,25 +452,28 @@ function selectionRow(bytes: Buffer): Record<string, unknown> | undefined {
 // Ownership is label-based: a resource without this stack's label is never removed, so listing the
 // rest of a shared daemon only cost time. Listing and inspecting every container, image and volume
 // on a daemon with a hundred unrelated containers made each `down` observation take seconds, and
-// `container ls --size` alone ran past the step timeout. Volumes stay unfiltered because a reset
-// refuses when a declared volume name belongs to something this stack does not own, and an
+// `container ls --size` alone ran past the step timeout. A stack's volumes stay unfiltered because a
+// reset refuses when a declared volume name belongs to something this stack does not own, and an
 // unlabelled volume of that name would otherwise be invisible; their inspection is still scoped.
-function runtimeCommand(kind: Exclude<ReclaimResourceKind, 'cache'>, selection: DockerSelection, stackId: string): readonly string[] {
+// The machine-wide listing has no such name to check, so it lists cockpit-labelled volumes alone.
+function runtimeCommand(kind: Exclude<ReclaimResourceKind, 'cache'>, selection: DockerSelection, owner: ListingOwner): readonly string[] {
     if (kind === 'build-cache') return ['--host', selection.endpoint, 'builder', 'du', '--format', 'json']
-    const prefix = ['--host', selection.endpoint]
-    const owned = ['--filter', `label=${REQUIRED_LABELS.stack}=${stackId}`]
+    const owned = ['--filter', owner === null ? `label=${REQUIRED_LABELS.stack}` : `label=${REQUIRED_LABELS.stack}=${owner.stackId}`]
     const command = kind === 'container' ? ['container', 'ls', '--all', '--no-trunc', ...owned]
-        : kind === 'volume' ? ['volume', 'ls'] : kind === 'image' ? ['image', 'ls', '--all', '--no-trunc', ...owned] : [kind, 'ls', '--no-trunc', ...owned]
-    return [...prefix, ...command, '--format', discoveryFormat(kind)]
+        : kind === 'volume' ? ['volume', 'ls', ...owner === null ? owned : []]
+            : kind === 'image' ? ['image', 'ls', '--all', '--no-trunc', ...owned] : [kind, 'ls', '--no-trunc', ...owned]
+    return ['--host', selection.endpoint, ...command, '--format', discoveryFormat(kind, owner)]
 }
 
-function discoveryFormat(kind: Exclude<ReclaimResourceKind, 'build-cache'>): string {
+function discoveryFormat(kind: Exclude<ReclaimResourceKind, 'build-cache'>, owner: ListingOwner): string {
     const id = kind === 'volume' ? '{{json .Name}}' : '{{json .ID}}'
     const name = kind === 'container' ? '{{json .Names}}' : kind === 'image' ? '{{json .Repository}}' : '{{json .Name}}'
     const label = (key: string) => `{{json (.Label "${key}")}}`
+    const labels = kind === 'image' ? '{}' : `{${(owner === null ? MACHINE_LABELS : listedLabels(kind)).map((key) => `"${key}":${label(key)}`).join(',')}}`
+    // The machine-wide listing attributes each resource by its labels alone and reports whether a container runs.
+    if (owner === null) return `{"id":${id},"name":${name},"state":${kind === 'container' ? '{{json .State}}' : '""'},"labels":${labels}}`
     // Without `--size` a container prints a misleading "0B (virtual ...)", so its size is unmeasured.
     const bytes = kind === 'network' || kind === 'container' ? 'null' : '{{json .Size}}'
-    const labels = kind === 'image' ? '{}' : `{${listedLabels(kind).map((key) => `"${key}":${label(key)}`).join(',')}}`
     return `{"id":${id},"name":${name},"labels":${labels},"referenced":false,"bytes":${bytes}}`
 }
 
@@ -478,13 +481,13 @@ function listedLabels(kind?: ReclaimResourceKind): readonly string[] {
     return [...Object.values(REQUIRED_LABELS), ...kind === 'volume' ? Object.values(COMPOSE_LABELS) : []]
 }
 
-function dockerLabels(value: unknown, kind?: ReclaimResourceKind): Readonly<Record<string, string>> | undefined {
+/** The labels Docker printed, refused when any is not `allowed` or its value is too long or holds a NUL; empty values are dropped. */
+function dockerLabels(value: unknown, allowed: readonly string[], maxLength = 512): Readonly<Record<string, string>> | undefined {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
     const labels: Record<string, string> = {}
-    const allowed = new Set<string>(listedLabels(kind))
-    if (Object.keys(value).some((key) => !allowed.has(key))) return undefined
+    if (Object.keys(value).some((key) => !allowed.includes(key))) return undefined
     for (const [key, labelValue] of Object.entries(value)) {
-        if (typeof labelValue !== 'string' || labelValue.length > 512 || labelValue.includes('\0')) return undefined
+        if (typeof labelValue !== 'string' || labelValue.length > maxLength || labelValue.includes('\0')) return undefined
         if (labelValue !== '') labels[key] = labelValue
     }
     return labels
@@ -525,7 +528,7 @@ function dockerResource(value: unknown, kind: Exclude<ReclaimResourceKind, 'cach
     const name = row.name
     const labels = kind === 'image'
         ? row.labels !== null && typeof row.labels === 'object' && !Array.isArray(row.labels) && exactKeys(row.labels, []) ? {} : undefined
-        : dockerLabels(row.labels, kind)
+        : dockerLabels(row.labels, listedLabels(kind))
     const bytes = dockerBytes(row.bytes, kind === 'container')
     const referenced = kind === 'image' ? typeof row.referenced === 'boolean' ? row.referenced : undefined : row.referenced
     return typeof id === 'string' && typeof name === 'string' && labels !== undefined && bytes !== undefined && typeof referenced === 'boolean'
@@ -665,6 +668,9 @@ export interface ReclaimDiscoveryInput {
     readonly host?: string
 }
 
+/** Whose resources a listing asks for: one stack's, by its stack label's value, or every stack's (null), by the label's presence. */
+type ListingOwner = Readonly<{ stackId: StackId; cockpitId: CockpitId }> | null
+
 interface DiscoveryRuntime {
     readonly executable: ResolvedExecutable
     readonly cwd: string
@@ -730,21 +736,8 @@ async function selectDocker(
     return { value: { context: input.context, endpoint: row.endpoint }, startedAt: outcome.receipt.startedAt, finishedAt: outcome.receipt.finishedAt }
 }
 
-async function listResources(
-    runtime: DiscoveryRuntime,
-    kind: Exclude<ReclaimResourceKind, 'cache'>,
-    execute: Executor,
-): Promise<Timed<readonly ReclaimResource[]> | undefined> {
-    const step = exactStep(`runtime:discover:${kind}`,
-        [runtime.executable.canonicalPath, ...runtimeCommand(kind, runtime.selection, runtime.stackId)],
-        runtime.executable, runtime.cwd, runtime.env, runtime.timeoutMs, [], {
-            stackId: runtime.stackId, cockpitId: runtime.cockpitId, resourceKind: kind,
-            dockerContext: runtime.selection.context, dockerEndpoint: runtime.selection.endpoint,
-        }, [], OUTPUT_LIMIT)
-    if (step === undefined) return undefined
-    const outcome = cleanOutput(await execute(step))
-    const text = outcome === undefined ? undefined : utf8(outcome.stdout)
-    if (outcome === undefined || text === undefined) return undefined
+/** One stack's listed resources of one kind, or nothing when any row cannot be read. */
+function stackRows(text: string, kind: Exclude<ReclaimResourceKind, 'cache'>): readonly ReclaimResource[] | undefined {
     const resources: ReclaimResource[] = []
     for (const line of text.split('\n')) {
         if (line.length === 0) continue
@@ -767,7 +760,53 @@ async function listResources(
         resources.push(owned)
     }
     if (resources.length > MAX_RESOURCES || new Set(resources.map(({ id }) => id)).size !== resources.length) return undefined
-    return { value: resources.sort((a, b) => lexical(a.id, b.id)), startedAt: outcome.receipt.startedAt, finishedAt: outcome.receipt.finishedAt }
+    return resources.sort((a, b) => lexical(a.id, b.id))
+}
+
+interface DaemonListing<Rows> {
+    readonly selection: DockerSelection
+    readonly lists: readonly Timed<Rows>[]
+    /** When the last listing finished. */
+    readonly listedAt: string
+    readonly reselected: Timed<DockerSelection>
+}
+
+/**
+ * Lists every kind at once on the context's daemon, reading the selection before and after so the
+ * listings describe one daemon. A step that fails, writes to stderr or prints a row `parse` rejects
+ * fails the whole listing closed.
+ */
+async function listOnSelectedDaemon<Kind extends Exclude<ReclaimResourceKind, 'cache'>, Rows>(
+    input: Pick<ReclaimDiscoveryInput, 'context' | 'host' | 'cwd' | 'timeoutMs'>,
+    executable: ResolvedExecutable,
+    env: Readonly<Record<string, string>>,
+    execute: Executor,
+    owner: ListingOwner,
+    kinds: readonly Kind[],
+    parse: (text: string, kind: Kind) => Rows | undefined,
+): Promise<DaemonListing<Rows> | undefined> {
+    const planned = await selectDocker(input, executable, env, execute)
+    if (planned === undefined) return undefined
+    const selection = planned.value
+    const listed = await Promise.all(kinds.map(async (kind): Promise<Timed<Rows> | undefined> => {
+        const step = exactStep(`${owner === null ? 'stacks' : 'runtime'}:discover:${kind}`,
+            [executable.canonicalPath, ...runtimeCommand(kind, selection, owner)],
+            executable, input.cwd, env, input.timeoutMs, [], {
+                ...owner === null ? {} : { stackId: owner.stackId, cockpitId: owner.cockpitId },
+                resourceKind: kind, dockerContext: selection.context, dockerEndpoint: selection.endpoint,
+            }, [], OUTPUT_LIMIT)
+        const outcome = step === undefined ? undefined : cleanOutput(await execute(step))
+        const text = outcome === undefined ? undefined : utf8(outcome.stdout)
+        const rows = text === undefined ? undefined : parse(text, kind)
+        return rows === undefined ? undefined : { value: rows, startedAt: outcome!.receipt.startedAt, finishedAt: outcome!.receipt.finishedAt }
+    }))
+    if (listed.some((value) => value === undefined)) return undefined
+    const lists = listed as Timed<Rows>[]
+    const listedAt = lists.map(({ finishedAt }) => finishedAt).sort(lexical).at(-1)!
+    const reselected = await selectDocker(input, executable, env, execute)
+    if (reselected === undefined || !sameSelection(reselected.value, selection)
+        || Date.parse(reselected.startedAt) < Date.parse(listedAt)) return undefined
+    return { selection, lists, listedAt, reselected }
 }
 
 /** Runs one kind's inspection steps; an oversized object names its chunk instead of failing anonymously. */
@@ -799,7 +838,7 @@ async function inspectImages(runtime: DiscoveryRuntime, images: readonly Reclaim
         if (rows === undefined) return undefined
         for (const [position, record] of rows.entries()) {
             const resourceId = ids[position]!
-            const observedLabels = exactKeys(record, ['id', 'labels']) ? dockerLabels(record.labels) : undefined
+            const observedLabels = exactKeys(record, ['id', 'labels']) ? dockerLabels(record.labels, listedLabels()) : undefined
             if (record.id !== resourceId || observedLabels === undefined || labels.has(resourceId)) return undefined
             labels.set(resourceId, observedLabels)
         }
@@ -904,20 +943,14 @@ async function discoverReclaimRound(
 ): Promise<ReclaimDiscovery | DiscoveryRefusal | undefined> {
     // The selection is read before and after the listings, and again after the inspections, so the
     // context's endpoint cannot have moved to another daemon while this stack was being read.
-    const planned = await selectDocker(input, executable, env, execute)
-    if (planned === undefined) return undefined
+    const listed = await listOnSelectedDaemon(input, executable, env, execute,
+        { stackId: input.stackId, cockpitId: input.cockpitId }, DISCOVERY_KINDS, stackRows)
+    if (listed === undefined || Date.parse(listed.reselected.finishedAt) - Date.parse(listed.listedAt) > 30_000) return undefined
+    const { lists, listedAt, selection } = listed
     const runtime: DiscoveryRuntime = {
         executable, cwd: input.cwd, env, timeoutMs: input.timeoutMs,
-        stackId: input.stackId, cockpitId: input.cockpitId, selection: planned.value,
+        stackId: input.stackId, cockpitId: input.cockpitId, selection,
     }
-    const listed = await Promise.all(DISCOVERY_KINDS.map((kind) => listResources(runtime, kind, execute)))
-    if (listed.some((value) => value === undefined)) return undefined
-    const lists = listed as Timed<readonly ReclaimResource[]>[]
-    const listedAt = lists.map(({ finishedAt }) => finishedAt).sort(lexical).at(-1)!
-    const current = await selectDocker(input, executable, env, execute)
-    if (current === undefined || !sameSelection(current.value, planned.value)
-        || Date.parse(current.startedAt) < Date.parse(listedAt)
-        || Date.parse(current.finishedAt) - Date.parse(listedAt) > 30_000) return undefined
     const [containers, networks, volumes, images, buildCache] = lists.map(({ value }) => value) as [
         readonly ReclaimResource[], readonly ReclaimResource[], readonly ReclaimResource[], readonly ReclaimResource[], readonly ReclaimResource[],
     ]
@@ -939,9 +972,9 @@ async function discoverReclaimRound(
         .filter((value): value is string => value !== undefined).sort(lexical).at(-1)!
     if (Date.parse(finishedAt) - Date.parse(startedAt) > 30_000) return undefined
     const confirmed = await selectDocker(input, executable, env, execute)
-    if (confirmed === undefined || !sameSelection(confirmed.value, planned.value)
+    if (confirmed === undefined || !sameSelection(confirmed.value, selection)
         || Date.parse(confirmed.startedAt) < Date.parse(finishedAt)) return undefined
-    return { observedAt: finishedAt, producer: 'runtime-resource-discovery', resources, startedAt, stackId: input.stackId, selection: planned.value }
+    return { observedAt: finishedAt, producer: 'runtime-resource-discovery', resources, startedAt, stackId: input.stackId, selection }
 }
 
 /**
@@ -990,18 +1023,9 @@ const MACHINE_KINDS = ['container', 'network', 'volume'] as const
 const COMPOSE_WORKING_DIR = 'com.docker.compose.project.working_dir'
 const MACHINE_LABELS = [...Object.values(REQUIRED_LABELS), COMPOSE_LABELS.project, COMPOSE_WORKING_DIR] as const
 const RUNNING_STATES = new Set(['running', 'restarting', 'paused'])
-
-function machineListing(kind: typeof MACHINE_KINDS[number], selection: DockerSelection): readonly string[] {
-    const label = (key: string) => `"${key}":{{json (.Label "${key}")}}`
-    const id = kind === 'volume' ? '{{json .Name}}' : '{{json .ID}}'
-    const name = kind === 'container' ? '{{json .Names}}' : '{{json .Name}}'
-    const state = kind === 'container' ? '{{json .State}}' : '""'
-    const format = `{"id":${id},"name":${name},"state":${state},"labels":{${MACHINE_LABELS.map(label).join(',')}}}`
-    // The presence filter keeps the listing to cockpit's own resources on a shared daemon.
-    const filter = ['--filter', `label=${REQUIRED_LABELS.stack}`]
-    const command = kind === 'container' ? ['container', 'ls', '--all', '--no-trunc'] : kind === 'network' ? ['network', 'ls', '--no-trunc'] : ['volume', 'ls']
-    return ['--host', selection.endpoint, ...command, ...filter, '--format', format]
-}
+// Each removal names its resources in argv, which a step bounds; a chunk also keeps the ids Docker
+// echoes on stdout within the step's default output cap.
+const REMOVAL_CHUNK = 128
 
 function machineRows(text: string, kind: typeof MACHINE_KINDS[number]): { resources: MachineStackResource[]; unattributed: number } | undefined {
     const resources: MachineStackResource[] = []
@@ -1011,26 +1035,23 @@ function machineRows(text: string, kind: typeof MACHINE_KINDS[number]): { resour
         // Unparseable docker output is unproven; the discovery fails closed.
         const row = tryParseJson(line)
         if (row === null || typeof row !== 'object' || Array.isArray(row) || !exactKeys(row, ['id', 'name', 'state', 'labels'])) return undefined
-        const { id, name, state, labels } = row as Record<string, unknown>
+        const { id, name, state, labels: listed } = row as Record<string, unknown>
+        // A working directory is a path, so its label may run far past a stack's own label bound.
+        const labels = listed !== null && typeof listed === 'object' && exactKeys(listed, MACHINE_LABELS) ? dockerLabels(listed, MACHINE_LABELS, 4_096) : undefined
         if (typeof id !== 'string' || !RESOURCE_ID.test(id) || typeof name !== 'string' || name.length === 0 || name.length > 512
-            || typeof state !== 'string' || state.length > 64
-            || labels === null || typeof labels !== 'object' || Array.isArray(labels) || !exactKeys(labels, MACHINE_LABELS)) return undefined
-        const values = labels as Record<string, unknown>
-        if (Object.values(values).some((value) => typeof value !== 'string' || value.length > 4_096 || value.includes('\0'))) return undefined
-        const stack = values[REQUIRED_LABELS.stack] as string
-        const owner = values[REQUIRED_LABELS.owner] as string
-        const config = values[REQUIRED_LABELS.config] as string
-        if (!STACK_ID.test(stack) || !COCKPIT_ID.test(owner) || !SHA256.test(config)) {
+            || typeof state !== 'string' || state.length > 64 || labels === undefined) return undefined
+        const stack = labels[REQUIRED_LABELS.stack] ?? ''
+        const owner = labels[REQUIRED_LABELS.owner] ?? ''
+        if (!STACK_ID.test(stack) || !COCKPIT_ID.test(owner) || !SHA256.test(labels[REQUIRED_LABELS.config] ?? '')) {
             unattributed += 1
             continue
         }
-        const project = values[COMPOSE_LABELS.project] as string
-        const workingDir = values[COMPOSE_WORKING_DIR] as string
+        const workingDir = labels[COMPOSE_WORKING_DIR]
         resources.push({
             kind, id, name, cockpitId: owner as CockpitId, stackId: stack as StackId,
             running: kind === 'container' && RUNNING_STATES.has(state),
-            composeProject: project === '' ? null : project,
-            workingDir: kind === 'container' && workingDir !== '' && isAbsolute(workingDir) ? normalize(workingDir) : null,
+            composeProject: labels[COMPOSE_LABELS.project] ?? null,
+            workingDir: kind === 'container' && workingDir !== undefined && isAbsolute(workingDir) ? normalize(workingDir) : null,
         })
     }
     return { resources, unattributed }
@@ -1048,48 +1069,46 @@ export async function discoverMachineStacks(input: MachineStackDiscoveryInput, e
     if (executable === undefined || env === undefined || !DOCKER_SELECTOR.test(input.context)
         || input.host !== undefined && (admitLocalDockerEndpoint(input.host) === undefined || input.context !== 'default')
         || !validExecutionInput(executable, input.cwd, input.env, input.timeoutMs)) return undefined
-    const planned = await selectDocker(input, executable, env, execute)
-    if (planned === undefined) return undefined
-    const listed = await Promise.all(MACHINE_KINDS.map(async (kind) => {
-        const step = exactStep(`stacks:discover:${kind}`, [executable.canonicalPath, ...machineListing(kind, planned.value)],
-            executable, input.cwd, env, input.timeoutMs, [], {
-                resourceKind: kind, dockerContext: planned.value.context, dockerEndpoint: planned.value.endpoint,
-            }, [], OUTPUT_LIMIT)
-        const outcome = step === undefined ? undefined : cleanOutput(await execute(step))
-        const text = outcome === undefined ? undefined : utf8(outcome.stdout)
-        return text === undefined ? undefined : { rows: machineRows(text, kind), finishedAt: outcome!.receipt.finishedAt }
-    }))
-    if (listed.some((value) => value?.rows === undefined)) return undefined
-    const lists = listed as { rows: NonNullable<ReturnType<typeof machineRows>>; finishedAt: string }[]
-    const listedAt = lists.map(({ finishedAt }) => finishedAt).sort(lexical).at(-1)!
-    const confirmed = await selectDocker(input, executable, env, execute)
-    if (confirmed === undefined || !sameSelection(confirmed.value, planned.value)
-        || Date.parse(confirmed.startedAt) < Date.parse(listedAt)) return undefined
-    const resources = lists.flatMap(({ rows }) => rows.resources)
+    const listed = await listOnSelectedDaemon(input, executable, env, execute, null, MACHINE_KINDS, machineRows)
+    if (listed === undefined) return undefined
+    const resources = listed.lists.flatMap(({ value }) => value.resources)
     if (resources.length > MAX_RESOURCES) return undefined
     return {
-        selection: planned.value, observedAt: listedAt,
+        selection: listed.selection, observedAt: listed.listedAt,
         resources: resources.sort((left, right) => lexical(`${left.kind}:${left.id}`, `${right.kind}:${right.id}`)),
-        unattributed: lists.reduce((sum, { rows }) => sum + rows.unattributed, 0),
+        unattributed: listed.lists.reduce((sum, { value }) => sum + value.unattributed, 0),
     }
 }
 
-/** The one Docker removal prune runs for a resource the machine discovery attributed to an orphaned stack. */
-export function machineStackRemovalStep(
+/**
+ * The Docker removals prune runs for one kind of one orphaned stack's resources, as the machine
+ * discovery attributed them: one client per chunk rather than one per resource. Undefined when the
+ * resources are not all of one kind and one stack, or a step cannot be built.
+ */
+export function machineStackRemovalSteps(
     input: Pick<MachineStackDiscoveryInput, 'executable' | 'cwd' | 'env' | 'timeoutMs'>,
     selection: DockerSelection,
-    resource: MachineStackResource,
-): ExecutionStep | undefined {
+    resources: readonly MachineStackResource[],
+): readonly Readonly<{ step: ExecutionStep; resources: readonly MachineStackResource[] }>[] | undefined {
     const executable = resolvedDockerExecutable(input.executable)
     const env = safeEnvironment(input.env)
-    if (executable === undefined || env === undefined || admitLocalDockerEndpoint(selection.endpoint) === undefined
-        || !RESOURCE_ID.test(resource.id) || !validExecutionInput(executable, input.cwd, input.env, input.timeoutMs)) return undefined
-    const command = resource.kind === 'container' ? ['container', 'rm', '--force', '--', resource.id]
-        : resource.kind === 'network' ? ['network', 'rm', '--', resource.id] : ['volume', 'rm', '--', resource.id]
-    return exactStep(`stacks:prune:${resource.kind}:${digestValue(resource.id).slice(0, 16)}`,
-        [executable.canonicalPath, '--host', selection.endpoint, ...command],
-        executable, input.cwd, env, input.timeoutMs, [],
-        { stackId: resource.stackId, cockpitId: resource.cockpitId, resourceKind: resource.kind, resourceId: resource.id })
+    const [first] = resources
+    if (first === undefined || executable === undefined || env === undefined || admitLocalDockerEndpoint(selection.endpoint) === undefined
+        || resources.some(({ kind, stackId, cockpitId, id }) => kind !== first.kind || stackId !== first.stackId || cockpitId !== first.cockpitId || !RESOURCE_ID.test(id))
+        || !validExecutionInput(executable, input.cwd, input.env, input.timeoutMs)) return undefined
+    const command = first.kind === 'container' ? ['container', 'rm', '--force'] : [first.kind, 'rm']
+    const removals: { step: ExecutionStep; resources: readonly MachineStackResource[] }[] = []
+    for (let start = 0; start < resources.length; start += REMOVAL_CHUNK) {
+        const chunk = resources.slice(start, start + REMOVAL_CHUNK)
+        const ids = chunk.map(({ id }) => id)
+        const step = exactStep(`stacks:prune:${first.kind}:${digestValue(ids).slice(0, 16)}`,
+            [executable.canonicalPath, '--host', selection.endpoint, ...command, '--', ...ids],
+            executable, input.cwd, env, input.timeoutMs, [],
+            { stackId: first.stackId, cockpitId: first.cockpitId, resourceKind: first.kind, resourceCount: String(ids.length) })
+        if (step === undefined) return undefined
+        removals.push({ step, resources: chunk })
+    }
+    return removals
 }
 
 export interface ResetTargetInput {
