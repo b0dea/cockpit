@@ -235,7 +235,7 @@ const AGENT_COCKPIT_COMMANDS = [
     'check *', 'doctor *', 'preflight *', 'logs *', 'ps *', 'restart *', 'rebuild *', 'exec *', 'sync *', 'reset * --apply', 'up *', 'sleep *',
     'runtime measure *', 'test-run *',
     'work status *', 'work accept *', 'work check *', 'work note *', 'work decide *', 'work answer *', 'work acknowledge *', 'work grade *', 'work signoff *', 'work recover *',
-    'work verify *', 'grade *', 'upgrade *', 'docs check *', 'use *', 'pull *',
+    'work verify *', 'grade *', 'upgrade *', 'docs check *', 'use *', 'pull *', 'stacks *',
     'browser drive *', 'browser screenshot *',
 ] as const
 

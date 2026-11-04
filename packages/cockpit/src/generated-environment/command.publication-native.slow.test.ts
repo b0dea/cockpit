@@ -134,7 +134,7 @@ describe('public surface publication transaction', () => {
             // allowed too, because the guard's ask still wins; always-person and destructive ones keep prompting.
             expect(settings.permissions.allow).toEqual(expect.arrayContaining([
                 'Bash(npx --no cockpit test-run *)', 'Bash(./node_modules/.bin/cockpit check *)', 'Bash(npx --no cockpit sync *)',
-                'Bash(npx --no cockpit work accept *)', 'Bash(npx --no cockpit reset * --apply)',
+                'Bash(npx --no cockpit work accept *)', 'Bash(npx --no cockpit reset * --apply)', 'Bash(npx --no cockpit stacks *)',
             ]))
             expect(settings.permissions.allow!.filter(rule => /cockpit (down|init|sibling|session)\b/.test(rule))).toEqual([])
             expect(Object.keys(codex.mcp_servers).sort()).toEqual(['approved-server', 'remote-headers', 'remote-helper', 'unapproved-server'])
