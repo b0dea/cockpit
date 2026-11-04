@@ -362,8 +362,9 @@ the weakened field. A stronger policy needs nobody.
 
 What no setting relaxes: reads of secrets and declared instances, pushes to protected branches,
 writes to guard controls, and the policy pin. What only a person can do: trust Codex's hooks, trust a
-workspace in Claude Code, and sign in to a secrets provider; `doctor` reports each with the exact
-command.
+workspace in Claude Code, and sign in to a secrets provider. `doctor` and `check` report missing
+Codex hook trust as `CODEX_HOOK_UNTRUSTED`; cockpit cannot observe the other two, so a person
+confirms them.
 
 A local `person` gate is best-effort: cockpit cannot tell a person from a program driving a terminal.
 `ci` relies on the `CI` variable, which an agent can set too, so locally it is best-effort as well.
