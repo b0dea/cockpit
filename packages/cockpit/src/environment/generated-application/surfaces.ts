@@ -1,4 +1,5 @@
 import { lstat, realpath } from 'node:fs/promises'
+import { openCodePatternUnsafe } from '../served-checkout-grants.js'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { renderBrowserSurfaces } from '../../browser/surfaces.js'
@@ -667,9 +668,7 @@ export async function prepareSurfaces(
     }
     const openCodeGrantRoots = projection.grants.filter(grant => grant.target === 'opencode')
         .map(grant => ({ slug: grant.slug, root: siblingRoots.get(grant.slug)! }))
-    // The file's bytes become part of an OpenCode pattern: a wildcard would widen the grant and a
-    // quote or backslash would change the JSON around it.
-    const unsafeGrant = openCodeGrantRoots.find(row => row.root === undefined || /[*?"\\\x00-\x1f\x7f]/.test(row.root))
+    const unsafeGrant = openCodeGrantRoots.find(row => row.root === undefined || openCodePatternUnsafe(row.root) !== undefined)
     if (unsafeGrant) return refuse('SURFACE_INPUT_INVALID',
         `the directory of sibling ${unsafeGrant.slug} contains *, ?, a quote, a backslash or a control character, which OpenCode would read as part of its access pattern; move the checkout to a plain path`,
         unsafeGrant.slug)

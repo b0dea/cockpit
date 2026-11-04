@@ -55,6 +55,13 @@ const remoteMcpMeasured = (fact: { evidence: 'not_applicable' | 'human_needed'; 
 const noRemoteMcp = Object.freeze({ state: 'unavailable' as const, evidence: 'not_applicable' as const, headers: false, helper: false,
     measuredOn: '2026-11-04', measuredVersion: null,
     provenance: 'cockpit writes no remote MCP server for this tool: its remote transport and header spelling have not been checked' })
+// Whether `cockpit use` can grant a checkout served from outside the declared one through a
+// machine-local file the tool reads. Each run wrote into the granted directory and into an
+// ungranted control beside it.
+const servedGrant = (fact: { state: 'enforced' | 'unavailable'; evidence: 'not_applicable' | 'human_needed'; measuredVersion: string | null; provenance: string }) =>
+    Object.freeze({ measuredOn: '2026-11-04', ...fact })
+const noServedGrant = servedGrant({ state: 'unavailable', evidence: 'not_applicable', measuredVersion: null,
+    provenance: 'the tool was not installed where this was measured, so cockpit use writes nothing for it' })
 const completeRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const)
 const nonPermissionRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks'] as const)
 
@@ -66,6 +73,8 @@ export const HARNESS_REGISTRY = Object.freeze([
         guard: Object.freeze({ capability: 'instructed' as const, firing: claudeFiring }), native: reviewedNative, sessionStart: claudeSessionStart,
         remoteMcp: remoteMcpMeasured({ evidence: 'human_needed', measuredVersion: '2.1.318', helper: true,
             provenance: 'from a project .mcp.json, Claude Code sent the Authorization header a ${NAME} reference named while a $NAME control went out literally; it ran a headersHelper given with --mcp-config, but refused to run one from the project file until a person trusts the workspace, and a misspelled headerHelper sent nothing' }),
+        servedCheckoutGrant: servedGrant({ state: 'enforced', evidence: 'human_needed', measuredVersion: '2.1.318',
+            provenance: 'a directory in .claude/settings.local.json permissions.additionalDirectories was written and the control refused, and a malformed twin granted nothing; measured in an untrusted workspace, so whether it combines with the committed list once a person trusts the workspace is unmeasured' }),
     }),
     Object.freeze({
         target: 'codexcli', type: 'agent' as const, displayName: 'Codex', rulesyncTarget: 'codexcli',
@@ -74,6 +83,8 @@ export const HARNESS_REGISTRY = Object.freeze([
         guard: Object.freeze({ capability: 'instructed' as const, firing: codexFiring }), native: reviewedNative, sessionStart: codexSessionStart,
         remoteMcp: remoteMcpMeasured({ evidence: 'not_applicable', measuredVersion: '0.166.0', helper: true,
             provenance: 'from a project .codex/config.toml in a directory Codex had not been told to trust, codex exec sent the bearer_token_env_var and env_http_headers values and the http_headers_helper output, named a misspelled http_header_helper as ignored, and sent a ${NAME} written in http_headers literally' }),
+        servedCheckoutGrant: servedGrant({ state: 'unavailable', evidence: 'not_applicable', measuredVersion: '0.166.0',
+            provenance: 'Codex reads no machine-local project file; --add-dir at start made the worktree writable and without it the write was refused, so cockpit use prints that flag and writes nothing' }),
     }),
     Object.freeze({
         target: 'opencode', type: 'agent' as const, displayName: 'OpenCode', rulesyncTarget: 'opencodev1',
@@ -85,6 +96,8 @@ export const HARNESS_REGISTRY = Object.freeze([
         sessionStart: noSessionStart('OpenCode 1.19.5 delivers session.created to a plugin, but no run has shown a plugin putting text in the agent\'s context, so cockpit generates no session-start check'),
         remoteMcp: remoteMcpMeasured({ evidence: 'not_applicable', measuredVersion: '1.19.5', helper: false,
             provenance: 'opencode mcp list sent headers expanded from {env:NAME} in a project opencode.jsonc while a ${NAME} control went out literally; its remote server schema has no headers helper, so a server that declares one is not written for it' }),
+        servedCheckoutGrant: servedGrant({ state: 'enforced', evidence: 'not_applicable', measuredVersion: '1.19.5',
+            provenance: 'the machine-local grant file holding the worktree path allowed the write and the control was denied, and a pattern naming a missing grant file stopped OpenCode at start, naming the file' }),
     }),
     Object.freeze({
         target: 'cursor', type: 'agent' as const, displayName: 'Cursor', rulesyncTarget: 'cursor',
@@ -92,14 +105,14 @@ export const HARNESS_REGISTRY = Object.freeze([
         // Rules overlays only: cockpit's own instructions reach Cursor through the root AGENTS.md.
         outputs: Object.freeze({ instruction: '.cursor/rules', skills: '.cursor/skills', mcp: '.cursor/mcp.json', permissions: Object.freeze(['.cursor/cli.json']) }),
         guard: noGuardAdapter, native: generatedNative, sessionStart: noSessionStart('cockpit generates no hook for this tool'),
-        remoteMcp: noRemoteMcp,
+        remoteMcp: noRemoteMcp, servedCheckoutGrant: noServedGrant,
     }),
     Object.freeze({
         target: 'grokcli', type: 'agent' as const, displayName: 'Grok Build', rulesyncTarget: 'grokcli',
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.grok/skills', mcp: '.grok/config.toml', permissions: Object.freeze(['.grok/config.toml']) }),
         guard: noGuardAdapter, native: generatedNative, sessionStart: noSessionStart('cockpit generates no hook for this tool'),
-        remoteMcp: noRemoteMcp,
+        remoteMcp: noRemoteMcp, servedCheckoutGrant: noServedGrant,
     }),
 ] as const)
 

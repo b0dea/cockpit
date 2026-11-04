@@ -292,8 +292,10 @@ guesses. So derive each value from what the repository shows, record it as infer
    the product untouched. Done when each product file is on its branch with its diff in your report,
    or no product file was written.
 6. Finish the configuration with the init flow in **Bootstrap**. On an existing cockpit, an edit to
-   `cockpit.toml` makes the guard hold every tool call, so a person runs
-   `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal; then run
+   `cockpit.toml` makes the guard hold every tool call until it is synced. When the hold says the
+   edit does not widen what agents may do, run
+   `./node_modules/.bin/cockpit sync --config cockpit.toml` yourself where `[autonomy] sync =
+   "agent"`; when it names fields that widen, a person runs it in a terminal. Then run
    `./node_modules/.bin/cockpit check --config cockpit.toml --json`. Done when the check exits 0.
 7. Where a runtime is declared, measure it with
    `./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image>`, using an
