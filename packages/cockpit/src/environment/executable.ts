@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
-import { basename, delimiter, isAbsolute, join, normalize } from 'node:path'
+import { basename, delimiter, isAbsolute, join, normalize, resolve } from 'node:path'
 import { errorCause } from './contract.js'
 import { fileFingerprint, recordVerifiedDigest, verifiedDigest } from '../environment-exec/verified-digest.js'
 import { exactKeys } from '../exact-keys.js'
@@ -114,42 +114,79 @@ async function digestRegularFile(path: string): Promise<string | undefined> {
     }
 }
 
-export async function resolveExecutablePath(path: string): Promise<ExecutableResolution> {
+type PathCheck = Readonly<{ state: 'present'; path: string; canonicalPath: string }> | Readonly<{ state: 'unavailable'; reason: string }>
+
+// The checks that need no file contents: an exact absolute path naming an executable file, or a
+// link that resolves to one.
+async function checkExecutablePath(path: string): Promise<PathCheck> {
     if (typeof path !== 'string' || !isAbsolute(path) || normalize(path) !== path || path.includes('\0')) {
-        return unavailable('Executable path must be an exact absolute path')
+        return { state: 'unavailable', reason: 'Executable path must be an exact absolute path' }
     }
     let invocation
-    try { invocation = await lstat(path) } catch (error) { return unavailable(`Executable is unavailable: ${path}: ${errorCause(error)}`) }
+    try { invocation = await lstat(path) } catch (error) { return { state: 'unavailable', reason: `Executable is unavailable: ${path}: ${errorCause(error)}` } }
     if (!(invocation.isFile() || invocation.isSymbolicLink()) || invocation.isFile() && (invocation.mode & 0o111) === 0) {
-        return unavailable(`Executable is unavailable: ${path}`)
+        return { state: 'unavailable', reason: `Executable is unavailable: ${path}` }
     }
-    let canonicalPath: string
-    try { canonicalPath = await realpath(path) } catch (error) { return unavailable(`Executable is unavailable: ${path}: ${errorCause(error)}`) }
-    const sha256 = await digestRegularFile(canonicalPath)
+    try { return { state: 'present', path, canonicalPath: await realpath(path) } } catch (error) {
+        return { state: 'unavailable', reason: `Executable is unavailable: ${path}: ${errorCause(error)}` }
+    }
+}
+
+export async function resolveExecutablePath(path: string): Promise<ExecutableResolution> {
+    const checked = await checkExecutablePath(path)
+    if (checked.state === 'unavailable') return unavailable(checked.reason)
+    const sha256 = await digestRegularFile(checked.canonicalPath)
     if (sha256 === undefined) return unavailable(`Executable identity is unavailable: ${path}`)
-    const value = resolvedExecutable({ canonicalPath, invocationPath: path, sha256, executionMode: 'verified-path' })
+    const value = resolvedExecutable({ canonicalPath: checked.canonicalPath, invocationPath: path, sha256, executionMode: 'verified-path' })
     return value ? { state: 'available', value } : unavailable(`Executable identity is invalid: ${path}`)
+}
+
+const miss = (reason: string): Readonly<{ state: 'unavailable'; reason: string }> => ({ state: 'unavailable', reason })
+
+// Validates the search path once and tries each directory in order; `probe` decides what a hit is.
+async function searchExecutable<T extends Readonly<{ state: string }>>(
+    name: string,
+    env: Readonly<Record<string, string | undefined>>,
+    probe: (path: string) => Promise<T>,
+    found: (result: T) => boolean,
+): Promise<T | Readonly<{ state: 'unavailable'; reason: string }>> {
+    const selected = searchPath(env)
+    if (selected.kind === 'unreadable') return miss('Executable search path is not readable')
+    const pathValue = selected.path
+    if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0') || Buffer.byteLength(pathValue) > 65_536) {
+        return miss('Executable search path is missing or invalid')
+    }
+    const directories = pathValue.split(delimiter)
+    if (directories.length > PATH_ENTRY_LIMIT || directories.some(path => !isAbsolute(path) || normalize(path) !== path)) {
+        return miss('Executable search path must contain bounded absolute directories')
+    }
+    for (const directory of directories) {
+        const result = await probe(join(directory, name))
+        if (found(result)) return result
+    }
+    return miss(`Executable was not found in the supplied search path: ${name}`)
 }
 
 export async function resolveExecutable(name: string, env: Readonly<Record<string, string | undefined>>): Promise<ExecutableResolution> {
     if (typeof name !== 'string' || name.length === 0 || name.includes('\0')) return unavailable('Executable name is invalid')
     if (isAbsolute(name)) return resolveExecutablePath(name)
     if (basename(name) !== name) return unavailable('Executable name must be absolute or a PATH entry name')
-    const selected = searchPath(env)
-    if (selected.kind === 'unreadable') return unavailable('Executable search path is not readable')
-    const pathValue = selected.path
-    if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0') || Buffer.byteLength(pathValue) > 65_536) {
-        return unavailable('Executable search path is missing or invalid')
-    }
-    const directories = pathValue.split(delimiter)
-    if (directories.length > PATH_ENTRY_LIMIT || directories.some(path => !isAbsolute(path) || normalize(path) !== path)) {
-        return unavailable('Executable search path must contain bounded absolute directories')
-    }
-    for (const directory of directories) {
-        const result = await resolveExecutablePath(join(directory, name))
-        if (result.state === 'available') return result
-    }
-    return unavailable(`Executable was not found in the supplied search path: ${name}`)
+    return searchExecutable<ExecutableResolution>(name, env, resolveExecutablePath, result => result.state === 'available')
+}
+
+/**
+ * Whether a command can be started from `cwd`, found the way a wrapper that changes into `cwd` would
+ * find it, without hashing the file: a command with a slash is relative to `cwd`, a bare name is
+ * looked up on PATH. For callers that report presence rather than run the file.
+ */
+export async function locateExecutable(
+    command: string,
+    env: Readonly<Record<string, string | undefined>>,
+    cwd: string,
+): Promise<Readonly<{ state: 'present'; path: string }> | Readonly<{ state: 'unavailable'; reason: string }>> {
+    if (typeof command !== 'string' || command.length === 0 || command.includes('\0')) return miss('Executable name is invalid')
+    if (command.includes('/')) return checkExecutablePath(resolve(cwd, command))
+    return searchExecutable(command, env, checkExecutablePath, result => result.state === 'present')
 }
 
 export async function resolveGitExecutable(env: Readonly<Record<string, string | undefined>>): Promise<ExecutableResolution> {

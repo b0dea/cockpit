@@ -1,30 +1,12 @@
-import { access, stat } from 'node:fs/promises'
-import { constants } from 'node:fs'
-import { delimiter, isAbsolute, join, normalize, resolve } from 'node:path'
-
-import { errorCause, type ENVIRONMENT_CODES, type EnvironmentDiagnostic } from './contract.js'
+import type { ENVIRONMENT_CODES, EnvironmentDiagnostic } from './contract.js'
+import { locateExecutable } from './executable.js'
 import type { McpServer } from '../surfaces/mcp.js'
 
 // Presence only: the doctor needs to know a command can be started, not its identity, so it
 // does not hash the binary the way a verified spawn does.
-async function executableReason(path: string): Promise<string | undefined> {
-    try {
-        if (!(await stat(path)).isFile()) return `Executable is unavailable: ${path}`
-        await access(path, constants.X_OK)
-        return undefined
-    } catch (error) { return `Executable is unavailable: ${path}: ${errorCause(error)}` }
-}
-
 async function commandReason(command: string, cwd: string, env: Readonly<Record<string, string | undefined>>): Promise<string | undefined> {
-    // The wrapper changes into the server's directory first, so a command with a slash is
-    // relative to it and a bare name is looked up on PATH.
-    if (command.includes('/')) return executableReason(resolve(cwd, command))
-    const pathValue = env.PATH
-    if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0')) return 'Executable search path is missing or invalid'
-    const directories = pathValue.split(delimiter)
-    if (directories.some(path => !isAbsolute(path) || normalize(path) !== path)) return 'Executable search path must contain bounded absolute directories'
-    for (const directory of directories) if (await executableReason(join(directory, command)) === undefined) return undefined
-    return `Executable was not found in the supplied search path: ${command}`
+    const located = await locateExecutable(command, env, cwd)
+    return located.state === 'present' ? undefined : located.reason
 }
 
 /**
