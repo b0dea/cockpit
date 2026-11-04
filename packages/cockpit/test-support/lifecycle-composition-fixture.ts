@@ -85,7 +85,7 @@ async function fixture(portCount = 2, runtimeMeasurement: 'supported' | 'unmeasu
 
 // A one-service stack run from its own compose.yml, with a resettable data volume, against a
 // scripted docker that answers the topology, inspection and lifecycle calls the owners make.
-async function stackFixture(options: Readonly<{ seed?: readonly string[]; memoryMb?: number }> = {}) {
+async function stackFixture(options: Readonly<{ seed?: readonly string[]; memoryMb?: number; profiles?: readonly string[] }> = {}) {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-lifecycle-stack-')))
     roots.push(root)
     const checkout = join(root, 'checkout')
@@ -130,6 +130,7 @@ async function stackFixture(options: Readonly<{ seed?: readonly string[]; memory
         'services:',
         '  app:',
         `    image: ${STACK_IMAGE}`,
+        ...(options.profiles ? [`    profiles: ${JSON.stringify(options.profiles)}`] : []),
         '    ports: ["127.0.0.1:${APP_HOST_PORT:-4100}:3000"]',
         '    volumes: ["./app:/workspace/source", "product-data:/workspace/data"]',
         'volumes:',
@@ -159,6 +160,7 @@ async function configureStackDocker(
     // Further directories under the checkout that the app service bind-mounts.
     binds: readonly string[] = [],
     healthcheck = true,
+    profiles?: readonly string[],
 ) {
     // sync publishes the ownership override up hands Compose; it reads the state root from HOME.
     const home = process.env.HOME
@@ -177,6 +179,7 @@ async function configureStackDocker(
         volumes: { 'product-data': { name: `${projectName}_product-data` } },
         services: { app: {
             image: STACK_IMAGE,
+            ...profiles ? { profiles } : {},
             ...healthcheck ? { healthcheck: { test: ['CMD', 'true'] } } : {},
             labels,
             volumes: [
@@ -186,7 +189,8 @@ async function configureStackDocker(
             ],
         } },
     }
-    const psRow = JSON.stringify({ ID: containerId.slice(0, 12), Project: projectName, Service: 'app' })
+    const psRow = JSON.stringify({ ID: containerId.slice(0, 12), Project: projectName, Service: 'app', State: 'running',
+        Health: healthcheck ? 'healthy' : '', Status: 'Up 1 minute', ExitCode: 0 })
     const status = JSON.stringify({ ID: containerId, State: 'running', Health: healthcheck ? 'healthy' : '',
         Mounts: [{ Type: 'bind', Source: join(candidate.checkout, 'app'), Destination: '/workspace/source' },
             ...binds.map((path) => ({ Type: 'bind', Source: join(candidate.checkout, path), Destination: `/workspace/${path}` }))],
@@ -253,6 +257,7 @@ case "$1" in
             if has --quiet "$@"; then printf '%s\\n' ${shellQuote(containerId)}; exit 0; fi
             exit 64
         fi
+        if has restart "$@"; then exit 0; fi
         if has up "$@"; then /bin/rm -f ${shellQuote(stoppedPath)} ${shellQuote(removedPath)}; exit 0; fi ;;
     container)
         case "$2" in
@@ -282,7 +287,7 @@ exit 64
     return { containerId }
 }
 
-async function runStackScenario(options: Readonly<{ seed?: readonly string[]; memoryMb?: number; healthcheck?: boolean }> = {}) {
+async function runStackScenario(options: Readonly<{ seed?: readonly string[]; memoryMb?: number; healthcheck?: boolean; profiles?: readonly string[] }> = {}) {
     const candidate = await stackFixture(options)
     const steps: ExecutionStep[] = []
     const adapters = createLifecycleCommandAdapters({
@@ -290,6 +295,7 @@ async function runStackScenario(options: Readonly<{ seed?: readonly string[]; me
         env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
         sessionId: 'stack-production',
         timeoutMs: 5_000,
+        ...options.profiles ? { activeProfiles: options.profiles } : {},
     }, async (step) => {
         steps.push(step)
         return executeProbe(step)
@@ -303,7 +309,7 @@ async function runStackScenario(options: Readonly<{ seed?: readonly string[]; me
         observedAt: new Date().toISOString(),
     })
     if (started.kind === 'refusal') throw new Error(JSON.stringify(started))
-    const docker = await configureStackDocker(candidate, loaded.result, [], options.healthcheck)
+    const docker = await configureStackDocker(candidate, loaded.result, [], options.healthcheck, options.profiles)
     listenerProbeControl.enabled = true
     const result = await runUp({ configPath: candidate.configPath }, adapters)
     const recorded = await readState(loaded.result.namespace.paths.lifecycle(loaded.result.stackId))

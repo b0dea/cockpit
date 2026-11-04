@@ -582,6 +582,15 @@ describe('built-in read-only profile', () => {
         expect(session(['rm', '-rf', 'src'])).toBe('ask')
         expect(session(['sh', '-c', 'cat README.md'])).toBe('ask')
         expect(session(['cat', 'config/active.instance'])).toBe('deny')
+        // exec's command runs in a container that mounts the checkout, so it is judged the same way.
+        const exec = (command: string[]) => {
+            const configured = launched()
+            configured.cockpitInvocations.push(candidate('npx', ['--no', 'cockpit', 'exec', '--config', 'cockpit.toml', '--service', 'web', '--', ...command]))
+            return decideLaunched(['npx --no cockpit exec --config cockpit.toml --service web --', ...command.map(word => `'${word}'`)].join(' '), configured).decision
+        }
+        expect(exec(['ls'])).toBe('allow')
+        expect(exec(['cat', '.env'])).toBe('deny')
+        expect(exec(['rm', '-rf', 'src'])).toBe('ask')
         // A command that parses a named file can quote it back, so the file is checked as a read.
         const reading = (file: string) => {
             const configured = launched()

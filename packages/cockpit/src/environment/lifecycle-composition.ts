@@ -7,7 +7,7 @@ import type { ConsumedLoadedConfig } from '../config/load.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import { redirectedBindSources } from './compose-topology.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import type { CockpitConfig } from '../schema.js'
+import { mounted, type CockpitConfig } from '../schema.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
 import {
     issueLifecycleRunContext,
@@ -35,9 +35,11 @@ import { readSeededAt, recordSeeded, seedDue } from './seed.js'
 import { observeHostCapacity } from './host-observation.js'
 import { composeProjectName, holderId, stackId } from './identity.js'
 import {
+    decodeLifecycleRecord,
     projectLifecycleStage,
     resolveLifecycleStage,
 } from './lifecycle-stage.js'
+import { readState } from './state.js'
 import {
     acquirePortProjection,
     compensateAcquiredPortHolder,
@@ -142,6 +144,26 @@ function redirectedMountDiagnostics(
     })
 }
 
+// A profile no Compose service declares enables nothing, and Compose accepts it silently, so the
+// stack would start without the services the person asked for.
+function undefinedProfileDiagnostics(
+    profiles: readonly string[],
+    config: CockpitConfig,
+    requested: readonly string[],
+    configPath: string,
+): readonly EnvironmentDiagnostic[] {
+    return profiles.map((profile) => {
+        const source = config.environment.profiles.includes(profile) ? `environment.profiles in ${basename(configPath)}`
+            : requested.includes(profile) ? 'up --profile' : 'the profile set the running stack was started with'
+        return {
+            severity: 'error' as const, code: 'COMPOSE_PROFILE_UNDEFINED' as const satisfies typeof ENVIRONMENT_CODES.COMPOSE_PROFILE_UNDEFINED,
+            target: `profile:${profile}`,
+            message: `profile ${profile}, from ${source}, is declared by no service in environment.compose_files, so it would start nothing`,
+            fix: 'add the profile to the services it should start in the Compose file, or stop requesting it: remove it from environment.profiles or --profile, and for a stack started with it run npx --no cockpit down --config <your cockpit.toml>',
+        }
+    })
+}
+
 export interface LifecycleCommandCompositionInput {
     readonly configPath: string
     readonly env: Readonly<Record<string, string | undefined>>
@@ -177,7 +199,12 @@ interface LifecycleRuntimeReadiness {
     readonly hostObservations: readonly import('./contract.js').EnvironmentObservation[]
     readonly runtimeObservations: readonly import('./contract.js').EnvironmentObservation[]
     readonly inputs: Readonly<Record<string, string>>
+    readonly activeProfiles: readonly string[]
 }
+
+// The runtime input naming the profile set, so `up` refuses to change the set under a running stack
+// as it refuses any other change to what the stack was started from.
+const ACTIVE_PROFILES_INPUT = 'active Compose profiles'
 
 interface CompositionBinding {
     readonly config: ConsumedLoadedConfig['config']
@@ -544,6 +571,9 @@ export function createLifecycleCommandAdapters(
         refuse: ReadinessRefusal<T> | undefined,
         purpose: RuntimeReadinessPurpose | undefined,
         resolvedMounts?: readonly string[],
+        // Set only on a teardown retry, for the same reason: a recorded profile the Compose files no
+        // longer declare must not keep down and sleep from retiring the stack.
+        droppedProfiles: readonly string[] = [],
     ): Promise<T | undefined> => {
         const binding = bindings.get(context)
         if (!input || !binding) return undefined
@@ -590,7 +620,17 @@ export function createLifecycleCommandAdapters(
             ? observeRuntimeMeasurement(measured, context.stackId) : undefined
         let artifacts: readonly ComposeArtifact[] | undefined
         let inputs: Readonly<Record<string, string>> = { [basename(context.source.path)]: context.runtimeSha256 }
-        const activeProfiles = input.activeProfiles ?? []
+        // A running stack keeps the profiles it started with, so every later command, down
+        // included, sees the services they enable; the run adds the declared default set and any
+        // profiles `up --profile` requested.
+        const recorded = await readState(context.namespace.paths.lifecycle(context.stackId))
+        if (recorded.kind !== 'complete' && recorded.kind !== 'missing') return refuse?.(ownerDiagnostics(recorded.code, recorded.message, recorded.target))
+        const recordedValue = recorded.kind === 'complete' ? decodeLifecycleRecord(recorded.value, context)?.value : undefined
+        if (recorded.kind === 'complete' && !recordedValue) return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
+            'lifecycle progress record is malformed', context.namespace.paths.lifecycle(context.stackId).path))
+        const recordedProfiles = recordedValue?.activeProfiles ?? []
+        const activeProfiles = [...new Set([...currentBinding.config.environment.profiles,
+            ...input.activeProfiles ?? [], ...recordedProfiles])].filter((profile) => !droppedProfiles.includes(profile)).sort()
         let expectedMountSources: readonly string[]
         const declared = await composeArtifacts(currentBinding.checkoutRoot, currentBinding.config.environment.compose_files)
         if (!declared) return undefined
@@ -609,10 +649,11 @@ export function createLifecycleCommandAdapters(
             `${COMPOSE_OWNERSHIP_FILE} is missing or does not match the current Compose files and cockpit.toml; run ${cockpitCommand('sync')}`,
             COMPOSE_OWNERSHIP_FILE))
         artifacts = [...declared, override]
-        inputs = { ...inputs, ...Object.fromEntries(declared.map(({ reference, sha256 }) => [reference, sha256])) }
+        inputs = { ...inputs, ...Object.fromEntries(declared.map(({ reference, sha256 }) => [reference, sha256])),
+            ...(activeProfiles.length === 0 ? {} : {
+                [ACTIVE_PROFILES_INPUT]: createHash('sha256').update(activeProfiles.join('\n')).digest('hex') }) }
         expectedMountSources = [...new Set([
-            ...currentBinding.config.sibling
-                .filter((sibling) => sibling.mount === 'always')
+            ...mounted(currentBinding.config, activeProfiles)
                 .map((sibling) => currentBinding.served.get(sibling.slug)!.served),
             ...currentBinding.config.environment.generated_host_paths
                 .map((path) => resolve(currentBinding.checkoutRoot, path)),
@@ -656,11 +697,16 @@ export function createLifecycleCommandAdapters(
             execute,
         })
         if (topology.kind !== 'complete') {
+            if (topology.undefinedProfiles && purpose === 'teardown') {
+                return runtimeReadiness(context, use, ports, refuse, purpose, resolvedMounts, [...droppedProfiles, ...topology.undefinedProfiles])
+            }
+            if (topology.undefinedProfiles) return refuse?.(undefinedProfileDiagnostics(topology.undefinedProfiles,
+                currentBinding.config, input.activeProfiles ?? [], context.source.path))
             const mismatch = topology.mounts
             if (!mismatch) return undefined
             if (purpose === 'teardown' && !resolvedMounts) {
                 const resolved = [...expectedMountSources.filter((source) => !mismatch.missing.includes(source)), ...mismatch.unexpected].sort()
-                return runtimeReadiness(context, use, ports, refuse, purpose, resolved)
+                return runtimeReadiness(context, use, ports, refuse, purpose, resolved, droppedProfiles)
             }
             return refuse?.(mountMismatchDiagnostics(mismatch, currentBinding.config, currentBinding.served))
         }
@@ -688,6 +734,7 @@ export function createLifecycleCommandAdapters(
             runtimeObservations: measurementObservation
                 ? [measurementObservation, ...topology.observations] : [...topology.observations],
             inputs,
+            activeProfiles,
         }
         issuedRuntimeReadiness.add(readiness)
         return use(readiness)

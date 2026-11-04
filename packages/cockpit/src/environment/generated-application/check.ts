@@ -218,6 +218,7 @@ async function composeTopologyDiagnostics(
         siblings: config.sibling.map(sibling => ({
             slug: sibling.slug, var: sibling.var, mount: sibling.mount, path: resolve(siblingsRoot, sibling.dir) })),
         hostPaths: config.environment.generated_host_paths.map(declared => ({ declared, path: resolve(root, declared) })),
+        profiles: config.environment.profiles,
     })
 }
 

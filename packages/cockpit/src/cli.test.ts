@@ -132,11 +132,14 @@ describe('closed ordinary invocation metadata', () => {
     // The words each available config-bearing row needs besides --config.
     const requiredWords: Readonly<Record<string, readonly string[]>> = {
         selftest: ['--probe-specifications', 'probes.json'], logs: ['--service', 'app'], runtime: ['measure', '--image', 'node:22-alpine'],
+        restart: ['--service', 'app'], rebuild: ['--service', 'app'], exec: ['--service', 'app'],
         'test-run': ['--gate', 'quick'], reset: ['--apply'], grade: ['--criteria', 'criteria.md'], use: ['app'],
         ...Object.fromEntries(['accept', 'check', 'acknowledge', 'grade', 'signoff', 'recover'].map(sub => [`work ${sub}`, ['--work-order', 'WO-1']])),
         'work note': ['--work-order', 'WO-1', '--text', 'why'], 'work answer': ['--work-order', 'WO-1', '--question', '1', '--text', 'because'],
         'work acknowledge': ['--work-order', 'WO-1', '--note', 'the deleted test is replaced'],
     }
+    // The container command follows `--` at the very end, after every option.
+    const trailingWords = (name: string): readonly string[] => name === 'exec' ? ['--', 'psql', '-c', 'select 1'] : []
     it('keeps public rows compatible and internal transport separately typed and closed', async () => {
         expect(commands.every(row => row.visibility === 'public' && row.ordinary !== undefined)).toBe(true)
         expect(internalCommands).toMatchObject([{ name: 'guard-evaluate', visibility: 'internal', ordinary: { availability: 'unavailable' } }])
@@ -151,7 +154,7 @@ describe('closed ordinary invocation metadata', () => {
             for (const [name, option] of Object.entries(options)) {
                 const parsed = row.options[name]
                 expect(parsed && { type: parsed.type, multiple: parsed.multiple === true }, `${row.name} --${name}`)
-                    .toEqual({ type: option.kind === 'flag' ? 'boolean' : 'string', multiple: false })
+                    .toEqual({ type: option.kind === 'flag' ? 'boolean' : 'string', multiple: option.repetition === 'repeated' })
             }
             for (const name of forbidden.presence) {
                 expect(Object.keys(row.options), `${row.name} forbidden --${name}`).toContain(name)
@@ -164,7 +167,8 @@ describe('closed ordinary invocation metadata', () => {
             ['registry-resolve', '--registry', 'registry.sh', '--siblings-root', '/workspace/app', '--adoption', 'adoption.toml'],
             ['setup'], ['sync', '--dry-run'], ['sync'], ['reset', '--apply'], ['check'],
             ['selftest', '--probe-specifications', 'probes.json'],
-            ['up'], ['sleep'], ['down'], ['preflight'], ['doctor'],
+            ['up'], ['up', '--profile', 'jobs', '--profile=mail.v2'], ['sleep'], ['down'], ['preflight'], ['doctor'],
+            ['ps'], ['ps', '--json'], ['restart', '--service', 'app'], ['rebuild', '--service=app', '--json'],
             ['logs', '--service', 'app'], ['logs', '--service', 'app', '--tail', '1', '--since', '15m', '--follow'],
             ['logs', '--service=app', '--tail=10000', '--since=2026-10-22T10:00:00Z', '--json'],
             ['runtime', 'measure', '--image', 'node:22-alpine'], ['runtime', 'measure', '--image', `sha256:${'c'.repeat(64)}`, '--json'],
@@ -188,6 +192,12 @@ describe('closed ordinary invocation metadata', () => {
             const { reads: _reads, ...profile } = ordinary(argv) ?? {}
             expect(profile, argv.join(' ')).toEqual({ executable: authority.executable, cwd: authority.canonicalRoot, argv })
         }
+        // The grammar admits exec's spelling with any command after `--`; the evaluator then judges
+        // that command as a host invocation.
+        for (const command of [['psql', '-c', 'select 1'], ['--version']]) {
+            const argv = ['exec', '--config', authority.configPath, '--service', 'app', '--', ...command]
+            expect(ordinary(argv), argv.join(' ')).toEqual({ executable: authority.executable, cwd: authority.canonicalRoot, argv })
+        }
         // The files a command parses are carried for the evaluator to check as reads.
         expect(ordinary(['grade', '--config', authority.configPath, '--criteria', 'criteria.md'])?.reads).toEqual(['/workspace/product/criteria.md'])
         expect(ordinary(['work', 'status', '--config', authority.configPath])).not.toHaveProperty('reads')
@@ -199,14 +209,16 @@ describe('closed ordinary invocation metadata', () => {
 
     it('requires the exact resolved config for every available config-bearing row', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
-        expect(rows.map(row => row.name)).toEqual(['setup', 'use', 'pull', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'sleep', 'down', 'reset', 'stacks', 'doctor',
+        expect(rows.map(row => row.name)).toEqual(['setup', 'use', 'pull', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'ps', 'restart', 'rebuild', 'exec',
+            'sleep', 'down', 'reset', 'stacks', 'doctor',
             'test-run', 'work status', 'work accept', 'work check', 'work note', 'work answer', 'work acknowledge', 'work grade', 'work signoff', 'work recover', 'work verify', 'grade',
             'browser drive', 'browser screenshot', 'docs check'])
         for (const row of rows) {
             const argv = [...row.name.split(' '), ...(requiredWords[row.name] ?? [])]
-            expect(ordinary(argv), `${row.name} missing config`).toBeUndefined()
-            expect(ordinary([...argv, '--config', authority.configPath]), row.name).toBeDefined()
-            expect(ordinary([...argv, '--config', 'other.toml']), `${row.name} wrong config`).toBeUndefined()
+            const tail = trailingWords(row.name)
+            expect(ordinary([...argv, ...tail]), `${row.name} missing config`).toBeUndefined()
+            expect(ordinary([...argv, '--config', authority.configPath, ...tail]), row.name).toBeDefined()
+            expect(ordinary([...argv, '--config', 'other.toml', ...tail]), `${row.name} wrong config`).toBeUndefined()
         }
     })
 
@@ -231,6 +243,12 @@ describe('closed ordinary invocation metadata', () => {
             ['selftest', '--probe-specifications', 'probe', '--write-probe-specifications', 'draft'],
             ['logs'], ['logs', '--service', 'other'], ['logs', '--service', 'app', '--tail', '0'], ['logs', '--service', 'app', '--tail', '10001'],
             ['logs', '--service', 'app', '--tail', '1.5'], ['logs', '--service', 'app', '--since', '1m;id'], ['logs', '--service', 'app', '--since', 'x'.repeat(65)],
+            ['up', '--profile', 'Jobs'], ['up', '--profile', '-jobs'], ['up', '--profile', 'x'.repeat(65)], ['ps', 'app'],
+            ['restart'], ['restart', '--service', 'other'], ['rebuild', 'app'], ['rebuild', '--service', 'app', '--profile', 'jobs'],
+            // exec needs its command after `--`, and nothing of cockpit's own after it.
+            ['exec', '--service', 'app'], ['exec', '--service', 'app', '--config', authority.configPath, '--'],
+            ['exec', '--service', 'app', '--config', authority.configPath, 'psql'], ['exec', '--service', 'other', '--config', authority.configPath, '--', 'psql'],
+            ['exec', '--config', authority.configPath, '--', 'psql'],
             ['sync', '--adopt', '.claude/settings.json'], ['upgrade', '^1.2.3'], ['upgrade', '1.2.3', '1.2.4'], ['upgrade', '--dry-run', '--dry-run'],
             ['reset'], ['reset', '--interactive'], ['guard-evaluate', '--harness', 'claudecode'],
             ['runtime', '--image', 'node:22-alpine'], ['runtime', 'other', '--image', 'node:22-alpine'], ['runtime', 'measure'],
@@ -261,10 +279,14 @@ describe('closed ordinary invocation metadata', () => {
             const required = row.name === 'init' ? ['.', '--target', 'codexcli'] : row.name === 'registry-resolve' ? ['--registry', 'r', '--siblings-root', '.', '--adoption', 'a'] : ['--config', authority.configPath, ...(requiredWords[row.name] ?? [])]
             for (const [name, option] of Object.entries(row.ordinary.options)) {
                 const value = option.kind === 'flag' ? [] : [name === 'target' ? 'codexcli' : name === 'config' ? authority.configPath : name === 'service' ? 'app' : name === 'tail' ? '1' : name === 'since' ? '1m'
-                    : name === 'gate' ? 'quick' : name === 'mode' ? 'full' : name === 'select' ? 'test:refresh' : name === 'accept-reset' ? 'a'.repeat(64) : name === 'question' ? '1' : name === 'evaluator' ? 'codexcli' : 'path']
+                    : name === 'gate' ? 'quick' : name === 'mode' ? 'full' : name === 'select' ? 'test:refresh' : name === 'accept-reset' ? 'a'.repeat(64) : name === 'question' ? '1' : name === 'evaluator' ? 'codexcli'
+                        : name === 'profile' ? 'jobs' : 'path']
                 const baseline = required.filter((arg, i) => arg !== `--${name}` && required[i - 1] !== `--${name}`)
-                expect(ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value]), `${row.name} single ${name}`).toBeDefined()
-                expect(ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value, `--${name}`, ...value]), `${row.name} repeated ${name}`).toBeUndefined()
+                const tail = trailingWords(row.name)
+                expect(ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value, ...tail]), `${row.name} single ${name}`).toBeDefined()
+                const repeated = ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value, `--${name}`, ...value, ...tail])
+                if (option.repetition === 'repeated') expect(repeated, `${row.name} repeated ${name}`).toBeDefined()
+                else expect(repeated, `${row.name} repeated ${name}`).toBeUndefined()
             }
         }
         // Browser commands run unprompted only where cockpit.toml preapproves them, and a writing sync, an
@@ -477,6 +499,10 @@ describe('CLI help', () => {
             '  preflight         Check that the environment is healthy and ready for work\n' +
             '  session           Keep the environment available for one command, then release it\n' +
             '  logs              Show recent logs for one declared service\n' +
+            '  ps                Show the state and health of each service in this checkout\'s stack\n' +
+            '  restart           Restart one service of this checkout\'s stack and wait until it is healthy\n' +
+            '  rebuild           Rebuild one service\'s image, replace its container and wait until it is healthy\n' +
+            '  exec              Run a command inside one service\'s container of this checkout\'s stack\n' +
             '  sleep             Release this checkout and stop the stack if no other holder remains\n' +
             '  down              Stop and remove the stack (on the active local Docker context)\n' +
             '  reset             Preview a reset, then approve it interactively or apply it as [autonomy] reset allows (on the active local Docker context)\n' +

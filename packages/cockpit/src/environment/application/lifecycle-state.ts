@@ -190,6 +190,7 @@ export async function invalidateCompletedLifecycle(
         completedServices: [],
         ...(purpose === 'down' ? { teardownComplete: true as const } : {
             ...(stored.value.runtimeInputs ? { runtimeInputs: stored.value.runtimeInputs } : {}),
+            ...(stored.value.activeProfiles ? { activeProfiles: stored.value.activeProfiles } : {}),
         }),
     }
     const publication = await publishLifecycleRecord(context, stored.record, value)

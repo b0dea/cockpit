@@ -18,11 +18,13 @@ import { createDestructiveCommandAdapters } from './destructive-composition.js'
 import { runSiblingAdd, runSiblingRemove } from './sibling-registration.js'
 import { recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage.js'
 import { createHealthCommandAdapters } from './health-composition.js'
+import { createReadCommandAdapters } from './read-composition.js'
+import { runServiceExec, runServicePs, runServiceRestart } from './application/services.js'
 import { readState } from './state.js'
 import { decodeCoordinationRecord, inspectDestructiveDrainRecovery, readActiveStackInventory } from './claims.js'
 import { checkGeneratedEnvironment } from './generated-application/check.js'
 import { syncGeneratedEnvironment } from './generated-application/sync.js'
-import { checkoutId, holderId } from './identity.js'
+import { checkoutId, composeProjectName, holderId } from './identity.js'
 import { leasePortFamily } from './ports.js'
 import {
     issueRuntimeMeasurementProbeAuthority,
@@ -711,6 +713,21 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const topologyStep = execute.mock.calls.map(([step]) => step as ExecutionStep)
             .find(({ id }) => id.startsWith('runtime:docker-compose:topology:'))
         expect(topologyStep?.argv).toEqual(expect.arrayContaining(['--profile', 'runtime_probe']))
+        expect(readiness).toEqual(expect.objectContaining({ activeProfiles: ['runtime_probe'] }))
+
+        // Compose accepts a profile no service declares and starts nothing for it; cockpit refuses.
+        const undeclared = createLifecycleCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            sessionId: 'cockpit-cli',
+            timeoutMs: 5_000,
+            activeProfiles: ['missing'],
+        }, executeProbe)
+        const reloaded = await undeclared.load({ configPath: candidate.configPath })
+        if (reloaded.kind !== 'complete') throw new Error(JSON.stringify(reloaded))
+        const refused = await undeclared.withRuntimeReadiness<unknown>(reloaded.result, async () => [], undefined, (diagnostics) => diagnostics)
+        expect(refused).toEqual([expect.objectContaining({ code: 'COMPOSE_PROFILE_UNDEFINED', target: 'profile:missing',
+            message: expect.stringContaining('from up --profile') })])
     })
 
     it('does not expose permanent-refusal adapters when composed with valid public input', async () => {
@@ -948,6 +965,72 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         if (saved.kind !== 'complete') throw new Error(JSON.stringify(saved))
         expect(decodeLifecycleRecord(saved.value, first.context)?.value.runtimeInputs).toEqual(first.inputs)
         expect(saved.value.value).not.toHaveProperty('teardownComplete')
+    })
+
+    // A stack keeps the profiles it started with, so a later command run without --profile, the
+    // sleep that stops it included, still activates the services those profiles enable.
+    it('records the profiles up started the stack with and acts on them in later commands', async () => {
+        const first = await runStackScenario({ profiles: ['jobs'] })
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const recorded = await readState(first.context.namespace.paths.lifecycle(first.context.stackId))
+        if (recorded.kind !== 'complete') throw new Error(JSON.stringify(recorded))
+        expect(decodeLifecycleRecord(recorded.value, first.context)?.value.activeProfiles).toEqual(['jobs'])
+        expect(first.inputs).toHaveProperty(['active Compose profiles'])
+        const steps: ExecutionStep[] = []
+        const later = createLifecycleCommandAdapters({
+            configPath: first.candidate.configPath,
+            env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
+            sessionId: 'stack-production',
+            timeoutMs: 5_000,
+        }, async (step) => { steps.push(step); return executeProbe(step) })
+
+        const slept = await runSleep({ configPath: first.candidate.configPath }, later)
+
+        expect(slept, JSON.stringify(slept)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'stopped' } })
+        const stop = steps.find(({ id }) => id.startsWith('runtime:docker-compose:stop'))
+        expect(stop?.argv).toEqual(expect.arrayContaining(['--profile', 'jobs']))
+    })
+
+    // Retiring a stack must not depend on its declaration still matching: a profile the stack started
+    // with and the Compose files no longer declare is dropped for teardown instead of refusing it.
+    it('stops a stack whose recorded profile the Compose files no longer declare', async () => {
+        const first = await runStackScenario({ profiles: ['jobs'] })
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        await configureStackDocker(first.candidate, first.context)
+
+        const slept = await runSleep({ configPath: first.candidate.configPath }, first.adapters)
+
+        expect(slept, JSON.stringify(slept)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'stopped' } })
+    })
+
+    // The verbs reach the stack through the topology its readiness authenticated, so the agent never
+    // names the hashed project, its files or its profiles.
+    it('runs the service verbs on the stack up started, under its own project and profiles', async () => {
+        const first = await runStackScenario({ profiles: ['jobs'] })
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const steps: ExecutionStep[] = []
+        const foreground = vi.fn(async () => ({ kind: 'complete' as const, exitCode: 3, signal: null, terminationConfirmed: true as const }))
+        const { services } = createReadCommandAdapters({
+            configPath: first.candidate.configPath,
+            env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
+            sessionId: 'stack-production',
+            timeoutMs: 5_000,
+        }, async (step) => { steps.push(step); return executeProbe(step) }, foreground)
+
+        expect(await runServicePs({ configPath: first.candidate.configPath }, services)).toMatchObject({ kind: 'complete',
+            result: { services: [{ service: 'app', state: 'running', health: 'healthy' }] } })
+        expect(await runServiceRestart({ configPath: first.candidate.configPath, service: 'app', verb: 'restart' }, services))
+            .toMatchObject({ kind: 'complete', result: { service: 'app', containerId: first.docker.containerId, change: 'restarted' } })
+        expect(steps.find(({ id }) => id.startsWith('runtime:docker-compose:restart:app'))?.argv)
+            .toEqual(expect.arrayContaining(['--profile', 'jobs', 'restart', '--no-deps', 'app']))
+        expect(await runServiceExec({ configPath: first.candidate.configPath, service: 'app', argv: ['psql', '-c', 'select 1'], tty: false }, services))
+            .toMatchObject({ kind: 'complete', status: 3 })
+        const [planned] = foreground.mock.calls[0] as unknown as [{ argv: readonly string[] }]
+        expect(planned.argv.slice(planned.argv.indexOf('--project-name'))).toEqual([
+            '--project-name', composeProjectName({ cockpitName: 'stack-environment', stackId: first.context.stackId }),
+            '--profile', 'jobs', 'exec', '--no-tty', 'app', 'psql', '-c', 'select 1'])
+        expect(await runServiceRestart({ configPath: first.candidate.configPath, service: 'missing', verb: 'rebuild' }, services))
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'SERVICE_NOT_DECLARED' }] })
     })
 
     it('gives two cockpits with the same name their own Compose project, kept across a cosmetic edit', async () => {

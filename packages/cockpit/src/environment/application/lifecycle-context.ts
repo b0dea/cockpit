@@ -72,6 +72,8 @@ export interface RuntimeReadiness {
     readonly runtimeObservations: readonly EnvironmentObservation[]
     /** The digest of each file this runtime is started from, by the name a person edits. */
     readonly inputs: RuntimeInputs
+    /** The Compose profiles this runtime activates, sorted. */
+    readonly activeProfiles: readonly string[]
 }
 
 export interface AcquiredPorts {

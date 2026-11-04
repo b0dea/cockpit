@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { EVALUATOR_COMMANDS, runningEvaluatorTool, type EvaluatorTool } from './schema.js'
+import { ComposeProfileName, EVALUATOR_COMMANDS, runningEvaluatorTool, type EvaluatorTool } from './schema.js'
 import { installedPackageMetadata } from './package-metadata.js'
 import { validateTeamMetadata, type TeamMetadataResult } from './team-metadata.js'
 import { renderComposeScaffold, SCAFFOLD_BACKING_SERVICES, writeComposeScaffold, type ScaffoldBackingService } from './init/scaffold.js'
@@ -46,7 +46,8 @@ import {
 } from './environment/application/lifecycle-context.js'
 import { runLogs as runLogsApplication } from './environment/application/logs.js'
 import { runDocsCheck } from './docs/check.js'
-import { executeForegroundProcess, executePlan, executeProbe } from './environment-exec/execute.js'
+import { runServiceExec, runServicePs, runServiceRestart } from './environment/application/services.js'
+import { executeForegroundProcess, executePlan, executeProbe, foregroundTerminal } from './environment-exec/execute.js'
 import { createDestructiveCommandAdapters, selectDestructiveDaemon } from './environment/destructive-composition.js'
 import { createHealthCommandAdapters } from './environment/health-composition.js'
 import { inspectInitReadiness } from './environment/readiness-composition.js'
@@ -156,6 +157,10 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
     init: InitApplicationInput & Readonly<{ unattended?: UnattendedInit }>
     doctor: DoctorCommandInput
     down: DownCommandInput
+    exec: Readonly<{ configPath: string; service: string; argv: readonly [string, ...string[]] }>
+    ps: Readonly<{ configPath: string }>
+    restart: Readonly<{ configPath: string; service: string }>
+    rebuild: Readonly<{ configPath: string; service: string }>
     logs: Readonly<{
         configPath: string
         service: string
@@ -180,7 +185,7 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
             candidate: SurfaceSelftestProbeSpecificationsCandidate,
         ) => Promise<string | undefined>
     }> | SurfaceSelftestDraftInput
-    session: Readonly<{ configPath: string; argv: readonly [string, ...string[]]; sessionId: string }>
+    session: Readonly<{ configPath: string; argv: readonly [string, ...string[]]; sessionId: string; profiles: readonly string[] }>
     sleep: SleepCommandInput
     stacks: Readonly<{ configPath: string; operation: 'list' | 'prune' }>
     sync: GeneratedEnvironmentCommandInput & Readonly<{
@@ -190,7 +195,7 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
             request: GeneratedStaleRemovalApprovalRequest,
         ) => Promise<GeneratedStaleRemovalApproval | undefined>
     }>
-    up: UpCommandInput
+    up: UpCommandInput & Readonly<{ profiles: readonly string[] }>
     upgrade: Readonly<{ configPath: string; version?: string; dryRun: boolean }>
     use: Omit<UseCommandInput, 'env'>
     pull: Omit<PullCommandInput, 'env'>
@@ -478,7 +483,7 @@ function readAdapters(configPath: string, runtime: CliRuntime, sessionId: string
         sessionId,
         timeoutMs: RUNTIME_STEP_TIMEOUT_MS,
         ...(runtime.signal ? { signal: runtime.signal } : {}),
-    }, executeProbe)
+    }, executeProbe, executeForegroundProcess)
 }
 
 // Each return is a literal, so the diagnostic inventory captures the fix beside its code.
@@ -598,12 +603,13 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
     const env = runtime.env ?? process.env
     const inherited = inheritedSessionId(env)
     const ordinarySessionId = inherited === undefined ? 'cockpit-cli' : inherited
-    const lifecycleAdapters = (configPath: string, sessionId: string, holderProcess?: HolderProcess) => createLifecycleCommandAdapters({
+    const lifecycleAdapters = (configPath: string, sessionId: string, holderProcess?: HolderProcess, profiles: readonly string[] = []) => createLifecycleCommandAdapters({
         configPath,
         env,
         sessionId,
         timeoutMs: RUNTIME_STEP_TIMEOUT_MS,
         ...(holderProcess === undefined ? {} : { holderProcess }),
+        ...(profiles.length === 0 ? {} : { activeProfiles: profiles }),
     }, executeProbe)
     const healthAdapters = (configPath: string) => createHealthCommandAdapters({
         configPath,
@@ -679,7 +685,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             const wrapper = await sessionChildHolderProcess(env)
             if (wrapper.refusal) return wrapper.refusal
             const configPath = resolve(input.configPath)
-            return runUpApplication({ configPath }, lifecycleAdapters(configPath, sessionId, wrapper.holderProcess))
+            return runUpApplication({ configPath }, lifecycleAdapters(configPath, sessionId, wrapper.holderProcess, input.profiles))
         },
         sleep: (input) => {
             const sessionId = ordinarySessionId
@@ -705,8 +711,9 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
                 sessionId,
                 timeoutMs: RUNTIME_STEP_TIMEOUT_MS,
                 holderProcess: { pid: process.pid, ...(started.state === 'present' ? { processStart: started.start } : {}) },
+                ...(input.profiles.length === 0 ? {} : { activeProfiles: input.profiles }),
             }, executeProbe)
-            return runSessionApplication({ ...input, configPath, cwd: process.cwd(), env: childEnv }, {
+            return runSessionApplication({ configPath, argv: input.argv, cwd: process.cwd(), env: childEnv }, {
                 up: (request) => runUpApplication(request, adapters),
                 sleep: (request) => runSleepApplication(request, adapters),
                 resolveExecutable: (name) => resolveExecutable(name, sessionEnvironment),
@@ -752,6 +759,29 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
                 'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
             const configPath = resolve(input.configPath)
             return runLogsApplication({ ...input, configPath }, readAdapters(configPath, runtime, ordinarySessionId).logs)
+        },
+        ps: async (input) => {
+            if (ordinarySessionId === null) return usageOutcome('CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
+            const configPath = resolve(input.configPath)
+            return runServicePs({ configPath }, readAdapters(configPath, runtime, ordinarySessionId).services)
+        },
+        restart: async (input) => {
+            if (ordinarySessionId === null) return usageOutcome('CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
+            const configPath = resolve(input.configPath)
+            return runServiceRestart({ configPath, service: input.service, verb: 'restart' }, readAdapters(configPath, runtime, ordinarySessionId).services)
+        },
+        rebuild: async (input) => {
+            if (ordinarySessionId === null) return usageOutcome('CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
+            const configPath = resolve(input.configPath)
+            return runServiceRestart({ configPath, service: input.service, verb: 'rebuild' }, readAdapters(configPath, runtime, ordinarySessionId).services)
+        },
+        exec: async (input) => {
+            if (ordinarySessionId === null) return usageOutcome('CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
+            const configPath = resolve(input.configPath)
+            // A terminal on both ends gets an interactive shell or client; anything else, an agent's
+            // captured output included, gets plain streams.
+            return runServiceExec({ configPath, service: input.service, argv: input.argv, tty: foregroundTerminal() },
+                readAdapters(configPath, runtime, ordinarySessionId).services)
         },
     }
 }
@@ -805,6 +835,14 @@ function renderCommandHelp(definition: CommandDefinition): string {
 
 function renderVersion(): string {
     return `${installedPackageMetadata.name} ${installedPackageMetadata.version} (Node ${installedPackageMetadata.engines.node}; source ${installedPackageMetadata.cockpitSourceRevision})\n`
+}
+
+// Repeated --profile values, each in the spelling environment.profiles accepts, or why not.
+function composeProfiles(values: readonly string[] | undefined): readonly string[] | string {
+    const profiles = values ?? []
+    const invalid = profiles.find(profile => !ComposeProfileName.safeParse(profile).success)
+    if (invalid !== undefined) return `--profile ${JSON.stringify(invalid)} must be a lowercase Compose profile name: letters, digits, '.', '_' and '-', starting with a letter or digit`
+    return [...new Set(profiles)]
 }
 
 const missingConfig = (): CommandOutcome => usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
@@ -1162,19 +1200,47 @@ async function decodeRequest(
     }
 
     if (handler === 'session') {
-        const values = parsed.values as { config?: string }
+        const values = parsed.values as { config?: string; profile?: string[] }
         const [command, ...argv] = parsed.positionals
         if (!values.config) return missingConfig()
+        const profiles = composeProfiles(values.profile)
+        if (typeof profiles === 'string') return usageOutcome('CLI_USAGE_INVALID', profiles, '--profile')
         if (!command) return usageOutcome('CLI_USAGE_INVALID', 'session requires a command after --', 'session')
         const inherited = inheritedSessionId(runtimeEnv)
         if (inherited === null) return usageOutcome(
             'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
         if (inherited !== undefined) return usageOutcome(
             'CLI_USAGE_INVALID', 'session cannot be nested inside another supervised session', 'session')
-        return { handler, input: { configPath: values.config, argv: [command, ...argv], sessionId: randomUUID() } }
+        return { handler, input: { configPath: values.config, argv: [command, ...argv], sessionId: randomUUID(), profiles } }
     }
 
-    if (handler === 'check' || handler === 'up' || handler === 'sleep' || handler === 'down' || handler === 'reset'
+    if (handler === 'up') {
+        const values = parsed.values as { config?: string; profile?: string[] }
+        if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'up accepts named inputs only')
+        if (!values.config) return missingConfig()
+        const profiles = composeProfiles(values.profile)
+        if (typeof profiles === 'string') return usageOutcome('CLI_USAGE_INVALID', profiles, '--profile')
+        return { handler, input: { configPath: values.config, profiles } }
+    }
+
+    if (handler === 'ps' || handler === 'restart' || handler === 'rebuild' || handler === 'exec') {
+        const values = parsed.values as { config?: string; service?: string }
+        if (!values.config) return missingConfig()
+        if (handler === 'ps') {
+            if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'ps accepts named inputs only')
+            return { handler, input: { configPath: values.config } }
+        }
+        if (!values.service) return usageOutcome('CLI_USAGE_INVALID', 'provide --service <name>', '--service')
+        if (handler !== 'exec') {
+            if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', `${handler} accepts named inputs only`)
+            return { handler, input: { configPath: values.config, service: values.service } }
+        }
+        const [command, ...argv] = parsed.positionals
+        if (!command) return usageOutcome('CLI_USAGE_INVALID', 'exec requires a command after --', 'exec')
+        return { handler, input: { configPath: values.config, service: values.service, argv: [command, ...argv] } }
+    }
+
+    if (handler === 'check' || handler === 'sleep' || handler === 'down' || handler === 'reset'
         || handler === 'preflight' || handler === 'doctor' || handler === 'docs-check') {
         const values = parsed.values as { config?: string; json?: boolean }
         if (parsed.positionals.length > 0) {
@@ -1431,6 +1497,10 @@ async function dispatchHandler(
     if (request.handler === 'preflight') return handlers.preflight?.(request.input) ?? unavailable()
     if (request.handler === 'doctor') return handlers.doctor?.(request.input) ?? unavailable()
     if (request.handler === 'logs') return handlers.logs?.(request.input) ?? unavailable()
+    if (request.handler === 'ps') return handlers.ps?.(request.input) ?? unavailable()
+    if (request.handler === 'restart') return handlers.restart?.(request.input) ?? unavailable()
+    if (request.handler === 'rebuild') return handlers.rebuild?.(request.input) ?? unavailable()
+    if (request.handler === 'exec') return handlers.exec?.(request.input) ?? unavailable()
     if (request.handler === 'runtime') return handlers.runtime?.(request.input) ?? unavailable()
     if (request.handler === 'stacks') {
         if (request.input.operation === 'list') return handlers.stacks?.(request.input) ?? unavailable()
@@ -1515,7 +1585,7 @@ export async function runCli(
                 exitCode, resolvedConfigPath })
             io.stdout.write(renderJsonResponse({ ...outcome, invocation }, outcome.fixContext))
         }
-        return verb === 'session' && Number.isInteger(status) && status > 0 && status < 256 ? status : exitCode
+        return (verb === 'session' || verb === 'exec') && Number.isInteger(status) && status > 0 && status < 256 ? status : exitCode
     }
     // One refusal here instead of per-command checks: process ownership, filesystem publication and
     // the shell guards assume POSIX semantics, so a native Windows run could fail part-way through a

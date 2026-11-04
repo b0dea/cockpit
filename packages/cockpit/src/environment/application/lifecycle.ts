@@ -203,10 +203,10 @@ async function reportFailedService(
     ]
 }
 
-async function collectFailureLogs(
+export async function collectFailureLogs(
     evidence: RuntimeServiceFailureEvidence | RuntimeServiceObservation | undefined,
     service: string,
-    adapters: UpCommandAdapters,
+    adapters: Pick<UpCommandAdapters, 'execute'>,
 ): Promise<readonly EnvironmentDiagnostic[]> {
     if (!evidence) return [ownerDiagnostic(
         ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
@@ -460,6 +460,7 @@ async function executeUpRound(
             holderId: context.holderId,
             ...planned.plan.progress,
             runtimeInputs: runtime.inputs,
+            ...(runtime.activeProfiles.length > 0 ? { activeProfiles: runtime.activeProfiles } : {}),
         }
         if (!stored || resetProgress || stored.value.holderId !== context.holderId && !completedCoTenant) {
             // The first lifecycle data starts its durable history, as `setup` does (an existing

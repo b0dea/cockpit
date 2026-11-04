@@ -34,7 +34,7 @@ input passed validation.
 | `environment.compose_files` | compose first | the surfaces, plus `check` reads the Compose topology | run the declared Compose files |
 
 The runtime commands are `up`, `sleep`, `session`, `down`,
-`reset`, `preflight`, `logs` and `runtime measure`. Every mode writes the harness
+`reset`, `preflight`, `logs`, `ps`, `restart`, `rebuild`, `exec` and `runtime measure`. Every mode writes the harness
 [surfaces](concepts.md#surface) (instructions, skills, guards, permissions, evaluator and work
 orders) and checks them for [drift](concepts.md#drift). A cockpit that declares only
 `[environment.machine]` still gets the machine-capacity checks in `preflight`, so it is not refused
@@ -69,6 +69,12 @@ with `COMPOSE_TOPOLOGY_UNAVAILABLE` if Docker cannot produce it. It also checks:
 - a service that sets `container_name` fails with `COMPOSE_CONTAINER_NAME_FIXED`, because Docker allows
   one container of a name and the second checkout's stack would fail to start; remove it and address
   the service by its Compose service name, or with `docker compose exec <service>`;
+- a service with `build` and a fixed `image` fails with `COMPOSE_IMAGE_TAG_SHARED`, because every
+  checkout builds to the same tag and one checkout's build replaces the image another's stack runs;
+  remove `image`, so Compose names the build after the stack's own project;
+- a profile in `environment.profiles` or a `profile:<name>` mount that no service declares fails
+  with `COMPOSE_PROFILE_UNDEFINED`, because Compose accepts an unknown profile and starts nothing
+  for it;
 - a service with no Compose healthcheck warns with `COMPOSE_HEALTHCHECK_MISSING`, because running
   is then treated as ready;
 - an image referenced by tag rather than digest warns with `COMPOSE_IMAGE_UNPINNED`.
@@ -130,6 +136,25 @@ app service has no healthcheck and that the images are pinned by tag; add a heal
 each image by digest when you can. The file is yours from then
 on: cockpit runs it as written and never rewrites it, and the scaffold refuses with
 `INIT_SCAFFOLD_COMPOSE_EXISTS` when the cockpit root already holds any Compose file.
+
+### Compose profiles
+
+A service with `profiles: [workers]` in the Compose file runs only while that profile is active.
+`environment.profiles` lists the profiles every `up` and `session` activates, and
+`up --profile <name>` or `session --profile <name>`, repeated for several, adds more for that run.
+A sibling declared `mount = "profile:<name>"` is mounted, and checked as mounted, exactly while its
+profile is active; the generated agent files follow `environment.profiles`. A profile no service
+declares is refused with `COMPOSE_PROFILE_UNDEFINED`, by `check` for the declared ones and by `up`
+for the requested ones.
+
+The stack records the profiles it started with, and every later command on it, `down`, `sleep`,
+`logs`, `preflight`, `ps` and the service verbs included, activates the same set, so `down` removes
+the profile services too. A plain `up` or `session` joins the running stack with its recorded set.
+Adding a profile changes what the stack runs, so `up` refuses it on a running stack with
+`LIFECYCLE_PROGRESS_INVALID`, as it refuses any change to what the stack was started from: run
+`down`, then `up --profile <name>`. `check` judges each service's bind mounts under the default
+set and under the default set plus each other profile, so a bind that only one profile set would
+refuse still fails `check`.
 
 ## Local URLs and port families
 
@@ -862,6 +887,27 @@ abort signal. Output is limited to 1 MiB of the container's stdout and 64 KiB of
 that, `logs` keeps the newest whole records that fit, sets `truncated` to `true` in the JSON result
 and warns with `LOGS_TRUNCATED`; lower `--tail` to stay under it. Output is returned after
 collection, including structured records in JSON mode, rather than streamed.
+
+### Work on one service
+
+`ps`, `restart`, `rebuild` and `exec` act on one service of this checkout's own running stack, with
+its Compose project, files and profiles, so neither a person nor an agent names the derived project.
+The stack must have been started by `up` from this checkout; after `down` they refuse and name `up`.
+
+- `ps` lists every service of the stack with its container state, health and status; a service
+  with no container is `absent`.
+- `restart --service <name>` restarts the container in place, without its dependents, then waits
+  for it as `up` does and reports its last log lines when it does not become healthy.
+- `rebuild --service <name>` builds the service's image, replaces its container and waits the same
+  way; use it when a change is baked into the image. It also works on a stack whose start stopped at
+  that service, and it records the new container so `preflight` and `logs` follow it.
+- `exec --service <name> -- <command> [args...]` runs the command inside the service's container
+  and exits with the command's own status, as `session` does. It gets a terminal only when cockpit
+  runs in one.
+
+The guard admits these verbs as it admits `up`, and judges the command after `exec --` as it
+judges a host command: the container mounts the checkouts and may hold their credentials, so
+`exec --service web -- cat .env` is refused like `cat .env`. `reset` stays gated by `[autonomy]`.
 
 ## Where the decisions live
 
