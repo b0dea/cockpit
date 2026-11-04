@@ -23,7 +23,9 @@ import { cockpitCommand } from '../fix-catalogue.js'
 import { stripDevelopmentMarkers } from '../surfaces/development-markers.js'
 import { decodeLifecycleRecord } from '../environment/application/lifecycle.js'
 import type { EnvironmentSnapshot, RuntimeEvidence } from '../environment/evidence.js'
-import { resolveExecutablePath } from '../environment/executable.js'
+import { selectLocalDockerDaemon } from '../environment/docker-daemon.js'
+import { resolveDockerExecutable, resolveExecutablePath } from '../environment/executable.js'
+import { discoverMachineStacks } from '../environment/reclaim.js'
 import {
     consumeWorkApplicationAuthorities,
     prepareWorkApplicationAuthorities,
@@ -38,7 +40,7 @@ import { parseDiff } from '../testing/test-protection.js'
 import { testFilePatterns, weakeningFindings, type RepositoryWeakening, type TestFilePatterns } from '../testing/weakening.js'
 import { runGate, type GateDependencies, type GateRegistry, type GateRequest, type ProductGateInvocation } from '../testing/gates.js'
 import { parseCriteriaFile, parseWorkOrder, scopeMatches, WORK_ORDER_ID, type ParsedFile, type WorkOrder, type WorkOrderCheck } from './contract.js'
-import { createWorkStore, outputTail, WORK_RECORD_DIRECTORY, type CheckResult, type WorkStore } from './store.js'
+import { createWorkStore, outputTail, WORK_RECORD_DIRECTORY, type CheckResult, type ContainerEvidence, type WorkStore } from './store.js'
 
 export type WorkEnvironmentApplicationConfig = ConsumedWorkEnvironmentConfig
 
@@ -107,6 +109,8 @@ export interface WorkApplicationComposition {
     /** Writes each record, a new one exclusively and an existing one replaced, then appends `indexLine` to [docs] decisions_index. */
     readonly writeDecisionRecords: (writes: readonly Readonly<{ reference: string; text: string; create: boolean }>[], indexLine?: string) => Promise<void>
     readonly gate: (request: WorkApplicationGateRequest) => Promise<Readonly<{ registry: GateRegistry; request: GateRequest; dependencies: GateDependencies }>>
+    /** The containers cockpit labels on this machine's local Docker daemon, where a lock's holder may run unseen by a pid probe. */
+    readonly containers: () => Promise<ContainerEvidence>
 }
 export type TestWeakeningObservation = Readonly<{ patterns: TestFilePatterns; findings: readonly RepositoryWeakening[] }>
 export interface WorkApplicationGateRequest {
@@ -818,6 +822,18 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         if ('problem' in read) return { refusal: { code: ENVIRONMENT_CODES.EVALUATOR_ANSWER_INVALID, message: read.problem, fix: 'rerun the command; if the answer is refused again, list another evaluator first in work.evaluators' } }
         return { criteria: read.criteria, evaluator: { tool: result.tool, fallbacks: result.fallbacks } }
     }
+    const containers = async (): Promise<ContainerEvidence> => {
+        const env = authorities.env
+        const docker = await resolveDockerExecutable(env)
+        if (docker.state !== 'available') return { state: 'no-docker', reason: docker.reason }
+        const daemon = await selectLocalDockerDaemon(env, 30_000, executeProbe, { command: 'work recover',
+            localOnly: 'a lock holder can be looked for only among the containers on this machine' })
+        if (daemon.kind === 'refusal') return { state: 'unavailable', reason: daemon.diagnostic.message }
+        const listed = await discoverMachineStacks({ executable: docker.value, context: daemon.dockerContext, ...env.DOCKER_HOST === undefined ? {} : { host: env.DOCKER_HOST },
+            cwd: root, env: { PATH: env.PATH ?? '' }, timeoutMs: 30_000 }, executeProbe)
+        if (!listed) return { state: 'unavailable', reason: `the containers cockpit labels could not be listed on Docker context ${daemon.dockerContext}; start Docker, or select the local context that runs cockpit stacks` }
+        return { state: 'listed', context: daemon.dockerContext, containers: listed.resources.filter(row => row.kind === 'container').map(({ id, name, running }) => ({ id, name, running })) }
+    }
     const composition: WorkApplicationComposition = {
         policy: config.policy, caps: { wip: config.wipCap, attempts: config.attemptCap }, env: authorities.env,
         store: createWorkStore(root), recordedPolicy: () => readRecordedPolicy(root), orderIds, readOrder,
@@ -825,7 +841,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         sourceDigests: async (order: Pick<WorkOrder, 'criteria'>) => Object.fromEntries(order.criteria.flatMap(row => row.source ? [row.source] : [])
             .map(source => [source, sha256Hex(readSource(source))])),
         heads, runCheck, changes, evaluate: gradeIndependently, testWeakening, browser, gate,
-        ...config.docs ? { docs: config.docs } : {}, decisionRecords, readDocsFile, writeDecisionRecords,
+        ...config.docs ? { docs: config.docs } : {}, decisionRecords, readDocsFile, writeDecisionRecords, containers,
     }
     issuedCompositions.add(composition)
     return composition

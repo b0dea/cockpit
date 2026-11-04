@@ -9,9 +9,9 @@ const policy = (autonomy: Record<string, string> = {}, work: Record<string, unkn
 
 describe('autonomy policy', () => {
     it('defaults every decision to an agent but reset and MCP approval, and a declared field overrides its default', () => {
-        expect(policy()).toEqual({ grading: 'independent', gates: { accept: 'agent', amend: 'agent', answer: 'agent', signoff: 'agent', acknowledge: 'person' },
+        expect(policy()).toEqual({ grading: 'independent', gates: { accept: 'agent', amend: 'agent', answer: 'agent', signoff: 'agent', acknowledge: 'agent' },
             autonomy: { sync: 'agent', stale_delete: 'agent', reset: 'person', mcp_approve: 'person' } })
-        expect(policy({ reset: 'ci' }, { gates: { signoff: 'person' } })).toEqual({ grading: 'independent',
+        expect(policy({ reset: 'ci' }, { gates: { signoff: 'person', acknowledge: 'person' } })).toEqual({ grading: 'independent',
             gates: { accept: 'agent', amend: 'agent', answer: 'agent', signoff: 'person', acknowledge: 'person' },
             autonomy: { sync: 'agent', stale_delete: 'agent', reset: 'ci', mcp_approve: 'person' } })
     })

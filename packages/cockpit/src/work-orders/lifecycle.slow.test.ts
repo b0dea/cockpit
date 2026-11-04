@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { runCli, type CliIo } from '../cli.js'
@@ -37,8 +37,9 @@ async function work(root: string, args: readonly string[], env: NodeJS.ProcessEn
         guidance?: readonly { code: string; text: string }[] } }
 }
 
-// A synthetic Claude Code on PATH that answers every criterion `unclear`, so a grade runs end to end
-// without a model and never passes.
+// A synthetic Claude Code on PATH, so a grade runs end to end without a model. It answers every
+// criterion with the verdict in the `verdict` file beside it (`unclear` unless a case writes another),
+// quoting the first changed file's whole diff, which occurs exactly once there, as a `met`'s evidence.
 function syntheticEvaluator(): string {
     const tools = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-work-evaluator-')))
     roots.push(tools)
@@ -48,7 +49,9 @@ const fs = require('node:fs'); const argv = process.argv.slice(2)
 if (argv[0] === '--version') { process.stdout.write('claude 1.0.0\\n'); process.exit(0) }
 if (argv.at(-1) === '--help') { process.stdout.write('--print --output-format --json-schema --no-session-persistence --safe-mode --strict-mcp-config --tools --permission-mode --add-dir\\n'); process.exit(0) }
 const request = JSON.parse(fs.readFileSync(/request JSON at (\\S+) with SHA-256/.exec(argv.at(-1))[1], 'utf8'))
-const answer = { criteria: request.order.criteria.map(row => ({ id: row.id, verdict: 'unclear', note: 'synthetic', evidence: [] })) }
+const verdict = fs.existsSync(__dirname + '/verdict') ? fs.readFileSync(__dirname + '/verdict', 'utf8').trim() : 'unclear'
+const evidence = verdict === 'met' ? [{ source: request.changes[0].path, quote: request.changes[0].diff }] : []
+const answer = { criteria: request.order.criteria.map(row => ({ id: row.id, verdict, note: 'synthetic: ' + row.text, evidence })) }
 process.stdout.write(JSON.stringify({ type: 'result', is_error: false, session_id: require('node:crypto').randomUUID(), result: JSON.stringify(answer), structured_output: answer }))
 `)
     chmodSync(join(tools, 'claude'), 0o700)
@@ -65,7 +68,8 @@ describe('work-order lifecycle', () => {
     it('grades a criteria file against the uncommitted change without counting the file itself as outside scope', async () => {
         const root = await cockpit('[work]\nevaluators = ["claudecode", "codexcli"]')
         // Only the synthetic Claude Code answers: a Codex installed on this machine is left off PATH.
-        const env = { ...process.env, CLAUDECODE: undefined, CODEX_THREAD_ID: undefined, PATH: [syntheticEvaluator(), ...(process.env.PATH ?? '').split(':').filter(dir => dir && !existsSync(join(dir, 'codex')))].join(':') }
+        const tools = syntheticEvaluator()
+        const env = { ...process.env, CLAUDECODE: undefined, CODEX_THREAD_ID: undefined, PATH: [tools, ...(process.env.PATH ?? '').split(':').filter(dir => dir && !existsSync(join(dir, 'codex')))].join(':') }
         writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => b + a\n')
         writeFileSync(join(root, 'criteria.md'), '---\nscope: [src/]\ncriteria:\n  - id: AC1\n    text: add(2, 3) returns 5.\n    check: [node, test/add.test.mjs]\n---\n')
         const graded = await work(root, ['grade', '--criteria', 'criteria.md'], env)
@@ -87,6 +91,11 @@ describe('work-order lifecycle', () => {
         // A person who names the grader gets that tool or a refusal, never another listed tool that is available.
         const named = await work(root, ['grade', '--criteria', 'criteria.md', '--evaluator', 'codexcli'], env)
         expect(named).toMatchObject({ status: 2, result: null, diagnostics: [{ message: expect.stringMatching(/^EVALUATOR_UNAVAILABLE: the Codex CLI \(codex\) is not on PATH/) }] })
+        // A change outside scope is the evaluator's to judge, not a failure by itself.
+        writeFileSync(join(root, 'README.md'), 'add sums two numbers\n')
+        writeFileSync(join(tools, 'verdict'), 'met')
+        expect(await work(root, ['grade', '--criteria', 'criteria.md'], env)).toMatchObject({ status: 0,
+            result: { outOfScope: ['README.md'], criteria: [{ id: 'AC1', verdict: 'met' }, { id: 'scope-changes-necessary', verdict: 'met' }] } })
         expect(existsSync(join(root, '.cockpit/work-orders'))).toBe(false)
     })
 
@@ -117,19 +126,22 @@ describe('work-order lifecycle', () => {
         expect((await work(root, ['work', 'verify'])).status).toBe(0)
     }, 120_000)
 
-    it('records a self-reported closure only with the agent\'s verdict and note, and still fails a failed check or a change outside scope', async () => {
+    it('records a self-reported closure only with the agent\'s verdict and a note that names each change outside scope, and still fails a failed check', async () => {
         const root = await cockpit('[work]\ngrading = "self"')
         writeFileSync(join(root, 'workorders/WO-2.md'), order('WO-2', '  - id: AC1\n    text: The change reads well.\n  - id: AC2\n    text: add(2, 3) returns 5.\n    check: [node, test/add.test.mjs]'))
         expect((await work(root, ['work', 'accept', '--work-order', 'WO-2'])).status).toBe(0)
         expect((await work(root, ['work', 'grade', '--work-order', 'WO-2'])).diagnostics[0]?.message).toMatch(/pass --verdict met\|unmet and --note/)
-        // A check cockpit can run and the scope are facts, not the agent's judgement: its own `met` covers neither.
+        // A check cockpit can run is a fact, not the agent's judgement: its own `met` does not cover it.
         writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => a - b\n')
         writeFileSync(join(root, 'README.md'), 'outside the scope\n')
-        expect(await work(root, ['work', 'grade', '--work-order', 'WO-2', '--verdict', 'met', '--note', 'read the diff'])).toMatchObject({ status: 2,
+        const grade = (note: string) => work(root, ['work', 'grade', '--work-order', 'WO-2', '--verdict', 'met', '--note', note])
+        // Whether a change outside scope was needed is the agent's verdict, so its note must at least name it.
+        expect((await grade('read the diff')).diagnostics[0]?.message).toMatch(/--note must name each path changed outside scope .* it does not name README\.md/)
+        expect(await grade('read the diff; README.md documents add')).toMatchObject({ status: 2,
             diagnostics: [{ code: 'WORK_GRADE_UNSATISFIED' }], result: { state: 'accepted', mode: 'self', checks: [{ criterion: 'AC2', passed: false }], outOfScope: ['README.md'] } })
         writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => a + b\n')
-        rmSync(join(root, 'README.md'))
-        expect((await work(root, ['work', 'grade', '--work-order', 'WO-2', '--verdict', 'met', '--note', 'read the diff'])).result).toMatchObject({ state: 'graded', mode: 'self' })
+        expect((await grade('read the diff; README.md documents add')).result).toMatchObject({ state: 'graded', mode: 'self', outOfScope: ['README.md'],
+            criteria: [{ id: 'AC1' }, { id: 'AC2' }, { id: 'scope-changes-necessary', verdict: 'met', note: 'read the diff; README.md documents add' }] })
         expect((await work(root, ['work', 'signoff', '--work-order', 'WO-2'])).result).toMatchObject({ closedAs: 'self-reported' })
     }, 120_000)
 
@@ -186,10 +198,16 @@ describe('work-order lifecycle', () => {
         expect((await work(root, ['work', 'accept', '--work-order', 'WO-3'])).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
         expect(await asPerson(root, ['work', 'accept', '--work-order', 'WO-3'], (prompt, digest) => prompt.includes('AC2 is removed') ? `amend ${digest}` : '')).toBe(0)
         expect(record(root, 'WO-3').amendments).toEqual([expect.objectContaining({ by: 'person', weakened: ['AC2 is removed'] })])
+
+        // Under checks grading no model can judge a widened scope, so it is a person's too.
+        writeFileSync(join(root, 'workorders/WO-3.md'), order('WO-3').replace('scope: [src/, test/]', 'scope: [src/, test/, docs/]'))
+        expect((await work(root, ['work', 'accept', '--work-order', 'WO-3'])).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
+        expect(await asPerson(root, ['work', 'accept', '--work-order', 'WO-3'], (prompt, digest) => prompt.includes('Changed scope: "src/, test/" -> "src/, test/, docs/"') ? `amend ${digest}` : '')).toBe(0)
+        expect(record(root, 'WO-3').amendments[1]).toMatchObject({ by: 'person', weakened: [], review: [{ field: 'scope', before: 'src/, test/', after: 'src/, test/, docs/' }] })
     }, 120_000)
 
-    it('fails a grade that deletes or skips tests until a person acknowledges exactly that weakening', async () => {
-        const root = await cockpit('[work]\ngrading = "checks"')
+    it('fails a checks grade that deletes or skips tests until it is acknowledged, by a person where the cockpit sets acknowledge = "person"', async () => {
+        const root = await cockpit('[work]\ngrading = "checks"\n\n[work.gates]\nacknowledge = "person"')
         // A second test the order's check does not run, so only the protection can notice its loss.
         writeFileSync(join(root, 'test/extra.test.mjs'), "console.log('extra')\n")
         git(root, 'add', '-A'); git(root, 'commit', '-qm', 'extra test')
@@ -217,6 +235,82 @@ describe('work-order lifecycle', () => {
         writeFileSync(join(root, 'test/later.test.mjs'), "test.skip('later', () => {})\n")
         expect(await work(root, ['work', 'grade', '--work-order', 'WO-4'])).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_TEST_WEAKENED',
             message: expect.stringContaining('test/later.test.mjs: test-skipped') }] })
+    }, 120_000)
+
+    it('has the evaluator judge changes outside scope, flagged test changes and an agent\'s rewording, and leaves a lowered bar and a capped order to whom the policy names', async () => {
+        const root = await cockpit(['[work]', 'evaluators = ["claudecode"]', 'attempt_cap = 1', '', '[work.gates]', 'signoff = "person"', '', '[testing]', '', '[[testing.stages]]', 'id = "unit"',
+            'command = ["node", "test/add.test.mjs"]', 'requires_stack = false', '', '[[testing.gates]]', 'id = "quick"', 'tier = "targeted"', 'stages = ["unit"]', 'changes = "any change"'].join('\n'))
+        writeFileSync(join(root, 'test/extra.test.mjs'), "console.log('extra')\n")
+        git(root, 'add', '-A'); git(root, 'commit', '-qm', 'extra test')
+        const tools = syntheticEvaluator()
+        const env = { ...process.env, CLAUDECODE: undefined, CODEX_THREAD_ID: undefined, PATH: [tools, ...(process.env.PATH ?? '').split(':')].join(':') }
+        const run = (args: readonly string[]) => work(root, args, env)
+        writeFileSync(join(root, 'workorders/WO-7.md'), order('WO-7'))
+        expect((await run(['work', 'accept', '--work-order', 'WO-7'])).status).toBe(0)
+        // An agent may reword its contract under amend = "agent"; the next grade judges whether that lowered the bar.
+        writeFileSync(join(root, 'workorders/WO-7.md'), order('WO-7', '  - id: AC1\n    text: add(2, 3) returns 5 for whole numbers.\n    check: [node, test/add.test.mjs]'))
+        expect((await run(['work', 'accept', '--work-order', 'WO-7'])).result).toMatchObject({ amended: true, by: 'agent', judgedAtGrade: ['criteria.AC1'] })
+        expect(record(root, 'WO-7').amendments).toEqual([expect.objectContaining({ by: 'agent', review: [{ field: 'criteria.AC1',
+            before: 'add(2, 3) returns 5. [check: ["node","test/add.test.mjs"]]', after: 'add(2, 3) returns 5 for whole numbers. [check: ["node","test/add.test.mjs"]]' }] })])
+
+        writeFileSync(join(root, 'README.md'), 'add sums two numbers\n')
+        rmSync(join(root, 'test/extra.test.mjs'))
+        // Where a model grades, a test-run reports the weakening for the grade to judge instead of failing on it.
+        expect(await run(['test-run', '--gate', 'quick', '--mode', 'canonical'])).toMatchObject({ status: 0, result: { testProtection: {
+            orders: [{ id: 'WO-7', findings: [expect.stringContaining('test/extra.test.mjs: test-file-removed')] }], note: expect.stringContaining('test-changes-justified') } } })
+        writeFileSync(join(tools, 'verdict'), 'met')
+        const graded = await run(['work', 'grade', '--work-order', 'WO-7'])
+        expect(graded).toMatchObject({ status: 0, result: { state: 'graded', outOfScope: ['README.md'], criteria: [{ id: 'AC1', verdict: 'met' },
+            { id: 'scope-changes-necessary', verdict: 'met', note: expect.stringContaining('Changed outside scope: README.md') },
+            { id: 'test-changes-justified', verdict: 'met', note: expect.stringContaining('test/extra.test.mjs: test-file-removed') },
+            { id: 'amendments-hold-bar', verdict: 'met', note: expect.stringContaining('criteria.AC1: "add(2, 3) returns 5. [check') }] } })
+
+        writeFileSync(join(tools, 'verdict'), 'unmet')
+        expect(await run(['work', 'grade', '--work-order', 'WO-7'])).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_TEST_WEAKENED' },
+            { code: 'WORK_GRADE_UNSATISFIED', message: expect.stringContaining('the next amendment of WO-7 is a person\'s') }] })
+        // The cap's remedy names whoever [work.gates] names: a person for signoff here, the agent for amend.
+        expect((await run(['work', 'check', '--work-order', 'WO-7'])).diagnostics[0]?.message)
+            .toMatch(/attempt cap \(1\); record the root cause with work note, then a person closes it with .*--partial\|--abandon --note <why> --interactive, or amend it with an edit to workorders\/WO-7\.md/)
+        // A grade that found the agent's amendments lower the bar makes the next amendment a person's.
+        writeFileSync(join(root, 'workorders/WO-7.md'), order('WO-7'))
+        expect((await run(['work', 'accept', '--work-order', 'WO-7'])).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
+        expect(await asPerson(root, ['work', 'accept', '--work-order', 'WO-7'], (prompt, digest) => prompt.includes('lower the bar') ? `amend ${digest}` : '')).toBe(0)
+        // A person's amendment settles the review, so the next grade carries no amendments criterion.
+        writeFileSync(join(tools, 'verdict'), 'met')
+        expect(((await run(['work', 'grade', '--work-order', 'WO-7'])).result?.criteria as { id: string }[]).map(row => row.id))
+            .toEqual(['AC1', 'scope-changes-necessary', 'test-changes-justified'])
+    }, 120_000)
+
+    it('removes a crashed command\'s lock only once its holder is shown gone, and records what it checked', async () => {
+        const root = await cockpit('[work]\ngrading = "checks"')
+        writeFileSync(join(root, 'workorders/WO-8.md'), order('WO-8'))
+        expect((await work(root, ['work', 'accept', '--work-order', 'WO-8'])).status).toBe(0)
+        // No Docker client on PATH: no container on this machine runs cockpit, which the record says.
+        const env = { ...process.env, PATH: (process.env.PATH ?? '').split(':').filter(dir => dir && !existsSync(join(dir, 'docker'))).join(':') }
+        const lock = join(root, '.cockpit/work-orders/WO-8.lock')
+        const recover = (apply: boolean) => work(root, ['work', 'recover', '--work-order', 'WO-8', ...apply ? ['--apply'] : []], env)
+        const exited = Number(execFileSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))']).toString())
+        // The control: on another host a pid that has exited here says nothing, so the lock stays.
+        writeFileSync(lock, JSON.stringify({ pid: exited, host: 'elsewhere.example.test', container: false }))
+        expect(await recover(true)).toMatchObject({ status: 2, diagnostics: [{ message: expect.stringContaining('was left in place: its holder cannot be shown gone') }] })
+        expect(existsSync(lock)).toBe(true)
+        // On this machine, outside a container, it is gone.
+        writeFileSync(lock, JSON.stringify({ pid: exited, host: hostname(), container: false }))
+        expect((await recover(false)).result).toMatchObject({ lock: 'dead' })
+        expect(existsSync(lock)).toBe(true)
+        // A Docker that is installed but cannot be read might hide the holder, so nothing is removed.
+        const broken = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-work-docker-')))
+        roots.push(broken)
+        writeFileSync(join(broken, 'docker'), '#!/bin/sh\nexit 1\n')
+        chmodSync(join(broken, 'docker'), 0o700)
+        expect(await work(root, ['work', 'recover', '--work-order', 'WO-8', '--apply'], { ...env, PATH: `${broken}:${env.PATH}` })).toMatchObject({ status: 2,
+            diagnostics: [{ message: expect.stringContaining('Docker could not be read') }] })
+        expect(existsSync(lock)).toBe(true)
+        expect((await recover(true)).result).toMatchObject({ lock: 'removed', recorded: true })
+        expect(existsSync(lock)).toBe(false)
+        expect(record(root, 'WO-8').recoveries).toEqual([expect.objectContaining({ checked: [`the lock was written by process ${exited} on host ${hostname()}`,
+            `this machine is host ${hostname()}`, expect.stringMatching(/^no Docker client is installed/), `process ${exited} on this machine is gone`] })])
+        expect((await recover(true)).result).toEqual({ id: 'WO-8', lock: 'none' })
     }, 120_000)
 
     it('judges tests by the declared test_files, and holds a passing test-run to the same protection', async () => {

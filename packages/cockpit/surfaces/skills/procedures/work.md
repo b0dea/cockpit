@@ -64,8 +64,11 @@ not the thinking: reuse the planning skills the harness already has.
    run the same command with `--interactive` in a terminal. Never type the digest yourself. Past
    `work.wip_cap` it refuses until an open order closes. Done when `work status` reports it accepted.
 3. **Work test-first inside scope.** Write the failing test for a criterion, then the code, changing
-   only what `scope` names. If the work needs more, edit the order and run `work accept` again to
-   accept the amendment; dropping or rewriting an accepted criterion always needs a person. When you
+   only what `scope` names; a file outside it that the change needs (a lockfile, a regenerated
+   reference, a changeset) is judged at grading, so change nothing else. If the work needs more, edit
+   the order and run `work accept` again to accept the amendment: dropping a criterion or gate always
+   needs a person, a rewritten criterion or widened scope needs one under `checks` grading, and
+   otherwise the next grade judges whether your amendment lowered the bar. When you
    need a person's input, run
    `./node_modules/.bin/cockpit work note --config cockpit.toml --work-order WO-001 --ask --text "<question>"`
    and stop: the order is blocked until it is answered with `work answer`, which under `answer =
@@ -95,22 +98,32 @@ not the thinking: reuse the planning skills the harness already has.
    rate-limited or timed out), the refusal names each tool's cause and the command that fixes it:
    report that to the person instead of retrying. A warning
    `EVALUATOR_FELL_BACK_TO_RUNNING_TOOL` means the tool doing the work graded it; pass it on. Under
-   `checks`, the checks decide. Under `self`, pass `--verdict met` or `unmet` and a `--note` saying
-   what you checked; the checks still run and a failed one fails the grade. Anything short of
-   passing (`WORK_GRADE_UNSATISFIED`) lists each criterion's verdict and note under
-   `result.criteria`, failed checks under `result.checks` and changes outside scope under
-   `result.outOfScope`: go back to step 3 for each. When the person names a grader ("use Codex to
+   `checks`, the checks decide, and any change outside scope fails. Under `self`, pass
+   `--verdict met` or `unmet` and a `--note` saying what you checked, naming each path in
+   `result.outOfScope` and each flagged test file with why its change is needed; the checks still run
+   and a failed one fails the grade. Cockpit adds standing criteria for changes outside scope
+   (`scope-changes-necessary`), flagged test changes (`test-changes-justified`) and your amendments
+   (`amendments-hold-bar`). Anything short of passing (`WORK_GRADE_UNSATISFIED`) lists each
+   criterion's verdict and note under `result.criteria` and failed checks under `result.checks`: go
+   back to step 3 for each, reverting a change outside scope or a test change the grade calls
+   unneeded. `WORK_TEST_WEAKENED` means a test change was not accepted: restore the test, or under
+   `checks` grading acknowledge a legitimate change with `work acknowledge --note <why>`. When
+   `amendments-hold-bar` is unmet, the next amendment is a person's: report it. When the person names a grader ("use Codex to
    grade", "use Claude for everything"), pass `--evaluator <tool>` (`codexcli`, `claudecode` or
    `opencode`) on every grade for the rest of the session; only that tool runs, with no fallback.
    Done when the grade passes.
 7. **Attempt cap.** Each failed check or grade counts an attempt; at `work.attempt_cap` the order is
-   blocked (the refusal names the cap). Record the root cause with `work note`, then report to the
-   person, who amends the contract or closes the order. Done when the person has the cause and the order's state.
+   blocked. Record the root cause with `work note`, then do what the refusal names: close it with
+   `work signoff --partial` or `--abandon`, or amend the contract, yourself where `[work.gates]` gives
+   that step to the agent, and otherwise hand the person the command. Done when the order is closed or
+   amended, or the person has the cause and the command.
 8. **Close** with `./node_modules/.bin/cockpit work signoff --config cockpit.toml --work-order WO-001`
    once graded; under `signoff = "person"` it answers `WORK_PERSON_REQUIRED` as step 2 describes.
    It refuses while a recorded decision is unresolved or its record still holds placeholders.
    An order that cannot be finished closes with `--partial --note <what is left>` or
-   `--abandon --note <why>`. Done when `work status` names how it closed.
+   `--abandon --note <why>`. A command refused because another holds the order's lock: when that
+   command crashed, run `work recover --work-order WO-001 --apply`, which removes the lock only once it
+   has shown the holder gone and otherwise names what it could not check. Done when `work status` names how it closed.
 
 Report each criterion's verdict and note, how the order closed (`work status` names it), and any
 step you could not run.

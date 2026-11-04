@@ -465,10 +465,10 @@ export type WorkGrading = typeof WORK_GRADING[number]
 const WorkGates = z
     .object({
         accept: Decider.optional().describe('Who accepts a draft work order: agent, person or ci. Default agent.'),
-        amend: Decider.optional().describe('Who accepts a changed contract. Default agent. Removing or rewriting an accepted criterion always needs a person or ci.'),
+        amend: Decider.optional().describe('Who accepts a changed contract. Default agent. Removing an accepted criterion or gate always needs a person or ci; an agent\'s rewrite of a criterion, scope, non-goal or objective is judged at the next grade, and needs a person under checks grading.'),
         answer: Decider.optional().describe('Who answers an open question on an order. Default agent.'),
         signoff: Decider.optional().describe('Who closes a graded order. Default agent.'),
-        acknowledge: Decider.optional().describe('Who acknowledges that an order weakened tests, which grading otherwise fails. Default person.'),
+        acknowledge: Decider.optional().describe('Who acknowledges that an order weakened tests, which checks grading otherwise fails; under independent and self grading the acknowledgement is context for the verdict. Default agent.'),
     })
     .strict()
 

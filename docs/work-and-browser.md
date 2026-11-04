@@ -76,21 +76,29 @@ derives: **stale** when the file or a source changed since acceptance, **blocked
 question waits or the attempt cap is reached, and **draft** before acceptance. `partial` and
 `abandoned` are closures. The work-in-progress cap, `work.wip_cap`, counts accepted orders that are
 not closed, and `work accept` refuses a new one past it. A failed check or grade counts an attempt;
-at `work.attempt_cap` the order is blocked until a person amends or closes it.
+at `work.attempt_cap` the order is blocked until it is amended or closed, by whoever
+[`[work.gates]`](#who-passes-each-gate) names for `amend` and `signoff`; the refusal names who.
 
 - **accept** records the contract. Run it again after editing an accepted order to accept the change
-  (an amendment). The check base stays the commits recorded at first acceptance.
+  (an [amendment](#amendments)). The check base stays the commits recorded at first acceptance.
 - **check** runs every criterion's check and the order's gates, in the order the contract lists them.
 - **grade** grades the order the way [`[work] grading`](#how-an-order-earns-done) says, and reports
-  every changed file outside `scope` since the base commits; a change outside scope fails the grade, and
-  so does [weakened tests](#test-protection).
+  every changed file outside `scope` since the base commits under `outOfScope`. Where a model grades,
+  each such change is judged by the standing criterion `scope-changes-necessary`; under `checks`
+  grading any change outside scope fails the grade. [Weakened tests](#test-protection) are judged the
+  same way.
 - **signoff** closes a graded order as done. `--partial --note <what is left>` or `--abandon --note <why>`
   closes any open order without a passing grade. Every closure first needs each
   [decision](#decisions) recorded on the order to be resolved.
 - <!-- cockpit:ref command=work note --> <!-- cockpit:ref command=work answer --> **note** records a note; `--ask` records an open question, which blocks the order until
   `work answer --question <n> --text <answer>` answers it.
-- <!-- cockpit:ref command=work recover --> **recover** inspects the lock a crashed command left on an order; a person adds `--apply` once
-  the holder it names is gone, since a holder in a container or on another host looks dead from here.
+- <!-- cockpit:ref command=work recover --> **recover** inspects the lock a crashed command left on an order, naming its holder and
+  what it checked. `--apply`, which an agent may run, removes the lock only once the holder is shown
+  gone: the lock records the writer's host and whether it ran in a container, a holder on another host
+  or in a container this machine's Docker does not list stays unknown, a container cockpit labels
+  counts as gone only when it is stopped, and a holder on this machine is probed by process. When Docker
+  is installed but cannot be read, it refuses. What it checked goes into the order's record under
+  `recoveries`.
 
 <!-- cockpit:ref path=packages/cockpit/src/guards/evaluator.ts --> cockpit keeps what happened in `.cockpit/work-orders/<id>.json`, committed with the work. It
 records who passed each step (`agent`, `person` or `ci`), each check's result, the grade with the
@@ -103,8 +111,8 @@ inspects; a process outside the guard can still replace a record.
 ## Who passes each gate
 
 <!-- cockpit:ref schema=work.gates.accept --> `[work.gates]` in `cockpit.toml` says who passes each step: `accept`, `amend` (accepting a changed
-contract), `answer`, `signoff` and `acknowledge` (accepting that an order weakened tests). The defaults
-are `agent`, except `acknowledge`, which is `person`.
+contract), `answer`, `signoff` and `acknowledge` (accepting that an order weakened tests). Every default
+is `agent`.
 
 | Value | What happens |
 | --- | --- |
@@ -112,8 +120,8 @@ are `agent`, except `acknowledge`, which is `person`.
 | `person` | The command shows what is being decided and its digest, and records the step only after a person types that digest in a terminal with `--interactive`. Without a terminal it refuses with `WORK_PERSON_REQUIRED`. |
 | `ci` | The command records the step as awaiting CI, and it counts once the required `work verify` job passes. |
 
-Removing or rewriting an accepted criterion is never the agent's to certify: under `amend = "agent"`
-such an amendment still needs a person.
+Removing an accepted criterion or gate is never the agent's to certify: under `amend = "agent"` such an
+amendment still needs a person. [Amendments](#amendments) says what happens to the rest.
 
 These local gates are best-effort. The guard keeps an agent's tool call from passing `--interactive`,
 and the command needs a terminal on both standard input and standard output, but cockpit cannot tell a
@@ -149,14 +157,42 @@ which way each order closed:
 | `grading` | `work grade` | Closes as |
 | --- | --- | --- |
 | `independent` (default) | runs the checks, then an evaluator grades each criterion against them and the change | `graded` |
-| `checks` | runs the checks; every criterion needs one, and the grade passes only when cockpit ran each and all passed | `checks-passed` |
-| `self` | runs the checks, then records the agent's `--verdict met` or `unmet` with a `--note` saying what it checked; a failed check or a change outside `scope` still fails it | `self-reported` |
+| `checks` | runs the checks; every criterion needs one, and the grade passes only when cockpit ran each and all passed and nothing changed outside `scope` | `checks-passed` |
+| `self` | runs the checks, then records the agent's `--verdict met` or `unmet` with a `--note` saying what it checked; the verdict covers the standing criteria too, so the note must name each path changed outside `scope` and each flagged test file (or a directory above it), and a failed check still fails it | `self-reported` |
 
 The signoff gate applies on top in every mode.
 
+Under `independent` and `self` grading cockpit adds standing criteria when they apply, judged with the
+order's own: `scope-changes-necessary` when files changed outside `scope`, `test-changes-justified`
+when [test protection](#test-protection) flags a change, `amendments-hold-bar` when an agent
+[amended](#amendments) the contract, and the [decision and documentation](#decisions) criteria when
+`[docs]` is declared. An order may not name a criterion with one of these ids. Under `checks` no model
+reads the change, so a change outside scope, an unacknowledged weakening and an unjudgeable amendment
+are decided by rule instead.
+
+### Amendments
+
+Editing an accepted order and running `work accept` again records an amendment in the record's
+`amendments`, with who passed it, what it removed and, under `review`, each part that changed in a way
+that may lower the bar, before and after:
+
+| Change | Under `amend = "agent"` |
+| --- | --- |
+| A criterion or gate removed | needs a person, in every grading mode |
+| A criterion rewritten (its text, check or source), `scope` widened | under `independent` and `self`, passes and is judged at the next grade; under `checks`, needs a person |
+| A non-goal dropped or reworded, the objective changed | passes, and is judged at the next grade where a model grades |
+| A criterion or gate added, `scope` narrowed, a non-goal added | passes |
+
+The next grade carries `amendments-hold-bar`, with the before and after of every amendment the agent
+made since a person or CI last accepted the contract; under `independent` the evaluator also sees them
+as the change to `workorders/<id>.md`. When it is not met the grade fails, and the next amendment is a
+person's: revert or rewrite the order, then a person runs `work accept --interactive`.
+
 <!-- cockpit:ref command=grade --> For a change that needs no order, `cockpit grade --config cockpit.toml --criteria <file>` (a file inside the repository, relative or absolute) runs the
 checks and the independent evaluator against the uncommitted change, and records nothing. The file has
-the same front-matter `criteria` list, and optionally `scope`, `gates` and `objective`.
+the same front-matter `criteria` list, and optionally `scope`, `gates` and `objective`. Changes outside
+that `scope` and flagged test changes become the standing criteria `scope-changes-necessary` and
+`test-changes-justified`, judged by the evaluator.
 
 ## Test protection
 
@@ -175,9 +211,9 @@ which has no order, compares with `HEAD`). Over the files cockpit treats as test
 - a runner's configuration or `package.json` test script that now excludes, ignores or tolerates the
   absence of tests (`test-selection-narrowed`).
 
-A diff cannot prove that a replacement keeps its force, so a removal is flagged and a person
-acknowledges the legitimate ones. The detection is textual, for JavaScript and TypeScript first and the
-common Python forms; it is not a parser.
+A diff cannot prove that a replacement keeps its force, so a removal is flagged as a candidate and
+something that reads the change decides. The detection is textual, for JavaScript and TypeScript first
+and the common Python forms; it is not a parser.
 
 Which files are tests comes from `[testing] test_files`, globs relative to each checkout, when
 declared. Otherwise cockpit uses its built-in patterns for common layouts (`*.test.*`, `*.spec.*`,
@@ -186,17 +222,26 @@ grade result names which applied in `result.testProtection.testFiles`. Runner co
 (`vitest.config.*`, `jest.config.*`, `playwright.config.*`, `pytest.ini`, `package.json` and similar) is
 always watched.
 
-A finding fails the grade as a criterion named `test-protection`, with the diagnostic
-`WORK_TEST_WEAKENED` and a fix. `test-run` runs the same comparison against the base of each open order
-and reports `WORK_TEST_WEAKENED` even when the gate passed; with no open order it says in
-`testProtection` that it had nothing to compare with.
+How a finding is decided depends on [`[work] grading`](#how-an-order-earns-done):
 
-To accept a legitimate change, a person runs `work acknowledge --work-order <id> --note <why it is not a
-weakening> --interactive`, reads the findings and types the digest, as for any person gate; the
-acknowledgement is recorded with who passed it. It covers exactly the findings it showed, so a test
-deleted or skipped later fails the grade again. `[work.gates] acknowledge` defaults to `person`, so an
-agent's run without a terminal is refused with `WORK_PERSON_REQUIRED`; setting it to `agent` lets an
-agent acknowledge, visibly, in the record and in `work status`.
+- `independent`: the findings become the standing criterion `test-changes-justified`, which the
+  evaluator judges against the diff, with any acknowledgement notes recorded on the order as context.
+  `cockpit grade` does the same.
+- `self`: the agent's verdict covers it, and its `--note` must name each flagged file.
+- `checks`: no model reads the change, so a finding fails the grade as the criterion `test-protection`
+  until it is acknowledged.
+
+An unmet verdict on either criterion reports `WORK_TEST_WEAKENED` with a fix. `test-run` runs the same
+comparison against the base of each open order and reports the findings under `testProtection`; under
+`checks` grading an unacknowledged finding fails the run with `WORK_TEST_WEAKENED` even when the gate
+passed, and otherwise the grade judges it. With no open order it says in `testProtection` that it had
+nothing to compare with.
+
+`work acknowledge --work-order <id> --note <why it is not a weakening>` records an acknowledgement with
+who passed it. It covers exactly the findings it showed, so a test deleted or skipped later fails a
+`checks` grade again. `[work.gates] acknowledge` defaults to `agent`; a cockpit that sets it to `person`
+has a person run it with `--interactive`, read the findings and type the digest, and an agent's run
+without a terminal is refused with `WORK_PERSON_REQUIRED`.
 
 ## Decisions
 

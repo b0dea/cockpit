@@ -5,7 +5,9 @@
 // an agent wrote there would read as cockpit's own. A write holds the order's lock file, which a
 // crashed writer leaves behind until `work recover --apply` removes it.
 import { randomUUID } from 'node:crypto'
-import { lstat, mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { link, lstat, mkdir, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { hostname } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
 
@@ -52,7 +54,10 @@ export const WorkRecord = z.object({
         sources: z.record(z.string(), z.string().length(64)),
         base: z.record(z.string(), z.string().regex(/^[a-f0-9]{40,64}$/)),
     }).strict(),
-    amendments: z.array(z.object({ at, by, from: z.string().length(64), to: z.string().length(64), weakened: z.array(z.string()).max(64) }).strict()).max(256),
+    // `weakened` names what the amendment removed; `review` each change a model, or a person where none grades, judges
+    // against the bar, with its text before and after. An agent's amendment is judged at the next grade.
+    amendments: z.array(z.object({ at, by, from: z.string().length(64), to: z.string().length(64), weakened: z.array(z.string()).max(64),
+        review: z.array(z.object({ field: z.string().max(64), before: z.string().max(131_072), after: z.string().max(131_072) }).strict()).max(128) }).strict()).max(256),
     // A person's (or, where [work.gates] allows, an agent's or CI's) acknowledgement that the change weakened tests:
     // it covers exactly the findings its digest names, so a later weakening needs its own.
     acknowledgements: z.array(z.object({ at, by, digest: z.string().length(64), findings: z.array(z.string().max(1_100)).max(256), note }).strict()).max(256),
@@ -64,6 +69,8 @@ export const WorkRecord = z.object({
     notes: z.array(z.object({ at, by: z.enum(['agent', 'person', 'ci']), kind: z.enum(['note', 'question', 'answer', 'decision', 'resolution']), text: note,
         answers: z.number().int().min(1).optional(), resolves: z.number().int().min(1).optional(), record: z.string().max(1_100).optional() }).strict()).max(1_024),
     closure: z.object({ at, by, how: z.enum(['graded', 'checks-passed', 'self-reported', 'partial', 'abandoned']), note: note.optional() }).strict().optional(),
+    // Each lock `work recover --apply` removed: the holder it named and what was checked to call it gone.
+    recoveries: z.array(z.object({ at, holder: z.string().max(1_024), checked: z.array(z.string().max(1_024)).max(16) }).strict()).max(256).optional(),
 }).strict()
 export type WorkRecord = z.infer<typeof WorkRecord>
 
@@ -78,13 +85,46 @@ export interface WorkStore {
     readonly list: () => Promise<readonly WorkRecord[]>
     /** Runs `change` holding the order's lock; it returns the next record, or undefined to write nothing. */
     readonly update: <T>(id: string, change: (current: WorkRecord | undefined) => Promise<{ record?: WorkRecord; value: T }>) => Promise<T>
-    readonly recover: (id: string, apply: boolean) => Promise<Readonly<{ id: string; lock: 'none' | 'live' | 'unknown' | 'dead' | 'removed'; holder?: string }>>
+    /** Names a lock's holder and, with `apply`, removes the lock once the holder is shown gone, recording what was checked. */
+    readonly recover: (id: string, apply: boolean, containers: () => Promise<ContainerEvidence>) => Promise<LockRecovery>
 }
 
-// A lock names its holder as pid@start, so a reused pid never keeps a dead writer's lock alive.
-const holder = async (): Promise<string> => {
+/** The containers cockpit labels on this machine's Docker daemon, which a process probe cannot look inside. */
+export type ContainerEvidence =
+    | Readonly<{ state: 'listed'; context: string; containers: readonly Readonly<{ id: string; name: string; running: boolean }>[] }>
+    | Readonly<{ state: 'no-docker'; reason: string }>
+    | Readonly<{ state: 'unavailable'; reason: string }>
+export type LockRecovery = Readonly<{ id: string; lock: 'none' | 'live' | 'unknown' | 'dead' | 'removed'; holder?: string; checked?: readonly string[]; recorded?: boolean }>
+
+// A lock names its writer: pid and start, so a reused pid never keeps a dead writer's lock alive, and
+// the host and whether it ran in a container, because a pid means nothing outside the process table
+// it came from. Docker names a container's host after the container, unless it shares the machine's network.
+const LockHolder = z.object({ pid: z.number().int().min(1), start: z.string().max(256).optional(), host: z.string().min(1).max(255), container: z.boolean() }).strict()
+type LockHolder = z.infer<typeof LockHolder>
+const inContainer = () => existsSync('/.dockerenv') || existsSync('/run/.containerenv')
+const holder = async (): Promise<LockHolder> => {
     const observed = await observeProcessStart(process.pid, processHost(executeProbe))
-    return observed.state === 'present' ? `${process.pid}@${observed.start}` : `${process.pid}`
+    return { pid: process.pid, ...observed.state === 'present' ? { start: observed.start } : {}, host: hostname(), container: inContainer() }
+}
+
+// Whether the holder is shown running or gone, looking first where a pid probe cannot; anything unproven is unknown.
+async function judgeHolder(found: LockHolder, containers: ContainerEvidence): Promise<Readonly<{ lock: 'live' | 'unknown' | 'dead'; checked: readonly string[] }>> {
+    const here = hostname()
+    const listed = containers.state === 'listed' ? containers.containers : []
+    const checked = [`the lock was written by process ${found.pid} on host ${found.host}${found.container ? ' inside a container' : ''}`, `this machine is host ${here}`,
+        (containers.state === 'listed' ? `Docker context ${containers.context} lists ${listed.length} cockpit-labelled container(s)${listed.length
+            ? `: ${listed.map(row => `${row.name} (${row.running ? 'running' : 'stopped'})`).join(', ')}` : ''}`
+            : containers.state === 'no-docker' ? `no Docker client is installed (${containers.reason}), so no container on this machine runs cockpit`
+                : `Docker could not be read: ${containers.reason}`).slice(0, 1_024)]
+    if (containers.state === 'unavailable') return { lock: 'unknown', checked }
+    if (found.host !== here || found.container) {
+        const writer = /^[a-f0-9]{12}$/.test(found.host) ? listed.find(row => row.id.startsWith(found.host)) : undefined
+        if (!writer) return { lock: 'unknown', checked: [...checked, 'the writer ran on another host or in a container this machine does not list, whose processes this machine cannot see'] }
+        return { lock: writer.running ? 'live' : 'dead', checked: [...checked, `container ${writer.name}, which wrote it, is ${writer.running ? 'running' : 'stopped, so none of its processes runs'}`] }
+    }
+    const observed = await observeProcessStart(found.pid, processHost(executeProbe))
+    const lock = isProcessGone(found.start, observed) ? 'dead' : observed.state === 'unknown' ? 'unknown' : 'live'
+    return { lock, checked: [...checked, `process ${found.pid} on this machine is ${lock === 'dead' ? 'gone' : observed.state === 'unknown' ? `not observable (${observed.reason})` : 'running'}`] }
 }
 
 export function createWorkStore(root: string): WorkStore {
@@ -116,14 +156,15 @@ export function createWorkStore(root: string): WorkStore {
     const lock = async (id: string) => {
         await mkdir(directory, { recursive: true })
         const path = pathOf(id, '.lock')
-        const recorded = await holder()
-        try {
-            const handle = await open(path, 'wx', 0o644)
-            try { await handle.writeFile(`${recorded}\n`) } finally { await handle.close() }
-        } catch (error) {
+        // The holder is written before the lock appears, by linking a finished file into place, so a
+        // crash never leaves a lock that names nobody and so could never be shown gone.
+        const staged = `${path}.${randomUUID()}.tmp`
+        await writeFile(staged, `${JSON.stringify(await holder())}\n`, { flag: 'wx', mode: 0o644 })
+        try { await link(staged, path) }
+        catch (error) {
             if (!hasErrorCode(error, 'EEXIST')) throw error
             throw new RefusalError(`work order ${id} is locked by another cockpit command (${WORK_RECORD_DIRECTORY}/${id}.lock); wait for it, or if it crashed run npx --no cockpit work recover --config <your cockpit.toml> --work-order ${id} --apply`)
-        }
+        } finally { await rm(staged, { force: true }) }
         return async () => { await rm(path, { force: true }) }
     }
     const write = async (record: WorkRecord) => {
@@ -152,18 +193,30 @@ export function createWorkStore(root: string): WorkStore {
                 return result.value
             } finally { await release() }
         },
-        recover: async (id, apply) => {
+        recover: async (id, apply, containers) => {
             const path = pathOf(id, '.lock')
             let text: string
             try { text = await readFile(path, 'utf8') } catch (error) { if (hasErrorCode(error, 'ENOENT')) return { id, lock: 'none' as const }; throw error }
-            const recorded = text.trim()
-            const [pidText, start] = recorded.split('@', 2)
-            const observed = await observeProcessStart(Number(pidText), processHost(executeProbe))
+            let parsed: unknown
+            try { parsed = JSON.parse(text) } catch (error) { if (!(error instanceof SyntaxError)) throw error }
+            const found = LockHolder.safeParse(parsed)
+            const shown = text.trim().slice(0, 1_024)
+            if (!found.success) return { id, lock: 'unknown' as const, holder: shown, checked: ['the lock does not name its holder the way cockpit writes one'] }
             // A lock whose writer is still running, or cannot be shown gone, is never removed: the write it guards may be in progress.
-            if (!isProcessGone(start, observed)) return { id, lock: observed.state === 'unknown' ? 'unknown' as const : 'live' as const, holder: recorded }
-            if (!apply) return { id, lock: 'dead' as const, holder: recorded }
-            await rm(path, { force: true })
-            return { id, lock: 'removed' as const, holder: recorded }
+            const judged = await judgeHolder(found.data, await containers())
+            if (judged.lock !== 'dead' || !apply) return { id, lock: judged.lock, holder: shown, checked: judged.checked }
+            // The lock is taken over rather than deleted, so no other writer slips in before the recovery is recorded.
+            const ours = `${path}.${randomUUID()}.tmp`
+            await writeFile(ours, `${JSON.stringify(await holder())}\n`, { flag: 'wx', mode: 0o644 })
+            try {
+                if (await readFile(path, 'utf8') !== text) throw new RefusalError(`the lock on ${id} changed while it was being recovered; rerun work recover`)
+                await rename(ours, path)
+            } finally { await rm(ours, { force: true }) }
+            try {
+                const record = await read(id)
+                if (record) await write({ ...record, recoveries: [...record.recoveries ?? [], { at: new Date().toISOString(), holder: shown, checked: [...judged.checked] }] })
+                return { id, lock: 'removed' as const, holder: shown, checked: judged.checked, recorded: record !== undefined }
+            } finally { await rm(path, { force: true }) }
         },
     }
     return store

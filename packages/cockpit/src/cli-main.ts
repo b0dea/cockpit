@@ -504,19 +504,19 @@ function unsatisfiedWorkDiagnostic(operation: WorkApplicationRequest['operation'
         fix: 'for an order changed since acceptance, run npx --no cockpit work accept --config <your cockpit.toml> --work-order <id> or revert the change; for a done order without a passing grade, regrade it with work grade; for a decision record that is missing or no longer cites its order, restore it from git or put back its "Work order: <id>" line' }
     if (operation === 'grade-criteria') return { severity: 'error', message,
         code: 'WORK_GRADE_UNSATISFIED' satisfies typeof ENVIRONMENT_CODES.WORK_GRADE_UNSATISFIED,
-        fix: 'read result.criteria, result.checks and result.outOfScope: fix the product for an unmet or unclear criterion, make a failed check pass, move or revert a change outside scope, then grade again with npx --no cockpit grade --config <your cockpit.toml> --criteria <file>' }
+        fix: 'read result.criteria and result.checks: fix the product for an unmet or unclear criterion, make a failed check pass, revert each change outside scope the scope-changes-necessary verdict calls unneeded, then grade again with npx --no cockpit grade --config <your cockpit.toml> --criteria <file>' }
     return { severity: 'error', message,
         code: 'WORK_GRADE_UNSATISFIED' satisfies typeof ENVIRONMENT_CODES.WORK_GRADE_UNSATISFIED,
-        fix: 'read result.criteria, result.checks and result.outOfScope: fix the product for an unmet or unclear criterion, make a failed check pass, move or revert a change outside scope, then grade again with npx --no cockpit work grade --config <your cockpit.toml> --work-order <id>' }
+        fix: 'read result.criteria, result.checks and result.outOfScope: fix the product for an unmet or unclear criterion, make a failed check pass, revert each change outside scope the scope-changes-necessary verdict calls unneeded (under [work] grading = "checks", every change outside scope), have a person amend the order when amendments-hold-bar is unmet, then grade again with npx --no cockpit work grade --config <your cockpit.toml> --work-order <id>' }
 }
 
 function weakenedTestsDiagnostic(operation: WorkApplicationRequest['operation'], message: string): Diagnostic {
     if (operation === 'work-grade') return { severity: 'error', message,
         code: 'WORK_TEST_WEAKENED' satisfies typeof ENVIRONMENT_CODES.WORK_TEST_WEAKENED,
-        fix: 'read result.testProtection.findings: restore each deleted, skipped, suppressed or loosened test, or have a person acknowledge the change by running npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why it is not a weakening> --interactive in a terminal outside CI; never type the digest for them' }
+        fix: 'read result.testProtection.findings and the verdict on them: restore each test weakened to make the change pass. Under [work] grading = "independent" the evaluator judged the test changes unjustified in the diff; under "self" your --note names each flagged file and why; under "checks" acknowledge a legitimate change with npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why it is not a weakening>, which [work.gates] acknowledge = "person" leaves to a person at a terminal with --interactive; never type the digest for them' }
     return { severity: 'error', message,
         code: 'WORK_TEST_WEAKENED' satisfies typeof ENVIRONMENT_CODES.WORK_TEST_WEAKENED,
-        fix: 'read result.testProtection: restore each deleted, skipped, suppressed or loosened test; an order records the base a weakening is judged against and a person acknowledges a legitimate one with npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why> --interactive' }
+        fix: 'read result.testProtection: restore each deleted, skipped, suppressed or loosened test. A grade without an order has the evaluator judge the test changes; an order records the base they are compared with, and under [work] grading = "checks" a legitimate change is acknowledged with npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why>, with --interactive by a person where [work.gates] acknowledge = "person"' }
 }
 
 // A person gate binds what the person reads to the digest they type, so it never completes for an agent.

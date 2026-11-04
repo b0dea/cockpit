@@ -184,7 +184,7 @@ describe('closed ordinary invocation metadata', () => {
             ['work', 'grade', '--work-order', 'WO-1', '--evaluator', 'codexcli'], ['grade', '--criteria', 'criteria.md', '--evaluator=claudecode'],
             ['work', 'grade', '--work-order', 'WO-1'], ['work', 'grade', '--work-order', 'WO-1', '--verdict', 'met', '--note', 'ran the suite'],
             ['work', 'signoff', '--work-order', 'WO-1'], ['work', 'signoff', '--work-order', 'WO-1', '--partial', '--note', 'AC3 left'],
-            ['work', 'recover', '--work-order', 'WO-1'], ['work', 'verify'], ['grade', '--criteria', 'criteria.md', '--json'],
+            ['work', 'recover', '--work-order', 'WO-1'], ['work', 'recover', '--work-order', 'WO-1', '--apply'], ['work', 'verify'], ['grade', '--criteria', 'criteria.md', '--json'],
             ['browser', 'drive', '--json'], ['browser', 'drive', '--role', 'admin'], ['browser', 'screenshot', '--role', 'admin', '--json'],
             // An agent points a sibling at its own worktree inside a root it may already write, and pulls.
             ['use', 'app', '/workspace/app/.worktrees/feature'], ['use', 'app', '--clear', '--json'], ['pull'], ['pull', '--json'],
@@ -259,9 +259,9 @@ describe('closed ordinary invocation metadata', () => {
             ['stacks', 'prune', '--interactive'], ['stacks', 'remove'], ['stacks', 'prune', 'extra'],
             ['check', 'extra'], ['check', '--unknown'], ['check', '--config', '/outside/cockpit.toml'], ['check', '--config', 'other.toml'],
             ['check', '--json=false'], ['check', '--'], ['check', '--config'], ['check', '-c', 'cockpit.toml'],
-            // A person types the displayed digest, takes a lock whose holder only looks dead.
+            // A person types the displayed digest.
             ['work', 'accept', '--work-order', 'WO-1', '--interactive'], ['work', 'answer', '--work-order', 'WO-1', '--question', '1', '--text', 'yes', '--interactive'],
-            ['work', 'signoff', '--work-order', 'WO-1', '--interactive'], ['work', 'recover', '--work-order', 'WO-1', '--apply'],
+            ['work', 'signoff', '--work-order', 'WO-1', '--interactive'],
             ['test-run'], ['test-run', '--gate', 'undeclared'], ['test-run', '--gate', 'quick', '--mode', 'all'],
             ['test-run', '--gate', 'quick', '--select', 'file:--config=evil.ts'], ['test-run', '--gate', 'quick', '--select', 'src/cache.test.ts'],
             ['work', 'note', '--work-order', 'WO-1'], ['work', 'answer', '--work-order', 'WO-1', '--question', 'first', '--text', 'yes'],

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { criteriaWeakening, parseCriteriaFile, parseWorkOrder, scopeMatches, workOrderDigest } from './contract.js'
+import { contractAmendment, parseCriteriaFile, parseWorkOrder, scopeMatches, workOrderDigest } from './contract.js'
 
 const order = (frontMatter: string, body = '\nNotes cockpit never reads.\n') => Buffer.from(`---\n${frontMatter}\n---\n${body}`)
 const valid = [
@@ -40,13 +40,21 @@ describe('work-order file', () => {
         expect(workOrderDigest(parsed.value, { 'docs/redirects.md': 'a'.repeat(64) }, { '.': 'd'.repeat(40) })).not.toBe(digest)
     })
 
-    it('calls removing or rewriting an accepted criterion a weakening, and adding one not', () => {
+    it('calls removing a criterion or gate a weakening, returns rewrites, widened scope and dropped non-goals for review, and adding none of them', () => {
         const parse = (text: string) => { const parsed = parseWorkOrder(order(text), 'WO-1'); if (!parsed.ok) throw new Error(parsed.problems.join('; ')); return parsed.value }
-        const accepted = parse(valid)
-        expect(criteriaWeakening(accepted, parse(`${valid}\n  - id: AC3\n    text: A third thing holds.`))).toEqual([])
-        expect(criteriaWeakening(accepted, parse(valid.replace('never another origin', 'rarely another origin')))).toEqual(['AC2 is rewritten'])
-        expect(criteriaWeakening(accepted, parse(valid.replace('    check: [npm, test]\n', '')))).toEqual(['AC2 is rewritten'])
-        expect(criteriaWeakening(accepted, parse(valid.split('\n  - id: AC2')[0]!))).toEqual(['AC2 is removed'])
+        const accepted = parse(`${valid}\ngates: [unit]\nnon_goals: [Changing sessions.]`)
+        const changed = (from: string, to: string) => contractAmendment(accepted, parse(`${valid}\ngates: [unit]\nnon_goals: [Changing sessions.]`.replace(from, to)))
+        expect(changed('criteria:', 'criteria:\n  - id: AC3\n    text: A third thing holds.')).toEqual({ removed: [], review: [] })
+        expect(changed('scope: [src/auth/, ', 'scope: [')).toEqual({ removed: [], review: [] })
+        expect(changed('non_goals: [Changing sessions.]', 'non_goals: [Changing sessions., Changing cookies.]')).toEqual({ removed: [], review: [] })
+        expect(changed('never another origin', 'rarely another origin').review).toEqual([{ field: 'criteria.AC2',
+            before: 'The target is never another origin. [check: ["npm","test"]] [source: docs/redirects.md]', after: 'The target is rarely another origin. [check: ["npm","test"]] [source: docs/redirects.md]' }])
+        expect(changed('    check: [npm, test]\n', '').review.map(row => row.field)).toEqual(['criteria.AC2'])
+        expect(changed('scope: [', 'scope: [docs/, ').review).toEqual([{ field: 'scope', before: 'src/auth/, tests/**, web:src/routes/login.ts', after: 'docs/, src/auth/, tests/**, web:src/routes/login.ts' }])
+        expect(changed('non_goals: [Changing sessions.]', 'non_goals: []').review.map(row => row.field)).toEqual(['non_goals'])
+        expect(changed('Expired sessions', 'Some sessions').review.map(row => row.field)).toEqual(['objective'])
+        expect(changed('gates: [unit]', 'gates: []')).toEqual({ removed: ['gate unit is removed'], review: [] })
+        expect(contractAmendment(accepted, parse(`${valid.split('\n  - id: AC2')[0]!}\ngates: [unit]\nnon_goals: [Changing sessions.]`)).removed).toEqual(['AC2 is removed'])
     })
 
     it('matches scope entries as directories, single-segment and recursive globs', () => {

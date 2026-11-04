@@ -537,12 +537,11 @@ const sources = [
     { name: 'work signoff', handler: 'work-signoff', stage: 'test-and-grade', summary: 'Close a graded order as done, or any open one as partial or abandoned', visibility: 'public',
         ordinary: ordinary('work-signoff', personFlag),
         flags: { ...configured, 'work-order': workOrderFlag, partial: bool(flag), abandon: bool(flag), note: str(value('label')), interactive: bool() } },
-    // Inspection only reports the holder. --apply deletes the lock once a pid probe calls its holder
-    // dead, and that probe sees only this machine's process table: a holder running in a container or
-    // on another host that shares the checkout looks dead to it, so a person confirms it is gone.
+    // Inspection only reports the holder. --apply removes the lock only once the command has shown its
+    // holder gone where a pid probe cannot see: the lock's host and the containers cockpit labels.
     { name: 'work recover', handler: 'work-recover', stage: 'test-and-grade', summary: "Inspect or remove a crashed command's work-order lock", visibility: 'public',
-        ordinary: ordinary('work-recover', { forbidden: Object.freeze({ presence: Object.freeze(['apply']) }) }),
-        flags: { ...configured, 'work-order': workOrderFlag, apply: bool() } },
+        ordinary: ordinary('work-recover'),
+        flags: { ...configured, 'work-order': workOrderFlag, apply: bool(flag) } },
     { name: 'work verify', handler: 'work-verify', stage: 'test-and-grade', summary: 'Check every record against its order; in CI, pass the steps gated on ci', visibility: 'public',
         ordinary: ordinary('work-verify'),
         flags: configured },

@@ -101,18 +101,36 @@ export function workOrderDigest(order: WorkOrder, sources: Readonly<Record<strin
     return createHash('sha256').update(JSON.stringify(canonical({ order, sources, base }))).digest('hex')
 }
 
+/** One part of a contract an amendment changed in a way that may lower the bar, as it read before and after. */
+export type AmendmentReview = Readonly<{ field: string; before: string; after: string }>
+export type ContractAmendment = Readonly<{ removed: readonly string[]; review: readonly AmendmentReview[] }>
+
+const criterionText = (row: WorkOrderCriterion) =>
+    `${row.text}${row.check ? ` [check: ${JSON.stringify(row.check)}]` : ''}${row.source ? ` [source: ${row.source}]` : ''}`
+
 /**
- * The accepted criteria a changed contract removes or rewrites. Adding a criterion strengthens an
- * order; dropping one, or changing what one says or how it is checked, weakens it, and that is never
- * an agent's decision.
+ * How a changed contract moves the bar. Dropping an accepted criterion or gate lowers it in every
+ * reading, so it is `removed`. A rewritten criterion, a widened scope, a dropped or reworded non-goal
+ * or a new objective may lower it or only clarify it: no byte comparison can tell which, so each is
+ * returned for review with its text before and after. Adding a criterion or gate, narrowing scope and
+ * adding a non-goal only raise the bar.
  */
-export function criteriaWeakening(accepted: WorkOrder, changed: WorkOrder): readonly string[] {
-    return accepted.criteria.flatMap(before => {
+export function contractAmendment(accepted: WorkOrder, changed: WorkOrder): ContractAmendment {
+    const removed = [...accepted.criteria.filter(before => !changed.criteria.some(row => row.id === before.id)).map(row => `${row.id} is removed`),
+        ...accepted.gates.filter(gate => !changed.gates.includes(gate)).map(gate => `gate ${gate} is removed`)]
+    const review: AmendmentReview[] = accepted.criteria.flatMap(before => {
         const after = changed.criteria.find(row => row.id === before.id)
-        if (!after) return [`${before.id} is removed`]
-        return JSON.stringify(canonical(after)) === JSON.stringify(canonical(before)) ? [] : [`${before.id} is rewritten`]
+        return after && JSON.stringify(canonical(after)) !== JSON.stringify(canonical(before))
+            ? [{ field: `criteria.${before.id}`, before: criterionText(before), after: criterionText(after) }] : []
     })
+    if (changed.scope.some(entry => !accepted.scope.includes(entry))) review.push({ field: 'scope', before: accepted.scope.join(', '), after: changed.scope.join(', ') })
+    if (accepted.non_goals.some(goal => !changed.non_goals.includes(goal))) review.push({ field: 'non_goals', before: accepted.non_goals.join('; '), after: changed.non_goals.join('; ') })
+    if (accepted.objective !== changed.objective) review.push({ field: 'objective', before: accepted.objective, after: changed.objective })
+    return { removed, review }
 }
+
+/** The review fields a `checks` grade enforces: the criteria's checks and the scope. Objective and non-goals bind only where a model grades. */
+export const checksBindsField = (field: string) => field === 'scope' || field.startsWith('criteria.')
 
 // `**` crosses directories, `*` and `?` stay within one; a plain entry also covers what is below it.
 export function scopeMatches(scope: readonly string[], path: string): boolean {
