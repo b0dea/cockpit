@@ -485,10 +485,19 @@ describe('guard policy construction', () => {
             return loadCockpitConfig(path)
         } })).toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining('changed during') } })
         expect(loads).toBe(2)
-        // An edited configuration holds every call until a human regenerates, and the reason says which file and how.
+        // An edit that does not widen the guard holds every call but the sync that applies it, which the agent may run.
         const canonicalConfig = realpathSync(configPath)
+        const sync = { ...request, searchPath: '/usr/bin:/bin', payload: shellPayload(`${resolve(dirname(identity.module), '../bin/cockpit.mjs')} sync --config ${canonicalConfig}`, root) }
         expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({ decision: { decision: 'unavailable', reason:
-            `${canonicalConfig} changed since the guards were generated; guard policy comes from it and an edit takes effect only once a human approves it, so every tool call is held, including a sync run through this agent. Fix: a human must run \`npx --no cockpit sync --config ${canonicalConfig}\` in a terminal, outside the agent, then commit any regenerated files.` } })
+            `${canonicalConfig} changed since the guards were generated without widening what agents may do; every tool call except cockpit sync and check is held until it is synced. Fix: run \`npx --no cockpit sync --config ${canonicalConfig}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files.` },
+        diagnostics: [{ code: 'GUARD_CONFIG_UNSYNCED' }] })
+        expect(await runGuardEvaluationApplication(sync, adapters)).toMatchObject({ decision: { decision: 'allow' } })
+        // An edit that widens it holds every call, that sync included, until a human regenerates, and the reason names what widened.
+        const widened = parse(readFileSync(configPath, 'utf8')) as { guards: { allow: unknown[] } }
+        widened.guards.allow.push({ argv: ['make', 'release'], reason: 'Releases are routine.' })
+        writeFileSync(configPath, stringify(widened))
+        for (const call of [request, sync]) expect(await runGuardEvaluationApplication(call, adapters)).toMatchObject({ decision: { decision: 'unavailable', reason:
+            `${canonicalConfig} changed since the guards were generated and it widens what agents may do (guards.allow); guard policy comes from it and an edit that may widen it takes effect only once a human approves it, so every tool call is held, including a sync run through this agent. Fix: a human must run \`npx --no cockpit sync --config ${canonicalConfig}\` in a terminal, outside the agent, then commit any regenerated files.` } })
     }, 120_000)
 
     it('carries distinct declared vendor and database authority with authenticated roots and exact instance paths', async () => {

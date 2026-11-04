@@ -69,8 +69,14 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
         const weakened = await check()
         expect(weakened.status).toBe(2)
         expect(weakened.diagnostics[0]).toMatchObject({ code: 'POLICY_WEAKENING_UNCONFIRMED', message: expect.stringContaining('autonomy.reset: person -> agent') })
+        // The guards generated from the original hold the agent; check says the edit widens them, and where.
+        expect(weakened.diagnostics[1]).toMatchObject({ code: 'GUARD_CONFIG_WIDENED', message: expect.stringContaining('(autonomy.reset)') })
+        await writeFile(configPath, `${original}\n# reworded\n`)
+        expect((await check()).diagnostics.map(row => row.code)).toEqual(expect.arrayContaining(['GUARD_CONFIG_UNSYNCED']))
         await writeFile(configPath, original)
-        expect((await check()).diagnostics.map(row => row.code)).not.toContain('POLICY_WEAKENING_UNCONFIRMED')
+        const reverted = (await check()).diagnostics.map(row => row.code)
+        expect(reverted).not.toContain('POLICY_WEAKENING_UNCONFIRMED')
+        expect(reverted).not.toContain('GUARD_CONFIG_UNSYNCED')
     })
 
     it('uses one admission and the same plan for catalogue repair with single consumption', async () => {

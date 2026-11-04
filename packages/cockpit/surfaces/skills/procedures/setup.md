@@ -20,9 +20,11 @@ budget: uncapped
   other user-guide pages cited here sit beside it.
 - When the guard asks before a command, the person decides in Claude Code; Codex and OpenCode deny
   instead, so hand the person the exact command to run in a terminal. A refusal that holds every
-  tool call (a guard message saying so, or `GUARD_AUTHORITY_UNAVAILABLE`) follows any
-  edit to `cockpit.toml` or reinstall of cockpit or Node, and clears only when a person runs
-  `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal. A refused command is the
+  tool call (a guard message saying so, `GUARD_AUTHORITY_UNAVAILABLE` or `GUARD_CONFIG_UNSYNCED`)
+  follows any edit to `cockpit.toml` or reinstall of cockpit or Node. `GUARD_CONFIG_UNSYNCED` means
+  the edit does not widen what agents may do, so run
+  `./node_modules/.bin/cockpit sync --config cockpit.toml` yourself where `[autonomy] sync =
+  "agent"`; any other hold clears only when a person runs it in a terminal. A refused command is the
   person's to run: never reword, wrap or re-spell it to get past the guard.
 - In Codex's sandbox only `check`, `sync --dry-run` and `--help` work. Every other cockpit command
   there cannot read cockpit's state or the Docker socket, so a failure it reports is not evidence:
@@ -241,13 +243,16 @@ report secure agent secret use as unavailable unless a sandbox that has been tes
 
 When the team starts or stops using an agent tool, the `tool` command edits only `[surfaces]
 tools` in `cockpit.toml`. The guard asks before every `tool` command, the preview included, and
-after the edit it holds every tool call until a person syncs.
+after the edit it holds every tool call until it is synced. Adding a tool does not widen what
+agents may do; removing one deletes that tool's guard, so the hold then names `surfaces.tools`
+and waits for a person.
 
 1. Preview with `./node_modules/.bin/cockpit tool add <tool> --config cockpit.toml --dry-run` (or
    `tool remove`) and show the person the list it prints. Done when they agree to that list.
 2. Run it without `--dry-run`. Tell the person first that every tool call is held after it. Done
    when the command exits 0.
-3. The person runs `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal: an added
+3. Sync: after `tool add`, run `./node_modules/.bin/cockpit sync --config cockpit.toml` yourself
+   where `[autonomy] sync = "agent"`; after `tool remove`, the person runs it in a terminal. An added
    tool's files are written from the same sources as the others, and a removed tool's files are
    deleted as `[autonomy] stale_delete` allows. When sync refuses with
    `GENERATED_STALE_APPROVAL_REQUIRED`, they rerun it with `--interactive` and type the
@@ -259,7 +264,7 @@ after the edit it holds every tool call until a person syncs.
 Use this on an installed cockpit when a product gains or drops a repository. The `sibling`
 command edits `cockpit.toml` so the repository is declared once, with its purpose, instead of
 reached by path. The guard asks before every `sibling` command, and because the command writes
-`cockpit.toml` immediately, the guard then holds every tool call until a person syncs.
+`cockpit.toml` immediately, the guard then holds every tool call until it is synced.
 
 1. **Propose the declaration.** Read the repository and ask the person for its purpose when no
    source states it. Show the human the proposed sibling declaration before invoking the command:
@@ -278,8 +283,11 @@ reached by path. The guard asks before every `sibling` command, and because the 
    output format, so it is neither a preview nor an acceptance gate. While the stack is up, a
    repository the stack uses is refused until a person runs
    `./node_modules/.bin/cockpit down --config cockpit.toml`. Done when the command exits 0.
-3. **Sync.** The changed declaration affects the guard, so a human runs
-   `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal. Then run
+3. **Sync.** When the hold says the edit does not widen what agents may do, as adding a
+   repository inside the siblings root does, run
+   `./node_modules/.bin/cockpit sync --config cockpit.toml` yourself where `[autonomy] sync =
+   "agent"`. When it names the fields that widen, as removing one does, a person runs it in a
+   terminal. Then run
    `./node_modules/.bin/cockpit check --config cockpit.toml --json`. Done when the check exits 0.
 4. **Instruction pointer, only on request.** When the person wants the repository's **AGENTS.md**
    to link to the cockpit instructions, add `--instruction-pointer` to the step 2 command; it opts

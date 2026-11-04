@@ -71,7 +71,8 @@ truncating `dd` or `tee` writes, `ln` onto either file, a `chmod` mode that drop
 permission or is copied with `--reference`, a patch delete or move, a Write tool call with empty
 content, and a `>` redirect. Editing the configuration in place stays permitted, including bounded
 `dd conv=notrunc` and `tee` append forms under the normal write checks; the edit takes effect only
-after a human runs `sync`.
+after `sync` runs, and only a person's sync applies an edit that
+[widens what agents may do](#edits-the-guard-has-not-applied).
 
 Writing anywhere under a `.git` directory is a hard denial, because Git configuration chooses
 programs that read-only Git commands run. For the same reason, so is every `git config` form other
@@ -229,7 +230,7 @@ cockpit commands in
 | `npx --no cockpit session --config cockpit.toml -- <command>` | the decision for `<command>` | A session runs its command as the agent could run it directly, so it never admits more. |
 | `npx --no cockpit test-run --config cockpit.toml --gate <gate>`, with an optional `--mode` and a `--select <kind>:<value>` whose value does not start with `-` | allowed for a gate `cockpit.toml` declares | The gate runs only the stages a person declared in the reviewed configuration, the trust `up` already has. |
 | `npx --no cockpit work status --config cockpit.toml`, `work accept`, `work check`, `work note`, `work answer`, `work acknowledge`, `work grade`, `work signoff`, `work recover` without `--apply`, `work verify` and `cockpit grade --criteria <file>`, each with its own options | allowed | They report, or take a step [`[work.gates]`](#who-decides) gives the agent; a step it gives a person waits for the digest typed after `--interactive`, which no agent invocation carries. Grading runs in a separate evaluator. |
-| `npx --no cockpit sync --config cockpit.toml`, and `upgrade`, whose sync child writes | allowed where `[autonomy] sync = "agent"`, otherwise a prompt | It regenerates the files the configuration already declares; the guard holds every call after `cockpit.toml` changes until a person syncs, so an agent's sync never publishes an edit of its own. |
+| `npx --no cockpit sync --config cockpit.toml`, and `upgrade`, whose sync child writes | allowed where `[autonomy] sync = "agent"`, otherwise a prompt | It regenerates the files the configuration declares; after `cockpit.toml` changes, the guard admits it only when the edit [does not widen](#edits-the-guard-has-not-applied) what agents may do, so an agent's sync never publishes a widening of its own. |
 | `npx --no cockpit reset --config cockpit.toml --apply` | allowed where `[autonomy] reset = "agent"`, otherwise a prompt | It deletes stack data. |
 | `npx --no cockpit stacks prune --config cockpit.toml --apply` | allowed; the command itself refuses a prune that deletes volumes unless `[autonomy] reset = "agent"` | It removes only stacks whose checkout is gone, which bringing the stack up again recreates, and their data only where a reset could delete it. |
 | `npx --no cockpit browser drive --config cockpit.toml`, and likewise `screenshot`, with an optional `--role` | allowed where `browser.request_preapproval` is set, otherwise a prompt | They sign in and capture the declared application, so they run unprompted only on the isolated, non-production data the configuration must declare before it can set preapproval. |
@@ -373,6 +374,34 @@ A local `person` gate is best-effort: cockpit cannot tell a person from a progra
 `ci` relies on the `CI` variable, which an agent can set too, so locally it is best-effort as well.
 The only enforced human gate is a required CI job behind a protected environment whose reviewers must
 approve it, such as the [`work verify` job](work-and-browser.md#who-passes-each-gate).
+
+### Edits the guard has not applied
+
+<!-- cockpit:ref path=packages/cockpit/src/guards/policy-change.ts --> Once `cockpit.toml` differs
+from the configuration the guards were generated from, the guard loads both, the earlier from the
+copy sync keeps in `.cockpit/local/guard-config`, and compares them with defaults applied. An edit that does
+not widen what agents may do holds every tool call except `cockpit sync` and `cockpit check`, which
+the agent may run under the rules above, and the hold says so (`GUARD_CONFIG_UNSYNCED`). Any other
+edit holds every call, that sync included, until a person runs `sync` in a terminal, and the hold
+names each field that widens.
+
+An edit does not widen only when every difference is one of these:
+
+- descriptive or host-only fields: a sibling's `purpose`, `guides` and `host_reason`,
+  `cockpit.guide_cap`, `[ports]`, `environment.entrypoint_derivatives` and `environment.machine`;
+- a new sibling inside the siblings root, other than the root itself, that declares no
+  environment files and no derived MCP sources;
+- added `testing` stages and gates, `[[guards.deny]]` rules, guard hosts, protected branches,
+  agent tools, `unconfirmed` answers and sibling operator gates;
+- removed `[[guards.allow]]` rules, `[mcp.approved]` entries, Compose files and resettable volumes,
+  a lowered `attempt_cap` or `wip_cap`, an install policy that admits no command it did not, and an
+  `[autonomy]` or `[work]` decision or grading made no weaker.
+
+Every other difference widens, including a field the classification has no rule for, so a field
+added to the schema is a person's decision until a rule says otherwise. A missing or mismatched
+copy of the generated configuration cannot show an edit safe, so it holds as a widening edit does.
+`check` reports the same classification: `GUARD_CONFIG_UNSYNCED` as a warning, `GUARD_CONFIG_WIDENED`
+as an error naming the fields.
 
 ## Native adapter behavior
 

@@ -16,6 +16,7 @@ import {
 import { GUARD_EXECUTABLE_SEARCH_PATH, type ExecutableResolution, type ResolvedExecutable } from '../executable.js'
 import { CockpitConfig } from '../../schema.js'
 import { pinnedPolicyDenial } from '../../guards/policy-pin.js'
+import { guardConfigChange, guardConfigHeldReason } from '../../guards/policy-change.js'
 import {
     evaluateGuard,
     foldGuardSpelling,
@@ -60,7 +61,7 @@ import {
     withSetupCheckoutProjection,
     type SetupCheckoutObservation,
 } from '../setup-observation.js'
-import { loadCockpitConfig, consumeLoadedConfigProjection, type LoadedConfigProjection } from '../../config/load.js'
+import { loadCockpitConfig, consumeLoadedConfigProjection, STRUCTURED_INPUT_BYTE_LIMIT, type LoadedConfigProjection } from '../../config/load.js'
 import { deriveRegistry } from '../../registry-derivation.js'
 import { confinedPath, lifecycleRefusal, ownDataValues, sameSource } from './shared.js'
 import { loadServedSiblings } from '../sibling-checkouts.js'
@@ -124,6 +125,16 @@ function guardHeld(identity: GuardHandlerIdentity, what: string, why: string, fi
     const action = fix.kind === 'sync' ? `a human must run ${sync}, then commit any regenerated files`
         : `a human must restore it with \`${formatShellCommand(['git', '-C', identity.root, 'restore', '--', fix.path])}\` (it is committed), or run ${sync}`
     return `${what}; ${why}, so every tool call is held, including a sync run through this agent. Fix: ${action}.`
+}
+
+// An edit that does not widen what agents may do needs only a sync, which the agent may run itself;
+// every other call waits for it, so no call is judged under a policy sync has not published.
+function unsyncedHold(identity: GuardHandlerIdentity, detail: string): GuardEvaluationApplicationResult {
+    const sync = cockpitCommand('sync', { config: identity.configPath })
+    const reason = `${identity.configPath} changed since the guards were generated without widening what agents may do${detail}; every tool call except cockpit sync and check is held until it is synced. Fix: run \`${sync}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files.`
+    return { decision: { decision: 'unavailable', reason }, diagnostics: [{ severity: 'error', target: 'guard', message: reason,
+        code: 'GUARD_CONFIG_UNSYNCED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_UNSYNCED,
+        fix: `run ${sync}; an agent may run it where [autonomy] sync = "agent"` }] }
 }
 
 const GUARD_RESTORABLE = new Set(['.cockpit/generated-environment-ownership.json', '.cockpit/guards/bash-guard.sh',
@@ -221,9 +232,21 @@ export async function runGuardEvaluationApplication(
         const module = unwrap(await modulePending)
         if (module.sha256 !== identity.moduleSha256) return changed('the installed cockpit version changed (its handler bytes differ)')
         const loaded = unwrap(await configPending)
-        if (loaded.kind !== 'complete' || loaded.result.source.path !== identity.configPath || loaded.result.source.sha256 !== identity.configSha256) {
+        if (loaded.kind !== 'complete' || loaded.result.source.path !== identity.configPath) {
             return unavailable(guardHeld(identity, `${identity.configPath} changed since the guards were generated`,
                 'guard policy comes from it and an edit takes effect only once a human approves it', { kind: 'sync' }))
+        }
+        // Every check below runs against the configuration on disk; an edit since sync is admitted
+        // only when it does not widen the one the guards were generated from, and then only for sync.
+        const configSha256 = loaded.result.source.sha256
+        const unsynced = configSha256 !== identity.configSha256
+        if (unsynced) {
+            const recorded = await readAnchoredFile(identity.root, GUARD_LOCAL_PATHS.generatedConfig, STRUCTURED_INPUT_BYTE_LIMIT, node, { execute: adapters.execute ?? executeProbe })
+            const change = guardConfigChange(identity.configSha256, recorded.kind === 'complete' ? recorded.bytes : undefined,
+                { sha256: configSha256, config: loaded.result.config })
+            if (change.kind === 'widening' || change.kind === 'unrecorded') return unavailable(guardHeld(identity,
+                `${identity.configPath} changed since the guards were generated and ${guardConfigHeldReason(change)}`,
+                'guard policy comes from it and an edit that may widen it takes effect only once a human approves it', { kind: 'sync' }))
         }
         const config = loaded.result.config
         let publication: Awaited<ReturnType<typeof readPublication>>
@@ -261,7 +284,9 @@ export async function runGuardEvaluationApplication(
         if (parsed.status !== 'parsed') return unavailable(parsed.reason)
         if (parsed.cwd !== data.cwd) return unavailable('Guard request cwd does not match its invocation authority.')
         const prepared = await prepareGuardEvaluationPolicy({ configuration: loaded.result, checkout })
-        if (prepared.kind !== 'complete') return unavailable('Guard policy authority could not be authenticated.')
+        if (prepared.kind !== 'complete') return unsynced
+            ? unsyncedHold(identity, `, but the guard cannot build its policy from it (${prepared.diagnostics[0]?.message ?? 'no reason given'})`)
+            : unavailable('Guard policy authority could not be authenticated.')
         // The inspector answers synchronously, so what only Git can say is asked first: which protected
         // paths a default ripgrep search reads, and which a repository's index holds for a Git command
         // that prints committed content. A request not asked here gets the walk, or no answer.
@@ -375,6 +400,9 @@ export async function runGuardEvaluationApplication(
             const inner = proven && ordinarySessionCommand(argv.slice(proven.prefix), cwd, configured)
             if (inner) prove(inner[0]!, cwd, inner.slice(1), false)
         }
+        if (unsynced && !(parsed.tool === 'Bash' && parsed.invocations.length > 0 && parsed.invocations.every(invocation => launched.some(entry =>
+            entry.session && entry.executable === invocation.executable && entry.cwd === invocation.cwd
+            && isDeepStrictEqual(entry.argv, invocation.argv) && ['sync', 'check'].includes(entry.argv[entry.prefix]!))))) return unsyncedHold(identity, '')
         let launcherSha256: string | undefined
         if (launched.length) {
             const status = lstatSync(launcher)
@@ -402,9 +430,9 @@ export async function runGuardEvaluationApplication(
             }
         }
         if (cockpitInvocations.length + prepared.result.policy.projectCommands.length > GUARD_INPUT_LIMITS.invocations) return unavailable('Guard candidates exceed the invocation bound.')
-        // The policy pin needs the text an edit applies to, which must be the text the guard was generated for.
+        // The policy pin needs the text an edit applies to, which must be the text the policy was built from.
         const configRead = publication.get(configName)!
-        if (configRead.sha256 !== identity.configSha256) return unavailable('Guard configuration changed during evaluation.')
+        if (configRead.sha256 !== configSha256) return unavailable('Guard configuration changed during evaluation.')
         const configStatus = lstatSync(identity.configPath)
         // A hard link or another spelling of the configuration is the configuration.
         const isConfig = (path: string) => {
@@ -420,7 +448,7 @@ export async function runGuardEvaluationApplication(
             searchPathRelativeEntry: guardSearchPathRelativeEntry(searchPath),
             ripgrepConfigActive: data.ripgrepConfigActive === true }, inspect)
         const current = await adapters.loadConfig(identity.configPath)
-        if (current.kind !== 'complete' || current.result.source.sha256 !== identity.configSha256) return unavailable('Guard configuration changed during evaluation.')
+        if (current.kind !== 'complete' || current.result.source.sha256 !== configSha256) return unavailable('Guard configuration changed during evaluation.')
         for (const [path, before] of [...roots, ...inspected]) {
             const after = lstatSync(path)
             // Directories may receive unrelated leaves, but replacement and file changes invalidate evidence.
@@ -439,8 +467,8 @@ export async function runGuardEvaluationApplication(
     }
 }
 
-// The guard runs only against the configuration sync generated it from, so the policy read here is the
-// one the last sync accepted.
+// The guard runs against the configuration sync generated it from, or one that does not widen it and
+// admits only sync and check, so the policy read here grants nothing the last sync did not.
 function ordinaryGrants(config: CockpitConfig): readonly OrdinaryGrant[] {
     const policy = effectivePolicy(config)
     return [...config.browser?.request_preapproval === true ? ['browser-preapproval' as const] : [],

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
-import { parse } from 'smol-toml'
+import { parse, TomlError } from 'smol-toml'
 import {
     RefusalError,
     ENVIRONMENT_CODES,
@@ -346,6 +346,19 @@ export async function loadAutonomyPolicy(configPath: string): Promise<Readonly<{
     const root = dirname(loaded.result.source.path)
     const recorded = await readRecordedPolicy(root)
     return { root, current: effectivePolicy(loaded.result.config), ...recorded ? { recorded } : {} }
+}
+
+/** The configuration `bytes` declare, or undefined when they are not UTF-8 TOML the schema accepts. */
+export function parseCockpitConfigBytes(bytes: Uint8Array): CockpitConfig | undefined {
+    let parsed: unknown
+    try { parsed = parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) }
+    catch (error) {
+        // Invalid UTF-8 or TOML is the answer; anything else is a fault to surface.
+        if (error instanceof TypeError || error instanceof TomlError) return undefined
+        throw error
+    }
+    const validated = CockpitConfig.safeParse(parsed)
+    return validated.success ? validated.data : undefined
 }
 
 export async function loadCockpitConfig(
