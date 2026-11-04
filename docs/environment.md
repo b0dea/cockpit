@@ -908,9 +908,12 @@ The stack must have been started by `up` from this checkout; after `down` they r
   and exits with the command's own status, as `session` does. It gets a terminal only when cockpit
   runs in one.
 
-The guard admits these verbs as it admits `up`, and judges the command after `exec --` as it
-judges a host command: the container mounts the checkouts and may hold their credentials, so
-`exec --service web -- cat .env` is refused like `cat .env`. `reset` stays gated by `[autonomy]`.
+The guard admits these verbs as it admits `up`. The command after `exec --` runs in the container,
+whose files the guard cannot see, so it is never proven read-only: the name-based denials still apply
+(`exec --service web -- cat .env` is refused like `cat .env`), and it runs without asking only when a
+`[guards] allow` rule or a declared build or test command admits it
+([Cockpit and project commands](safety-and-autonomy.md#cockpit-and-project-commands)). `reset` stays
+gated by `[autonomy]`.
 
 ## Where the decisions live
 

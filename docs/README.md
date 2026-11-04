@@ -22,13 +22,14 @@ contributor pages live separately under docs/contributing/.
 ## Guides
 
 - [Joining a team's cockpit](joining-a-team.md): install and verify a cockpit from a fresh clone.
-- [Environment lifecycle](environment.md): setup, bring-up, health, logs, reset and seeding.
+- [Environment lifecycle](environment.md): setup, bring-up, health, logs, reset and seeding;
+  worktrees, Compose profiles, one-service commands and pruning stacks across the machine.
 - [Compose patterns](compose-patterns.md): vendor stubs, TLS and data restore in plain Compose.
 - [Harness surfaces](harness-surfaces.md): what `sync` writes for each agent tool, and overlays.
 - [Extending cockpit](extending.md): supported extension points, what an upgrade replaces and the build-beside pattern.
 - [Safety and autonomy](safety-and-autonomy.md): what guards allow, ask about and deny.
-- [Work and browser workflows](work-and-browser.md): work orders, grading, browser checks and
-  test tiers.
+- [Work and browser workflows](work-and-browser.md): work orders, grading, test protection,
+  decisions, browser checks and test tiers.
 - [Living documents and decision records](docs-check.md): find documents that cite removed paths
   or make targets, and decision records whose numbers, index or statuses disagree.
 

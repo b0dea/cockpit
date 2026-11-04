@@ -68,10 +68,12 @@ holds its schema and limits.
 ### Evaluator
 
 The grader for a finished work order under the default `independent` grading. It grades each
-acceptance criterion against the checks cockpit ran and the change since the order was accepted, in a
-fresh read-only run that never sees the session that did the work, in another listed agent tool when
-one is available, otherwise the same tool in a new run. It never edits code. A cockpit can instead let the
-checks alone decide, or let the agent report its own verdict; the record says which.
+acceptance criterion, and the standing criteria cockpit adds (changes outside scope, flagged test
+changes, the agent's amendments), against the checks cockpit ran and the change since the order was
+accepted, in a fresh read-only run that never sees the session that did the work, in another listed
+agent tool when one is available, otherwise the same tool in a new run. It never edits code. A cockpit
+can instead let the checks alone decide, or let the agent report its own verdict; the record says
+which.
 
 ### Enforced, instructed, generated and unavailable
 

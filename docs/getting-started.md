@@ -94,11 +94,15 @@ same procedure.
 A clean-looking configuration with invented values in it is the failure cockpit exists to prevent.
 The agent follows these rules for the whole setup:
 
-1. **Ask the human first, and wait for a yes,** before writing into a product repository (a
-   Dockerfile, Compose file, `.env.schema` or anything else in a sibling checkout), creating a Git
-   remote or hosted repository, running a destructive command (`down`, `reset`, `sync --interactive`
-   removals, deleting files), running `cockpit sync --adopt`, or accepting an `init` digest. A person
-   approves or runs staging and the commit of the cockpit: the agent hands them the command.
+1. **Ask the human first, and wait for a yes,** before creating a Git remote or hosted repository,
+   running a destructive command (`reset`, `sync --interactive` removals, deleting files), running
+   `cockpit sync --adopt`, accepting an `init` digest, or changing a product repository in any other
+   way than the next sentences allow (adopting a test framework or a dependency, for example). A
+   person approves or runs staging and the commit of the cockpit: the agent hands them the command.
+   A Dockerfile, Compose file or `.env.schema` the product needs goes on a new branch in that
+   sibling's checkout, started with no uncommitted changes, and the hand-back shows its diff against
+   the branch it started from. Nothing is pushed, so the person reviews it before it reaches anyone
+   else.
 2. **Show the exact preview before asking:** the `sync --dry-run` listing, the `init` preview with its
    `previewSha256`, the answers file or the defaults digest. Consent binds to those bytes, and a
    digest from anything but the latest pending run is refused.
@@ -115,9 +119,10 @@ The agent follows these rules for the whole setup:
    of production, staging and shared environments. Variable names come from env templates, never
    values; each host comes from the human.
 6. **Defaults never reach into a product repository.** "Use sensible defaults" covers `init` answers
-   only. A pointer in a sibling's **AGENTS.md**, a Compose file or a `package.json` still needs an
-   explicit yes to that exact change. Every answer the agent chose itself is marked `"agent-default"`
-   (below), and its report ends with each default, its field and its value.
+   only. A pointer in a sibling's **AGENTS.md** or a change to its `package.json` still needs an
+   explicit yes to that exact change, and a product file goes on a branch as rule 1 says. Every
+   answer the agent chose itself is marked `"agent-default"` (below), and its report ends with each
+   default, its field and its value.
 
 These rules are instructions, not enforcement. The guard cockpit installs later blocks some commands;
 see [Safety and autonomy](safety-and-autonomy.md).
@@ -169,9 +174,18 @@ has an `id`, a `level` (a `required` gap is refused by the command that needs it
 warns), `needs` (why cockpit needs it) and `findings` (each diagnostic with its message and fix).
 `noFinding` lists the prerequisites no check reported; a check that could not run reports nothing, so
 it is not proof. Take the gaps one at a time, required first: what is missing, why, and the exact change
-you propose. Judgement calls (which test runner to adopt, whether the existing tests prove anything)
-are the human's. The cockpit directory must be a Git working tree, committed and clean, before
-`preflight` passes; a new one reports `GIT_STATE_UNHEALTHY` until a person stages and commits it.
+you propose.
+
+Whether the existing tests prove anything is the agent's judgement, made on evidence. For each
+proposed gate, name the behaviours its tests exercise, then break one of them on purpose, run the
+gate, watch it go red, and restore the file so the checkout is as it was found; that edit needs no
+yes, because it is undone before the step ends. Write the behaviours into the gate's `changes` text
+and report the judgement, with the red run's output, in the hand-back. A gate that stays green on the
+break proves nothing about that behaviour, and the report says so. Adopting a new test framework in a
+product repository stays the human's call.
+
+The cockpit directory must be a Git working tree, committed and clean, before `preflight` passes; a
+new one reports `GIT_STATE_UNHEALTHY` until a person stages and commits it.
 
 ## The init interview
 
@@ -310,7 +324,7 @@ compose_files = ["compose.yml"]
 `[ports.bases]` variable, and a service without a healthcheck warns. The rules are in
 [Environment lifecycle](environment.md#environment-modes); a working layout is
 [examples/compose-first](../examples/compose-first/README.md). Changing a product's Compose file is a
-product change: ask first.
+product change: an agent makes it on a branch, as the [safety contract](#safety-contract) says.
 
 **Data.** `seed` and `resettable_volumes` fill and wipe the stack's data
 ([Demo data, test users and roles](environment.md#demo-data-test-users-and-roles)). `cockpit reset` previews the change and needs a person
@@ -589,6 +603,12 @@ to the stack's leased port and each entrypoint under `COCKPIT_ENTRYPOINT_`
 group stops, `session` calls `sleep`, which stops the stack only if no other checkout still holds
 it. Interrupting `session` stops only the process group it started, and a `session` inside another
 is refused. Use plain `up` only when the stack should outlive one command.
+
+While it runs, `ps` shows each service, and `restart`, `rebuild` and `exec` act on one of them by its
+`--service` name; `up --profile <name>` adds a Compose profile. To work on a sibling in a worktree,
+`use <slug> <checkout>` points this cockpit checkout's stack at it, `pull` fast-forwards every
+checkout, and `stacks prune` removes the stack a deleted worktree left behind. All of them are in
+[Environment lifecycle](environment.md#serve-a-sibling-from-a-worktree).
 
 To remove the stack and its containers, run `down`. It reads the active Docker context once,
 refuses one that is not local, and deletes only from that daemon, so a deletion never lands on a

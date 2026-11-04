@@ -114,13 +114,16 @@ Compose stack are its second chapter. To watch it all on a throwaway example fir
 | Capability | How cockpit does it |
 |---|---|
 | **Every repository in reach** | Declare each repository once; `setup` clones or finds it, its guides are copied into the root `AGENTS.md` (the one route that loaded in all three tools in the dated runs), and every tool is granted its directory. A changed guide shows as drift until a person runs `sync`, so an agent cannot quietly change what later agents load. |
-| **The product running, per checkout** | `session` runs your own Compose files on the live checkouts and leases each checkout, linked worktrees included, a port family, so parallel agents do not collide. `up`, `preflight`, `logs`, `sleep`, `down` and `reset` drive it; the stack stops only when no checkout still holds it, and `reset` wipes only the volumes you declared resettable. |
-| **Proof in a real browser** | `browser drive` and `browser screenshot` run a headless browser through your own Playwright project against every declared route on the leased application origin, signed in as a declared role when you ask, and record each screenshot with its digest ([below](#browser-checks)). |
-| **Test gates that cannot fake a pass** | `test-run` runs your own targeted or full gate (Vitest, Jest, pytest, Nx, Turborepo, Bazel and others) and reports PASS only for a complete, stable run whose checks all passed; anything else is FAIL, DEGRADED, VOID or PARTIAL. |
+| **The product running, per checkout** | `session` runs your own Compose files on the live checkouts and leases each checkout, linked worktrees included, a port family, so parallel agents do not collide. `up`, `preflight`, `logs`, `sleep`, `down` and `reset` drive the stack, `ps`, `restart`, `rebuild` and `exec` one service of it, and `--profile` your Compose profiles. The stack stops only when no checkout still holds it, and `reset` wipes only the volumes you declared resettable. |
+| **Parallel work in worktrees** | `use` serves a sibling from a worktree for one cockpit checkout, so each agent runs the whole product on its own branch. `check` refuses a fixed `container_name` or a shared image tag that would make two stacks collide, `doctor` warns when a lockfile or a declared input such as migrations changed under a running stack, and `stacks prune` removes what a deleted worktree's stack left behind. |
+| **Proof in a real browser** | `browser drive` and `browser screenshot` run a headless browser through your own Playwright project against every declared route on the leased application origin, signed in as a declared role when you ask, and record each screenshot with its digest and each route's console errors and failed requests ([below](#browser-checks)). |
+| **Test gates that cannot fake a pass** | `test-run` runs your own targeted or full gate (Vitest, Jest, pytest, Nx, Turborepo, Bazel and others) and reports PASS only for a complete, stable run whose checks all passed; anything else is FAIL, DEGRADED, VOID or PARTIAL. A change that deletes, skips or loosens tests is flagged. |
 | **One guard in every tool** | The same script refuses pushes to protected branches, reads and writes of secret files, and commands aimed at the production hosts you declare. A command it cannot prove read-only goes to a person, or is refused where the tool has no prompt. |
+| **Agents that unblock themselves** | An agent runs without asking what only reads, fast-forwards or repairs cockpit's own state: `pull` fast-forwards every checkout, `work recover` clears a crashed command's lock once it shows the holder gone, `sync` applies the agent's own `cockpit.toml` edit when it does not widen what agents may do, and `init` accepts the answers it read exactly from a file. Widening access, and by default deleting data, stays a person's. |
 | **Skills for driving it** | Each listed tool gets cockpit's skills for fixing a bug with proof, running a work order, checking the app in a browser and explaining a refusal ([below](#skills)). |
-| **Done, measured** | Optional work orders hold a change to an objective, a scope of paths and criteria with checks. In every mode cockpit reruns the checks and fails any change outside scope; the criteria are judged by a fresh read-only agent run, by the checks alone, or by the agent's own report, and the record says which. |
-| **MCP servers you approve** | A server your repositories declare reaches an agent only after a person approves its exact SHA-256 in `[mcp.approved]`; a changed declaration needs approval again. |
+| **Judged, not just gated** | Optional work orders hold a change to an objective, a scope of paths and criteria with checks. A fresh read-only agent run grades it by default (or the checks alone, or the agent's own report, and the record says which), and judges what a fixed rule cannot: whether a change outside scope was needed, a test change justified, and the agent's amendments to the contract held the bar. |
+| **Decisions and docs kept true** | A work order records each lasting decision as a numbered decision record and cannot be signed off while one is unresolved. `docs check` reports documents that still cite a removed path or `make` target, and decision records whose numbers, index or statuses disagree. |
+| **MCP servers you approve** | A server your repositories declare, local or remote over HTTP, reaches an agent only after a person approves its exact SHA-256 in `[mcp.approved]`; a changed declaration needs approval again. |
 | **Checked, not assumed** | `check` fails in CI, and when a Claude Code or Codex session starts, if a generated file stops matching `cockpit.toml`. Every diagnostic names what failed and the fix ([example](#drift-checks)). The [capability matrix](docs/capability-matrix.md) records what each tool actually enforced, from dated runs of the real tool; `selftest` checks the tools installed on your machine with probes you write. |
 
 Adopt it in steps: the instructions, skills and guard need only Git and Node.js; the stack switches on
@@ -218,10 +221,10 @@ stack, the tests and the grading the same way in each tool.
 | Skill | The agent uses it to |
 |---|---|
 | `cockpit-fix` | Fix a named bug or failing test: reproduce it with the declared test gate, fix it, prove it with the same gate. Most changes need nothing more. |
-| `cockpit-work` | Run a work order: write it, accept it, work inside its scope, check and grade it. |
+| `cockpit-work` | Run a work order: write it, accept it, work inside its scope, record its decisions, check and grade it. |
 | `cockpit-browser` | Check what the running app shows, through declared routes, signed-in roles and screenshots. It reports and never edits. Installed when a browser endpoint is declared. |
 | `cockpit-explain` | Say what the cockpit does, why it refused something and what to run next, changing nothing. |
-| `cockpit-setup` | Add a repository, upgrade, diagnose, or make a repository's guides reach every tool. |
+| `cockpit-setup` | Add a repository, upgrade, diagnose, clear a stale or orphaned stack, or make a repository's guides reach every tool. |
 | `adopt-cockpit` | Set cockpit up in a repository that has none yet. Install it with `npx skills add b0dea/cockpit --skill adopt-cockpit`. |
 
 Your own rules, skills and subagents go beside them as [overlays](docs/harness-surfaces.md#ownership-and-extension).
@@ -245,8 +248,8 @@ criteria:
 ```
 
 `work accept` records the contract, `work check` runs the checks, `work grade` grades it and
-`work signoff` closes it. A change outside `scope` fails the grade even when every criterion is met
-(this run used `grading = "checks"`):
+`work signoff` closes it. Under `grading = "checks"` a change outside `scope` fails the grade even
+when every criterion is met:
 
 ```console
 $ npx --no cockpit work grade --config cockpit.toml --work-order WO-1
@@ -273,10 +276,13 @@ which way each one closed:
 | `checks` | cockpit's reruns of each criterion's check, and nothing else. | `checks-passed` |
 | `self` | The agent that did the work, with a note saying what it checked. | `self-reported` |
 
-In every mode a failed check or a change outside scope fails the grade. Moving to a weaker mode needs a
-person's confirmation, and `[work.gates]` can ask for a person or a CI job to accept, amend or sign off
-an order (only the CI job is enforced). To grade a change without an order:
-`npx --no cockpit grade --config cockpit.toml --criteria criteria.md`. See
+A failed check fails the grade in every mode. Where a model grades, a change outside `scope`, a
+flagged test change and the agent's own amendments to the contract become standing criteria it judges;
+under `checks` they are decided by rule. With `[docs]` declared, `work note --decision` and
+`work decide` record each lasting decision, and `work signoff` waits until every one is resolved.
+Moving to a weaker mode needs a person's confirmation, and `[work.gates]` can ask for a person or a
+CI job to accept, amend or sign off an order (only the CI job is enforced). To grade a change without
+an order: `npx --no cockpit grade --config cockpit.toml --criteria criteria.md`. See
 [Work and browser](docs/work-and-browser.md).
 
 ## Browser checks
@@ -292,9 +298,16 @@ $ npx --no cockpit browser drive --config cockpit.toml --role admin  # as a sign
 
 The browser runs headless (Chromium by default; Firefox and WebKit are options) and stays on the
 application's leased origin: evidence is recorded only for a page that ends there, a second top-level
-navigation is refused, and a failure names the URL and the browser's own error code, never page text. Sign-in states are per worker or taken in turns, so parallel
-agents do not share a session. The guard asks a person before each browser command unless
-`browser.request_preapproval` is set, which is allowed only for isolated, non-production data.
+navigation is refused, and a failure names the URL and the browser's own error code. Sign-in states
+are per worker or taken in turns, so parallel agents do not share a session. Each route's console
+errors and failed requests to the application's origin are evidence, not a gate: `drive` exits 0
+unless `--fail-on-findings` is given.
+
+The data posture decides how much the agent may do alone. When `[browser.data]` is isolated, not
+restored and not production, `browser.request_preapproval` is on by default, so the guard runs browser
+commands without asking, and each route carries a short excerpt of the page's error messages, tagged
+untrusted. On any other posture the guard asks a person before each command and the excerpt is
+omitted.
 
 To let an agent drive a browser interactively through Playwright MCP tools, run a browser service in
 your own Compose file and declare its `browser.endpoint`; cockpit then publishes the Playwright MCP
@@ -308,7 +321,7 @@ server for approval and installs the `cockpit-browser` skill. See
 | Hand-written `AGENTS.md`, hooks and per-tool settings | Instructions and permissions | cockpit writes those files too, adds the enforcement an instruction cannot give, and tells you when a copy drifts. |
 | [rulesync](https://github.com/dyoshikawa/rulesync), [Ruler](https://github.com/intellectronica/ruler) | One set of rules rendered for many agent tools | cockpit bundles rulesync and uses it to render each tool's files, and adds the guard hook, permissions, a drift check for all of it, and a dated record of what each tool enforces. |
 | Docker Compose, Tilt, Dev Containers | Running the services | cockpit runs your own `compose.yml` against the checkouts agents edit, with port leases so parallel agents do not collide. It does not replace them. |
-| Parallel-agent runners and worktree managers | Several agents at once, each in its own checkout | cockpit does not create the checkouts. It gives each one its own port lease on the real multi-repository stack, and the same guard and grading in every tool. |
+| Parallel-agent runners and worktree managers | Several agents at once, each in its own checkout | cockpit does not create the checkouts. It gives each one its own port lease on the real multi-repository stack, serves a sibling from any worktree with `use`, prunes the stacks of deleted ones, and applies the same guard and grading in every tool. |
 | OpenSpec, spec-kit | The plan: specs, tasks, prompts | cockpit owns the environment and the grading. They combine. |
 
 ## Status and limits

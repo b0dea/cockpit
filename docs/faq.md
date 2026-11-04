@@ -67,9 +67,11 @@ its declared remote. It never rewrites Git remotes or edits undeclared files.
 
 ## Can two agents use the same machine at once?
 
-Yes. Each checkout leases its own port family, and each running `up` or `session` is a holder of
-the stack. `sleep` stops the stack only when no holder remains, so one agent cannot stop
-another's environment. See [Environment](environment.md#lifecycle-and-ownership).
+Yes. Each checkout, a linked worktree included, leases its own port family and runs its own stack,
+and each running `up` or `session` is a holder of it. `sleep` stops the stack only when no holder
+remains, so one agent cannot stop another's environment. `cockpit use` points a sibling at a worktree
+for one cockpit checkout, and `cockpit stacks prune` removes the stack a deleted worktree left behind.
+See [Environment](environment.md#lifecycle-and-ownership).
 
 ## What happens to my secrets?
 
