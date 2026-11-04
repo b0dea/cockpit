@@ -232,7 +232,7 @@ function openCodeExternalDirectories(grants: readonly Readonly<{ slug: string; t
 // ran a matching command headless, the control and a chain with an unmatched part were denied, a hook
 // `ask` denied a matching command, and Claude ignores these rules until a person trusts the workspace.
 const AGENT_COCKPIT_COMMANDS = [
-    'check *', 'doctor *', 'preflight *', 'logs *', 'ps *', 'restart *', 'rebuild *', 'exec *', 'sync *', 'reset * --apply', 'up *', 'sleep *', 'down *',
+    'check *', 'confirm *', 'doctor *', 'preflight *', 'logs *', 'ps *', 'restart *', 'rebuild *', 'exec *', 'sync *', 'reset * --apply', 'up *', 'sleep *', 'down *',
     'runtime measure *', 'test-run *',
     'work status *', 'work accept *', 'work check *', 'work note *', 'work decide *', 'work answer *', 'work acknowledge *', 'work grade *', 'work signoff *', 'work recover *',
     'work verify *', 'grade *', 'upgrade *', 'docs check *', 'use *', 'pull *', 'stacks *',

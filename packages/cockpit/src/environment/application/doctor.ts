@@ -26,6 +26,7 @@ import {
 } from './health.js'
 import { ownDataValues } from './shared.js'
 import { cockpitCommand } from '../../fix-catalogue.js'
+import { unconfirmedFix } from '../../guards/answer-confirmation.js'
 import { unreadableStateWarning } from './lifecycle-state.js'
 
 export interface DoctorCommandInput {
@@ -176,7 +177,8 @@ async function doctorTestingGateDiagnostics(loading: Promise<LoadedDoctorConfig>
 }
 
 // init records answers no person stated under `unconfirmed`. They look exactly like stated values
-// in the file, so doctor keeps naming them until a person confirms each and deletes its entry.
+// in the file, so doctor keeps naming them until each is confirmed: by the observation that verifies
+// it, or by a person where it is a trust decision or no observation settles it.
 async function doctorUnconfirmedDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {
     const loaded = await loading
     if (loaded.kind !== 'complete' || !loaded.result.config.unconfirmed) return []
@@ -186,7 +188,7 @@ async function doctorUnconfirmedDiagnostics(loading: Promise<LoadedDoctorConfig>
         code: 'DECLARATION_UNCONFIRMED' satisfies typeof ENVIRONMENT_CODES.DECLARATION_UNCONFIRMED,
         message: `${loaded.result.config.unconfirmed.join(', ')} in cockpit.toml were chosen by the setup agent or by no one named, not stated by a person, so they may not describe this product`,
         target: 'unconfirmed',
-        fix: 'confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml>',
+        fix: unconfirmedFix(loaded.result.config.unconfirmed),
     }]
 }
 

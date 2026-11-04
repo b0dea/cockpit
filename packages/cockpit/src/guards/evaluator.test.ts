@@ -325,6 +325,8 @@ describe('resolved guard evaluation', () => {
             // An unkeyed work-order record written by an agent would read as a person's, and a rewritten
             // policy record would present the agent's weakening as one a person accepted.
             '.cockpit/work-orders/WO-1.json', '.cockpit/work-orders/WO-1.lock', '.cockpit/policy.json',
+            // A confirmation an agent wrote would let its own sync remove an unconfirmed answer nothing observed.
+            '.cockpit/local/answer-confirmations',
             'cockpit/adopted/.claude/settings.json', 'cockpit/adopted/.codex/hooks.json', 'cockpit/adopted/.codex/config.toml']) {
             for (const input of [
                 payload('Write', { file_path: `${root}/${path}`, content: '{}' }), payload('Edit', { file_path: path, old_string: 'a', new_string: 'b' }),

@@ -128,7 +128,7 @@ describe('executable remedy catalogue', () => {
 // install, every configured command refuses without --config, and down and reset refuse until the
 // Docker daemon is named.
 describe('printed cockpit commands', () => {
-    const VERBS = 'sibling add|sibling remove|runtime measure|setup|sync|check|selftest|up|sleep|session|down|reset|preflight|doctor|logs'
+    const VERBS = 'sibling add|sibling remove|runtime measure|setup|sync|check|confirm|selftest|up|sleep|session|down|reset|preflight|doctor|logs'
     // Every work, browser and test command reads --config too; they are spelled through their own owners, not cockpitCommand.
     const SCANNED = `${VERBS}|test-run|${commandGroups.map(group => `${group.name} [a-z][a-z-]*`).join('|')}`
     const runnable = new RegExp(`(?:npx --no |\\./node_modules/\\.bin/)cockpit (${SCANNED})(?![\\w-])`, 'g')

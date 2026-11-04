@@ -16,7 +16,7 @@ import type { SetupResult } from './environment/setup.js'
 import type { SurfaceSelftestDraftInput, SurfaceSelftestHandlerInput } from './environment/selftest-application.js'
 import { commands, describePublicOption, internalCommands, resolveOrdinaryInvocation } from './command-table.js'
 import { effectivePolicy } from './autonomy.js'
-import { Autonomy, Work } from './schema.js'
+import { Autonomy, UNCONFIRMABLE_ANSWERS, Work } from './schema.js'
 import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS, SURFACE_TARGETS } from './surfaces/harness-registry.js'
 import { installedPackageMetadata } from './package-metadata.js'
 import { cockpitPackageVersion } from './test-support/package-version.js'
@@ -133,7 +133,7 @@ describe('closed ordinary invocation metadata', () => {
     const requiredWords: Readonly<Record<string, readonly string[]>> = {
         selftest: ['--probe-specifications', 'probes.json'], logs: ['--service', 'app'], runtime: ['measure', '--image', 'node:22-alpine'],
         restart: ['--service', 'app'], rebuild: ['--service', 'app'], exec: ['--service', 'app'],
-        'test-run': ['--gate', 'quick'], reset: ['--apply'], grade: ['--criteria', 'criteria.md'], use: ['app'], tool: ['add', 'codexcli'],
+        'test-run': ['--gate', 'quick'], reset: ['--apply'], grade: ['--criteria', 'criteria.md'], use: ['app'], tool: ['add', 'codexcli'], confirm: ['ports.bases'],
         ...Object.fromEntries(['accept', 'check', 'acknowledge', 'grade', 'signoff', 'recover'].map(sub => [`work ${sub}`, ['--work-order', 'WO-1']])),
         'work note': ['--work-order', 'WO-1', '--text', 'why'], 'work decide': ['--work-order', 'WO-1', '--decision', '1', '--record'], 'work answer': ['--work-order', 'WO-1', '--question', '1', '--text', 'because'],
         'work acknowledge': ['--work-order', 'WO-1', '--note', 'the deleted test is replaced'],
@@ -190,6 +190,8 @@ describe('closed ordinary invocation metadata', () => {
             ['use', 'app', '/workspace/app/.worktrees/feature'], ['use', 'app', '--clear', '--json'], ['pull'], ['pull', '--json'],
             // An added tool never widens what agents may do; the hold after it waits only for a sync.
             ['tool', 'add', 'opencode'], ['tool', 'add', 'codexcli', '--dry-run', '--json'],
+            // confirm itself names the person a trust decision needs, so every answer reaches it.
+            ...UNCONFIRMABLE_ANSWERS.map(answer => ['confirm', answer]), ['confirm', 'ports.bases', '--json'],
         ]
         for (const args of cases) {
             const argv = args[0] === 'registry-resolve' ? args : [...args, '--config', authority.configPath]
@@ -213,7 +215,7 @@ describe('closed ordinary invocation metadata', () => {
 
     it('requires the exact resolved config for every available config-bearing row', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
-        expect(rows.map(row => row.name)).toEqual(['setup', 'use', 'pull', 'tool', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'ps', 'restart', 'rebuild', 'exec',
+        expect(rows.map(row => row.name)).toEqual(['setup', 'use', 'pull', 'tool', 'confirm', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'ps', 'restart', 'rebuild', 'exec',
             'sleep', 'down', 'reset', 'stacks', 'doctor',
             'test-run', 'work status', 'work accept', 'work check', 'work note', 'work decide', 'work answer', 'work acknowledge', 'work grade', 'work signoff', 'work recover', 'work verify', 'grade',
             'browser drive', 'browser screenshot', 'docs check'])
@@ -277,6 +279,7 @@ describe('closed ordinary invocation metadata', () => {
             ['use', 'app', '/workspace/app/feature', 'extra'], ['pull', 'app'],
             // Removing a tool deletes its guard, so a person runs it.
             ['tool', 'remove', 'codexcli'], ['tool', 'add', 'unknown'], ['tool', 'add'], ['tool', 'add', 'codexcli', 'opencode'],
+            ['confirm'], ['confirm', 'ports'], ['confirm', 'ports.bases', 'guards'],
         ]
         for (const args of cases) {
             const argv = args[0] === 'registry-resolve' || args.some(arg => arg === '--config') ? args : [...args, '--config', authority.configPath]
@@ -384,6 +387,7 @@ describe('CLI help', () => {
         ['init', 'Usage: cockpit init [<root>] [options]'],
         ['runtime', 'Usage: cockpit runtime measure [options]'],
         ['sibling', 'Usage: cockpit sibling add|remove <slug> [options]'],
+        ['confirm', 'Usage: cockpit confirm <answer> [options]'],
     ])('prints the operands `%s` takes besides its options', async (verb, usage) => {
         const result = await runInProcess([verb, '--help'])
 
@@ -429,6 +433,21 @@ describe('CLI help', () => {
         const invalid = await runInProcess(['sibling', 'unknown', 'api'])
         expect(invalid.status).toBe(2)
         expect(invalid.stderr).toContain('[--instruction-pointer]')
+    })
+
+    it('routes confirm with its one answer to the handler and refuses an answer cockpit does not record', async () => {
+        const seen: unknown[] = []
+        const confirm = async (input: unknown) => { seen.push(input); return { status: 0, result: null, diagnostics: [] } }
+        expect((await runInProcess(['confirm', 'environment.machine', '--config', 'cockpit.toml'], { confirm } as never)).status).toBe(0)
+        expect(seen).toEqual([{ configPath: 'cockpit.toml', answer: 'environment.machine' }])
+
+        for (const args of [['confirm', 'environment', '--config', 'cockpit.toml'], ['confirm', '--config', 'cockpit.toml']]) {
+            const refused = await runInProcess(args, { confirm } as never)
+            expect(refused.status, args.join(' ')).toBe(2)
+            expect(refused.stderr).toContain('CLI_USAGE_INVALID')
+            expect(refused.stderr).toContain('ports.bases, environment.install_policies')
+        }
+        expect(seen).toHaveLength(1)
     })
 
     it('lists the commands for a bare invocation and points usage errors at --help', async () => {
@@ -495,6 +514,7 @@ describe('CLI help', () => {
             '  pull              Fast-forward the cockpit and its siblings to their upstreams\n' +
             '  sibling           Add or remove a repository in cockpit.toml (sibling add, sibling remove)\n' +
             '  tool              Add or remove an agent tool in cockpit.toml (tool add, tool remove)\n' +
+            '  confirm           Confirm an init answer no person stated by running the observation that verifies it\n' +
             '  registry-resolve  Turn a validated shell registry into data shell scripts can source\n' +
             '  upgrade           Move the exact cockpit pin to a newer version and re-run sync\n\n' +
             'Generate and verify:\n' +

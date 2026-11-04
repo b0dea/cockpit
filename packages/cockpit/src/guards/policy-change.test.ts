@@ -1,9 +1,17 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import type { z } from 'zod'
 
+import { stringify } from 'smol-toml'
+
 import { CockpitConfig } from '../schema.js'
-import { POLICY_CHANGE_RULE_PATHS, policyChange } from './policy-change.js'
+import { sha256Hex } from '../sha256.js'
+import { ANSWER_CONFIRMATION_PATH, confirmationConfigurationSha256, encodeAnswerConfirmations } from './answer-confirmation.js'
+import { encodeGuardLocalIdentity, GUARD_LOCAL_PATHS } from './local-identity.js'
+import { guardConfigChange, inspectGuardConfigChange, POLICY_CHANGE_RULE_PATHS, policyChange } from './policy-change.js'
 
 // A declaration as cockpit.toml spells it, edited freely and parsed again by each case.
 type Declared = Record<string, any>
@@ -136,5 +144,53 @@ describe('policyChange', () => {
         // The walk stops at the first rule on a path, so a rule beneath another is never consulted.
         const root = POLICY_CHANGE_RULE_PATHS.filter(path => !path.startsWith('sibling[].'))
         expect(root.filter(path => root.some(other => path.startsWith(`${other}.`)))).toEqual([])
+    })
+})
+
+describe('guardConfigChange', () => {
+    // The guards were generated with two answers unconfirmed; the agent's edit removes ports.bases.
+    const generated = Buffer.from(stringify({ ...declared, unconfirmed: ['ports.bases', 'guards'] }))
+    const edited = (edit: (config: Declared) => void = () => {}) => {
+        const after = structuredClone({ ...declared, unconfirmed: ['guards'] })
+        edit(after)
+        return CockpitConfig.parse(after)
+    }
+    const record = (answer: string, row: Record<string, unknown> = {}, observed: CockpitConfig = edited()) => Buffer.from(encodeAnswerConfirmations({
+        [answer]: { observation: 'preflight', ranAt: '2026-11-04T10:00:00.000Z', result: 'passed', evidenceSha256: 'a'.repeat(64),
+            configurationSha256: confirmationConfigurationSha256(observed), ...row } } as never))
+    const change = (confirmations: Uint8Array | undefined, after = edited()) =>
+        guardConfigChange(sha256Hex(generated), generated, { sha256: 'f'.repeat(64), config: after }, confirmations)
+    const widening = { kind: 'widening', fields: ['unconfirmed'] }
+
+    it('admits removing an unconfirmed answer only with a passed observation recorded for it against exactly the new configuration', () => {
+        expect(change(record('ports.bases'))).toEqual({ kind: 'non-widening' })
+        // Missing, unreadable, or recorded for another answer.
+        expect(change(undefined)).toEqual(widening)
+        expect(change(Buffer.from('{"format":'))).toEqual(widening)
+        expect(change(record('environment.machine', { observation: 'runtime-floor' }))).toEqual(widening)
+        // Stale: observed before another edit, which the removal then rides along with.
+        expect(change(record('ports.bases', {}, edited(config => { config.ports.bases.WEB_PORT = 4000 })))).toEqual(widening)
+        // Forged: not the observation that verifies the answer, or not a pass.
+        expect(change(record('ports.bases', { observation: 'check' }))).toEqual(widening)
+        expect(change(record('ports.bases', { result: 'failed' }))).toEqual(widening)
+        // A trust decision stays a person's whatever the record claims.
+        const trusted = edited(config => { config.unconfirmed = ['ports.bases'] })
+        expect(change(record('guards', {}, trusted), trusted)).toEqual(widening)
+    })
+
+    it('lets check read the record, so a confirmed removal waits only for a sync', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'cockpit-policy-change-'))
+        try {
+            mkdirSync(join(root, GUARD_LOCAL_PATHS.directory), { recursive: true })
+            const identity = Object.fromEntries(['root', 'rootDevice', 'rootInode', 'configPath', 'configDevice', 'configInode', 'node', 'nodeSha256',
+                'nodeFingerprint', 'module', 'moduleSha256'].map(key => [key, 'synthetic']))
+            writeFileSync(join(root, GUARD_LOCAL_PATHS.identity), encodeGuardLocalIdentity({ ...identity, configSha256: sha256Hex(generated) } as never))
+            writeFileSync(join(root, GUARD_LOCAL_PATHS.generatedConfig), generated)
+            const codes = async () => (await inspectGuardConfigChange(root, join(root, 'cockpit.toml'), { sha256: 'f'.repeat(64), config: edited() }))
+                .map(row => row.code)
+            expect(await codes()).toEqual(['GUARD_CONFIG_WIDENED'])
+            writeFileSync(join(root, ANSWER_CONFIRMATION_PATH), record('ports.bases'))
+            expect(await codes()).toEqual(['GUARD_CONFIG_UNSYNCED'])
+        } finally { rmSync(root, { recursive: true, force: true }) }
     })
 })

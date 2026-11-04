@@ -20,6 +20,7 @@ import { hasErrorCode } from '../environment/contract.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import type { CockpitConfig } from '../schema.js'
 import { sha256Hex } from '../sha256.js'
+import { ANSWER_CONFIRMATION_PATH, confirmedAnswers } from './answer-confirmation.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from './local-identity.js'
 
 type PolicyChange = Readonly<{ kind: 'non-widening' }> | Readonly<{ kind: 'widening'; fields: readonly string[] }>
@@ -85,7 +86,8 @@ const installPolicies: Rule = (before: CockpitConfig['environment']['install_pol
 
 // Keyed by schema path from the configuration's root.
 const CHANGE_RULES: Rules = {
-    // Removing an entry would claim a person stated an answer nobody stated.
+    // Removing an entry would claim a person stated an answer nobody stated; policyChange admits the
+    // removal of one an observation recorded as confirmed for exactly the new configuration.
     unconfirmed: onlyAdds,
     'cockpit.guide_cap': safe,
     sibling: siblings,
@@ -116,10 +118,13 @@ export const POLICY_CHANGE_RULE_PATHS: readonly string[] = Object.freeze([...Obj
 
 /**
  * Whether `after` lets agents do anything `before` did not, over the loaded configurations. Only a
- * difference a rule above proves safe is non-widening; every other difference widens.
+ * difference a rule above proves safe is non-widening; every other difference widens. `confirmed`
+ * names the answers whose recorded observation matches `after`; only those may leave `unconfirmed`.
  */
-export function policyChange(before: CockpitConfig, after: CockpitConfig): PolicyChange {
-    const fields = walk(before, after, CHANGE_RULES, '')
+export function policyChange(before: CockpitConfig, after: CockpitConfig, confirmed: ReadonlySet<string> = new Set()): PolicyChange {
+    const unconfirmed: Rule = (from: readonly string[] = [], to: readonly string[] = [], at: string) =>
+        gains(to, from.filter(answer => !confirmed.has(answer))) ? [at] : []
+    const fields = walk(before, after, { ...CHANGE_RULES, unconfirmed }, '')
     return fields.length ? { kind: 'widening', fields: [...new Set(fields)] } : { kind: 'non-widening' }
 }
 
@@ -128,13 +133,14 @@ type GuardConfigChange = Readonly<{ kind: 'unchanged' | 'unrecorded' }> | Policy
 /**
  * How the current configuration differs from the one the guards were generated from. `recorded` is
  * the copy sync kept of that configuration; one missing, or not the configuration `generatedSha256`
- * names, cannot show the edit is safe.
+ * names, cannot show the edit is safe. `confirmations` is the machine-local record `cockpit confirm`
+ * keeps of the observations that confirmed answers.
  */
 export function guardConfigChange(generatedSha256: string, recorded: Uint8Array | undefined,
-    current: Readonly<{ sha256: string; config: CockpitConfig }>): GuardConfigChange {
+    current: Readonly<{ sha256: string; config: CockpitConfig }>, confirmations?: Uint8Array): GuardConfigChange {
     if (current.sha256 === generatedSha256) return { kind: 'unchanged' }
     const before = recorded && sha256Hex(recorded) === generatedSha256 ? parseCockpitConfigBytes(recorded) : undefined
-    return before ? policyChange(before, current.config) : { kind: 'unrecorded' }
+    return before ? policyChange(before, current.config, confirmedAnswers(confirmations, current.config)) : { kind: 'unrecorded' }
 }
 
 /** Why a changed configuration needs a person before the guard applies it, for a hold or a check. */
@@ -161,7 +167,8 @@ export async function inspectGuardConfigChange(root: string, configPath: string,
     if (!identityBytes) return []
     const identity = parseGuardLocalIdentity(identityBytes.toString('utf8'))
     if (!identity) return []
-    const change = guardConfigChange(identity.configSha256, await local(GUARD_LOCAL_PATHS.generatedConfig), current)
+    const change = guardConfigChange(identity.configSha256, await local(GUARD_LOCAL_PATHS.generatedConfig), current,
+        await local(ANSWER_CONFIRMATION_PATH))
     if (change.kind === 'unchanged') return []
     if (change.kind === 'non-widening') return [{ severity: 'warning' as const, target: 'guard',
         code: 'GUARD_CONFIG_UNSYNCED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_UNSYNCED,
