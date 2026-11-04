@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -38,8 +38,27 @@ describe('autonomy policy', () => {
             expect(await readRecordedPolicy(root)).toBeUndefined()
             await writeRecordedPolicy(root, policy({ reset: 'ci' }))
             expect(await readRecordedPolicy(root)).toEqual(policy({ reset: 'ci' }))
+            const malformed = /not a cockpit-policy\/v1 record .*git restore -- \.cockpit\/policy\.json, or if that copy is the damaged one, a person deletes/
             writeFileSync(join(root, '.cockpit/policy.json'), JSON.stringify({ format: 'cockpit-policy/v1', policy: { ...policy(), grading: 'lenient' } }))
-            await expect(readRecordedPolicy(root)).rejects.toThrow(/not a cockpit-policy\/v1 record; restore it/)
+            await expect(readRecordedPolicy(root)).rejects.toThrow(malformed)
+            writeFileSync(join(root, '.cockpit/policy.json'), JSON.stringify({ format: 'cockpit-policy/v1', policy: { ...policy(), gates: { ...policy().gates, merge: 'agent' } } }))
+            await expect(readRecordedPolicy(root)).rejects.toThrow(malformed)
+        } finally { rmSync(root, { recursive: true }) }
+    })
+
+    it('reads a record from before a gate existed with that gate at person, so the new default reports as a weakening a sync can record', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'cockpit-policy-'))
+        try {
+            // The record 0.1.0 wrote, before [work.gates] acknowledge existed.
+            mkdirSync(join(root, '.cockpit'))
+            writeFileSync(join(root, '.cockpit/policy.json'), JSON.stringify({ format: 'cockpit-policy/v1', policy: { grading: 'independent',
+                gates: { accept: 'agent', amend: 'agent', answer: 'agent', signoff: 'agent' }, autonomy: { sync: 'agent', stale_delete: 'agent', reset: 'person', mcp_approve: 'person' } } }))
+            const recorded = (await readRecordedPolicy(root))!
+            expect(recorded.gates.acknowledge).toBe('person')
+            expect(policyWeakening(recorded, policy())).toEqual([{ field: 'work.gates.acknowledge', from: 'person', to: 'agent' }])
+            // What a person's sync --interactive records once they accept it.
+            await writeRecordedPolicy(root, policy())
+            expect(await readRecordedPolicy(root)).toEqual(policy())
         } finally { rmSync(root, { recursive: true }) }
     })
 })
