@@ -4,6 +4,7 @@ import { readBoundedFile } from '../bounded-read.js'
 import { isIP } from 'node:net'
 import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import { errorCause, snapshotJson, type HolderId, type StackId, RefusalError, hasErrorCode } from '../environment/contract.js'
+import { redactSensitiveMessage } from '../environment/sensitive.js'
 import { type StateNamespace } from '../environment/state.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import { assertBrowserStorageStateCurrent, browserRuntimeControlAuthorities, browserRuntimeControlPorts, type BrowserRuntimeProjection } from './runtime.js'
@@ -238,13 +239,22 @@ function parseDiagnosticEntry(value: unknown): BrowserDiagnosticEntry | undefine
         ? { kind: 'request', method: value.method, path: value.path, failure: value.failure } : undefined
 }
 
+// Page text is kept as work-order evidence, so a URL loses its query string and fragment and anything
+// secret-shaped is redacted; text that cannot be redacted is withheld, never kept raw.
+function sanitizeExcerpt(text: string): string {
+    const redacted = redactSensitiveMessage(text.replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s?#]*)[?#]\S*/gi, '$1')) ?? '[withheld]'
+    let bounded = redacted
+    while (Buffer.byteLength(bounded) > MAX_EXCERPT_MESSAGE_BYTES) bounded = bounded.slice(0, -1)
+    return bounded
+}
+
 function parseMessages(value: unknown): Extract<BrowserMessageExcerpt, { trust: string }> | undefined {
     if (!Array.isArray(value) || value.length > MAX_EXCERPT_MESSAGES) return undefined
     const messages: Array<{ kind: 'console' | 'pageerror'; text: string }> = []
     for (const row of value) {
         if (!isRecord(row) || !exactKeys(row, ['kind', 'text']) || row.kind !== 'console' && row.kind !== 'pageerror' || typeof row.text !== 'string'
             || row.text.length === 0 || Buffer.byteLength(row.text) > MAX_EXCERPT_MESSAGE_BYTES || /[\x00-\x1f\x7f]/.test(row.text)) return undefined
-        messages.push({ kind: row.kind, text: row.text })
+        messages.push({ kind: row.kind, text: sanitizeExcerpt(row.text) })
     }
     return { trust: 'untrusted-page-content', messages }
 }
@@ -393,7 +403,10 @@ function selectRoutes(input: BrowserCommandInput): BrowserRoutePolicy['surfaces'
     const route = input.route
     const origin = new URL(input.policy.origin)
     let href: string | undefined
-    if (route.startsWith('/') && !route.startsWith('//')) { try { href = new URL(route, origin).href } catch { href = undefined } }
+    if (route.startsWith('/') && !route.startsWith('//')) {
+        // `new URL` throws TypeError for an address it cannot parse; such a route can only match by name.
+        try { href = new URL(route, origin).href } catch (error) { if (!(error instanceof TypeError)) throw error }
+    }
     const surface = input.policy.surfaces.find(row => row.name === route || href !== undefined && row.url === href)
     if (surface) return [surface]
     // The route is the caller's own input, so it is safe to echo back.

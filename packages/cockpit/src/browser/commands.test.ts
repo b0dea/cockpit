@@ -21,7 +21,7 @@ afterEach(async () => Promise.all(roots.splice(0).map(root => rm(root, { recursi
 
 type ModuleMode = 'connect' | 'context' | 'page' | 'goto' | 'screenshot' | 'http-error'
     | 'null-response' | 'redirect-return' | 'final-foreign' | 'same-origin-redirect' | 'popup-cross-origin' | 'control-plane-attempts'
-    | 'later-navigation' | 'refused' | 'findings' | 'flood'
+    | 'later-navigation' | 'refused' | 'findings' | 'flood' | 'secret-message'
     | 'oversize-screenshot' | 'preexisting-screenshot' | 'swap-root' | 'remove-screenshot' | 'cleanup' | null
 
 function playwrightModule(input: { logPath: string; serverPath: string; artifactRoot: string; outsideRoot: string; mode: ModuleMode }): string {
@@ -93,6 +93,7 @@ const browser = () => ({
             emit('response', reply(foreign('/lib.js'), 500)); emit('requestfailed', foreign('/pixel.gif'))
             emit('response', reply({ ...own('/settings'), isNavigationRequest: () => true, frame: () => frame }, 404))
           }
+          if (${JSON.stringify(input.mode)} === 'secret-message') emit('console', { type: () => 'error', text: () => 'fetch http://app.localhost:4000/api?token=abc123leak#frag failed; Authorization: Bearer abc123leak', location: () => ({ url: 'http://app.localhost:4000/app.js', lineNumber: 1 }) })
           if (${JSON.stringify(input.mode)} === 'flood') for (let line = 0; line < 25; line++) emit('console', { type: () => 'error', text: () => 'flood ' + line + ' ' + 'x'.repeat(400), location: () => ({ url: 'http://app.localhost:4000/app.js', lineNumber: line }) })
           ${input.mode === 'http-error' ? 'fulfilled = response(current, 503)' : ''}
           ${input.mode === 'null-response' ? 'return null' : 'return fulfilled'} },
@@ -251,6 +252,16 @@ describe('browser driving commands', () => {
         if (!('messages' in excerpt)) throw new Error('flood drive carried no excerpt')
         expect(excerpt.messages).toHaveLength(5)
         expect(excerpt.messages.every(row => Buffer.byteLength(row.text) <= 240)).toBe(true)
+    })
+
+    it('redacts secret-shaped text and strips URL queries from the message excerpt', async () => {
+        const leaky = await fixture({ mode: 'secret-message' })
+        const result = await executeBrowserCommand({ runtime: leaky.runtime, client: leaky.client, policy: leaky.policy, kind: 'drive' })
+        if (result.kind !== 'complete') throw new Error('secret-message drive refused')
+        const excerpt = result.receipt.surfaces[0]!.diagnostics!.excerpt
+        if (!('messages' in excerpt)) throw new Error('secret-message drive carried no excerpt')
+        expect(excerpt.messages[0]!.text).toContain('http://app.localhost:4000/api')
+        expect(JSON.stringify(result.receipt)).not.toMatch(/abc123leak|frag/)
     })
 
     it('fails the application outcome on findings only when the command asks for a clean route', async () => {
