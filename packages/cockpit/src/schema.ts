@@ -532,11 +532,8 @@ const BrowserArtifactRoots = z.object({
 })
 
 /** The data posture that lets browser tools run without prompts: isolated, not restored, not reaching production. */
-const browserDataQualifies = (data: Readonly<{ mode: string; isolated: boolean; reaches_production: boolean }>): boolean =>
+export const browserDataQualifies = (data: Readonly<{ mode: string; isolated: boolean; reaches_production: boolean }>): boolean =>
     data.mode !== 'restored' && data.isolated && !data.reaches_production
-/** An explicit request_preapproval wins; otherwise preapproval follows the declared data posture. */
-export const browserPreapprovalRequested = (browser: Readonly<{ request_preapproval?: boolean | undefined; data: Parameters<typeof browserDataQualifies>[0] }>): boolean =>
-    browser.request_preapproval ?? browserDataQualifies(browser.data)
 
 export const Browser = z.object({
     engine: z.enum(['chromium', 'firefox', 'webkit']).default('chromium').describe('Browser engine to drive.'),

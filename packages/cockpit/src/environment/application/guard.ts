@@ -15,7 +15,7 @@ import {
     snapshotJson,
 } from '../contract.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, type ExecutableResolution, type ResolvedExecutable } from '../executable.js'
-import { browserPreapprovalRequested, CockpitConfig } from '../../schema.js'
+import { CockpitConfig } from '../../schema.js'
 import { pinnedPolicyDenial } from '../../guards/policy-pin.js'
 import { guardConfigChange, guardConfigHeldReason } from '../../guards/policy-change.js'
 import {
@@ -63,7 +63,7 @@ import {
     withSetupCheckoutProjection,
     type SetupCheckoutObservation,
 } from '../setup-observation.js'
-import { loadCockpitConfig, consumeLoadedConfigProjection, STRUCTURED_INPUT_BYTE_LIMIT, type LoadedConfigProjection } from '../../config/load.js'
+import { browserPreapprovalRequested, loadCockpitConfig, consumeLoadedConfigProjection, STRUCTURED_INPUT_BYTE_LIMIT, type LoadedConfigProjection } from '../../config/load.js'
 import { deriveRegistry } from '../../registry-derivation.js'
 import { confinedPath, lifecycleRefusal, ownDataValues, sameSource } from './shared.js'
 import { readSiblingCheckouts, servedSiblings, type ServedSibling, type SiblingCheckoutRecordRead } from '../sibling-checkouts.js'

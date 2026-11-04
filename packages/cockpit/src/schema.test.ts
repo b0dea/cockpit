@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import { ENTRYPOINT_KINDS } from './entrypoint-kinds.js'
-import { Autonomy, Browser, browserPreapprovalRequested, Docs, EntrypointDerivative, Environment, InstallPolicy, Sibling, Testing, Work } from './schema.js'
+import { browserPreapprovalRequested } from './config/load.js'
+import { Autonomy, Browser, Docs, EntrypointDerivative, Environment, InstallPolicy, Sibling, Testing, Work } from './schema.js'
 import { CockpitConfig, CustomHarness, Guards, SurfaceDeclaration, SurfaceOverlay } from './schema.js'
 import { renderCockpitSchema } from './schema-json.js'
 import { compileDraft04Schema } from '../test-support/draft04-validator.js'

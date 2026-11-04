@@ -13,7 +13,11 @@ import {
     snapshotJson,
 } from '../environment/contract.js'
 import { effectivePolicy, readRecordedPolicy, type EffectivePolicy } from '../autonomy.js'
-import { browserPreapprovalRequested, CockpitConfig, EVALUATOR_COMMANDS, runtimeDeclarationSha256, type EvaluatorTool } from '../schema.js'
+import { browserDataQualifies, CockpitConfig, EVALUATOR_COMMANDS, runtimeDeclarationSha256, type EvaluatorTool } from '../schema.js'
+
+/** An explicit request_preapproval wins; otherwise preapproval follows the declared data posture. */
+export const browserPreapprovalRequested = (browser: Readonly<{ request_preapproval?: boolean | undefined; data: Parameters<typeof browserDataQualifies>[0] }>): boolean =>
+    browser.request_preapproval ?? browserDataQualifies(browser.data)
 import { formatShellCommand } from '../fix-catalogue.js'
 import { readBoundedFile, type BoundedRead } from '../bounded-read.js'
 
