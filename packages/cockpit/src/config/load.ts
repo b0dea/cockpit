@@ -133,6 +133,7 @@ function projectTestingConfig(declaredTesting: NonNullable<CockpitConfig['testin
             })),
         },
         nativeHookInstall: declaredTesting.native_hooks.install,
+        ...(declaredTesting.test_files === undefined ? {} : { testFiles: [...declaredTesting.test_files] }),
         ...(declaredTesting.native_hook_policy === undefined ? {} : {
             nativeHookPolicy: { ...declaredTesting.native_hook_policy },
         }),

@@ -12,7 +12,7 @@ import { type BoundedRead, readBoundedFile } from './bounded-read.js'
 import { type EnvironmentDiagnostic, type ENVIRONMENT_CODES, hasErrorCode, RefusalError } from './environment/contract.js'
 import type { CockpitConfig, Decider, WorkGrading } from './schema.js'
 
-export type WorkGate = 'accept' | 'amend' | 'answer' | 'signoff'
+export type WorkGate = 'accept' | 'amend' | 'answer' | 'signoff' | 'acknowledge'
 export type AutonomyDecision = 'sync' | 'stale_delete' | 'reset' | 'mcp_approve'
 export interface EffectivePolicy {
     readonly grading: WorkGrading
@@ -24,7 +24,7 @@ export interface EffectivePolicy {
 // would start outside the guard, and a team opts into person or CI gates field by field. A sibling's
 // MCP source is an ordinary file an agent writes, and a harness starts an enabled server outside every
 // guard boundary, so an agent approving MCP servers could run any command it wrote there.
-export const GATE_DEFAULTS: Readonly<Record<WorkGate, Decider>> = Object.freeze({ accept: 'agent', amend: 'agent', answer: 'agent', signoff: 'agent' })
+export const GATE_DEFAULTS: Readonly<Record<WorkGate, Decider>> = Object.freeze({ accept: 'agent', amend: 'agent', answer: 'agent', signoff: 'agent', acknowledge: 'person' })
 export const AUTONOMY_DEFAULTS: Readonly<Record<AutonomyDecision, Decider>> = Object.freeze({ sync: 'agent', stale_delete: 'agent', reset: 'person', mcp_approve: 'person' })
 
 export function effectivePolicy(config: Readonly<{ work: Readonly<Pick<CockpitConfig['work'], 'grading'> & { gates: Readonly<CockpitConfig['work']['gates']> }>

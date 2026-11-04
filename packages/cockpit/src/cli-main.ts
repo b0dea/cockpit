@@ -491,8 +491,17 @@ function unsatisfiedWorkDiagnostic(operation: WorkApplicationRequest['operation'
         fix: 'read result.criteria, result.checks and result.outOfScope: fix the product for an unmet or unclear criterion, make a failed check pass, move or revert a change outside scope, then grade again with npx --no cockpit work grade --config <your cockpit.toml> --work-order <id>' }
 }
 
+function weakenedTestsDiagnostic(operation: WorkApplicationRequest['operation'], message: string): Diagnostic {
+    if (operation === 'work-grade') return { severity: 'error', message,
+        code: 'WORK_TEST_WEAKENED' satisfies typeof ENVIRONMENT_CODES.WORK_TEST_WEAKENED,
+        fix: 'read result.testProtection.findings: restore each deleted, skipped, suppressed or loosened test, or have a person acknowledge the change by running npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why it is not a weakening> --interactive in a terminal outside CI; never type the digest for them' }
+    return { severity: 'error', message,
+        code: 'WORK_TEST_WEAKENED' satisfies typeof ENVIRONMENT_CODES.WORK_TEST_WEAKENED,
+        fix: 'read result.testProtection: restore each deleted, skipped, suppressed or loosened test; an order records the base a weakening is judged against and a person acknowledges a legitimate one with npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why> --interactive' }
+}
+
 // A person gate binds what the person reads to the digest they type, so it never completes for an agent.
-function personRequired(handler: 'work-accept' | 'work-answer' | 'work-signoff', prompt: string): CommandOutcome {
+function personRequired(handler: 'work-accept' | 'work-answer' | 'work-signoff' | 'work-acknowledge', prompt: string): CommandOutcome {
     return { artifact: null, destination: null, result: { prompt }, status: 2, diagnostics: [{ severity: 'error', message: `${handler.slice('work-'.length)} is a person's step under [work.gates] in cockpit.toml, and this run has no person at a terminal`,
         code: 'WORK_PERSON_REQUIRED' satisfies typeof ENVIRONMENT_CODES.WORK_PERSON_REQUIRED,
         fix: 'stop and ask a person to run the same command with --interactive in a terminal outside CI, read what it shows, and type the digest; never type it for them' }] }
@@ -509,7 +518,9 @@ function sameToolGradeWarnings(value: unknown, env: Readonly<Record<string, stri
 
 function workCommandOutcome(outcome: WorkApplicationOutcome, env: Readonly<Record<string, string | undefined>>): CommandOutcome {
     if (outcome.kind === 'complete') return { status: 0, result: outcome.value, diagnostics: sameToolGradeWarnings(outcome.value, env) }
-    if (outcome.kind === 'unsatisfied') return { status: 2, result: outcome.value, diagnostics: [unsatisfiedWorkDiagnostic(outcome.operation, outcome.reason), ...sameToolGradeWarnings(outcome.value, env)] }
+    if (outcome.kind === 'unsatisfied') return { status: 2, result: outcome.value, diagnostics: [
+        ...outcome.weakening ? [weakenedTestsDiagnostic(outcome.operation, outcome.weakening)] : [],
+        ...outcome.reason || !outcome.weakening ? [unsatisfiedWorkDiagnostic(outcome.operation, outcome.reason)] : [], ...sameToolGradeWarnings(outcome.value, env)] }
     return usageOutcome('WORK_APPLICATION_REFUSED', outcome.kind === 'refusal' ? outcome.reason : 'this step needs a person at a terminal')
 }
 
@@ -956,6 +967,10 @@ async function decodeRequest(
             const answer = text('text'), question = Number(text('question'))
             if (!answer || !Number.isSafeInteger(question) || question < 1) return usageOutcome('CLI_USAGE_INVALID', 'provide --question <number> and --text <answer>')
             request = { operation: handler, workOrderId: workOrderId!, question, text: answer }
+        } else if (handler === 'work-acknowledge') {
+            const note = text('note')
+            if (!note) return usageOutcome('CLI_USAGE_INVALID', 'provide --note <why this change to the tests is not a weakening>', '--note')
+            request = { operation: handler, workOrderId: workOrderId!, note }
         } else if (handler === 'work-grade') {
             const verdict = text('verdict'), note = text('note')
             if (verdict !== undefined && verdict !== 'met' && verdict !== 'unmet') return usageOutcome('CLI_USAGE_INVALID', '--verdict is met or unmet', '--verdict')
@@ -1294,7 +1309,7 @@ async function dispatchHandler(
         request.handler,
     )
     if (isWorkHandler(request.handler) && 'request' in request.input) {
-        if (request.handler === 'work-accept' || request.handler === 'work-answer' || request.handler === 'work-signoff') {
+        if (request.handler === 'work-accept' || request.handler === 'work-answer' || request.handler === 'work-signoff' || request.handler === 'work-acknowledge') {
             const opened = await operators.beginOperatorWorkApplication?.(request.input)
             if (!opened) return unavailable()
             if (!('decide' in opened)) return opened

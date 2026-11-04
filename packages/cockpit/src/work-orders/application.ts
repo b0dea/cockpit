@@ -14,6 +14,7 @@ import { errorCause, RefusalError } from '../environment/contract.js'
 import type { GradingSubject, Verdict } from '../grading/grade.js'
 import type { Decider } from '../schema.js'
 import { runGate } from '../testing/gates.js'
+import { describeWeakening, testWeakeningDigest } from '../testing/weakening.js'
 import { criteriaWeakening, scopeMatches, WORK_ORDER_ID, workOrderDigest, type WorkOrder } from './contract.js'
 import type { CheckResult, WorkRecord } from './store.js'
 import { isWorkApplicationComposition, type WorkApplicationComposition } from './composition.js'
@@ -29,6 +30,7 @@ const Request = z.discriminatedUnion('operation', [
     z.object({ operation: z.literal('work-answer'), workOrderId: id, question: z.number().int().min(1), text: note }).strict(),
     z.object({ operation: z.literal('work-grade'), workOrderId: id, verdict: z.enum(['met', 'unmet']).optional(), note: note.optional() }).strict(),
     z.object({ operation: z.literal('work-signoff'), workOrderId: id, close: z.enum(['done', 'partial', 'abandoned']), note: note.optional() }).strict(),
+    z.object({ operation: z.literal('work-acknowledge'), workOrderId: id, note }).strict(),
     z.object({ operation: z.literal('work-recover'), workOrderId: id, apply: z.boolean() }).strict(),
     z.object({ operation: z.literal('work-verify') }).strict(),
     z.object({ operation: z.literal('grade-criteria'), criteriaFile: relativeFile }).strict(),
@@ -51,12 +53,13 @@ export type WorkApplicationOutcome =
     | Readonly<{ kind: 'refusal'; operation: Operation | 'invalid'; reason: string }>
     // The operation ran and its result does not meet the bar (a gate short of PASS, a failed check, an
     // unmet criterion); the result is the evidence to act on.
-    | Readonly<{ kind: 'unsatisfied'; operation: Operation; value: unknown; reason: string }>
+    // `weakening` is the part of the failure that is test weakening, which has its own diagnostic and fix.
+    | Readonly<{ kind: 'unsatisfied'; operation: Operation; value: unknown; reason: string; weakening?: string }>
 
 const refusal = (operation: Operation | 'invalid', reason: string): WorkApplicationOutcome => ({ kind: 'refusal', operation, reason })
 const complete = (operation: Operation, value: unknown): WorkApplicationOutcome => ({ kind: 'complete', operation, value })
-const unsatisfied = (operation: Operation, value: unknown, reason: string): WorkApplicationOutcome =>
-    ({ kind: 'unsatisfied', operation, value, reason })
+const unsatisfied = (operation: Operation, value: unknown, reason: string, weakening?: string): WorkApplicationOutcome =>
+    ({ kind: 'unsatisfied', operation, value, reason, ...weakening ? { weakening } : {} })
 const now = () => new Date().toISOString()
 // Agent-written text is shown to a person with its control and bidirectional-override characters
 // replaced, so it can neither drive their terminal nor read in an order other than the one recorded.
@@ -77,7 +80,25 @@ function displayState(row: Observed, attemptCap: number): string {
 function openQuestions(record: WorkRecord): readonly number[] {
     return record.notes.flatMap((row, index) => row.kind === 'question' && !record.notes.some(answer => answer.answers === index + 1) ? [index + 1] : [])
 }
+// The grade's criterion-level finding for tests weakened since the base. An acknowledgement covers exactly
+// the findings it was recorded for, so any further weakening fails again.
+const PROTECTION_ID = 'test-protection'
+type Weakening = Awaited<ReturnType<WorkApplicationComposition['testWeakening']>>
+function protection(weak: Weakening, record: WorkRecord | undefined) {
+    const rows = weak.findings.map(describeWeakening)
+    const digest = testWeakeningDigest(weak.findings)
+    const acknowledged = weak.findings.length ? record?.acknowledgements.find(row => row.digest === digest) : undefined
+    const how = record ? 'a person records it with npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why this is not a weakening> --interactive'
+        : 'a work order lets a person acknowledge it; there is none for this grade'
+    const verdict: Verdict | undefined = !weak.findings.length ? undefined
+        : acknowledged ? { id: PROTECTION_ID, verdict: 'met', note: `weakening acknowledged by ${acknowledged.by}: ${acknowledged.note}`.slice(0, 4_000) }
+            : { id: PROTECTION_ID, verdict: 'unmet', note: `tests were weakened since the base (${rows.join('; ')}; test files from ${weak.patterns.source}); revert it, or ${how}`.slice(0, 4_000) }
+    return { verdict, value: { testFiles: weak.patterns.source, findings: rows, ...acknowledged ? { acknowledgedBy: acknowledged.by } : {} } }
+}
+const split = (verdicts: readonly Verdict[]) => ({ others: verdicts.filter(row => row.verdict !== 'met' && row.id !== PROTECTION_ID),
+    weakening: verdicts.find(row => row.id === PROTECTION_ID && row.verdict !== 'met')?.note })
 const pendingCi = (record: WorkRecord) => [
+    ...record.acknowledgements.filter(row => row.by === 'ci').map(() => 'acknowledge'),
     ...record.accepted.by === 'ci' ? ['accept'] : [], ...record.amendments.filter(row => row.by === 'ci').map(() => 'amend'),
     ...record.notes.filter(row => row.kind === 'answer' && row.by === 'ci').map(() => 'answer'), ...record.closure?.by === 'ci' ? ['signoff'] : [],
 ]
@@ -98,7 +119,14 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
         if (captured.operation === 'test-run') {
             const prepared = await composition.gate(captured)
             const run = await runGate(prepared.registry, prepared.request, prepared.dependencies)
-            return run.satisfiesGate ? complete(operation, run) : unsatisfied(operation, run, `${run.verdict}: ${run.reasons.join('; ') || 'declared gate was not satisfied'}`)
+            // A passing run proves nothing if the tests it ran were weakened, so it is checked against the base of each open order.
+            const open = (await composition.store.list()).filter(row => !TERMINAL.has(row.state))
+            const guards = await Promise.all(open.map(async row => ({ id: row.id, ...protection(await composition.testWeakening(row.accepted.base), row) })))
+            const testProtection = guards.length ? { comparedWith: guards.map(row => `${row.id}'s base`), orders: guards.map(row => ({ id: row.id, ...row.value })) }
+                : { comparedWith: [], note: 'no open work order records a base commit to compare tests with; accept an order before changing tests' }
+            const weakening = guards.flatMap(row => row.verdict?.verdict === 'unmet' ? [`${row.id}: ${row.verdict.note}`] : []).join(' | ')
+            const failure = run.satisfiesGate ? '' : `${run.verdict}: ${run.reasons.join('; ') || 'declared gate was not satisfied'}`
+            return !failure && !weakening ? complete(operation, { ...run, testProtection }) : unsatisfied(operation, { ...run, testProtection }, failure, weakening || undefined)
         }
         // A policy weakened in cockpit.toml since the last sync is not in force until a person accepts it there.
         const recorded = await composition.recordedPolicy()
@@ -178,6 +206,7 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
                 id: row.id, state: displayState(row, composition.caps.attempts),
                 ...row.record?.closure ? { closedAs: row.record.closure.how, closedBy: row.record.closure.by } : {},
                 ...row.record ? { attempts: row.record.attempts, acceptedBy: row.record.accepted.by, openQuestions: openQuestions(row.record),
+                    acknowledgements: row.record.acknowledgements.map(({ by, note, findings }) => ({ by, note, findings })),
                     awaitingCi: pendingCi(row.record), ...row.record.grade ? { grade: { mode: row.record.grade.mode, passed: row.record.grade.passed,
                         criteria: row.record.grade.criteria, outOfScope: row.record.grade.outOfScope, ...row.record.grade.evaluator ? { evaluator: row.record.grade.evaluator } : {} } } : {} } : {},
                 ...row.order ? { waitingOn: row.order.depends_on.filter(dependency => !closed.has(dependency)) } : {},
@@ -200,7 +229,7 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
             return gated('accept', policy.gates.accept, [`Accept ${order.id} (digest ${digest})`, ...shownOrder], 'accept', async by => store.update(order.id, async existing => {
                 if (existing) throw new RefusalError(`${order.id} was accepted while this prompt was open; rerun work status`)
                 const record: WorkRecord = { format: 'cockpit-work-order/v1', id: order.id, state: 'accepted',
-                    accepted: { at: now(), by, digest, order, sources, base }, amendments: [], attempts: 0, notes: [] }
+                    accepted: { at: now(), by, digest, order, sources, base }, amendments: [], acknowledgements: [], attempts: 0, notes: [] }
                 return { record, value: complete(operation, { id: order.id, state: 'accepted', by, digest, ...by === 'ci' ? { awaitingCi: ['accept'] } : {} }) }
             }))
         }
@@ -284,6 +313,9 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
             verdicts = graded.criteria
             evaluator = { tool: graded.evaluator.tool, fallbacks: graded.evaluator.fallbacks.map(row => ({ ...row })) }
         }
+        // Weakened tests bind in every mode too: a grader or an agent that says met has not read the base's tests.
+        const guarded = protection(await composition.testWeakening(record.accepted.base), record)
+        if (guarded.verdict) verdicts = [...verdicts, guarded.verdict]
         const passed = verdicts.every(row => row.verdict === 'met') && checks.every(row => row.passed) && outOfScope.length === 0
         const grade: NonNullable<WorkRecord['grade']> = { at: now(), digest: record.accepted.digest, mode: policy.grading, passed,
             criteria: [...verdicts], outOfScope: [...outOfScope], ...evaluator ? { evaluator } : {}, ...request.note ? { note: request.note } : {} }
@@ -292,11 +324,28 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
             return { record: { ...existing, state: passed ? 'graded' : 'accepted', attempts: existing.attempts + (passed ? 0 : 1), grade,
                 ...checks.length ? { checks: { at: now(), digest: record.accepted.digest, results: [...checks] } } : {} }, value: undefined }
         })
-        const value = { id: order.id, state: passed ? 'graded' : 'accepted', mode: policy.grading, criteria: verdicts, checks, outOfScope, ...evaluator ? { evaluator } : {} }
+        const value = { id: order.id, state: passed ? 'graded' : 'accepted', mode: policy.grading, criteria: verdicts, checks, outOfScope, testProtection: guarded.value, ...evaluator ? { evaluator } : {} }
         if (passed) return complete(operation, value)
-        return unsatisfied(operation, value, [...verdicts.filter(row => row.verdict !== 'met').map(row => `${row.id} ${row.verdict}: ${row.note}`),
+        return unsatisfied(operation, value, [...split(verdicts).others.map(row => `${row.id} ${row.verdict}: ${row.note}`),
             ...checks.filter(row => !row.passed).map(row => `check ${row.criterion}: ${row.outcome}`),
-            ...outOfScope.length ? [`changed outside scope: ${outOfScope.join(', ')}`] : []].join('; '))
+            ...outOfScope.length ? [`changed outside scope: ${outOfScope.join(', ')}`] : []].join('; '), split(verdicts).weakening)
+    }
+    if (request.operation === 'work-acknowledge') {
+        const { order, record } = await current(request.workOrderId)
+        const weak = await composition.testWeakening(record.accepted.base)
+        if (!weak.findings.length) return refusal(operation, `${order.id} weakens no tests since its base, so there is nothing to acknowledge`)
+        const digest = testWeakeningDigest(weak.findings)
+        if (record.acknowledgements.some(row => row.digest === digest)) return refusal(operation, `this weakening of ${order.id} is already acknowledged; run work grade`)
+        const rows = weak.findings.map(describeWeakening)
+        return gated('acknowledge', policy.gates.acknowledge, [`Acknowledge that ${order.id} weakens tests since its base (test files from ${weak.patterns.source}):`,
+            ...rows.map(row => `  ${row}`), 'Reason given:', `  ${request.note}`], 'acknowledge', async by => store.update(order.id, async existing => {
+            if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while this prompt was open; rerun work acknowledge`)
+            if (testWeakeningDigest((await composition.testWeakening(existing.accepted.base)).findings) !== digest) {
+                throw new RefusalError(`the test changes of ${order.id} changed while this prompt was open; rerun work acknowledge`)
+            }
+            return { record: { ...existing, acknowledgements: [...existing.acknowledgements, { at: now(), by, digest, findings: rows, note: request.note }] },
+                value: complete(operation, { id: order.id, acknowledged: rows, by, digest }) }
+        }))
     }
     if (request.operation === 'work-signoff') {
         const record = await store.read(request.workOrderId)
@@ -348,8 +397,11 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
     const subject: GradingSubject = { ...file.objective ? { objective: file.objective } : {}, criteria: file.criteria, nonGoals: [], scope: file.scope, checks, changes, outOfScope }
     const graded = await composition.evaluate(subject)
     if ('refusal' in graded) return refusal(operation, `${graded.refusal.code}: ${graded.refusal.message}; ${graded.refusal.fix}`)
-    const passed = graded.criteria.every(row => row.verdict === 'met') && checks.every(row => row.passed) && outOfScope.length === 0
-    const value = { criteria: graded.criteria, checks, outOfScope, evaluator: graded.evaluator }
-    return passed ? complete(operation, value) : unsatisfied(operation, value, graded.criteria.filter(row => row.verdict !== 'met').map(row => `${row.id} ${row.verdict}: ${row.note}`)
-        .concat(checks.filter(row => !row.passed).map(row => `check ${row.criterion}: ${row.outcome}`), outOfScope.length ? [`changed outside scope: ${outOfScope.join(', ')}`] : []).join('; '))
+    // With no order there is no recorded base, so the change since HEAD is what is compared, and nobody can acknowledge it.
+    const guarded = protection(await composition.testWeakening(await composition.heads()), undefined)
+    const criteria = guarded.verdict ? [...graded.criteria, guarded.verdict] : graded.criteria
+    const passed = criteria.every(row => row.verdict === 'met') && checks.every(row => row.passed) && outOfScope.length === 0
+    const value = { criteria, checks, outOfScope, testProtection: guarded.value, evaluator: graded.evaluator }
+    return passed ? complete(operation, value) : unsatisfied(operation, value, split(criteria).others.map(row => `${row.id} ${row.verdict}: ${row.note}`)
+        .concat(checks.filter(row => !row.passed).map(row => `check ${row.criterion}: ${row.outcome}`), outOfScope.length ? [`changed outside scope: ${outOfScope.join(', ')}`] : []).join('; '), split(criteria).weakening)
 }

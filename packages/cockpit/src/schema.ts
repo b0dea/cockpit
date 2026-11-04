@@ -460,6 +460,7 @@ const WorkGates = z
         amend: Decider.optional().describe('Who accepts a changed contract. Default agent. Removing or rewriting an accepted criterion always needs a person or ci.'),
         answer: Decider.optional().describe('Who answers an open question on an order. Default agent.'),
         signoff: Decider.optional().describe('Who closes a graded order. Default agent.'),
+        acknowledge: Decider.optional().describe('Who acknowledges that an order weakened tests, which grading otherwise fails. Default person.'),
     })
     .strict()
 
@@ -630,6 +631,8 @@ const TestingSelect = z.object({
     route: TestingSelectArguments.optional().describe('Arguments that select tests by route; {value} becomes the selection.'),
 }).strict()
 export const Testing = z.object({
+    test_files: z.array(z.string().min(1).max(512).regex(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._@+\-/*?]+$/, 'a relative path or glob, without .. or a leading /')).min(1).max(64).optional()
+        .describe('Paths and globs, relative to each checkout, that hold tests. Grading fails an order that deletes, skips or loosens what they match. Defaults to common layouts.'),
     stages: z.array(z.object({
         id: TestingName.describe('Name of the stage.'),
         command: TestingCommand.describe('Command to run, as an argument list.'),
