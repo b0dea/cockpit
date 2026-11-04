@@ -12,7 +12,7 @@ export function isRecordedAnswerField(value: string): boolean {
 }
 
 export type WorkHandlerIdentifier =
-    | 'work-status' | 'work-accept' | 'work-check' | 'work-note' | 'work-answer' | 'work-grade' | 'work-signoff' | 'work-recover' | 'work-verify' | 'grade-criteria'
+    | 'work-status' | 'work-accept' | 'work-check' | 'work-note' | 'work-answer' | 'work-acknowledge' | 'work-grade' | 'work-signoff' | 'work-recover' | 'work-verify' | 'grade-criteria'
     | 'browser-drive' | 'browser-screenshot' | 'test-run'
 
 export type HandlerIdentifier = WorkHandlerIdentifier
@@ -421,6 +421,9 @@ const sources = [
     { name: 'work answer', handler: 'work-answer', stage: 'test-and-grade', summary: 'Answer an open question on an order, as [work.gates] allows', visibility: 'public',
         ordinary: ordinary('work-answer', personFlag),
         flags: { ...configured, 'work-order': workOrderFlag, question: str(value('tail', true)), text: str(value('label', true)), interactive: bool() } },
+    { name: 'work acknowledge', handler: 'work-acknowledge', stage: 'test-and-grade', summary: 'Acknowledge that an order weakened tests, as [work.gates] allows', visibility: 'public',
+        ordinary: ordinary('work-acknowledge', personFlag),
+        flags: { ...configured, 'work-order': workOrderFlag, note: str(value('label', true)), interactive: bool() } },
     // Grading hands the order to an evaluator running apart from the agent that did the work, unless
     // [work] grading names checks or self.
     { name: 'work grade', handler: 'work-grade', stage: 'test-and-grade', summary: 'Grade an accepted order the way [work] grading says', visibility: 'public',

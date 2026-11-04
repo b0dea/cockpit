@@ -1,11 +1,13 @@
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { additiveBypassReasons, parseDiff } from '../packages/cockpit/src/testing/test-protection.ts'
 
 const ACK = 'COCKPIT_TEST_WEAKENING_ACK'
 const protectedPaths = new Set([
     'scripts/check-test-protection.mjs',
     'scripts/check-test-protection.d.mts',
+    'packages/cockpit/src/testing/test-protection.ts',
     '.github/workflows/ci.yml',
     // What decides which tests run and how their results are judged.
     'vitest.config.ts',
@@ -25,44 +27,10 @@ function protectedPath(path) {
         || /^packages\/cockpit\/src\/.*\.(?:test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/.test(path)
 }
 
-function gitPath(value) {
-    if (!value.startsWith('"')) return value
-    // Git quotes paths as C strings, including octal UTF-8 bytes.
-    const bytes = []
-    for (let i = 1; i < value.length - 1; i++) {
-        if (value[i] !== '\\') { bytes.push(...Buffer.from(value[i])); continue }
-        const octal = /^[0-7]{1,3}/.exec(value.slice(i + 1))?.[0]
-        if (octal) { bytes.push(Number.parseInt(octal, 8)); i += octal.length; continue }
-        const escaped = value[++i]
-        const controls = { t: '\t', n: '\n', r: '\r', b: '\b', f: '\f', v: '\v', '\\': '\\', '"': '"' }
-        if (!(escaped in controls)) throw new Error('unsupported Git path escape')
-        bytes.push(...Buffer.from(controls[escaped]))
-    }
-    return Buffer.from(bytes).toString('utf8')
-}
-
 /** Conservatively flag removals: a diff cannot prove that a replacement keeps its force. */
 export function classifyTestProtection(diff, commitMessages = '') {
     const findings = []
-    let file
-    const files = []
-    for (const line of diff.split('\n')) {
-        if (line.startsWith('diff --git ')) {
-            const names = /^diff --git ("(?:\\.|[^"])*"|a\/\S+) ("(?:\\.|[^"])*"|b\/\S+)$/.exec(line)
-            file = { old: names ? gitPath(names[1]).slice(2) : '', next: names ? gitPath(names[2]).slice(2) : '', hunk: false, removed: false, removedLines: [], renamed: false, deleted: false, added: [] }
-            files.push(file)
-        } else if (file) {
-            if (line.startsWith('@@ ')) file.hunk = true
-            else if (!file.hunk && line.startsWith('--- ')) file.old = gitPath(line.slice(4)).replace(/^a\//, '')
-            else if (!file.hunk && line.startsWith('+++ ')) file.next = gitPath(line.slice(4)).replace(/^b\//, '')
-            else if (line.startsWith('rename from ')) { file.old = gitPath(line.slice(12)); file.renamed = true }
-            else if (line.startsWith('rename to ')) file.next = gitPath(line.slice(10))
-            else if (line.startsWith('deleted file mode ')) file.deleted = true
-            else if (line.startsWith('-') && line.slice(1).trim()) { file.removed = true; file.removedLines.push(line.slice(1)) }
-            else if (line.startsWith('+')) file.added.push(line.slice(1))
-            else if (line.startsWith('Binary files ')) file.removed = true
-        }
-    }
+    const files = parseDiff(diff)
     for (const item of files) {
         const path = protectedPath(item.old) ? item.old : item.next
         if (!protectedPath(path)) continue
@@ -70,17 +38,7 @@ export function classifyTestProtection(diff, commitMessages = '') {
         else if (item.renamed) findings.push({ path, reason: 'protected control file renamed' })
         else if (item.removed && (path !== 'package.json' || item.removedLines.length === 0
             || item.removedLines.some(line => MANIFEST_CONTROL_LINE.test(line)))) findings.push({ path, reason: 'protected control lines removed or replaced' })
-        const added = item.added.join('\n')
-        if (/(?:\.\s*|\[\s*['"])(?:skip|todo|only|skipIf|runIf|fails)\b|\b(?:skip|todo|only)\s*:\s*true/.test(added)) {
-            findings.push({ path, reason: 'test selection or expected-failure semantics added' })
-        }
-        if (item.added.some(line => /^[ \t]*return[ \t]*;?[ \t]*(?:\/\/.*)?$/.test(line))) {
-            findings.push({ path, reason: 'potential additive control-flow bypass: bare return added' })
-        }
-        // Only explicit added-line forms are measured; this is not JavaScript dataflow analysis.
-        if (item.added.some(line => /^[ \t]*(?:if\s*\(\s*(?:true|1)\s*\)\s*(?:\{\s*)?return\s*;?(?:\s*\})?\s*(?:\/\/.*)?$|if\s*\(\s*(?:false|0|null|undefined)\s*\)\s*\{|(?:false\s*&&|true\s*\|\|)\s*(?:describe|test|it|suite)\s*\(|process\s*\.\s*exit\s*\(\s*(?:0\s*)?\))/.test(line))) {
-            findings.push({ path, reason: 'potential additive control-flow bypass: explicit static bypass added' })
-        }
+        for (const reason of additiveBypassReasons(item.added)) findings.push({ path, reason })
     }
     const acknowledged = new RegExp(`(^|[^A-Za-z0-9_])${ACK}($|[^A-Za-z0-9_])`).test(commitMessages)
     return { findings, acknowledged, allowed: findings.length === 0 || acknowledged }

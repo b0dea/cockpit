@@ -785,6 +785,15 @@
                 "person",
                 "ci"
               ]
+            },
+            "acknowledge": {
+              "description": "Who acknowledges that an order weakened tests, which grading otherwise fails. Default person.",
+              "type": "string",
+              "enum": [
+                "agent",
+                "person",
+                "ci"
+              ]
             }
           },
           "additionalProperties": false
@@ -1225,6 +1234,18 @@
       "description": "Test stages and gates.",
       "type": "object",
       "properties": {
+        "test_files": {
+          "description": "Paths and globs, relative to each checkout, that hold tests. Grading fails an order that deletes, skips or loosens what they match. Defaults to common layouts.",
+          "minItems": 1,
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^(?!\\/)(?!.*(?:^|\\/)\\.\\.(?:\\/|$))[A-Za-z0-9._@+\\-/*?]+$"
+          }
+        },
         "stages": {
           "minItems": 1,
           "maxItems": 128,

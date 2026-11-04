@@ -33,8 +33,10 @@ import { createLifecycleCommandAdapters } from '../environment/lifecycle-composi
 import { createReadCommandAdapters } from '../environment/read-composition.js'
 import { deriveEntrypoints, observeRetainedPortFamily } from '../environment/ports.js'
 import { readState } from '../environment/state.js'
+import { parseDiff } from '../testing/test-protection.js'
+import { testFilePatterns, weakeningFindings, type RepositoryWeakening, type TestFilePatterns } from '../testing/weakening.js'
 import { runGate, type GateDependencies, type GateRegistry, type GateRequest, type ProductGateInvocation } from '../testing/gates.js'
-import { parseCriteriaFile, parseWorkOrder, WORK_ORDER_ID, type ParsedFile, type WorkOrder, type WorkOrderCheck } from './contract.js'
+import { parseCriteriaFile, parseWorkOrder, scopeMatches, WORK_ORDER_ID, type ParsedFile, type WorkOrder, type WorkOrderCheck } from './contract.js'
 import { createWorkStore, outputTail, WORK_RECORD_DIRECTORY, type CheckResult, type WorkStore } from './store.js'
 
 export type WorkEnvironmentApplicationConfig = ConsumedWorkEnvironmentConfig
@@ -92,9 +94,12 @@ export interface WorkApplicationComposition {
     readonly runCheck: (criterion: string, check: WorkOrderCheck) => Promise<CheckResult>
     readonly changes: (base: Readonly<Record<string, string>>) => Promise<readonly ChangedFile[]>
     readonly evaluate: (subject: GradingSubject) => Promise<GradingResult>
+    /** Test weakening in each checkout since `base`, over the files this cockpit treats as tests. */
+    readonly testWeakening: (base: Readonly<Record<string, string>>) => Promise<TestWeakeningObservation>
     readonly browser: (kind: BrowserCommandKind, role?: string, route?: string) => Promise<BrowserCommandInput>
     readonly gate: (request: WorkApplicationGateRequest) => Promise<Readonly<{ registry: GateRegistry; request: GateRequest; dependencies: GateDependencies }>>
 }
+export type TestWeakeningObservation = Readonly<{ patterns: TestFilePatterns; findings: readonly RepositoryWeakening[] }>
 export interface WorkApplicationGateRequest {
     readonly operation: 'test-run'
     readonly gate: string
@@ -710,6 +715,28 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         }
         return files
     }
+    // Test weakening since the base, per checkout: committed, staged and unstaged edits of tracked files,
+    // and new untracked test files, which a diff against the base does not list.
+    const testWeakening = async (base: Readonly<Record<string, string>>): Promise<TestWeakeningObservation> => {
+        const patterns = testFilePatterns(config.testing?.testFiles)
+        const findings: RepositoryWeakening[] = []
+        for (const repository of repositories) {
+            const from = base[repository.key] ?? 'HEAD'
+            const diff = await git(repository, ['-c', 'core.quotePath=true', 'diff', '--no-ext-diff', '--no-textconv', '--no-color', '--text', '--find-renames', '--unified=0', from, '--'])
+            const files = parseDiff(diff)
+            for (const path of (await git(repository, ['ls-files', '--others', '--exclude-standard', '-z'])).split('\0').filter(Boolean)) {
+                if (!scopeMatches(patterns.tests, path)) continue
+                let content: string
+                try {
+                    admitRepositoryPath(repository.root, repository.identity, path, repository.sensitivePaths, browserAuthenticationTargets)
+                    content = readBounded(repository.root, path, MAX_DIFF_BYTES).toString('utf8')
+                } catch (error) { if (error instanceof RefusalError) continue; throw error }
+                files.push({ old: '/dev/null', next: path, hunk: true, removed: false, removedLines: [], renamed: false, deleted: false, added: content.split('\n') })
+            }
+            for (const row of weakeningFindings(files, patterns)) findings.push({ ...row, repository: repository.key })
+        }
+        return { patterns, findings }
+    }
     const gradeIndependently = async (subject: GradingSubject): Promise<GradingResult> => {
         let evaluator: EvaluatorAuthority
         try { evaluator = await resolveEvaluator() }
@@ -733,7 +760,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         readCriteriaFile: async (path: string) => parseCriteriaFile(readBounded(root, path, 65_536)),
         sourceDigests: async (order: Pick<WorkOrder, 'criteria'>) => Object.fromEntries(order.criteria.flatMap(row => row.source ? [row.source] : [])
             .map(source => [source, sha256Hex(readSource(source))])),
-        heads, runCheck, changes, evaluate: gradeIndependently, browser, gate,
+        heads, runCheck, changes, evaluate: gradeIndependently, testWeakening, browser, gate,
     }
     issuedCompositions.add(composition)
     return composition

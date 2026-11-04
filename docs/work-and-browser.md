@@ -61,7 +61,7 @@ judged by exit status, keeping the end of long output, for at most `work.verific
 
 ## Accept, check, grade and close
 
-<!-- cockpit:ref command=work status --> <!-- cockpit:ref command=work accept --> <!-- cockpit:ref command=work check --> <!-- cockpit:ref command=work grade --> <!-- cockpit:ref command=work signoff -->
+<!-- cockpit:ref command=work status --> <!-- cockpit:ref command=work accept --> <!-- cockpit:ref command=work check --> <!-- cockpit:ref command=work grade --> <!-- cockpit:ref command=work acknowledge --> <!-- cockpit:ref command=work signoff -->
 
 ```sh
 npx --no cockpit work accept --config cockpit.toml --work-order WO-1
@@ -82,7 +82,8 @@ at `work.attempt_cap` the order is blocked until a person amends or closes it.
   (an amendment). The check base stays the commits recorded at first acceptance.
 - **check** runs every criterion's check and the order's gates, in the order the contract lists them.
 - **grade** grades the order the way [`[work] grading`](#how-an-order-earns-done) says, and reports
-  every changed file outside `scope` since the base commits; a change outside scope fails the grade.
+  every changed file outside `scope` since the base commits; a change outside scope fails the grade, and
+  so does [weakened tests](#test-protection).
 - **signoff** closes a graded order as done. `--partial --note <what is left>` or `--abandon --note <why>`
   closes any open order without a passing grade.
 - <!-- cockpit:ref command=work note --> <!-- cockpit:ref command=work answer --> **note** records a note; `--ask` records an open question, which blocks the order until
@@ -101,7 +102,8 @@ inspects; a process outside the guard can still replace a record.
 ## Who passes each gate
 
 <!-- cockpit:ref schema=work.gates.accept --> `[work.gates]` in `cockpit.toml` says who passes each step: `accept`, `amend` (accepting a changed
-contract), `answer` and `signoff`. The defaults are all `agent`.
+contract), `answer`, `signoff` and `acknowledge` (accepting that an order weakened tests). The defaults
+are `agent`, except `acknowledge`, which is `person`.
 
 | Value | What happens |
 | --- | --- |
@@ -153,6 +155,46 @@ The signoff gate applies on top in every mode.
 <!-- cockpit:ref command=grade --> For a change that needs no order, `cockpit grade --config cockpit.toml --criteria <file>` (a file inside the repository, relative or absolute) runs the
 checks and the independent evaluator against the uncommitted change, and records nothing. The file has
 the same front-matter `criteria` list, and optionally `scope`, `gates` and `objective`.
+
+## Test protection
+
+An agent can make a check pass by weakening the tests behind it. Every `work grade`, in any
+`[work] grading` mode, and `cockpit grade` therefore compare each checkout's tests with the base
+commits the order recorded at acceptance (committed, staged, unstaged and new files; `cockpit grade`,
+which has no order, compares with `HEAD`). Over the files cockpit treats as tests it flags:
+
+- a test file deleted or moved out of the tests (`test-file-removed`);
+- a test skipped, focused, marked todo or expected to fail: `it.skip`, `describe.only`, `test.todo`,
+  `xit`, `pytest.mark.skip`, `@unittest.skip` and the like (`test-skipped`);
+- `@ts-ignore`, `@ts-nocheck` or a lint disable added to a test (`check-suppressed`);
+- more tests or assertions removed than added, specific assertions replaced by weaker ones, or an
+  assertion that cannot fail added (`tests-removed`, `assertions-removed`, `assertions-loosened`,
+  `assertion-vacuous`);
+- a runner's configuration or `package.json` test script that now excludes, ignores or tolerates the
+  absence of tests (`test-selection-narrowed`).
+
+A diff cannot prove that a replacement keeps its force, so a removal is flagged and a person
+acknowledges the legitimate ones. The detection is textual, for JavaScript and TypeScript first and the
+common Python forms; it is not a parser.
+
+Which files are tests comes from `[testing] test_files`, globs relative to each checkout, when
+declared. Otherwise cockpit uses its built-in patterns for common layouts (`*.test.*`, `*.spec.*`,
+`__tests__/`, `tests/`, `test/`, `e2e/`, `test_*.py`, `*_test.py`, `conftest.py`, and a few others). The
+grade result names which applied in `result.testProtection.testFiles`. Runner configuration
+(`vitest.config.*`, `jest.config.*`, `playwright.config.*`, `pytest.ini`, `package.json` and similar) is
+always watched.
+
+A finding fails the grade as a criterion named `test-protection`, with the diagnostic
+`WORK_TEST_WEAKENED` and a fix. `test-run` runs the same comparison against the base of each open order
+and reports `WORK_TEST_WEAKENED` even when the gate passed; with no open order it says in
+`testProtection` that it had nothing to compare with.
+
+To accept a legitimate change, a person runs `work acknowledge --work-order <id> --note <why it is not a
+weakening> --interactive`, reads the findings and types the digest, as for any person gate; the
+acknowledgement is recorded with who passed it. It covers exactly the findings it showed, so a test
+deleted or skipped later fails the grade again. `[work.gates] acknowledge` defaults to `person`, so an
+agent's run without a terminal is refused with `WORK_PERSON_REQUIRED`; setting it to `agent` lets an
+agent acknowledge, visibly, in the record and in `work status`.
 
 ## The independent evaluator
 

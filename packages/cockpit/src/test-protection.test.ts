@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url'
 import { deflateSync } from 'node:zlib'
 import { afterEach, describe, expect, it } from 'vitest'
 import { classifyTestProtection } from '../../../scripts/check-test-protection.mjs'
+import { parseDiff } from './testing/test-protection.js'
+import { testFilePatterns, weakeningFindings } from './testing/weakening.js'
 
 const SCRIPT = fileURLToPath(new URL('../../../scripts/check-test-protection.mjs', import.meta.url))
 const GUARD = 'packages/cockpit/src/guards/evaluator.test.ts'
@@ -362,10 +364,49 @@ describe('CI runs the base revision of its change guards', () => {
         expect(missing.stdout).not.toContain('head copy')
     })
 
+    // The script imports the shared detector, so the base's detector must travel with it.
+    it('runs the base copy of the guard together with the base copy of the detector it imports', () => {
+        const script = 'scripts/check-test-protection.mjs', core = 'packages/cockpit/src/testing/test-protection.ts'
+        const repo = repository()
+        const base = repo.commit({ [script]: "import { origin } from '../packages/cockpit/src/testing/test-protection.ts'\nconsole.log(origin)\n", [core]: "export const origin = 'base detector'\n" })
+        const head = repo.commit({ [script]: marker('head copy'), [core]: "export const origin = 'head detector'\n" }, base)
+        const temp = mkdtempSync(join(tmpdir(), 'test-protection-temp-'))
+        roots.push(temp)
+        const ran = spawnSync('bash', ['-c', stepAfter('BASE_SHA: ${{ github.event.pull_request.base.sha }}')], {
+            cwd: repo.root, encoding: 'utf8', env: { ...process.env, RUNNER_TEMP: temp, BASE_SHA: base, HEAD_SHA: head } })
+        expect(ran.stdout).toContain('base detector')
+        expect(ran.stdout).not.toContain('head')
+    })
+
     it('version pull request scope runs the base parent copy of its guard', () => {
         const step = workflow.slice(workflow.indexOf('Like the test-protection job'), workflow.indexOf('# Needs a public repository'))
         expect(step).toContain('git show HEAD^1:.github/scripts/check-version-pr-scope.sh')
         expect(step).toContain('bash "$RUNNER_TEMP/check-version-pr-scope.sh" HEAD^1 HEAD')
         expect(workflow).not.toMatch(/bash \.github\/scripts\/check-version-pr-scope\.sh|node scripts\/check-test-protection\.mjs/)
+    })
+})
+
+// The same detector judges a consumer's checkout at grade time, over the files its patterns call tests.
+describe('test weakening in a consumer checkout', () => {
+    const edit = (path: string, removed: string[], added: string[]) =>
+        `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n${removed.map(line => `-${line}\n`).join('')}${added.map(line => `+${line}\n`).join('')}`
+    const kinds = (diff: string, declared?: string[]) => weakeningFindings(parseDiff(diff), testFilePatterns(declared)).map(row => `${row.path} ${row.kind}`)
+
+    it('flags deleting, skipping, suppressing, removing and loosening tests and narrowing the runner, and passes an ordinary edit', () => {
+        const deleted = 'diff --git a/src/a.test.ts b/src/a.test.ts\ndeleted file mode 100644\n--- a/src/a.test.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-expect(a()).toBe(1)\n'
+        expect(kinds(deleted)).toEqual(['src/a.test.ts test-file-removed'])
+        expect(kinds(edit('src/a.test.ts', [], ["it.skip('a', () => {})"]))).toEqual(['src/a.test.ts test-skipped'])
+        expect(kinds(edit('tests/test_a.py', [], ['@pytest.mark.skip(reason="later")']))).toEqual(['tests/test_a.py test-skipped'])
+        expect(kinds(edit('src/a.spec.ts', [], ['// @ts-ignore']))).toEqual(['src/a.spec.ts check-suppressed'])
+        expect(kinds(edit('src/a.test.ts', ['expect(a()).toBe(1)'], []))).toEqual(['src/a.test.ts assertions-removed'])
+        expect(kinds(edit('src/a.test.ts', ['expect(a()).toBe(1)'], ['expect(a()).toBeDefined()']))).toEqual(['src/a.test.ts assertions-loosened'])
+        expect(kinds(edit('vitest.config.ts', [], ["exclude: ['src/slow/**'],"]))).toEqual(['vitest.config.ts test-selection-narrowed'])
+        expect(kinds(edit('package.json', ['"test": "vitest run"'], ['"test": "vitest run || true"']))).toEqual(['package.json test-selection-narrowed'])
+        // A stronger test, and a source file that merely says skip, are not weakening.
+        expect(kinds(edit('src/a.test.ts', ['expect(a()).toBe(1)'], ['expect(a()).toBe(2)', 'expect(b()).toBe(3)']))).toEqual([])
+        expect(kinds(edit('src/a.ts', ['const x = 1'], ["it.skip('a')"]))).toEqual([])
+        // Declared test_files replace the default layout: tests/ is no longer a test directory.
+        expect(kinds(edit('tests/a.ts', [], ["it.skip('a')"]), ['checks/**'])).toEqual([])
+        expect(kinds(edit('checks/a.ts', [], ["it.skip('a')"]), ['checks/**'])).toEqual(['checks/a.ts test-skipped'])
     })
 })

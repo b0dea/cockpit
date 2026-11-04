@@ -53,6 +53,9 @@ export const WorkRecord = z.object({
         base: z.record(z.string(), z.string().regex(/^[a-f0-9]{40,64}$/)),
     }).strict(),
     amendments: z.array(z.object({ at, by, from: z.string().length(64), to: z.string().length(64), weakened: z.array(z.string()).max(64) }).strict()).max(256),
+    // A person's (or, where [work.gates] allows, an agent's or CI's) acknowledgement that the change weakened tests:
+    // it covers exactly the findings its digest names, so a later weakening needs its own.
+    acknowledgements: z.array(z.object({ at, by, digest: z.string().length(64), findings: z.array(z.string().max(1_100)).max(256), note }).strict()).max(256),
     attempts: z.number().int().min(0),
     checks: z.object({ at, digest: z.string().length(64), results: z.array(CheckResult).max(64) }).strict().optional(),
     grade: Grade.optional(),

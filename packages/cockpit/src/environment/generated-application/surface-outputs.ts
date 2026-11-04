@@ -233,7 +233,7 @@ function openCodeExternalDirectories(grants: readonly Readonly<{ slug: string; t
 // `ask` denied a matching command, and Claude ignores these rules until a person trusts the workspace.
 const AGENT_COCKPIT_COMMANDS = [
     'check *', 'doctor *', 'preflight *', 'logs *', 'sync *', 'reset * --apply', 'up *', 'sleep *', 'runtime measure *', 'test-run *',
-    'work status *', 'work accept *', 'work check *', 'work note *', 'work answer *', 'work grade *', 'work signoff *', 'work recover *',
+    'work status *', 'work accept *', 'work check *', 'work note *', 'work answer *', 'work acknowledge *', 'work grade *', 'work signoff *', 'work recover *',
     'work verify *', 'grade *', 'upgrade *',
     'browser drive *', 'browser screenshot *',
 ] as const

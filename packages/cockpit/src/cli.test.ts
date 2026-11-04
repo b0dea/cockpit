@@ -133,8 +133,9 @@ describe('closed ordinary invocation metadata', () => {
     const requiredWords: Readonly<Record<string, readonly string[]>> = {
         selftest: ['--probe-specifications', 'probes.json'], logs: ['--service', 'app'], runtime: ['measure', '--image', 'node:22-alpine'],
         'test-run': ['--gate', 'quick'], reset: ['--apply'], grade: ['--criteria', 'criteria.md'],
-        ...Object.fromEntries(['accept', 'check', 'grade', 'signoff', 'recover'].map(sub => [`work ${sub}`, ['--work-order', 'WO-1']])),
+        ...Object.fromEntries(['accept', 'check', 'acknowledge', 'grade', 'signoff', 'recover'].map(sub => [`work ${sub}`, ['--work-order', 'WO-1']])),
         'work note': ['--work-order', 'WO-1', '--text', 'why'], 'work answer': ['--work-order', 'WO-1', '--question', '1', '--text', 'because'],
+        'work acknowledge': ['--work-order', 'WO-1', '--note', 'the deleted test is replaced'],
     }
     it('keeps public rows compatible and internal transport separately typed and closed', async () => {
         expect(commands.every(row => row.visibility === 'public' && row.ordinary !== undefined)).toBe(true)
@@ -195,7 +196,7 @@ describe('closed ordinary invocation metadata', () => {
     it('requires the exact resolved config for every available config-bearing row', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
         expect(rows.map(row => row.name)).toEqual(['setup', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'sleep', 'down', 'reset', 'doctor',
-            'test-run', 'work status', 'work accept', 'work check', 'work note', 'work answer', 'work grade', 'work signoff', 'work recover', 'work verify', 'grade',
+            'test-run', 'work status', 'work accept', 'work check', 'work note', 'work answer', 'work acknowledge', 'work grade', 'work signoff', 'work recover', 'work verify', 'grade',
             'browser drive', 'browser screenshot'])
         for (const row of rows) {
             const argv = [...row.name.split(' '), ...(requiredWords[row.name] ?? [])]
@@ -487,15 +488,16 @@ describe('CLI help', () => {
         expect(work.stdout).toBe('Usage: cockpit work <subcommand> [options]\n\n' +
             'Accept, check, grade and close work orders\n\n' +
             'Subcommands:\n' +
-            '  status   Report each work order, its state and how it closed\n' +
-            '  accept   Accept a work order, or a change to an accepted one, as [work.gates] allows\n' +
-            "  check    Run every criterion's check and the order's gates\n" +
-            '  note     Record a note on an order, or with --ask an open question that blocks it\n' +
-            '  answer   Answer an open question on an order, as [work.gates] allows\n' +
-            '  grade    Grade an accepted order the way [work] grading says\n' +
-            '  signoff  Close a graded order as done, or any open one as partial or abandoned\n' +
-            "  recover  Inspect or remove a crashed command's work-order lock\n" +
-            '  verify   Check every record against its order; in CI, pass the steps gated on ci\n\n' +
+            '  status       Report each work order, its state and how it closed\n' +
+            '  accept       Accept a work order, or a change to an accepted one, as [work.gates] allows\n' +
+            "  check        Run every criterion's check and the order's gates\n" +
+            '  note         Record a note on an order, or with --ask an open question that blocks it\n' +
+            '  answer       Answer an open question on an order, as [work.gates] allows\n' +
+            '  acknowledge  Acknowledge that an order weakened tests, as [work.gates] allows\n' +
+            '  grade        Grade an accepted order the way [work] grading says\n' +
+            '  signoff      Close a graded order as done, or any open one as partial or abandoned\n' +
+            "  recover      Inspect or remove a crashed command's work-order lock\n" +
+            '  verify       Check every record against its order; in CI, pass the steps gated on ci\n\n' +
             "Run 'cockpit work <subcommand> --help' for its options.\n")
         const browser = await runInProcess(['browser', '--help'])
         expect(browser.status).toBe(0)
@@ -506,7 +508,7 @@ describe('CLI help', () => {
 
         const envelope = async (args: string[]) => JSON.parse((await runInProcess([...args, '--json'])).stdout)
         expect(await envelope(['work'])).toMatchObject({ invocation: { verb: 'work', exitCode: 2 }, diagnostics: [{ code: 'CLI_COMMAND_REQUIRED',
-            message: 'work requires a subcommand: status, accept, check, note, answer, grade, signoff, recover, verify' }] })
+            message: 'work requires a subcommand: status, accept, check, note, answer, acknowledge, grade, signoff, recover, verify' }] })
         expect(await envelope(['work', 'bogus'])).toMatchObject({ invocation: { verb: 'unknown' }, diagnostics: [{ code: 'CLI_UNKNOWN_COMMAND', message: 'unknown command "work bogus"' }] })
         // There are no hyphenated aliases; the refusal names the spelling that runs.
         const hyphenated = await runInProcess(['work-grade', '--config', 'cockpit.toml'])

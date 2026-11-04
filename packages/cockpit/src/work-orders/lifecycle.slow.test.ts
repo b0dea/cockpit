@@ -152,4 +152,54 @@ describe('work-order lifecycle', () => {
         expect(await asPerson(root, ['work', 'accept', '--work-order', 'WO-3'], (prompt, digest) => prompt.includes('AC2 is removed') ? `amend ${digest}` : '')).toBe(0)
         expect(record(root, 'WO-3').amendments).toEqual([expect.objectContaining({ by: 'person', weakened: ['AC2 is removed'] })])
     }, 120_000)
+
+    it('fails a grade that deletes or skips tests until a person acknowledges exactly that weakening', async () => {
+        const root = await cockpit('[work]\ngrading = "checks"')
+        // A second test the order's check does not run, so only the protection can notice its loss.
+        writeFileSync(join(root, 'test/extra.test.mjs'), "console.log('extra')\n")
+        git(root, 'add', '-A'); git(root, 'commit', '-qm', 'extra test')
+        writeFileSync(join(root, 'workorders/WO-4.md'), order('WO-4'))
+        expect((await work(root, ['work', 'accept', '--work-order', 'WO-4'])).status).toBe(0)
+        expect(await work(root, ['work', 'grade', '--work-order', 'WO-4'])).toMatchObject({ status: 0, result: { state: 'graded', testProtection: { findings: [] } } })
+
+        rmSync(join(root, 'test/extra.test.mjs'))
+        const weakened = await work(root, ['work', 'grade', '--work-order', 'WO-4'])
+        expect(weakened).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_TEST_WEAKENED', message: expect.stringContaining('test/extra.test.mjs: test-file-removed') }],
+            result: { state: 'accepted', criteria: [{ id: 'AC1', verdict: 'met' }, { id: 'test-protection', verdict: 'unmet' }],
+                testProtection: { testFiles: expect.stringContaining('built-in') } } })
+
+        // The agent's plain run has no terminal, so it cannot acknowledge for itself; a wrong digest records nothing.
+        const note = ['work', 'acknowledge', '--work-order', 'WO-4', '--note', 'the extra test duplicated AC1']
+        expect((await work(root, note)).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
+        expect(await asPerson(root, note, () => `acknowledge ${'0'.repeat(64)}`)).toBe(2)
+        expect(record(root, 'WO-4').acknowledgements).toEqual([])
+        expect(await asPerson(root, note, (prompt, digest) => prompt.includes('test/extra.test.mjs: test-file-removed') ? `acknowledge ${digest}` : '')).toBe(0)
+        expect(record(root, 'WO-4').acknowledgements).toEqual([expect.objectContaining({ by: 'person', note: 'the extra test duplicated AC1' })])
+        expect(await work(root, ['work', 'grade', '--work-order', 'WO-4'])).toMatchObject({ status: 0, result: { state: 'graded',
+            criteria: [{ id: 'AC1' }, { id: 'test-protection', verdict: 'met' }], testProtection: { acknowledgedBy: 'person' } } })
+
+        // The acknowledgement covers what the person read: a test skipped afterwards fails the grade again.
+        writeFileSync(join(root, 'test/later.test.mjs'), "test.skip('later', () => {})\n")
+        expect(await work(root, ['work', 'grade', '--work-order', 'WO-4'])).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_TEST_WEAKENED',
+            message: expect.stringContaining('test/later.test.mjs: test-skipped') }] })
+    }, 120_000)
+
+    it('judges tests by the declared test_files, and holds a passing test-run to the same protection', async () => {
+        const root = await cockpit(['[work]', 'grading = "checks"', '', '[testing]', 'test_files = ["checks/**"]', '', '[[testing.stages]]', 'id = "unit"',
+            'command = ["node", "test/add.test.mjs"]', 'requires_stack = false', '', '[[testing.gates]]', 'id = "quick"', 'tier = "targeted"', 'stages = ["unit"]', 'changes = "any change"'].join('\n'))
+        mkdirSync(join(root, 'checks'))
+        writeFileSync(join(root, 'checks/one.mjs'), "console.log('one')\n")
+        git(root, 'add', '-A'); git(root, 'commit', '-qm', 'checks')
+        writeFileSync(join(root, 'workorders/WO-5.md'), order('WO-5'))
+        expect((await work(root, ['work', 'accept', '--work-order', 'WO-5'])).status).toBe(0)
+        const run = () => work(root, ['test-run', '--gate', 'quick', '--mode', 'canonical'])
+        expect(await run()).toMatchObject({ status: 0, result: { testProtection: { comparedWith: ["WO-5's base"], orders: [{ id: 'WO-5', findings: [], testFiles: '[testing] test_files in cockpit.toml' }] } } })
+
+        // test/ is no longer a test directory once test_files names another; checks/ is.
+        rmSync(join(root, 'test/add.test.mjs'))
+        writeFileSync(join(root, 'test/add.test.mjs'), "console.log('add(2, 3) returned 5')\n")
+        expect((await run()).status).toBe(0)
+        rmSync(join(root, 'checks/one.mjs'))
+        expect(await run()).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_TEST_WEAKENED', message: expect.stringContaining('checks/one.mjs: test-file-removed') }] })
+    }, 120_000)
 })
