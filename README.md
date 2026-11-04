@@ -34,6 +34,7 @@ from one <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml` you review li
 | Changes held to criteria you set | [Work orders](#work-orders) | A scope, checks and a grade whose record names who judged it |
 | Your agent to do the setup | [Set up with an agent](docs/getting-started.md#set-up-with-an-agent) | A setup that asks you for every value it cannot read and invents none |
 | To join a team that already uses it | [Joining a team's cockpit](docs/joining-a-team.md) | A verified install from a fresh clone |
+| To move an existing scripted setup over | [Adopt an existing setup](docs/getting-started.md#adopt-an-existing-setup) | Your registry and scripts adopted in layers, with your own agent settings kept |
 
 Each is independent: start with one and add the others when you need them. Only the stack needs Docker.
 
@@ -114,11 +115,14 @@ Compose stack are its second chapter. To watch it all on a throwaway example fir
 | Capability | How cockpit does it |
 |---|---|
 | **Every repository in reach** | Declare each repository once; `setup` clones or finds it, its guides are copied into the root `AGENTS.md` (the one route that loaded in all three tools in the dated runs), and every tool is granted its directory. A changed guide shows as drift until a person runs `sync`, so an agent cannot quietly change what later agents load. |
-| **The product running, per checkout** | `session` runs your own Compose files on the live checkouts and leases each checkout, linked worktrees included, a port family, so parallel agents do not collide. `preflight` says when the stack is healthy; seed data, logs, test gates and browser screenshots use the same declarations. |
+| **The product running, per checkout** | `session` runs your own Compose files on the live checkouts and leases each checkout, linked worktrees included, a port family, so parallel agents do not collide. `up`, `preflight`, `logs`, `sleep`, `down` and `reset` drive it; the stack stops only when no checkout still holds it, and `reset` wipes only the volumes you declared resettable. |
+| **Proof in a real browser** | `browser drive` and `browser screenshot` run a headless browser through your own Playwright project against every declared route on the leased application origin, signed in as a declared role when you ask, and record each screenshot with its digest ([below](#browser-checks)). |
+| **Test gates that cannot fake a pass** | `test-run` runs your own targeted or full gate (Vitest, Jest, pytest, Nx, Turborepo, Bazel and others) and reports PASS only for a complete, stable run whose checks all passed; anything else is FAIL, DEGRADED, VOID or PARTIAL. |
 | **One guard in every tool** | The same script refuses pushes to protected branches, reads and writes of secret files, and commands aimed at the production hosts you declare. A command it cannot prove read-only goes to a person, or is refused where the tool has no prompt. |
 | **Skills for driving it** | Each listed tool gets cockpit's skills for fixing a bug with proof, running a work order, checking the app in a browser and explaining a refusal ([below](#skills)). |
 | **Done, measured** | Optional work orders hold a change to an objective, a scope of paths and criteria with checks. In every mode cockpit reruns the checks and fails any change outside scope; the criteria are judged by a fresh read-only agent run, by the checks alone, or by the agent's own report, and the record says which. |
-| **Checked, not assumed** | `check` fails in CI, and when a Claude Code or Codex session starts, if a generated file stops matching `cockpit.toml`. Every diagnostic names what failed and the fix ([example](#drift-checks)). The [capability matrix](docs/capability-matrix.md) records what each tool actually enforced, from dated runs of the real tool. |
+| **MCP servers you approve** | A server your repositories declare reaches an agent only after a person approves its exact SHA-256 in `[mcp.approved]`; a changed declaration needs approval again. |
+| **Checked, not assumed** | `check` fails in CI, and when a Claude Code or Codex session starts, if a generated file stops matching `cockpit.toml`. Every diagnostic names what failed and the fix ([example](#drift-checks)). The [capability matrix](docs/capability-matrix.md) records what each tool actually enforced, from dated runs of the real tool; `selftest` checks the tools installed on your machine with probes you write. |
 
 Adopt it in steps: the instructions, skills and guard need only Git and Node.js; the stack switches on
 when you declare Compose files (Docker), and agent-run grading when an agent tool is on `PATH` and
@@ -275,6 +279,28 @@ person's confirmation, and `[work.gates]` can ask for a person or a CI job to ac
 an order (only the CI job is enforced). To grade a change without an order:
 `npx --no cockpit grade --config cockpit.toml --criteria criteria.md`. See
 [Work and browser](docs/work-and-browser.md).
+
+## Browser checks
+
+Optional, for evidence of what a person would see. Declare the application's routes, a `[browser]`
+table and a small Playwright project of your own, then:
+
+```console
+$ npx --no cockpit browser drive --config cockpit.toml --json        # visit every declared route
+$ npx --no cockpit browser screenshot --config cockpit.toml --json   # capture each one
+$ npx --no cockpit browser drive --config cockpit.toml --role admin  # as a signed-in role
+```
+
+The browser runs headless (Chromium by default; Firefox and WebKit are options) and stays on the
+application's leased origin: evidence is recorded only for a page that ends there, a second top-level
+navigation is refused, and a failure names the URL and the browser's own error code, never page text. Sign-in states are per worker or taken in turns, so parallel
+agents do not share a session. The guard asks a person before each browser command unless
+`browser.request_preapproval` is set, which is allowed only for isolated, non-production data.
+
+To let an agent drive a browser interactively through Playwright MCP tools, run a browser service in
+your own Compose file and declare its `browser.endpoint`; cockpit then publishes the Playwright MCP
+server for approval and installs the `cockpit-browser` skill. See
+[Browser evidence](docs/work-and-browser.md#browser-evidence).
 
 ## How cockpit compares
 
