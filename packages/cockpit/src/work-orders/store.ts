@@ -209,11 +209,26 @@ export function createWorkStore(root: string): WorkStore {
             const judged = await judgeHolder(found.data, await containers())
             if (judged.lock !== 'dead' || !apply) return { id, lock: judged.lock, holder: shown, checked: judged.checked }
             // The lock is taken over rather than deleted, so no other writer slips in before the recovery is recorded.
+            // Two recoveries that both judged it dead must not both replace it and then each delete the other's: each
+            // links its holder at the takeover name, which only one can create, and only that one replaces the lock.
             const ours = `${path}.${randomUUID()}.tmp`
+            const takeover = `${path}.takeover`
             await writeFile(ours, `${JSON.stringify(await holder())}\n`, { flag: 'wx', mode: 0o644 })
             try {
-                if (await readFile(path, 'utf8') !== text) throw new RefusalError(`the lock on ${id} changed while it was being recovered; rerun work recover`)
-                await rename(ours, path)
+                try { await link(ours, takeover) }
+                catch (error) {
+                    if (!hasErrorCode(error, 'EEXIST')) throw error
+                    throw new RefusalError(`another work recover is taking over the lock on ${id}; rerun work recover once it finishes, `
+                        + `or if none is running, a person removes ${WORK_RECORD_DIRECTORY}/${id}.lock.takeover, which a crashed recovery left`)
+                }
+                let replaced = false
+                try {
+                    let current: string | undefined
+                    try { current = await readFile(path, 'utf8') } catch (error) { if (!hasErrorCode(error, 'ENOENT')) throw error }
+                    if (current !== text) throw new RefusalError(`the lock on ${id} changed while it was being recovered; rerun work recover`)
+                    await rename(takeover, path)
+                    replaced = true
+                } finally { if (!replaced) await rm(takeover, { force: true }) }
             } finally { await rm(ours, { force: true }) }
             try {
                 const record = await read(id)
