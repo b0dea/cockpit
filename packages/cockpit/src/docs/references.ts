@@ -5,7 +5,7 @@
 // allowlist is needed, and a link that never resolved is a link checker's business.
 import { posix } from 'node:path'
 import type { Diagnostic, ENVIRONMENT_CODES } from '../environment/contract.js'
-import type { WalkedMarkdown } from './markdown.js'
+import { resolveLinkTarget, type WalkedMarkdown } from './markdown.js'
 
 export interface RepositoryHistory {
     /** Each path a commit deleted or renamed away, newest first, mapped to its new name for a rename. */
@@ -76,14 +76,14 @@ function citedTargets(text: string): string[] {
 }
 
 function citedPath(document: string, raw: string, relativeToDocument: boolean): string | undefined {
-    let value = raw.trim().replace(/^<|>$/g, '').split(/[#?]/, 1)[0]!.replace(/:\d+(?::\d+)?$/, '').replace(/\/+$/, '')
-    // A `%` that starts no valid escape is part of the file name, as CommonMark reads it.
-    try { value = decodeURI(value) } catch (error) { if (!(error instanceof URIError)) throw error }
-    if (value === '' || value.startsWith('/') || /^[a-z][a-z0-9+.-]*:/i.test(value)) return undefined
+    const value = raw.trim().replace(/^<|>$/g, '')
     const relative = relativeToDocument || value.startsWith('./') || value.startsWith('../')
-    const resolved = posix.normalize(relative ? posix.join(posix.dirname(document), value) : value)
-    return resolved === '.' || resolved.startsWith('../') ? undefined : resolved
+    const resolved = resolveLinkTarget(relative ? posix.dirname(document) : '', value)
+    return resolved === undefined || resolved === '.' || resolved.startsWith('../') ? undefined : resolved
 }
+
+// Every directory above the given files: `a/b/c.md` contributes `a` and `a/b`.
+const ancestors = (files: Iterable<string>) => new Set([...files].flatMap(file => file.split('/').slice(0, -1).map((_, index, parts) => parts.slice(0, index + 1).join('/'))))
 
 /**
  * The stale references in the given documents. `files` are the repository's files now; a cited
@@ -99,9 +99,9 @@ export function staleReferences(input: Readonly<{
     present: (path: string) => boolean
 }>): Diagnostic[] {
     const findings: Diagnostic[] = []
-    const directories = new Set([...input.files].flatMap(file => file.split('/').slice(0, -1).map((_, index, parts) => parts.slice(0, index + 1).join('/'))))
+    const directories = ancestors(input.files)
     const exists = (path: string) => input.files.has(path) || directories.has(path)
-    const removedDirectories = new Set([...input.history.removed.keys()].flatMap(file => file.split('/').slice(0, -1).map((_, index, parts) => parts.slice(0, index + 1).join('/'))))
+    const removedDirectories = ancestors(input.history.removed.keys())
     // Follow renames to where the content lives now; a chain that ends in a deletion is a removal.
     const successor = (path: string): string | undefined => {
         const seen = new Set<string>()

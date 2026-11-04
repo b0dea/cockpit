@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { withStatus } from './decision-record.js'
 import { inspectDecisionRecords } from './decisions.js'
 
 const inspect = (files: Record<string, string>, index?: string) => inspectDecisionRecords({
@@ -54,5 +55,22 @@ describe('decision record integrity', () => {
             'DECISION_SUPERSEDED_STALE decision record docs/adr/0001-store.md still has status "Accepted", but docs/adr/0004-cache-v2.md:5 supersedes it',
             'DECISION_LINK_UNRESOLVED decision record docs/adr/0006-gone.md:3 cites #9, which names no record in docs/adr',
         ])
+    })
+
+    // `work decide --supersedes` marks the old record with this; a status only the check could read
+    // left the record unmarkable, and the check then reported it stale.
+    it('marks a record superseded wherever the check reads its status, in the form it was written', () => {
+        const newer = '# Cache v2\n\nStatus: Accepted\n\nSupersedes 0001.\n'
+        for (const [old, marked] of [
+            ['# Store\n\n- Status: Accepted\n', '# Store\n\n- Status: superseded by 0002\n'],
+            ['# Store\n\n## Status\n\nAccepted\n\n## Context\n', '# Store\n\n## Status\n\nsuperseded by 0002\n\n## Context\n'],
+            ['---\r\ntitle: Store\r\nstatus: accepted\r\n---\r\n# Store\r\n', '---\r\ntitle: Store\r\nstatus: superseded by 0002\r\n---\r\n# Store\r\n'],
+            ['# Store\n\n```\nStatus: example\n```\n\n__Status__: Accepted\n', '# Store\n\n```\nStatus: example\n```\n\n__Status__: superseded by 0002\n'],
+        ] as const) {
+            expect(inspect({ '0001-store.md': old, '0002-cache-v2.md': newer })).toEqual([expect.stringMatching(/^DECISION_SUPERSEDED_STALE /)])
+            expect(withStatus(old, 'superseded by 0002')).toBe(marked)
+            expect(inspect({ '0001-store.md': marked, '0002-cache-v2.md': newer })).toEqual([])
+        }
+        expect(withStatus('# Store\n\nNo status here.\n', 'superseded by 0002')).toBeUndefined()
     })
 })

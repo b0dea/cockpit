@@ -9,8 +9,10 @@ import { loadCockpitConfig } from '../config/load.js'
 import { ENVIRONMENT_CODES, errorCause, snapshotExecutionStep, type Diagnostic, type ExecutionStep } from '../environment/contract.js'
 import { resolveGitExecutable, type ResolvedExecutable } from '../environment/executable.js'
 import { gitRepositoryRefusal } from '../environment/git-observation.js'
+import { loadServedSiblings, missingServedCheckout } from '../environment/sibling-checkouts.js'
 import { refusalOutcome } from '../refusal.js'
-import { scopeMatches } from '../work-orders/contract.js'
+import { splitRepositoryPath } from '../repository-path.js'
+import { scopeMatcher } from '../work-orders/contract.js'
 import { inspectDecisionRecords } from './decisions.js'
 import { walkMarkdownProse } from './markdown.js'
 import { historicalMakeTargets, makeTargets, parseRemovedPaths, staleReferences, type LivingDocument } from './references.js'
@@ -81,10 +83,10 @@ function removedPaths(output: string): ReadonlyMap<string, string | undefined> {
     try { return parseRemovedPaths(output) } catch (error) { throw new EvidenceUnavailable((error as Error).message) }
 }
 
-// `<slug>:path` names a sibling's repository; a bare path names the cockpit's own.
-function split(path: string): Readonly<{ repository: string; path: string }> {
-    const match = /^([a-z0-9][a-z0-9-]{0,63}):(.*)$/.exec(path)
-    return match ? { repository: match[1]!, path: match[2]! } : { repository: '', path }
+// `<slug>:path` names a sibling's repository; a bare path names the cockpit's own, keyed ''.
+function split(reference: string): Readonly<{ repository: string; path: string }> {
+    const { slug, path } = splitRepositoryPath(reference)
+    return { repository: slug ?? '', path }
 }
 
 export async function runDocsCheck(input: DocsCheckInput, dependencies: Readonly<{ execute: Execute }>): Promise<DocsCheckOutcome> {
@@ -105,9 +107,12 @@ export async function runDocsCheck(input: DocsCheckInput, dependencies: Readonly
     }
     const executable = resolution.value
     const cockpitRoot = posix.dirname(source.path)
-    const siblingsRoot = resolve(cockpitRoot, config.cockpit.siblings_root)
-    const rootOf = (repository: string) => repository === '' ? cockpitRoot
-        : resolve(siblingsRoot, config.sibling.find(row => row.slug === repository)!.dir)
+    // A sibling `cockpit use` serves from another checkout is checked there, where the stack runs it.
+    const served = await loadServedSiblings(cockpitRoot, config)
+    if (served.kind !== 'complete') return { status: 2, diagnostics: [served.diagnostic], result: null }
+    const gone = await missingServedCheckout(served.siblings)
+    if (gone) return { status: 2, diagnostics: [gone], result: null }
+    const rootOf = (repository: string) => repository === '' ? cockpitRoot : served.siblings.get(repository)!.served
     const decisions = docs.decisions === undefined ? undefined : split(docs.decisions)
     const living = docs.living.map(split)
     const repositories = [...new Set([...living.map(entry => entry.repository), ...decisions ? [decisions.repository] : []])]
@@ -146,22 +151,27 @@ async function checkRepository(input: Readonly<{
     let decisionFiles = 0
     try {
         // Untracked files that are not ignored count, so a document added in this change is checked before its commit.
-        const files = new Set((await git(input.executable, root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], input.execute))
-            .split('\0').filter(Boolean))
-        if (globs.length > 0) {
-            const [names, patch] = await Promise.all([
+        const [listed, history] = await Promise.all([
+            git(input.executable, root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], input.execute),
+            globs.length > 0 ? Promise.all([
                 git(input.executable, root, ['log', '--relative', '--format=', '--name-status', '-z', '-M', '--diff-filter=DR'], input.execute),
                 git(input.executable, root, ['log', '--relative', '-p', '--format=', '--no-color', '--no-ext-diff', '--no-textconv', '--', ...MAKEFILE_PATHSPECS], input.execute),
-            ])
+            ]) : undefined,
+        ])
+        const all = listed.split('\0').filter(Boolean)
+        const files = new Set(all)
+        const markdown = all.filter(file => MARKDOWN.test(file))
+        if (history) {
+            const [names, patch] = history
             for (const glob of globs) {
-                if (![...files].some(file => MARKDOWN.test(file) && scopeMatches([glob], file))) {
+                if (!markdown.some(scopeMatcher([glob]))) {
                     findings.push({ severity: 'error', code: 'DOCS_DECLARATION_UNMATCHED' satisfies typeof ENVIRONMENT_CODES.DOCS_DECLARATION_UNMATCHED, target: `${prefix}${glob}`,
                         message: `[docs] living entry ${prefix}${glob} matches no Markdown file, so it checks nothing`,
                         fix: 'correct the glob under [docs] living in cockpit.toml to match the documents, or remove it; then rerun npx --no cockpit docs check --config <your cockpit.toml>' })
                 }
             }
             const documents: LivingDocument[] = []
-            for (const path of [...files].filter(file => MARKDOWN.test(file) && scopeMatches(globs, file)).sort()) {
+            for (const path of markdown.filter(scopeMatcher(globs)).sort()) {
                 let body: string
                 try { body = read(root, path) } catch (error) { unavailable(error); continue }
                 // The walker throws only for an HTML comment that never closes.
@@ -170,24 +180,24 @@ async function checkRepository(input: Readonly<{
                 }
             }
             livingDocuments = documents.length
-            const current = makeTargets([...files].filter(file => MAKEFILE.test(file)).flatMap(file => read(root, file).split('\n')))
+            const current = makeTargets(all.filter(file => MAKEFILE.test(file)).flatMap(file => read(root, file).split('\n')))
             findings.push(...staleReferences({ repository: prefix, documents, files, targets: current, present: path => present(root, path),
                 history: { removed: removedPaths(names), targets: historicalMakeTargets(patch) } }))
         }
         if (input.decisions) {
             const directory = posix.normalize(input.decisions.directory).replace(/\/$/, '')
             const index = input.decisions.index === undefined ? undefined : posix.normalize(input.decisions.index)
-            const names = [...files].filter(file => posix.dirname(file) === directory && MARKDOWN.test(file))
-            const missing = names.length === 0 ? { target: directory, message: `[docs] decisions ${prefix}${directory} holds no Markdown file` }
+            const records = markdown.filter(file => posix.dirname(file) === directory)
+            const missing = records.length === 0 ? { target: directory, message: `[docs] decisions ${prefix}${directory} holds no Markdown file` }
                 : index !== undefined && !files.has(index) ? { target: index, message: `[docs] decisions_index ${prefix}${index} does not exist` } : undefined
             if (missing) {
                 findings.push({ severity: 'error', code: 'DOCS_DECLARATION_UNMATCHED' satisfies typeof ENVIRONMENT_CODES.DOCS_DECLARATION_UNMATCHED,
                     target: `${prefix}${missing.target}`, message: `${missing.message}, so it checks nothing`,
                     fix: 'correct decisions or decisions_index under [docs] in cockpit.toml to the directory of decision records and the file that lists them, or remove the key; then rerun npx --no cockpit docs check --config <your cockpit.toml>' })
             } else {
-                decisionFiles = names.length
+                decisionFiles = records.length
                 findings.push(...inspectDecisionRecords({ repository: prefix, directory,
-                    files: new Map(names.map(name => [posix.basename(name), read(root, name)])),
+                    files: new Map(records.map(name => [posix.basename(name), read(root, name)])),
                     ...index === undefined ? {} : { index: { path: index, body: read(root, index) } } }))
             }
         }
