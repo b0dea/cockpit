@@ -17,6 +17,7 @@ export type WorkHandlerIdentifier =
 
 export type HandlerIdentifier = WorkHandlerIdentifier
     | 'check'
+    | 'docs-check'
     | 'doctor'
     | 'down'
     | 'init'
@@ -54,6 +55,7 @@ export const commandStages: readonly Readonly<{ id: CommandStage; title: string 
 export const commandGroups: readonly Readonly<{ name: string; summary: string }>[] = Object.freeze([
     { name: 'work', summary: 'Accept, check, grade and close work orders' },
     { name: 'browser', summary: 'Drive, inspect and capture the declared application in a browser' },
+    { name: 'docs', summary: 'Check living documents and decision records against the repositories' },
 ])
 
 /**
@@ -446,6 +448,10 @@ const sources = [
     { name: 'browser screenshot', handler: 'browser-screenshot', stage: 'test-and-grade', summary: 'Capture the declared application surfaces', visibility: 'public',
         ordinary: ordinary('browser-screenshot', browserAdmission),
         flags: { ...configured, role: str(value('identifier')) } },
+    // Reads documents and runs read-only Git, like check; it writes nothing, so an agent runs it freely.
+    { name: 'docs check', handler: 'docs-check', stage: 'test-and-grade', summary: 'Report removed paths and make targets living docs still cite, and broken decision records', visibility: 'public',
+        ordinary: ordinary('docs-check'),
+        flags: configured },
 ] as const satisfies readonly CommandSource[]
 
 export const commands: readonly CommandDefinition[] = sources.map(({ flags, ...command }): CommandDefinition => {

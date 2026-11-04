@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { walkMarkdownProse } from '../../../scripts/docs-lint.ts'
+import { walkMarkdownProse } from './docs/markdown.js'
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 const PUBLIC_POLICIES = [

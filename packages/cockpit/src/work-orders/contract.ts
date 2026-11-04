@@ -14,7 +14,7 @@ const PRINTABLE = /^[^\x00-\x08\x0b-\x1f\x7f]*$/
 const text = z.string().trim().min(1).refine(value => Buffer.byteLength(value) <= WORK_ORDER_LIMITS.textBytes && PRINTABLE.test(value),
     `at most ${WORK_ORDER_LIMITS.textBytes} bytes without control characters`)
 // `path` in the cockpit's own repository, or `<sibling slug>:path` in a sibling; never absolute or climbing.
-const REPOSITORY_PATH = /^(?:[a-z0-9][a-z0-9-]{0,63}:)?(?![/])(?!.*(?:^|[/:])\.\.(?:\/|$))[A-Za-z0-9._@+\-/*?]+$/
+export const REPOSITORY_PATH = /^(?:[a-z0-9][a-z0-9-]{0,63}:)?(?![/])(?!.*(?:^|[/:])\.\.(?:\/|$))[A-Za-z0-9._@+\-/*?]+$/
 const repositoryPath = z.string().max(1_024).regex(REPOSITORY_PATH, 'a relative path, optionally <sibling slug>:path, without .. or a leading /')
 const sourcePath = repositoryPath.refine(value => !/[*?]/.test(value), 'a source names one file, without wildcards')
 const argument = z.string().min(1).refine(value => Buffer.byteLength(value) <= WORK_ORDER_LIMITS.argumentBytes && !/[\x00-\x1f\x7f]/.test(value), 'a bounded argument without control characters')

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { lintDocumentation, walkMarkdownProse, type Authority } from '../../../scripts/docs-lint.ts'
+import { lintDocumentation, type Authority } from '../../../scripts/docs-lint.ts'
+import { walkMarkdownProse } from './docs/markdown.js'
 
 const authority: Authority = {
     files: new Set(['packages/cockpit/src/cli.ts']),

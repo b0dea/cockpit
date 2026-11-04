@@ -29,6 +29,8 @@ contributor pages live separately under docs/contributing/.
 - [Safety and autonomy](safety-and-autonomy.md): what guards allow, ask about and deny.
 - [Work and browser workflows](work-and-browser.md): work orders, grading, browser checks and
   test tiers.
+- [Living documents and decision records](docs-check.md): find documents that cite removed paths
+  or make targets, and decision records whose numbers, index or statuses disagree.
 
 ## Reference
 

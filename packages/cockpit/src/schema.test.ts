@@ -159,6 +159,22 @@ describe('consumer surface declarations', () => {
         expect(CockpitConfig.safeParse({ cockpit: { name: 'synthetic' }, sibling: [sibling], ports: { bases: {} } }).success).toBe(true)
     })
 
+    it('accepts [docs] paths in declared repositories only, and an index only beside its records', () => {
+        const sibling = { slug: 'app', dir: 'app', mount: 'none', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic source' }
+        const issues = (docs: unknown) => {
+            const parsed = CockpitConfig.safeParse({ cockpit: { name: 'synthetic' }, sibling: [sibling], ports: { bases: {} }, docs })
+            return parsed.success ? [] : parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`)
+        }
+        expect(issues({ living: ['README.md', 'app:docs/**/*.md'], decisions: 'app:docs/adr', decisions_index: 'app:docs/adr/README.md' })).toEqual([])
+        expect(issues({ living: ['../outside.md'] })).toEqual([
+            'docs.living.0: a relative path, optionally <sibling slug>:path, without .. or a leading /',
+        ])
+        expect(issues({ living: ['api:README.md'], decisions: 'docs/adr', decisions_index: 'app:docs/adr/README.md' })).toEqual([
+            'docs.living.0: "api:README.md" names sibling "api", which no [[sibling]] declares',
+            'docs.decisions_index: decisions_index needs decisions set to the directory it indexes, in the same repository',
+        ])
+    })
+
     it.each(['../../../secret', '/etc/passwd', 'docs/../../secret', 'docs\\..\\secret'])('rejects sibling guide %j', (guide) => {
         const sibling = { slug: 'app', dir: 'app', mount: 'none', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic source', guides: [guide] }
         expect(CockpitConfig.safeParse({ cockpit: { name: 'synthetic' }, sibling: [sibling], ports: { bases: {} } }).success).toBe(false)

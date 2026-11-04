@@ -271,6 +271,7 @@ function doctorSummary(
         const declared = named('declared')
         const absent = named('not-declared')
         lines.push(`Declared: ${declared.join(', ') || 'nothing'}${absent.length === 0 ? '' : `; not declared: ${absent.join(', ')}`}.`)
+        if (declared.includes('docs')) lines.push(`Documents: ${bindConfigPath(cockpitCommand('docs check'), fixContext)} checks them; doctor does not.`)
     }
     const readiness = result.readiness as Readonly<{ gaps?: unknown; noFinding?: unknown }> | undefined
     if (readiness && Array.isArray(readiness.gaps)) {

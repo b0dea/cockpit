@@ -1,0 +1,5 @@
+---
+"@b00dea/cockpit": patch
+---
+
+New `cockpit docs check` command and `[docs]` table. `living` lists globs of documents that must stay true, in the cockpit's repository or `<sibling slug>:` in a sibling; the command reports `DOCS_REFERENCE_REMOVED` for a path a living document cites that the repository history deleted or renamed (naming the new path), and `DOCS_TARGET_REMOVED` for a `make` target a Makefile once defined and no longer does. A path or target that never existed is not reported. The optional `decisions` and `decisions_index` keys check a decision-record set: `DECISION_NUMBER_REUSED`, `DECISION_UNINDEXED`, `DECISION_INDEX_ENTRY_MISSING`, `DECISION_STATUS_MISSING`, `DECISION_LINK_UNRESOLVED` and `DECISION_SUPERSEDED_STALE`. It exits 2 on any finding, supports `--json`, refuses with `DOCS_NOT_DECLARED` without a `[docs]` table and reports `DOCS_DECLARATION_UNMATCHED` for an entry that matches nothing. The guard admits it for agents because it only reads, the generated Claude Code settings allow it without a prompt, and `doctor` names it when `[docs]` is declared. Run `cockpit sync` to pick up the new allow rule.
