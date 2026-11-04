@@ -637,7 +637,7 @@ describe('observation application runners', () => {
         const result = await runPreflight(source.input, { load: source.load, execute } as never)
 
         expect(order).toEqual([
-            'claims', 'git', 'host', 'lifecycle', 'ports', 'runtime', 'state', 'templates', 'envSchema', 'surfaces',
+            'claims', 'git', 'host', 'lifecycle', 'ports', 'runtime', 'state', 'templates', 'envSchema', 'siblings', 'surfaces',
             'authenticate',
         ])
         expect(execute).not.toHaveBeenCalled()
@@ -731,7 +731,7 @@ describe('observation application runners', () => {
 })
 
 const healthProducerNames = [
-    'claims', 'git', 'host', 'lifecycle', 'ports', 'runtime', 'state', 'templates', 'envSchema', 'surfaces',
+    'claims', 'git', 'host', 'lifecycle', 'ports', 'runtime', 'state', 'templates', 'envSchema', 'siblings', 'surfaces',
 ] as const
 
 function logRequestBaseFixture() {

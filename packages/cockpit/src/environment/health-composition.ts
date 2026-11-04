@@ -7,7 +7,7 @@ import { createWorkStore } from '../work-orders/store.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { type DoctorCommandAdapters } from './application/doctor.js'
-import { ObservationProducerRefusal, type HealthObservationProducers, type PreflightCommandAdapters } from './application/health.js'
+import { ObservationProducerRefusal, type HealthObservationProducers, type LoadedCockpitConfigResult, type PreflightCommandAdapters } from './application/health.js'
 import { decodeLifecycleRecord, revalidateService } from './application/lifecycle.js'
 import { type RuntimeReadiness } from './application/lifecycle-context.js'
 import { decodeCoordinationRecord, observeClaimState, readRootPortInventory } from './claims.js'
@@ -58,6 +58,7 @@ import {
 import { observeConfiguration, readState, selectStateRoot, type StateNamespace } from './state.js'
 import { observeTemplateHealth } from './templates.js'
 import { inspectServedSiblings } from './application/siblings.js'
+import { observeServedCheckouts } from './sibling-observation.js'
 
 export interface HealthCommandCompositionInput {
     readonly configPath: string
@@ -386,6 +387,10 @@ function producers(input: {
         state: async () => observeConfiguration({
             path: input.config.result.source.path, stackId: input.stack, observedAt: observedAt(),
         }),
+        siblings: async () => observeServedCheckouts({
+            stackId: input.stack, observedAt: observedAt(), configPath: input.config.result.source.path,
+            config: input.config.result.config,
+        }),
         templates: async () => observeTemplateHealth({
             stackId: input.stack, observedAt: observedAt(), siblingRoot,
             siblings: input.config.result.config.sibling,
@@ -451,6 +456,7 @@ export function createHealthCommandAdapters(
 ): HealthCommandAdapterComposition {
     const input = captureInput(rawInput)
     let selectedNamespace: StateNamespace | undefined
+    let loadedConfig: LoadedCockpitConfigResult | undefined
     let selectedOwn: (OwnCheckout & Readonly<{ configPath: string }>) | undefined
     const load: HealthCommandAdapterComposition['load'] = async (command, issue, refuse, purpose) => {
         const requestedPath = commandConfigPath(command)
@@ -460,6 +466,7 @@ export function createHealthCommandAdapters(
         // A malformed cockpit.toml is the user's to fix, so the loader's own diagnostics reach them.
         if (loaded.kind === 'refusal') return refuse?.(loaded.diagnostics)
         if (loaded.kind !== 'complete') return undefined
+        loadedConfig = loaded
         // Health is about a running stack or a machine floor; with neither declared it is not declared,
         // never healthy, and preflight refuses. Doctor still checks what such a cockpit does depend on:
         // its Git working tree, its siblings and its surfaces.
@@ -648,7 +655,10 @@ export function createHealthCommandAdapters(
     }
     const inspectStacks: NonNullable<HealthCommandAdapterComposition['inspectStacks']> = async () =>
         selectedNamespace && selectedOwn ? inspectMachineStacksForDoctor({ namespace: selectedNamespace, own: selectedOwn, configPath: selectedOwn.configPath }) : []
-    const inspectServed = input ? () => inspectServedSiblings({ configPath: input.configPath, env: input.env }, { execute }) : undefined
+    const inspectServed = input ? (loaded?: LoadedCockpitConfigResult) => {
+        const reuse = loaded ?? loadedConfig
+        return inspectServedSiblings({ configPath: input.configPath, env: input.env, ...(reuse ? { loaded: reuse } : {}) }, { execute })
+    } : undefined
     return { load, inspectSurfaceOverrides, ...(inspectHookTrust ? { inspectHookTrust } : {}), ...(inspectServed ? { inspectServedSiblings: inspectServed } : {}),
         ...(inspectEvaluator ? { inspectEvaluator } : {}), ...(inspectReadiness ? { inspectReadiness } : {}), readUnreadableState, inspectStacks,
         execute: (step: ExecutionStep) => execute(step) }

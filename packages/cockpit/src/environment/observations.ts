@@ -18,6 +18,7 @@ import { observationDeclarations as envSchemaDeclarations } from './env-schema-o
 import { observationDeclarations as gitDeclarations } from './git-observation.js'
 import { observationDeclarations as hostDeclarations } from './host-observation.js'
 import { observationDeclarations as lifecycleStageDeclarations } from './lifecycle-stage.js'
+import { observationDeclarations as siblingDeclarations } from './sibling-observation.js'
 import { observationDeclarations as runtimeDeclarations, runtimeHealthObservationDeclarations } from './runtime.js'
 import { observationDeclarations as stateDeclarations } from './state.js'
 import { observationDeclarations as templateDeclarations } from './templates.js'
@@ -81,6 +82,7 @@ export const allObservationDeclarations: readonly ObservationDeclaration[] = Obj
     ...hostDeclarations,
     ...lifecycleStageDeclarations,
     ...runtimeDeclarations,
+    ...siblingDeclarations,
     ...stateDeclarations,
     ...templateDeclarations,
     ...surfaceObservationDeclarations,

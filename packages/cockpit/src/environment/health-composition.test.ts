@@ -725,6 +725,47 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
     })
 })
 
+describe('served checkout health', () => {
+    const owner = 'sibling-observation'
+
+    async function recordServed(candidate: Awaited<ReturnType<typeof fixture>>, directory: string) {
+        const local = join(dirname(candidate.configPath), '.cockpit', 'local')
+        await mkdir(local, { recursive: true })
+        await writeFile(join(local, 'sibling-checkouts'), `${JSON.stringify({ format: 'cockpit-sibling-checkouts/v1', checkouts: { api: directory } })}\n`)
+    }
+
+    async function rows(candidate: Awaited<ReturnType<typeof fixture>>) {
+        const adapters = createHealthCommandAdapters({ configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home }, timeoutMs: 5_000 }, vi.fn(executeProbe))
+        const doctor = await runDoctor({ configPath: candidate.configPath }, adapters)
+        const preflight = await runPreflight({ configPath: candidate.configPath }, adapters)
+        return [doctor, preflight].map(result => ({ result, row: result.result.checks.find(check => check.owner === owner) }))
+    }
+
+    // `up` refuses a recorded checkout that is gone, so a gate that only warned would pass a stack `up` cannot start.
+    it('fails preflight and doctor for a recorded checkout that no longer exists, as up refuses it', async () => {
+        const candidate = await fixture({ machineOnly: true })
+        const gone = join(candidate.root, 'removed-worktree')
+        await recordServed(candidate, gone)
+
+        for (const { result, row } of await rows(candidate)) {
+            expect(row).toMatchObject({ code: 'SIBLING_CHECKOUT_UNAVAILABLE', verdict: 'fail', measured: [gone] })
+            expect(result.diagnostics).toEqual(expect.arrayContaining([
+                expect.objectContaining({ severity: 'error', code: 'SIBLING_CHECKOUT_UNAVAILABLE', target: 'served-checkouts' }),
+            ]))
+        }
+    })
+
+    it('passes the row when the recorded checkout exists', async () => {
+        const candidate = await fixture({ machineOnly: true })
+        const present = join(candidate.root, 'present-worktree')
+        await mkdir(present)
+        await recordServed(candidate, present)
+
+        for (const { row } of await rows(candidate)) expect(row).toMatchObject({ verdict: 'pass', measured: [] })
+    })
+})
+
 describe('env schema health', () => {
     // Distinctive enough that any copy of it in output or state is unmistakable.
     const SECRET = 'sentinel-resolved-value-7c1e94'

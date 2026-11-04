@@ -11,10 +11,13 @@
 import { createHash } from 'node:crypto'
 import { lstat, readdir, readFile, readlink, rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import { readBoundedFile } from '../bounded-read.js'
 import { cockpitCommand } from '../fix-catalogue.js'
+import { sha256Hex } from '../sha256.js'
 import { GUARD_LOCAL_PATHS, writeCockpitLocalFiles } from '../guards/local-identity.js'
 import type { CockpitConfig, Sibling } from '../schema.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, RefusalError, tryParseJson, type EnvironmentDiagnostic } from './contract.js'
+import { mapLimit } from './map-limit.js'
 import type { ServedSibling } from './sibling-checkouts.js'
 
 const FORMAT = 'cockpit-stack-inputs/v1'
@@ -23,6 +26,8 @@ const RECORD_PATH = `${GUARD_LOCAL_PATHS.directory}/${RECORD_NAME}`
 const RECORD_MAX_BYTES = 1_048_576
 // A migrations directory is small; one this large is the wrong path, and hashing it would stall every doctor.
 const DIRECTORY_ENTRY_LIMIT = 20_000
+// Each in-flight digest may hold a file descriptor.
+const DIGEST_CONCURRENCY = 16
 
 // The lockfiles the common toolchains write, watched when no install policy names the sibling's.
 export const COMMON_LOCKFILES: readonly string[] = Object.freeze([
@@ -45,21 +50,30 @@ async function digestPath(path: string): Promise<string | null> {
         if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return null
         throw error
     }
-    if (status.isSymbolicLink()) return createHash('sha256').update(`link\0${await readlink(path)}`).digest('hex')
-    if (status.isFile()) return createHash('sha256').update(await readFile(path)).digest('hex')
-    if (!status.isDirectory()) return createHash('sha256').update(`other\0${status.mode}`).digest('hex')
+    if (status.isSymbolicLink()) return sha256Hex(`link\0${await readlink(path)}`)
+    if (status.isFile()) return sha256Hex(await readFile(path))
+    if (!status.isDirectory()) return sha256Hex(`other\0${status.mode}`)
     const hash = createHash('sha256')
+    // Entries are digested concurrently but folded into the hash in sorted order, so the digest is deterministic.
     let entries = 0
-    const walk = async (directory: string, prefix: string): Promise<void> => {
-        for (const entry of (await readdir(directory, { withFileTypes: true })).sort((left, right) => left.name < right.name ? -1 : 1)) {
-            if (++entries > DIRECTORY_ENTRY_LIMIT) throw new RefusalError(`${path} holds more than ${DIRECTORY_ENTRY_LIMIT} entries`)
+    const walk = async (directory: string, prefix: string): Promise<string[]> => {
+        const listed = (await readdir(directory, { withFileTypes: true })).sort((left, right) => left.name < right.name ? -1 : 1)
+        entries += listed.length
+        if (entries > DIRECTORY_ENTRY_LIMIT) throw new RefusalError(`${path} holds more than ${DIRECTORY_ENTRY_LIMIT} entries`)
+        return (await mapLimit(listed, DIGEST_CONCURRENCY, async entry => {
             const relative = `${prefix}${entry.name}`
-            if (entry.isDirectory()) { hash.update(`dir\0${relative}\0`); await walk(join(directory, entry.name), `${relative}/`) }
-            else hash.update(`${relative}\0${await digestPath(join(directory, entry.name))}\0`)
-        }
+            return entry.isDirectory()
+                ? [`dir\0${relative}\0`, ...await walk(join(directory, entry.name), `${relative}/`)]
+                : [`${relative}\0${await digestPath(join(directory, entry.name))}\0`]
+        })).flat()
     }
-    await walk(path, '')
+    for (const line of await walk(path, '')) hash.update(line)
     return hash.digest('hex')
+}
+
+async function exists(path: string): Promise<boolean> {
+    try { await lstat(path); return true }
+    catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return false; throw error }
 }
 
 /** The paths watched for one sibling and where each came from: its own list, then the toolchain's lockfiles. */
@@ -71,7 +85,7 @@ export async function watchedInputs(config: Pick<CockpitConfig, 'environment'>,
     // Without a policy only the lockfiles present at up are watched; one created later is a new
     // toolchain, which a person adds to install_policies.
     const common = policies.length > 0 ? [] : (await Promise.all(COMMON_LOCKFILES.map(async path =>
-        await digestPath(join(served, path)) === null ? [] : [{ path, source: 'common lockfile names' as const }]))).flat()
+        await exists(join(served, path)) ? [{ path, source: 'common lockfile names' as const }] : []))).flat()
     const seen = new Set<string>()
     return [...declared, ...policies, ...common].filter(row => !seen.has(row.path) && seen.add(row.path))
 }
@@ -91,13 +105,12 @@ export async function recordStackInputs(cockpitRoot: string, config: Pick<Cockpi
             try { await lstat(join(cockpitRoot, RECORD_PATH)); return [] }
             catch (error) { if (!hasErrorCode(error, 'ENOENT')) throw error }
         }
-        const siblings: SiblingInputs[] = []
-        for (const sibling of stackSiblings(config)) {
+        const siblings: SiblingInputs[] = await Promise.all(stackSiblings(config).map(async sibling => {
             const directory = served.get(sibling.slug)!.served
-            const inputs: InputDigest[] = []
-            for (const row of await watchedInputs(config, sibling, directory)) inputs.push({ ...row, sha256: await digestPath(join(directory, row.path)) })
-            siblings.push({ slug: sibling.slug, served: directory, inputs })
-        }
+            const inputs = await Promise.all((await watchedInputs(config, sibling, directory)).map(async row =>
+                ({ ...row, sha256: await digestPath(join(directory, row.path)) })))
+            return { slug: sibling.slug, served: directory, inputs }
+        }))
         const record: StackInputsRecord = { format: FORMAT, recordedAt: new Date().toISOString(), siblings }
         const written = await writeCockpitLocalFiles(cockpitRoot, [{ name: RECORD_NAME, bytes: `${JSON.stringify(record)}\n` }])
         if (written.kind !== 'complete') throw new RefusalError(written.message)
@@ -151,31 +164,31 @@ export async function staleStackDiagnostics(cockpitRoot: string, served: Readonl
     const path = join(cockpitRoot, RECORD_PATH)
     let bytes: Buffer
     try {
-        const status = await lstat(path)
-        if (!status.isFile() || status.isSymbolicLink() || status.size > RECORD_MAX_BYTES) return [unrecorded(`${path} is not a record cockpit wrote`)]
-        bytes = await readFile(path)
+        const read = readBoundedFile(path, RECORD_MAX_BYTES)
+        if (read.kind === 'too-large') return [unrecorded(`${path} is not a record cockpit wrote`)]
+        bytes = read.bytes
     } catch (error) {
         if (hasErrorCode(error, 'ENOENT')) return []
+        if (hasErrorCode(error, 'ELOOP', 'EISDIR')) return [unrecorded(`${path} is not a record cockpit wrote`)]
         return [unrecorded(`${path} could not be read (${errorCause(error)})`)]
     }
     const record = decode(bytes)
     if (!record) return [unrecorded(`${path} is not a record cockpit wrote`)]
-    const findings: EnvironmentDiagnostic[] = []
-    for (const sibling of record.siblings) {
+    const findings = await Promise.all(record.siblings.map(async (sibling): Promise<EnvironmentDiagnostic | undefined> => {
         const current = served.get(sibling.slug)
-        if (!current) continue
-        const changes: string[] = []
-        if (current.served !== sibling.served) changes.push(`it is now served from ${current.served}`)
+        if (!current) return undefined
+        let changes: string[]
+        if (current.served !== sibling.served) changes = [`it is now served from ${current.served}`]
         else {
-            for (const input of sibling.inputs) {
+            changes = (await mapLimit(sibling.inputs, DIGEST_CONCURRENCY, async input => {
                 let digest: string | null
                 try { digest = await digestPath(join(sibling.served, input.path)) }
-                catch (error) { changes.push(`${input.path} (${input.source}) could not be read: ${errorCause(error)}`); continue }
-                if (digest !== input.sha256) changes.push(`${input.path} (${input.source}) ${digest === null ? 'was removed' : input.sha256 === null ? 'was created' : 'changed'}`)
-            }
+                catch (error) { return `${input.path} (${input.source}) could not be read: ${errorCause(error)}` }
+                return digest === input.sha256 ? undefined : `${input.path} (${input.source}) ${digest === null ? 'was removed' : input.sha256 === null ? 'was created' : 'changed'}`
+            })).filter(change => change !== undefined)
         }
-        if (changes.length === 0) continue
-        findings.push({
+        if (changes.length === 0) return undefined
+        return {
             severity: 'warning',
             code: 'STACK_INPUTS_CHANGED' satisfies typeof ENVIRONMENT_CODES.STACK_INPUTS_CHANGED,
             message: `the stack came up at ${record.recordedAt} with sibling ${sibling.slug} from ${sibling.served}; since then ${changes.join(', ')}, `
@@ -183,7 +196,7 @@ export async function staleStackDiagnostics(cockpitRoot: string, served: Readonl
             target: `sibling:${sibling.slug}`,
             fix: `run ${cockpitCommand('down')} and then ${cockpitCommand('up')} so every service starts on the current files; `
                 + 'a service whose image installs the dependencies needs that image rebuilt before up',
-        })
-    }
-    return findings
+        }
+    }))
+    return findings.filter(finding => finding !== undefined)
 }

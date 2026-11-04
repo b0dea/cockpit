@@ -36,12 +36,16 @@ async function unconfiguredFilters(git: GitRunner, path: string): Promise<readon
     // grep exits 1 when nothing matches.
     if (named.kind !== 'complete') return named.exitCode === 1 ? [] : { reason: `its attributes could not be read (${named.detail})` }
     const drivers = [...new Set(named.stdout.split('\n').map(line => line.trim().slice('filter='.length)).filter(Boolean))]
-    const missing = []
-    for (const driver of drivers) {
-        const defined = await git.run(path, 'pull:filter-driver', ['config', '--get-regexp', `^filter\\.${driver.replace(/[^A-Za-z0-9_-]/g, '.')}\\.(smudge|process)$`])
-        if (defined.kind !== 'complete') missing.push(driver)
+    // One call lists every filter variable; git exits 1 when there are none. Section and variable
+    // names are lower-cased in the output, the driver (subsection) keeps its case.
+    const configured = await git.run(path, 'pull:filter-drivers', ['config', '--get-regexp', '^filter\\.'])
+    if (configured.kind !== 'complete' && configured.exitCode !== 1) return { reason: `its Git configuration could not be read (${configured.detail})` }
+    const defined = new Set<string>()
+    for (const line of configured.kind === 'complete' ? configured.stdout.split('\n') : []) {
+        const match = /^filter\.(.+)\.(smudge|process)(?:\s|$)/.exec(line)
+        if (match) defined.add(match[1]!)
     }
-    return missing
+    return drivers.filter(driver => !defined.has(driver))
 }
 
 export async function fastForwardCheckout(git: GitRunner, path: string): Promise<PullRow> {

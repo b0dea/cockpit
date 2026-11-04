@@ -13,9 +13,11 @@ import { refusalOutcome } from '../../refusal.js'
 import { ENVIRONMENT_CODES, errorCause, type Diagnostic, type EnvironmentDiagnostic, type ExecutionStep } from '../contract.js'
 import {
     createGitRunner, inspectSiblingCheckout, loadServedSiblings, missingEnvironmentFileDiagnostics, missingEnvironmentFiles,
-    readSiblingCheckouts, SIBLING_CHECKOUTS_PATH, servedSiblings, writeSiblingCheckouts, type GitRunner,
+    readSiblingCheckouts, SIBLING_CHECKOUTS_PATH, servedSiblings, vanishedServedCheckouts, writeSiblingCheckouts, type GitRunner,
 } from '../sibling-checkouts.js'
 import { fastForwardCheckout, type PullRow } from '../sibling-pull.js'
+import { mapLimit } from '../map-limit.js'
+import type { LoadedCockpitConfigResult } from './health.js'
 import { staleStackDiagnostics } from '../stack-inputs.js'
 
 type Execute = (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
@@ -120,6 +122,8 @@ export interface PullCommandInput {
     readonly env: Readonly<Record<string, string | undefined>>
 }
 
+const PULL_CONCURRENCY = 4
+
 type PullTarget = Readonly<{ label: string; path: string; expected: boolean }>
 
 export async function runPull(input: PullCommandInput, dependencies: Readonly<{ execute: Execute }>): Promise<SiblingCommandOutcome> {
@@ -140,26 +144,33 @@ export async function runPull(input: PullCommandInput, dependencies: Readonly<{ 
         targets.push({ label: sibling.slug, path: entry.declared, expected: sibling.acquire !== 'none' })
         if (entry.overridden) targets.push({ label: `${sibling.slug} (served)`, path: entry.served, expected: true })
     }
+    const located = await Promise.all(targets.map(async target => {
+        const output = await git.run(target.path, 'pull:root', ['rev-parse', '--show-toplevel'])
+        return output.kind === 'complete' ? await realpath(output.stdout).catch(() => undefined) : undefined
+    }))
+    // Two targets in one repository (an in-repo cockpit is its own sibling) move once, under the first one's label.
+    const distinct = new Map<string, PullTarget>()
+    located.forEach((toplevel, index) => { if (toplevel !== undefined && !distinct.has(toplevel)) distinct.set(toplevel, targets[index]!) })
+    const advanced = new Map(await mapLimit([...distinct], PULL_CONCURRENCY, async ([toplevel, target]) =>
+        [toplevel, { label: target.label, ...await fastForwardCheckout(git, toplevel) }] as const))
     const rows: (PullRow & { readonly label: string })[] = []
     const diagnostics: EnvironmentDiagnostic[] = []
-    const pulled = new Set<string>()
-    for (const target of targets) {
-        const located = await git.run(target.path, 'pull:root', ['rev-parse', '--show-toplevel'])
-        const toplevel = located.kind === 'complete' ? await realpath(located.stdout).catch(() => undefined) : undefined
+    const reported = new Set<string>()
+    located.forEach((toplevel, index) => {
+        const target = targets[index]!
         if (toplevel === undefined) {
             const row = { label: target.label, state: 'skipped' as const, path: target.path, reason: 'there is no Git checkout there',
                 fix: `run ${cockpitCommand('setup', { config: loaded.result.source.path })} to clone it`, blocked: target.expected }
             rows.push(row)
             if (row.blocked) diagnostics.push(skippedDiagnostic(row))
-            continue
+            return
         }
-        // Two targets in one repository (an in-repo cockpit is its own sibling) move once.
-        if (pulled.has(toplevel)) continue
-        pulled.add(toplevel)
-        const row = { label: target.label, ...await fastForwardCheckout(git, toplevel) }
+        if (reported.has(toplevel)) return
+        reported.add(toplevel)
+        const row = advanced.get(toplevel)!
         rows.push(row)
         if (row.state === 'skipped' && row.blocked) diagnostics.push(skippedDiagnostic(row))
-    }
+    })
     // A pulled lockfile or migration behind a running stack is the next thing to go wrong.
     if (rows.some(row => row.state === 'advanced')) diagnostics.push(...await staleStackDiagnostics(root, served.siblings))
     const line = (row: (typeof rows)[number]) => row.state === 'advanced'
@@ -184,11 +195,14 @@ function skippedDiagnostic(row: Extract<PullRow, { state: 'skipped' }> & { reado
  * from, an override that no longer names a checkout of its sibling, the environment files a worktree
  * lacks, and a running stack whose siblings' dependencies or migrations moved since it came up.
  */
-export async function inspectServedSiblings(input: Readonly<{ configPath: string; env: Readonly<Record<string, string | undefined>> }>,
-    dependencies: Readonly<{ execute: Execute }>): Promise<readonly EnvironmentDiagnostic[]> {
-    // These commands report; the commands that act on a served checkout refuse it themselves.
+export async function inspectServedSiblings(input: Readonly<{
+    configPath: string
+    env: Readonly<Record<string, string | undefined>>
+    /** The configuration the command already loaded; read again from `configPath` when absent. */
+    loaded?: LoadedCockpitConfigResult
+}>, dependencies: Readonly<{ execute: Execute }>): Promise<readonly EnvironmentDiagnostic[]> {
     try {
-        return (await servedSiblingFindings(input, dependencies)).map(row => row.severity === 'error' ? { ...row, severity: 'warning' as const } : row)
+        return await servedSiblingFindings(input, dependencies)
     } catch (error) {
         return [{ severity: 'warning', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
             message: `the checkouts serving the siblings could not be inspected: ${errorCause(error)}`, target: SIBLING_CHECKOUTS_PATH,
@@ -196,14 +210,15 @@ export async function inspectServedSiblings(input: Readonly<{ configPath: string
     }
 }
 
-async function servedSiblingFindings(input: Readonly<{ configPath: string; env: Readonly<Record<string, string | undefined>> }>,
+async function servedSiblingFindings(input: Parameters<typeof inspectServedSiblings>[0],
     dependencies: Readonly<{ execute: Execute }>): Promise<readonly EnvironmentDiagnostic[]> {
-    const loaded = await loadCockpitConfig(input.configPath)
+    const loaded = input.loaded ?? await loadCockpitConfig(input.configPath)
     // An unloadable cockpit.toml is reported by the command itself.
     if (loaded.kind !== 'complete') return []
     const config = loaded.result.config
     const root = dirname(loaded.result.source.path)
     const recorded = await readSiblingCheckouts(root)
+    // `up` refuses an unreadable record, so the served-checkouts row fails on it too; this says why.
     if (recorded.kind !== 'complete') return [recorded.diagnostic]
     const served = servedSiblings(root, config, recorded.checkouts)
     const findings: EnvironmentDiagnostic[] = []
@@ -213,27 +228,32 @@ async function servedSiblingFindings(input: Readonly<{ configPath: string; env: 
         target: SIBLING_CHECKOUTS_PATH,
         fix: `forget it with ${cockpitCommand('use', { operand: slug, args: '--clear' })}`,
     })
-    const overridden = [...served.values()].filter(entry => entry.overridden)
+    // A directory that is gone is the served-checkouts row's finding, which `up` refuses as well; it is not repeated here.
+    const gone = new Set((await vanishedServedCheckouts(served)).map(entry => entry.slug))
+    const overridden = [...served.values()].filter(entry => entry.overridden && !gone.has(entry.slug))
     const git = overridden.length === 0 ? undefined : await createGitRunner(input.env, dependencies.execute)
-    for (const entry of overridden) {
+    const perEntry = await Promise.all(overridden.map(async (entry): Promise<EnvironmentDiagnostic[]> => {
         const sibling = config.sibling.find(row => row.slug === entry.slug)!
-        findings.push({
+        const rows: EnvironmentDiagnostic[] = [{
             severity: 'info', code: 'SIBLING_CHECKOUT_OVERRIDDEN' satisfies typeof ENVIRONMENT_CODES.SIBLING_CHECKOUT_OVERRIDDEN,
             message: `sibling ${entry.slug} is served from ${entry.served}, recorded by use in ${SIBLING_CHECKOUTS_PATH}, instead of its declared checkout ${entry.declared}`,
             target: `sibling:${entry.slug}`,
             fix: `serve the declared checkout again with ${cockpitCommand('use', { operand: entry.slug, args: '--clear' })}`,
-        })
-        if (git === undefined) continue
+        }]
+        if (git === undefined) return rows
         if ('unavailable' in git) {
-            findings.push({ severity: 'warning', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
+            rows.push({ severity: 'warning', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
                 message: `whether ${entry.served} is still a checkout of sibling ${entry.slug} could not be checked: ${git.unavailable}`,
                 target: entry.served, fix: 'install Git and put it on PATH, then rerun this command' })
-            continue
+            return rows
         }
         const inspected = await inspectSiblingCheckout({ sibling, declared: entry.declared, candidate: entry.served, git })
-        if (inspected.kind === 'refusal') { findings.push(inspected.diagnostic); continue }
-        findings.push(...missingEnvironmentFileDiagnostics(entry, await missingEnvironmentFiles(entry, sibling)))
-    }
+        // `up` does not refuse a checkout of another repository, so these commands report it as a warning.
+        if (inspected.kind === 'refusal') rows.push({ ...inspected.diagnostic, severity: 'warning' })
+        else rows.push(...missingEnvironmentFileDiagnostics(entry, await missingEnvironmentFiles(entry, sibling)))
+        return rows
+    }))
+    findings.push(...perEntry.flat())
     findings.push(...await staleStackDiagnostics(root, served))
     return findings
 }

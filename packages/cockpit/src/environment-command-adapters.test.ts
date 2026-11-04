@@ -217,7 +217,7 @@ describe('environment observation command adapters', () => {
                     const produce = async () => [row.value]
                     const none = async () => []
                     const producers: HealthObservationProducers = { surfaces: none, claims: none,
-                        git: none, host: none, lifecycle: none, ports: none, runtime: none, state: none, templates: none, envSchema: none,
+                        git: none, host: none, lifecycle: none, ports: none, runtime: none, state: none, templates: none, envSchema: none, siblings: none,
                         [row.producer]: produce }
                     const source = await withSetupCheckoutProjection(setup, { source: fresh.result.source,
                         cockpitName: fresh.result.config.cockpit.name, evaluatedAt: Date.parse(setupTime) }, checkout => issue({

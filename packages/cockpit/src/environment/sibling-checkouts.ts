@@ -9,9 +9,10 @@
  * Without it, an agent working on a branch in a sibling's worktree had the stack, the checks and
  * every grade run against the main checkout's branch while reporting green.
  */
-import { lstat, readFile, realpath } from 'node:fs/promises'
+import { lstat, realpath } from 'node:fs/promises'
 import { isAbsolute, join, normalize, resolve } from 'node:path'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import { readBoundedFile } from '../bounded-read.js'
 import { cockpitCommand, formatShellCommand } from '../fix-catalogue.js'
 import { GUARD_LOCAL_PATHS, writeCockpitLocalFiles } from '../guards/local-identity.js'
 import type { CockpitConfig, Sibling } from '../schema.js'
@@ -54,12 +55,13 @@ export async function readSiblingCheckouts(cockpitRoot: string): Promise<Sibling
     const path = join(cockpitRoot, SIBLING_CHECKOUTS_PATH)
     let bytes: Buffer
     try {
-        const status = await lstat(path)
-        if (!status.isFile() || status.isSymbolicLink()) return recordRefusal(path, 'it is not a plain file')
-        if (status.size > RECORD_MAX_BYTES) return recordRefusal(path, `it is larger than ${RECORD_MAX_BYTES} bytes`)
-        bytes = await readFile(path)
+        const read = readBoundedFile(path, RECORD_MAX_BYTES)
+        if (read.kind === 'too-large') return recordRefusal(path, `it is larger than ${RECORD_MAX_BYTES} bytes`)
+        bytes = read.bytes
     } catch (error) {
         if (hasErrorCode(error, 'ENOENT')) return { kind: 'complete', checkouts: {} }
+        // ELOOP: a link at the last component; EISDIR: the reader's code for a file that is not regular.
+        if (hasErrorCode(error, 'ELOOP', 'EISDIR')) return recordRefusal(path, 'it is not a plain file')
         return recordRefusal(path, `it could not be read: ${errorCause(error)}`)
     }
     const value = tryParseJson(bytes.toString('utf8'))
@@ -110,25 +112,34 @@ export async function loadServedSiblings(cockpitRoot: string, config: Pick<Cockp
     return read.kind === 'complete' ? { kind: 'complete', siblings: servedSiblings(cockpitRoot, config, read.checkouts) } : read
 }
 
+/** The overridden siblings whose recorded directory is gone, such as a removed worktree. */
+export async function vanishedServedCheckouts(served: ReadonlyMap<string, ServedSibling>): Promise<readonly ServedSibling[]> {
+    const overridden = [...served.values()].filter(sibling => sibling.overridden)
+    const present = await Promise.all(overridden.map(async sibling => {
+        try { return (await lstat(sibling.served)).isDirectory() }
+        catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return false; throw error }
+    }))
+    return overridden.filter((_, index) => !present[index])
+}
+
+export function vanishedCheckoutFix(slug: string): string {
+    return `serve the declared checkout again with ${cockpitCommand('use', { operand: slug, args: '--clear' })}, or name another checkout of it`
+}
+
 /**
- * A refusal when an override names a directory that is gone, such as a removed worktree. Docker
- * creates a missing bind-mount source as an empty directory, so the stack would start on nothing.
+ * A refusal when an override names a directory that is gone. Docker creates a missing bind-mount
+ * source as an empty directory, so the stack would start on nothing. Preflight and doctor report
+ * the same fact as the served-checkouts observation row, so all three agree.
  */
 export async function missingServedCheckout(served: ReadonlyMap<string, ServedSibling>): Promise<EnvironmentDiagnostic | undefined> {
-    for (const sibling of served.values()) {
-        if (!sibling.overridden) continue
-        let directory = false
-        try { directory = (await lstat(sibling.served)).isDirectory() }
-        catch (error) { if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR')) throw error }
-        if (!directory) return {
-            severity: 'error',
-            code: 'SIBLING_CHECKOUT_UNAVAILABLE' satisfies typeof ENVIRONMENT_CODES.SIBLING_CHECKOUT_UNAVAILABLE,
-            message: `sibling ${sibling.slug} is recorded to be served from ${sibling.served}, which is no longer a directory`,
-            target: sibling.served,
-            fix: `serve the declared checkout again with ${cockpitCommand('use', { operand: sibling.slug, args: '--clear' })}, or name another checkout of it`,
-        }
+    const [sibling] = await vanishedServedCheckouts(served)
+    return sibling === undefined ? undefined : {
+        severity: 'error',
+        code: 'SIBLING_CHECKOUT_UNAVAILABLE' satisfies typeof ENVIRONMENT_CODES.SIBLING_CHECKOUT_UNAVAILABLE,
+        message: `sibling ${sibling.slug} is recorded to be served from ${sibling.served}, which is no longer a directory`,
+        target: sibling.served,
+        fix: vanishedCheckoutFix(sibling.slug),
     }
-    return undefined
 }
 
 /** The directory variables Compose interpolates: each sibling's `var` and the directory that serves it. */
@@ -244,13 +255,12 @@ export async function inspectSiblingCheckout(input: Readonly<{
         return unavailable(`${input.candidate} reaches ${directory} through a symbolic link, so cockpit will not record it`,
             `name the directory itself: ${cockpitCommand('use', { operand: input.sibling.slug, args: formatShellCommand([directory]) })}`)
     }
-    const candidate = await checkoutIdentity(input.git, directory)
+    const [candidate, declared] = await Promise.all([checkoutIdentity(input.git, directory), checkoutIdentity(input.git, input.declared)])
     if ('reason' in candidate) return unavailable(`${directory} cannot serve sibling ${input.sibling.slug}: ${candidate.reason}`, listWorktrees)
     if (candidate.toplevel !== directory) {
         return unavailable(`${directory} is inside the checkout at ${candidate.toplevel}, not its root, so the stack would mount part of a checkout`,
             `name the checkout's root: ${cockpitCommand('use', { operand: input.sibling.slug, args: formatShellCommand([candidate.toplevel]) })}`)
     }
-    const declared = await checkoutIdentity(input.git, input.declared)
     if (!('reason' in declared) && declared.commonDirectory === candidate.commonDirectory) {
         return { kind: 'same-repository', directory, evidence: 'object-store' }
     }
@@ -272,15 +282,11 @@ export async function inspectSiblingCheckout(input: Readonly<{
 
 /** The declared environment files the served checkout lacks; a fresh worktree has none of the ignored ones. */
 export async function missingEnvironmentFiles(served: ServedSibling, sibling: Pick<Sibling, 'environment_files'>): Promise<readonly Readonly<{ template: string; instance: string }>[]> {
-    const missing = []
-    for (const file of sibling.environment_files ?? []) {
-        try { await lstat(join(served.served, file.instance)) }
-        catch (error) {
-            if (!hasErrorCode(error, 'ENOENT')) throw error
-            missing.push({ template: file.template, instance: file.instance })
-        }
-    }
-    return missing
+    const present = await Promise.all((sibling.environment_files ?? []).map(async file => {
+        try { await lstat(join(served.served, file.instance)); return true }
+        catch (error) { if (!hasErrorCode(error, 'ENOENT')) throw error; return false }
+    }))
+    return (sibling.environment_files ?? []).filter((_, index) => !present[index]).map(file => ({ template: file.template, instance: file.instance }))
 }
 
 /** One warning per environment file an overriding checkout lacks, naming who must create it and from what. */
