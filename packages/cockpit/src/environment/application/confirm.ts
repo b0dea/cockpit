@@ -116,6 +116,15 @@ export async function runConfirm(input: ConfirmCommandInput, adapters: ConfirmCo
         return { ...refused, diagnostics: [...refused.diagnostics, ...verdict.diagnostics] }
     }
 
+    // The observation re-reads cockpit.toml itself, so the record binds to what it observed only if the
+    // file is still the one loaded above. An agent edit made meanwhile cannot be reverted before this
+    // read: the guard holds every call but sync and check once the file differs from the synced one.
+    const after = await loadCockpitConfig(configPath)
+    if (after.kind !== 'complete' || after.result.source.sha256 !== loaded.result.source.sha256) {
+        return refusalOutcome(ENVIRONMENT_CODES.CONFIG_CHANGED_DURING_EXECUTION,
+            'cockpit.toml changed while the observation ran, so it cannot show which configuration passed; nothing was recorded or removed', configPath,
+            `run ${cockpitCommand('confirm', { config: configPath, operand: answer })} again`)
+    }
     const root = dirname(configPath)
     const record: AnswerConfirmationRecord = { observation: confirmation.observation, ranAt, result: 'passed',
         evidenceSha256: sha256Hex(canonicalJson(verdict.evidence)), configurationSha256: confirmationConfigurationSha256(config) }

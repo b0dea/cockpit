@@ -113,6 +113,18 @@ describe('confirm', () => {
             expect.objectContaining({ code: 'CONFIRM_OBSERVATION_FAILED', message: expect.stringContaining('check did not pass') }),
             expect.objectContaining({ code: 'COMPOSE_TOPOLOGY_UNAVAILABLE' })])
 
+        // A record must bind to the configuration the observation read, so an edit made while it ran refuses.
+        const swapped = adapters({ codes: { PORT_FAMILY_COLLISION: 'pass' } })
+        const observed = swapped.preflight.getMockImplementation()!
+        swapped.preflight.mockImplementation(async () => {
+            writeFileSync(configPath, text.replace('APP_PORT = 3000', 'APP_PORT = 4000'))
+            return observed()
+        })
+        const changed = await runConfirm({ configPath, answer: 'ports.bases' }, swapped)
+        expect(changed.diagnostics).toEqual([expect.objectContaining({ code: 'CONFIG_CHANGED_DURING_EXECUTION' })])
+        expect(existsSync(join(root, ANSWER_CONFIRMATION_PATH))).toBe(false)
+        writeFileSync(configPath, text)
+
         // The record goes first, so an unwritable one leaves the entry in place.
         rmSync(join(root, '.cockpit'), { recursive: true })
         expect(await refused('ports.bases', adapters({ codes: { PORT_FAMILY_COLLISION: 'pass' } }))).toEqual([
