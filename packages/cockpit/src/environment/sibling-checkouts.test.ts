@@ -226,7 +226,7 @@ describe('git runner', () => {
         const bin = join(root, 'bin')
         await mkdir(bin)
         const realGit = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim()
-        await writeFile(join(bin, 'git'), `#!/bin/sh\nif [ "$2" = "${join(root, 'api')}" ] && [ "$3" = rev-parse ]; then echo "${loop}"; exit 0; fi\nexec "${realGit}" "$@"\n`, { mode: 0o755 })
+        await writeFile(join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" -C ${join(root, 'api')} "*" rev-parse "*) echo "${loop}"; exit 0 ;; esac\nexec "${realGit}" "$@"\n`, { mode: 0o755 })
 
         const pulled = await runPull({ configPath, env: { ...env, PATH: `${bin}:${process.env.PATH}` } }, deps)
 
