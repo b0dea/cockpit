@@ -32,6 +32,10 @@ npm install --save-dev --save-exact @b00dea/cockpit
 npx --no cockpit init . --target claudecode
 ```
 
+With pnpm or yarn, install with `pnpm add -D -E @b00dea/cockpit` or `yarn add -D -E @b00dea/cockpit`
+and run `pnpm exec cockpit` or `yarn cockpit` wherever this guide runs cockpit through `npx --no`. `init`
+detects `pnpm-lock.yaml` or `yarn.lock` and writes the matching commands into what it proposes.
+
 Replace `claudecode` with `codexcli` or `opencode` for those tools, or list several, yours first
 (`--target claudecode,opencode`). `init` records them as `[surfaces] tools` and installs the
 `cockpit-setup` skill for each listed tool. The default tools are `claudecode`, `codexcli` and
