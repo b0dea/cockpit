@@ -12,27 +12,29 @@
  * It never spawns a process itself: Docker steps cross the supplied `execute`, which production binds
  * to `environment-exec/execute.ts`. State files are read and removed only through `state.ts`.
  */
-import { createHash, randomUUID } from 'node:crypto'
-import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { lstat, readdir, realpath } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
+import { readBoundedFile } from '../bounded-read.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { loadCockpitConfig } from '../config/load.js'
 import { cockpitCommand } from '../fix-catalogue.js'
+import { sha256Hex } from '../sha256.js'
 import { decodeCoordinationRecord, type CoordinationRecord } from './claims.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, type CockpitId, type Diagnostic, type EnvironmentDiagnostic, type ExecutionStep, type StackId } from './contract.js'
 import { selectLocalDockerDaemon } from './docker-daemon.js'
 import { resolveDockerExecutable, resolveGitExecutable, type ResolvedExecutable } from './executable.js'
 import { checkoutId as deriveCheckoutId, cockpitId as deriveCockpitId, composeProjectName, holderId, stackId as deriveStackId } from './identity.js'
-import { discoverMachineStacks, machineStackRemovalStep, type MachineStackDiscovery, type MachineStackResource } from './reclaim.js'
+import { discoverMachineStacks, machineStackRemovalSteps, type MachineStackDiscovery, type MachineStackResource } from './reclaim.js'
 import { consumeSetupCheckoutProjection, observeSetupCheckout, withSetupCheckoutProjection } from './setup-observation.js'
 import {
-    inspectStackState,
+    inspectStackRecords,
     inspectStateNamespaceFolder,
-    readState,
     removeStackState,
     removeStateNamespaceFolder,
     selectStateRoot,
     withStateNamespaceInventory,
+    type SkippedStateNamespace,
     type StackStateFile,
     type StateNamespace,
 } from './state.js'
@@ -124,10 +126,20 @@ async function statOf(path: string): Promise<Awaited<ReturnType<typeof lstat>> |
     }
 }
 
-async function readPointer(path: string): Promise<string | undefined> {
-    const status = await statOf(path)
-    if (typeof status === 'string' || !status.isFile() || status.size > GIT_POINTER_BYTES) return undefined
-    return (await readFile(path, 'utf8')).trim()
+function readPointer(path: string): string | undefined {
+    try {
+        const read = readBoundedFile(path, GIT_POINTER_BYTES)
+        return read.kind === 'complete' ? read.bytes.toString('utf8').trim() : undefined
+    } catch (error) {
+        // Absent, not a regular file, a symbolic link or unreadable: no pointer Git would follow.
+        if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'EISDIR', 'ELOOP', 'EACCES', 'EPERM')) return undefined
+        throw error
+    }
+}
+
+function settledValue<T>(result: PromiseSettledResult<T>): T {
+    if (result.status === 'rejected') throw result.reason
+    return result.value
 }
 
 async function canonical(path: string): Promise<string | undefined> {
@@ -143,10 +155,10 @@ async function mainCheckoutOf(checkout: string): Promise<string | undefined> {
     const dotGit = await statOf(join(checkout, '.git'))
     if (typeof dotGit === 'string') return undefined
     if (dotGit.isDirectory()) return canonical(checkout)
-    const pointer = /^gitdir: (.+)$/m.exec(await readPointer(join(checkout, '.git')) ?? '')
+    const pointer = /^gitdir: (.+)$/m.exec(readPointer(join(checkout, '.git')) ?? '')
     if (!pointer) return undefined
     const gitDirectory = resolve(checkout, pointer[1]!.trim())
-    const common = await readPointer(join(gitDirectory, 'commondir'))
+    const common = readPointer(join(gitDirectory, 'commondir'))
     if (common === undefined) return undefined
     const commonDirectory = resolve(gitDirectory, common)
     return basename(commonDirectory) === '.git' ? canonical(dirname(commonDirectory)) : undefined
@@ -166,24 +178,33 @@ async function checkoutsOf(main: string): Promise<readonly string[] | undefined>
         throw error
     }
     if (names.length > WORKTREE_LIMIT) return undefined
-    const checkouts = [main]
-    for (const name of names.sort()) {
-        const pointer = await readPointer(join(registry, name, 'gitdir'))
+    // Every registration is read at once; walking the results in name order keeps the outcome a
+    // sequential walk would give, down to which failure, an unreadable entry or a throw, decides it.
+    const registered = await Promise.allSettled(names.sort().map(async (name): Promise<string | 'absent' | undefined> => {
+        const pointer = readPointer(join(registry, name, 'gitdir'))
         if (pointer === undefined) return undefined
         const target = resolve(registry, name, pointer)
         if (basename(target) !== '.git') return undefined
         const status = await statOf(dirname(target))
         if (status === 'unreadable') return undefined
-        if (status === 'absent') continue
-        const path = await canonical(dirname(target))
+        if (status === 'absent') return 'absent'
+        return canonical(dirname(target))
+    }))
+    const checkouts = [main]
+    for (const result of registered) {
+        const path = settledValue(result)
         if (path === undefined) return undefined
-        checkouts.push(path)
+        if (path !== 'absent') checkouts.push(path)
     }
     return checkouts
 }
 
 function derivesStack(cockpitId: CockpitId, stackId: StackId, path: string): boolean {
-    return deriveStackId({ cockpitId, checkoutId: deriveCheckoutId({ checkoutPath: path }), variant: { kind: 'shared' } }) === stackId
+    return sharedStackOf(cockpitId, deriveCheckoutId({ checkoutPath: path })) === stackId
+}
+
+function sharedStackOf(cockpitId: CockpitId, checkoutId: ReturnType<typeof deriveCheckoutId>): StackId {
+    return deriveStackId({ cockpitId, checkoutId, variant: { kind: 'shared' } })
 }
 
 /** The ancestor of a Compose working directory whose checkout identity derives this stack's identity. */
@@ -245,27 +266,26 @@ interface StateStack {
 async function readStateStacks(namespace: StateNamespace): Promise<
     Readonly<{ stacks: readonly StateStack[]; skipped: readonly Readonly<{ path: string; reason: string }>[] }> | Refusal> {
     const read = await withStateNamespaceInventory(namespace, async (namespaces, skipped) => {
-        const stacks: StateStack[] = []
-        for (const candidate of namespaces) {
-            const cockpitId = candidate.paths.coordination(`stack:${'0'.repeat(64)}` as StackId).cockpitId
-            for (const stackId of await stackIdsIn(candidate)) {
-                const coordinationPath = candidate.paths.coordination(stackId).path
-                const files = await inspectStackState(candidate, stackId)
-                const stored = await readState(candidate.paths.coordination(stackId))
-                const record = stored.kind === 'complete' ? decodeCoordinationRecord(stored.value, stackId) : undefined
-                const malformed = files.kind !== 'complete' ? files.kind === 'missing' ? 'its state disappeared during observation' : files.message
-                    : stored.kind === 'refusal' || stored.kind === 'indeterminate' ? stored.message
-                        : stored.kind === 'complete' && record === undefined ? 'the coordination record does not match the format this version reads' : undefined
-                const status = malformed === undefined ? undefined : await statOf(coordinationPath)
-                stacks.push({
-                    cockpitId, stackId, namespace: candidate, coordinationPath, record, malformed,
-                    files: files.kind === 'complete' ? files.value : [],
-                    updatedAt: stored.kind === 'complete' && record !== undefined ? stored.value.updatedAt : undefined,
-                    modifiedAt: status !== undefined && typeof status !== 'string' ? status.mtime.toISOString() : undefined,
-                })
+        const readStack = async (candidate: StateNamespace, stackId: StackId): Promise<StateStack> => {
+            const cockpitId = candidate.paths.coordination(stackId).cockpitId
+            const coordinationPath = candidate.paths.coordination(stackId).path
+            const records = await inspectStackRecords(candidate, stackId)
+            const stored = records.kind === 'complete' ? records.value.coordination : undefined
+            const record = stored?.kind === 'complete' ? decodeCoordinationRecord(stored.value, stackId) : undefined
+            const malformed = records.kind !== 'complete' ? records.kind === 'missing' ? 'its state disappeared during observation' : records.message
+                : stored?.kind === 'refusal' || stored?.kind === 'indeterminate' ? stored.message
+                    : stored?.kind === 'complete' && record === undefined ? 'the coordination record does not match the format this version reads' : undefined
+            const status = malformed === undefined ? undefined : await statOf(coordinationPath)
+            return {
+                cockpitId, stackId, namespace: candidate, coordinationPath, record, malformed,
+                files: records.kind === 'complete' ? records.value.files : [],
+                updatedAt: stored?.kind === 'complete' && record !== undefined ? stored.value.updatedAt : undefined,
+                modifiedAt: status !== undefined && typeof status !== 'string' ? status.mtime.toISOString() : undefined,
             }
         }
-        return { stacks, skipped }
+        const perNamespace = await Promise.all(namespaces.map(async (candidate) =>
+            Promise.all((await stackIdsIn(candidate)).map((stackId) => readStack(candidate, stackId)))))
+        return { stacks: perNamespace.flat(), skipped }
     })
     if (read.kind === 'complete') return read.value
     if (read.kind === 'missing') return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'the state root disappeared during observation', read.path)
@@ -333,14 +353,26 @@ async function observe(input: Parameters<typeof observeMachineStacks>[0]): Promi
         }
     }
     const mains = new Map<CockpitId, string>([[input.own.cockpitId, input.own.mainCheckoutPath]])
-    for (const { id, cockpitId } of identities) {
+    // Each proven checkout's main checkout is read at once; the first, in identity order, that
+    // derives its cockpit decides, and a read a sequential walk would have skipped cannot fail it.
+    const candidates = identities.flatMap(({ id, cockpitId }) => {
         const proven = proofs.get(id)
-        if (proven === undefined || mains.has(cockpitId)) continue
-        const main = await mainCheckoutOf(proven)
+        return proven === undefined || cockpitId === input.own.cockpitId ? [] : [{ cockpitId, proven }]
+    })
+    const candidateMains = await Promise.allSettled(candidates.map(({ proven }) => mainCheckoutOf(proven)))
+    for (const [index, { cockpitId }] of candidates.entries()) {
+        if (mains.has(cockpitId)) continue
+        const main = settledValue(candidateMains[index]!)
         if (main !== undefined && deriveCockpitId({ name: cockpitNameOf(cockpitId), mainCheckoutPath: main }) === cockpitId) mains.set(cockpitId, main)
     }
-    const checkouts = new Map<CockpitId, readonly string[] | undefined>()
-    for (const [cockpitId, main] of mains) checkouts.set(cockpitId, await checkoutsOf(main))
+    // Every checkout a cockpit records, with the checkout and shared stack identity it derives, computed once per path.
+    const checkouts = new Map(await Promise.all([...mains].map(async ([cockpitId, main]) => {
+        const paths = await checkoutsOf(main)
+        return [cockpitId, paths?.map((path) => {
+            const checkoutId = deriveCheckoutId({ checkoutPath: path })
+            return { path, checkoutId, stackId: sharedStackOf(cockpitId, checkoutId) }
+        })] as const
+    })))
 
     const stacks: ObservedStack[] = []
     for (const { id, cockpitId, stackId } of identities) {
@@ -349,7 +381,7 @@ async function observe(input: Parameters<typeof observeMachineStacks>[0]): Promi
         const known = checkouts.get(cockpitId)
         // A holder names its checkout's identity outright; the derivation covers a stack no one holds.
         const holders = new Set(stored?.record?.holders.map(({ checkoutId: id }) => id) ?? [])
-        const registered = known?.find((path) => derivesStack(cockpitId, stackId, path) || holders.has(deriveCheckoutId({ checkoutPath: path })))
+        const registered = known?.find((checkout) => checkout.stackId === stackId || holders.has(checkout.checkoutId))?.path
         const proven = proofs.get(id)
         const checkout: StackCheckout = registered !== undefined
             ? { path: registered, status: 'present', source: `a checkout Git records for ${mains.get(cockpitId)}` }
@@ -393,26 +425,26 @@ async function observe(input: Parameters<typeof observeMachineStacks>[0]): Promi
         })
     }
 
-    const folders: { row: StateFolderRow; fingerprint: string | undefined }[] = []
-    for (const folder of state.skipped) {
+    const folders = await Promise.all(state.skipped.map(async (folder): Promise<Observation['folders'][number]> => {
         const cockpitId = namespaceCockpitId(folder.path)
         const live = stacks.find(({ row }) => row.cockpitId === cockpitId && row.verdict !== 'orphaned')
-        const fingerprint = await inspectStateNamespaceFolder(input.namespace, folder.path)
+        // Only a prune, which consults Docker, can remove a folder, so only it needs the folder's fingerprint.
+        const fingerprint = input.discovery === undefined ? undefined : await inspectStateNamespaceFolder(input.namespace, folder.path)
         // Only the colon spelling an earlier build used is provably no current build's: a folder in the
         // current spelling that this version cannot read may belong to a newer version still in use.
         const legacy = basename(folder.path).includes(':')
         const why = cockpitId === null ? 'its name is not a cockpit identity, so Docker cannot show which stacks it holds'
             : !legacy ? 'it is named as current cockpit versions name their state, so a newer version may still use it; prune it from a version that reads it'
-                : input.discovery === undefined ? 'Docker was not consulted to show that none of its stacks is in use'
+                : fingerprint === undefined ? 'Docker was not consulted to show that none of its stacks is in use'
                     : live !== undefined ? `its stack ${live.row.stackId} is kept: ${live.row.reason}`
                         : fingerprint.kind !== 'complete' ? `it cannot be inspected safely: ${fingerprint.kind === 'refusal' ? fingerprint.message : 'it disappeared'}`
                             : 'an earlier cockpit build wrote it, no current version reads it, and none of its stacks is in use'
-        const orphaned = cockpitId !== null && legacy && input.discovery !== undefined && live === undefined && fingerprint.kind === 'complete'
-        folders.push({
+        const orphaned = cockpitId !== null && legacy && live === undefined && fingerprint?.kind === 'complete'
+        return {
             row: { path: folder.path, cockpitId, reason: folder.reason, verdict: orphaned ? 'orphaned' : 'kept', why },
-            fingerprint: fingerprint.kind === 'complete' ? fingerprint.value : undefined,
-        })
-    }
+            fingerprint: fingerprint?.kind === 'complete' ? fingerprint.value : undefined,
+        }
+    }))
     return {
         selection: input.discovery?.selection,
         inventory: { stacks: stacks.map(({ row }) => row), stateFolders: folders.map(({ row }) => row), unattributedResources: input.discovery?.unattributed ?? 0 },
@@ -525,7 +557,7 @@ function planOf(observed: Observation): Readonly<{ stacks: readonly ObservedStac
             resources: resources.map(({ kind, id }) => `${kind}:${id}`), files: files.map(({ kind, path, sha256 }) => `${kind}:${path}:${sha256}`) })),
         folders: folders.map(({ row, fingerprint }) => `${row.path}:${fingerprint}`),
     }
-    return { stacks, folders, digest: createHash('sha256').update(JSON.stringify(bound)).digest('hex'),
+    return { stacks, folders, digest: sha256Hex(JSON.stringify(bound)),
         deletesData: stacks.some(({ resources }) => resources.some(({ kind }) => kind === 'volume')) }
 }
 
@@ -538,7 +570,8 @@ export interface StacksPruneSession {
     apply(): Promise<StacksOutcome>
 }
 
-const PRUNE_ORDER: Readonly<Record<MachineStackResource['kind'], number>> = { container: 0, network: 1, volume: 2 }
+// Containers first, so no network or volume is still held when its removal runs.
+const PRUNE_ORDER: readonly MachineStackResource['kind'][] = ['container', 'network', 'volume']
 
 /**
  * Observes the machine and plans the prune of every orphaned stack and state folder. `apply` observes
@@ -580,10 +613,14 @@ export async function openStacksPrune(context: StacksContext, dependencies: Read
                 message: `prune stopped: ${what}; what it had not removed is still listed`,
                 fix: `inspect the named resource, then run ${cockpitCommand('stacks prune', { config: context.configPath, args: '--apply' })} again to resume` }] })
             for (const stack of current.stacks) {
-                for (const resource of [...stack.resources].sort((left, right) => PRUNE_ORDER[left.kind] - PRUNE_ORDER[right.kind])) {
-                    const step = machineStackRemovalStep(context.docker, again.selection!, resource)
-                    const outcome = step === undefined ? undefined : authenticatedExecutionOutcome(await dependencies.execute(step), step)
-                    if (outcome?.kind !== 'complete') return incomplete(`docker could not remove ${resource.kind} ${resource.name} of ${stack.row.stackId}${outcome ? ` (${outcome.code})` : ''}`)
+                for (const kind of PRUNE_ORDER) {
+                    const batch = stack.resources.filter((resource) => resource.kind === kind)
+                    if (batch.length === 0) continue
+                    const removals = machineStackRemovalSteps(context.docker, again.selection!, batch) ?? [{ step: undefined, resources: batch }]
+                    for (const { step, resources } of removals) {
+                        const outcome = step === undefined ? undefined : authenticatedExecutionOutcome(await dependencies.execute(step), step)
+                        if (outcome?.kind !== 'complete') return incomplete(`docker could not remove ${kind} ${resources.map(({ name }) => name).join(', ')} of ${stack.row.stackId}${outcome ? ` (${outcome.code})` : ''}`)
+                    }
                 }
                 if (stack.namespace !== undefined && stack.files.length > 0) {
                     const state = await removeStackState(stack.namespace, stack.row.stackId, stack.files, { ownerId })
@@ -612,28 +649,44 @@ export async function openStacksPrune(context: StacksContext, dependencies: Read
     }
 }
 
+/** What doctor reads of this machine's cockpit state in one walk of the state namespace. */
+export type DoctorMachineState =
+    | Readonly<{
+        kind: 'complete'
+        /** Other cockpits' state folders the namespace walk skipped as unreadable by this version. */
+        unreadableFolders: readonly SkippedStateNamespace[]
+        /** A STACKS_ORPHANED warning when stacks of this machine have a checkout that is gone or state this version cannot read. */
+        orphanedStacks: readonly EnvironmentDiagnostic[]
+    }>
+    | Refusal
+
 /**
- * What doctor reports about the machine's stacks without asking Docker: stacks of this cockpit whose
- * checkout is gone, and state this version cannot read. The full inventory is `cockpit stacks`.
+ * Doctor's view of the machine's stacks without asking Docker: stacks whose checkout is gone, state
+ * this version cannot read, and the other cockpits' state folders it skipped. The full inventory is
+ * `cockpit stacks`.
  */
-export async function inspectMachineStacksForDoctor(input: Readonly<{ namespace: StateNamespace; own: OwnCheckout; configPath: string }>): Promise<readonly EnvironmentDiagnostic[]> {
+export async function inspectMachineStateForDoctor(input: Readonly<{ namespace: StateNamespace; own: OwnCheckout; configPath: string }>): Promise<DoctorMachineState> {
     const observed = await observeMachineStacks({ namespace: input.namespace, own: input.own })
-    if ('kind' in observed) return observed.diagnostics.map((diagnostic) => ({ ...diagnostic, severity: 'warning' as const,
-        message: `doctor could not read this machine's cockpit state, so it did not look for orphaned stacks: ${diagnostic.message}` }))
+    if ('kind' in observed) return observed
+    const unreadableFolders = observed.inventory.stateFolders.map(({ path, reason }) => ({ path, reason }))
     const gone = observed.inventory.stacks.filter(({ checkout }) => checkout.status === 'missing')
     // Other cockpits' unreadable state folders have doctor's own warning; these are unreadable records.
     const unreadable = observed.inventory.stacks.filter(({ state }) => state.status === 'malformed' && state.path !== null
         && !observed.inventory.stateFolders.some(({ path }) => path === state.path)).length
-    const warnings: EnvironmentDiagnostic[] = []
-    if (gone.length + unreadable > 0) {
-        const parts = [
-            ...gone.length > 0 ? [`${gone.length} whose checkout no longer exists`] : [],
-            ...unreadable > 0 ? [`${unreadable} whose state this cockpit version cannot read`] : [],
-        ]
-        warnings.push({ severity: 'warning', target: dirname(input.namespace.cockpitRoot),
-            code: 'STACKS_ORPHANED' as const satisfies typeof ENVIRONMENT_CODES.STACKS_ORPHANED,
-            message: `this machine has stacks that no checkout can reach (${parts.join('; ')}); they keep their containers, volumes, port leases and state`,
-            fix: `list them with ${cockpitCommand('stacks', { config: input.configPath })}, preview the removal with ${cockpitCommand('stacks prune', { config: input.configPath })}, then apply it with --apply` })
-    }
-    return warnings
+    if (gone.length + unreadable === 0) return { kind: 'complete', unreadableFolders, orphanedStacks: [] }
+    const parts = [
+        ...gone.length > 0 ? [`${gone.length} whose checkout no longer exists`] : [],
+        ...unreadable > 0 ? [`${unreadable} whose state this cockpit version cannot read`] : [],
+    ]
+    return { kind: 'complete', unreadableFolders, orphanedStacks: [{ severity: 'warning', target: dirname(input.namespace.cockpitRoot),
+        code: 'STACKS_ORPHANED' as const satisfies typeof ENVIRONMENT_CODES.STACKS_ORPHANED,
+        message: `this machine has stacks that no checkout can reach (${parts.join('; ')}); they keep their containers, volumes, port leases and state`,
+        fix: `list them with ${cockpitCommand('stacks', { config: input.configPath })}, preview the removal with ${cockpitCommand('stacks prune', { config: input.configPath })}, then apply it with --apply` }] }
+}
+
+/** The orphaned-stack warnings of `inspectMachineStateForDoctor`, with a state that cannot be read reported as a warning. */
+export async function inspectMachineStacksForDoctor(input: Readonly<{ namespace: StateNamespace; own: OwnCheckout; configPath: string }>): Promise<readonly EnvironmentDiagnostic[]> {
+    const state = await inspectMachineStateForDoctor(input)
+    return state.kind === 'complete' ? state.orphanedStacks : state.diagnostics.map((diagnostic) => ({ ...diagnostic, severity: 'warning' as const,
+        message: `doctor could not read this machine's cockpit state, so it did not look for orphaned stacks: ${diagnostic.message}` }))
 }

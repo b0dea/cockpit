@@ -11,6 +11,7 @@ import { ANSWER_PROVENANCES } from '../init/render.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from '../surfaces/contract.js'
 import { checkoutId as deriveCheckoutId, type BootstrapLockOwnerId } from './identity.js'
 import { redactSensitiveText } from './sensitive.js'
+import { sha256Hex } from '../sha256.js'
 import {
     hasErrorCode,
     ENVIRONMENT_CODES,
@@ -1131,7 +1132,11 @@ export async function readState(address: StateAddress | BootstrapStateAddress): 
         if (hasErrorCode(error, 'ENOENT')) return { kind: 'missing', path: stableAddress.path }
         return malformed(stableAddress, error)
     }
+    return decodeStateRecord(stableAddress, bytes)
+}
 
+/** A record's bytes as read from an address that has already been checked safe, validated against that address. */
+function decodeStateRecord(stableAddress: StateAddress | BootstrapStateAddress, bytes: Buffer): StateResult<AnyStateRecord> {
     let parsed: unknown
     try {
         const source = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
@@ -2391,8 +2396,9 @@ function stackStatePaths(value: StateNamespace, stackId: StackId): readonly Read
     ]
 }
 
-async function readStackStateFiles(value: StateNamespace, stackId: StackId): Promise<readonly StackStateFile[]> {
+async function readStackStateFiles(value: StateNamespace, stackId: StackId): Promise<StackStateRead> {
     const files: StackStateFile[] = []
+    let coordination: StateResult<StateRecord> | undefined
     for (const { kind, path } of stackStatePaths(value, stackId)) {
         let bytes: Buffer
         // Bytes, not parsed records: a record this version cannot parse is still this stack's and is
@@ -2402,13 +2408,27 @@ async function readStackStateFiles(value: StateNamespace, stackId: StackId): Pro
             if (hasErrorCode(error, 'ENOENT')) continue
             throw error
         }
-        files.push({ kind, path, sha256: createHash('sha256').update(bytes).digest('hex') })
+        files.push({ kind, path, sha256: sha256Hex(bytes) })
+        if (kind === 'coordination') coordination = decodeStateRecord(value.paths.coordination(stackId), bytes) as StateResult<StateRecord>
     }
-    return files
+    return { files, coordination }
 }
+
+/** A stack's record files, and its coordination record decoded from the very bytes its file digest binds. */
+export type StackStateRead = Readonly<{
+    files: readonly StackStateFile[]
+    /** Undefined when the stack has no coordination file. */
+    coordination: StateResult<StateRecord> | undefined
+}>
 
 /** The record files a stack has under one cockpit's namespace, read as bytes so an unparseable record is listed too. */
 export async function inspectStackState(value: StateNamespace, stackId: StackId): Promise<StateResult<readonly StackStateFile[]>> {
+    const read = await inspectStackRecords(value, stackId)
+    return read.kind === 'complete' || read.kind === 'indeterminate' ? { ...read, value: read.value.files } : read
+}
+
+/** `inspectStackState`, plus the coordination record decoded from the bytes it read rather than from a second read. */
+export async function inspectStackRecords(value: StateNamespace, stackId: StackId): Promise<StateResult<StackStateRead>> {
     const authenticated = authenticateStateNamespace(value)
     if (!authenticated || !stackIdentity.test(stackId)) return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'stack state inspection requires an issued namespace and a stack id', 'stack state')
     try { return { kind: 'complete', value: await readStackStateFiles(authenticated, stackId) } }
@@ -2438,7 +2458,7 @@ export async function removeStackState(value: StateNamespace, stackId: StackId, 
     try {
         const locked = await withStateRootPortLock(authenticated, { ownerId: options.ownerId, contentionTimeoutMs: 2_000 },
             () => withStateScopedLock(authenticated, scope, { ownerId: options.ownerId, contentionTimeoutMs: 2_000 }, async (): Promise<StateRemoval> => {
-                const current = await readStackStateFiles(authenticated, stackId)
+                const { files: current } = await readStackStateFiles(authenticated, stackId)
                 if (key(current) !== key(expected)) return { kind: 'changed', reason: `the state of ${stackId} changed since it was previewed` }
                 for (const { path } of current) await unlink(path)
                 for (const directory of new Set(current.map(({ path }) => dirname(path)))) await syncDirectory(directory)
