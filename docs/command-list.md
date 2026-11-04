@@ -12,6 +12,7 @@ This generated index is for users choosing the command that owns their next oper
 - `cockpit pull`: Fast-forward the cockpit and its siblings to their upstreams.
 - `cockpit sibling`: Add or remove a repository in cockpit.toml (sibling add, sibling remove).
 - `cockpit tool`: Add or remove an agent tool in cockpit.toml (tool add, tool remove).
+- `cockpit confirm`: Confirm an init answer no person stated by running the observation that verifies it.
 - `cockpit registry-resolve`: Turn a validated shell registry into data shell scripts can source.
 - `cockpit upgrade`: Move the exact cockpit pin to a newer version and re-run sync.
 

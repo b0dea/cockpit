@@ -180,7 +180,7 @@ started it, even where it lives outside this root.
    "proceed without asking" covers interview answers only. Mark every answer you chose yourself in
    the file's `[provenance]` table, for example `"environment.machine" = "agent-default"`: init then
    writes the field under `unconfirmed` in `cockpit.toml` with a comment saying the setup agent
-   chose it, and `doctor` reports `DECLARATION_UNCONFIRMED` until a person confirms it. Mark a
+   chose it, and `doctor` reports `DECLARATION_UNCONFIRMED` until it is confirmed (step 7). Mark a
    field with `confirmedBy = "agent"` as `"derived"` instead, with no value needed: init answers it
    with what it read, refuses one that differs (`DOCUMENT_CONFIGURATION_ANSWER_NOT_DERIVED`), and
    records the file it came from. An unmarked answer is recorded as the person's. Done when the file holds every answer and marks each one you
@@ -232,6 +232,16 @@ started it, even where it lives outside this root.
      person to run `codex -C <cockpit root>` in a terminal (not `codex exec`), trust the folder if
      asked, and choose **Trust all and continue** when Codex shows **Hooks need review**. `doctor`
      reports `CODEX_HOOK_UNTRUSTED` until it is done.
+   - `DECLARATION_UNCONFIRMED` lists the answers no person stated. Confirm `ports.bases` (with the
+     stack up), `environment.compose_files` and `environment.machine` by observation, one at a time:
+     `./node_modules/.bin/cockpit confirm ports.bases --config cockpit.toml --json` runs the
+     observation that verifies the answer and, when it passes, removes the entry and records what
+     ran. Then run `./node_modules/.bin/cockpit sync --config cockpit.toml` where `[autonomy] sync =
+     "agent"`, or hand it to the person, before confirming the next one. A refusal
+     (`CONFIRM_OBSERVATION_FAILED`) names what the observation saw: fix that, or the value, and
+     confirm again. Never delete an `unconfirmed` entry by hand: `CONFIRM_PERSON_REQUIRED` marks the
+     answers only a person confirms (the trust decisions, `cockpit.name`, `estate.runnable`,
+     `environment.test_data`), so list them in your report with their values.
    Done when `doctor` reports no required gap and every other gap is cleared or reported.
 8. **Put product changes where the person reviews them.** A Dockerfile, Compose file or
    `.env.schema` the product needs goes on a new branch in that sibling's checkout: start the branch

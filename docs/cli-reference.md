@@ -131,6 +131,23 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
+## cockpit confirm
+
+Confirm an init answer no person stated by running the observation that verifies it.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--json` | boolean | `false` |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
 ## cockpit registry-resolve
 
 Turn a validated shell registry into data shell scripts can source.

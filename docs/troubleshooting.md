@@ -249,7 +249,6 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `DECISION_LINK_UNRESOLVED` | correct the number or link to name an existing record, or restore the record it names |
 | `DECISION_NUMBER_REUSED` | renumber the later record to the next free number, then update the index and every supersedes line that cites it |
 | `DECISION_UNINDEXED` | add a line linking the record to the decision index |
-| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `DOCS_NOT_DECLARED` | add a [docs] table to cockpit.toml: living = ["README.md", "docs/**/*.md"] lists the documents that must stay true, and the optional decisions = "docs/adr" and decisions_index = "docs/adr/README.md" name the decision records and their index; then rerun npx --no cockpit docs check --config <your cockpit.toml> |
 | `DOCS_REFERENCE_REMOVED` | cite the path that replaced it (a rename is named in the message), or rewrite or delete the sentence if what it described is gone; then rerun npx --no cockpit docs check --config <your cockpit.toml> |
 | `DOCS_TARGET_REMOVED` | cite the target or command that replaced it, or rewrite or delete the sentence if the step is gone; then rerun npx --no cockpit docs check --config <your cockpit.toml> |
