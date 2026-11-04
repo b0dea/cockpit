@@ -1607,6 +1607,17 @@
           },
           "uniqueItems": true
         },
+        "profiles": {
+          "default": [],
+          "description": "Compose profiles every up and session activates; up --profile adds more for one run.",
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9_.-]*$"
+          }
+        },
         "entrypoint_derivatives": {
           "default": [],
           "description": "Addresses derived from leased ports, such as application origins and callback URLs.",

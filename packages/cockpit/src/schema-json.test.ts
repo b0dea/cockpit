@@ -483,6 +483,7 @@ describe('the published cockpit schema', () => {
             resettable_volumes: [],
             generated_host_paths: [],
             compose_files: [],
+            profiles: [],
             entrypoint_derivatives: [],
             install_policies: [],
         })

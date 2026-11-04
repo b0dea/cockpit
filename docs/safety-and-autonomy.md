@@ -28,7 +28,9 @@ A cockpit command is allowed only when it matches an exact available public comm
 application verifies the executable and working root; the command resolver checks the bounded
 complete argument vector, resolved configuration path, declared services, permitted option roles
 and inspected paths. Internal guard transport and public commands marked unavailable are excluded.
-Declared project build and test commands are allowed only as their exact argument vectors in their
+The command after `session --` or `exec --` is judged as one more invocation, so neither admits
+what the guard would refuse on its own; `exec` runs it in a product container that mounts the
+checkouts. Declared project build and test commands are allowed only as their exact argument vectors in their
 own checkout. A wildcard over a command family never grants permission.
 
 ## Hard controls and prompts

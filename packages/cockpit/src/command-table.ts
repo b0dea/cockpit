@@ -19,11 +19,15 @@ export type HandlerIdentifier = WorkHandlerIdentifier
     | 'check'
     | 'doctor'
     | 'down'
+    | 'exec'
     | 'init'
     | 'logs'
     | 'preflight'
+    | 'ps'
+    | 'rebuild'
     | 'registry-resolve'
     | 'reset'
+    | 'restart'
     | 'runtime'
     | 'setup'
     | 'selftest'
@@ -110,6 +114,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     note: 'What was checked, or what was and was not done',
     partial: 'Close the order as partly done; --note says what is left',
     port: 'With --scaffold-compose: the port the app listens on inside its container',
+    profile: 'Compose profile to activate beside environment.profiles; repeat it for several',
     'probe-specifications': 'Path to the harness probe specifications; with --write-probe-specifications, the earlier file whose filled rows for unchanged cells carry forward',
     purpose: 'Short purpose of the sibling repository',
     question: 'Number of the open question to answer, as work status lists it',
@@ -119,7 +124,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     role: 'Declared browser role',
     'scaffold-compose': 'Write a starting compose.yml for the app in this directory, relative to the root, once; it refuses when a Compose file exists',
     select: 'Optional subset of the gate to run',
-    service: 'Declared service whose logs are collected',
+    service: 'Declared Compose service the command acts on',
     'siblings-root': 'Root directory containing sibling checkouts',
     since: 'Collect logs no older than this duration',
     tail: 'Maximum number of log records to collect',
@@ -141,11 +146,11 @@ export function describePublicOption(name: string): string {
 }
 
 type OrdinaryValueRole = 'confined-path' | 'resolved-config' | 'declared-service' | 'declared-gate' | 'gate-mode' | 'gate-selector'
-    | 'identifier' | 'label' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target' | 'local-image' | 'evaluator-tool'
+    | 'identifier' | 'label' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target' | 'local-image' | 'evaluator-tool' | 'compose-profile'
 export interface OrdinaryOption {
     readonly kind: 'flag' | 'value'
     readonly role: 'boolean' | OrdinaryValueRole
-    readonly repetition: 'singleton'
+    readonly repetition: 'singleton' | 'repeated'
     readonly required?: true
 }
 export type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; reason: string }> | Readonly<{
@@ -158,6 +163,10 @@ export type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; re
     cwdRole: 'canonical-root'
     configuration: 'resolved' | 'none'
     forbidden: Readonly<{ presence: readonly string[] }>
+    // `container`: the words after `--` are a command that runs inside the product container. This
+    // grammar admits the spelling; the evaluator judges that command as it judges a host command,
+    // because the container mounts the checkouts and may hold their credentials.
+    trailing?: 'container'
     // Admitted only where cockpit.toml grants it: browser.request_preapproval, which the schema allows
     // only on isolated data that cannot reach production, or an [autonomy] field set to agent.
     requires?: OrdinaryGrant
@@ -181,6 +190,8 @@ const configFlag = str(value('resolved-config', true))
 const jsonFlag = bool(flag)
 const configured = { config: configFlag, json: jsonFlag } as const
 const workOrderFlag = str(value('identifier', true))
+const profileFlag: Flag = { type: 'string', multiple: true, agent: { kind: 'value', role: 'compose-profile', repetition: 'repeated' } }
+const serviceFlag = str(value('declared-service', true))
 
 // The flags and their roles are filled in from `flags` when the table is built.
 function ordinary(command: HandlerIdentifier, extra: Partial<Extract<OrdinaryCommandMetadata, { availability: 'available' }>> = {}): OrdinaryCommandMetadata {
@@ -326,7 +337,7 @@ const sources = [
         handler: 'up',
         visibility: 'public',
         ordinary: ordinary('up'),
-        flags: configured,
+        flags: { ...configured, profile: profileFlag },
     },
     {
         name: 'preflight',
@@ -344,9 +355,10 @@ const sources = [
         usage: '[options] -- <command> [args...]',
         handler: 'session',
         visibility: 'public',
-        // The guard admits `session --config <file> -- <command>` only when it admits the inner command.
+        // The guard admits `session --config <file> [--profile <name>]... -- <command>` only when it
+        // admits the inner command.
         ordinary: unavailable('session wraps an arbitrary foreground command'),
-        flags: { config: str() },
+        flags: { config: str(), profile: { type: 'string', multiple: true } },
     },
     {
         name: 'logs',
@@ -355,8 +367,47 @@ const sources = [
         handler: 'logs',
         visibility: 'public',
         ordinary: ordinary('logs'),
-        flags: { config: configFlag, service: str(value('declared-service', true)), tail: str(value('tail'), '100'), since: str(value('since'), '15m'),
+        flags: { config: configFlag, service: serviceFlag, tail: str(value('tail'), '100'), since: str(value('since'), '15m'),
             follow: bool(flag), json: jsonFlag },
+    },
+    {
+        name: 'ps',
+        stage: 'run-the-stack',
+        summary: 'Show the state and health of each service in this checkout\'s stack',
+        handler: 'ps',
+        visibility: 'public',
+        ordinary: ordinary('ps'),
+        flags: configured,
+    },
+    // The service verbs act only on this checkout's own leased stack, as up does, so an agent runs
+    // them as it runs up; reset, which deletes data, stays gated.
+    {
+        name: 'restart',
+        stage: 'run-the-stack',
+        summary: 'Restart one service of this checkout\'s stack and wait until it is healthy',
+        handler: 'restart',
+        visibility: 'public',
+        ordinary: ordinary('restart'),
+        flags: { ...configured, service: serviceFlag },
+    },
+    {
+        name: 'rebuild',
+        stage: 'run-the-stack',
+        summary: 'Rebuild one service\'s image, replace its container and wait until it is healthy',
+        handler: 'rebuild',
+        visibility: 'public',
+        ordinary: ordinary('rebuild'),
+        flags: { ...configured, service: serviceFlag },
+    },
+    {
+        name: 'exec',
+        stage: 'run-the-stack',
+        summary: 'Run a command inside one service\'s container of this checkout\'s stack',
+        usage: '--service <name> [options] -- <command> [args...]',
+        handler: 'exec',
+        visibility: 'public',
+        ordinary: ordinary('exec', { trailing: 'container' }),
+        flags: { config: configFlag, service: serviceFlag },
     },
     {
         name: 'sleep',
@@ -487,6 +538,8 @@ const ORDINARY_GRANTS: readonly OrdinaryGrant[] = ['browser-preapproval', 'auton
 
 // An image reference or ID as Docker spells it; the command itself refuses one that is not local.
 const LOCAL_IMAGE = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,255}$/
+// The spelling environment.profiles accepts; the command itself refuses a profile no service declares.
+const COMPOSE_PROFILE = /^[a-z0-9][a-z0-9_.-]{0,63}$/
 // A selected value that starts with `-` would reach the product's tool as an option of its own.
 const GATE_SELECTOR = /^(?:spec|file|test|route):[^-]/
 
@@ -510,8 +563,14 @@ export function ordinarySessionCommand(argv: readonly string[], cwd: string,
     const separator = argv.indexOf('--')
     if (argv[0] !== 'session' || separator < 0 || separator === argv.length - 1 || cwd !== authority.canonicalRoot) return undefined
     const options = argv.slice(1, separator)
-    const config = options.length === 2 && options[0] === '--config' ? options[1]
-        : options.length === 1 && options[0]!.startsWith('--config=') ? options[0]!.slice('--config='.length) : undefined
+    let config: string | undefined
+    for (let index = 0; index < options.length; index++) {
+        const [name, inline] = options[index]!.startsWith('--') && options[index]!.includes('=')
+            ? [options[index]!.slice(0, options[index]!.indexOf('=')), options[index]!.slice(options[index]!.indexOf('=') + 1)]
+            : [options[index]!, options[++index]]
+        if (name === '--config' && config === undefined && inline !== undefined) config = inline
+        else if (name !== '--profile' || inline === undefined || !COMPOSE_PROFILE.test(inline)) return undefined
+    }
     return config && resolve(cwd, config) === authority.configPath ? argv.slice(separator + 1) : undefined
 }
 
@@ -554,7 +613,10 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
     const reads: string[] = []
     const positionals: string[] = []
     const options = new Map<string, string | true>()
-    const words = spelling.rest
+    const separator = grammar.trailing === 'container' ? spelling.rest.indexOf('--') : -1
+    // The container command is required and is the only thing after `--`.
+    if (grammar.trailing === 'container' && (separator < 0 || separator === spelling.rest.length - 1)) return undefined
+    const words = separator < 0 ? spelling.rest : spelling.rest.slice(0, separator)
     for (let index = 0; index < words.length; index++) {
         const arg = words[index]!
         if (!arg.startsWith('-')) { positionals.push(arg); continue }
@@ -562,7 +624,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
         const equal = arg.indexOf('=')
         const name = arg.slice(2, equal < 0 ? undefined : equal)
         const option = grammar.options[name]
-        if (!option || options.has(name) || grammar.forbidden.presence.includes(name)) return undefined
+        if (!option || options.has(name) && option.repetition !== 'repeated' || grammar.forbidden.presence.includes(name)) return undefined
         if (option.kind === 'flag') {
             if (equal >= 0) return undefined
             options.set(name, true)
@@ -586,6 +648,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
             : option.role === 'surface-target' ? text.split(',').every(tool => SURFACE_TARGETS.some(target => target === tool))
             : option.role === 'evaluator-tool' ? EVALUATOR_TOOLS.includes(text)
             : option.role === 'local-image' ? LOCAL_IMAGE.test(text)
+            : option.role === 'compose-profile' ? COMPOSE_PROFILE.test(text)
             : option.role === 'sha256' && /^[a-f0-9]{64}$/.test(text)
         if (!valid) return undefined
         options.set(name, text)

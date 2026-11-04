@@ -84,3 +84,47 @@ describe('compose topology port exposure', () => {
         expect(await exposure(publishing('0.0.0.0'))).toEqual([])
     })
 })
+
+describe('compose topology profiles', () => {
+    const worker = (mountSources: readonly string[], profiles?: readonly string[]): ComposeServiceTopology =>
+        ({ id: 'worker', ports: [], healthcheck: true, image: null, build: true, mountSources, ...profiles ? { profiles } : {} })
+    const findings = async (services: readonly ComposeServiceTopology[], root: string, profiles: readonly string[] = []) =>
+        (await assessComposeTopology(services, { projectDirectory: root, portVariables: [], hostPaths: [], profiles,
+            siblings: [{ slug: 'jobs', var: 'JOBS_DIR', mount: 'profile:jobs', path: join(root, 'api') }] })).map(row => [row.code, row.target])
+
+    // up runs the default set plus any profile `up --profile` adds, and mounts a profile sibling
+    // exactly while its profile is active, so check judges the binds under each such set.
+    it('admits a profile sibling bound by its own profile\'s services and refuses one bound outside it', async () => {
+        const root = product()
+        expect(await findings([worker([join(root, 'api')], ['jobs'])], root)).toEqual([])
+        // A service with no profile runs under every set, the one without jobs included.
+        const runner: ComposeServiceTopology = { id: 'runner', ports: [], healthcheck: true, image: null, build: true, mountSources: [], profiles: ['jobs'] }
+        expect(await findings([worker([join(root, 'api')]), runner], root)).toEqual([['COMPOSE_BIND_UNDECLARED', `compose:worker:${join(root, 'api')}`]])
+        expect(await findings([worker([join(root, 'api')]), runner], root, ['jobs'])).toEqual([])
+        expect(await findings([worker([], ['jobs'])], root)).toEqual([['COMPOSE_SIBLING_NOT_MOUNTED', 'sibling:jobs']])
+    })
+
+    // Compose accepts an unknown profile silently, so the stack would start without what was asked for.
+    it('refuses a default or mount profile no service declares', async () => {
+        const root = product()
+        expect(await findings([worker([join(root, 'api')], ['jobs'])], root, ['mail'])).toEqual([['COMPOSE_PROFILE_UNDEFINED', 'profile:mail']])
+        expect(await findings([worker([])], root)).toEqual([['COMPOSE_PROFILE_UNDEFINED', 'profile:jobs']])
+    })
+})
+
+describe('compose topology build image tags', () => {
+    const built = (image: string | null): ComposeServiceTopology =>
+        ({ id: 'api', ports: [], healthcheck: true, image, build: true, mountSources: [] })
+    const findings = async (api: ComposeServiceTopology) => (await assessComposeTopology([api], {
+        projectDirectory: '/unused', portVariables: ['API_HOST_PORT'], hostPaths: [], siblings: [],
+    })).map(row => [row.severity, row.code, row.target])
+
+    // One checkout's build would replace the image every other checkout's stack runs.
+    it('refuses a fixed tag on a built image and accepts one that differs per stack', async () => {
+        expect(await findings(built('my-app:dev'))).toEqual([['error', 'COMPOSE_IMAGE_TAG_SHARED', 'compose:api']])
+        expect(await findings(built('my-app:${TAG:-dev}'))).toEqual([['error', 'COMPOSE_IMAGE_TAG_SHARED', 'compose:api']])
+        expect(await findings(built(null))).toEqual([])
+        expect(await findings(built('my-app:${COMPOSE_PROJECT_NAME:-dev}'))).toEqual([])
+        expect(await findings(built('my-app:${API_HOST_PORT}'))).toEqual([])
+    })
+})

@@ -22,7 +22,8 @@ siblings_root = ".."
 ## `[[sibling]]`
 
 One table per product repository. `mount` says how the stack uses the checkout: `always`
-bind-mounts it, `profile:<name>` mounts it only under that Compose profile, `none` leaves it read
+bind-mounts it, `profile:<name>` mounts it only while that Compose profile is active
+([Compose profiles](environment.md#compose-profiles)), `none` leaves it read
 but never mounted, and `host` runs it outside the stack for the reason given in `host_reason`.
 `acquire` says how it reaches disk: `auto` clones `remote` during `setup`, `manual` expects a
 person to clone it, and `none` never clones it, so it must already be there. The two are
@@ -90,12 +91,15 @@ as written ([Compose-first stacks](environment.md#compose-first-stacks)). A smal
 Compose file gets a starting one from `cockpit init --scaffold-compose`
 ([Scaffold a Compose file](environment.md#scaffold-a-compose-file)). `resettable_volumes` names the
 Compose volumes `reset` may delete, and `seed` the command `up` runs to fill them
-([Demo data, test users and roles](environment.md#demo-data-test-users-and-roles)). Full entry:
+([Demo data, test users and roles](environment.md#demo-data-test-users-and-roles)). `profiles`
+names the Compose profiles every `up` activates; `up --profile <name>` adds one for a run
+([Compose profiles](environment.md#compose-profiles)). Full entry:
 [`[environment]`](configuration-reference.md#environment).
 
 ```toml
 [environment]
 compose_files = ["compose.yml"]
+profiles = ["workers"]
 resettable_volumes = ["postgres-data"]
 seed = { argv = ["npm", "run", "db:seed"], timeout_seconds = 300 }
 ```

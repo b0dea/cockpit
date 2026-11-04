@@ -530,7 +530,7 @@ function capturePlannerInput(input: unknown): CapturedInput | undefined {
     if (!targets || targets.length === 0 || new Set(targets).size !== targets.length || !targets.every(item => target(item))) return undefined
     const activeProfiles = stringArray(value.activeProfiles)
     if (!activeProfiles || new Set(activeProfiles).size !== activeProfiles.length
-        || activeProfiles.some(profile => !/^[a-z0-9][a-z0-9.-]*$/.test(profile))) return undefined
+        || activeProfiles.some(profile => !/^[a-z0-9][a-z0-9_.-]*$/.test(profile))) return undefined
 
     const siblings: ProjectionSiblingInput[] = []
     const siblingSlugs = new Set<string>()

@@ -64,6 +64,11 @@ export interface LifecycleRecordValue extends LifecycleProgress {
      * refused declaration change can say which one changed.
      */
     readonly runtimeInputs?: RuntimeInputs
+    /**
+     * The Compose profiles the stack was started with, sorted, when it runs with any: every later
+     * command on the stack activates the same set, so down removes the profile services too.
+     */
+    readonly activeProfiles?: readonly string[]
 }
 
 export type RuntimeInputs = Readonly<Record<string, string>>
@@ -123,7 +128,7 @@ export function decodeLifecycleRecord(
 ): CurrentLifecycleRecord | undefined {
     const value = snapshotJson(record.value)
     if (!value || typeof value !== 'object' || Array.isArray(value)
-        || !exactKeys(value, ['completedServices', 'holderId', 'operationGeneration', 'workBasisSha256'], ['runtimeInputs', 'teardownComplete'])
+        || !exactKeys(value, ['completedServices', 'holderId', 'operationGeneration', 'workBasisSha256'], ['activeProfiles', 'runtimeInputs', 'teardownComplete'])
         || record.format !== 'cockpit-state/v1' || record.kind !== 'lifecycle'
         || record.cockpitId !== context.cockpitId || record.subjectId !== context.stackId) return undefined
     const candidate = value as Record<string, unknown>
@@ -142,6 +147,14 @@ export function decodeLifecycleRecord(
             || name.includes('\0') || typeof digest !== 'string' || !lifecycleDigest.test(digest))) return undefined
         runtimeInputs = Object.fromEntries(entries)
     }
+    let activeProfiles: readonly string[] | undefined
+    if (Object.hasOwn(candidate, 'activeProfiles')) {
+        const value = candidate.activeProfiles
+        if (teardownComplete || !Array.isArray(value) || value.length === 0 || value.length > 64
+            || value.some((profile, index) => typeof profile !== 'string' || !lifecycleService.test(profile)
+                || index > 0 && value[index - 1]! >= profile)) return undefined
+        activeProfiles = value as string[]
+    }
     const completed = candidate.completedServices.map((item) => {
         if (!item || typeof item !== 'object' || Array.isArray(item)
             || !exactKeys(item, ['containerId', 'service'])) return undefined
@@ -159,6 +172,7 @@ export function decodeLifecycleRecord(
             holderId: candidate.holderId as HolderId,
             ...(teardownComplete ? { teardownComplete: true as const } : {}),
             ...(runtimeInputs ? { runtimeInputs } : {}),
+            ...(activeProfiles ? { activeProfiles } : {}),
             workBasisSha256: candidate.workBasisSha256,
             operationGeneration: candidate.operationGeneration,
             completedServices: completed as LifecycleProgress['completedServices'],

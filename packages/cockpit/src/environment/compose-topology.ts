@@ -57,6 +57,8 @@ export interface ComposeServiceTopology {
      * bind, or the raw `${VAR}` text of a source still waiting for its variable.
      */
     readonly mountSources: readonly string[]
+    /** The Compose profiles that enable the service; absent or empty when it always runs. */
+    readonly profiles?: readonly string[]
 }
 
 /** A `[[sibling]]` row as the mount detector needs it: its absolute checkout path and variable. */
@@ -196,6 +198,8 @@ function projectServices(stdout: Buffer): readonly ComposeServiceTopology[] | un
             && !(Array.isArray(test) && test[0] === 'NONE')
         const image = service.image
         if (image !== undefined && typeof image !== 'string') return undefined
+        const profiles = service.profiles ?? []
+        if (!Array.isArray(profiles) || profiles.some(profile => typeof profile !== 'string')) return undefined
         const rawVolumes = service.volumes ?? []
         if (!Array.isArray(rawVolumes)) return undefined
         const mountSources: string[] = []
@@ -208,6 +212,7 @@ function projectServices(stdout: Buffer): readonly ComposeServiceTopology[] | un
         projected.push({
             id, ports, healthcheck,
             image: image ?? null, build: service.build !== undefined, mountSources,
+            ...profiles.length > 0 ? { profiles: profiles as string[] } : {},
         })
     }
     return projected
@@ -355,37 +360,44 @@ export interface ComposeTopologyDeclarations {
     readonly siblings: readonly ComposeSiblingMount[]
     /** The `environment.generated_host_paths`, as declared and absolute, which `up` hands to containers beside the checkouts. */
     readonly hostPaths: readonly Readonly<{ declared: string; path: string }>[]
+    /** The `environment.profiles` every `up` activates. */
+    readonly profiles?: readonly string[]
 }
 
-/**
- * Judges a cockpit's own Compose topology. A host port that is not drawn from a leased
- * `ports.bases` variable is the same number in every worktree and parallel stack, so the second
- * stack to start fails to bind it; the remaining findings are warnings about what cockpit can
- * then promise, not about whether the stack runs.
- */
-export async function assessComposeTopology(
+function profileOf(sibling: ComposeSiblingMount): string | undefined {
+    return sibling.mount.startsWith('profile:') ? sibling.mount.slice('profile:'.length) : undefined
+}
+
+// Image references that differ per stack: Compose's own project name, which cockpit derives per
+// checkout, and the leased ports.bases variables.
+function imageVariesPerStack(image: string, leased: ReadonlySet<string>): boolean {
+    return [...image.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/g)].some(([, name]) => name === 'COMPOSE_PROJECT_NAME' || leased.has(name!))
+}
+
+// The bind findings of the services one profile set runs, judged as `up` judges them under that set.
+async function assessBinds(
     services: readonly ComposeServiceTopology[],
     declarations: ComposeTopologyDeclarations,
+    variables: Readonly<Record<string, string>>,
+    active: readonly string[],
 ): Promise<readonly Diagnostic[]> {
-    const leased = new Set(declarations.portVariables)
     const diagnostics: Diagnostic[] = []
-    // `up` admits the topology only when every bind lands inside a mount = "always" checkout or a
-    // generated host path, and every such checkout is mounted; check judges the same binds the same
-    // way, or a configuration check accepts refuses every runtime command.
-    const always = declarations.siblings.filter(sibling => sibling.mount === 'always')
-    const declared = [...always.map(sibling => sibling.path), ...declarations.hostPaths.map(({ path }) => path)]
-    const variables = Object.fromEntries(declarations.siblings.map(sibling => [sibling.var, sibling.path]))
-    const binds = services.flatMap(service => service.mountSources.map(source => ({
+    const running = services.filter(service => !service.profiles?.length || service.profiles.some(profile => active.includes(profile)))
+    const mounted = declarations.siblings.filter(sibling => sibling.mount === 'always'
+        || profileOf(sibling) !== undefined && active.includes(profileOf(sibling)!))
+    const declared = [...mounted.map(sibling => sibling.path), ...declarations.hostPaths.map(({ path }) => path)]
+    const binds = running.flatMap(service => service.mountSources.map(source => ({
         service: service.id, source, path: composeBindPath(source, declarations.projectDirectory, variables) })))
         .filter(bind => bind.path !== 'volume')
     const resolved = binds.flatMap(bind => bind.path === undefined ? [] : [bind.path])
     const { missing, unexpected } = compareBindSources(resolved, declared)
     const redirected = (await redirectedBindSources(resolved, declared)).map(({ bind }) => bind)
-    for (const sibling of always) {
+    const under = active.length === 0 ? '' : ` with profile ${active.join(', ')} active`
+    for (const sibling of mounted) {
         if (!missing.includes(sibling.path)) continue
         diagnostics.push({
             severity: 'error' as const, code: 'COMPOSE_SIBLING_NOT_MOUNTED', target: `sibling:${sibling.slug}`,
-            message: `sibling ${sibling.slug} is declared mount = "always", but no Compose service bind-mounts ${sibling.path} or a directory inside it; up admits a stack only when every such sibling is mounted, so it would refuse to start`,
+            message: `sibling ${sibling.slug} is declared mount = "${sibling.mount}", but no Compose service${under} bind-mounts ${sibling.path} or a directory inside it; up admits a stack only when every such sibling is mounted, so it would refuse to start`,
             fix: `bind-mount it in a service of the Compose file, whole or a directory inside it (for example "\${${sibling.var}}:/workspace/${sibling.slug}"), or set mount = "none" on sibling ${sibling.slug} in cockpit.toml, then run ${cockpitCommand('sync')}`,
         })
     }
@@ -401,14 +413,61 @@ export async function assessComposeTopology(
     for (const bind of binds) {
         const why = bind.path === undefined
             ? 'whose host side names a variable cockpit does not supply and gives it no default'
-            : unexpected.includes(bind.path) ? 'which lies inside no mount = "always" sibling and is no environment.generated_host_paths entry'
+            : unexpected.includes(bind.path) ? `which lies inside no mounted sibling${under} and is no environment.generated_host_paths entry`
                 : redirected.includes(bind.path) ? 'which resolves through a symbolic link to a path outside the sibling that holds it' : undefined
         if (why === undefined) continue
         diagnostics.push({
             severity: 'error' as const, code: 'COMPOSE_BIND_UNDECLARED', target: `compose:${bind.service}:${bind.source}`,
             message: `service ${bind.service} bind-mounts ${bind.path ?? bind.source}, ${why}; up hands a container only the checkouts and host paths cockpit.toml declares, so it would refuse to start`,
-            fix: `bind a directory inside a mount = "always" sibling (its variable, as in "\${VAR}/path", or a path relative to the first Compose file's directory), list the path under environment.generated_host_paths, or remove the bind mount from service ${bind.service}; then run ${cockpitCommand('check')}`,
+            fix: `bind a directory inside a mounted sibling (its variable, as in "\${VAR}/path", or a path relative to the first Compose file's directory), list the path under environment.generated_host_paths, or remove the bind mount from service ${bind.service}; then run ${cockpitCommand('check')}`,
         })
+    }
+    return diagnostics
+}
+
+/**
+ * Judges a cockpit's own Compose topology. A host port that is not drawn from a leased
+ * `ports.bases` variable is the same number in every worktree and parallel stack, so the second
+ * stack to start fails to bind it, and a fixed tag on a built image is shared the same way; the
+ * remaining findings are warnings about what cockpit can then promise, not about whether the stack
+ * runs.
+ */
+export async function assessComposeTopology(
+    services: readonly ComposeServiceTopology[],
+    declarations: ComposeTopologyDeclarations,
+): Promise<readonly Diagnostic[]> {
+    const leased = new Set(declarations.portVariables)
+    const diagnostics: Diagnostic[] = []
+    const defined = new Set(services.flatMap(service => service.profiles ?? []))
+    const defaults = declarations.profiles ?? []
+    for (const [profile, source] of [
+        ...defaults.map(profile => [profile, 'environment.profiles names it'] as const),
+        ...declarations.siblings.flatMap(sibling => profileOf(sibling) === undefined ? []
+            : [[profileOf(sibling)!, `sibling ${sibling.slug} is mounted under it`] as const]),
+    ]) {
+        if (defined.has(profile)) continue
+        diagnostics.push({
+            severity: 'error' as const, code: 'COMPOSE_PROFILE_UNDEFINED' as const satisfies typeof ENVIRONMENT_CODES.COMPOSE_PROFILE_UNDEFINED,
+            target: `profile:${profile}`,
+            message: `profile ${profile} is declared by no service in environment.compose_files, and ${source}; Compose accepts an unknown profile silently, so activating it would start nothing`,
+            fix: `add profiles: [${profile}] to the services it should start, or remove it from cockpit.toml; then run ${cockpitCommand('check')}`,
+        })
+    }
+    // `up` admits the topology only when every bind of an active service lands inside a mounted
+    // checkout or a generated host path, and every such checkout is mounted; check judges the same
+    // binds the same way, or a configuration check accepts refuses every runtime command. A stack
+    // runs the default profile set plus any profiles `up --profile` adds, so the binds are judged
+    // under the default set and under the default set plus each other defined profile: a finding
+    // under several added profiles already shows under one of them.
+    const usable = defaults.filter(profile => defined.has(profile))
+    const sets = [usable, ...[...defined].filter(profile => !usable.includes(profile)).sort().map(profile => [...usable, profile])]
+    const variables = Object.fromEntries(declarations.siblings.map(sibling => [sibling.var, sibling.path]))
+    const seen = new Set<string>()
+    for (const active of sets) {
+        for (const diagnostic of await assessBinds(services, declarations, variables, active)) {
+            const key = `${diagnostic.code}\0${diagnostic.target}`
+            if (!seen.has(key)) { seen.add(key); diagnostics.push(diagnostic) }
+        }
     }
     for (const service of services) {
         for (const port of service.ports) {
@@ -438,6 +497,11 @@ export async function assessComposeTopology(
             severity: 'warning' as const, code: 'COMPOSE_IMAGE_UNPINNED', target: `compose:${service.id}`,
             message: `service ${service.id} runs image ${JSON.stringify(service.image)} by tag, so a later pull can change what runs`,
             fix: `pin it by digest, for example ${service.image.replace(/:[^/:]*$/, '')}@sha256:<digest> from docker image inspect`,
+        })
+        if (service.build && service.image !== null && !imageVariesPerStack(service.image, leased)) diagnostics.push({
+            severity: 'error' as const, code: 'COMPOSE_IMAGE_TAG_SHARED', target: `compose:${service.id}`,
+            message: `service ${service.id} builds its image and tags it ${JSON.stringify(service.image)}, which is the same in every worktree and parallel stack, so one checkout's build replaces the image another checkout's stack runs`,
+            fix: `remove image from service ${service.id}, so Compose names the build after this stack's project`,
         })
     }
     return diagnostics

@@ -7,9 +7,14 @@ import { type RuntimeEvidenceObservation } from './application/health.js'
 import { decodeLifecycleRecord } from './application/lifecycle.js'
 import { type ReadinessRefusal } from './application/lifecycle-context.js'
 import { type LogObservation, type LogsCommandAdapters } from './application/logs.js'
+import { publishLifecycleRecord } from './application/lifecycle-state.js'
+import type { LifecycleRunContext } from './application/lifecycle-context.js'
+import { type ServiceCommandAdapters, type ServiceObservation } from './application/services.js'
+import type { ForegroundProcessInput, ForegroundProcessOutcome } from '../environment-exec/execute.js'
+import type { LifecycleRecordValue } from './lifecycle-stage.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { deriveEntrypoints, observeRetainedPortFamily, projectRetainedPortFamilyResult, type PortLeaseProjection } from './ports.js'
-import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, type ExecutionStep, type HolderId, type LifecycleProgress, type StackId, RefusalError } from './contract.js'
+import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, type ExecutionStep, type HolderId, type StackId, RefusalError } from './contract.js'
 import { DeclarationRefusalError, runtimeNotDeclared, serviceNotDeclared } from './declaration.js'
 import {
     admitRuntimeServiceHealth,
@@ -47,6 +52,7 @@ export interface ReadCommandCompositionInput {
 
 export interface ReadCommandAdapterComposition {
     readonly logs: LogsCommandAdapters
+    readonly services: ServiceCommandAdapters
     readonly environment: Readonly<{ observe: (input: { readonly configPath: string }) => Promise<RuntimeEvidenceObservation> }>
 }
 
@@ -65,11 +71,8 @@ interface CapturedInput {
     readonly runtimeMeasurementProbeAuthority?: RuntimeMeasurementProbeAuthority
 }
 
-interface LifecycleRecordValue extends LifecycleProgress {
-    readonly holderId: string
-}
-
 interface StableReadContext {
+    readonly run: LifecycleRunContext
     readonly ownComposeAuthority?: Extract<RuntimeAdapterAuthority, { ownComposeFiles: true }>
     readonly configuration: ConsumedLoadedConfig
     readonly namespace: StateNamespace
@@ -206,12 +209,15 @@ function exactCompletedTopology(context: StableReadContext): boolean {
 export function createReadCommandAdapters(
     rawInput: ReadCommandCompositionInput,
     execute: Executor,
+    executeForeground?: (input: ForegroundProcessInput, options: { readonly signal?: AbortSignal }) => Promise<ForegroundProcessOutcome>,
 ): ReadCommandAdapterComposition {
     const input = captureInput(rawInput)
 
     // `refuse` receives the lifecycle's own refusal, such as an unmeasured runtime, so a caller can
     // report it instead of a generic unavailable context.
-    const prepare = async (signal?: AbortSignal, refuse?: ReadinessRefusal<never>): Promise<StableReadContext> => {
+    // A service verb may act on a stack whose start stopped part-way: rebuilding the service that
+    // failed is how its fixed code gets running. Every other reader needs a started service.
+    const prepare = async (signal?: AbortSignal, refuse?: ReadinessRefusal<never>, partial = false): Promise<StableReadContext> => {
         if (!input || typeof execute !== 'function') throw new RefusalError('read command composition is unavailable')
         const lifecycle = createLifecycleCommandAdapters({
             configPath: input.configPath,
@@ -257,7 +263,9 @@ export function createReadCommandAdapters(
         const lifecycleRead = await readState(context.namespace.paths.lifecycle(context.stackId))
         if (lifecycleRead.kind !== 'complete') throw new RefusalError('lifecycle state is unavailable')
         const lifecycleValue = decodeLifecycleRecord(lifecycleRead.value, context)?.value
-        if (!lifecycleValue || lifecycleValue.completedServices.length === 0) throw new RefusalError('lifecycle state is malformed')
+        if (!lifecycleValue) throw new RefusalError('lifecycle state is malformed')
+        if (lifecycleValue.teardownComplete) throw new RefusalError('down removed the stack')
+        if (lifecycleValue.completedServices.length === 0 && !partial) throw new RefusalError('lifecycle state is malformed')
         if (lifecycleValue.holderId !== context.holderId) throw new RefusalError('lifecycle holder authority changed')
         const env = runtimeEnvironment(input.env)
         const executable = await resolveDockerExecutable(input.env)
@@ -282,6 +290,7 @@ export function createReadCommandAdapters(
             ])),
         }
         return {
+            run: context,
             ownComposeAuthority,
             configuration,
             namespace: context.namespace,
@@ -402,10 +411,40 @@ export function createReadCommandAdapters(
         return { snapshot: ownedSnapshot, evidence: ownedEvidence }
     }
 
+    const observeServices = async (request: { readonly configPath: string }): Promise<ServiceObservation> => {
+        if (!input || resolve(request.configPath) !== input.configPath) throw new RefusalError('service configuration path does not match')
+        const context = await prepare(input.signal, (diagnostics) => { throw new DeclarationRefusalError(diagnostics[0]!) }, true)
+        return {
+            topology: context.topology,
+            completedServices: context.lifecycle.completedServices,
+            // The recorded container is what `up`, `preflight` and `logs` revalidate, so a rebuild that
+            // replaced it updates the record rather than leaving the stack looking broken.
+            recordContainer: async (service, containerId) => {
+                const value = { ...context.lifecycle, completedServices: context.lifecycle.completedServices
+                    .map((row) => row.service === service ? { service, containerId } : row) }
+                const published = await publishLifecycleRecord(context.run, context.lifecycleRecord, value)
+                if ('status' in published) return published.diagnostics
+                if (published.kind === 'complete') return []
+                return [{ severity: 'error' as const,
+                    code: published.kind === 'missing' ? ENVIRONMENT_CODES.STATE_RECORD_MALFORMED : published.code,
+                    target: context.namespace.paths.lifecycle(context.stackId).path,
+                    message: `the rebuilt container of service ${service} runs, and the stack record could not be updated to it${published.kind === 'missing' ? '' : `: ${published.message}`}`,
+                    fix: 'run npx --no cockpit up --config <your cockpit.toml> to record the running containers again' }]
+            },
+        }
+    }
+
+    const services: ServiceCommandAdapters = {
+        observe: observeServices,
+        execute: (step: ExecutionStep) => execute(step, input?.signal ? { signal: input.signal } : undefined),
+        executeForeground: executeForeground ?? (async () => { throw new RefusalError('foreground execution is not bound') }),
+        ...(input?.signal ? { signal: input.signal } : {}),
+    }
+
     const logs: LogsCommandAdapters = {
         observe: observeLogs,
         execute: (step: ExecutionStep, options: { readonly signal?: AbortSignal }) => execute(step, options),
         ...(input?.signal ? { signal: input.signal } : {}),
     }
-    return { logs, environment: { observe: observeEnvironment } }
+    return { logs, services, environment: { observe: observeEnvironment } }
 }

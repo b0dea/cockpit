@@ -956,11 +956,12 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         holdAsk(invocation, ask(UNPROVEN_LAUNCHER))
         return { operands: invocation.argv.slice(prefix) }
     }
-    // A session runs the words after `--` as a command, with no shell, in its own directory, so
-    // that command is judged as one more invocation: the session never admits more than it would.
+    // A session runs the words after `--` as a command, with no shell, in its own directory, and exec
+    // runs them in a product container that mounts the checkouts and may hold their credentials, so
+    // that command is judged as one more invocation: neither admits more than the guard would.
     const invocations = input.invocations.flatMap((invocation): ParsedInvocation[] => {
         const cockpit = provenCockpit(invocation)
-        const separator = cockpit?.[0] === 'session' ? cockpit.indexOf('--') : -1
+        const separator = cockpit?.[0] === 'session' || cockpit?.[0] === 'exec' ? cockpit.indexOf('--') : -1
         const command = separator < 0 ? [] : cockpit!.slice(separator + 1)
         if (!command.length) return [invocation]
         return [invocation, { executable: command[0]!, argv: command.slice(1), cwd: invocation.cwd, wrapped: false, redirects: [],

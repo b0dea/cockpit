@@ -39,7 +39,7 @@ import { fileFingerprint, verifiedDigest } from '../../environment-exec/verified
 import { SHIPPED_SETUP_SKILL, extendInspectedSkillStandingCosts, inspectRenderedSkillSet } from '../../surfaces/skill-contract.js'
 import { readAnchoredFile, readAnchoredEntry, readAnchoredBatches } from '../../generated-environment/transaction.js'
 import { ENVIRONMENT_CODES, errorCause, snapshotGeneratedJson, RefusalError } from '../contract.js'
-import { SIBLING_DEFAULT_GUIDES } from '../../schema.js'
+import { mounted, SIBLING_DEFAULT_GUIDES } from '../../schema.js'
 import { checkoutId, cockpitId, stackId } from '../identity.js'
 import { resolveLifecycleStage } from '../lifecycle-stage.js'
 import { observeConfiguration, selectStateRoot } from '../state.js'
@@ -106,7 +106,9 @@ export async function prepareSurfaces(
     // Only the listed tools are rendered and drift-checked; an unlisted tool's files become stale.
     const tools = listedSurfaceTargets(config.surfaces.tools)
     const guardedTools = GUARD_SURFACE_TARGETS.filter(target => tools.includes(target))
-    const selected = config.sibling.filter(row => row.mount === 'always')
+    // Generated files are one per checkout, so they follow the declared default profile set; a
+    // profile one run adds with `up --profile` reaches the stack, not the agents' instructions.
+    const selected = mounted(config, config.environment.profiles)
     const requiredSlugs = new Set([...selected.map(row => row.slug), ...prepared.registry.mcpSources.map(row => row.slug)])
     const siblingRoots = new Map<string, string>()
     const sourceRoots: SourceRootIdentity[] = []
@@ -147,7 +149,7 @@ export async function prepareSurfaces(
     const projectionInput: ProjectionPlannerInput = {
         canonicalMainCheckout: prepared.root,
         siblingsRoot: config.cockpit.siblings_root,
-        activeProfiles: [],
+        activeProfiles: [...config.environment.profiles],
         guideCapLines: config.cockpit.guide_cap,
         siblings: config.sibling.map(row => ({ slug: row.slug, mount: row.mount, directoryAuthority: row.dir, guides: [...projectionGuides(row)] })),
         mountedPaths: selected.map(row => ({ slug: row.slug, path: siblingRoots.get(row.slug)! })),

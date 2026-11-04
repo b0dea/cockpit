@@ -232,9 +232,39 @@ describe('lifecycle CLI composition', () => {
 
         expect(status).toBe(0)
         expect(handler).toHaveBeenCalledOnce()
-        expect(handler).toHaveBeenCalledWith({ configPath: '/synthetic/cockpit.toml' })
+        expect(handler).toHaveBeenCalledWith(verb === 'up' ? { configPath: '/synthetic/cockpit.toml', profiles: [] } : { configPath: '/synthetic/cockpit.toml' })
         expect(JSON.parse(capture.output().stdout)).toMatchObject({ result: { change: verb } })
         expect(capture.output().stderr).toBe('')
+    })
+
+    // The profiles reach the lifecycle as the run's request; environment.profiles and the running
+    // stack's recorded set are added where the stack's readiness is resolved.
+    it('passes repeated --profile values to up and session, and refuses a malformed one', async () => {
+        const up = vi.fn(async () => complete('up'))
+        const session = vi.fn(async () => complete('stopped'))
+        expect(await runCli(['up', '--config', '/synthetic/cockpit.toml', '--profile', 'jobs', '--profile=mail', '--profile', 'jobs'],
+            captureIo().io, { up })).toBe(0)
+        expect(up).toHaveBeenCalledWith({ configPath: '/synthetic/cockpit.toml', profiles: ['jobs', 'mail'] })
+        expect(await runCli(['session', '--config', '/synthetic/cockpit.toml', '--profile', 'jobs', '--', 'synthetic-agent'],
+            captureIo().io, { session })).toBe(0)
+        expect(session).toHaveBeenCalledWith(expect.objectContaining({ argv: ['synthetic-agent'], profiles: ['jobs'] }))
+        const refused = captureIo()
+        expect(await runCli(['up', '--config', '/synthetic/cockpit.toml', '--profile', 'Jobs'], refused.io, { up })).toBe(2)
+        expect(refused.output().stderr).toContain('--profile "Jobs" must be a lowercase Compose profile name')
+        expect(up).toHaveBeenCalledOnce()
+    })
+
+    it('dispatches the service verbs, and exec exits with its command\'s own status', async () => {
+        const restart = vi.fn(async () => complete('restarted'))
+        const exec = vi.fn(async () => ({ kind: 'complete' as const, status: 3, diagnostics: [], result: { exitCode: 3, signal: null } }))
+        expect(await runCli(['restart', '--config', '/synthetic/cockpit.toml', '--service', 'api'], captureIo().io, { restart })).toBe(0)
+        expect(restart).toHaveBeenCalledWith({ configPath: '/synthetic/cockpit.toml', service: 'api' })
+        expect(await runCli(['exec', '--config', '/synthetic/cockpit.toml', '--service', 'api', '--', 'psql', '-c', 'select 1'],
+            captureIo().io, { exec })).toBe(3)
+        expect(exec).toHaveBeenCalledWith({ configPath: '/synthetic/cockpit.toml', service: 'api', argv: ['psql', '-c', 'select 1'] })
+        const missing = captureIo()
+        expect(await runCli(['exec', '--config', '/synthetic/cockpit.toml', '--service', 'api'], missing.io, { exec })).toBe(2)
+        expect(missing.output().stderr).toContain('exec requires a command after --')
     })
 
     it('keeps ordinary and JSON reset on the preview-only runner', async () => {

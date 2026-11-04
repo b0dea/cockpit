@@ -869,6 +869,11 @@ function captureForegroundInput(input: ForegroundProcessInput): ForegroundProces
 }
 
 /** Runs one operator/agent session process while retaining ownership of its whole process group. */
+/** Whether a foreground process inherits a terminal on both stdin and stdout, so it may ask for one of its own. */
+export function foregroundTerminal(): boolean {
+    return process.stdin.isTTY === true && process.stdout.isTTY === true
+}
+
 export async function executeForegroundProcess(
     input: ForegroundProcessInput,
     options: Readonly<{ signal?: AbortSignal }> = {},

@@ -1211,7 +1211,7 @@ export interface RuntimeTopologyEvidence {
 
 export type RuntimeTopologyObservation =
     | { readonly kind: 'complete'; readonly step: ExecutionStep; readonly topology: RuntimeTopologyEvidence; readonly observations: readonly EnvironmentObservation[] }
-    | { readonly kind: 'unavailable'; readonly reason: string; readonly mounts?: RuntimeMountMismatch }
+    | { readonly kind: 'unavailable'; readonly reason: string; readonly mounts?: RuntimeMountMismatch; readonly undefinedProfiles?: readonly string[] }
 
 interface TopologyPlanContract {
     readonly runtimePlan: ExecutionPlan
@@ -1533,7 +1533,7 @@ function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, a
     readonly order: readonly string[]
     readonly byId: ReadonlyMap<string, RuntimeTopologyService>
     readonly runtimeHealth: ReadonlyMap<string, RuntimeHealthServiceExpectation>
-} | undefined {
+} | { readonly undefinedProfiles: readonly string[] } | undefined {
     try {
         const source = new TextDecoder('utf-8', { fatal: true }).decode(stdout)
         const parsed: unknown = JSON.parse(source)
@@ -1553,6 +1553,11 @@ function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, a
             profiles.set(name, selected)
         }
         const active = new Set(activeProfiles)
+        // Compose reports only the services of active profiles, so an active profile no reported
+        // service carries is one no service declares; Compose itself accepts it silently.
+        const declaredProfiles = new Set([...profiles.values()].flat())
+        const undefinedProfiles = activeProfiles.filter((profile) => !declaredProfiles.has(profile))
+        if (undefinedProfiles.length > 0) return { undefinedProfiles }
         const names = declaredNames.filter((name) => {
             const serviceProfiles = profiles.get(name) ?? []
             return serviceProfiles.length === 0 || serviceProfiles.some((profile) => active.has(profile))
@@ -1638,6 +1643,11 @@ function admitRuntimeTopology(contract: TopologyPlanContract, step: ExecutionSte
         || now < windowStart || now > windowEnd) return unavailable()
     const projected = parseTopology(outcome.stdout, contract.stackId, contract.configSha256, contract.runtime.activeProfiles)
     if (!projected) return unavailable()
+    if ('undefinedProfiles' in projected) return {
+        kind: 'unavailable' as const,
+        reason: `no Compose service declares profile ${projected.undefinedProfiles.join(', ')}`,
+        undefinedProfiles: projected.undefinedProfiles,
+    }
     const mounts = compareBindSources(projected.services.flatMap(({ bindMountSources }) => bindMountSources),
         contract.runtime.expectedMountSources)
     // The caller can name the sibling or host path behind each difference; a bare refusal here
@@ -1906,6 +1916,7 @@ function runtimeServiceInitialSteps(
     topologyContract: TopologyEvidenceContract,
     service: RuntimeTopologyService,
     issuanceId: string,
+    rebuild = false,
 ): RuntimeServiceInitialSteps | undefined {
     // `up --wait` returns only once the service runs and its healthcheck passes, after Compose has
     // built or pulled its image, and the declared cold_start_seconds bounds exactly that. The
@@ -1919,7 +1930,7 @@ function runtimeServiceInitialSteps(
             + Math.max(topologyContract.step.timeoutMs, topologyContract.runtime.coldStartLimitMillis) },
         `runtime:docker-compose:start:${service.id}`,
         'up',
-        ['--progress', 'quiet', 'up', '--detach', '--wait', '--no-deps', service.id],
+        ['--progress', 'quiet', 'up', '--detach', '--wait', '--no-deps', ...rebuild ? ['--build', '--force-recreate'] : [], service.id],
         OUTPUT_LIMIT_BYTES,
         issuanceId,
         MAX_OBSERVATION_WINDOW_MS,
@@ -2292,9 +2303,12 @@ export async function startRuntimeService(input: {
     readonly topology: RuntimeTopologyEvidence
     readonly service: string
     readonly execute: Execute
+    /** Build the service's image and replace its container, as `rebuild` does after its code changed. */
+    readonly rebuild?: true
 }): Promise<RuntimeServiceOutcome> {
     const contract = runtimeServiceContract(input.topology, input.service)
-    const steps = contract && runtimeServiceInitialSteps(contract.topologyContract, contract.service, randomBytes(32).toString('hex'))
+    const steps = contract && runtimeServiceInitialSteps(contract.topologyContract, contract.service, randomBytes(32).toString('hex'),
+        input.rebuild === true)
     if (!contract || !steps) return { kind: 'failure' }
     const { projectName } = contract.topologyContract.runtime
     const window = contract.topologyContract.observationWindow
@@ -2351,6 +2365,96 @@ export async function revalidateRuntimeService(input: {
     if (!observed) return { kind: 'failure' }
     if (observed.kind === 'missing' || observed.containerId !== input.expectedContainerId) return { kind: 'stale' }
     return inspectRuntimeService({ ...contract, containerId: observed.containerId, identityFinishedAt: identity.receipt.finishedAt }, input.execute)
+}
+
+/**
+ * Restarts one service's container in place with `compose restart`, then waits for it as `up` does
+ * and inspects it, so the outcome is the same healthy-or-failed evidence a start gives.
+ */
+export async function restartRuntimeService(input: {
+    readonly topology: RuntimeTopologyEvidence
+    readonly service: string
+    readonly execute: Execute
+}): Promise<RuntimeServiceOutcome> {
+    const contract = runtimeServiceContract(input.topology, input.service)
+    const step = contract && derivedComposeStep(
+        { ...contract.topologyContract.step, timeoutMs: COMPOSE_STOP_GRACE_MS + contract.topologyContract.step.timeoutMs },
+        `runtime:docker-compose:restart:${contract.service.id}`,
+        'restart',
+        ['--progress', 'quiet', 'restart', '--no-deps', contract.service.id],
+        OUTPUT_LIMIT_BYTES,
+        randomBytes(32).toString('hex'),
+        MAX_OBSERVATION_WINDOW_MS,
+        undefined,
+        contract.topologyContract.runtime.interpolatedNames,
+    )
+    if (!contract || !step) return { kind: 'failure' }
+    const restarted = await input.execute(step)
+    if (restarted.kind !== 'complete' || restarted.stderr.byteLength !== 0) {
+        return runtimeServiceFailure(contract, 'start', restarted, undefined, null)
+    }
+    return startRuntimeService(input)
+}
+
+/** One service of the stack as Compose reports it; `state` is `absent` when it has no container. */
+export interface RuntimeServiceState {
+    readonly service: string
+    readonly state: string
+    readonly health: string | null
+    readonly status: string | null
+    readonly exitCode: number | null
+}
+
+/** Lists every service of the stack with its container's state and health through `compose ps`. */
+export async function observeRuntimeServiceStates(input: {
+    readonly topology: RuntimeTopologyEvidence
+    readonly execute: Execute
+}): Promise<Readonly<{ kind: 'complete'; services: readonly RuntimeServiceState[] }> | Readonly<{ kind: 'unavailable'; reason: string }>> {
+    const contract = issuedTopologyEvidence.get(input.topology)
+    const step = contract && derivedComposeStep(contract.step, `runtime:docker-compose:ps:${contract.runtime.projectName}`, 'ps',
+        ['ps', '--format', 'json', '--all'], OUTPUT_LIMIT_BYTES, randomBytes(32).toString('hex'),
+        MAX_OBSERVATION_WINDOW_MS, undefined, contract.runtime.interpolatedNames)
+    if (!contract || !step) return { kind: 'unavailable', reason: 'the stack topology is no longer current' }
+    const outcome = await input.execute(step)
+    if (outcome.kind !== 'complete') return { kind: 'unavailable', reason: `docker compose ps failed (${outcome.code})` }
+    const reported = new Map<string, RuntimeServiceState>()
+    try {
+        for (const line of new TextDecoder('utf-8', { fatal: true }).decode(outcome.stdout).split('\n')) {
+            if (line.trim() === '') continue
+            const row = JSON.parse(line) as Record<string, unknown>
+            if (row.Project !== contract.runtime.projectName || typeof row.Service !== 'string' || typeof row.State !== 'string') {
+                return { kind: 'unavailable', reason: 'docker compose ps reported a container outside this stack or without a state' }
+            }
+            reported.set(row.Service, {
+                service: row.Service, state: row.State,
+                health: typeof row.Health === 'string' && row.Health !== '' ? row.Health : null,
+                status: typeof row.Status === 'string' ? row.Status : null,
+                exitCode: typeof row.ExitCode === 'number' ? row.ExitCode : null,
+            })
+        }
+    } catch (error) {
+        return { kind: 'unavailable', reason: unavailableReason('docker compose ps output is not JSON lines', error) }
+    }
+    return { kind: 'complete', services: [...contract.services.keys()].sort().map(service => reported.get(service)
+        ?? { service, state: 'absent', health: null, status: null, exitCode: null }) }
+}
+
+/**
+ * The foreground command that runs `argv` inside one service's container, under the stack's own
+ * project, files and profiles, so the caller never names the derived project.
+ */
+export function planRuntimeServiceExec(input: {
+    readonly topology: RuntimeTopologyEvidence
+    readonly service: string
+    readonly argv: readonly [string, ...string[]]
+    readonly tty: boolean
+}): Readonly<{ executable: ResolvedExecutable; argv: readonly string[]; cwd: string; env: Readonly<Record<string, string>> }> | undefined {
+    const contract = runtimeServiceContract(input.topology, input.service)
+    const step = contract && derivedComposeStep(contract.topologyContract.step, `runtime:docker-compose:exec:${contract.service.id}`, 'exec',
+        ['exec', ...input.tty ? [] : ['--no-tty'], contract.service.id, ...input.argv], OUTPUT_LIMIT_BYTES,
+        randomBytes(32).toString('hex'), MAX_OBSERVATION_WINDOW_MS, undefined, contract.topologyContract.runtime.interpolatedNames)
+    if (!contract || !step) return undefined
+    return { executable: contract.topologyContract.runtime.runtimeExecutable, argv: step.argv.slice(1), cwd: step.cwd, env: step.env }
 }
 
 /** The observation as healthy-service evidence, or undefined when the service is not running healthy. */

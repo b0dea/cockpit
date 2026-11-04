@@ -90,6 +90,8 @@ export const MachineFloor = z
     .strict()
 
 export const ResettableVolumeId = z.string().regex(/^[a-z0-9][a-z0-9_.-]*$/)
+/** A Compose profile name, in the lowercase spelling every stack command and state record shares. */
+export const ComposeProfileName = z.string().max(64).regex(/^[a-z0-9][a-z0-9_.-]*$/, 'expected a lowercase Compose profile name')
 export const GeneratedHostPath = SafeRelativePath
 
 export function parseBrowserNetworkExposure(
@@ -191,6 +193,7 @@ export const Environment = z
         resettable_volumes: z.array(ResettableVolumeId).default([]).describe('Compose volumes that reset may delete and recreate, named by their Compose key.'),
         generated_host_paths: z.array(GeneratedHostPath).default([]).describe('Host paths cockpit generates and owns, relative to the cockpit.'),
         compose_files: z.array(LocalComposePath).default([]).describe('Compose files, relative to the cockpit, that make up the stack; cockpit runs them as written.'),
+        profiles: z.array(ComposeProfileName).max(64).default([]).describe('Compose profiles every up and session activates; up --profile adds more for one run.'),
         entrypoint_derivatives: z.array(EntrypointDerivative).default([]).describe('Addresses derived from leased ports, such as application origins and callback URLs.'),
         install_policies: z.array(InstallPolicy).default([]).describe('The build and test commands the guard admits for each toolchain and lockfile.'),
         // Product data lives in the resettable volumes, so the seed reruns exactly when one of them is
@@ -206,6 +209,7 @@ export const Environment = z
             resettable_volumes: environment.resettable_volumes,
             generated_host_paths: environment.generated_host_paths,
             compose_files: environment.compose_files,
+            profiles: environment.profiles,
             entrypoint_derivatives: environment.entrypoint_derivatives.map((row) => row.name),
             posture_requirements: environment.posture_requirements?.map((row) => row.requirement) ?? [],
         }
@@ -957,12 +961,17 @@ export const CockpitConfig = z
                     message: `resettable volume ${JSON.stringify(name)} names no volume: the environment declares no compose_files`,
                 })
             })
+            cfg.environment.profiles.forEach((name, index) => {
+                ctx.addIssue({
+                    code: 'custom', path: ['environment', 'profiles', index],
+                    message: `profile ${JSON.stringify(name)} activates nothing: the environment declares no compose_files`,
+                })
+            })
         }
-        // Deliberately NOT checked here: that a `profile:<name>` lane names a profile in
-        // `profiles.default`. A profile lane is opt-in by definition — it exists precisely to
-        // stay off until EXTRA_PROFILES turns it on — so absence from the default set is the
-        // normal case, not a defect. The spelling is defined by the compose file,
-        // which preflight reads and a schema cannot.
+        // Not checked here: that `environment.profiles` and each `profile:<name>` mount name a
+        // profile the Compose files define. Those names live in the Compose files, which `check`
+        // and every stack command read and a schema cannot. A profile mount outside
+        // `environment.profiles` is the normal case: it stays off until `up --profile` turns it on.
     })
 
 export type CockpitConfig = z.infer<typeof CockpitConfig>
@@ -990,7 +999,7 @@ export type CustomHarness = z.infer<typeof CustomHarness>
 export type Surfaces = z.infer<typeof Surfaces>
 
 /** Rows the stack bind-mounts under the given profile set — the projection's import list. */
-export function mounted(cfg: CockpitConfig, profiles: readonly string[]): Sibling[] {
+export function mounted<Row extends Readonly<Pick<Sibling, 'mount'>>>(cfg: Readonly<{ sibling: readonly Row[] }>, profiles: readonly string[]): Row[] {
     return cfg.sibling.filter(
         (s) => s.mount === 'always' || (s.mount.startsWith('profile:') && profiles.includes(s.mount.slice(8))),
     )

@@ -212,6 +212,13 @@ function lifecycleSummary(command: string, result: Readonly<Record<string, unkno
             + resetTargetLines(targets)
             + 'The next up recreates the removed volumes and, where environment.seed is declared, runs the seed to fill them.\n'
     }
+    if (command === 'ps' && Array.isArray(result.services)) {
+        return (result.services as readonly { service?: unknown; state?: unknown; status?: unknown }[])
+            .map(row => `${escapeForTerminal(`${String(row.service)}  ${String(row.state)}${typeof row.status === 'string' ? `  ${row.status}` : ''}`)}\n`).join('')
+    }
+    if ((command === 'restart' || command === 'rebuild') && typeof result.service === 'string' && typeof result.change === 'string') {
+        return `${escapeForTerminal(`Service ${result.service} ${result.change} and healthy.`)}\n`
+    }
     const headline = Object.hasOwn(LIFECYCLE_CHANGES, command) && typeof result.change === 'string'
         && Object.hasOwn(LIFECYCLE_CHANGES[command]!, result.change) ? LIFECYCLE_CHANGES[command]![result.change] : undefined
     if (headline === undefined || typeof result.stackId !== 'string') return ''
