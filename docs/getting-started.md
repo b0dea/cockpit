@@ -123,6 +123,11 @@ The agent follows these rules for the whole setup:
    explicit yes to that exact change, and a product file goes on a branch as rule 1 says. Every
    answer the agent chose itself is marked `"agent-default"` (below), and its report ends with each
    default, its field and its value.
+7. **Confirm a default only by observing it.** The agent clears an `unconfirmed` entry only with
+   `cockpit confirm`, which runs the observation that verifies that answer on this machine and
+   records it. The trust decisions (`guards`, `testing`, `environment.install_policies`, `sibling`,
+   `environment.posture`) and the answers no observation settles (`cockpit.name`, `estate.runnable`,
+   `environment.test_data`) stay a person's (below).
 
 These rules are instructions, not enforcement. The guard cockpit installs later blocks some commands;
 see [Safety and autonomy](safety-and-autonomy.md).
@@ -149,10 +154,36 @@ guards = "agent-default"
 ```
 
 Each such field is written under `unconfirmed` at the top of `cockpit.toml`, listed in
-`result.unconfirmed`, and reported by `doctor` as `DECLARATION_UNCONFIRMED` until a person confirms
-the value, deletes its `unconfirmed` entry and runs `cockpit sync`. An `environment.machine` floor
-the file does not attribute is recorded as unattributed, because no file records its free disk or
-cold start time.
+`result.unconfirmed`, and reported by `doctor` as `DECLARATION_UNCONFIRMED` until it is confirmed. An
+`environment.machine` floor the file does not attribute is recorded as unattributed, because no file
+records its free disk or cold start time.
+
+Three answers are facts about this machine and the running product, so an agent confirms them by
+observation, one at a time:
+
+```sh
+./node_modules/.bin/cockpit confirm ports.bases --config cockpit.toml --json
+```
+
+| Answer | The observation that confirms it |
+|---|---|
+| `ports.bases` | `preflight` passes with the stack up and its port family leased on the declared bases |
+| `environment.compose_files` | `check` passes, which parses the Compose files and resolves the stack's topology |
+| `environment.machine` | the runtime measured on this machine meets the declared memory, CPU and free-disk floor |
+
+When the observation passes, `confirm` removes that one entry from `unconfirmed` (comments and every
+other byte stay) and records what ran, when, its result and an evidence digest in
+`.cockpit/local/answer-confirmations`. That file is machine-local and ignored, because the evidence is
+about this machine, and the guard denies agent writes to it. The guard treats the removed entry as
+non-widening only while that record matches the configuration on disk, so the agent's own sync
+applies it where `[autonomy] sync = "agent"`; any other edit, or a clone without the record, leaves
+it to a person. A failed observation is refused with `CONFIRM_OBSERVATION_FAILED` beside the
+diagnostics that explain it.
+
+Every other answer is refused with `CONFIRM_PERSON_REQUIRED`: the trust decisions, and
+`cockpit.name`, `estate.runnable` and `environment.test_data`, which state what the owner wants rather
+than anything a machine can show. A person confirms the value with whoever owns the product, corrects
+it if it is wrong, deletes its `unconfirmed` entry and runs `cockpit sync` in a terminal.
 
 A field whose `interview.outstanding` entry says `confirmedBy = "agent"` can instead be marked
 `"derived"`, with or without a value: `init` answers it with the value it read, refuses
@@ -290,7 +321,7 @@ vendor_endpoint_hosts = []
 | `environment.posture` | `addressing`, `authentication` and `posture_requirements` ([Declare environment postures](environment.md#declare-environment-postures)) |
 | `testing` | the product's `[testing]` stages and gates; `"none"` records that it has no tests yet, so no work can be graded PASS and `doctor` warns (`TESTING_GATE_UNDECLARED`) |
 | `guards` | `hosted_db_hosts` and `vendor_endpoint_hosts` of every non-local environment; `[]` for both records that none exists |
-| `provenance` | optional; `"human"` (the default), `"agent-default"` or `"derived"` per field |
+| `provenance` | optional; `"human"` (the default), `"agent-default"` or `"derived"` per field. An `"agent-default"` answer stays under `unconfirmed` until `cockpit confirm` observes it or a person confirms it ([Mark the answers you chose](#mark-the-answers-you-chose)) |
 
 A key that names no field is refused. Recorded answers are kept, so the same file can be passed on every
 run; a different value for a recorded field is refused (`INIT_ANSWER_CONFLICT`) before anything is

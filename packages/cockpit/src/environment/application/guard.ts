@@ -35,6 +35,7 @@ import { GUARD_INPUT_LIMITS, parseGuardInput } from '../../guards/invocation-par
 import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../../generated-environment/transaction.js'
 import { parseOwnershipManifest } from '../../surfaces/ownership.js'
 import { installedPackageMetadata } from '../../package-metadata.js'
+import { ANSWER_CONFIRMATION_PATH } from '../../guards/answer-confirmation.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../../guards/local-identity.js'
 import {
     guardInstalledDirectories,
@@ -242,9 +243,10 @@ export async function runGuardEvaluationApplication(
         const configSha256 = loaded.result.source.sha256
         const unsynced = configSha256 !== identity.configSha256
         if (unsynced) {
-            const recorded = await readAnchoredFile(identity.root, GUARD_LOCAL_PATHS.generatedConfig, STRUCTURED_INPUT_BYTE_LIMIT, node, { execute: adapters.execute ?? executeProbe })
+            const local = (path: string) => readAnchoredFile(identity.root, path, STRUCTURED_INPUT_BYTE_LIMIT, node, { execute: adapters.execute ?? executeProbe })
+            const [recorded, confirmations] = await Promise.all([local(GUARD_LOCAL_PATHS.generatedConfig), local(ANSWER_CONFIRMATION_PATH)])
             const change = guardConfigChange(identity.configSha256, recorded.kind === 'complete' ? recorded.bytes : undefined,
-                { sha256: configSha256, config: loaded.result.config })
+                { sha256: configSha256, config: loaded.result.config }, confirmations.kind === 'complete' ? confirmations.bytes : undefined)
             if (change.kind === 'widening' || change.kind === 'unrecorded') return unavailable(guardHeld(identity,
                 `${identity.configPath} changed since the guards were generated and ${guardConfigHeldReason(change)}`,
                 'guard policy comes from it and an edit that may widen it takes effect only once a human approves it', { kind: 'sync' }))

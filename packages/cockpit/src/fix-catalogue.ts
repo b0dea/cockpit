@@ -8,7 +8,7 @@ import type { Diagnostic } from './environment/contract.js'
 // supplied one.
 const CONFIG_PLACEHOLDER = '<your cockpit.toml>'
 
-export type ConfiguredCommand = 'setup' | 'sync' | 'check' | 'selftest' | 'upgrade' | 'up' | 'sleep' | 'session' | 'down'
+export type ConfiguredCommand = 'setup' | 'sync' | 'check' | 'confirm' | 'selftest' | 'upgrade' | 'up' | 'sleep' | 'session' | 'down'
     | 'reset' | 'preflight' | 'doctor' | 'logs' | 'runtime measure' | 'sibling add' | 'sibling remove' | 'stacks' | 'stacks prune' | 'docs check' | 'use' | 'pull'
 
 export interface FixContext {

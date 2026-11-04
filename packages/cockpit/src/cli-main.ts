@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { ComposeProfileName, EVALUATOR_COMMANDS, runningEvaluatorTool, type EvaluatorTool } from './schema.js'
+import { ComposeProfileName, EVALUATOR_COMMANDS, runningEvaluatorTool, UNCONFIRMABLE_ANSWERS, type EvaluatorTool } from './schema.js'
 import { installedPackageMetadata } from './package-metadata.js'
 import { validateTeamMetadata, type TeamMetadataResult } from './team-metadata.js'
 import { renderComposeScaffold, SCAFFOLD_BACKING_SERVICES, writeComposeScaffold, type ScaffoldBackingService } from './init/scaffold.js'
@@ -34,6 +34,8 @@ import {
 import { type DoctorCommandInput, runDoctor as runDoctorApplication } from './environment/application/doctor.js'
 import { runGuardCommand } from './cli-guard.js'
 import { type PreflightCommandInput, runPreflight as runPreflightApplication } from './environment/application/health.js'
+import { type ConfirmCommandInput, runConfirm } from './environment/application/confirm.js'
+import { isUnconfirmedAnswerName } from './guards/answer-confirmation.js'
 import {
     runSession as runSessionApplication,
     runSleep as runSleepApplication,
@@ -157,6 +159,7 @@ interface WorkCommandInput { readonly configPath: string; readonly request: Work
 interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInput> {
     check: GeneratedEnvironmentCommandInput
     'docs-check': Readonly<{ configPath: string }>
+    confirm: ConfirmCommandInput
     init: InitApplicationInput & Readonly<{ unattended?: UnattendedInit }>
     doctor: DoctorCommandInput
     down: DownCommandInput
@@ -743,6 +746,17 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         runtime: (input) => runRuntimeMeasure({ ...input, env }, { execute: executeProbe, probe: probeInstalledRuntime }),
         stacks: (input) => runStacksInventory({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
         'docs-check': (input) => runDocsCheck({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
+        confirm: (input) => {
+            const configPath = resolve(input.configPath)
+            return runConfirm({ configPath, answer: input.answer }, {
+                preflight: ({ configPath }) => runPreflightApplication({ configPath }, healthAdapters(configPath)),
+                check: async ({ configPath }) => {
+                    const metadata = teamMetadataOutcome(await validateTeamMetadata(configPath))
+                    return metadata ?? checkGeneratedEnvironment({ configPath })
+                },
+                now: () => new Date(),
+            })
+        },
         sibling: (request) => request.operation === 'add'
             ? runSiblingAdd({ ...request.input, env }, { execute: executeProbe })
             : runSiblingRemove({ ...request.input, env }),
@@ -1265,6 +1279,16 @@ async function decodeRequest(
         }
     }
 
+    if (handler === 'confirm') {
+        const values = parsed.values as { config?: string }
+        const [answer, ...extra] = parsed.positionals
+        if (answer === undefined || extra.length > 0 || !isUnconfirmedAnswerName(answer)) {
+            return usageOutcome('CLI_USAGE_INVALID', `confirm takes one answer listed under unconfirmed, one of ${UNCONFIRMABLE_ANSWERS.join(', ')}: ${cockpitCommand('confirm', { operand: 'ports.bases' })}`)
+        }
+        if (!values.config) return missingConfig()
+        return { handler, input: { configPath: values.config, answer } }
+    }
+
     if (handler === 'runtime') {
         const values = parsed.values as { config?: string; image?: string }
         const [operation, ...extra] = parsed.positionals
@@ -1460,6 +1484,7 @@ async function dispatchHandler(
     if (request.handler === 'sync') return runSyncOperatorCommand(request.input, options, io, handlers.sync ?? (async () => unavailable()), operators.loadPolicy ?? loadOperatorPolicy)
     if (request.handler === 'check') return handlers.check?.(request.input) ?? unavailable()
     if (request.handler === 'docs-check') return handlers['docs-check']?.(request.input) ?? unavailable()
+    if (request.handler === 'confirm') return handlers.confirm?.(request.input) ?? unavailable()
     if (request.handler === 'selftest') {
         const selftest = handlers.selftest ?? (async () => unavailable())
         return 'writeProbeSpecificationsPath' in request.input ? selftest(request.input)

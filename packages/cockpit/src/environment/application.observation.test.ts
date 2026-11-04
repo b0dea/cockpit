@@ -215,7 +215,9 @@ describe('observation application runners', () => {
             expect(await doctorFor('unconfirmed = ["environment.machine", "guards"]\n')).toEqual([{ severity: 'warning',
                 code: 'DECLARATION_UNCONFIRMED', target: 'unconfirmed',
                 message: 'environment.machine, guards in cockpit.toml were chosen by the setup agent or by no one named, not stated by a person, so they may not describe this product',
-                fix: expect.stringContaining('delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config') }])
+                // The agent confirms what an observation verifies; a trust decision stays a person's.
+                fix: 'run npx --no cockpit confirm environment.machine --config <your cockpit.toml>, which confirms environment.machine only if the container runtime measured on this machine meets the declared memory, CPU and free-disk floor; '
+                    + 'a person confirms guards with whoever owns the product, corrects cockpit.toml if a value is wrong, deletes its entry from unconfirmed, then runs npx --no cockpit sync --config <your cockpit.toml> in a terminal outside the agent' }])
             expect(await doctorFor('')).toEqual([])
             // A policy the last sync recorded stronger than cockpit.toml now declares is reported, not silently weaker.
             mkdirSync(join(directory, '.cockpit'))

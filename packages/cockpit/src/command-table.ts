@@ -17,6 +17,7 @@ export type WorkHandlerIdentifier =
 
 export type HandlerIdentifier = WorkHandlerIdentifier
     | 'check'
+    | 'confirm'
     | 'docs-check'
     | 'doctor'
     | 'down'
@@ -187,6 +188,11 @@ type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; reason: s
 
 // Mirrors EvaluatorTool in schema.ts, which this data table may not import.
 const EVALUATOR_TOOLS: readonly string[] = ['codexcli', 'claudecode', 'opencode']
+// Mirrors UNCONFIRMABLE_ANSWERS in schema.ts. Every answer is admitted, so confirm itself names the
+// person an answer needs instead of the guard refusing it unexplained.
+const UNCONFIRMED_ANSWER_WORDS: readonly string[] = Object.freeze(['cockpit.name', 'sibling', 'estate.runnable', 'ports.bases',
+    'environment.install_policies', 'environment.test_data', 'environment.compose_files', 'environment.machine', 'environment.posture',
+    'testing', 'guards'])
 // A declared route's name or its path; the command checks it against the declared routes.
 const ROUTE_SELECTOR = /^(?:[a-z0-9][a-z0-9_-]{0,63}|\/(?!\/)[^\s#\x00-\x1f\x7f]{0,511})$/
 const EXACT_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
@@ -301,6 +307,20 @@ const sources = [
         ordinary: ordinary('tool', { positional: Object.freeze({ min: 2, max: 2, roles: Object.freeze(['operation', 'surface-target'] as const),
             operations: Object.freeze(['add']) }) }),
         flags: { config: configFlag, 'dry-run': bool(flag), json: jsonFlag },
+    },
+    {
+        name: 'confirm',
+        stage: 'set-up',
+        summary: 'Confirm an init answer no person stated by running the observation that verifies it',
+        usage: '<answer> [options]',
+        handler: 'confirm',
+        visibility: 'public',
+        // It removes an entry from unconfirmed only after an observation of this machine and the running
+        // stack passes, and records that observation where only cockpit writes; the guard then treats the
+        // removal as non-widening. It refuses the answers a person must confirm.
+        ordinary: ordinary('confirm', { positional: Object.freeze({ min: 1, max: 1, roles: Object.freeze(['operation'] as const),
+            operations: UNCONFIRMED_ANSWER_WORDS }) }),
+        flags: configured,
     },
     {
         name: 'registry-resolve',
