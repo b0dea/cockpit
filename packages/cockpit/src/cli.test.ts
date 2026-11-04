@@ -185,7 +185,7 @@ describe('closed ordinary invocation metadata', () => {
             ['work', 'grade', '--work-order', 'WO-1'], ['work', 'grade', '--work-order', 'WO-1', '--verdict', 'met', '--note', 'ran the suite'],
             ['work', 'signoff', '--work-order', 'WO-1'], ['work', 'signoff', '--work-order', 'WO-1', '--partial', '--note', 'AC3 left'],
             ['work', 'recover', '--work-order', 'WO-1'], ['work', 'recover', '--work-order', 'WO-1', '--apply'], ['work', 'verify'], ['grade', '--criteria', 'criteria.md', '--json'],
-            ['browser', 'drive', '--json'], ['browser', 'drive', '--role', 'admin'], ['browser', 'screenshot', '--role', 'admin', '--json'],
+            ['browser', 'drive', '--json'], ['browser', 'drive', '--role', 'admin'], ['browser', 'drive', '--route', 'home', '--fail-on-findings'], ['browser', 'screenshot', '--role', 'admin', '--json'],
             // An agent points a sibling at its own worktree inside a root it may already write, and pulls.
             ['use', 'app', '/workspace/app/.worktrees/feature'], ['use', 'app', '--clear', '--json'], ['pull'], ['pull', '--json'],
         ]
@@ -267,7 +267,7 @@ describe('closed ordinary invocation metadata', () => {
             ['work', 'note', '--work-order', 'WO-1'], ['work', 'answer', '--work-order', 'WO-1', '--question', 'first', '--text', 'yes'],
             ['work', 'grade', '--work-order', 'WO-1', '--evaluator', 'gemini'], ['work', 'status', '--evaluator', 'codexcli'],
             ['work', 'grade', '--work-order', '../WO-1'], ['grade', '--criteria', '../outside.md'], ['grade'],
-            ['work', 'status', 'WO-1'], ['work', '--json'], ['work', 'unknown'], ['browser', 'drive', '--role', 'a/b'],
+            ['work', 'status', 'WO-1'], ['work', '--json'], ['work', 'unknown'], ['browser', 'drive', '--role', 'a/b'], ['browser', 'screenshot', '--fail-on-findings'],
             // A checkout outside every allowed root would widen what the agent can write, so a person names it.
             ['use', 'app', '/outside/app-feature'], ['use', 'app', '../app-feature'], ['use', 'App', '--clear'], ['use'],
             ['use', 'app', '/workspace/app/feature', 'extra'], ['pull', 'app'],
@@ -1920,6 +1920,7 @@ describe('work command routing', () => {
             ['browser-drive', ['--role', 'qa_user'], { operation: 'browser-drive', role: 'qa_user' }],
             ['browser-drive', ['--route', 'settings'], { operation: 'browser-drive', route: 'settings' }],
             ['browser-drive', ['--route', '/settings?tab=billing'], { operation: 'browser-drive', route: '/settings?tab=billing' }],
+            ['browser-drive', ['--route', 'settings', '--fail-on-findings'], { operation: 'browser-drive', route: 'settings', failOnFindings: true }],
             ['browser-screenshot', ['--role', '1worker'], { operation: 'browser-screenshot', role: '1worker' }],
             ['browser-screenshot', [], { operation: 'browser-screenshot' }],
             ['test-run', ['--gate', 'unit', '--mode', 'canonical', '--select', 'file:src/example.ts'], { operation: 'test-run', gate: 'unit', mode: 'canonical', select: { kind: 'file', value: 'src/example.ts' } }],

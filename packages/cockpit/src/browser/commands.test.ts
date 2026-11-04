@@ -12,6 +12,8 @@ import { observeConfiguration, selectStateRoot } from '../environment/state.js'
 import { executeBrowserCommand, isIssuedBrowserCommandReceipt, issueBrowserRoutePolicy } from './commands.js'
 import { resolveBrowserRuntime } from './runtime.js'
 import { renderBrowserSurfaces } from './surfaces.js'
+import { workCommandOutcome } from '../cli-main.js'
+import { browserOutcome } from '../work-orders/application.js'
 import { evaluateUiGate } from './ui-gate.js'
 
 const roots: string[] = []
@@ -81,9 +83,9 @@ const browser = () => ({
             const own = (path, method = 'GET') => ({ url: () => 'http://app.localhost:4000' + path, method: () => method, isNavigationRequest: () => false, frame: () => frame,
               failure: () => ({ errorText: 'net::ERR_CONNECTION_REFUSED' }) })
             const reply = (request, status) => ({ url: request.url, status: () => status, request: () => request, text: async () => 'secret-body', headers: () => ({ authorization: 'secret-header' }) })
-            const message = (type, line) => ({ type: () => type, text: () => 'secret console text', location: () => ({ url: 'http://app.localhost:4000/assets/app.js?token=secret', lineNumber: line }) })
+            const message = (type, line) => ({ type: () => type, text: () => 'items request failed\\nwith status 404', location: () => ({ url: 'http://app.localhost:4000/assets/app.js?token=secret', lineNumber: line }) })
             emit('console', message('error', 12)); emit('console', message('warning', 3)); emit('console', message('warning', 4)); emit('console', message('log', 5))
-            emit('pageerror', Object.assign(new TypeError('secret error message'), { stack: 'secret stack' }))
+            emit('pageerror', Object.assign(new TypeError('cannot read name of undefined'), { stack: 'secret stack' }))
             emit('response', reply(own('/api/items?token=secret'), 404)); emit('response', reply(own('/api/ok'), 200))
             emit('requestfailed', own('/api/save', 'POST'))
             emit('requestfailed', { ...own('/api/slow'), failure: () => ({ errorText: 'net::ERR_ABORTED' }) })
@@ -92,7 +94,7 @@ const browser = () => ({
             emit('response', reply(foreign('/lib.js'), 500)); emit('requestfailed', foreign('/pixel.gif'))
             emit('response', reply({ ...own('/settings'), isNavigationRequest: () => true, frame: () => frame }, 404))
           }
-          if (${JSON.stringify(input.mode)} === 'flood') for (let line = 0; line < 25; line++) emit('console', { type: () => 'error', location: () => ({ url: 'http://app.localhost:4000/app.js', lineNumber: line }) })
+          if (${JSON.stringify(input.mode)} === 'flood') for (let line = 0; line < 25; line++) emit('console', { type: () => 'error', text: () => 'flood ' + line + ' ' + 'x'.repeat(400), location: () => ({ url: 'http://app.localhost:4000/app.js', lineNumber: line }) })
           ${input.mode === 'http-error' ? 'fulfilled = response(current, 503)' : ''}
           ${input.mode === 'null-response' ? 'return null' : 'return fulfilled'} },
         url: () => current,
@@ -130,7 +132,7 @@ exports.webkit = browserType('webkit')
 `
 }
 
-async function fixture(options: { mode?: ModuleMode; engine?: 'chromium' | 'firefox' | 'webkit'; local?: boolean; artifactRoot?: string; absentArtifactRoot?: boolean } = {}) {
+async function fixture(options: { mode?: ModuleMode; engine?: 'chromium' | 'firefox' | 'webkit'; local?: boolean; artifactRoot?: string; absentArtifactRoot?: boolean; data?: 'restored' } = {}) {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-browser-command-')))
     roots.push(root)
     const id = cockpitId({ name: 'fixture', mainCheckoutPath: root })
@@ -167,7 +169,7 @@ async function fixture(options: { mode?: ModuleMode; engine?: 'chromium' | 'fire
         project: { lockfile: 'package-lock.json', sha256: digest(lock), driverVersion: '1.2.3' },
         ...(!options.local ? { endpoint: 'ws://localhost:3001/' } : {}), ...(options.engine ? { engine: options.engine } : {}), maxClients: 1,
         proxy: { serverPort: 3000, proxyPort: 3001, allowedHosts: ['localhost:3001'] }, resolver: [], authentication: { policy: 'none', states: [] },
-        data: { mode: 'empty', isolated: true, reachesProduction: false }, requestPreapproval: true,
+        data: { mode: options.data ?? 'empty', isolated: true, reachesProduction: false }, requestPreapproval: options.data === undefined,
         artifacts: { mcp: '.playwright-mcp', cli: artifactRelative, auth: '.browser/auth' },
     })
     if (runtime.connection.kind === 'remote') {
@@ -195,7 +197,8 @@ async function fixture(options: { mode?: ModuleMode; engine?: 'chromium' | 'fire
 }
 
 const cleanRoute = { verdict: 'clean', diagnostics: { consoleErrors: 0, consoleWarnings: 0, pageErrors: 0, failedRequests: 0, abortedRequests: 0,
-    thirdParty: { requests: 0, failed: 0 }, entries: [], omitted: 0 } }
+    thirdParty: { requests: 0, failed: 0 }, entries: [], omitted: 0,
+    excerpt: { trust: 'untrusted-page-content', messages: [] } } }
 
 async function calls(path: string): Promise<unknown[]> {
     try { return (await readFile(path, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) }
@@ -227,13 +230,15 @@ describe('browser driving commands', () => {
         if (result.kind !== 'complete') return
         expect(result.receipt.verdict).toBe('findings')
         expect(result.receipt.surfaces.map(row => [row.name, row.verdict])).toEqual([['home', 'clean'], ['settings', 'findings'], ['dashboard', 'clean']])
-        // Query strings, console and error text, bodies and headers never reach the receipt; warnings, aborted
-        // requests and third-party failures are counted but are not findings.
+        // Query strings, bodies, headers and stacks never reach the receipt; warnings, aborted requests and
+        // third-party failures are counted but are not findings. Message text is the only page text it carries.
         expect(result.receipt.surfaces[1]!.diagnostics).toEqual({
             consoleErrors: 1, consoleWarnings: 2, pageErrors: 1, failedRequests: 2, abortedRequests: 1,
             thirdParty: { requests: 2, failed: 2 }, omitted: 0,
             entries: [{ kind: 'console', path: '/assets/app.js', line: 12 }, { kind: 'pageerror', name: 'TypeError' },
                 { kind: 'request', method: 'GET', path: '/api/items', status: 404 }, { kind: 'request', method: 'POST', path: '/api/save', failure: 'ERR_CONNECTION_REFUSED' }],
+            excerpt: { trust: 'untrusted-page-content', messages: [
+                { kind: 'console', text: 'items request failed with status 404' }, { kind: 'pageerror', text: 'cannot read name of undefined' }] },
         })
         expect(JSON.stringify(result.receipt)).not.toMatch(/secret|token/)
 
@@ -242,6 +247,35 @@ describe('browser driving commands', () => {
         if (capped.kind !== 'complete') throw new Error('flood drive refused')
         expect(capped.receipt.surfaces[0]!.diagnostics).toMatchObject({ consoleErrors: 25, omitted: 5 })
         expect(capped.receipt.surfaces[0]!.diagnostics!.entries).toHaveLength(20)
+        // The excerpt is capped in count and in bytes per message, however many errors the page logs.
+        const excerpt = capped.receipt.surfaces[0]!.diagnostics!.excerpt
+        if (!('messages' in excerpt)) throw new Error('flood drive carried no excerpt')
+        expect(excerpt.messages).toHaveLength(5)
+        expect(excerpt.messages.every(row => Buffer.byteLength(row.text) <= 240)).toBe(true)
+    })
+
+    it('exits 0 with findings in the receipt, and exits 2 only when the command asks for a clean route', async () => {
+        const found = await fixture({ mode: 'findings' })
+        const dirty = await executeBrowserCommand({ runtime: found.runtime, client: found.client, policy: found.policy, kind: 'drive' })
+        const tidy = await fixture()
+        const clean = await executeBrowserCommand({ runtime: tidy.runtime, client: tidy.client, policy: tidy.policy, kind: 'drive' })
+        const outcome = (result: typeof dirty, strict: boolean) => workCommandOutcome(browserOutcome('browser-drive', result, strict), {})
+
+        // A criterion's check passes or fails on this exit status.
+        expect(outcome(dirty, false)).toMatchObject({ status: 0, result: { receipt: { verdict: 'findings' } } })
+        const strict = outcome(dirty, true)
+        expect(strict).toMatchObject({ status: 2, result: { receipt: { verdict: 'findings' } },
+            diagnostics: [{ code: 'BROWSER_ROUTE_FINDINGS', message: 'settings: 1 console error, 1 uncaught page error, 2 failed requests' }] })
+        expect(outcome(clean, true).status).toBe(0)
+    })
+
+    it('omits the message excerpt, and says why, unless the data posture allows preapproval', async () => {
+        const restored = await fixture({ mode: 'findings', data: 'restored' })
+        const result = await executeBrowserCommand({ runtime: restored.runtime, client: restored.client, policy: restored.policy, kind: 'drive' })
+        if (result.kind !== 'complete') throw new Error('restored-data drive refused')
+        const settings = result.receipt.surfaces[1]!.diagnostics!
+        expect(settings).toMatchObject({ consoleErrors: 1, pageErrors: 1, excerpt: { omitted: expect.stringContaining('not isolated, non-production and non-restored') } })
+        expect(JSON.stringify(result.receipt)).not.toMatch(/with status 404|cannot read name/)
     })
 
     it('drives only the route named by its declared name or path and refuses an undeclared one before launching', async () => {

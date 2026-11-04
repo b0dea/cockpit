@@ -14,7 +14,7 @@ import {
     snapshotJson,
 } from '../contract.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, type ExecutableResolution, type ResolvedExecutable } from '../executable.js'
-import { CockpitConfig } from '../../schema.js'
+import { browserPreapprovalRequested, CockpitConfig } from '../../schema.js'
 import { pinnedPolicyDenial } from '../../guards/policy-pin.js'
 import { guardConfigChange, guardConfigHeldReason } from '../../guards/policy-change.js'
 import {
@@ -471,7 +471,7 @@ export async function runGuardEvaluationApplication(
 // admits only sync and check, so the policy read here grants nothing the last sync did not.
 function ordinaryGrants(config: CockpitConfig): readonly OrdinaryGrant[] {
     const policy = effectivePolicy(config)
-    return [...config.browser?.request_preapproval === true ? ['browser-preapproval' as const] : [],
+    return [...config.browser && browserPreapprovalRequested(config.browser) ? ['browser-preapproval' as const] : [],
         ...policy.autonomy.sync === 'agent' ? ['autonomy-sync' as const] : [], ...policy.autonomy.reset === 'agent' ? ['autonomy-reset' as const] : []]
 }
 

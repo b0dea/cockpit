@@ -958,14 +958,20 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     }
     // A session runs the words after `--` as a command, with no shell, in its own directory, and exec
     // runs them in a product container that mounts the checkouts and may hold their credentials, so
-    // that command is judged as one more invocation: neither admits more than the guard would.
+    // that command is judged as one more invocation: neither admits more than the guard would. The
+    // name-based denials apply to exec's command as to any other, but a read-only proof is about the
+    // host's files and exec's command sees the container's, so only a declared allow rule or a
+    // build or test command admits it.
+    const containerCommands = new Set<ParsedInvocation>()
     const invocations = input.invocations.flatMap((invocation): ParsedInvocation[] => {
         const cockpit = provenCockpit(invocation)
         const separator = cockpit?.[0] === 'session' || cockpit?.[0] === 'exec' ? cockpit.indexOf('--') : -1
         const command = separator < 0 ? [] : cockpit!.slice(separator + 1)
         if (!command.length) return [invocation]
-        return [invocation, { executable: command[0]!, argv: command.slice(1), cwd: invocation.cwd, wrapped: false, redirects: [],
-            words: command.map((value, index) => ({ role: index ? 'argument' as const : 'executable' as const, value })) }]
+        const inner: ParsedInvocation = { executable: command[0]!, argv: command.slice(1), cwd: invocation.cwd, wrapped: false, redirects: [],
+            words: command.map((value, index) => ({ role: index ? 'argument' as const : 'executable' as const, value })) }
+        if (cockpit![0] === 'exec') containerCommands.add(inner)
+        return [invocation, inner]
     })
     const accesses = new Map(invocations.map((invocation) => {
         const cockpit = provenCockpit(invocation)
@@ -1099,6 +1105,11 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (invocation.executable === null) continue
         const matches = (profile: { executable: string; argv: readonly string[] }, cwd: string) => profile.executable === invocation.executable
             && cwd === invocation.cwd && profile.argv.length === invocation.argv.length && profile.argv.every((word, i) => word === invocation.argv[i])
+        if (containerCommands.has(invocation)) {
+            if (resolved.projectCommands.some((profile) => matches(profile, profile.checkoutRoot))) continue
+            return ask(`${named(invocation)} runs inside the product container, whose filesystem the guard cannot see, so no read-only proof about host paths covers it. `
+                + `The guard admits it only as a declared build or test command or under a [guards] allow rule; a person approves it or runs it in a terminal, or admits it for good under [guards] allow in ${posix.basename(resolved.configPath)}.`)
+        }
         if (!readOnly.has(invocation) && !resolved.cockpitInvocations.some((profile) => matches(profile, profile.cwd))
             && !resolved.projectCommands.some((profile) => matches(profile, profile.checkoutRoot))) {
             const config = /^[\w./@%+=:,-]+$/.test(resolved.configPath) ? resolved.configPath : `'${resolved.configPath.replaceAll("'", "'\\''")}'`
