@@ -13,6 +13,105 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.1
+
+### Patch Changes
+
+- 88f97b6: Browser route findings are evidence, not a gate. `browser drive` with findings now exits 0 and carries `verdict: findings` with the full receipt; `--fail-on-findings` restores exit 2 (`BROWSER_ROUTE_FINDINGS`) for a criterion that wants a clean route. Each route also carries an `excerpt` of up to five console and uncaught error messages, 240 bytes each, tagged `untrusted-page-content`, so a favicon 404 can be told from a broken API call. The excerpt is read only when `[browser.data]` is isolated, not restored and not reaching production; otherwise it is omitted with the reason.
+  
+  `browser.request_preapproval` now defaults to on when `[browser.data]` qualifies for it and to off otherwise; an explicit value still wins, and `true` on a posture that does not qualify is still refused.
+  
+  The command after `cockpit exec --service <s> --` runs in the container's filesystem, so the guard no longer proves it read-only: it stays subject to the name-based denials and is admitted only by a `[guards] allow` rule or a declared build or test command, and otherwise asks.
+  
+  `init` lists the `COMPOSE_IMAGE_TAG_SHARED` finding beside the other Compose findings.
+- 6058a69: `browser drive` now reports what each route's page did wrong, not only that it loaded: console errors, uncaught page errors, and failed or 4xx/5xx requests to the application's own origin, with method, URL path (no query) and status, plus counts of warnings, aborted requests and third-party traffic. Each route gets a `clean` or `findings` verdict, at most 20 entries are kept per route, and message text, bodies, headers and cookies are never read. With `--fail-on-findings` a drive with findings exits 2 with `BROWSER_ROUTE_FINDINGS`, so it works as a work-order criterion check that demands a clean route; without it the findings are evidence and the drive exits 0. `--route <name-or-path>` drives or captures a single declared route.
+- 1752c64: `cockpit check` now refuses a Compose service that sets `container_name`. Docker allows one container
+  of a name, so the second checkout's `up` failed at runtime, which breaks the one-stack-per-checkout
+  promise; the finding is `COMPOSE_CONTAINER_NAME_FIXED`, an error like `COMPOSE_PORT_NOT_LEASED`, and
+  `init` shows it beside the drafted `cockpit.toml`. The install instructions now name the pnpm and
+  yarn equivalents.
+  
+  Upgrade: remove `container_name` from each Compose service `check` names and address the service by
+  its Compose service name or `docker compose exec <service>`.
+- 1cd11c3: Compose profiles now activate. `[environment] profiles` lists the profiles every `up` and `session`
+  starts, and `up --profile <name>` (repeatable, also on `session`) adds more for a run. The stack
+  records its profile set, so `down`, `sleep`, `logs`, `preflight` and the service verbs act on the
+  same services, and a `profile:<name>` sibling is mounted while its profile is active. A profile no
+  service declares is refused with `COMPOSE_PROFILE_UNDEFINED`; adding a profile to a running stack
+  is refused like any other change, so run `down`, then `up --profile <name>`.
+  
+  New service verbs act on this checkout's own stack without naming its Compose project: `ps`,
+  `restart --service <name>`, `rebuild --service <name>` and `exec --service <name> -- <command>`.
+  The guard admits them like `up`. The command after `exec --` runs inside the container, where the guard cannot see files, so it is never treated as read-only: it runs without asking only when a `[guards] allow` rule or a declared build or test command matches it. An agent's `--profile` runs without asking only for a profile in `environment.profiles` that mounts no operator-gated sibling.
+  
+  `check` refuses a built service with a fixed `image` tag (`COMPOSE_IMAGE_TAG_SHARED`), because one
+  checkout's build replaced the image another checkout's stack ran, and now judges bind mounts of
+  profile-gated services under their profiles instead of refusing them.
+  
+  Upgrade: run cockpit sync, so Claude Code may run the new verbs without asking.
+- e7da68a: `cockpit confirm <answer> --config <file>` clears an `unconfirmed` entry once the observation that verifies it passes on this machine: `preflight` with the stack up for `ports.bases`, `check` for `environment.compose_files`, and the measured runtime against the declared floor for `environment.machine`. It removes only that entry from `cockpit.toml`, keeping comments, and records what ran, when, the result and an evidence digest in `.cockpit/local/answer-confirmations`, which the guard keeps agents from writing. The guard treats the removal as non-widening only while that record matches the configuration, so an agent's own sync applies it where `[autonomy] sync = "agent"`; a missing, stale or forged record still holds it for a person. A failed observation is refused with `CONFIRM_OBSERVATION_FAILED`, and the trust decisions (`guards`, `testing`, `environment.install_policies`, `sibling`, `environment.posture`) and the answers no observation settles (`cockpit.name`, `estate.runnable`, `environment.test_data`) with `CONFIRM_PERSON_REQUIRED`.
+  
+  `DECLARATION_UNCONFIRMED` now names `cockpit confirm` for the answers an observation settles and says a person confirms the rest.
+- 55fca43: New `cockpit docs check` command and `[docs]` table. `living` lists globs of documents that must stay true, in the cockpit's repository or `<sibling slug>:` in a sibling; the command reports `DOCS_REFERENCE_REMOVED` for a path a living document cites that the repository history deleted or renamed (naming the new path), and `DOCS_TARGET_REMOVED` for a `make` target a Makefile once defined and no longer does. A path or target that never existed is not reported. The optional `decisions` and `decisions_index` keys check a decision-record set: `DECISION_NUMBER_REUSED`, `DECISION_UNINDEXED`, `DECISION_INDEX_ENTRY_MISSING`, `DECISION_STATUS_MISSING`, `DECISION_LINK_UNRESOLVED` and `DECISION_SUPERSEDED_STALE`. It exits 2 on any finding, supports `--json`, refuses with `DOCS_NOT_DECLARED` without a `[docs]` table and reports `DOCS_DECLARATION_UNMATCHED` for an entry that matches nothing. The guard admits it for agents because it only reads, the generated Claude Code settings allow it without a prompt, and `doctor` names it when `[docs]` is declared. Run `cockpit sync` to pick up the new allow rule.
+- 33e2085: Every Git command cockpit runs now carries `core.fsmonitor=false` and `core.hooksPath=/dev/null`, including the `ls-files` and `log` reads behind `docs check`. `pull` skips a checkout whose own Git configuration sets `core.sshCommand`, `core.askPass`, `core.gitProxy`, `credential.helper` or a remote's `uploadpack`/`receivepack`, as `PULL_SKIPPED` naming the key, because the fetch would run that command.
+  
+  Browser console and error excerpts are redacted like other diagnostics and lose URL query strings and fragments before they are kept as evidence. `docs check` redacts Git's error text in its diagnostics.
+- c5ea35d: Grading now detects a change that weakens tests: deleted test files, skipped or focused tests, suppressed checks, removed or loosened assertions, and narrowed test configuration, judged against the order's recorded base commits. Under `checks` grading such a change fails until it is acknowledged with the new `work acknowledge` command (`[work.gates] acknowledge`, default `agent`); under `independent` and `self` grading the findings are judged as the `test-changes-justified` criterion instead. `[testing] test_files` declares which files are tests; common layouts are the default.
+- 0fdaf04: The guard's pin on `[work]`, `[work.gates]` and `[autonomy]` now judges the command after `cockpit exec --service <s> --` as a command of its own, as it already did for `cockpit session`. Before, a container command that named `cockpit.toml` after its own `--config` was taken for cockpit's `--config` operand and let through. Because the command runs in the container, no read-only spelling excuses it from the pin either.
+- 69a3d9a: `sync` refuses a sibling guide that is, or links to, a `.env` or `.env.*` file, a file below a
+  `.secrets` directory or a declared environment instance, with `PROJECTION_GUIDE_SECRET`, instead of
+  copying its contents into the root `AGENTS.md` that every agent reads.
+  
+  The guard admits `up --profile <name>` and `session --profile <name>` from an agent only for a
+  profile already in `environment.profiles` that mounts no sibling with `gate = "operator"`; any other
+  profile asks for a person.
+- e17d668: An agent can now apply its own `cockpit.toml` edit when the edit does not widen what agents may do.
+  After any edit the guard still holds every tool call, but it compares the edit with the configuration
+  the guards were generated from: when the edit only rewords a sibling's purpose, moves a port, adds a
+  derived route, an agent tool or an operator gate, or removes a Compose file, profile or resettable
+  volume, the guard admits `cockpit sync` and `cockpit check` from the agent (where `[autonomy] sync =
+  "agent"`) and reports `GUARD_CONFIG_UNSYNCED`. Any other edit keeps the person-only hold, whose
+  message now names each field that widens: any change to `[guards]`, `[work]`, `[autonomy]`, `[mcp]`,
+  `[testing]` or `[browser]`, a new sibling, a sibling's changed directory, guides or environment files,
+  a command field, and a field the classification has no rule for. `check` reports the same
+  classification, `GUARD_CONFIG_WIDENED` as an error and `GUARD_CONFIG_UNSYNCED` as a warning. Sync
+  keeps the configuration it generated the guards from in `.cockpit/local/guard-config`. An agent may
+  now run `cockpit tool add`; `tool remove`, `sibling add` and `sibling remove` stay a person's.
+- bf769dc: `init` now lets the setup agent accept what it read from exact sources. Each proposal in `interview.outstanding` carries `provenance.kind` (`derived`, `measured` or `inferred`) and each field a `confirmedBy` of `agent` or `person`. An answers file can mark `cockpit.name`, `ports.bases` and `environment.compose_files` as `"derived"`, with or without a value: init answers with the value it read, refuses a different one with `DOCUMENT_CONFIGURATION_ANSWER_NOT_DERIVED`, and records the source file and line in `cockpit.toml` and `result.derived` instead of listing the field as unconfirmed. The defaults digest now covers only the security boundaries (protected branches, guard allow and deny lists, approved MCP servers, resettable volumes, generated host paths), and the draft shows which values a person confirms. The machine floor is proposed: memory and CPUs from the Compose file's service limits, or from this machine's measured container runtime where no limit records them; free disk and cold start are never proposed.
+- 4c96d73: Add `cockpit stacks`, which lists every stack on this machine with its checkout, state, containers,
+  volumes, port lease and last activity, and `cockpit stacks prune`, which previews and, with `--apply`,
+  removes the stacks whose checkout is gone, such as a deleted worktree's, together with their
+  containers, networks, labelled volumes, port lease and state. A checkout is proven from Compose's
+  working-directory label or from the checkouts Git records for the cockpit, never from names; a stack
+  whose checkout exists is never touched. State this version cannot read is listed and kept, except
+  state folders in the spelling an earlier build used, which are pruned once none of their stacks is
+  kept. A prune that deletes volumes follows `[autonomy] reset`; otherwise a person approves it with
+  `--interactive`. `doctor` now warns with `STACKS_ORPHANED`, and its warning
+  about unreadable state folders names `stacks prune` instead of a manual `rm -rf`.
+- 98b824a: A `.cockpit/policy.json` written by 0.1.0, which has no `[work.gates] acknowledge`, no longer makes every `work` command, `sync` and `doctor` refuse it as malformed: a missing decider is read as `person`, so the new `agent` default is reported as the weakening `work.gates.acknowledge: person -> agent`, which a person accepts with `sync --interactive`. A record with an unknown key still refuses, and now says what to do when the committed copy is the damaged one. A grade that finds an agent's amendments lower the bar stays on the order until a person or CI amends it, so a later `work check` no longer lets the agent amend again. Two concurrent `work recover --apply` runs no longer both take over a dead lock and delete each other's: one takes it over and the other refuses. `work decide` writes decision records and the index line through descriptors checked against the confined path, so a directory swapped for a link while the record is opened no longer redirects the write outside the repository.
+- 2b8f74c: A sibling's MCP declaration can now list remote (streamable HTTP) servers in Claude Code's spelling: `type: "http"`, a `url` (https, or http only to loopback), `headers` whose values are only `${NAME}` or `Bearer ${NAME}` references, and an optional `headersHelper` command that prints the headers when the tool connects. They are approved by digest like local servers, so a changed URL, header or helper needs a new approval. `sync` writes each tool's native form (Claude Code `.mcp.json`, Codex `bearer_token_env_var`, `env_http_headers` and `http_headers_helper`, OpenCode `{env:NAME}` headers); a tool that cannot carry the credential, OpenCode for a helper and Cursor and Grok Build for any remote server, gets nothing and `sync` and `check` warn `MCP_TRANSPORT_UNAVAILABLE`. SSE servers and literal header values are refused. `doctor` now warns `MCP_COMMAND_UNRESOLVED` when an approved server's command or helper does not resolve and `MCP_ENVIRONMENT_UNSET` when a variable it reads is unset, without starting a server or using the network.
+- 9e514aa: `cockpit use <slug> <checkout>` serves a sibling from another checkout of its repository, such as a
+  linked worktree, for this cockpit checkout only; `use <slug> --clear` goes back to the declared one.
+  The stack's mounts, `logs`, the guard's allowed roots and protected instance files, `doctor` and
+  `preflight` all follow it, a checkout of a different repository is refused, and a worktree missing a
+  declared environment file is reported, never filled in. `cockpit pull` fetches and fast-forwards the
+  cockpit and every sibling to its upstream, skipping and reporting any checkout with modified files, a
+  diverged branch or a failed fetch; agents may run it. `up` now records each mounted sibling's
+  lockfiles and the new `rebuild_inputs` paths, and `doctor`, `preflight` and `pull` warn with
+  `STACK_INPUTS_CHANGED` when they change under a running stack.
+- 090c027: Preflight and doctor now fail when a checkout recorded by `cockpit use` no longer exists, as `up` already refuses it. Before, they only warned, so the gate passed a stack `up` could not start.
+- 1f3618c: Work orders and `docs check` read a sibling where `cockpit use` serves it. Heads, changes, test-weakening detection, grades, test gates and `docs check` used the checkout cockpit.toml declares even while the stack ran a worktree, so a grade could pass work it never saw; they now read the served checkout, and refuse with `SIBLING_CHECKOUT_UNAVAILABLE` when that checkout is gone.
+  
+  `work decide --supersedes` reads decision records as `docs check` does. It marks a record whose status is a `- Status:` or `__Status__:` line, the line under a `## Status` heading, or CRLF front matter, rewriting it in place, and it no longer rewrites a `Status:` line inside a code fence. A record named `0012_x.md` is numbered 12 when choosing the next record's number.
+- 45095f0: `stacks prune --apply` now removes only the running cockpit's orphaned stacks, plus the state folders an earlier build left. Before, it covered every cockpit on the machine while checking only the running cockpit's `[autonomy] reset`, so an agent could delete the volumes of a cockpit that requires a person. Another cockpit's orphans are still listed in the preview, marked `thisCockpit: false` with a `STACKS_PRUNE_UNCONFIRMED` warning, and a person removes them with `stacks prune --interactive`.
+  
+  A worktree whose path is missing while Git still registers it, or marks it locked, is no longer taken for gone: its checkout is `unknown` and its stack is kept, since an unmounted drive or share, or a checkout moved without `git worktree repair`, looks the same. Run `git worktree prune` (after `git worktree unlock` for a locked worktree) once the checkout is really gone, and the next prune removes its stack.
+- 546232c: `cockpit use` now grants the agent tools a checkout outside the declared one, so they no longer prompt or refuse edits there. Claude Code gets it in `.claude/settings.local.json` (`use` keeps everything else in that file and `use --clear` removes only the entry it added), and OpenCode gets it in its machine-local grant file, which `sync` now keeps. Codex has no machine-local setting for this, so `use` tells you to start it with `--add-dir <checkout>`; Cursor and Grok Build get nothing and `use` says so. `--json` reports the tools as `agentGrants`. `use` also refuses with `EVIDENCE_UNAVAILABLE` when the declared checkout exists but cannot be resolved, instead of guessing its path, and `pull` reports a checkout whose repository cannot be resolved with `PULL_SKIPPED` under its label, where it used to report it as missing.
+- 913a385: Work orders hand judgement to the grading model instead of a fixed rule or a person. Under `independent` and `self` grading, a change outside `scope` no longer fails the grade by itself: it becomes the standing criterion `scope-changes-necessary`; flagged test changes become `test-changes-justified`, judged against the diff with any acknowledgement notes as context; and an agent's amendment that rewrites a criterion, widens `scope`, or drops a non-goal or rewords the objective is recorded with its before and after and judged at the next grade as `amendments-hold-bar`, whose failure makes the next amendment a person's. Under `self` the `--note` must name each such path. `checks` grading keeps the hard rules, and now also needs a person for an agent's scope widening. Removing a criterion or gate always needs a person. `[work.gates] acknowledge` now defaults to `agent`, so a cockpit that left it unset reports the change as a policy weakening at its next sync. `work recover --apply` is open to agents: it checks the lock's recorded host and the containers cockpit labels before removing a lock, refuses when it cannot show the holder gone, and records what it checked in the order's record. The attempt-cap refusal names who closes or amends the order as `[work.gates]` says.
+- e54c63d: Work orders record their lasting decisions. With `[docs] decisions` declared, `work note --decision --text "<title>"` records a decision on an order and `work decide` resolves it: `--record` writes the next numbered decision record (with `Work order:` back-link, placeholders to fill and an index line in `decisions_index`), optionally marking an older one `superseded by` it with `--supersedes`; `--record-file` cites an existing record; `--none --reason` says it is not lasting. `work signoff` refuses every closure while a decision is unresolved or its record still holds placeholders, `work verify` fails when a cited record is gone or no longer names its order, and `work status` lists open decisions. `work accept` and `work status` list decision records that name paths in the order's scope. Under `independent` and `self` grading, a declared `[docs]` adds the standing criteria `decisions-recorded` and `docs-updated` to every grade.
+  
+  A work-order scope or source spelled `<sibling>:../path` is now refused when the order is read, as `../path` already was.
+
 ## 0.1.0
 
 ### Minor Changes

@@ -1,5 +1,0 @@
----
-"@b00dea/cockpit": patch
----
-
-A `.cockpit/policy.json` written by 0.1.0, which has no `[work.gates] acknowledge`, no longer makes every `work` command, `sync` and `doctor` refuse it as malformed: a missing decider is read as `person`, so the new `agent` default is reported as the weakening `work.gates.acknowledge: person -> agent`, which a person accepts with `sync --interactive`. A record with an unknown key still refuses, and now says what to do when the committed copy is the damaged one. A grade that finds an agent's amendments lower the bar stays on the order until a person or CI amends it, so a later `work check` no longer lets the agent amend again. Two concurrent `work recover --apply` runs no longer both take over a dead lock and delete each other's: one takes it over and the other refuses. `work decide` writes decision records and the index line through descriptors checked against the confined path, so a directory swapped for a link while the record is opened no longer redirects the write outside the repository.
