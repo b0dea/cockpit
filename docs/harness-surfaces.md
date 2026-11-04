@@ -171,8 +171,9 @@ refused even the `test-run` its own skill asks for. The generated `.claude/setti
 allows, by prefix, the cockpit commands the shipped skills tell an agent to run and the guard
 admits (see [Cockpit commands an agent can run](safety-and-autonomy.md#cockpit-commands-an-agent-can-run)),
 spelled both as `npx --no cockpit <command>` and as `./node_modules/.bin/cockpit <command>`.
-Person-only commands such as `sync`, `down` and `work accept` keep prompting. The guard hook still
-runs first, and its ask or deny wins over a rule. Claude Code ignores a project's allow rules
+Commands that are always a person's, such as `init` and `sibling add`, have no rule and keep
+prompting. A command the policy decides, such as `sync` or `work accept`, has a rule: the guard hook
+still runs first, and its ask or deny wins over a rule. Claude Code ignores a project's allow rules
 until a person has trusted the workspace by starting Claude Code there once. Measured with Claude
 Code 2.1.316 on 2026-11-02 beside a command with no rule.
 

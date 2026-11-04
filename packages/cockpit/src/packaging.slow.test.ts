@@ -918,7 +918,7 @@ it('discards answers inferred for an estate that changes from no runnable produc
     })
 }, 480_000)
 
-it('lists every outstanding headless init question with the values it inferred', async () => {
+it('lists every outstanding headless init question with the values it proposes', async () => {
     const { launcher, env } = await installedInitEnvironment()
     mkdirSync(join(packScratch, 'init-headless'))
     const headless = realpathSync(join(packScratch, 'init-headless'))
@@ -934,10 +934,10 @@ it('lists every outstanding headless init question with the values it inferred',
         'cockpit.name', 'sibling', 'ports.bases', 'environment.install_policies', 'environment.test_data',
         'environment.compose_files', 'environment.machine', 'environment.posture', 'testing', 'guards', 'configuration.defaults',
     ])
-    expect(listed.interview.outstanding.find((row: { field: string }) => row.field === 'ports.bases').inferred).toEqual([
+    expect(listed.interview.outstanding.find((row: { field: string }) => row.field === 'ports.bases').proposals).toEqual([
         expect.objectContaining({ target: 'library.container_ports', value: [4100], provenance: expect.objectContaining({ kind: 'inferred', source: 'library/Dockerfile' }) }),
     ])
-    expect(listed.interview.outstanding.find((row: { field: string }) => row.field === 'testing').inferred).toEqual([
+    expect(listed.interview.outstanding.find((row: { field: string }) => row.field === 'testing').proposals).toEqual([
         expect.objectContaining({ target: 'testing.library', provenance: expect.objectContaining({ kind: 'inferred', source: 'library/package.json' }) }),
     ])
 }, 480_000)

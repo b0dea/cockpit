@@ -131,12 +131,13 @@ describe('public surface publication transaction', () => {
             expect(settings.permissions.deny).toEqual(['Read(//**/.env)', 'Read(//**/.env.*)', 'Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/external/.env)'])
             // Claude's default mode runs no Bash without a rule, so the commands the skills tell an
             // agent to run are allowed by prefix. A policy-decided command such as sync or work accept is
-            // allowed too, because the guard's ask still wins; always-person and destructive ones keep prompting.
+            // allowed too, because the guard's ask still wins; always-person ones keep prompting. down keeps
+            // the data volumes, so it is the agent's.
             expect(settings.permissions.allow).toEqual(expect.arrayContaining([
                 'Bash(npx --no cockpit test-run *)', 'Bash(./node_modules/.bin/cockpit check *)', 'Bash(npx --no cockpit sync *)',
-                'Bash(npx --no cockpit work accept *)', 'Bash(npx --no cockpit reset * --apply)', 'Bash(npx --no cockpit stacks *)',
+                'Bash(npx --no cockpit work accept *)', 'Bash(npx --no cockpit reset * --apply)', 'Bash(npx --no cockpit stacks *)', 'Bash(npx --no cockpit down *)',
             ]))
-            expect(settings.permissions.allow!.filter(rule => /cockpit (down|init|sibling|session)\b/.test(rule))).toEqual([])
+            expect(settings.permissions.allow!.filter(rule => /cockpit (init|sibling|session)\b/.test(rule))).toEqual([])
             expect(Object.keys(codex.mcp_servers).sort()).toEqual(['approved-server', 'remote-headers', 'remote-helper', 'unapproved-server'])
             expect([codex.mcp_servers['approved-server']?.enabled !== false, codex.mcp_servers['unapproved-server']?.enabled]).toEqual([true, false])
             expect(codex).toMatchObject({
