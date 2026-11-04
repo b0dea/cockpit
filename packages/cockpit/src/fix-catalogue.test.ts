@@ -10,6 +10,7 @@ import { commandGroups, commands as cliCommands } from './command-table.js'
 import { renderHumanDiagnostics } from './diagnostics.js'
 import { admitDiagnosticFix, cockpitCommand, formatShellCommand, type ConfiguredCommand } from './fix-catalogue.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './generated-environment/command.js'
+import { stubComposeTopology } from '../test-support/compose-topology-docker.js'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -76,6 +77,11 @@ describe('executable remedy catalogue', () => {
         roots.push(root)
         // The compose-first example under a configuration name a shell would misread.
         cpSync(resolve('examples/compose-first'), root, { recursive: true })
+        // The example's compose.yml as Compose reports it, in the fields check reads: both services build,
+        // have a healthcheck, publish a leased loopback port and bind their sibling.
+        const service = (sibling: string, port: string) => ({ build: { context: join(root, sibling) }, healthcheck: { test: ['CMD', 'true'] },
+            ports: [port], volumes: [{ type: 'bind', source: join(root, sibling), target: '/app' }] })
+        await stubComposeTopology({ api: service('api', '127.0.0.1:${API_HOST_PORT:-4200}:3000'), web: service('web', '127.0.0.1:${WEB_HOST_PORT:-4300}:3000') })
         const configPath = join(root, "demo'$(false); config.toml")
         await writeFile(configPath, await readFile(join(root, 'cockpit.toml'), 'utf8'))
         await rm(join(root, 'cockpit.toml'))

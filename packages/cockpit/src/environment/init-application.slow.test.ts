@@ -17,6 +17,7 @@ import { syncTeamGeneratedEnvironment } from './generated-application/sync.js'
 import { inspectInitReadiness } from './readiness-composition.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { digest, fixture, removeInitApplicationFixtures } from '../../test-support/init-application-fixture.js'
+import { stubComposeTopology } from '../../test-support/compose-topology-docker.js'
 
 // End-to-end init runs through the real bootstrap, document and generated-environment owners.
 afterEach(removeInitApplicationFixtures)
@@ -30,6 +31,8 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
     await writeFile(join(f.root, 'fixtures/personas.json'), '[{"id":"synthetic"}]\n')
     await writeFile(join(f.root, 'compose.yml'),
         'services:\n  app:\n    image: synthetic.invalid/app:1\n    ports: ["127.0.0.1:${APP_HOST_PORT:-4100}:3000"]\n    volumes: ["./app:/app"]\n')
+    await stubComposeTopology({ app: { image: 'synthetic.invalid/app:1', ports: ['127.0.0.1:${APP_HOST_PORT:-4100}:3000'],
+        volumes: [{ type: 'bind', source: join(f.root, 'app'), target: '/app' }] } })
     const sourceConfig = parseToml(await readFile(resolve('fixtures/registries/generated-environment.toml'), 'utf8')) as {
         sibling: Record<string, unknown>[]; ports: { bases: unknown }; environment: { install_policies: unknown }
     }

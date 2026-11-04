@@ -251,9 +251,11 @@ describe('the compose-first and docs-only example cockpits', () => {
         const path = join(root, 'compose.yml')
         writeFileSync(path, readFileSync(path, 'utf8').replace('"127.0.0.1:${WEB_HOST_PORT:-4300}:3000"', '"127.0.0.1:4300:3000"'))
         const doctor = run(root, ['cockpit', 'doctor', '--config', 'cockpit.toml', '--json'])
-        if (!readsTopology(doctor)) return
         const codes = doctor.response.diagnostics.map((row: { code: string }) => row.code)
-        expect(codes).toContain('COMPOSE_PORT_NOT_LEASED')
+        // Without docker, check refuses on the unread topology instead, and doctor reports that refusal.
+        expect(doctor.response.diagnostics).toContainEqual(dockerAbsent
+            ? expect.objectContaining({ code: 'COMPOSE_TOPOLOGY_UNAVAILABLE', message: expect.stringContaining(DOCKER_ABSENT) })
+            : expect.objectContaining({ code: 'COMPOSE_PORT_NOT_LEASED', target: 'compose:web:3000' }))
         for (const dependent of ['GUIDE_CAP_EXCEEDED', 'HARNESS_SURFACE_UNAVAILABLE', 'SKILL_BUDGET_UNAVAILABLE', 'DIRECTORY_GRANTS_UNAVAILABLE']) expect(codes).not.toContain(dependent)
         expect(doctor.response.diagnostics).not.toContainEqual(expect.objectContaining({ target: 'surfaces', message: 'surfaces observation producer failed' }))
     })

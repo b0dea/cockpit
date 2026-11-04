@@ -74,15 +74,18 @@ export function createGeneratedCommandFixture() {
     }
 
     // The same cockpit running its own compose.yml, so sync also owns compose.cockpit.yml. Sync and
-    // its ownership render read the Compose file directly; only check needs a Docker CLI.
+    // its ownership render read the Compose file directly; only check needs a Docker CLI, and
+    // `services` is what Compose reports for that file, for a check run against stubComposeTopology.
     async function composeConsumer(name: string, parentDirectory?: string) {
         const result = await consumer(name, parentDirectory)
         await writeFile(result.configPath, `${await readFile(result.configPath, 'utf8')}\n[environment]\ncompose_files = ["compose.yml"]\n`)
+        const image = `node@sha256:${'8'.repeat(64)}`
+        const port = '127.0.0.1:${APP_HOST_PORT:-4100}:3000'
         await writeFile(join(result.root, 'compose.yml'), [
-            'services:', '  app:', `    image: node@sha256:${'8'.repeat(64)}`,
-            '    ports: ["127.0.0.1:${APP_HOST_PORT:-4100}:3000"]', '    volumes: ["./app:/app"]', '',
+            'services:', '  app:', `    image: ${image}`, `    ports: ["${port}"]`, '    volumes: ["./app:/app"]', '',
         ].join('\n'))
-        return result
+        const services = { app: { image, ports: [port], volumes: [{ type: 'bind', source: join(result.root, 'app'), target: '/app' }] } }
+        return { ...result, services }
     }
 
     const surfaceFeatures = ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const

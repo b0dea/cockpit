@@ -11,6 +11,7 @@ import * as transaction from './generated-environment/transaction.js'
 import { proposeGeneratedEnvironmentRepair } from './repair.js'
 import { runCli, type CliIo } from './cli.js'
 import { initializeTeamMetadata } from '../test-support/team-metadata.js'
+import { stubComposeTopology } from '../test-support/compose-topology-docker.js'
 
 const roots: string[] = []
 const firstInstant = '2026-10-22T12:00:00.000Z'
@@ -30,11 +31,14 @@ async function consumer() {
     await writeFile(configPath, `${(await readFile(resolve('fixtures/registries/generated-environment.toml'), 'utf8')).replace(
         'name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."',
     )}\n[environment]\ncompose_files = ["compose.yml"]\n`)
-    await writeFile(join(root, 'compose.yml'), `services:\n  first:\n    image: node@sha256:${'8'.repeat(64)}\n    volumes: ["./app:/app"]\n`)
+    const image = `node@sha256:${'8'.repeat(64)}`
+    await writeFile(join(root, 'compose.yml'), `services:\n  first:\n    image: ${image}\n    volumes: ["./app:/app"]\n`)
     const synced = await syncGeneratedEnvironment({ configPath }, { now: () => firstInstant })
     expect(synced).toMatchObject({ kind: 'complete' })
     if (synced.kind !== 'complete') throw new Error('Synthetic repair fixture failed')
-    return { root, configPath, paths: [...synced.result.paths, ledgerPath] }
+    // What Compose reports for compose.yml, for a check run against stubComposeTopology.
+    const services = { first: { image, volumes: [{ type: 'bind', source: join(root, 'app'), target: '/app' }] } }
+    return { root, configPath, paths: [...synced.result.paths, ledgerPath], services }
 }
 
 // A service added to compose.yml changes the ownership override the next sync writes.
@@ -174,7 +178,8 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
     })
 
     it('compensates corrupt preimages and explicitly syncs the identical admitted restoration once', async () => {
-        const { root, configPath, paths } = await consumer()
+        const { root, configPath, paths, services } = await consumer()
+        await stubComposeTopology(services)
         const desired = await readFile(join(root, overridePath))
         const originalLedger = await readFile(join(root, ledgerPath))
         const original = JSON.parse(originalLedger.toString())

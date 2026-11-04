@@ -19,6 +19,7 @@ import {
 import { observeGeneratedApplicationSurfaces } from '../environment/generated-application/surface-observation.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './command.js'
 import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
+import { stubComposeTopology } from '../../test-support/compose-topology-docker.js'
 
 const { roots, cleanup, surfaceConsumer, digest, runGeneratedGuard, bytes } = createGeneratedCommandFixture()
 afterEach(cleanup)
@@ -256,6 +257,11 @@ ${variant.endpoint ? 'compose_files = ["compose.yml"]\n' : ''}
                 'services:', '  browser:', `    image: node@sha256:${'8'.repeat(64)}`,
                 '    ports: ["127.0.0.1:${BROWSER_PORT}:3001"]',
                 '    volumes: ["${APP_DIR}:/workspace/app", "./.browser/mcp:/browser/mcp", "./.browser/cli:/browser/cli", "./.browser/auth:/browser/auth"]', ''].join('\n'))
+            // Compose reports that file's variable source as written and its artifact binds under the project directory.
+            if (variant.endpoint) await stubComposeTopology({ browser: { image: `node@sha256:${'8'.repeat(64)}`, ports: ['127.0.0.1:${BROWSER_PORT}:3001'], volumes: [
+                { type: 'volume', source: '${APP_DIR}', target: '/workspace/app' },
+                ...['mcp', 'cli', 'auth'].map(name => ({ type: 'bind', source: join(fixture.root, '.browser', name), target: `/browser/${name}` })),
+            ] } })
             const additions = `
 [[sibling]]
 slug = "browser-source"

@@ -19,6 +19,7 @@ import * as generatedCommands from './command.js'
 import { installedPackageMetadata } from '../package-metadata.js'
 
 import { createGeneratedCommandFixture, stagedPublicationInputs } from '../../test-support/generated-fixtures.js'
+import { stubComposeTopology } from '../../test-support/compose-topology-docker.js'
 
 const { roots, cleanup, canonicalOutputRead, publicationGroups, consumer, composeConsumer, surfaceConsumer, digest,
     staleRemovalAuthority, bytes } = createGeneratedCommandFixture()
@@ -36,7 +37,8 @@ async function guardAnotherHost(configPath: string) {
 
 describe('public generated repair', () => {
     it('previews and explicitly applies identical changes through each exact prepared plan once', async () => {
-        const { root, configPath } = await composeConsumer('public-repair')
+        const { root, configPath, services } = await composeConsumer('public-repair')
+        await stubComposeTopology(services)
         const admit = vi.spyOn(publicationTransaction, 'admitPublicationPlan')
         const run = vi.spyOn(publicationTransaction, 'runPublicationPlan')
         try {
@@ -263,7 +265,8 @@ describe('selected bootstrap target', () => {
     })
 
     it('adopts only the exact state publication and anchored bootstrap outputs during first sync', async () => {
-        const { root, configPath } = await composeConsumer('bootstrap-adoption')
+        const { root, configPath, services } = await composeConsumer('bootstrap-adoption')
+        await stubComposeTopology(services)
         const prepared = await prepareSelectedBootstrapSurface({ root, target: 'codexcli', tools: ['codexcli', 'claudecode', 'opencode'] })
         if (prepared.kind !== 'complete') throw new Error('bootstrap preparation was refused')
         const applied = await applySelectedBootstrapSurface(prepared.authority)
