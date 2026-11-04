@@ -13,12 +13,10 @@ support branch and no backporting.
 **Never report a vulnerability in a public issue, pull request or discussion.** A public fix whose
 diff or message explains the problem is a disclosure too.
 
-<!-- cockpit:operator-evidence private-reporting-channel=pending -->
+<!-- cockpit:operator-evidence private-reporting-channel=enabled -->
 
 Report it privately through GitHub's private vulnerability reporting: open the repository's
-**Security** tab and choose **Report a vulnerability**. If that button is missing, private
-reporting is not enabled; open a public issue that asks for a private contact and contains no
-details of the problem.
+**Security** tab and choose **Report a vulnerability**.
 
 A useful report gives what an attacker can do, the smallest synthetic reproduction (the project
 cannot accept material that identifies someone's private deployment, even in a security report),

@@ -17,9 +17,6 @@ The package itself is installed in the next step, inside the demo directory.
 ## Create the demo directory
 
 Copy the example outside the cockpit checkout, so its generated files stay out of this repository.
-Until the first release, build the tarball as in
-[Install from source](getting-started.md#install-from-source) and install it in place of
-`@b00dea/cockpit` below.
 
 ```sh
 rm -rf "${TMPDIR:-/tmp}/cockpit-demo" && cp -R examples/compose-first "${TMPDIR:-/tmp}/cockpit-demo"

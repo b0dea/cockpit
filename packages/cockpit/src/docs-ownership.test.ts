@@ -66,10 +66,12 @@ describe('effective documentation ownership', () => {
         expect(contributing).not.toMatch(/Co-Authored-By|disclos(?:e|ure).*development tool/i)
     })
 
-    it('holds the private security channel until live proof while keeping response policy explicit', () => {
+    it('names the enabled private security channel and keeps response policy explicit', () => {
         const security = readFileSync(new URL('../../../SECURITY.md', import.meta.url), 'utf8')
 
-        expect(security).toContain('cockpit:operator-evidence private-reporting-channel=pending')
+        expect(security).toContain('cockpit:operator-evidence private-reporting-channel=enabled')
+        expect(security).toContain('choose **Report a vulnerability**')
+        expect(security).not.toMatch(/button is missing|asks for a private contact/)
         expect(security).not.toContain('Use the private reporting form')
         expect(security).toContain('| Acknowledgement | within 7 days |')
         expect(security).toContain('**90 days**')
