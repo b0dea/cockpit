@@ -1096,9 +1096,11 @@ done
         expect(outcome.diagnostics).toEqual([expect.objectContaining({ code })])
     })
 
+    // The child stays alive after writing, so the kill the cap triggers always lands: a child that
+    // exited first would leave no signal to record and make the outcome depend on timing.
     it.each([
-        ['stdout', "process.stdout.write('12345')", { stdoutLimitBytes: 4 }, 'EXECUTION_STDOUT_LIMIT'],
-        ['stderr', "process.stderr.write('12345')", { stderrLimitBytes: 4 }, 'EXECUTION_STDERR_LIMIT'],
+        ['stdout', "process.stdout.write('12345'); setInterval(() => {}, 1000)", { stdoutLimitBytes: 4 }, 'EXECUTION_STDOUT_LIMIT'],
+        ['stderr', "process.stderr.write('12345'); setInterval(() => {}, 1000)", { stderrLimitBytes: 4 }, 'EXECUTION_STDERR_LIMIT'],
     ] as const)('retains the exact bounded %s prefix when one chunk crosses the cap', async (stream, script, limits, code) => {
         const outcome = await executeProbe(nodeStep(`limit-${stream}`, script, limits))
 
