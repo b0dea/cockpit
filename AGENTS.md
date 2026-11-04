@@ -26,7 +26,9 @@ evidence on that class. If the scan fires, anonymise; never narrow the scan.
 
 Publish product truth, not development ceremony: tracked files do not name private tooling,
 plan or task identifiers, sessions or local planning paths. Anything generated or machine-local
-is ignored in the same change that introduces it.
+is ignored in the same change that introduces it. Working material that needs real names lives in
+the ignored `internal/`; if your checkout has an `internal/AGENTS.md`, read it before research or
+design work. A public clone has none and needs none.
 
 ## Two surface estates, never mixed
 
