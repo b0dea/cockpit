@@ -2,7 +2,7 @@
 
 cockpit is the local environment coding agents work from: every repository of the product in reach,
 the product running on the checkouts they edit, the same instructions, skills and guard in every agent
-tool from one `cockpit.toml`, and work orders graded by a separate read-only run. The instructions and
+tool from one `cockpit.toml`, and work orders checked against criteria you set and graded the way you choose. The instructions and
 guard need only Git and Node.js; the stack and grading switch on when configured. New here: read [Getting started](getting-started.md)
 chapter 1, which needs one repository and no Docker.
 

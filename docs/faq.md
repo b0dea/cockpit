@@ -7,7 +7,8 @@ page with the detail.
 
 The local environment coding agents work from: every repository of your product in reach, the
 product running on the checkouts they edit, the same instructions, skills, guard and permissions in
-Claude Code, Codex CLI and OpenCode, and work orders graded by a separate read-only run.
+Claude Code, Codex CLI and OpenCode, and work orders checked against criteria you set and graded
+the way you choose: by a fresh read-only agent run, by the checks alone, or by the agent's own report.
 
 ## When should I not use cockpit?
 
