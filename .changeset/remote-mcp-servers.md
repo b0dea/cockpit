@@ -1,5 +1,0 @@
----
-"@b00dea/cockpit": patch
----
-
-A sibling's MCP declaration can now list remote (streamable HTTP) servers in Claude Code's spelling: `type: "http"`, a `url` (https, or http only to loopback), `headers` whose values are only `${NAME}` or `Bearer ${NAME}` references, and an optional `headersHelper` command that prints the headers when the tool connects. They are approved by digest like local servers, so a changed URL, header or helper needs a new approval. `sync` writes each tool's native form (Claude Code `.mcp.json`, Codex `bearer_token_env_var`, `env_http_headers` and `http_headers_helper`, OpenCode `{env:NAME}` headers); a tool that cannot carry the credential, OpenCode for a helper and Cursor and Grok Build for any remote server, gets nothing and `sync` and `check` warn `MCP_TRANSPORT_UNAVAILABLE`. SSE servers and literal header values are refused. `doctor` now warns `MCP_COMMAND_UNRESOLVED` when an approved server's command or helper does not resolve and `MCP_ENVIRONMENT_UNSET` when a variable it reads is unset, without starting a server or using the network.

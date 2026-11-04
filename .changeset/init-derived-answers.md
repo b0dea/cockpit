@@ -1,5 +1,0 @@
----
-"@b00dea/cockpit": patch
----
-
-`init` now lets the setup agent accept what it read from exact sources. Each proposal in `interview.outstanding` carries `provenance.kind` (`derived`, `measured` or `inferred`) and each field a `confirmedBy` of `agent` or `person`. An answers file can mark `cockpit.name`, `ports.bases` and `environment.compose_files` as `"derived"`, with or without a value: init answers with the value it read, refuses a different one with `DOCUMENT_CONFIGURATION_ANSWER_NOT_DERIVED`, and records the source file and line in `cockpit.toml` and `result.derived` instead of listing the field as unconfirmed. The defaults digest now covers only the security boundaries (protected branches, guard allow and deny lists, approved MCP servers, resettable volumes, generated host paths), and the draft shows which values a person confirms. The machine floor is proposed: memory and CPUs from the Compose file's service limits, or from this machine's measured container runtime where no limit records them; free disk and cold start are never proposed.
