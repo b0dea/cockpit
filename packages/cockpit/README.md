@@ -1,3 +1,5 @@
+<p align="center"><img src="https://raw.githubusercontent.com/b0dea/cockpit/main/.github/assets/cockpit-logo.png" alt="" width="128"></p>
+
 # @b00dea/cockpit
 
 This package is the cockpit CLI: where coding agents work on your whole product. From one reviewed

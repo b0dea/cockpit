@@ -1,5 +1,4 @@
-<!-- Logo: save it as docs/assets/cockpit-logo.png, then add
-<p align="center"><img src="docs/assets/cockpit-logo.png" alt="" width="160"></p> above the title. -->
+<p align="center"><img src=".github/assets/cockpit-logo.png" alt="" width="160"></p>
 
 <h1 align="center">cockpit</h1>
 
