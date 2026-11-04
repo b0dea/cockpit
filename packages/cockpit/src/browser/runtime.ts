@@ -152,7 +152,8 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
         || typeof input.data.reachesProduction !== 'boolean' || typeof input.requestPreapproval !== 'boolean') {
         throw new RefusalError('browser data posture must be explicit')
     }
-    if (input.requestPreapproval && (input.data.mode === 'restored' || !input.data.isolated || input.data.reachesProduction)) {
+    const dataQualifies = input.data.mode !== 'restored' && input.data.isolated && !input.data.reachesProduction
+    if (input.requestPreapproval && !dataQualifies) {
         throw new RefusalError('browser preapproval requires isolated empty or seeded data with no production reach')
     }
     const projection = {
@@ -170,6 +171,8 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
         authentication: signedOut
             ? { posture: signedOut, policy: 'none' as const, states: [] }
             : { posture: 'real' as const, policy: input.authentication.policy, states: states.map((state) => ({ ...state })), claim: input.authentication.policy === 'serialized' ? 'exclusive' as const : 'per-worker' as const },
+        // The posture alone, whatever request_preapproval says: it also gates message excerpts in drive receipts.
+        dataQualifies,
         preapproval: input.requestPreapproval ? 'eligible' as const : 'not-requested' as const,
         networkExposure: networkExposure.value,
         ...(networkExposure.reason ? { networkExposureReason: networkExposure.reason } : {}),

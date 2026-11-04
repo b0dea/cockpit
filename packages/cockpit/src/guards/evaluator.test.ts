@@ -582,15 +582,21 @@ describe('built-in read-only profile', () => {
         expect(session(['rm', '-rf', 'src'])).toBe('ask')
         expect(session(['sh', '-c', 'cat README.md'])).toBe('ask')
         expect(session(['cat', 'config/active.instance'])).toBe('deny')
-        // exec's command runs in a container that mounts the checkout, so it is judged the same way.
-        const exec = (command: string[]) => {
+        // exec's command runs in a container whose files the guard cannot see: the name-based denials
+        // still apply, but a host read-only proof does not, so only an explicit allow admits it.
+        const exec = (command: string[], configure: (configured: ReturnType<typeof launched>) => void = () => {}) => {
             const configured = launched()
             configured.cockpitInvocations.push(candidate('npx', ['--no', 'cockpit', 'exec', '--config', 'cockpit.toml', '--service', 'web', '--', ...command]))
+            configure(configured)
             return decideLaunched(['npx --no cockpit exec --config cockpit.toml --service web --', ...command.map(word => `'${word}'`)].join(' '), configured).decision
         }
-        expect(exec(['ls'])).toBe('allow')
+        expect(exec(['ls'])).toBe('ask')
         expect(exec(['cat', '.env'])).toBe('deny')
         expect(exec(['rm', '-rf', 'src'])).toBe('ask')
+        expect(exec(['ls'], configured => configured.declaredAllows.push({ argv: ['ls'], reason: 'Listing the container is safe.' }))).toBe('allow')
+        expect(exec(['npm', 'test'])).toBe('allow')
+        // The allow rule never lifts a denial: .env stays denied inside the container.
+        expect(exec(['cat', '.env'], configured => configured.declaredAllows.push({ argv: ['cat'], reason: 'Reading is safe.' }))).toBe('deny')
         // A command that parses a named file can quote it back, so the file is checked as a read.
         const reading = (file: string) => {
             const configured = launched()

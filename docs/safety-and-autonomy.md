@@ -29,8 +29,11 @@ application verifies the executable and working root; the command resolver check
 complete argument vector, resolved configuration path, declared services, permitted option roles
 and inspected paths. Internal guard transport and public commands marked unavailable are excluded.
 The command after `session --` or `exec --` is judged as one more invocation, so neither admits
-what the guard would refuse on its own; `exec` runs it in a product container that mounts the
-checkouts. Declared project build and test commands are allowed only as their exact argument vectors in their
+what the guard would refuse on its own. `exec` runs it in a product container whose files the
+guard cannot see, so a read-only proof about host paths does not carry over: the name-based
+denials (`.env*` and the rest) still apply to it, and it is admitted only by a `[guards] allow`
+rule or as a declared build or test command; otherwise it asks, which Codex and OpenCode turn into
+a denial. Declared project build and test commands are allowed only as their exact argument vectors in their
 own checkout. A wildcard over a command family never grants permission.
 
 ## Hard controls and prompts
@@ -233,7 +236,7 @@ cockpit commands in
 | `npx --no cockpit sync --config cockpit.toml`, and `upgrade`, whose sync child writes | allowed where `[autonomy] sync = "agent"`, otherwise a prompt | It regenerates the files the configuration declares; after `cockpit.toml` changes, the guard admits it only when the edit [does not widen](#edits-the-guard-has-not-applied) what agents may do, so an agent's sync never publishes a widening of its own. |
 | `npx --no cockpit reset --config cockpit.toml --apply` | allowed where `[autonomy] reset = "agent"`, otherwise a prompt | It deletes stack data. |
 | `npx --no cockpit stacks prune --config cockpit.toml --apply` | allowed; the command itself refuses a prune that deletes volumes unless `[autonomy] reset = "agent"` | It removes only stacks whose checkout is gone, which bringing the stack up again recreates, and their data only where a reset could delete it. |
-| `npx --no cockpit browser drive --config cockpit.toml`, and likewise `screenshot`, with an optional `--role` | allowed where `browser.request_preapproval` is set, otherwise a prompt | They sign in and capture the declared application, so they run unprompted only on the isolated, non-production data the configuration must declare before it can set preapproval. |
+| `npx --no cockpit browser drive --config cockpit.toml`, and likewise `screenshot`, with an optional `--role` | allowed where `browser.request_preapproval` is on, otherwise a prompt | They sign in and capture the declared application, so they run unprompted only on the isolated, non-production data the configuration declares. Preapproval is on by default exactly when `browser.data` is isolated, not restored and not reaching production, and off otherwise; an explicit `request_preapproval` wins, and `true` on a posture that does not qualify is refused. `drive` also accepts `--fail-on-findings`. |
 | `work accept`, `work answer`, `work acknowledge` and `work signoff` with `--interactive` | a prompt, which Codex and OpenCode turn into a denial | `--interactive` asks for a person at a terminal to type the digest of what it shows. |
 | `work recover --apply` | a prompt, which Codex and OpenCode turn into a denial | It deletes a lock once a process probe calls its holder dead, and that probe sees only this machine's processes: a holder in a container or on another host that shares the checkout looks dead to it. |
 | `sync --adopt`, `sync --interactive`, `reset --interactive`, `stacks prune --interactive`, `sibling add` and every other command | a prompt, which Codex and OpenCode turn into a denial | They rewrite `cockpit.toml` or a team's own settings, ask for a person, or delete data. |

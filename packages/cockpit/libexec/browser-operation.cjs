@@ -11,8 +11,10 @@
 // per-route diagnostics: counts of console errors, uncaught page errors and failed or >= 400 requests to
 // the application origin, a count of warnings, aborted requests and third-party traffic, and a capped
 // list of entries. Entries hold only identifiers: a request's method, URL path (no query) and status or
-// network error code; a console error's script path and line; an uncaught error's class name. Message
-// text, bodies, headers and cookies are never read.
+// network error code; a console error's script path and line; an uncaught error's class name. Bodies,
+// headers and cookies are never read. Message text is read only when cockpit passes --messages, which it
+// does only for a data posture that is isolated, not restored and not reaching production; the drive
+// observation then carries a capped `messages` list of console error and uncaught error text.
 // stderr on failure: one JSON 'cockpit-browser-failure/v1' object naming the phase and its category,
 // and, when one is known, a fixed-vocabulary reason (a browser network error code such as
 // ERR_CONNECTION_REFUSED, HTTP_<status> or TIMEOUT), exit code 1. The failure deliberately carries no
@@ -32,13 +34,23 @@ const one = name => { const index = args.indexOf(name); if (index < 0 || index +
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
 const MAX_ENTRIES = 20
 const MAX_PATH = 200
+const MAX_MESSAGES = 5
+const MAX_MESSAGE_BYTES = 240
 const SETTLE_MS = 1000
-// Records what the page did wrong, never what it said: see the stdout contract above.
-function collectDiagnostics(page, origin) {
+// Records what the page did wrong; what it said only with withMessages: see the stdout contract above.
+function collectDiagnostics(page, origin, withMessages) {
     const counts = { consoleErrors: 0, consoleWarnings: 0, pageErrors: 0, failedRequests: 0, abortedRequests: 0 }
     const thirdParty = { requests: 0, failed: 0 }
     const entries = []
     let omitted = 0
+    const messages = []
+    // Control characters are replaced so message text stays one line of plain text; the cap is in bytes.
+    const excerpt = value => {
+        let text = String(value).replace(/[\x00-\x1f\x7f]+/g, ' ').trim()
+        while (Buffer.byteLength(text) > MAX_MESSAGE_BYTES) text = text.slice(0, -1)
+        return text
+    }
+    const keep = (kind, value) => { if (withMessages && messages.length < MAX_MESSAGES) { const text = excerpt(value); if (text) messages.push({ kind, text }) } }
     const add = entry => { if (entries.length < MAX_ENTRIES) entries.push(entry); else omitted += 1 }
     const parse = value => { try { const parsed = new URL(value); return ['http:', 'https:'].includes(parsed.protocol) ? parsed : undefined } catch { return undefined } }
     const pathOf = parsed => parsed.pathname.slice(0, MAX_PATH)
@@ -46,6 +58,7 @@ function collectDiagnostics(page, origin) {
         if (message.type() === 'warning') counts.consoleWarnings += 1
         if (message.type() !== 'error') return
         counts.consoleErrors += 1
+        keep('console', message.text())
         const location = message.location()
         const parsed = location && typeof location.url === 'string' ? parse(location.url) : undefined
         const own = parsed && parsed.origin === origin
@@ -54,6 +67,7 @@ function collectDiagnostics(page, origin) {
     })
     page.on('pageerror', error => {
         counts.pageErrors += 1
+        keep('pageerror', error && typeof error.message === 'string' ? error.message : 'uncaught error')
         add({ kind: 'pageerror', name: error && typeof error.name === 'string' && /^[A-Za-z0-9_$.]{1,64}$/.test(error.name) ? error.name : 'Error' })
     })
     page.on('request', request => { const parsed = parse(request.url()); if (parsed && parsed.origin !== origin) thirdParty.requests += 1 })
@@ -80,7 +94,7 @@ function collectDiagnostics(page, origin) {
         counts.failedRequests += 1
         add({ kind: 'request', method: request.method(), path: pathOf(parsed), status })
     })
-    return () => ({ ...counts, thirdParty, entries, omitted })
+    return () => ({ ...counts, thirdParty, entries, omitted, ...(withMessages ? { messages } : {}) })
 }
 async function main() {
     const moduleProof = fs.readFileSync(one('--module-proof'))
@@ -152,7 +166,7 @@ async function main() {
         })
         phase = 'navigation'
         page = await context.newPage()
-        const diagnostics = operation === 'drive' ? collectDiagnostics(page, origin) : undefined
+        const diagnostics = operation === 'drive' ? collectDiagnostics(page, origin, args.includes('--messages')) : undefined
         let documentEpoch = 0
         let documentResponse
         page.on('framenavigated', frame => { if (frame === page.mainFrame()) documentEpoch += 1 })

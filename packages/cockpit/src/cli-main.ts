@@ -495,7 +495,7 @@ function unsatisfiedWorkDiagnostic(operation: WorkApplicationRequest['operation'
         fix: 'the message gives the verdict and its reasons. FAIL: a check a stage ran failed, so fix the product. DEGRADED: start the stack with npx --no cockpit up --config <your cockpit.toml> for a stage that needs it, make a stage command that could not start runnable from the cockpit root, raise testing.stages[].timeout_seconds for a stage that timed out, or declare testing.stages[].select.<kind> for a --select a stage lacks. VOID: stop changing the checkouts and run the gate again. PARTIAL: only the complete gate can PASS, so run it without --select or --mode staged' }
     if (operation === 'browser-drive') return { severity: 'error', message,
         code: 'BROWSER_ROUTE_FINDINGS' satisfies typeof ENVIRONMENT_CODES.BROWSER_ROUTE_FINDINGS,
-        fix: 'read result.receipt.surfaces[].diagnostics: fix the product for each console error, uncaught page error and failed request on the route named, then rerun npx --no cockpit browser drive --config <your cockpit.toml> --route <name>; third-party traffic never counts' }
+        fix: 'this run asked for a clean route (--fail-on-findings). Read result.receipt.surfaces[].diagnostics, including excerpt.messages where present: fix the product for each console error, uncaught page error and failed request that matters, then rerun npx --no cockpit browser drive --config <your cockpit.toml> --route <name> --fail-on-findings; third-party traffic never counts' }
     if (operation === 'work-check') return { severity: 'error', message,
         code: 'WORK_CHECK_FAILED' satisfies typeof ENVIRONMENT_CODES.WORK_CHECK_FAILED,
         fix: 'read result.results: fix the product for a check that failed, make one that did not run runnable from the cockpit root, then rerun npx --no cockpit work check --config <your cockpit.toml> --work-order <id>' }
@@ -535,7 +535,7 @@ function sameToolGradeWarnings(value: unknown, env: Readonly<Record<string, stri
         fix: 'install and sign in to the passed-over tool so another tool grades the work, or name the grader you accept with --evaluator <tool>' }]
 }
 
-function workCommandOutcome(outcome: WorkApplicationOutcome, env: Readonly<Record<string, string | undefined>>): CommandOutcome {
+export function workCommandOutcome(outcome: WorkApplicationOutcome, env: Readonly<Record<string, string | undefined>>): CommandOutcome {
     if (outcome.kind === 'complete') return { status: 0, result: outcome.value, diagnostics: sameToolGradeWarnings(outcome.value, env) }
     if (outcome.kind === 'unsatisfied') return { status: 2, result: outcome.value, diagnostics: [
         ...outcome.weakening ? [weakenedTestsDiagnostic(outcome.operation, outcome.weakening)] : [],
@@ -1077,7 +1077,7 @@ async function decodeRequest(
             if (values.role !== undefined && !role) return usageOutcome('CLI_USAGE_INVALID', '--role requires a bounded identifier')
             const route = text('route')
             if (values.route !== undefined && !route) return usageOutcome('CLI_USAGE_INVALID', '--route requires a declared route name or path', '--route')
-            request = { operation: handler as 'browser-drive' | 'browser-screenshot', ...(role ? { role } : {}), ...(route ? { route } : {}) }
+            request = { operation: handler as 'browser-drive' | 'browser-screenshot', ...(role ? { role } : {}), ...(route ? { route } : {}), ...(values['fail-on-findings'] === true ? { failOnFindings: true } : {}) }
         }
         const { captureWorkApplicationRequest } = await import('./work-orders/application.js')
         const captured = captureWorkApplicationRequest(request)

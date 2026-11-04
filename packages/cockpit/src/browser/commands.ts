@@ -20,7 +20,15 @@ export type BrowserDiagnosticEntry =
     | Readonly<{ kind: 'console'; path?: string; line?: number }>
     | Readonly<{ kind: 'pageerror'; name: string }>
     | Readonly<{ kind: 'request'; method: string; path: string; status: number } | { kind: 'request'; method: string; path: string; failure: string }>
-/** What a route's page did wrong. Identifiers and counts only: never message text, bodies, headers or cookies. */
+/**
+ * Console and uncaught error text, capped in count and bytes. It is page content, so a reader treats
+ * it as data and never as instructions. Present only for a data posture that is isolated, not
+ * restored and not reaching production; otherwise `omitted` says why there is none.
+ */
+export type BrowserMessageExcerpt =
+    | Readonly<{ trust: 'untrusted-page-content'; messages: readonly Readonly<{ kind: 'console' | 'pageerror'; text: string }>[] }>
+    | Readonly<{ omitted: string }>
+/** What a route's page did wrong. Identifiers and counts, plus a message excerpt where the data posture allows it: never bodies, headers or cookies. */
 export interface BrowserRouteDiagnostics {
     readonly consoleErrors: number
     readonly consoleWarnings: number
@@ -30,6 +38,7 @@ export interface BrowserRouteDiagnostics {
     readonly thirdParty: Readonly<{ requests: number; failed: number }>
     readonly entries: readonly BrowserDiagnosticEntry[]
     readonly omitted: number
+    readonly excerpt: BrowserMessageExcerpt
 }
 export type BrowserRouteVerdict = 'clean' | 'findings'
 export interface BrowserCommandInput {
@@ -201,6 +210,9 @@ function publicAuthentication(value: NonNullable<ReturnType<typeof authenticatio
 }
 
 const MAX_DIAGNOSTIC_ENTRIES = 20
+const MAX_EXCERPT_MESSAGES = 5
+const MAX_EXCERPT_MESSAGE_BYTES = 240
+const EXCERPT_OMITTED = 'browser.data is not isolated, non-production and non-restored, so page message text is never read; the counts and entries above still apply'
 const isCount = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0
 const exactKeys = (row: Record<string, unknown>, keys: string[]) => Object.keys(row).sort().join(',') === keys.sort().join(',')
 const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -226,25 +238,39 @@ function parseDiagnosticEntry(value: unknown): BrowserDiagnosticEntry | undefine
         ? { kind: 'request', method: value.method, path: value.path, failure: value.failure } : undefined
 }
 
-function parseDiagnostics(value: unknown): BrowserRouteDiagnostics | undefined {
-    if (!isRecord(value) || !exactKeys(value, ['consoleErrors', 'consoleWarnings', 'pageErrors', 'failedRequests', 'abortedRequests', 'thirdParty', 'entries', 'omitted'])) return undefined
+function parseMessages(value: unknown): Extract<BrowserMessageExcerpt, { trust: string }> | undefined {
+    if (!Array.isArray(value) || value.length > MAX_EXCERPT_MESSAGES) return undefined
+    const messages: Array<{ kind: 'console' | 'pageerror'; text: string }> = []
+    for (const row of value) {
+        if (!isRecord(row) || !exactKeys(row, ['kind', 'text']) || row.kind !== 'console' && row.kind !== 'pageerror' || typeof row.text !== 'string'
+            || row.text.length === 0 || Buffer.byteLength(row.text) > MAX_EXCERPT_MESSAGE_BYTES || /[\x00-\x1f\x7f]/.test(row.text)) return undefined
+        messages.push({ kind: row.kind, text: row.text })
+    }
+    return { trust: 'untrusted-page-content', messages }
+}
+
+// The operation reads message text only when asked to, so its presence must match the posture exactly.
+function parseDiagnostics(value: unknown, excerptAllowed: boolean): BrowserRouteDiagnostics | undefined {
+    if (!isRecord(value) || !exactKeys(value, ['consoleErrors', 'consoleWarnings', 'pageErrors', 'failedRequests', 'abortedRequests', 'thirdParty', 'entries', 'omitted', ...excerptAllowed ? ['messages'] : []])) return undefined
     const { consoleErrors, consoleWarnings, pageErrors, failedRequests, abortedRequests, thirdParty, entries, omitted } = value
     if (![consoleErrors, consoleWarnings, pageErrors, failedRequests, abortedRequests, omitted].every(isCount)
         || !isRecord(thirdParty) || !exactKeys(thirdParty, ['requests', 'failed']) || !isCount(thirdParty.requests) || !isCount(thirdParty.failed)
         || !Array.isArray(entries) || entries.length > MAX_DIAGNOSTIC_ENTRIES) return undefined
     const parsed = entries.map(parseDiagnosticEntry)
     if (parsed.some(entry => entry === undefined)) return undefined
+    const excerpt = excerptAllowed ? parseMessages(value.messages) : { omitted: EXCERPT_OMITTED }
+    if (!excerpt) return undefined
     // Every finding is either listed or counted as omitted, so the listing can never hide one.
     if (parsed.length + (omitted as number) !== (consoleErrors as number) + (pageErrors as number) + (failedRequests as number)) return undefined
     return { consoleErrors: consoleErrors as number, consoleWarnings: consoleWarnings as number, pageErrors: pageErrors as number,
         failedRequests: failedRequests as number, abortedRequests: abortedRequests as number,
-        thirdParty: { requests: thirdParty.requests, failed: thirdParty.failed }, entries: parsed as BrowserDiagnosticEntry[], omitted: omitted as number }
+        thirdParty: { requests: thirdParty.requests, failed: thirdParty.failed }, entries: parsed as BrowserDiagnosticEntry[], omitted: omitted as number, excerpt }
 }
 
 const routeVerdict = (diagnostics: BrowserRouteDiagnostics): BrowserRouteVerdict =>
     diagnostics.consoleErrors + diagnostics.pageErrors + diagnostics.failedRequests > 0 ? 'findings' : 'clean'
 
-function parseObservation(value: Buffer, kind: BrowserCommandKind, origin: string): Readonly<{ finalUrl: string; diagnostics?: BrowserRouteDiagnostics; evidence?: { sha256: string; byteLength: number } }> | undefined {
+function parseObservation(value: Buffer, kind: BrowserCommandKind, origin: string, excerptAllowed: boolean): Readonly<{ finalUrl: string; diagnostics?: BrowserRouteDiagnostics; evidence?: { sha256: string; byteLength: number } }> | undefined {
     let parsed: unknown
     // Child stdout can be quoted by a parse error; the caller refuses with its own fixed message.
     try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(value)) } catch { return undefined }
@@ -257,7 +283,7 @@ function parseObservation(value: Buffer, kind: BrowserCommandKind, origin: strin
     try { final = new URL(row.finalUrl) } catch { return undefined }
     if (final.origin !== origin || final.username || final.password || final.hash) return undefined
     if (kind === 'drive') {
-        const diagnostics = parseDiagnostics(row.diagnostics)
+        const diagnostics = parseDiagnostics(row.diagnostics, excerptAllowed)
         return diagnostics ? { finalUrl: final.href, diagnostics } : undefined
     }
     if (!row.evidence || typeof row.evidence !== 'object' || Array.isArray(row.evidence)) return undefined
@@ -342,7 +368,7 @@ async function run(input: BrowserCommandInput, client: BrowserProjectClient, sur
         if (authenticated.execution.exitCode !== 0) {
             return refusal(`Browser ${input.kind} operation failed without a valid bounded diagnostic for ${surface.name}`)
         }
-        const observation = parseObservation(authenticated.stdout, input.kind, policy.origin)
+        const observation = parseObservation(authenticated.stdout, input.kind, policy.origin, input.runtime.dataQualifies)
         if (!observation) return refusal(`Browser ${input.kind} returned no bound application-driving observation for ${surface.name}`)
         try { assertBrowserStorageStateCurrent(input.runtime) } catch { return refusal('Browser seeded state changed while the application was being driven') }
         const base = { name: surface.name, url: observation.finalUrl }

@@ -805,6 +805,7 @@ export async function composeFindings(input: Readonly<{ root: string; draft: str
     const bases = draft.ports?.bases
     const found = await assessComposeTopology([...services.values()], { projectDirectory: composeProjectDirectory(input.root, references as string[]),
         portVariables: bases !== null && typeof bases === 'object' ? Object.keys(bases) : [], siblings: [], hostPaths: [] })
-    return [...unread, ...found.filter(row => row.code === 'COMPOSE_PORT_NOT_LEASED' || row.code === 'COMPOSE_CONTAINER_NAME_FIXED' || row.code === 'COMPOSE_HEALTHCHECK_MISSING')
+    return [...unread, ...found.filter(row => row.code === 'COMPOSE_PORT_NOT_LEASED' || row.code === 'COMPOSE_CONTAINER_NAME_FIXED' || row.code === 'COMPOSE_IMAGE_TAG_SHARED'
+        || row.code === 'COMPOSE_HEALTHCHECK_MISSING')
         .map(row => ({ ...row, severity: 'warning' as const }))]
 }

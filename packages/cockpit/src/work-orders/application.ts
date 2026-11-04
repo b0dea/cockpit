@@ -8,7 +8,7 @@ import { posix } from 'node:path'
 import { z } from 'zod'
 
 import { decide, policyWeakening, runningInCi, type WorkGate } from '../autonomy.js'
-import { executeBrowserCommand, type BrowserCommandReceipt } from '../browser/commands.js'
+import { executeBrowserCommand, type BrowserCommandReceipt, type BrowserCommandResult } from '../browser/commands.js'
 import { evaluateUiGate } from '../browser/ui-gate.js'
 import { errorCause, RefusalError } from '../environment/contract.js'
 import type { GradingSubject, Verdict } from '../grading/grade.js'
@@ -41,7 +41,8 @@ const Request = z.discriminatedUnion('operation', [
     z.object({ operation: z.literal('work-verify') }).strict(),
     z.object({ operation: z.literal('grade-criteria'), criteriaFile: relativeFile }).strict(),
     z.object({ operation: z.enum(['browser-drive', 'browser-screenshot']), role: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional(),
-        route: z.string().regex(/^(?:[a-z0-9][a-z0-9_-]{0,63}|\/(?!\/)[^\s#\x00-\x1f\x7f]{0,511})$/).optional() }).strict(),
+        route: z.string().regex(/^(?:[a-z0-9][a-z0-9_-]{0,63}|\/(?!\/)[^\s#\x00-\x1f\x7f]{0,511})$/).optional(),
+        failOnFindings: z.boolean().optional() }).strict(),
     z.object({ operation: z.literal('test-run'), gate: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/), mode: z.enum(['canonical', 'full', 'staged']),
         select: z.object({ kind: z.enum(['spec', 'file', 'test', 'route']), value: z.string().min(1).refine(value => Buffer.byteLength(value) <= 4_096 && !/[\x00-\x1f\x7f]/.test(value)) }).strict().optional() }).strict(),
 ])
@@ -154,12 +155,7 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
     try {
         if (captured.operation === 'browser-drive' || captured.operation === 'browser-screenshot') {
             const kind = captured.operation === 'browser-screenshot' ? 'screenshot' : 'drive'
-            const result = await executeBrowserCommand(await composition.browser(kind, captured.role, captured.route))
-            if (result.kind === 'refusal') return refusal(operation, result.reason)
-            if (result.kind === 'complete') { const gate = evaluateUiGate({ activating: kind, receipts: [result.receipt] }); if (gate.kind === 'refusal') return refusal(operation, gate.reason) }
-            // A route that loaded but threw errors or failed requests is evidence to act on, like a failed gate.
-            if (result.kind === 'complete' && result.receipt.verdict === 'findings') return unsatisfied(operation, result, browserFindingsReason(result.receipt))
-            return complete(operation, result)
+            return browserOutcome(captured.operation, await executeBrowserCommand(await composition.browser(kind, captured.role, captured.route)), captured.failOnFindings === true)
         }
         if (captured.operation === 'test-run') {
             const prepared = await composition.gate(captured)
@@ -182,6 +178,15 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
         }
         return await work(captured as WorkRequest, composition)
     } catch (error) { return refusal(operation, errorCause(error)) }
+}
+
+// Findings are evidence for the agent and the grader to weigh, so they fail the command only for a criterion that demands a clean route.
+export function browserOutcome(operation: 'browser-drive' | 'browser-screenshot', result: BrowserCommandResult, failOnFindings: boolean): WorkApplicationOutcome {
+    if (result.kind === 'refusal') return refusal(operation, result.reason)
+    const gate = evaluateUiGate({ activating: operation === 'browser-screenshot' ? 'screenshot' : 'drive', receipts: [result.receipt] })
+    if (gate.kind === 'refusal') return refusal(operation, gate.reason)
+    if (failOnFindings && result.receipt.verdict === 'findings') return unsatisfied(operation, result, browserFindingsReason(result.receipt))
+    return complete(operation, result)
 }
 
 function browserFindingsReason(receipt: BrowserCommandReceipt): string {
