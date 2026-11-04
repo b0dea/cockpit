@@ -5,18 +5,21 @@
  * The decisions live in `sibling-checkouts.ts`, `sibling-pull.ts` and `stack-inputs.ts`.
  */
 import { realpath } from 'node:fs/promises'
-import { dirname, sep } from 'node:path'
+import { dirname } from 'node:path'
 import type { ExecuteProbeOutcome } from '../../environment-exec/execute.js'
 import { loadCockpitConfig } from '../../config/load.js'
 import { cockpitCommand } from '../../fix-catalogue.js'
 import { refusalOutcome } from '../../refusal.js'
-import { ENVIRONMENT_CODES, errorCause, type Diagnostic, type EnvironmentDiagnostic, type ExecutionStep } from '../contract.js'
+import { mounted } from '../../schema.js'
+import { listedSurfaceTargets } from '../../surfaces/harness-registry.js'
+import { ENVIRONMENT_CODES, errorCause, isMissing, type Diagnostic, type EnvironmentDiagnostic, type ExecutionStep } from '../contract.js'
 import {
     createGitRunner, inspectSiblingCheckout, loadServedSiblings, missingEnvironmentFileDiagnostics, missingEnvironmentFiles,
     readSiblingCheckouts, SIBLING_CHECKOUTS_PATH, servedSiblings, vanishedServedCheckouts, writeSiblingCheckouts, type GitRunner,
 } from '../sibling-checkouts.js'
 import { fastForwardCheckout, type PullRow } from '../sibling-pull.js'
 import { mapLimit } from '../map-limit.js'
+import { applyAgentGrants, inside, planAgentGrants } from '../served-checkout-grants.js'
 import type { LoadedCockpitConfigResult } from './health.js'
 import { staleStackDiagnostics } from '../stack-inputs.js'
 
@@ -39,10 +42,6 @@ export interface UseCommandInput {
     readonly env: Readonly<Record<string, string | undefined>>
 }
 
-function inside(path: string, root: string): boolean {
-    return path === root || path.startsWith(`${root}${sep}`)
-}
-
 async function gitOrRefusal(env: UseCommandInput['env'], execute: Execute): Promise<GitRunner | SiblingCommandOutcome> {
     const git = await createGitRunner(env, execute)
     return 'unavailable' in git
@@ -63,8 +62,12 @@ export async function runUse(input: UseCommandInput, dependencies: Readonly<{ ex
     // A sibling removed from cockpit.toml can still be forgotten, or doctor would name it forever.
     if (!sibling && input.clear && Object.hasOwn(recorded.checkouts, input.slug)) {
         const { [input.slug]: forgotten, ...others } = recorded.checkouts
+        const grants = await planAgentGrants({ root, slug: input.slug, declared: undefined, served: undefined, targets: [] })
+        if (grants.kind !== 'complete') return { status: 2, result: null, diagnostics: [grants.diagnostic] }
         const written = await writeSiblingCheckouts(root, others)
         if (written.kind !== 'complete') return recordUnwritable(configPath, root, written.message)
+        const granted = await applyAgentGrants(root, grants.plan)
+        if (granted.kind !== 'complete') return { status: 2, result: null, diagnostics: [granted.diagnostic] }
         return { status: 0, diagnostics: [], destination: null, artifact: `Forgot the checkout recorded for ${input.slug}, which cockpit.toml no longer declares.\n`,
             result: { slug: input.slug, overridden: false, previous: forgotten } }
     }
@@ -74,8 +77,16 @@ export async function runUse(input: UseCommandInput, dependencies: Readonly<{ ex
             `name a declared sibling, or declare this one with ${cockpitCommand('sibling add', { operand: input.slug, config: configPath })}`)
     }
     const declaredPath = servedSiblings(root, config, {}).get(sibling.slug)!.declared
-    // Compared with a resolved candidate, so a siblings root reached through a link still matches.
-    const declared = await realpath(declaredPath).catch(() => declaredPath)
+    // Compared with a resolved candidate, so a siblings root reached through a link still matches. A
+    // declared checkout not cloned yet stays as declared; one that cannot be resolved is not guessed at.
+    let declared = declaredPath
+    try {
+        declared = await realpath(declaredPath)
+    } catch (error) {
+        if (!isMissing(error)) return refusalOutcome(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
+            `the declared checkout of sibling ${sibling.slug}, ${declaredPath}, could not be resolved: ${errorCause(error)}`, declaredPath,
+            'make that directory and every directory above it readable, or correct sibling.dir in cockpit.toml, then run this command again')
+    }
     const previous = recorded.checkouts[sibling.slug]
     let served = declared
     let evidence: 'object-store' | 'remote' | undefined
@@ -90,8 +101,15 @@ export async function runUse(input: UseCommandInput, dependencies: Readonly<{ ex
     const { [sibling.slug]: _cleared, ...others } = recorded.checkouts
     // Naming the declared checkout is the same as clearing: it is what serves the sibling by default.
     const checkouts = served === declared ? others : { ...others, [sibling.slug]: served }
+    // The tools that hold a committed grant for this sibling, as sync writes them.
+    const targets = mounted(config, config.environment.profiles).some(row => row.slug === sibling.slug) ? listedSurfaceTargets(config.surfaces.tools) : []
+    const grants = await planAgentGrants({ root, slug: sibling.slug, declared, served, targets })
+    if (grants.kind !== 'complete') return { status: 2, result: null, diagnostics: [grants.diagnostic] }
     const written = previous === checkouts[sibling.slug] ? { kind: 'complete' as const } : await writeSiblingCheckouts(root, checkouts)
     if (written.kind !== 'complete') return recordUnwritable(configPath, root, written.message)
+    const granted = await applyAgentGrants(root, grants.plan)
+    if (granted.kind !== 'complete') return { status: 2, result: null, diagnostics: [{ ...granted.diagnostic,
+        message: `${served} was recorded for sibling ${sibling.slug}, but ${granted.diagnostic.message}` }] }
     const current = servedSiblings(root, config, checkouts)
     const entry = current.get(sibling.slug)!
     const diagnostics = [
@@ -104,12 +122,12 @@ export async function runUse(input: UseCommandInput, dependencies: Readonly<{ ex
         entry.overridden ? `Sibling ${sibling.slug} is now served from ${served} (${evidence === 'object-store' ? 'a worktree of' : 'a clone with the same origin as'} ${declared}).`
             : `Sibling ${sibling.slug} is served from its declared checkout ${declared}${previous === undefined ? '' : ` again, no longer from ${previous}`}.`,
         `Recorded for this cockpit checkout only, in ${SIBLING_CHECKOUTS_PATH}; up, the guard, doctor and preflight read it.`,
-        ...(entry.overridden && !covered ? [`${served} lies outside ${declared}, so the directory grants sync wrote for agent tools do not reach it and a tool may ask before editing there; a worktree inside the declared checkout avoids that.`] : []),
+        ...(grants.plan.lines.length > 0 ? [`${served} lies outside ${declared}, which the committed directory grants name:`, ...grants.plan.lines.map(line => `  ${line}`)] : []),
         '',
     ].join('\n')
     return { status: 0, diagnostics, destination: null, artifact,
         result: { slug: sibling.slug, declared, served, overridden: entry.overridden, ...(evidence ? { evidence } : {}),
-            ...(previous === undefined ? {} : { previous }), insideDeclared: covered } }
+            ...(previous === undefined ? {} : { previous }), insideDeclared: covered, ...(grants.plan.report ? { agentGrants: grants.plan.report } : {}) } }
 }
 
 function recordUnwritable(configPath: string, root: string, reason: string): SiblingCommandOutcome {
@@ -144,13 +162,20 @@ export async function runPull(input: PullCommandInput, dependencies: Readonly<{ 
         targets.push({ label: sibling.slug, path: entry.declared, expected: sibling.acquire !== 'none' })
         if (entry.overridden) targets.push({ label: `${sibling.slug} (served)`, path: entry.served, expected: true })
     }
-    const located = await Promise.all(targets.map(async target => {
+    // Where Git puts each target's repository: a string, nothing when there is no checkout there, or
+    // why a toplevel Git named could not be resolved, which is reported against the target's label.
+    const located = await Promise.all(targets.map(async (target): Promise<string | undefined | Readonly<{ unresolved: string }>> => {
         const output = await git.run(target.path, 'pull:root', ['rev-parse', '--show-toplevel'])
-        return output.kind === 'complete' ? await realpath(output.stdout).catch(() => undefined) : undefined
+        if (output.kind !== 'complete') return undefined
+        try {
+            return await realpath(output.stdout)
+        } catch (error) {
+            return isMissing(error) ? undefined : { unresolved: `its repository at ${output.stdout} could not be resolved: ${errorCause(error)}` }
+        }
     }))
     // Two targets in one repository (an in-repo cockpit is its own sibling) move once, under the first one's label.
     const distinct = new Map<string, PullTarget>()
-    located.forEach((toplevel, index) => { if (toplevel !== undefined && !distinct.has(toplevel)) distinct.set(toplevel, targets[index]!) })
+    located.forEach((toplevel, index) => { if (typeof toplevel === 'string' && !distinct.has(toplevel)) distinct.set(toplevel, targets[index]!) })
     const advanced = new Map(await mapLimit([...distinct], PULL_CONCURRENCY, async ([toplevel, target]) =>
         [toplevel, { label: target.label, ...await fastForwardCheckout(git, toplevel) }] as const))
     const rows: (PullRow & { readonly label: string })[] = []
@@ -163,6 +188,13 @@ export async function runPull(input: PullCommandInput, dependencies: Readonly<{ 
                 fix: `run ${cockpitCommand('setup', { config: loaded.result.source.path })} to clone it`, blocked: target.expected }
             rows.push(row)
             if (row.blocked) diagnostics.push(skippedDiagnostic(row))
+            return
+        }
+        if (typeof toplevel !== 'string') {
+            const row = { label: target.label, state: 'skipped' as const, path: target.path, reason: toplevel.unresolved,
+                fix: 'make that directory and every directory above it readable, then run pull again', blocked: true }
+            rows.push(row)
+            diagnostics.push(skippedDiagnostic(row))
             return
         }
         if (reported.has(toplevel)) return

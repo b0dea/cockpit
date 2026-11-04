@@ -274,8 +274,24 @@ worktree has none of the ignored ones, and cockpit never copies them from anothe
 
 A running stack keeps the checkout it mounted: run `down` and `up` after `use`. An agent may run
 `use` for a checkout inside a directory it may already write; any other path is a person's call. The
-directory grants `sync` writes for each agent tool cover the declared checkout, so a worktree kept
-inside it stays reachable without a prompt.
+directory grants `sync` writes for each agent tool are committed and name the declared checkout, so a
+worktree kept inside it stays reachable without a prompt. For a checkout outside it, `use` grants
+the tools that read a machine-local setting, and `use --clear` takes that grant back:
+
+- **Claude Code**: `use` adds the checkout to `permissions.additionalDirectories` in
+  `.claude/settings.local.json`, keeping everything else in the file, and removes only the entry it
+  added. It refuses a file it cannot parse rather than rewrite it, because Claude Code ignores such
+  a file entirely.
+- **OpenCode**: `use` writes the checkout to the machine-local grant file `sync` writes for the
+  sibling, and `sync` keeps it there.
+- **Codex** has no machine-local setting for extra writable roots, so its sandbox still reaches only
+  the declared checkout: start Codex with `--add-dir <checkout>`.
+- **Cursor** and **Grok Build** have no measured machine-local grant, so `use` writes nothing for
+  them and they may ask before editing the checkout.
+
+`use` lists in its output which tools got the grant, and `--json` reports them as `agentGrants`.
+Restart an agent session that is already running so it reads the new grant.
+[Harness surfaces](harness-surfaces.md#sibling-projection-and-standing-cost) records what was measured.
 
 ## Bring checkouts up to date
 

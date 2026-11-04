@@ -93,6 +93,51 @@ describe('serving a sibling from another checkout', () => {
         expect(await inspectServedSiblings({ configPath, env }, deps)).toEqual([])
     })
 
+    it('grants the agent tools a worktree outside the declared checkout through machine-local settings, and takes back only what it added', async () => {
+        const { root, cockpit, configPath } = await estate()
+        const app = join(root, 'app')
+        const worktree = join(root, 'app-feature')
+        git(app, 'worktree', 'add', '--quiet', '-b', 'feature', worktree)
+        const settingsPath = join(cockpit, '.claude/settings.local.json')
+        const grantPath = join(cockpit, '.cockpit/local/opencode-grant-app')
+        await mkdir(join(cockpit, '.claude'))
+        // Claude Code drops a settings file it cannot load, so one cockpit cannot read is left alone and nothing is recorded.
+        await writeFile(settingsPath, '{"permissions": ')
+        expect(await runUse({ configPath, slug: 'app', checkout: worktree, clear: false, env }, deps)).toMatchObject({ status: 2,
+            diagnostics: [{ code: 'SIBLING_CHECKOUT_RECORD_INVALID', target: '.claude/settings.local.json' }] })
+        expect(await exists(join(cockpit, '.cockpit/local/sibling-checkouts'))).toBe(false)
+
+        const person = { model: 'synthetic', permissions: { allow: ['Bash(ls)'], additionalDirectories: ['/synthetic/own'] } }
+        const personBytes = `${JSON.stringify(person)}\n`
+        await writeFile(settingsPath, personBytes)
+        const used = await runUse({ configPath, slug: 'app', checkout: worktree, clear: false, env }, deps)
+        expect(used, JSON.stringify(used)).toMatchObject({ status: 0, result: { served: worktree, insideDeclared: false,
+            agentGrants: { granted: ['claudecode', 'opencode'], ungranted: ['codexcli'] } } })
+        expect(used.artifact).toContain(`start Codex with --add-dir ${worktree}`)
+        expect(JSON.parse(await readFile(settingsPath, 'utf8'))).toEqual({ ...person,
+            permissions: { ...person.permissions, additionalDirectories: ['/synthetic/own', worktree] } })
+        expect(await readFile(grantPath, 'utf8')).toBe(worktree)
+
+        expect(await runUse({ configPath, slug: 'app', clear: true, env }, deps)).toMatchObject({ status: 0 })
+        expect(JSON.parse(await readFile(settingsPath, 'utf8'))).toEqual(person)
+        expect(await readFile(grantPath, 'utf8')).toBe(app)
+
+        // A file cockpit created for its grant alone is removed with it.
+        await rm(settingsPath)
+        await runUse({ configPath, slug: 'app', checkout: worktree, clear: false, env }, deps)
+        expect(JSON.parse(await readFile(settingsPath, 'utf8'))).toEqual({ permissions: { additionalDirectories: [worktree] } })
+        await runUse({ configPath, slug: 'app', clear: true, env }, deps)
+        expect(await exists(settingsPath)).toBe(false)
+    })
+
+    it('refuses a declared checkout it cannot resolve rather than guessing its path', async () => {
+        const { root, configPath } = await estate()
+        await rm(join(root, 'app'), { recursive: true, force: true })
+        await symlink(join(root, 'app'), join(root, 'app'))
+        expect(await runUse({ configPath, slug: 'app', clear: true, env }, deps)).toMatchObject({ status: 2,
+            diagnostics: [{ code: 'EVIDENCE_UNAVAILABLE', target: join(root, 'app'), message: expect.stringContaining('could not be resolved') }] })
+    })
+
     it('refuses a checkout of another repository or part of a checkout, and accepts a clone with the same origin', async () => {
         const { root, cockpit, configPath } = await estate()
         const app = join(root, 'app')
@@ -171,6 +216,23 @@ describe('git runner', () => {
 
         expect(status.kind).toBe('complete')
         expect(await exists(marker)).toBe(false)
+    })
+
+    it('reports a checkout whose repository cannot be resolved under its label instead of dropping it', async () => {
+        const { root, configPath } = await estate([['api', []]])
+        const loop = join(root, 'loop')
+        await symlink(loop, loop)
+        // Git names a toplevel the filesystem cannot resolve, which a real repository does not produce on demand.
+        const bin = join(root, 'bin')
+        await mkdir(bin)
+        const realGit = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim()
+        await writeFile(join(bin, 'git'), `#!/bin/sh\nif [ "$2" = "${join(root, 'api')}" ] && [ "$3" = rev-parse ]; then echo "${loop}"; exit 0; fi\nexec "${realGit}" "$@"\n`, { mode: 0o755 })
+
+        const pulled = await runPull({ configPath, env: { ...env, PATH: `${bin}:${process.env.PATH}` } }, deps)
+
+        const rows = (pulled.result as { repositories: { label: string; state: string; reason?: string }[] }).repositories
+        expect(rows.find(row => row.label === 'api')).toMatchObject({ state: 'skipped', reason: expect.stringContaining(`${loop} could not be resolved`) })
+        expect(pulled.diagnostics).toEqual([expect.objectContaining({ code: 'PULL_SKIPPED', target: join(root, 'api'), message: expect.stringMatching(/^api at /) })])
     })
 })
 

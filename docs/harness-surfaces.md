@@ -341,6 +341,26 @@ project root, so the committed pattern is `{file:.cockpit/local/opencode-grant-<
 substitutes the absolute sibling directory that `sync` writes to that machine-local, ignored file,
 and refuses to start, naming the file, until `sync` has run on the machine.
 
+A checkout `cockpit use` serves from outside the declared one needs a grant that names a path on one
+machine, which no committed file can hold. Measured on 2026-11-04, each run writing into the granted
+directory and into an ungranted control directory beside it:
+
+- Claude Code 2.1.318, `claude -p --permission-mode acceptEdits`: a directory listed in
+  `.claude/settings.local.json` `permissions.additionalDirectories` was written and the control was
+  refused. A twin whose list was a string was reported as not loaded, and granted nothing. The run
+  was in an untrusted workspace, where Claude Code ignored the committed `.claude/settings.json`
+  list, so whether the two lists combine once a person trusts the workspace is unmeasured. `use`
+  writes the served checkout there.
+- OpenCode 1.19.5, `opencode run`: the grant file holding the worktree path allowed the write, the
+  control was denied, and a pattern naming a missing grant file stopped OpenCode at start, naming the
+  file. `use` and `sync` write the served checkout there.
+- Codex 0.166.0, `codex exec`: Codex reads no machine-local project file; its only per-project user
+  setting is the trust level. `--add-dir <dir>` at start made the worktree writable beside the
+  committed writable roots, and without it the same write was refused. `use` writes nothing for
+  Codex and prints that flag.
+
+Cursor and Grok Build were not installed, so `use` writes nothing for them and says so.
+
 The `[cockpit].guide_cap` limit applies to always-loaded guidance, copied sibling guides included;
 going over it makes `sync`, `check` and `preflight` report `GUIDE_CAP_EXCEEDED` with the measured
 lines and the cap. The same code reports cockpit's region of **AGENTS.md** passing 32768 bytes,
