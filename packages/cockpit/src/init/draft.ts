@@ -3,6 +3,7 @@ import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { initCommand } from '../fix-catalogue.js'
+import { canonicalJson } from '../canonical-json.js'
 import { readBoundedInput, schemaIssueSummary, STRUCTURED_INPUT_BYTE_LIMIT } from '../config/load.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { errorCause, snapshotJson, RefusalError, tryParseJson, hasErrorCode } from '../environment/contract.js'
@@ -771,11 +772,6 @@ const STATED_BY: Readonly<Record<AnswerProvenance, string>> = {
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
-
-/** JSON with object keys sorted, so two values compare equal whatever order their keys were written in. */
-const canonicalJson = (value: unknown): string => Array.isArray(value) ? `[${value.map(canonicalJson).join(',')}]`
-    : isRecord(value) ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`
-        : JSON.stringify(value)
 
 /** The complete answer init read for a field, and where from. */
 type DerivedValue = Readonly<{ value: unknown; source: string }>

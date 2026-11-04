@@ -46,7 +46,8 @@ function collectDiagnostics(page, origin, withMessages) {
     const messages = []
     // Control characters are replaced so message text stays one line of plain text; the cap is in bytes.
     const excerpt = value => {
-        let text = String(value).replace(/[\x00-\x1f\x7f]+/g, ' ').trim()
+        // A character is at least one byte, so the first MAX_MESSAGE_BYTES characters hold the longest prefix within the cap.
+        let text = String(value).replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, MAX_MESSAGE_BYTES)
         while (Buffer.byteLength(text) > MAX_MESSAGE_BYTES) text = text.slice(0, -1)
         return text
     }

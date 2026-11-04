@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { initCommand } from '../fix-catalogue.js'
+import { canonicalJson } from '../canonical-json.js'
 import type { SurfaceTarget } from '../surfaces/contract.js'
 import {
     runInitApplication,
@@ -76,11 +77,6 @@ const UNATTRIBUTED_UNLESS_MARKED: readonly string[] = ['environment.machine']
 
 const isTable = (value: unknown): value is Record<string, unknown> =>
     value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date)
-
-// The init presentation reaches no document owner, so it keeps its own canonical form.
-const canonicalJson = (value: unknown): string => Array.isArray(value) ? `[${value.map(canonicalJson).join(',')}]`
-    : isTable(value) ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`
-        : JSON.stringify(value)
 
 /** Flattens the answers file to field -> value, naming any key that matches no interview field. */
 function answersByField(answers: Readonly<Record<string, unknown>>): { fields: Map<string, unknown>; unknown: string[] } {

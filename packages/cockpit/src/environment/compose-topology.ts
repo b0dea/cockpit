@@ -341,7 +341,7 @@ async function canonicalPath(path: string): Promise<string> {
  * Docker follows a symbolic link in the bind source, so `./api/cache -> /` would otherwise hand
  * the host root to a container under a mount = "always" checkout.
  */
-export async function redirectedBindSources(binds: readonly string[], declared: readonly string[]): Promise<readonly Readonly<{
+export async function redirectedBindSources(binds: readonly string[], declared: readonly string[], resolve: (path: string) => Promise<string> = canonicalPath): Promise<readonly Readonly<{
     bind: string; holder: string
 }>[]> {
     const redirected: { bind: string; holder: string }[] = []
@@ -350,7 +350,7 @@ export async function redirectedBindSources(binds: readonly string[], declared: 
         const owner = bindHolder(bind, declared)
         if (owner === undefined) continue
         let inside: boolean
-        try { inside = contains(await canonicalPath(owner), await canonicalPath(bind)) }
+        try { inside = contains(await resolve(owner), await resolve(bind)) }
         catch { inside = false } // A bind that cannot be resolved cannot be shown to sit inside its holder, so it is reported redirected and refused.
         if (!inside) redirected.push({ bind, holder: owner })
     }
@@ -384,6 +384,7 @@ async function assessBinds(
     declarations: ComposeTopologyDeclarations,
     variables: Readonly<Record<string, string>>,
     active: readonly string[],
+    resolve: (path: string) => Promise<string>,
 ): Promise<readonly Diagnostic[]> {
     const diagnostics: Diagnostic[] = []
     const running = services.filter(service => !service.profiles?.length || service.profiles.some(profile => active.includes(profile)))
@@ -395,7 +396,7 @@ async function assessBinds(
         .filter(bind => bind.path !== 'volume')
     const resolved = binds.flatMap(bind => bind.path === undefined ? [] : [bind.path])
     const { missing, unexpected } = compareBindSources(resolved, declared)
-    const redirected = (await redirectedBindSources(resolved, declared)).map(({ bind }) => bind)
+    const redirected = (await redirectedBindSources(resolved, declared, resolve)).map(({ bind }) => bind)
     const under = active.length === 0 ? '' : ` with profile ${active.join(', ')} active`
     for (const sibling of mounted) {
         if (!missing.includes(sibling.path)) continue
@@ -466,9 +467,16 @@ export async function assessComposeTopology(
     const usable = defaults.filter(profile => defined.has(profile))
     const sets = [usable, ...[...defined].filter(profile => !usable.includes(profile)).sort().map(profile => [...usable, profile])]
     const variables = Object.fromEntries(declarations.siblings.map(sibling => [sibling.var, sibling.path]))
+    // The same binds recur in most profile sets, so each real path is resolved once.
+    const resolutions = new Map<string, Promise<string>>()
+    const resolve = (path: string) => {
+        let resolution = resolutions.get(path)
+        if (resolution === undefined) { resolution = canonicalPath(path); resolutions.set(path, resolution) }
+        return resolution
+    }
     const seen = new Set<string>()
     for (const active of sets) {
-        for (const diagnostic of await assessBinds(services, declarations, variables, active)) {
+        for (const diagnostic of await assessBinds(services, declarations, variables, active, resolve)) {
             const key = `${diagnostic.code}\0${diagnostic.target}`
             if (!seen.has(key)) { seen.add(key); diagnostics.push(diagnostic) }
         }
