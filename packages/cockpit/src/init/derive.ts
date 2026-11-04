@@ -689,6 +689,7 @@ export async function composeFindings(input: Readonly<{ root: string; draft: str
             if (ports === undefined || services.has(id)) continue
             const health = service.healthcheck as { disable?: unknown; test?: unknown } | undefined
             services.set(id, { id, ports, mountSources: [], build: service.build !== undefined,
+                containerName: typeof service.container_name === 'string' ? service.container_name : null,
                 image: typeof service.image === 'string' ? service.image : null,
                 healthcheck: health !== undefined && health !== null && health.disable !== true && !(Array.isArray(health.test) && health.test[0] === 'NONE') })
         }
@@ -696,6 +697,6 @@ export async function composeFindings(input: Readonly<{ root: string; draft: str
     const bases = draft.ports?.bases
     const found = await assessComposeTopology([...services.values()], { projectDirectory: composeProjectDirectory(input.root, references as string[]),
         portVariables: bases !== null && typeof bases === 'object' ? Object.keys(bases) : [], siblings: [], hostPaths: [] })
-    return [...unread, ...found.filter(row => row.code === 'COMPOSE_PORT_NOT_LEASED' || row.code === 'COMPOSE_HEALTHCHECK_MISSING')
+    return [...unread, ...found.filter(row => row.code === 'COMPOSE_PORT_NOT_LEASED' || row.code === 'COMPOSE_CONTAINER_NAME_FIXED' || row.code === 'COMPOSE_HEALTHCHECK_MISSING')
         .map(row => ({ ...row, severity: 'warning' as const }))]
 }

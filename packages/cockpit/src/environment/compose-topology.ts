@@ -52,6 +52,8 @@ export interface ComposeServiceTopology {
     readonly healthcheck: boolean
     readonly image: string | null
     readonly build: boolean
+    /** The service's fixed `container_name`, `null` when Compose names the container itself. */
+    readonly containerName: string | null
     /**
      * Each volume source as Compose reports it without interpolation: the absolute host path of a
      * bind, or the raw `${VAR}` text of a source still waiting for its variable.
@@ -196,6 +198,8 @@ function projectServices(stdout: Buffer): readonly ComposeServiceTopology[] | un
             && !(Array.isArray(test) && test[0] === 'NONE')
         const image = service.image
         if (image !== undefined && typeof image !== 'string') return undefined
+        const containerName = service.container_name
+        if (containerName !== undefined && typeof containerName !== 'string') return undefined
         const rawVolumes = service.volumes ?? []
         if (!Array.isArray(rawVolumes)) return undefined
         const mountSources: string[] = []
@@ -207,7 +211,7 @@ function projectServices(stdout: Buffer): readonly ComposeServiceTopology[] | un
         }
         projected.push({
             id, ports, healthcheck,
-            image: image ?? null, build: service.build !== undefined, mountSources,
+            image: image ?? null, build: service.build !== undefined, containerName: containerName ?? null, mountSources,
         })
     }
     return projected
@@ -360,7 +364,7 @@ export interface ComposeTopologyDeclarations {
 /**
  * Judges a cockpit's own Compose topology. A host port that is not drawn from a leased
  * `ports.bases` variable is the same number in every worktree and parallel stack, so the second
- * stack to start fails to bind it; the remaining findings are warnings about what cockpit can
+ * stack to start fails to bind it, and a fixed `container_name` fails the same way; the remaining findings are warnings about what cockpit can
  * then promise, not about whether the stack runs.
  */
 export async function assessComposeTopology(
@@ -429,6 +433,11 @@ export async function assessComposeTopology(
                 fix: `publish it as "\${${name}}:${port.target}" in the Compose file and declare ${name} under [ports.bases]`,
             })
         }
+        if (service.containerName !== null) diagnostics.push({
+            severity: 'error' as const, code: 'COMPOSE_CONTAINER_NAME_FIXED', target: `compose:${service.id}`,
+            message: `service ${service.id} sets container_name ${JSON.stringify(service.containerName)}, and Docker allows one container of a name, so a second checkout's stack fails to start`,
+            fix: `remove container_name from service ${service.id} and address it by its Compose service name, or with docker compose exec ${service.id}`,
+        })
         if (!service.healthcheck) diagnostics.push({
             severity: 'warning' as const, code: 'COMPOSE_HEALTHCHECK_MISSING', target: `compose:${service.id}`,
             message: `service ${service.id} declares no Compose healthcheck, so running is treated as ready`,

@@ -15,6 +15,9 @@ Install it as an exact, project-local dev dependency (the package is pre-alpha, 
 npm install --save-dev --save-exact @b00dea/cockpit
 ```
 
+With pnpm or yarn, use `pnpm add -D -E @b00dea/cockpit` or `yarn add -D -E @b00dea/cockpit`, and run
+`pnpm exec cockpit` or `yarn cockpit` in place of running it through `npx --no`.
+
 Start with the [repository README](https://github.com/b0dea/cockpit#readme) and
 [Getting started](https://github.com/b0dea/cockpit/blob/main/docs/getting-started.md#install-cockpit).
 

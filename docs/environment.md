@@ -66,12 +66,15 @@ with `COMPOSE_TOPOLOGY_UNAVAILABLE` if Docker cannot produce it. It also checks:
   `COMPOSE_PORT_ALL_INTERFACES`, because Docker then binds every interface and the service is
   reachable from the network; write `"127.0.0.1:${API_HOST_PORT}:3000"`, or name `0.0.0.0` when you
   mean the wider exposure;
+- a service that sets `container_name` fails with `COMPOSE_CONTAINER_NAME_FIXED`, because Docker allows
+  one container of a name and the second checkout's stack would fail to start; remove it and address
+  the service by its Compose service name, or with `docker compose exec <service>`;
 - a service with no Compose healthcheck warns with `COMPOSE_HEALTHCHECK_MISSING`, because running
   is then treated as ready;
 - an image referenced by tag rather than digest warns with `COMPOSE_IMAGE_UNPINNED`.
 
 `doctor` reports a refusal from this check as itself, with its fix, not as the surface evidence it makes
-unavailable. `init` shows the port and healthcheck findings beside the drafted `cockpit.toml`, as
+unavailable. `init` shows the port, container name and healthcheck findings beside the drafted `cockpit.toml`, as
 warnings carrying the same fix; it never edits a Compose file, so apply the edit before or right after
 accepting.
 
