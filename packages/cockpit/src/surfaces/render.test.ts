@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 
 import { describe, expect, it } from 'vitest'
 
+import { RULESYNC_VERSION } from './generator-adapter.js'
 import { renderSurfaceSet, surfaceModelSha256 } from './render.js'
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex')
@@ -14,7 +15,7 @@ function input() {
     return {
         configuredHarnesses: ['claudecode', 'codexcli', 'cursor', 'grokcli', 'opencode'],
         merge: { kind: 'complete', surfaces: [], overrides: [], findings: [] },
-        generated: { kind: 'complete', status: 0, diagnostics: [], mechanism: { package: 'rulesync', version: '43.1.2', role: 'spelling' }, files: [
+        generated: { kind: 'complete', status: 0, diagnostics: [], mechanism: { package: 'rulesync', version: RULESYNC_VERSION, role: 'spelling' }, files: [
             file('codexcli', 'AGENTS.md', 'base instructions\n'),
             file('opencode', 'AGENTS.md', 'base instructions\n'),
             file('opencode', 'opencode.jsonc', '{"$schema":"schema.json","instructions":[]}\n'),

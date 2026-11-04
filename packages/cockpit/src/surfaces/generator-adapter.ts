@@ -47,7 +47,7 @@ export type SurfaceGenerationOutcome =
         kind: 'complete'
         status: 0
         diagnostics: readonly []
-        mechanism: Readonly<{ package: 'rulesync'; version: '43.1.2'; role: 'spelling' }>
+        mechanism: Readonly<{ package: 'rulesync'; version: typeof RULESYNC_VERSION; role: 'spelling' }>
         files: readonly RenderedSurfaceFile[]
         warnings?: readonly SurfaceGenerationWarning[]
     }>
@@ -76,7 +76,7 @@ export type SurfaceBundleGenerationOutcome =
         status: 0
         diagnostics: readonly []
         format: SurfaceBundleFormat
-        mechanism: Readonly<{ package: 'rulesync'; version: '43.1.2'; role: 'packaging' }>
+        mechanism: Readonly<{ package: 'rulesync'; version: typeof RULESYNC_VERSION; role: 'packaging' }>
         files: readonly RenderedSurfaceBundleFile[]
     }>
     | Exclude<SurfaceGenerationOutcome, { kind: 'complete' }>
@@ -174,7 +174,9 @@ interface EstatePassResult {
     readonly jobs: ReadonlyMap<string, TargetGeneration | SurfaceGenerationDiagnostic>
 }
 
-const PINNED_VERSION = '43.1.2'
+// The bundled Rulesync release, recorded as every generated surface's provenance. Written by
+// npm run bundle:rulesync from devDependencies.rulesync in package.json; --check refuses a drift.
+export const RULESYNC_VERSION = '43.1.2'
 const OPERATION_TIMEOUT_MS = 30_000
 const CLEANUP_TIMEOUT_MS = 2_000
 const MAX_NODE_BYTES = 536_870_912
@@ -190,7 +192,8 @@ const EMPTY_FILES = Object.freeze([]) as readonly []
 const EMPTY_DIAGNOSTICS = Object.freeze([]) as readonly []
 const EMPTY_WARNINGS = Object.freeze([]) as readonly SurfaceGenerationWarning[]
 // This digest binds the checked-in, self-contained generator asset. The build-time package
-// tree is deliberately absent from the runtime authority boundary.
+// tree is deliberately absent from the runtime authority boundary. npm run bundle:rulesync
+// writes it with the bundle.
 const PINNED_GENERATOR_BUNDLE_SHA256 = '01781a4b3952c24a1ec3ec749985eccf895728e932bc41a3bea4ab1d901fe4a5'
 // The worker programs enforce these bounds; they receive them in each request so the limits keep
 // one owner here.
@@ -244,7 +247,7 @@ function complete(files: readonly RenderedSurfaceFile[], warnings: readonly Surf
         kind: 'complete',
         status: 0,
         diagnostics: EMPTY_DIAGNOSTICS,
-        mechanism: { package: 'rulesync' as const, version: PINNED_VERSION, role: 'spelling' as const },
+        mechanism: { package: 'rulesync' as const, version: RULESYNC_VERSION, role: 'spelling' as const },
         files: files.map(file => ({ ...file })),
         warnings: warnings.length === 0 ? EMPTY_WARNINGS : warnings.map(warning => ({ ...warning })),
     }
@@ -259,7 +262,7 @@ function completeBundle(
         status: 0,
         diagnostics: EMPTY_DIAGNOSTICS,
         format,
-        mechanism: { package: 'rulesync' as const, version: PINNED_VERSION, role: 'packaging' as const },
+        mechanism: { package: 'rulesync' as const, version: RULESYNC_VERSION, role: 'packaging' as const },
         files: files.map(({ path, bytes, sha256 }) => ({ path, bytes, sha256 })),
     }
 }
@@ -874,7 +877,7 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
     let bundle: BundleAuthority
     try { bundle = await bundleAuthority() } catch (error) {
         return unavailable(diagnostic('SURFACE_PACKAGE_UNAVAILABLE',
-            `the authenticated Rulesync ${PINNED_VERSION} generator bundle is unavailable: ${errorCause(error)} — fix: reinstall @b00dea/cockpit`,
+            `the authenticated Rulesync ${RULESYNC_VERSION} generator bundle is unavailable: ${errorCause(error)} — fix: reinstall @b00dea/cockpit`,
             'package', 'rulesync-generator.cjs'))
     }
     let programs: SurfacePrograms

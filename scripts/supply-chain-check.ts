@@ -31,47 +31,16 @@ type Json = Record<string, any>
 interface LockNode { path: string; version?: string; hasInstallScript: boolean; bin: unknown; allowScript?: true }
 export interface SupplyChainDiagnostic { readonly code: string; readonly path: string; readonly message: string }
 
-const EXPECTED_RUNTIME_DEPENDENCIES = Object.freeze({ 'smol-toml': '1.9.1', yaml: '2.9.1', zod: '4.6.7' })
 const EXPECTED_PACKAGE_LINKS = Object.freeze({
     repository: { type: 'git', url: 'git+https://github.com/b0dea/cockpit.git', directory: 'packages/cockpit' },
     homepage: 'https://github.com/b0dea/cockpit#readme',
     bugs: { url: 'https://github.com/b0dea/cockpit/issues' },
 })
-const REVIEWED_EXECUTABLE_LOCK_NODES: readonly LockNode[] = Object.freeze([
-    {"path": "node_modules/@changesets/cli", "version": "3.0.3", "hasInstallScript": false, "bin": {"changeset": "bin.js"}},
-    {"path": "node_modules/@typescript/old", "version": "6.0.3", "hasInstallScript": false, "bin": {"tsc": "bin/tsc", "tsserver": "bin/tsserver"}},
-    {"path": "node_modules/@typescript/typescript6", "version": "6.0.2", "hasInstallScript": false, "bin": {"tsc6": "bin/tsc6"}},
-    {"path": "node_modules/acorn", "version": "8.19.0", "hasInstallScript": false, "bin": {"acorn": "bin/acorn"}},
-    {"path": "node_modules/dependency-cruiser", "version": "18.7.0", "hasInstallScript": false, "bin": {"depcruise": "bin/dependency-cruiser.mjs", "depcruise-baseline": "bin/depcruise-baseline.mjs", "depcruise-fmt": "bin/depcruise-fmt.mjs", "depcruise-wrap-stream-in-html": "bin/wrap-stream-in-html.mjs", "dependency-cruise": "bin/dependency-cruiser.mjs", "dependency-cruiser": "bin/dependency-cruiser.mjs"}},
-    {"path": "node_modules/esbuild", "version": "0.28.2", "hasInstallScript": true, "bin": {"esbuild": "bin/esbuild"}, "allowScript": true},
-    {"path": "node_modules/esprima", "version": "4.0.1", "hasInstallScript": false, "bin": {"esparse": "bin/esparse.js", "esvalidate": "bin/esvalidate.js"}},
-    {"path": "node_modules/fsevents", "version": "2.3.3", "hasInstallScript": true, "bin": null, "allowScript": true},
-    {"path": "node_modules/gray-matter/node_modules/js-yaml", "version": "3.15.2", "hasInstallScript": false, "bin": {"js-yaml": "bin/js-yaml.js"}},
-    {"path": "node_modules/human-id", "version": "4.2.2", "hasInstallScript": false, "bin": {"human-id": "dist/cli.js"}},
-    {"path": "node_modules/js-yaml", "version": "5.5.0", "hasInstallScript": false, "bin": {"js-yaml": "bin/js-yaml.mjs"}},
-    {"path": "node_modules/json5", "version": "2.2.3", "hasInstallScript": false, "bin": {"json5": "lib/cli.js"}},
-    {"path": "node_modules/katex", "version": "0.18.2", "hasInstallScript": false, "bin": {"katex": "cli.js"}},
-    {"path": "node_modules/markdown-it", "version": "15.0.3", "hasInstallScript": false, "bin": {"markdown-it": "bin/markdown-it.mjs"}},
-    {"path": "node_modules/markdownlint-cli2", "version": "0.24.0", "hasInstallScript": false, "bin": {"markdownlint-cli2": "markdownlint-cli2-bin.mjs"}},
-    {"path": "node_modules/markdownlint-cli2/node_modules/js-yaml", "version": "5.4.3", "hasInstallScript": false, "bin": {"js-yaml": "bin/js-yaml.mjs"}},
-    {"path": "node_modules/nanoid", "version": "3.3.20", "hasInstallScript": false, "bin": {"nanoid": "bin/nanoid.cjs"}},
-    {"path": "node_modules/regexp-tree", "version": "0.1.27", "hasInstallScript": false, "bin": {"regexp-tree": "bin/regexp-tree"}},
-    {"path": "node_modules/resolve", "version": "1.22.13", "hasInstallScript": false, "bin": {"resolve": "bin/resolve"}},
-    {"path": "node_modules/rolldown", "version": "1.2.15", "hasInstallScript": false, "bin": {"rolldown": "bin/cli.mjs"}},
-    {"path": "node_modules/rulesync", "version": "43.1.2", "hasInstallScript": false, "bin": {"rulesync": "dist/cli/index.js"}},
-    {"path": "node_modules/semver", "version": "7.8.5", "hasInstallScript": false, "bin": {"semver": "bin/semver.js"}},
-    {"path": "node_modules/tsx", "version": "4.23.15", "hasInstallScript": false, "bin": {"tsx": "dist/cli.mjs"}},
-    {"path": "node_modules/typescript", "version": "7.0.2", "hasInstallScript": false, "bin": {"tsc": "bin/tsc"}},
-    {"path": "node_modules/vite", "version": "8.3.5", "hasInstallScript": false, "bin": {"vite": "bin/vite.js"}},
-    {"path": "node_modules/vitest", "version": "5.0.5", "hasInstallScript": false, "bin": {"vitest": "vitest.mjs"}},
-    {"path": "node_modules/watskeburt", "version": "6.0.0", "hasInstallScript": false, "bin": {"watskeburt": "dist/run-cli.js"}},
-    {"path": "node_modules/which", "version": "2.0.2", "hasInstallScript": false, "bin": {"node-which": "bin/node-which"}},
-    {"path": "node_modules/why-is-node-running", "version": "3.2.1", "hasInstallScript": false, "bin": {"why-is-node-running": "cli.js"}},
-    {"path": "node_modules/yaml", "version": "2.9.1", "hasInstallScript": false, "bin": {"yaml": "bin.mjs"}},
-    // The workspace's own version is read from its manifest: every release moves it, and the
-    // lockfile must move with it.
-    {"path": "packages/cockpit", "hasInstallScript": false, "bin": {"cockpit": "bin/cockpit.mjs"}},
-])
+// The reviewed runtime dependencies and every lock node with an install script or a binary. The
+// file sits beside this script rather than in the inspected root, so a synthetic root is judged
+// against the repository's own review. `--refresh-pins` rewrites it from the lockfile; the review
+// is of its diff, and an install script stays unapproved until allowScripts names it.
+const PINS_PATH = fileURLToPath(new URL('./supply-chain-pins.json', import.meta.url))
 // Only gates no file in this repository can prove.
 const OPERATOR_GAPS = Object.freeze(['package-scope-owner', 'trusted-publisher', 'superseded-minor-deprecation'])
 const MINIMUM_COOLDOWN_DAYS = 7
@@ -172,13 +141,59 @@ function executableLockNodes(lock: Json): LockNode[] {
     }).sort((left, right) => compareCodeUnits(left.path, right.path))
 }
 
-function reviewedAllowScripts() {
-    return Object.fromEntries(REVIEWED_EXECUTABLE_LOCK_NODES.flatMap(row => {
-        if (!row.allowScript) return []
-        const match = /(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)$/.exec(row.path)
-        if (!match || !row.hasInstallScript) throw new Error('[SUPPLY_CHAIN_POLICY_INVALID] allowed script row is not an installer package')
-        return [[`${match[1]}@${row.version}`, true] as const]
-    }).sort(([left], [right]) => compareCodeUnits(left, right)))
+interface ReviewedPins { readonly runtimeDependencies: Readonly<Record<string, string>>; readonly executableLockNodes: readonly LockNode[] }
+
+function reviewedPins(): ReviewedPins {
+    const pins: unknown = JSON.parse(readFileSync(PINS_PATH, 'utf8'))
+    if (!record(pins) || !record(pins.runtimeDependencies) || !Object.values(pins.runtimeDependencies).every(value => typeof value === 'string')
+        || !Array.isArray(pins.executableLockNodes) || !pins.executableLockNodes.every(row => record(row) && typeof row.path === 'string'
+            && typeof row.hasInstallScript === 'boolean' && (row.allowScript === undefined || row.allowScript === true))) {
+        throw new Error(`[SUPPLY_CHAIN_POLICY_INVALID] ${PINS_PATH} is not the reviewed pin shape; restore it from git and run node scripts/supply-chain-check.ts --refresh-pins`)
+    }
+    return pins as unknown as ReviewedPins
+}
+
+// npm's allowScripts key for an installer lock node: its package name, from the last
+// node_modules segment of its path, and its version.
+function installerKey(row: LockNode): string {
+    const match = /(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)$/.exec(row.path)
+    if (!match || !row.hasInstallScript) throw new Error(`[SUPPLY_CHAIN_POLICY_INVALID] ${row.path} is not an installer package`)
+    return `${match[1]}@${row.version}`
+}
+
+function reviewedAllowScripts(pins: ReviewedPins) {
+    return Object.fromEntries(pins.executableLockNodes.flatMap(row => row.allowScript ? [[installerKey(row), true] as const] : [])
+        .sort(([left], [right]) => compareCodeUnits(left, right)))
+}
+
+// The pins as the lockfile and manifests now state them. An install script is pinned as allowed
+// only when the root allowScripts already approves that exact name@version: approving code that
+// runs at install time stays a person's edit, so refresh reports it instead of making it.
+export function refreshedPins(root: string): Readonly<{ text: string; pending: readonly string[] }> {
+    const rootManifest = json(root, 'package.json')
+    const approved: Json = record(rootManifest.allowScripts) ? rootManifest.allowScripts : {}
+    const pending: string[] = []
+    const allowed = new Set<string>()
+    const rows = executableLockNodes(json(root, 'package-lock.json')).map(row => {
+        // The workspace's own version is read from its manifest: every release moves it, and the
+        // lockfile must move with it.
+        if (row.path === 'packages/cockpit') return { path: row.path, hasInstallScript: row.hasInstallScript, bin: row.bin }
+        if (!row.hasInstallScript) return row
+        const key = installerKey(row)
+        if (approved[key] === true) {
+            allowed.add(key)
+            return { ...row, allowScript: true as const }
+        }
+        pending.push(`${key} has an install script that allowScripts in package.json does not approve: read what it runs, then add "${key}": true to allowScripts and rerun npm run deps:refresh`)
+        return row
+    })
+    for (const key of Object.keys(approved).sort(compareCodeUnits)) {
+        if (!allowed.has(key)) pending.push(`allowScripts in package.json approves ${key}, which is not an installer in package-lock.json: remove it`)
+    }
+    const runtimeDependencies = json(root, 'packages/cockpit/package.json').dependencies ?? {}
+    const text = `{\n  "runtimeDependencies": ${JSON.stringify(runtimeDependencies)},\n  "executableLockNodes": [\n${
+        rows.map(row => `    ${JSON.stringify(row)}`).join(',\n')}\n  ]\n}\n`
+    return { text, pending }
 }
 
 function readScript(root: string, script: string): string {
@@ -310,6 +325,7 @@ export function inspectSupplyChain(root: string, packFiles: unknown): Readonly<{
     const rootManifest = json(root, 'package.json')
     const packageManifest = json(root, 'packages/cockpit/package.json')
     const lock = json(root, 'package-lock.json')
+    const pins = reviewedPins()
     for (const [path, manifest] of [['package.json', rootManifest], ['packages/cockpit/package.json', packageManifest]] as const) {
         for (const field of DEPENDENCY_FIELDS) for (const [name, version] of Object.entries(manifest[field] ?? {})) {
             if (typeof version !== 'string' || !EXACT_VERSION.test(version)) diagnostics.push(diagnostic('DEPENDENCY_VERSION_MUTABLE', path, `${field}.${name} must be exact`))
@@ -318,8 +334,8 @@ export function inspectSupplyChain(root: string, packFiles: unknown): Readonly<{
             if (manifest.scripts?.[name]) diagnostics.push(diagnostic('INSTALL_SCRIPT_PRESENT', path, `${name} is not permitted`))
         }
     }
-    if (JSON.stringify(packageManifest.dependencies) !== JSON.stringify(EXPECTED_RUNTIME_DEPENDENCIES)) {
-        diagnostics.push(diagnostic('RUNTIME_DEPENDENCIES_CHANGED', 'packages/cockpit/package.json', 'runtime dependencies require explicit policy review'))
+    if (JSON.stringify(packageManifest.dependencies) !== JSON.stringify(pins.runtimeDependencies)) {
+        diagnostics.push(diagnostic('RUNTIME_DEPENDENCIES_CHANGED', 'packages/cockpit/package.json', 'runtime dependencies differ from scripts/supply-chain-pins.json; review the change, then run npm run deps:refresh'))
     }
     if (JSON.stringify(packageManifest.bin) !== JSON.stringify({ cockpit: 'bin/cockpit.mjs' })) {
         diagnostics.push(diagnostic('PACKAGE_BIN_CHANGED', 'packages/cockpit/package.json', 'the package must expose only the cockpit binary'))
@@ -330,13 +346,13 @@ export function inspectSupplyChain(root: string, packFiles: unknown): Readonly<{
     if (packageManifest.types !== './dist/cli.d.ts' || JSON.stringify(packageManifest.exports) !== JSON.stringify({ '.': { types: './dist/cli.d.ts', import: './dist/cli.js' } })) {
         diagnostics.push(diagnostic('PACKAGE_EXPORTS_CHANGED', 'packages/cockpit/package.json', 'the public import and declaration targets must remain explicit'))
     }
-    if (JSON.stringify(sortedRecord(rootManifest.allowScripts)) !== JSON.stringify(reviewedAllowScripts())) {
-        diagnostics.push(diagnostic('ALLOW_SCRIPTS_POLICY_MISMATCH', 'package.json', 'allowScripts must exactly match the reviewed executable dependency policy'))
+    if (JSON.stringify(sortedRecord(rootManifest.allowScripts)) !== JSON.stringify(reviewedAllowScripts(pins))) {
+        diagnostics.push(diagnostic('ALLOW_SCRIPTS_POLICY_MISMATCH', 'package.json', 'allowScripts must exactly match the installers allowed in scripts/supply-chain-pins.json; run npm run deps:refresh, which names each entry to add or remove'))
     }
-    const reviewedLockNodes = REVIEWED_EXECUTABLE_LOCK_NODES.map(({ allowScript: _allowScript, ...row }) =>
+    const reviewedLockNodes = pins.executableLockNodes.map(({ allowScript: _allowScript, ...row }) =>
         row.path === 'packages/cockpit' ? { path: row.path, version: packageManifest.version, hasInstallScript: row.hasInstallScript, bin: row.bin } : row)
     if (JSON.stringify(executableLockNodes(lock)) !== JSON.stringify(reviewedLockNodes)) {
-        diagnostics.push(diagnostic('LOCK_EXECUTABLE_POLICY_CHANGED', 'package-lock.json', 'installer and binary lock nodes require explicit policy review'))
+        diagnostics.push(diagnostic('LOCK_EXECUTABLE_POLICY_CHANGED', 'package-lock.json', 'installer and binary lock nodes differ from scripts/supply-chain-pins.json; run npm run deps:refresh and review its diff'))
     }
     for (const [path, manifest, lockPath] of [['package.json', rootManifest, ''], ['packages/cockpit/package.json', packageManifest, 'packages/cockpit']] as const) {
         const locked = lock.packages?.[lockPath]
@@ -411,6 +427,12 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
         const result = inspectSupplyChain(resolve(process.argv[3]!), JSON.parse(process.argv[4]!))
         process.stdout.write(`${JSON.stringify(result)}\n`)
         if (result.diagnostics.length > 0) process.exitCode = 1
+    } else if (process.argv.length === 3 && process.argv[2] === '--refresh-pins') {
+        const { text, pending } = refreshedPins(root)
+        writeFileSync(PINS_PATH, text)
+        process.stdout.write('scripts/supply-chain-pins.json now matches package-lock.json; review its diff\n')
+        for (const line of pending) process.stderr.write(`ALLOW_SCRIPTS_REVIEW_NEEDED ${line}\n`)
+        if (pending.length > 0) process.exitCode = 1
     } else if (process.argv.length === 2) process.exitCode = runSupplyChainCheck(root)
-    else throw new Error('[SUPPLY_CHAIN_USAGE_INVALID] use no arguments, --inspect <root> <pack-files-json>, or --sbom <output>')
+    else throw new Error('[SUPPLY_CHAIN_USAGE_INVALID] use no arguments, --refresh-pins, --inspect <root> <pack-files-json>, or --sbom <output>')
 }

@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
-    expectedPackageFiles, generateSbom, runSupplyChainCheck,
+    expectedPackageFiles, generateSbom, refreshedPins, runSupplyChainCheck,
 } from '../../../scripts/supply-chain-check.ts'
 import { cockpitPackageVersion } from './test-support/package-version.js'
 
@@ -132,6 +132,34 @@ describe('the supply-chain readiness detector', () => {
         expect(inspect(root, PACK_FILES).diagnostics.map(row => row.code)).toContain('LOCK_EXECUTABLE_POLICY_CHANGED')
         mutate(root, 'package-lock.json', value => { value.packages['packages/cockpit'].version = bumped })
         expect(inspect(root, PACK_FILES).diagnostics).toEqual([])
+    })
+
+    it('refreshes the pins from the lockfile but leaves each install script for a person to approve', () => {
+        const current = refreshedPins(repositoryRoot)
+        expect(current.text).toBe(readFileSync(join(repositoryRoot, 'scripts/supply-chain-pins.json'), 'utf8'))
+        expect(current.pending).toEqual([])
+
+        const root = fixture()
+        mutate(root, 'package-lock.json', value => {
+            value.packages['node_modules/yaml'].version = '2.99.0'
+            value.packages['node_modules/esbuild'].version = '0.99.0'
+        })
+        const unapproved = refreshedPins(root)
+        const rows = (text: string) => JSON.parse(text).executableLockNodes as { path: string; version?: string; allowScript?: true }[]
+        expect(rows(unapproved.text)).toContainEqual(expect.objectContaining({ path: 'node_modules/yaml', version: '2.99.0' }))
+        expect(rows(unapproved.text).find(row => row.path === 'node_modules/esbuild')).not.toHaveProperty('allowScript')
+        expect(unapproved.pending).toEqual([
+            expect.stringContaining('esbuild@0.99.0 has an install script that allowScripts in package.json does not approve'),
+            expect.stringContaining('approves esbuild@0.28.2, which is not an installer in package-lock.json'),
+        ])
+
+        mutate(root, 'package.json', value => {
+            delete value.allowScripts['esbuild@0.28.2']
+            value.allowScripts['esbuild@0.99.0'] = true
+        })
+        const approved = refreshedPins(root)
+        expect(rows(approved.text).find(row => row.path === 'node_modules/esbuild')).toMatchObject({ version: '0.99.0', allowScript: true })
+        expect(approved.pending).toEqual([])
     })
 
     it.each([

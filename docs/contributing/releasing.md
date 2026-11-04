@@ -109,27 +109,43 @@ arrive together in the `pinned-by-hand` group, which auto-merge skips; the group
 ## Updating pinned dependencies
 
 `rulesync` and `esbuild` produce the committed `packages/cockpit/libexec/rulesync-generator.cjs`
-bundle and its legal notice, so a new version of either makes the bundle stale. The supply-chain
-check pins the version of every installed package that has an install script or a binary, the
-runtime dependencies, and the `allowScripts` entries. Each pin is there so a person reviews what
-changed before it runs in CI or ships.
+bundle and its legal notice, and `src/surfaces/generator-adapter.ts` pins the bundle's digest and
+the Rulesync version it records as provenance. The supply-chain check pins the runtime
+dependencies and every installed package that has an install script or a binary, in
+`scripts/supply-chain-pins.json`, and the `allowScripts` entries in the root `package.json`. Each
+pin is there so a person reviews what changed before it runs in CI or ships.
 
-Check out the update's pull request, then regenerate and review:
+The manifests are the only place a version is moved by hand; one command derives every other pin
+from them and the lockfile. Check out the update's pull request, refresh, and review:
 
 ```sh
 gh pr checkout <number> --repo b0dea/cockpit
 npm ci --ignore-scripts
-npm run bundle:rulesync --workspace @b00dea/cockpit
-npm run lint:supply-chain
+npm run deps:refresh
+git diff
 ```
 
-When `lint:supply-chain` refuses, update the pins in `scripts/supply-chain-check.ts` to the
-versions now in `package-lock.json`: `REVIEWED_EXECUTABLE_LOCK_NODES` for
-`LOCK_EXECUTABLE_POLICY_CHANGED` and `EXPECTED_RUNTIME_DEPENDENCIES` for
-`RUNTIME_DEPENDENCIES_CHANGED`. For `ALLOW_SCRIPTS_POLICY_MISMATCH`, update `allowScripts` in the
-root `package.json`. Read the changelog of each package whose pin you move. Then run the build,
-`npm test` and `npm run typecheck`, commit the regenerated bundle and the pins, and push. Your
-push starts CI; merge by hand once `ci-ok` passes.
+`npm run deps:refresh` does three things:
+
+1. Rewrites `package-lock.json` from the manifests without installing anything. Dependabot records
+   a workspace's exact `devDependencies` entry as a caret range in the lockfile, which
+   `lint:supply-chain` refuses as `LOCKFILE_MISMATCH`.
+2. Regenerates the bundle and its notice, and writes `RULESYNC_VERSION`, taken from
+   `devDependencies.rulesync` in `packages/cockpit/package.json`, and the bundle digest into the
+   generator adapter. `npm run bundle:rulesync:check --workspace @b00dea/cockpit` refuses any of
+   them that is stale.
+3. Rewrites `scripts/supply-chain-pins.json` from the lockfile and the package manifest.
+
+In the diff, read the changelog of each package whose version moved, and look in
+`supply-chain-pins.json` for a new binary or a changed `bin` path. Refresh never approves an
+install script. When the lockfile holds an installer that `allowScripts` does not name at that
+exact version, such as a new esbuild, refresh exits non-zero with `ALLOW_SCRIPTS_REVIEW_NEEDED`,
+names the entry to add, and names the old entry to remove. Read what the install script runs, edit
+`allowScripts` in the root `package.json`, and run `npm run deps:refresh` again.
+
+Then run `npm run typecheck` and `npm test`, and commit the lockfile, the bundle, its notice, the
+adapter and the pins. A new Rulesync ships in the bundle, so it needs a patch changeset. Your push
+starts CI; merge by hand once `ci-ok` passes.
 
 ## One-time setup
 

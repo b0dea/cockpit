@@ -6,7 +6,7 @@ import { snapshotGeneratedJson, type JsonSnapshot, type JsonSnapshotObject, tryP
 import { CustomHarness, type CustomHarness as CustomHarnessValue } from '../schema.js'
 import { safeSurfacePath as safePath, type SurfaceFeature, type SurfaceTarget } from './contract.js'
 import { GUARD_SURFACE_TARGETS, SURFACE_TARGETS, harnessFact } from './harness-registry.js'
-import type { SurfaceGenerationOutcome, SurfaceGenerationWarning } from './generator-adapter.js'
+import { RULESYNC_VERSION, type SurfaceGenerationOutcome, type SurfaceGenerationWarning } from './generator-adapter.js'
 import type { SurfaceMergeResult } from './merge.js'
 import type { McpCollectionOutcome } from './mcp.js'
 import type { ProjectionPlanResult } from './projection.js'
@@ -295,7 +295,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         || captured.generated.kind !== 'complete' || captured.generated.status !== 0 || !Array.isArray(captured.generated.diagnostics)
         || captured.generated.diagnostics.length !== 0 || !object(captured.generated.mechanism)
         || !exactKeys(captured.generated.mechanism, ['package', 'version', 'role']) || captured.generated.mechanism.package !== 'rulesync'
-        || captured.generated.mechanism.version !== '43.1.2' || captured.generated.mechanism.role !== 'spelling'
+        || captured.generated.mechanism.version !== RULESYNC_VERSION || captured.generated.mechanism.role !== 'spelling'
         || !Array.isArray(captured.generated.files)
         || !object(captured.projection) || captured.projection.kind !== 'complete' || !Array.isArray(captured.projection.guides)
         || !Array.isArray(captured.projection.grants)

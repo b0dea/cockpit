@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "npm run build --workspace @b00dea/cockpit",
+    "deps:refresh": "npm install --package-lock-only --ignore-scripts --no-audit --no-fund && npm run bundle:rulesync --workspace @b00dea/cockpit && node scripts/supply-chain-check.ts --refresh-pins",
     "lint:docs": "tsx scripts/docs-lint.ts",
     "lint:markdown": "markdownlint-cli2",
     "lint:links": "git ls-files '*.md' | lychee --offline --include-fragments --no-progress --files-from -",

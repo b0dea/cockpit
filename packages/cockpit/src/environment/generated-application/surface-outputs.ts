@@ -3,7 +3,7 @@ import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
 import { parseDocument } from 'yaml'
 import { SURFACE_TARGETS, type SurfaceFeature, type SurfaceSourceFile, type SurfaceTarget } from '../../surfaces/contract.js'
 import { harnessFact, isGuardSurfaceTarget } from '../../surfaces/harness-registry.js'
-import type { SurfaceGenerationOutcome } from '../../surfaces/generator-adapter.js'
+import { RULESYNC_VERSION, type SurfaceGenerationOutcome } from '../../surfaces/generator-adapter.js'
 import { hasTargetMcpServers, type McpCollectionOutcome } from '../../surfaces/mcp.js'
 import { codexWritableRoot, shippedInstructionCapabilities } from '../../surfaces/projection.js'
 import { surfaceModelSha256, type NativeFragmentSet } from '../../surfaces/render.js'
@@ -141,7 +141,7 @@ function expectsCodexSkillSidecar(bytes: string): boolean {
 export function emptyGeneration(): Extract<SurfaceGenerationOutcome, { kind: 'complete' }> {
     return {
         kind: 'complete', status: 0, diagnostics: [] as readonly [],
-        mechanism: { package: 'rulesync', version: '43.1.2', role: 'spelling' },
+        mechanism: { package: 'rulesync', version: RULESYNC_VERSION, role: 'spelling' },
         files: [],
     }
 }

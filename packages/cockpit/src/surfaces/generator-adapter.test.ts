@@ -12,7 +12,7 @@ import * as ts from '@typescript/typescript6'
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
 import { snapshotExecutionStep, type ExecutionStep } from '../environment/contract.js'
 import { SURFACE_FILE_MAX_BYTES } from './contract.js'
-import { generateSurfaceBatch, generateSurfaceEstate } from './generator-adapter.js'
+import { generateSurfaceBatch, generateSurfaceEstate, RULESYNC_VERSION } from './generator-adapter.js'
 
 const authorityFault = vi.hoisted(() => ({
     kind: 'none' as 'none' | 'grown-bundle' | 'tampered-bundle' | 'node-close' | 'bundle-close' | 'stage-variance' | 'warning-stage-variance' | 'warning-receipt-bounds',
@@ -355,7 +355,10 @@ it('renders one deterministic complete batch through the authenticated generator
     expect(first.kind).toBe('complete')
     expect(second.kind).toBe('complete')
     if (first.kind !== 'complete' || second.kind !== 'complete') return
-    expect(first.mechanism).toEqual({ package: 'rulesync', version: '43.1.2', role: 'spelling' })
+    // package.json is the pin's one source, so the recorded provenance must follow it.
+    const pinned = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).devDependencies.rulesync
+    expect(RULESYNC_VERSION).toBe(pinned)
+    expect(first.mechanism).toEqual({ package: 'rulesync', version: pinned, role: 'spelling' })
     expect(first.files).toEqual(second.files)
     expect(first.files.map(({ target, path }) => `${target}:${path}`)).toEqual([
         ...expectedOutputs.claudecode.map(path => `claudecode:${path}`),

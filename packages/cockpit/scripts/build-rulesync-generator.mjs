@@ -54,6 +54,28 @@ async function packageForInput(input) {
     throw new Error(`cannot establish package ownership for bundled input: ${input}`)
 }
 
+// package.json is the one place a person or Dependabot moves the Rulesync version; the adapter's
+// constants are derived from it and from the bundle bytes.
+async function pinnedRulesyncVersion() {
+    const pinned = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8')).devDependencies?.rulesync
+    if (typeof pinned !== 'string' || !/^\d+\.\d+\.\d+$/.test(pinned)) {
+        throw new Error('devDependencies.rulesync in packages/cockpit/package.json must be an exact version')
+    }
+    return pinned
+}
+
+function replaceConstant(source, name, pattern, value) {
+    const declaration = new RegExp(`^(export )?const ${name} = '${pattern}'$`, 'gm')
+    const found = source.match(declaration) ?? []
+    if (found.length !== 1) throw new Error(`src/surfaces/generator-adapter.ts must declare ${name} exactly once as a string literal`)
+    return source.replace(declaration, (_match, exported = '') => `${exported}const ${name} = '${value}'`)
+}
+
+function pinAdapter(adapter, version, bundle) {
+    const digest = createHash('sha256').update(bundle).digest('hex')
+    return replaceConstant(replaceConstant(adapter, 'RULESYNC_VERSION', '[^\']*', version), 'PINNED_GENERATOR_BUNDLE_SHA256', '[a-f0-9]{64}', digest)
+}
+
 async function renderNotices(inputs) {
     const packages = new Map()
     for (const input of inputs) {
@@ -61,8 +83,9 @@ async function renderNotices(inputs) {
         const item = await packageForInput(input)
         packages.set(`${item.manifest.name}@${item.manifest.version}\0${item.root}`, item)
     }
-    if (![...packages.values()].some(({ manifest }) => manifest.name === 'rulesync' && manifest.version === '43.1.2')) {
-        throw new Error('Rulesync 43.1.2 is absent from the bundle inventory')
+    const pinned = await pinnedRulesyncVersion()
+    if (![...packages.values()].some(({ manifest }) => manifest.name === 'rulesync' && manifest.version === pinned)) {
+        throw new Error(`Rulesync ${pinned}, pinned in package.json, is absent from the bundle inventory; run npm ci --ignore-scripts`)
     }
 
     const sections = []
@@ -127,7 +150,8 @@ async function renderArtifacts() {
     const external = externalRuntimeImports(bundle)
     if (external.length > 0) throw new Error(`Rulesync bundle retained external runtime imports: ${external.join(', ')}`)
     const notice = await renderNotices(Object.keys(result.metafile.inputs))
-    return { bundle, notice }
+    const adapter = pinAdapter(await readFile(adapterPath, 'utf8'), await pinnedRulesyncVersion(), bundle)
+    return { bundle, notice, adapter }
 }
 
 async function main() {
@@ -145,17 +169,15 @@ async function main() {
     if (arguments_.length === 0) {
         await writeFile(bundlePath, rendered.bundle, { encoding: 'utf8', mode: 0o644 })
         await writeFile(noticePath, rendered.notice, { encoding: 'utf8', mode: 0o644 })
+        await writeFile(adapterPath, rendered.adapter, 'utf8')
         return
     }
-    const actualBundle = await readFile(bundlePath, 'utf8')
-    const actualNotice = await readFile(noticePath, 'utf8')
-    if (actualBundle !== rendered.bundle || actualNotice !== rendered.notice) {
-        throw new Error('checked-in Rulesync bundle or legal notice is stale; run npm run bundle:rulesync --workspace @b00dea/cockpit')
+    const artifacts = [[bundlePath, rendered.bundle], [noticePath, rendered.notice], [adapterPath, rendered.adapter]]
+    for (const [path, bytes] of artifacts) {
+        if (await readFile(path, 'utf8') !== bytes) {
+            throw new Error(`${relative(packageRoot, path)} is stale against the installed Rulesync and its pins; run npm run bundle:rulesync --workspace @b00dea/cockpit`)
+        }
     }
-    const adapter = await readFile(adapterPath, 'utf8')
-    const pinned = adapter.match(/const PINNED_GENERATOR_BUNDLE_SHA256 = '([a-f0-9]{64})'/)?.[1]
-    const actualDigest = createHash('sha256').update(actualBundle).digest('hex')
-    if (pinned !== actualDigest) throw new Error('generator adapter does not pin the checked-in Rulesync bundle digest')
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

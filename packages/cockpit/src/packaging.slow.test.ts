@@ -374,7 +374,8 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
 
         expect(Buffer.byteLength(bundle)).toBeGreaterThan(1_000_000)
         expect(notice.match(/^## /gm)).toHaveLength(38)
-        expect(notice).toContain('## rulesync 43.1.2')
+        const rulesync = (JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8')) as { devDependencies: { rulesync: string } }).devDependencies.rulesync
+        expect(notice).toContain(`## rulesync ${rulesync}\n`)
         expect(notice).toContain('SPDX license: MIT')
         expect(manifest.dependencies).not.toHaveProperty('rulesync')
         expect(existsSync(join(installed, '../../rulesync'))).toBe(false)
