@@ -12,7 +12,6 @@ import { observeConfiguration, selectStateRoot } from '../environment/state.js'
 import { executeBrowserCommand, isIssuedBrowserCommandReceipt, issueBrowserRoutePolicy } from './commands.js'
 import { resolveBrowserRuntime } from './runtime.js'
 import { renderBrowserSurfaces } from './surfaces.js'
-import { workCommandOutcome } from '../cli-main.js'
 import { browserOutcome } from '../work-orders/application.js'
 import { evaluateUiGate } from './ui-gate.js'
 
@@ -254,19 +253,16 @@ describe('browser driving commands', () => {
         expect(excerpt.messages.every(row => Buffer.byteLength(row.text) <= 240)).toBe(true)
     })
 
-    it('exits 0 with findings in the receipt, and exits 2 only when the command asks for a clean route', async () => {
+    it('fails the application outcome on findings only when the command asks for a clean route', async () => {
         const found = await fixture({ mode: 'findings' })
         const dirty = await executeBrowserCommand({ runtime: found.runtime, client: found.client, policy: found.policy, kind: 'drive' })
         const tidy = await fixture()
         const clean = await executeBrowserCommand({ runtime: tidy.runtime, client: tidy.client, policy: tidy.policy, kind: 'drive' })
-        const outcome = (result: typeof dirty, strict: boolean) => workCommandOutcome(browserOutcome('browser-drive', result, strict), {})
 
-        // A criterion's check passes or fails on this exit status.
-        expect(outcome(dirty, false)).toMatchObject({ status: 0, result: { receipt: { verdict: 'findings' } } })
-        const strict = outcome(dirty, true)
-        expect(strict).toMatchObject({ status: 2, result: { receipt: { verdict: 'findings' } },
-            diagnostics: [{ code: 'BROWSER_ROUTE_FINDINGS', message: 'settings: 1 console error, 1 uncaught page error, 2 failed requests' }] })
-        expect(outcome(clean, true).status).toBe(0)
+        expect(browserOutcome('browser-drive', dirty, false)).toMatchObject({ kind: 'complete', value: { receipt: { verdict: 'findings' } } })
+        expect(browserOutcome('browser-drive', dirty, true)).toMatchObject({ kind: 'unsatisfied', operation: 'browser-drive',
+            value: { receipt: { verdict: 'findings' } }, reason: 'settings: 1 console error, 1 uncaught page error, 2 failed requests' })
+        expect(browserOutcome('browser-drive', clean, true).kind).toBe('complete')
     })
 
     it('omits the message excerpt, and says why, unless the data posture allows preapproval', async () => {

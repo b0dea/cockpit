@@ -14,7 +14,7 @@ import { createInvocationRecord, EXIT_CODES } from './invocation.js'
 import { commandGroups, commandSpelling, commandStages, commands, describePublicOption, internalCommands, isWorkHandler, isRecordedAnswerField, resolveOrdinaryInvocation, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
 import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS, isGuardSurfaceTarget } from './surfaces/harness-registry.js'
-import type { FixContext } from './fix-catalogue.js'
+import { cockpitCommand, type FixContext } from './fix-catalogue.js'
 import { type Diagnostic, renderHumanDiagnostics, renderHumanValue, renderJsonResponse } from './diagnostics.js'
 import { classifyEstateObservation, draftFromEstate, observeCockpitRoot, observePublicEstate } from './init/draft.js'
 import { runInitOperatorCommand, type UnattendedInit } from './init/command.js'
@@ -502,21 +502,19 @@ function unsatisfiedWorkDiagnostic(operation: WorkApplicationRequest['operation'
     if (operation === 'work-verify') return { severity: 'error', message,
         code: 'WORK_VERIFY_FAILED' satisfies typeof ENVIRONMENT_CODES.WORK_VERIFY_FAILED,
         fix: 'for an order changed since acceptance, run npx --no cockpit work accept --config <your cockpit.toml> --work-order <id> or revert the change; for a done order without a passing grade, regrade it with work grade; for a decision record that is missing or no longer cites its order, restore it from git or put back its "Work order: <id>" line' }
-    if (operation === 'grade-criteria') return { severity: 'error', message,
-        code: 'WORK_GRADE_UNSATISFIED' satisfies typeof ENVIRONMENT_CODES.WORK_GRADE_UNSATISFIED,
-        fix: 'read result.criteria and result.checks: fix the product for an unmet or unclear criterion, make a failed check pass, revert each change outside scope the scope-changes-necessary verdict calls unneeded, then grade again with npx --no cockpit grade --config <your cockpit.toml> --criteria <file>' }
     return { severity: 'error', message,
         code: 'WORK_GRADE_UNSATISFIED' satisfies typeof ENVIRONMENT_CODES.WORK_GRADE_UNSATISFIED,
-        fix: 'read result.criteria, result.checks and result.outOfScope: fix the product for an unmet or unclear criterion, make a failed check pass, revert each change outside scope the scope-changes-necessary verdict calls unneeded (under [work] grading = "checks", every change outside scope), have a person amend the order when amendments-hold-bar is unmet, then grade again with npx --no cockpit work grade --config <your cockpit.toml> --work-order <id>' }
+        fix: operation === 'grade-criteria'
+            ? 'read result.criteria and result.checks: fix the product for an unmet or unclear criterion, make a failed check pass, revert each change outside scope the scope-changes-necessary verdict calls unneeded, then grade again with npx --no cockpit grade --config <your cockpit.toml> --criteria <file>'
+            : 'read result.criteria, result.checks and result.outOfScope: fix the product for an unmet or unclear criterion, make a failed check pass, revert each change outside scope the scope-changes-necessary verdict calls unneeded (under [work] grading = "checks", every change outside scope), have a person amend the order when amendments-hold-bar is unmet, then grade again with npx --no cockpit work grade --config <your cockpit.toml> --work-order <id>' }
 }
 
 function weakenedTestsDiagnostic(operation: WorkApplicationRequest['operation'], message: string): Diagnostic {
-    if (operation === 'work-grade') return { severity: 'error', message,
-        code: 'WORK_TEST_WEAKENED' satisfies typeof ENVIRONMENT_CODES.WORK_TEST_WEAKENED,
-        fix: 'read result.testProtection.findings and the verdict on them: restore each test weakened to make the change pass. Under [work] grading = "independent" the evaluator judged the test changes unjustified in the diff; under "self" your --note names each flagged file and why; under "checks" acknowledge a legitimate change with npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why it is not a weakening>, which [work.gates] acknowledge = "person" leaves to a person at a terminal with --interactive; never type the digest for them' }
     return { severity: 'error', message,
         code: 'WORK_TEST_WEAKENED' satisfies typeof ENVIRONMENT_CODES.WORK_TEST_WEAKENED,
-        fix: 'read result.testProtection: restore each deleted, skipped, suppressed or loosened test. A grade without an order has the evaluator judge the test changes; an order records the base they are compared with, and under [work] grading = "checks" a legitimate change is acknowledged with npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why>, with --interactive by a person where [work.gates] acknowledge = "person"' }
+        fix: operation === 'work-grade'
+            ? 'read result.testProtection.findings and the verdict on them: restore each test weakened to make the change pass. Under [work] grading = "independent" the evaluator judged the test changes unjustified in the diff; under "self" your --note names each flagged file and why; under "checks" acknowledge a legitimate change with npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why it is not a weakening>, which [work.gates] acknowledge = "person" leaves to a person at a terminal with --interactive; never type the digest for them'
+            : 'read result.testProtection: restore each deleted, skipped, suppressed or loosened test. A grade without an order has the evaluator judge the test changes; an order records the base they are compared with, and under [work] grading = "checks" a legitimate change is acknowledged with npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why>, with --interactive by a person where [work.gates] acknowledge = "person"' }
 }
 
 // A person gate binds what the person reads to the digest they type, so it never completes for an agent.
@@ -535,11 +533,14 @@ function sameToolGradeWarnings(value: unknown, env: Readonly<Record<string, stri
         fix: 'install and sign in to the passed-over tool so another tool grades the work, or name the grader you accept with --evaluator <tool>' }]
 }
 
-export function workCommandOutcome(outcome: WorkApplicationOutcome, env: Readonly<Record<string, string | undefined>>): CommandOutcome {
+function workCommandOutcome(outcome: WorkApplicationOutcome, env: Readonly<Record<string, string | undefined>>): CommandOutcome {
     if (outcome.kind === 'complete') return { status: 0, result: outcome.value, diagnostics: sameToolGradeWarnings(outcome.value, env) }
-    if (outcome.kind === 'unsatisfied') return { status: 2, result: outcome.value, diagnostics: [
-        ...outcome.weakening ? [weakenedTestsDiagnostic(outcome.operation, outcome.weakening)] : [],
-        ...outcome.reason || !outcome.weakening ? [unsatisfiedWorkDiagnostic(outcome.operation, outcome.reason)] : [], ...sameToolGradeWarnings(outcome.value, env)] }
+    if (outcome.kind === 'unsatisfied') {
+        const weakened = outcome.weakening ? [weakenedTestsDiagnostic(outcome.operation, outcome.weakening)] : []
+        // A failure that is only test weakening is already stated by its own diagnostic.
+        const unsatisfied = weakened.length === 0 || outcome.reason !== '' ? [unsatisfiedWorkDiagnostic(outcome.operation, outcome.reason)] : []
+        return { status: 2, result: outcome.value, diagnostics: [...weakened, ...unsatisfied, ...sameToolGradeWarnings(outcome.value, env)] }
+    }
     return usageOutcome('WORK_APPLICATION_REFUSED', outcome.kind === 'refusal' ? outcome.reason : 'this step needs a person at a terminal')
 }
 
@@ -611,13 +612,19 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         sessionId,
         timeoutMs: RUNTIME_STEP_TIMEOUT_MS,
         ...(holderProcess === undefined ? {} : { holderProcess }),
-        ...(profiles.length === 0 ? {} : { activeProfiles: profiles }),
+        activeProfiles: profiles,
     }, executeProbe)
     const healthAdapters = (configPath: string) => createHealthCommandAdapters({
         configPath,
         env,
         timeoutMs: RUNTIME_STEP_TIMEOUT_MS,
     }, executeProbe)
+    // The ordinary (non-session) verbs all need a valid session identity and an absolute config path.
+    const withSession = <Input extends Readonly<{ configPath: string }>>(
+        run: (input: Input, configPath: string, sessionId: string) => Promise<CommandOutcome>,
+    ) => async (input: Input): Promise<CommandOutcome> => ordinarySessionId === null
+        ? usageOutcome('CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
+        : run(input, resolve(input.configPath), ordinarySessionId)
     const workHandlers: Partial<Pick<CommandHandlers, WorkHandlerIdentifier>> = {}
     for (const command of commands) if (isWorkHandler(command.handler)) {
         workHandlers[command.handler] = async input => workCommandOutcome(await configuredWorkApplication(input, runtime), runtime.env ?? process.env)
@@ -684,22 +691,12 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         },
         selftest: runConfiguredSurfaceSelftestOutcome,
         upgrade: input => runUpgrade({ ...input, env: concreteEnvironment(env) }, { execute: executeProbe, executeForeground: executeForegroundProcess }),
-        up: async (input) => {
-            const sessionId = ordinarySessionId
-            if (sessionId === null) return usageOutcome(
-                'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
+        up: withSession(async (input, configPath, sessionId) => {
             const wrapper = await sessionChildHolderProcess(env)
             if (wrapper.refusal) return wrapper.refusal
-            const configPath = resolve(input.configPath)
             return runUpApplication({ configPath }, lifecycleAdapters(configPath, sessionId, wrapper.holderProcess, input.profiles))
-        },
-        sleep: (input) => {
-            const sessionId = ordinarySessionId
-            if (sessionId === null) return Promise.resolve(usageOutcome(
-                'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
-            const configPath = resolve(input.configPath)
-            return runSleepApplication({ configPath }, lifecycleAdapters(configPath, sessionId))
-        },
+        }),
+        sleep: withSession((_input, configPath, sessionId) => runSleepApplication({ configPath }, lifecycleAdapters(configPath, sessionId))),
         session: async (input) => {
             if (inherited === null) return usageOutcome(
                 'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
@@ -717,7 +714,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
                 sessionId,
                 timeoutMs: RUNTIME_STEP_TIMEOUT_MS,
                 holderProcess: { pid: process.pid, ...(started.state === 'present' ? { processStart: started.start } : {}) },
-                ...(input.profiles.length === 0 ? {} : { activeProfiles: input.profiles }),
+                activeProfiles: input.profiles,
             }, executeProbe)
             return runSessionApplication({ configPath, argv: input.argv, cwd: process.cwd(), env: childEnv }, {
                 up: (request) => runUpApplication(request, adapters),
@@ -727,18 +724,8 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
                 ...(runtime.signal ? { signal: runtime.signal } : {}),
             })
         },
-        down: async (input) => {
-            if (ordinarySessionId === null) return usageOutcome(
-                'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
-            const configPath = resolve(input.configPath)
-            return runDownApplication({ configPath }, await destructiveAdapters(configPath, runtime, ordinarySessionId))
-        },
-        reset: async (input) => {
-            if (ordinarySessionId === null) return usageOutcome(
-                'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
-            const configPath = resolve(input.configPath)
-            return runResetApplication({ configPath }, await destructiveAdapters(configPath, runtime, ordinarySessionId))
-        },
+        down: withSession(async (_input, configPath, sessionId) => runDownApplication({ configPath }, await destructiveAdapters(configPath, runtime, sessionId))),
+        reset: withSession(async (_input, configPath, sessionId) => runResetApplication({ configPath }, await destructiveAdapters(configPath, runtime, sessionId))),
         preflight: (input) => {
             const configPath = resolve(input.configPath)
             return runPreflightApplication({ configPath }, healthAdapters(configPath))
@@ -761,35 +748,16 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         tool: runToolChange,
         use: (input) => runUse({ ...input, env }, { execute: executeProbe }),
         pull: (input) => runPull({ ...input, env }, { execute: executeProbe }),
-        logs: (input) => {
-            if (ordinarySessionId === null) return Promise.resolve(usageOutcome(
-                'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
-            const configPath = resolve(input.configPath)
-            return runLogsApplication({ ...input, configPath }, readAdapters(configPath, runtime, ordinarySessionId).logs)
-        },
-        ps: async (input) => {
-            if (ordinarySessionId === null) return usageOutcome('CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
-            const configPath = resolve(input.configPath)
-            return runServicePs({ configPath }, readAdapters(configPath, runtime, ordinarySessionId).services)
-        },
-        restart: async (input) => {
-            if (ordinarySessionId === null) return usageOutcome('CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
-            const configPath = resolve(input.configPath)
-            return runServiceRestart({ configPath, service: input.service, verb: 'restart' }, readAdapters(configPath, runtime, ordinarySessionId).services)
-        },
-        rebuild: async (input) => {
-            if (ordinarySessionId === null) return usageOutcome('CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
-            const configPath = resolve(input.configPath)
-            return runServiceRestart({ configPath, service: input.service, verb: 'rebuild' }, readAdapters(configPath, runtime, ordinarySessionId).services)
-        },
-        exec: async (input) => {
-            if (ordinarySessionId === null) return usageOutcome('CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
-            const configPath = resolve(input.configPath)
-            // A terminal on both ends gets an interactive shell or client; anything else, an agent's
-            // captured output included, gets plain streams.
-            return runServiceExec({ configPath, service: input.service, argv: input.argv, tty: foregroundTerminal() },
-                readAdapters(configPath, runtime, ordinarySessionId).services)
-        },
+        logs: withSession((input, configPath, sessionId) => runLogsApplication({ ...input, configPath }, readAdapters(configPath, runtime, sessionId).logs)),
+        ps: withSession((_input, configPath, sessionId) => runServicePs({ configPath }, readAdapters(configPath, runtime, sessionId).services)),
+        restart: withSession((input, configPath, sessionId) =>
+            runServiceRestart({ configPath, service: input.service, verb: 'restart' }, readAdapters(configPath, runtime, sessionId).services)),
+        rebuild: withSession((input, configPath, sessionId) =>
+            runServiceRestart({ configPath, service: input.service, verb: 'rebuild' }, readAdapters(configPath, runtime, sessionId).services)),
+        // A terminal on both ends gets an interactive shell or client; anything else, an agent's
+        // captured output included, gets plain streams.
+        exec: withSession((input, configPath, sessionId) =>
+            runServiceExec({ configPath, service: input.service, argv: input.argv, tty: foregroundTerminal() }, readAdapters(configPath, runtime, sessionId).services)),
     }
 }
 
@@ -845,12 +813,15 @@ function renderVersion(): string {
 }
 
 // Repeated --profile values, each in the spelling environment.profiles accepts, or why not.
-function composeProfiles(values: readonly string[] | undefined): readonly string[] | string {
+function composeProfiles(values: readonly string[] | undefined): Readonly<{ profiles: readonly string[] } | { error: string }> {
     const profiles = values ?? []
     const invalid = profiles.find(profile => !ComposeProfileName.safeParse(profile).success)
-    if (invalid !== undefined) return `--profile ${JSON.stringify(invalid)} must be a lowercase Compose profile name: letters, digits, '.', '_' and '-', starting with a letter or digit`
-    return [...new Set(profiles)]
+    if (invalid !== undefined) return { error: `--profile ${JSON.stringify(invalid)} must be a lowercase Compose profile name: letters, digits, '.', '_' and '-', starting with a letter or digit` }
+    return { profiles: [...new Set(profiles)] }
 }
+
+const namedOnly = (handler: string, positionals: readonly string[]): CommandOutcome | undefined =>
+    positionals.length > 0 ? usageOutcome('CLI_USAGE_INVALID', `${handler} accepts named inputs only`) : undefined
 
 const missingConfig = (): CommandOutcome => usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
 
@@ -1222,8 +1193,9 @@ async function decodeRequest(
         const values = parsed.values as { config?: string; profile?: string[] }
         const [command, ...argv] = parsed.positionals
         if (!values.config) return missingConfig()
-        const profiles = composeProfiles(values.profile)
-        if (typeof profiles === 'string') return usageOutcome('CLI_USAGE_INVALID', profiles, '--profile')
+        const composed = composeProfiles(values.profile)
+        if ('error' in composed) return usageOutcome('CLI_USAGE_INVALID', composed.error, '--profile')
+        const { profiles } = composed
         if (!command) return usageOutcome('CLI_USAGE_INVALID', 'session requires a command after --', 'session')
         const inherited = inheritedSessionId(runtimeEnv)
         if (inherited === null) return usageOutcome(
@@ -1237,36 +1209,29 @@ async function decodeRequest(
         const values = parsed.values as { config?: string; profile?: string[] }
         if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'up accepts named inputs only')
         if (!values.config) return missingConfig()
-        const profiles = composeProfiles(values.profile)
-        if (typeof profiles === 'string') return usageOutcome('CLI_USAGE_INVALID', profiles, '--profile')
+        const composed = composeProfiles(values.profile)
+        if ('error' in composed) return usageOutcome('CLI_USAGE_INVALID', composed.error, '--profile')
+        const { profiles } = composed
         return { handler, input: { configPath: values.config, profiles } }
     }
 
     if (handler === 'ps' || handler === 'restart' || handler === 'rebuild' || handler === 'exec') {
         const values = parsed.values as { config?: string; service?: string }
         if (!values.config) return missingConfig()
-        if (handler === 'ps') {
-            if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'ps accepts named inputs only')
-            return { handler, input: { configPath: values.config } }
-        }
+        if (handler === 'ps') return namedOnly(handler, parsed.positionals) ?? { handler, input: { configPath: values.config } }
         if (!values.service) return usageOutcome('CLI_USAGE_INVALID', 'provide --service <name>', '--service')
-        if (handler !== 'exec') {
-            if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', `${handler} accepts named inputs only`)
-            return { handler, input: { configPath: values.config, service: values.service } }
+        if (handler === 'exec') {
+            const [command, ...argv] = parsed.positionals
+            if (!command) return usageOutcome('CLI_USAGE_INVALID', 'exec requires a command after --', 'exec')
+            return { handler, input: { configPath: values.config, service: values.service, argv: [command, ...argv] } }
         }
-        const [command, ...argv] = parsed.positionals
-        if (!command) return usageOutcome('CLI_USAGE_INVALID', 'exec requires a command after --', 'exec')
-        return { handler, input: { configPath: values.config, service: values.service, argv: [command, ...argv] } }
+        return namedOnly(handler, parsed.positionals) ?? { handler, input: { configPath: values.config, service: values.service } }
     }
 
     if (handler === 'check' || handler === 'sleep' || handler === 'down' || handler === 'reset'
         || handler === 'preflight' || handler === 'doctor' || handler === 'docs-check') {
         const values = parsed.values as { config?: string; json?: boolean }
-        if (parsed.positionals.length > 0) {
-            return usageOutcome('CLI_USAGE_INVALID', `${handler} accepts named inputs only`)
-        }
-        if (!values.config) return missingConfig()
-        return { handler, input: { configPath: values.config } } as HandlerRequest
+        return namedOnly(handler, parsed.positionals) ?? (values.config ? { handler, input: { configPath: values.config } } as HandlerRequest : missingConfig())
     }
 
     if (handler === 'logs') {
@@ -1314,7 +1279,7 @@ async function decodeRequest(
         const values = parsed.values as { config?: string; apply?: boolean; interactive?: boolean }
         const [operation, ...extra] = parsed.positionals
         if (operation !== undefined && operation !== 'prune' || extra.length > 0) {
-            return usageOutcome('CLI_USAGE_INVALID', 'stacks takes no operation, or prune: npx --no cockpit stacks --config <your cockpit.toml>, or npx --no cockpit stacks prune --config <your cockpit.toml> [--apply | --interactive]')
+            return usageOutcome('CLI_USAGE_INVALID', `stacks takes no operation, or prune: ${cockpitCommand('stacks')}, or ${cockpitCommand('stacks prune', { args: '[--apply | --interactive]' })}`)
         }
         if (operation === undefined && (values.apply || values.interactive)) {
             return usageOutcome('CLI_USAGE_INVALID', '--apply and --interactive belong to stacks prune; stacks alone only lists', values.apply ? '--apply' : '--interactive')
