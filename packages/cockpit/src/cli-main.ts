@@ -115,7 +115,8 @@ import {
     type SurfaceSelftestProbeSpecificationsCandidate,
 } from './environment/selftest-application.js'
 import { loadOperatorPolicy, runResetOperatorApplication, runStacksPruneOperatorApplication, type StacksPruneOperatorSession } from './environment/operator-application.js'
-import { beginStacksPrune, runStacksInventory, type StacksPruneScope } from './environment/stack-inventory.js'
+import { beginStacksPrune, type StacksPruneScope } from './environment/stack-inventory-prune.js'
+import { runStacksInventory } from './environment/stack-inventory-report.js'
 
 import type { WorkApplicationOutcome, WorkApplicationRequest } from './work-orders/application.js'
 

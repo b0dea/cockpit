@@ -8,7 +8,9 @@ import { readRootPortInventory } from './claims.js'
 import type { CockpitId, StackId } from './contract.js'
 import { checkoutId, cockpitId as deriveCockpitId, stackId as deriveStackId } from './identity.js'
 import { discoverMachineStacks } from './reclaim.js'
-import { inspectMachineStacksForDoctor, observeMachineStacks, openStacksPrune, type StacksContext, type StacksPruneSession } from './stack-inventory.js'
+import { inspectMachineStacksForDoctor, observeMachineStacks } from './stack-inventory.js'
+import { openStacksPrune, type StacksPruneSession } from './stack-inventory-prune.js'
+import type { StacksContext } from './stack-inventory-report.js'
 import { selectStateRoot } from './state.js'
 
 const sha = (value: string) => createHash('sha256').update(value).digest('hex')

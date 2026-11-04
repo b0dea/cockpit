@@ -5,7 +5,7 @@ import { ENVIRONMENT_CODES, type Diagnostic } from './contract.js'
 import { EXIT_CODES } from '../invocation.js'
 import { refusalOutcome as refusal } from '../refusal.js'
 import type { ResetCommandInput } from './application/lifecycle-context.js'
-import type { StacksPruneScope } from './stack-inventory.js'
+import type { StacksPruneScope } from './stack-inventory-prune.js'
 import type {
     GeneratedEnvironmentCommandInput,
     GeneratedEnvironmentSyncInput,
