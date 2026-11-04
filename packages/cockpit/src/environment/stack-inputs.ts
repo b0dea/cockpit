@@ -19,7 +19,7 @@ import { GUARD_LOCAL_PATHS, writeCockpitLocalFiles } from '../guards/local-ident
 import type { CockpitConfig, Sibling } from '../schema.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, RefusalError, tryParseJson, type EnvironmentDiagnostic } from './contract.js'
 import { mapLimit } from './map-limit.js'
-import type { ServedSibling } from './sibling-checkouts.js'
+import { servedPath, type ServedSibling } from './sibling-checkouts.js'
 
 const FORMAT = 'cockpit-stack-inputs/v1'
 const RECORD_NAME = 'stack-inputs'
@@ -106,7 +106,7 @@ export async function recordStackInputs(cockpitRoot: string, config: Pick<Cockpi
             catch (error) { if (!hasErrorCode(error, 'ENOENT')) throw error }
         }
         const siblings: SiblingInputs[] = await Promise.all(stackSiblings(config).map(async sibling => {
-            const directory = served.get(sibling.slug)!.served
+            const directory = servedPath(served, sibling.slug)
             const inputs = await Promise.all((await watchedInputs(config, sibling, directory)).map(async row =>
                 ({ ...row, sha256: await digestPath(join(directory, row.path)) })))
             return { slug: sibling.slug, served: directory, inputs }

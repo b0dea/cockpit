@@ -39,7 +39,7 @@ import { readState } from '../environment/state.js'
 import { parseDiff } from '../testing/test-protection.js'
 import { testFilePatterns, weakeningFindings, type RepositoryWeakening, type TestFilePatterns } from '../testing/weakening.js'
 import { runGate, type GateDependencies, type GateRegistry, type GateRequest, type ProductGateInvocation } from '../testing/gates.js'
-import { readSiblingCheckouts, missingServedCheckout, servedSiblings, type ServedSibling } from '../environment/sibling-checkouts.js'
+import { readSiblingCheckouts, missingServedCheckout, servedPath, servedSiblings, type ServedSibling } from '../environment/sibling-checkouts.js'
 import { splitRepositoryPath } from '../repository-path.js'
 import { parseCriteriaFile, parseWorkOrder, scopeMatcher, WORK_ORDER_ID, type ParsedFile, type WorkOrder, type WorkOrderCheck } from './contract.js'
 import { createWorkStore, outputTail, WORK_RECORD_DIRECTORY, type CheckResult, type ContainerEvidence, type WorkStore } from './store.js'
@@ -622,7 +622,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
     // The cockpit's own repository is `.`; a sibling is named by its slug, and its paths read `<slug>:path`.
     // A sibling is read where it is served, which `cockpit use` may have moved to a worktree, so a grade
     // judges the code the stack runs. One served at the cockpit root is that same repository, under the cockpit's key.
-    const servedRoot = (slug: string) => served.get(slug)!.served
+    const servedRoot = (slug: string) => servedPath(served, slug)
     const siblingRoots = config.siblings.map(row => ({ root: servedRoot(row.slug), environmentFiles: row.environmentFiles }))
     const repositories = [{ key: '.', identity: config.cockpitName, root }, ...config.siblings.flatMap(row => servedRoot(row.slug) === root ? []
         : [{ key: row.slug, identity: `siblings/${row.slug}`, root: servedRoot(row.slug) }])]
@@ -1075,7 +1075,7 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
         const served = servedSiblings(config.cockpitRoot, { cockpit: { siblings_root: config.siblingsRoot }, sibling: config.siblings }, recorded.checkouts)
         const gone = await missingServedCheckout(served)
         if (gone) return { kind: 'refusal', reason: `${gone.code}: ${gone.message}; ${gone.fix}` }
-        const siblingRoots = config.siblings.map(row => ({ root: served.get(row.slug)!.served, environmentFiles: row.environmentFiles }))
+        const siblingRoots = config.siblings.map(row => ({ root: servedPath(served, row.slug), environmentFiles: row.environmentFiles }))
         const gateBrowserAuthenticationTargets = new Set((config.browser?.authentication.states ?? []).map(row => resolve(config.cockpitRoot, row.path)))
         const gateRepositories = [
             { identity: config.cockpitName, root: config.cockpitRoot,

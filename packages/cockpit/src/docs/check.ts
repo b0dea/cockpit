@@ -8,7 +8,7 @@ import { loadCockpitConfig } from '../config/load.js'
 import { ENVIRONMENT_CODES, errorCause, type Diagnostic, type ExecutionStep } from '../environment/contract.js'
 import { gitRepositoryRefusal } from '../environment/git-observation.js'
 import { redactSensitiveMessage } from '../environment/sensitive.js'
-import { createGitRunner, loadServedSiblings, missingServedCheckout, type GitRunner } from '../environment/sibling-checkouts.js'
+import { createGitRunner, loadServedSiblings, missingServedCheckout, servedPath, type GitRunner } from '../environment/sibling-checkouts.js'
 import { refusalOutcome } from '../refusal.js'
 import { splitRepositoryPath } from '../repository-path.js'
 import { scopeMatcher } from '../work-orders/contract.js'
@@ -99,7 +99,7 @@ export async function runDocsCheck(input: DocsCheckInput, dependencies: Readonly
     if (served.kind !== 'complete') return { status: 2, diagnostics: [served.diagnostic], result: null }
     const gone = await missingServedCheckout(served.siblings)
     if (gone) return { status: 2, diagnostics: [gone], result: null }
-    const rootOf = (repository: string) => repository === '' ? cockpitRoot : served.siblings.get(repository)!.served
+    const rootOf = (repository: string) => repository === '' ? cockpitRoot : servedPath(served.siblings, repository)
     const decisions = docs.decisions === undefined ? undefined : split(docs.decisions)
     const living = docs.living.map(split)
     const repositories = [...new Set([...living.map(entry => entry.repository), ...decisions ? [decisions.repository] : []])]

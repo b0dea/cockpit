@@ -17,7 +17,7 @@ import { readBoundedFile } from '../bounded-read.js'
 import { cockpitCommand, formatShellCommand } from '../fix-catalogue.js'
 import { GUARD_LOCAL_PATHS, writeCockpitLocalFiles } from '../guards/local-identity.js'
 import type { CockpitConfig, Sibling } from '../schema.js'
-import { ENVIRONMENT_CODES, errorCause, hasErrorCode, tryParseJson, type EnvironmentDiagnostic, type ExecutionStep } from './contract.js'
+import { ENVIRONMENT_CODES, errorCause, hasErrorCode, RefusalError, tryParseJson, type EnvironmentDiagnostic, type ExecutionStep } from './contract.js'
 import { resolveGitExecutable, type ResolvedExecutable } from './executable.js'
 import { repositoryIdentity, type RepositoryIdentity } from './repository-identity.js'
 import { redactSensitiveMessage } from './sensitive.js'
@@ -105,6 +105,13 @@ export function servedSiblings(cockpitRoot: string,
     }))
 }
 
+/** The directory serving a declared sibling; a slug the map lacks is a caller's error, named as one. */
+export function servedPath(served: ReadonlyMap<string, ServedSibling>, slug: string): string {
+    const entry = served.get(slug)
+    if (!entry) throw new RefusalError(`sibling ${slug} has no served checkout; it is not declared in cockpit.toml`)
+    return entry.served
+}
+
 type ServedSiblingsRead =
     | Readonly<{ kind: 'complete'; siblings: ReadonlyMap<string, ServedSibling> }>
     | Readonly<{ kind: 'refusal'; diagnostic: EnvironmentDiagnostic }>
@@ -143,7 +150,7 @@ export async function missingServedCheckout(served: ReadonlyMap<string, ServedSi
 
 /** The directory variables Compose interpolates: each sibling's `var` and the directory that serves it. */
 export function servedSiblingVariables(config: Pick<CockpitConfig, 'sibling'>, served: ReadonlyMap<string, ServedSibling>): Readonly<Record<string, string>> {
-    return Object.fromEntries(config.sibling.map(sibling => [sibling.var, served.get(sibling.slug)!.served]))
+    return Object.fromEntries(config.sibling.map(sibling => [sibling.var, servedPath(served, sibling.slug)]))
 }
 
 // `stderr` is Git's own text, kept for classifying the failure; it may carry a remote URL's

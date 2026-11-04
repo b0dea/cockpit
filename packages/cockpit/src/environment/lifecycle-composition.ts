@@ -72,7 +72,7 @@ import {
 } from './setup-observation.js'
 import { selectStateRoot } from './state.js'
 import { readBoundedFile } from '../bounded-read.js'
-import { loadServedSiblings, missingServedCheckout, servedSiblingVariables, type ServedSibling } from './sibling-checkouts.js'
+import { loadServedSiblings, missingServedCheckout, servedPath, servedSiblingVariables, type ServedSibling } from './sibling-checkouts.js'
 import { recordStackInputs } from './stack-inputs.js'
 
 const OWNER = 'lifecycle-adapter-composition'
@@ -94,14 +94,14 @@ function mountMismatchDiagnostics(
     config: CockpitConfig,
     served: ReadonlyMap<string, ServedSibling>,
 ): readonly EnvironmentDiagnostic[] {
-    const bySource = new Map(config.sibling.map((sibling) => [served.get(sibling.slug)!.served, sibling]))
+    const bySource = new Map(config.sibling.map((sibling) => [servedPath(served, sibling.slug), sibling]))
     // After `use` the running stack still mounts the checkout it started with: the sibling's served
     // directory is missing and another one is mounted in its place. Compose is fine; the stack is old.
     const switched = mismatch.unexpected.length === 0 ? undefined
-        : config.sibling.find((sibling) => mismatch.missing.includes(served.get(sibling.slug)!.served))
+        : config.sibling.find((sibling) => mismatch.missing.includes(servedPath(served, sibling.slug)))
     if (switched) return [{
         severity: 'error' as const, code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, target: `sibling:${switched.slug}`,
-        message: `sibling ${switched.slug} is served from ${served.get(switched.slug)!.served}, but the running stack mounts ${mismatch.unexpected.join(', ')} instead`,
+        message: `sibling ${switched.slug} is served from ${servedPath(served, switched.slug)}, but the running stack mounts ${mismatch.unexpected.join(', ')} instead`,
         fix: `if the stack started before use changed the checkout, run ${cockpitCommand('down')} and then ${cockpitCommand('up')}; `
             + `otherwise bind-mount \${${switched.var}} in a Compose service and run ${cockpitCommand('check')}`,
     }]
@@ -133,7 +133,7 @@ function redirectedMountDiagnostics(
     config: CockpitConfig,
     served: ReadonlyMap<string, ServedSibling>,
 ): readonly EnvironmentDiagnostic[] {
-    const bySource = new Map(config.sibling.map((sibling) => [served.get(sibling.slug)!.served, sibling]))
+    const bySource = new Map(config.sibling.map((sibling) => [servedPath(served, sibling.slug), sibling]))
     return redirected.map(({ bind, holder }) => {
         const sibling = bySource.get(holder)
         return {
@@ -654,7 +654,7 @@ export function createLifecycleCommandAdapters(
                 [ACTIVE_PROFILES_INPUT]: createHash('sha256').update(activeProfiles.join('\n')).digest('hex') }) }
         expectedMountSources = [...new Set([
             ...mounted(currentBinding.config, activeProfiles)
-                .map((sibling) => currentBinding.served.get(sibling.slug)!.served),
+                .map((sibling) => servedPath(currentBinding.served, sibling.slug)),
             ...currentBinding.config.environment.generated_host_paths
                 .map((path) => resolve(currentBinding.checkoutRoot, path)),
         ])].sort()
