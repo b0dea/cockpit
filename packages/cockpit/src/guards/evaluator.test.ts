@@ -70,6 +70,16 @@ describe('resolved guard evaluation', () => {
             cwd: root, tool_input: {} }), policy(), inspect).decision).toBe('unavailable')
     })
 
+    it('matches a dotted allowed MCP tool under the name Claude Code calls it, and nothing wider', () => {
+        const configured = { ...policy(), mcpAllowedTools: { reports: ['read.record'] } }
+        const invoke = (tool: string) => evaluateGuard(parseGuardInput({
+            hook_event_name: 'PreToolUse', tool_name: tool, cwd: root, tool_input: {},
+        }), configured, inspect).decision
+        expect(invoke('mcp__reports__read_record')).toBe('allow')
+        expect(invoke('mcp__reports__read_records')).toBe('deny')
+        expect(invoke('mcp__reports__readXrecord')).toBe('deny')
+    })
+
     it('applies declared deny and allow rules in precedence order to normalized invocations', () => {
         const configured = policy()
         configured.declaredAllows.push(

@@ -699,7 +699,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (resolved.mcpAllowedTools === undefined) return unavailable('MCP tool policy is missing from the authenticated guard request.')
         for (const [server, allowed] of Object.entries(resolved.mcpAllowedTools)) {
             const prefix = `mcp__${server}__`
-            if (input.tool.startsWith(prefix) && !allowed.some(tool => input.tool === `${prefix}${tool}`)) {
+            // Claude Code calls a tool `read.record` by the native name `read_record`, the only name this hook receives.
+            if (input.tool.startsWith(prefix) && !allowed.some(tool => input.tool === `${prefix}${tool.replaceAll('.', '_')}`)) {
                 return deny(`MCP tool ${shownGuardWord(input.tool)} is outside the exact allowlist for ${server}. Fix: use a listed tool or have a person review [mcp.allowed_tools] and sync.`)
             }
         }

@@ -286,6 +286,10 @@ authenticated `PreToolUse` guard scoped to the restricted server namespaces. It 
 tools and defers listed tools to Claude Code's existing permission rules; listing a tool grants no
 native permission. Unrestricted servers and plugin tools do not pass through this MCP guard.
 Start Claude Code from the cockpit checkout and trust the workspace so its project hooks load.
+Write each name as the server publishes it. Claude Code rewrites a dot in a tool name to an
+underscore before the guard sees it, and keeps only the first of two tools that collide. So under
+Claude Code a listed `read_record` also admits a server tool named `read.record`; Codex matches the
+raw name and keeps them apart. Check the server's tool list when it publishes dotted names.
 These restrictions have their own dated row in the
 [capability matrix](capability-matrix.md); Codex's native tool filter does not depend on hook trust.
 Other harnesses omit restricted servers and report `MCP_TRANSPORT_UNAVAILABLE`: use Claude Code or
