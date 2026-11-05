@@ -49,7 +49,7 @@ ask when scope is missing or an exact preview still needs acceptance:
    file says, and the stronger default holds until a person confirms it. End your report by telling
    the human to confirm each: delete its entry from `unconfirmed`, then run
    `npx --no cockpit sync --config cockpit.toml --interactive` in a terminal outside the agent
-   (`cockpit confirm` refuses these).
+   (the confirm command refuses these).
 
 ## Install cockpit if it is missing
 

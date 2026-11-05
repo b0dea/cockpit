@@ -896,8 +896,9 @@ it('discards answers inferred for an estate that changes from no runnable produc
     const changingPending = changingRun('--accept-preview', changingPreview.previewSha256, '--answers', changingAnswers)
     expect(changingPending.status, changingPending.stdout + changingPending.stderr).toBe(0)
     expect(JSON.parse(changingPending.stdout).result).toMatchObject({
+        // The name is the file's to state; sibling is a trust answer, which an answers file cannot show a person gave.
         estate: { classification: 'no-runnable-product', answers: [expect.objectContaining({ provenance: 'operator-confirmed' }),
-            expect.objectContaining({ provenance: 'operator-confirmed' })] },
+            expect.objectContaining({ provenance: 'unattributed' })] },
         question: { field: 'ports.bases' },
     })
 
@@ -916,7 +917,7 @@ it('discards answers inferred for an estate that changes from no runnable produc
     const refreshed = JSON.parse(changedAccepted.stdout).result
     expect(refreshed).toMatchObject({
         estate: { classification: 'one-sibling', answers: [expect.objectContaining({ provenance: 'operator-confirmed' }),
-            expect.objectContaining({ provenance: 'operator-confirmed' })] },
+            expect.objectContaining({ provenance: 'unattributed' })] },
         question: { field: 'ports.bases' },
     })
 }, 480_000)
