@@ -149,7 +149,7 @@ export function pinnedPolicyDenial(input: Readonly<{
     const { mcp: beforeMcp, ...beforePinned } = before
     const { mcp: afterMcp, ...afterPinned } = after
     if (!isDeepStrictEqual(beforePinned, afterPinned) || mcpPolicyWideningFields(beforeMcp, afterMcp).length) {
-        return denial(`Refusing to change gate authority or widen MCP access in ${PINNED}: a person must review this change outside the agent and run sync. Only unchanged MCP approval removals may be edited without that review.`)
+        return denial(`Refusing to change gate authority or widen MCP access in ${PINNED}: a person must review this change outside the agent and run sync. Only unchanged MCP approval removals and exact tool restrictions may narrow access without that review.`)
     }
     return undefined
 }

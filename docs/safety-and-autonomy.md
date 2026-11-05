@@ -374,7 +374,8 @@ using those here would leave sibling secrets outside the protection. See
 
 <!-- cockpit:ref path=packages/cockpit/src/guards/policy-pin.ts --> The guard pins the policy: an agent's edit, write or patch that would change `[work]`,
 `[work.gates]` or `[autonomy]`, or widens `[mcp]` while `mcp_approve` is `person`, is a hard denial.
-Removing unchanged MCP approvals is permitted: disabling a server grants no new access. The guard
+Removing unchanged MCP approvals and adding or narrowing exact tool allowlists is permitted:
+disabling a server or restricting its tools grants no new access. The guard
 applies the edit to the current text and compares the tables, so an edit elsewhere in the file stays
 permitted; an edit it cannot apply exactly, and a shell command that names the file and is not a
 proven read, a Git record or the `--config` operand of a cockpit command, are denied because the guard
@@ -420,12 +421,13 @@ An edit does not widen only when every difference is one of these:
 - added agent tools, `unconfirmed` answers and sibling operator gates;
 - removed Compose files, Compose profiles and resettable volumes, and an install policy that admits no
   command it did not;
-- removed guard allow rules and unchanged MCP approvals; added guard deny rules, protected branches,
+- removed guard allow rules and unchanged MCP approvals, added or narrowed MCP tool allowlists;
+  added guard deny rules, protected branches,
   hosted database hosts and vendor endpoint hosts.
 
 Every other difference widens. That includes any change, in either direction, to
 `[work]`, `[autonomy]`, `[testing]` (whose stages `test-run` runs unprompted) and `[browser]`;
-new or changed MCP approvals, new guard allows or removed guard restrictions; a new sibling, wherever its directory is; a sibling's changed `dir`, `guides` (sync copies each guide
+new or changed MCP approvals, removed or expanded MCP tool allowlists, new guard allows or removed guard restrictions; a new sibling, wherever its directory is; a sibling's changed `dir`, `guides` (sync copies each guide
 into the root `AGENTS.md`), environment files or derived MCP sources; and every command field, such
 as `environment.seed`. A field the classification has no rule for widens too, so a field added to
 the schema is a person's decision until a rule says otherwise. A missing or mismatched

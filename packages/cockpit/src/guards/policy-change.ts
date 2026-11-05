@@ -18,7 +18,7 @@ import { parseCockpitConfigBytes, readBoundedInput } from '../config/load.js'
 import type { ENVIRONMENT_CODES, EnvironmentDiagnostic } from '../environment/contract.js'
 import { hasErrorCode } from '../environment/contract.js'
 import { cockpitCommand } from '../fix-catalogue.js'
-import type { CockpitConfig } from '../schema.js'
+import { McpAllowedTools, type CockpitConfig } from '../schema.js'
 import { sha256Hex } from '../sha256.js'
 import { ANSWER_CONFIRMATION_PATH, confirmedAnswers } from './answer-confirmation.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from './local-identity.js'
@@ -61,9 +61,18 @@ const approvalRemovals: Rule = (before: unknown, after: unknown, at: string) => 
         .map(name => `${at}.${name}`)
 }
 
+// Absence permits every tool; an explicit list may only retain or lose names.
+const toolRestrictionNarrowing: Rule = (before: unknown, after: unknown, at: string) => {
+    const from = McpAllowedTools.safeParse(before === undefined ? {} : before)
+    const to = McpAllowedTools.safeParse(after === undefined ? {} : after)
+    if (!from.success || !to.success) return [at]
+    return Object.keys(from.data).filter(name => !Object.hasOwn(to.data, name)
+        || gains(from.data[name]!, to.data[name]!)).map(name => `${at}.${name}`)
+}
+
 /** Shared by the edit pin and the unsynced-policy hold so revocation never needs a second approval. */
 export function mcpPolicyWideningFields(before: unknown, after: unknown, at = 'mcp'): readonly string[] {
-    return walk(before ?? {}, after ?? {}, { approved: approvalRemovals }, at)
+    return walk(before ?? {}, after ?? {}, { approved: approvalRemovals, allowed_tools: toolRestrictionNarrowing }, at)
 }
 
 // The fields of an existing sibling that say what it is for. Everything else about a sibling decides

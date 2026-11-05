@@ -277,7 +277,9 @@ reports = ["read_record", "search_records"]
 Each name is exact. Every other tool from that server, including a newly added tool, is denied.
 An empty list denies all tools; an absent server has no tool restriction. The server must be
 declared, and overlapping native server namespaces are refused. Widening this list changes the
-guard policy and requires the same approval as other increases in agent authority.
+guard policy and requires the same approval as other increases in agent authority. Adding a
+restriction or removing tools from a list narrows access and can be synced by an agent when
+`[autonomy] sync = "agent"`. Removing a server's list makes it unrestricted and requires a person.
 
 Codex receives `enabled_tools` in its generated server configuration. Claude Code receives exact
 permission rules for the listed tools and an authenticated `PreToolUse` guard that denies the

@@ -46,6 +46,34 @@ describe('guard policy pin', () => {
         expect(edit(approved, approved + '\nfuture = true', config, prior)).toBe('deny')
     })
 
+    it('permits exact MCP tool restriction and narrowing edits while holding every expansion for a person', () => {
+        const declaration = 'approved = {}'
+        const restrict = (tools: string) => `${declaration}\nallowed_tools = { docs = ${tools} }`
+        for (const [from, to] of [
+            [declaration, restrict('["read_record", "search_records"]')],
+            [restrict('["read_record", "search_records"]'), restrict('["read_record"]')],
+            [restrict('["read_record"]'), restrict('[]')],
+        ]) {
+            const prior = current.replace(declaration, from!)
+            const next = current.replace(declaration, to!)
+            for (const payload of [
+                { tool_name: 'Edit', tool_input: { file_path: config, old_string: from, new_string: to } },
+                { tool_name: 'Write', tool_input: { file_path: config, content: next } },
+                { tool_name: 'apply_patch', tool_input: { command:
+                    `*** Begin Patch\n*** Update File: ${config}\n@@\n${from!.split('\n').map(line => `-${line}`).join('\n')}\n${to!.split('\n').map(line => `+${line}`).join('\n')}\n*** End Patch` } },
+            ]) expect(decide(payload, undefined, prior)).toBeUndefined()
+            const parsed = parseCockpitConfigBytes(Buffer.from(next))
+            const original = parseCockpitConfigBytes(Buffer.from(prior))
+            if (!parsed || !original) throw new Error('synthetic configuration must parse')
+            expect(guardConfigChange(sha256Hex(prior), Buffer.from(prior), { sha256: sha256Hex(next), config: parsed }))
+                .toEqual({ kind: 'non-widening' })
+            expect(edit(to!, from!, config, next)).toBe('deny')
+            expect(guardConfigChange(sha256Hex(next), Buffer.from(next), { sha256: sha256Hex(prior), config: original }))
+                .toEqual({ kind: 'widening', fields: ['mcp.allowed_tools.docs'] })
+        }
+        expect(edit(declaration, restrict('true'))).toBe('deny')
+    })
+
     it('denies an edit, write or patch that changes [work], [work.gates], [autonomy] or a person-approved [mcp], and admits one elsewhere', () => {
         expect(edit('grading = "independent"', 'grading = "self"')).toBe('deny')
         expect(edit('accept = "person"', 'accept = "agent"')).toBe('deny')
