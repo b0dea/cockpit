@@ -22,7 +22,7 @@ import {
     type ExecutionStep,
 } from './contract.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
-import { resolveDockerExecutable, resolveGitExecutable } from './executable.js'
+import { observationSearchPath, resolveDockerExecutable, resolveGitExecutable } from './executable.js'
 import { inspectMachineStacksForDoctor, type OwnCheckout } from './stack-inventory.js'
 import { createGitObservationStep, observeGit, observeRunningCheckout } from './git-observation.js'
 import { inspectProjectReadiness } from './readiness-composition.js'
@@ -37,7 +37,7 @@ import {
     revalidatePortLeaseProjection,
 } from './ports.js'
 import { generatedApplicationProjection } from './generated-application/authorities.js'
-import { checkGeneratedEnvironment } from './generated-application/check.js'
+import { checkGeneratedEnvironment, prepareGeneratedEnvironmentCurrentness } from './generated-application/check.js'
 import { observeGeneratedApplicationSurfaces } from './generated-application/surface-observation.js'
 import { syncGeneratedEnvironment } from './generated-application/sync.js'
 import {
@@ -253,7 +253,7 @@ function producers(input: {
         const session = await runtimeSession
         if (runningStack && !session) return undefined
         const checked = await checkGeneratedEnvironment({ configPath: input.config.result.source.path },
-            { execute: input.execute })
+            { execute: input.execute, observationEnv: input.env })
         if (checked.kind !== 'complete') checkRefusal = checked.diagnostics.filter(({ severity }) => severity === 'error') as readonly EnvironmentDiagnostic[]
         return checked.kind === 'complete' ? generatedApplicationProjection(checked.result.application) : undefined
     })()
@@ -455,17 +455,45 @@ export function createHealthCommandAdapters(
     execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
 ): HealthCommandAdapterComposition {
     const input = captureInput(rawInput)
+    return composeHealthCommandAdapters(input, input, execute)
+}
+
+/** Doctor's observation subprocesses exclude relative bins without changing harness or evaluator discovery. */
+export function createDoctorCommandAdapters(
+    rawInput: HealthCommandCompositionInput,
+    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
+): DoctorCommandAdapters {
+    const inherited = captureInput(rawInput)
+    const search = inherited ? observationSearchPath(inherited.env) : undefined
+    const input = inherited && search?.state === 'available'
+        ? { ...inherited, env: { ...inherited.env, PATH: search.path } } : undefined
+    return composeHealthCommandAdapters(input, inherited, execute, search?.state === 'unavailable' ? search.reason : undefined)
+}
+
+function composeHealthCommandAdapters(
+    input: CapturedInput | undefined,
+    inherited: CapturedInput | undefined,
+    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
+    searchRefusal?: string,
+): HealthCommandAdapterComposition {
     let selectedNamespace: StateNamespace | undefined
     let loadedConfig: LoadedCockpitConfigResult | undefined
     let selectedOwn: (OwnCheckout & Readonly<{ configPath: string }>) | undefined
     const load: HealthCommandAdapterComposition['load'] = async (command, issue, refuse, purpose) => {
         const requestedPath = commandConfigPath(command)
-        if (!input || typeof execute !== 'function' || typeof issue !== 'function'
-            || requestedPath !== input.configPath) return undefined
-        const loaded = await loadCockpitConfig(input.configPath)
-        // A malformed cockpit.toml is the user's to fix, so the loader's own diagnostics reach them.
+        const sourceInput = input ?? inherited
+        if (!sourceInput || typeof execute !== 'function' || typeof issue !== 'function'
+            || requestedPath !== sourceInput.configPath) return undefined
+        const loaded = await loadCockpitConfig(sourceInput.configPath)
+        // The configuration's own error comes first; an invalid PATH cannot make a missing file less specific.
         if (loaded.kind === 'refusal') return refuse?.(loaded.diagnostics)
         if (loaded.kind !== 'complete') return undefined
+        if (searchRefusal) return refuse?.([{
+            severity: 'error', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
+            message: `doctor's observation tools cannot be selected: ${searchRefusal}`, target: 'PATH',
+            fix: 'put Git and Docker in absolute PATH directories, remove empty or parent-traversing entries, then rerun doctor',
+        }])
+        if (!input) return undefined
         loadedConfig = loaded
         // Health is about a running stack or a machine floor; with neither declared it is not declared,
         // never healthy, and preflight refuses. Doctor still checks what such a cockpit does depend on:
@@ -608,7 +636,7 @@ export function createHealthCommandAdapters(
         try {
             const outcome = await syncGeneratedEnvironment(
                 { configPath: input.configPath, dryRun: true },
-                { execute },
+                { execute, observationEnv: input.env },
             )
             if (outcome.kind !== 'complete') {
                 const diagnostic = outcome.diagnostics[0]
@@ -642,11 +670,11 @@ export function createHealthCommandAdapters(
         }
     }
     // Codex skips a project hook nobody on this machine has trusted, so doctor says so.
-    const inspectHookTrust = input ? () => inspectCodexHookTrust({ root: dirname(input.configPath), env: input.env })
+    const inspectHookTrust = inherited ? () => inspectCodexHookTrust({ root: dirname(inherited.configPath), env: inherited.env })
         : undefined
-    const inspectEvaluator = input ? (evaluators: readonly EvaluatorTool[]) => inspectWorkEvaluator(dirname(input.configPath), input.env, evaluators) : undefined
-    const inspectReadiness = input ? () => inspectProjectReadiness({ root: dirname(input.configPath), configPath: input.configPath,
-        checkRoot: false, env: input.env, timeoutMs: input.timeoutMs }, execute) : undefined
+    const inspectEvaluator = inherited ? (evaluators: readonly EvaluatorTool[]) => inspectWorkEvaluator(dirname(inherited.configPath), inherited.env, evaluators) : undefined
+    const inspectReadiness = inherited ? () => inspectProjectReadiness({ root: dirname(inherited.configPath), configPath: inherited.configPath,
+        checkRoot: false, env: inherited.env, ...(input ? { observationEnv: input.env } : {}), timeoutMs: inherited.timeoutMs }, execute) : undefined
     // Read after load, which selects this cockpit's state namespace; before that there is no state root to read.
     const readUnreadableState: NonNullable<HealthCommandAdapterComposition['readUnreadableState']> = async () => {
         if (!selectedNamespace) return { kind: 'complete', skipped: [] }
@@ -659,7 +687,10 @@ export function createHealthCommandAdapters(
         const reuse = loaded ?? loadedConfig
         return inspectServedSiblings({ configPath: input.configPath, env: input.env, ...(reuse ? { loaded: reuse } : {}) }, { execute })
     } : undefined
+    const inspectGeneratedCurrentness = input ? () => prepareGeneratedEnvironmentCurrentness({ configPath: input.configPath },
+        { execute, observationEnv: input.env }) : undefined
     return { load, inspectSurfaceOverrides, ...(inspectHookTrust ? { inspectHookTrust } : {}), ...(inspectServed ? { inspectServedSiblings: inspectServed } : {}),
+        ...(inspectGeneratedCurrentness ? { inspectGeneratedCurrentness } : {}),
         ...(inspectEvaluator ? { inspectEvaluator } : {}), ...(inspectReadiness ? { inspectReadiness } : {}), readUnreadableState, inspectStacks,
         execute: (step: ExecutionStep) => execute(step) }
 }

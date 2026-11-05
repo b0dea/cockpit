@@ -27,7 +27,7 @@ import {
 } from './contract.js'
 import type { SetupObservation, SetupPathEvidence } from './setup.js'
 import { gitEnvironment } from './setup.js'
-import { resolveGitExecutable, resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
+import { observationSearchPath, resolveGitExecutable, resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
 import { checkoutId as deriveCheckoutId } from './identity.js'
 import { cockpitId as deriveCockpitId } from './identity.js'
 
@@ -1319,12 +1319,15 @@ export async function observeGeneratedCheckoutIdentity(input: {
         if (parent === candidate) break
         candidate = parent
     }
-    const searchEnvironment = value.env
+    let searchEnvironment = value.env
     const observedAt = Date.now()
     if (!Number.isSafeInteger(observedAt)) return setupCheckoutFailure('generated checkout observation time is invalid')
     let checkout: SetupCheckoutBinding | undefined
     let consumed: ConsumedSetupCheckoutObservation | undefined
     if (hasCheckout) {
+        const search = observationSearchPath(searchEnvironment)
+        if (search.state !== 'available') return setupCheckoutFailure(search.reason)
+        searchEnvironment = { ...searchEnvironment, PATH: search.path }
         const git = await resolveGitExecutable(searchEnvironment)
         if (git.state !== 'available') return setupCheckoutFailure(git.reason)
         const env = gitEnvironment(searchEnvironment)

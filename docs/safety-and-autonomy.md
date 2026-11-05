@@ -113,6 +113,21 @@ one, no command is allowed without a prompt, whatever profile or declared rule m
 reason names the entry. Keep relative entries off the `PATH` an agent harness starts with; `doctor`
 reports one in the `PATH` it runs with as `GUARD_SEARCH_PATH_RELATIVE`.
 
+That warning describes the CLI process, not a measurement of a running harness's environment:
+`pnpm exec` can add a relative bin directory just for the command it starts. Check the shell or
+launcher that starts the harness before changing its configuration. For their own Git and Docker
+observations, `doctor` and `docs check` use only the absolute directories already on `PATH`, in
+their original order. Relative directories are excluded so changing into a sibling cannot select
+a different tool. Empty entries, parent traversal and noncanonical absolute entries still refuse
+the observation; put the required tool in an absolute directory and rerun the command. This does
+not change the environment used to start sessions, discover evaluators or check MCP commands, or
+the guard's approval rules. A completed observation does not establish that a harness runs its
+generated hooks or that an external integration works.
+
+Generated checkout identity and native-hook revision observations use the same absolute-only
+Git search during `sync` and `check`. Publication authorization and the native hook's execution
+environment retain their existing rules.
+
 The Claude Code registration includes `NotebookEdit`, so notebook cell changes get the same
 protected-path checks as text edits. For a configuration in a repository subdirectory, these
 controls belong to the configuration's directory. Start Codex in that directory: its generated hook

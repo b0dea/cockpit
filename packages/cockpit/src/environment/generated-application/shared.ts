@@ -116,6 +116,8 @@ export interface GeneratedEnvironmentChange {
 }
 
 export interface GeneratedEnvironmentCommandAdapters {
+    /** Observation callers select their tool search path without replacing the process environment. */
+    readonly observationEnv?: Readonly<Record<string, string | undefined>>
     readonly now?: () => string
     readonly observeSource: typeof observeConfigSource
     readonly execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>

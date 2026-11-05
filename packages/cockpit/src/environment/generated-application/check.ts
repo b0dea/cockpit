@@ -194,15 +194,16 @@ async function composeTopologyDiagnostics(
     configPath: string,
     sourceSha256: string,
     adapters: GeneratedEnvironmentCommandAdapters,
+    environment: Readonly<Record<string, string | undefined>>,
 ): Promise<readonly Diagnostic[]> {
     const loaded = await loadCockpitConfig(configPath)
     if (loaded.kind !== 'complete' || loaded.result.source.sha256 !== sourceSha256) return [{ severity: 'error' as const,
         code: 'GENERATED_SOURCE_CHANGED', message: 'the configuration changed while check was reading the Compose topology', target: configPath }]
     const config = loaded.result.config
     if (declaredRuntime(config.environment) !== 'compose') return []
-    const env = { PATH: process.env.PATH, DOCKER_HOST: process.env.DOCKER_HOST, DOCKER_CONTEXT: process.env.DOCKER_CONTEXT,
-        DOCKER_TLS_VERIFY: process.env.DOCKER_TLS_VERIFY, DOCKER_CERT_PATH: process.env.DOCKER_CERT_PATH }
-    const [docker, node] = await Promise.all([resolveDockerExecutable(process.env), nodeAuthority()])
+    const env = { PATH: environment.PATH, DOCKER_HOST: environment.DOCKER_HOST, DOCKER_CONTEXT: environment.DOCKER_CONTEXT,
+        DOCKER_TLS_VERIFY: environment.DOCKER_TLS_VERIFY, DOCKER_CERT_PATH: environment.DOCKER_CERT_PATH }
+    const [docker, node] = await Promise.all([resolveDockerExecutable(environment), nodeAuthority()])
     const observed = docker.state !== 'available' ? { kind: 'unavailable' as const, reason: docker.reason }
         : !node ? { kind: 'unavailable' as const, reason: 'the current Node executable could not be authenticated' }
             : await observeComposeTopology({ root: dirname(loaded.result.source.path), references: config.environment.compose_files,
@@ -230,7 +231,7 @@ export async function checkGeneratedEnvironment(
     const adapters = mergedAdapters(adapterOverrides)
     const currentness = await prepareGeneratedEnvironmentCurrentness(input, adapters)
     const findings = currentness.outcome.kind === 'complete'
-        ? await composeTopologyDiagnostics(input.configPath, currentness.outcome.result.sourceSha256, adapters) : []
+        ? await composeTopologyDiagnostics(input.configPath, currentness.outcome.result.sourceSha256, adapters, adapters.observationEnv ?? process.env) : []
     const diagnostics = [...currentness.outcome.diagnostics, ...findings]
     const outcome = findings.some(row => row.severity === 'error')
         ? { kind: 'refusal' as const, artifact: null, destination: null, result: null, status: 2 as const, diagnostics }

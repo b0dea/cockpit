@@ -7,6 +7,7 @@ import { readBoundedFile } from '../bounded-read.js'
 import { loadCockpitConfig } from '../config/load.js'
 import { ENVIRONMENT_CODES, errorCause, type Diagnostic, type ExecutionStep } from '../environment/contract.js'
 import { gitRepositoryRefusal } from '../environment/git-observation.js'
+import { observationSearchPath } from '../environment/executable.js'
 import { redactSensitiveMessage } from '../environment/sensitive.js'
 import { createGitRunner, loadServedSiblings, missingServedCheckout, servedPath, type GitRunner } from '../environment/sibling-checkouts.js'
 import { refusalOutcome } from '../refusal.js'
@@ -87,11 +88,13 @@ export async function runDocsCheck(input: DocsCheckInput, dependencies: Readonly
             `${source.path} has no [docs] table, so there are no living documents or decision records to check`, 'docs',
             'add a [docs] table to cockpit.toml: living = ["README.md", "docs/**/*.md"] lists the documents that must stay true, and the optional decisions = "docs/adr" and decisions_index = "docs/adr/README.md" name the decision records and their index; then rerun npx --no cockpit docs check --config <your cockpit.toml>')
     }
-    const runner = await createGitRunner(input.env, dependencies.execute)
+    const search = observationSearchPath(input.env)
+    const runner = search.state === 'available'
+        ? await createGitRunner({ ...input.env, PATH: search.path }, dependencies.execute) : { unavailable: search.reason }
     if ('unavailable' in runner) {
         return refusalOutcome(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
             `docs check reads repository history with Git, which is unavailable: ${runner.unavailable}`, 'git',
-            'install Git or put it on PATH, then rerun npx --no cockpit docs check --config <your cockpit.toml>')
+            'put Git in an absolute PATH directory, remove empty or parent-traversing entries, then rerun npx --no cockpit docs check --config <your cockpit.toml>')
     }
     const cockpitRoot = posix.dirname(source.path)
     // A sibling `cockpit use` serves from another checkout is checked there, where the stack runs it.

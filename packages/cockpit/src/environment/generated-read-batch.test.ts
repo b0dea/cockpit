@@ -392,7 +392,7 @@ describe('generated application authenticated read batching', () => {
         const priorPath = process.env.PATH
         let result: Awaited<ReturnType<typeof syncGeneratedEnvironment>>
         try {
-            process.env.PATH = bin + (priorPath === undefined ? '' : delimiter + priorPath)
+            process.env.PATH = `./node_modules/.bin${delimiter}${bin}` + (priorPath === undefined ? '' : delimiter + priorPath)
             result = await syncGeneratedEnvironment({ configPath })
         } finally {
             if (priorPath === undefined) delete process.env.PATH

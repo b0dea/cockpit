@@ -644,7 +644,7 @@ exec '${input.gitExecutable.canonicalPath}' "$@"
             const generated = await observeGeneratedCheckoutIdentity({
                 source: input.source,
                 cockpitName: input.cockpitName,
-                env: { PATH: bin, Path: '/must-not-reach-git', UNRELATED_SEARCH_VALUE: 'private' },
+                env: { PATH: `./node_modules/.bin:${bin}`, Path: '/must-not-reach-git', UNRELATED_SEARCH_VALUE: 'private' },
             })
             if (generated.state !== 'available') throw new Error(generated.reason)
             vi.setSystemTime(now + 60_001)

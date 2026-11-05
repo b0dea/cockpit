@@ -195,7 +195,7 @@ export async function prepare(input: unknown, adapters: GeneratedEnvironmentComm
     // Surface observations and health must name the same checkout, including a linked worktree
     // or a configuration below its root. The observer also authenticates standalone directories.
     const checkoutIdentity = await observeGeneratedCheckoutIdentity({ source: loaded.result.source, cockpitName: config.cockpit.name,
-        env: process.env })
+        env: adapters.observationEnv ?? process.env })
     if (checkoutIdentity.state === 'failed') return refuse('GENERATED_INPUT_INVALID',
         `generated checkout identity is unavailable: ${checkoutIdentity.reason}`, loaded.result.source.path,
         'restore the configuration checkout and Git installation, then run npx --no cockpit sync --config <your cockpit.toml>')

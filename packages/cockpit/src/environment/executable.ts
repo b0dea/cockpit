@@ -143,6 +143,37 @@ export async function resolveExecutablePath(path: string): Promise<ExecutableRes
 
 const miss = (reason: string): Readonly<{ state: 'unavailable'; reason: string }> => ({ state: 'unavailable', reason })
 
+function searchDirectories(pathValue: unknown): Readonly<{ state: 'available'; directories: string[] }>
+    | Readonly<{ state: 'unavailable'; reason: string }> {
+    if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0') || Buffer.byteLength(pathValue) > 65_536) {
+        return miss('Executable search path is missing or invalid')
+    }
+    const directories = pathValue.split(delimiter)
+    return directories.length > PATH_ENTRY_LIMIT ? miss('Executable search path must contain bounded absolute directories')
+        : { state: 'available', directories }
+}
+
+/** Read-only observations exclude relative bins: a package manager's cwd must not select Git or Docker in a sibling. */
+export function observationSearchPath(env: Readonly<Record<string, string | undefined>>): Readonly<{ state: 'available'; path: string }>
+    | Readonly<{ state: 'unavailable'; reason: string }> {
+    const selected = searchPath(env)
+    if (selected.kind === 'unreadable') return miss('Executable search path is not readable')
+    const bounded = searchDirectories(selected.path)
+    if (bounded.state === 'unavailable') return bounded
+    const absolute: string[] = []
+    for (const directory of bounded.directories) {
+        // Never normalize: a link followed by .. can name a different directory after lexical cleanup.
+        const relative = directory.startsWith('./') ? directory.slice(2) : directory
+        if (isAbsolute(directory) ? normalize(directory) !== directory
+            : relative.split('/').some(part => part === '' || part === '.' || part === '..')) {
+            return miss('Observation search path contains an empty, parent-traversing or noncanonical directory')
+        }
+        if (isAbsolute(directory)) absolute.push(directory)
+    }
+    return absolute.length > 0 ? { state: 'available', path: absolute.join(delimiter) }
+        : miss('Observation search path has no absolute directories; relative entries are excluded')
+}
+
 // Validates the search path once and tries each directory in order; `probe` decides what a hit is.
 async function searchExecutable<T extends Readonly<{ state: string }>>(
     name: string,
@@ -152,12 +183,10 @@ async function searchExecutable<T extends Readonly<{ state: string }>>(
 ): Promise<T | Readonly<{ state: 'unavailable'; reason: string }>> {
     const selected = searchPath(env)
     if (selected.kind === 'unreadable') return miss('Executable search path is not readable')
-    const pathValue = selected.path
-    if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0') || Buffer.byteLength(pathValue) > 65_536) {
-        return miss('Executable search path is missing or invalid')
-    }
-    const directories = pathValue.split(delimiter)
-    if (directories.length > PATH_ENTRY_LIMIT || directories.some(path => !isAbsolute(path) || normalize(path) !== path)) {
+    const bounded = searchDirectories(selected.path)
+    if (bounded.state === 'unavailable') return bounded
+    const directories = bounded.directories
+    if (directories.some(path => !isAbsolute(path) || normalize(path) !== path)) {
         return miss('Executable search path must contain bounded absolute directories')
     }
     for (const directory of directories) {
