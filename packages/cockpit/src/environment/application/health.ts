@@ -24,7 +24,7 @@ import {
     type PreflightContext,
     type PreflightEvaluation,
 } from '../observations.js'
-import { ENV_SCHEMA_OVERRIDE_NAME_LIMIT, envSchemaNotRun, envSchemaOverrides, envSchemaToolMissing, VARLOCK_INSTALL_URL } from '../env-schema-observation.js'
+import { ENV_SCHEMA_OVERRIDE_NAME_LIMIT, envSchemaNotRun, envSchemaOverrides, envSchemaToolMissing } from '../env-schema-observation.js'
 import { SURFACE_OBSERVATION_CODES } from '../generated-application/surface-observation.js'
 import {
     createComparisonRemoteRefStep,
@@ -508,14 +508,14 @@ export function healthDiagnostics(health: HealthEvaluation): readonly Environmen
         code: ENVIRONMENT_CODES.ENV_SCHEMA_TOOL_MISSING,
         message: `${sibling} has an .env.schema but varlock is not installed, so its env schema was not checked`,
         target: sibling,
-        fix: `install Varlock (${VARLOCK_INSTALL_URL}) and put it on PATH`,
+        fix: 'install Varlock (https://varlock.dev) and put it on PATH',
     })))
     const uncommitted = health.preflight.checks.flatMap((check) => envSchemaNotRun(check).map(({ schema, load }): EnvironmentDiagnostic => ({
         severity: 'warning',
         code: ENVIRONMENT_CODES.ENV_SCHEMA_UNCOMMITTED,
-        message: `${schema} has an .env.schema that is not committed in a Git repository, so it was not run: loading a schema runs its resolvers`,
+        message: `${schema} has an .env.schema that is not committed in a Git repository, so it was not run: loading a schema runs its resolvers. A person who reviewed it can run ${load}`,
         target: schema,
-        fix: `commit it to have it validated, or have a person review it and run ${load}`,
+        fix: 'commit the schema to have it validated, or have a person review it and run the load this message names',
     })))
     const overridden = health.preflight.checks.flatMap((check) => envSchemaOverrides(check).map(({ schema, keys }): EnvironmentDiagnostic => ({
         severity: 'warning',

@@ -414,9 +414,18 @@ bytes atomically, or creates a missing schema in a discovered directory.
 | that command compounded with `&&`, `;` or a pipe, or with a redirect | ask |
 | `cp`, `mv` or `printf ... >>` onto that name | ask, which a tool with no prompt tier refuses |
 
-The evaluator's answers do not show that a harness routes its tool through the guard, and no native
-Codex or OpenCode run was measured here. The native results are dated and limited to that version. A
-person's terminal has no such limit.
+The evaluator's answers do not show that a harness routes its tool through the guard, so these were
+also driven against a synthetic project installed from the package tarball, with a loopback model:
+
+| Measured | Result |
+| --- | --- |
+| Claude Code 2.1.318, generated settings and guard, 2026-11-05 | `env keys`, `env schema` and `--replace-from` with a draft from the Write tool ran without a prompt. `--replace-from .env` needed approval and `cat .env` was refused by the guard. A sentinel in `.env` appeared nowhere in the output. |
+| Codex CLI 0.166.0, hook not trusted, 2026-11-05 | The same commands ran. So did `cat .env`, which printed the sentinel: Codex skips an untrusted hook, which is why [the hook must be trusted](harness-surfaces.md#trust-the-codex-hook) before a session near real secrets. |
+| Generated Codex guard run directly on Codex-shaped calls, 2026-11-05 | Allowed `env keys`, `env schema`, a safe `--replace-from`, `cat .env.schema` and an `apply_patch` of the schema. Denied `--replace-from .env`, `cat .env`, an `apply_patch` of `.env` and a shell-written draft. This does not show Codex routing a call through a trusted hook. |
+
+OpenCode, Cursor and Grok were not driven. Cursor and Grok have no generated guard, so nothing here is
+enforced for them. The native results are dated and limited to those versions. A person's terminal has
+no such limit.
 
 ## Who decides
 

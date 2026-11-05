@@ -971,8 +971,8 @@ describe('env schema health', () => {
             expect(row(result)).toMatchObject({ verdict: 'pass', measured: [{ sibling: 'api', state: 'not-run' }] })
             expect(result.diagnostics).toContainEqual({
                 severity: 'warning', code: 'ENV_SCHEMA_UNCOMMITTED', target: 'api',
-                message: expect.stringContaining('api has an .env.schema that is not committed'),
-                fix: `commit it to have it validated, or have a person review it and run VARLOCK_TELEMETRY_DISABLED=true varlock load --path ${api}`,
+                message: expect.stringMatching(new RegExp(`^api has an \\.env\\.schema that is not committed.*A person who reviewed it can run VARLOCK_TELEMETRY_DISABLED=true varlock load --path ${api}$`)),
+                fix: 'commit the schema to have it validated, or have a person review it and run the load this message names',
             })
         }
         await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })

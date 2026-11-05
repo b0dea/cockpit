@@ -148,6 +148,9 @@ see [Safety and autonomy](safety-and-autonomy.md).
   [CLI reference](cli-reference.md), not from memory.
 - `init` exits 0 when it stops at a question. Read `result.stage`, `result.question` and
   `result.interview.outstanding` for the pending decision.
+- A cockpit that declares no runtime ends at stage `surfaces-verified`, not `environment-verified`:
+  its generated files are checked, and nothing verified a running environment. `doctor` reports its
+  schema status.
 
 ### Mark the answers you chose
 
