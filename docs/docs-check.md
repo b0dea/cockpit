@@ -74,7 +74,11 @@ and any file named as a template.
 The status is read from `status:` in YAML front matter, a `Status:` line (bold or not), or the
 first line under a `## Status` heading. A supersedes reference is a link, a file name, `ADR-12`,
 `#12`, or a number right after the keyword. "Supersedes 0012" replaces the whole record;
-"supersedes the retry clause of 0012" replaces part of it, so 0012 only has to exist.
+"supersedes the retry clause of 0012", "supersedes decision 2 of ADR 0012",
+"supersedes ADR 0012 only for retries" and "supersedes 0012's retry clause" replace part
+of it, so 0012 only has to exist. Incidental paths to other documentation are not record
+references; directly named supersession targets and links labelled ADR, decision or record
+are still checked, including when their paths point outside the records' directory.
 
 What this cannot see is a decision that was made and never written down; nothing here makes an
 agent record one.
