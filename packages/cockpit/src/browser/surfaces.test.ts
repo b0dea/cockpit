@@ -238,6 +238,18 @@ describe('browser transport surfaces', () => {
             .toMatchObject({ mcp_servers: { playwright: { enabled_tools: ['browser_snapshot'] } } })
         expect(restricted.files.some(file => file.path === 'opencode.jsonc')).toBe(false)
         expect(restricted.mcp.result.servers[0]).toMatchObject({ allowedTools: ['browser_snapshot'] })
+        // The skill may name only what the guard will let through, and says what remains.
+        for (const [path, tool] of [['.claude/skills/cockpit-browser/SKILL.md', 'mcp__playwright__browser_snapshot'], ['.agents/skills/cockpit-browser/SKILL.md', 'mcp__playwright__browser_snapshot']] as const) {
+            const skill = restricted.files.find(file => file.path === path)!.bytes
+            expect(skill).not.toContain('browser_navigate')
+            expect(skill).toContain(tool)
+            const unusable = renderBrowserSurfaces({ ...input, allowedTools: [] }).files.find(file => file.path === path)!.bytes
+            expect(unusable).not.toContain('browser_navigate')
+            expect(unusable).toContain('denies every tool of the playwright MCP server')
+            expect(renderBrowserSurfaces(input).files.find(file => file.path === path)!.bytes).toContain('browser_navigate')
+        }
+        expect(renderBrowserSurfaces({ ...input, allowedTools: ['browser_navigate'] }).rows.find(row => row.target === 'claudecode' && row.transport === 'mcp'))
+            .toMatchObject({ tool: 'mcp__playwright__browser_navigate' })
         expect(restricted.rows.find(row => row.target === 'opencode' && row.transport === 'mcp'))
             .toMatchObject({ declaration: 'unavailable', reason: expect.stringContaining('tool restriction') })
         // A declaration read from any other sibling starts elsewhere; the refusal names where it must come from.

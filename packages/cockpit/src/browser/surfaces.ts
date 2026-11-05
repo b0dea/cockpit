@@ -91,6 +91,7 @@ const issuedOperationAuthorizations = new WeakMap<object, {
     pending: Set<Promise<unknown>>
 }>()
 
+const MEASURED_BROWSER_TOOL = 'browser_navigate'
 // Historical measurements seed spelling only; every current invocation still needs its paired control.
 const MEASURED = {
     claudecode: { version: '2.1.220', date: '2026-08-25', tool: 'mcp__playwright__browser_navigate', cli: true },
@@ -474,6 +475,14 @@ function nativeMcp(target: GuardSurfaceTarget, command: string, args: readonly s
     return file(target, '.codex/config.toml', `[mcp_servers.playwright]\ncommand = ${JSON.stringify(command)}\nargs = ${JSON.stringify(args)}\nenabled = true\ndefault_tools_approval_mode = "approve"\n${allowedTools === undefined ? '' : `enabled_tools = ${JSON.stringify(allowedTools)}\n`}`)
 }
 
+// The measured native names end in this tool; an allowlist holds the name the server publishes.
+function allowedToolGuidance(measuredTool: string, allowed: readonly string[]): string {
+    const namespace = measuredTool.slice(0, -MEASURED_BROWSER_TOOL.length)
+    return allowed.length === 0
+        ? '[mcp.allowed_tools] denies every tool of the playwright MCP server, so this transport cannot be used.'
+        : `[mcp.allowed_tools] permits only ${allowed.map(tool => `${namespace}${tool}`).join(', ')} on the playwright MCP server, so use those.`
+}
+
 function renderSkill(template: string, target: GuardSurfaceTarget, rows: readonly BrowserTransportRow[], runtime: BrowserRuntimeProjection): RenderedSurfaceFile {
     if (template.split('{{browser}}').length !== 2 || /{{|}}/.test(template.replace('{{browser}}', ''))
         || !template.startsWith('---\nname: cockpit-browser\n') || /^(?:allowed-tools|tools|disallowedTools):/m.test(template)) {
@@ -543,10 +552,13 @@ export function renderBrowserSurfaces(input: BrowserSurfaceInput) {
             else if (transport === 'mcp' && harness.target === 'codexcli' && runtime.preapproval !== 'eligible') {
                 available = false; reason = 'Measured MCP transport requires approval that this data posture does not authorize.'
             }
+            // The skill names this tool to the agent, so it must be one the allowlist lets through.
+            const denied = available && transport === 'mcp' && data.allowedTools !== undefined && !data.allowedTools.includes(MEASURED_BROWSER_TOOL)
+            if (denied) reason += ` ${allowedToolGuidance(measured.tool, data.allowedTools!)}`
             rows.push({ target: harness.target, version: harness.version, transport,
                 measuredOn: measured.date, measuredVersion: measured.version, declaration: available ? 'instructed' : 'unavailable',
                 callable: available ? 'human_needed' : 'unavailable', productState: 'instructed', reason,
-                tool: available && transport === 'mcp' ? measured.tool : null, cli: available && transport === 'cli' ? cli : null })
+                tool: available && transport === 'mcp' && !denied ? measured.tool : null, cli: available && transport === 'cli' ? cli : null })
         }
         const ownRows = rows.filter(row => row.target === harness.target)
         if (ownRows.every(row => row.declaration === 'unavailable')) continue
