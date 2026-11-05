@@ -214,6 +214,10 @@ warns), `needs` (why cockpit needs it) and `findings` (each diagnostic with its 
 it is not proof. Take the gaps one at a time, required first: what is missing, why, and the exact change
 you propose.
 
+Run readiness checks with the installed Cockpit copy. A package-manager link, such as pnpm's package
+link, is recognized when it resolves to that running copy; the guard binding and launcher still have
+to pass their own checks.
+
 Whether the existing tests prove anything is the agent's judgement, made on evidence. For each
 proposed gate, name the behaviours its tests exercise, then break one of them on purpose, run the
 gate, watch it go red, and restore the file so the checkout is as it was found; that edit needs no

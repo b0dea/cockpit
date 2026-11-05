@@ -439,11 +439,20 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
     const root = dirname(resolve(configPath))
     const findings: EnvironmentDiagnostic[] = []
     const installed = join(root, 'node_modules', ...PACKAGE.split('/'))
-    const present = await lstat(installed).then((status) => status.isDirectory(), (error: unknown) => {
-        if (isMissing(error)) return false
-        throw error
-    })
-    if (!present) {
+    let own: string | undefined
+    try {
+        const status = await lstat(installed)
+        if (status.isDirectory()) own = await realpath(installed)
+        else if (status.isSymbolicLink()) {
+            const target = await realpath(installed)
+            // pnpm links its package directory; only the exact running copy authenticates that link.
+            if (target === await realpath(INSTALLED_PACKAGE_ROOT)) own = target
+        }
+    } catch (error) {
+        // Missing or cyclic links establish no installed copy; other I/O failures must surface.
+        if (!isMissing(error) && !hasErrorCode(error, 'ELOOP')) throw error
+    }
+    if (own === undefined) {
         findings.push({
             severity: 'warning' as const,
             // A literal, so the diagnostic inventory captures the fix beside the code.
@@ -458,7 +467,6 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
             throw error
         })
         const identity = read?.kind === 'complete' ? parseGuardLocalIdentity(Buffer.from(read.bytes).toString('utf8')) : undefined
-        const own = await realpath(installed)
         if (identity && relative(own, identity.module).startsWith('..')) findings.push({
             severity: 'warning' as const,
             // A literal, so the diagnostic inventory captures the fix beside the code.

@@ -173,6 +173,43 @@ purpose = "Synthetic local repository"
             target: 'sibling:app', fix: expect.stringContaining('sibling add app --remote <url>') })])
     })
 
+    it('recognizes the exact linked installation without granting an unproven launcher or an unrelated package target', async () => {
+        const root = await fixture('.')
+        const configPath = join(root, 'cockpit.toml')
+        await mkdir(join(root, 'app'))
+        await initializeTeamMetadata(configPath)
+        const installed = join(root, 'node_modules', ...installedPackageMetadata.name.split('/'))
+        await mkdir(resolve(installed, '..'), { recursive: true })
+        await symlink(resolve('packages/cockpit'), installed)
+        await mkdir(join(root, 'node_modules/.bin'))
+        const launcher = join(root, 'node_modules/.bin/cockpit')
+        await writeFile(launcher, '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+        expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({
+            code: 'COCKPIT_LAUNCHER_UNPROVEN', target: 'npx --no cockpit',
+        })])
+        await rm(launcher)
+        await symlink(join(installed, 'bin/cockpit.mjs'), launcher)
+        expect(await inspectTeamReadiness(configPath)).toEqual([])
+
+        const unrelated = join(root, 'unrelated')
+        await mkdir(unrelated)
+        await writeFile(join(unrelated, 'package.json'), JSON.stringify(installedPackageMetadata))
+        await rm(installed)
+        await symlink(unrelated, installed)
+        expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({
+            code: 'COCKPIT_NOT_INSTALLED', target: 'node_modules',
+        })])
+        await rm(unrelated, { recursive: true })
+        expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({
+            code: 'COCKPIT_NOT_INSTALLED', target: 'node_modules',
+        })])
+        await rm(installed)
+        await symlink(installed, installed)
+        expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({
+            code: 'COCKPIT_NOT_INSTALLED', target: 'node_modules',
+        })])
+    })
+
     it('reports the exact initialization writes during a read-only preview', async () => {
         const root = await fixture()
         await writeFile(join(root, 'package.json'), '{"private":true}\n')
