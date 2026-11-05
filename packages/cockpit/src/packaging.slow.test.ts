@@ -688,7 +688,7 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
     })
 })
 
-it('keeps a verified local-archive pin through installed init, check and npm ci', { timeout: 360_000 }, () => {
+it('keeps a verified local-archive pin through installed init, check and npm ci', () => {
     const requestedRoot = join(packScratch, 'source-install-init')
     mkdirSync(join(requestedRoot, 'library'), { recursive: true })
     const root = realpathSync(requestedRoot)
@@ -749,7 +749,7 @@ it('keeps a verified local-archive pin through installed init, check and npm ci'
     execFileSync('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], {
         cwd: root, env, stdio: 'ignore', timeout: 30_000,
     })
-}, 120_000)
+}, 360_000)
 
 
 // The installed-init cases share one HOME, as one operator's machine would; each case inits its own root.
