@@ -293,7 +293,9 @@ it starts its own installed package:
 
 Where npx cannot be proven, every npx spelling prompts, and Codex and OpenCode refuse it, while the
 same command spelled as a path, such as `./node_modules/.bin/cockpit doctor --config cockpit.toml`,
-still counts from the cockpit root.
+still counts from the cockpit root. pnpm writes `node_modules/.bin/cockpit` as a shell shim, which
+neither npx nor a path check can follow, so there the provable spelling is the package's own script:
+`./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml`.
 `doctor` reports this as `COCKPIT_LAUNCHER_UNPROVEN`, using the guard's own check, and names which
 spelling it can prove. The guard does not check which `npx` the command search path finds: it
 assumes that program behaves as npm's own, as the version-manager and package-firewall shims that

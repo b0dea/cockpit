@@ -218,7 +218,7 @@ type NodeManager = typeof NODE_LOCKFILES[number][1]
 type NodeLockfile = Readonly<{ manager: NodeManager; lockfile: string }>
 const PACKAGE_RUN_SCRIPTS = ['start', 'serve', 'dev'] as const
 
-async function nodeLockfile(present: (name: string) => Promise<boolean>): Promise<NodeLockfile | undefined> {
+export async function nodeLockfile(present: (name: string) => Promise<boolean>): Promise<NodeLockfile | undefined> {
     for (const [lockfile, manager] of NODE_LOCKFILES) if (await present(lockfile)) return { manager, lockfile }
     return undefined
 }
@@ -227,7 +227,7 @@ const managerReason = (node: NodeLockfile | undefined) => node ? `${node.lockfil
 // `bun test` runs Bun's own runner instead of the script, so Bun runs the script by name.
 const NODE_TEST: Readonly<Record<NodeManager, readonly string[]>> = { npm: ['npm', 'test'], pnpm: ['pnpm', 'test'], yarn: ['yarn', 'test'], bun: ['bun', 'run', 'test'] }
 // --no keeps npx from downloading a tool the repository does not install.
-const NODE_EXEC: Readonly<Record<NodeManager, readonly string[]>> = { npm: ['npx', '--no'], pnpm: ['pnpm', 'exec'], yarn: ['yarn'], bun: ['bun', 'x'] }
+export const NODE_EXEC: Readonly<Record<NodeManager, readonly string[]>> = { npm: ['npx', '--no'], pnpm: ['pnpm', 'exec'], yarn: ['yarn'], bun: ['bun', 'x'] }
 // `npm init` writes this placeholder; proposing it would declare a gate that always fails.
 const NPM_PLACEHOLDER_TEST = /no test specified/
 
