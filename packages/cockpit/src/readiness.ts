@@ -68,7 +68,7 @@ export const READINESS_CATALOGUE: readonly ReadinessEntry[] = [
         fix: 'give the container runtime more capacity, or lower environment.machine deliberately with whoever owns the product' },
     { id: 'env-schema-declared', level: 'recommended', appliesTo: BOTH, codes: [C.ENV_SCHEMA_UNDECLARED],
         needs: 'a .env.schema declares required variables and validation rules for repositories that use dotenv or environment template files',
-        fix: 'consider adopting Varlock: install it if needed, then run varlock init in the reported directory and review .env.schema without copying secret values into it' },
+        fix: 'consider adopting Varlock: install it if needed, then ask a person to run VARLOCK_TELEMETRY_DISABLED=true varlock init in the reported directory and review .env.schema without copying secret values into it' },
     { id: 'env-schema', level: 'required', appliesTo: RUNTIME, codes: [C.ENV_SCHEMA_UNHEALTHY, C.ENV_SCHEMA_TOOL_MISSING],
         refusedBy: { command: 'preflight', code: C.ENV_SCHEMA_UNHEALTHY },
         needs: 'preflight validates a repository\'s .env.schema with Varlock, without reading a value, wherever the repository has one',

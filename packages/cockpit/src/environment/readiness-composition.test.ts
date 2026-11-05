@@ -5,12 +5,38 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { loadCockpitConfig } from '../config/load.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { readinessReport } from '../readiness.js'
+import { STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
 import { inspectProjectReadiness } from './readiness-composition.js'
 
 const scratch: string[] = []
 afterEach(async () => { await Promise.all(scratch.splice(0).map(path => rm(path, { recursive: true, force: true }))) })
 
 describe('project readiness', () => {
+    it('keeps schema discovery within the root entry budget and reports an incomplete scan', async () => {
+        const base = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-readiness-')))
+        scratch.push(base)
+        const root = join(base, 'cockpit')
+        const bin = join(base, 'empty-path')
+        await Promise.all([mkdir(root), mkdir(bin)])
+        await writeFile(join(root, '.env'), 'SYNTHETIC_KEY=\n')
+        for (let start = 1; start < STRUCTURED_INPUT_ENTRY_LIMIT; start += 64) {
+            await Promise.all(Array.from({ length: Math.min(64, STRUCTURED_INPUT_ENTRY_LIMIT - start) },
+                (_, index) => writeFile(join(root, `entry-${start + index}`), '')))
+        }
+        const input = { root, checkRoot: false, env: { PATH: bin }, timeoutMs: 5_000 }
+        const within = await inspectProjectReadiness(input, executeProbe)
+        expect(within.filter(({ target }) => target === root)).toEqual([expect.objectContaining({
+            severity: 'warning', code: 'ENV_SCHEMA_UNDECLARED',
+        })])
+
+        await writeFile(join(root, 'entry-over-limit'), '')
+        const exceeded = await inspectProjectReadiness(input, executeProbe)
+        expect(exceeded.filter(({ target }) => target === root)).toEqual([expect.objectContaining({
+            severity: 'warning', code: 'EVIDENCE_UNAVAILABLE',
+            message: expect.stringContaining('root entry limit'),
+        })])
+    })
+
     it('reports an unavailable metadata scan as a warning rather than refusing readiness', async () => {
         const base = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-readiness-')))
         scratch.push(base)
@@ -68,7 +94,7 @@ describe('project readiness', () => {
         const missing = findings.filter(({ code }) => code === 'ENV_SCHEMA_UNDECLARED')
         expect(missing).toEqual([root, template, dotenv].map(target => expect.objectContaining({
             severity: 'warning', code: 'ENV_SCHEMA_UNDECLARED', target,
-            fix: expect.stringContaining('varlock init'),
+            fix: expect.stringContaining('ask a person to run VARLOCK_TELEMETRY_DISABLED=true varlock init'),
         })))
         expect(JSON.stringify(missing)).not.toContain('not-for-diagnostics')
         expect(readinessReport('surfaces-only', missing, []).gaps).toEqual([
