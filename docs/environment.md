@@ -756,6 +756,14 @@ Secret-manager resolvers, such as vault or 1Password, may need their own sign-in
 probe passes your environment through, never prompts because its stdin is closed, and reports a
 timeout as unavailable. This was measured only with a failing synthetic resolver, not a real provider.
 
+The probe has an execution limit. `varlock load` runs the schema's resolvers, including an `exec()`
+command, and the guard exempts a schema from secret-file denial as documentation, so an agent that
+can edit a schema can have commands run, with your environment, by a `doctor` or `preflight` it may
+run unprompted. Declared testing commands also run code an agent edited, and cockpit is not a
+sandbox. Review schema changes as you review code, and run `doctor` with a provider sign-in only on
+schemas you trust. This was reasoned from Varlock's documented resolver behaviour plus a failing
+`exec()` measured with a synthetic schema.
+
 Set `VARLOCK_TELEMETRY_DISABLED=true` in product-owned Varlock wrappers too. Cockpit's probes
 always disable Varlock telemetry; they do not modify global Varlock settings. See
 [Varlock's privacy documentation](https://varlock.dev/privacy/) for the opt-out contract.

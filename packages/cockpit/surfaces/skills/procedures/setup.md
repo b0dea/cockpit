@@ -253,7 +253,12 @@ Varlock resolver expressions or external-provider references under
 `env/.secrets/<cockpit-project>/<component>`; the generated ignore block in the cockpit's `.gitignore`
 must be current, the directory mode 0700, and resolver files mode 0600 before use. Ignoring, encryption and redaction
 do not prevent same-user code from reading a resolved value. The agent receives schema and redacted
-status, never a plaintext source.
+status, never a plaintext source. `cockpit doctor` and `preflight` run `varlock load`, which runs a
+schema's resolvers, including an `exec()` command, with the caller's environment, and the guard does
+not deny editing a schema. Declared testing commands also run edited code, and cockpit is not a
+sandbox. Tell the person to review schema changes as they review code, and to run `doctor` with a
+provider sign-in only on schemas they trust. This was reasoned from Varlock's documented resolver
+behaviour plus a failing `exec()` measured with a synthetic schema.
 
 Reuse the product's declared command or script. Resolve both paths to absolute paths from their owning
 roots so the command is independent of its working directory; repeated Varlock paths are applied in
