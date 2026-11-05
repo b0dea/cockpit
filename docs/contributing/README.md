@@ -1,6 +1,6 @@
 # Contributor documentation
 
-These pages are for people working on cockpit itself. Setup and the pull request rules are in
+For people working on cockpit itself. Setup and the pull request rules are in
 [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 - [Documentation style](style.md): what the docs linter enforces and what needs a reviewer

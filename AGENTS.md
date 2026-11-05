@@ -1,7 +1,6 @@
 # AGENTS.md
 
-Guide for AI coding agents and humans changing cockpit itself. For using cockpit, see the
-[README](README.md); for contribution process (branches, changesets, review), see
+For AI coding agents and humans changing cockpit itself. Contribution process (changesets, review) is in
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## What this is
@@ -37,10 +36,9 @@ design work. A public clone has none and needs none.
 | Where | `AGENTS.md`, `CLAUDE.md`, `.agents/skills`, `.claude/skills` (symlink to `.agents/skills`) | `packages/cockpit/surfaces/` |
 | Authored | by hand, nothing generates them | templates rendered per cockpit from the registry |
 
-A skill about the `cockpit.toml` schema belongs on the left. A skill about driving a stack or
-reaching a sibling repository belongs on the right. A consumer's session must not load
-instructions for maintaining a config parser. Only these root surfaces are tracked; the harness
-settings directories are not published (enforced by `tree-hygiene.test.ts`).
+A skill about the `cockpit.toml` schema belongs on the left; one about driving a stack belongs on the right.
+Only these root surfaces are tracked; the harness settings directories are not published (enforced by
+`tree-hygiene.test.ts`).
 
 ## Layout
 
@@ -100,7 +98,7 @@ slow tier; run it locally only when a shared seam changes.
 - **Comments explain why.** Keep comments that record the failure motivating a design; do not
   restate them elsewhere.
 - **Every bug fix lands with a test that fails without it.** One test pins one public behaviour;
-  extend the closest existing case rather than adding branch or getter coverage.
+  extend the closest existing case.
 
 ## Keep docs current
 

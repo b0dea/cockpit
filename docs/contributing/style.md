@@ -1,8 +1,7 @@
 # Documentation style
 
-This policy tells cockpit contributors which Markdown rules the documentation checks enforce and
-which need a reviewer. The checks gate what a reader would trip over (a broken link, a code
-cockpit never prints, a reference to something that does not exist) and leave wording to review.
+The checks gate what a reader would trip over (a broken link, a code cockpit never prints, a
+reference to something that does not exist) and leave wording to review.
 
 ## What the checks enforce
 
@@ -32,9 +31,9 @@ Generated pages are checked by regenerating them: see
 
 ## What needs a reviewer
 
-Human documentation opens with prose that says what the page is for and who it is for.
-Executable instructions (agent rules, skills and the shipped surface templates) may begin directly
-with commands or constraints, because rewriting them as explanation can change their behavior.
+Keep it friendly and short. One owner per fact: elsewhere, one sentence and a link. Executable
+instructions (agent rules, skills and the shipped surface templates) may begin directly with commands
+or constraints, because rewriting them as explanation can change their behavior.
 
 ### Example
 

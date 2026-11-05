@@ -1,7 +1,7 @@
 # Operator paths
 
-This contract is for contributors: when cockpit takes its direct-fix path and when it creates a
-durable work order. It is an implementation contract, not a user procedure.
+When cockpit takes its direct-fix path and when it creates a durable work order. An implementation
+contract, not a user procedure.
 
 | Path | Used for | Steps |
 |---|---|---|

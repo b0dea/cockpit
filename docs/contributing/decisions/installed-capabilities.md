@@ -1,8 +1,5 @@
 # Installed capabilities
 
-This contract is for contributors extending environment execution or generated surfaces: who
-observes, decides and executes, who owns each generated file, and where the framework ends.
-
 ## Observation and execution
 
 Application code runs the steps in order: observe, decide, execute, then check the result. The

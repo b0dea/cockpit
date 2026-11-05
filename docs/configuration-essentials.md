@@ -1,17 +1,13 @@
 # Configuration essentials
 
-This page is for people writing or reviewing their first `cockpit.toml`. It covers the tables a
-typical cockpit sets, the ones `init` asks about and the bundled examples declare, each with a
-minimal snippet and a link to its full entry in the generated
-[configuration reference](configuration-reference.md). Everything else is optional and listed by
-area at the end.
+The tables a typical `cockpit.toml` sets, each with a minimal snippet and a link to its entry in the generated
+[configuration reference](configuration-reference.md). Optional areas are listed at the end.
 
 ## `[cockpit]`
 
-The cockpit's name and where the product's repositories live. The name scopes the cockpit's
-Compose projects, state and generated files, so renaming it later means bringing the stack down
-and syncing again. `siblings_root` is relative to the cockpit directory and defaults to `..`.
-Full entry: [`[cockpit]`](configuration-reference.md#cockpit).
+The cockpit's name, which scopes its Compose projects, state and generated files
+([Rename a cockpit](getting-started.md#rename-a-cockpit)), and where the product's repositories live.
+`siblings_root` is relative to the cockpit directory and defaults to `..`. Full entry: [`[cockpit]`](configuration-reference.md#cockpit).
 
 ```toml
 [cockpit]
@@ -160,8 +156,7 @@ warns until a person confirms each value and deletes its entry. Full entry:
 
 ## Everything else
 
-Each optional area links to its tables in the reference and to the guide that explains it. The
-reference also lists the [defaults](configuration-reference.md#defaults) and the
+The reference also lists the [defaults](configuration-reference.md#defaults) and the
 [checks beyond the schema](configuration-reference.md#checks-beyond-the-schema).
 
 | Area | Tables | Guide |

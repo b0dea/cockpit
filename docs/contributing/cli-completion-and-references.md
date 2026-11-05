@@ -1,7 +1,6 @@
 # CLI completion and generated references
 
-This page is for people working on cockpit itself: how a command reports that it finished, and how
-the generated reference pages are kept current with the source.
+How a command reports that it finished, and how the generated pages stay current with the source.
 
 ## Command completion and interactive decline
 
