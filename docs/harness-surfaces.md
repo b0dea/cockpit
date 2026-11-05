@@ -24,7 +24,8 @@ file. The ownership manifest records the expected type, bytes and sources. Its d
 accidental changes; it does not prove who wrote a file in the past.
 
 Removing a stale entry needs your separate approval of those exact paths and bytes: plain `sync`
-refuses, and `sync --interactive` asks you to type the digest the dry run showed. A stale path whose
+refuses, and `sync --interactive` asks you to type the digest the dry run showed. The exception is a
+removal that only narrows MCP access, under [`[mcp.allowed_tools]`](#mcp-servers-and-restrictions). A stale path whose
 contents changed stays a conflict for you to resolve; [Check and sync](environment.md#check-and-sync)
 has the full procedure.
 
@@ -279,7 +280,11 @@ An empty list denies all tools; an absent server has no tool restriction. The se
 declared, and overlapping native server namespaces are refused. Widening this list changes the
 guard policy and requires the same approval as other increases in agent authority. Adding a
 restriction or removing tools from a list narrows access and can be synced by an agent when
-`[autonomy] sync = "agent"`. Removing a server's list makes it unrestricted and requires a person.
+`[autonomy] sync = "agent"`, whatever `stale_delete` says: when the restriction leaves a listed tool
+with no servers, `sync` removes that tool's MCP-only file (`.mcp.json` or `.cursor/mcp.json`) as long
+as its bytes are still what cockpit generated. A hand-edited file is a conflict, and any other stale
+path in the same sync still needs the stale-removal approval.
+Removing a server's list makes it unrestricted and requires a person.
 
 Codex receives `enabled_tools` in its generated server configuration. Claude Code receives an
 authenticated `PreToolUse` guard scoped to the restricted server namespaces. It denies unlisted

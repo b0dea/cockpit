@@ -375,7 +375,7 @@ using those here would leave sibling secrets outside the protection. See
 | Field | Decides | Default |
 | --- | --- | --- |
 | `sync` | whether the guard lets an agent run a writing `sync`; under `ci` a writing sync runs only where `CI` is set | `agent` |
-| `stale_delete` | whether `sync` removes a file it generated before and no longer generates without a person typing the stale-removal digest | `agent` |
+| `stale_delete` | whether `sync` removes a file it generated before and no longer generates without a person typing the stale-removal digest; an unchanged MCP-only file of a listed tool whose servers are no longer written never waits, because removing it only narrows access | `agent` |
 | `reset` | whether `reset --apply`, and a `stacks prune --apply` that deletes volumes, delete stack data without a person; otherwise a person approves the preview with `--interactive` | `person` |
 | `mcp_approve` | `person`: sync enables only the MCP servers whose digest a person recorded in `[mcp.approved]`, and `MCP_NOT_APPROVED` names the rest; `agent`: sync enables every declared server as declared now, which lets an agent start processes outside the guard, because a sibling's MCP source is a file the agent can write and each harness starts an enabled server outside every guard boundary | `person` |
 

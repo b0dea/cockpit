@@ -19,7 +19,7 @@ import {
 import { syncCommandInput } from './prepare.js'
 import { inputSourcesCurrent, ownedInputOverlap, preparePublication } from './publication.js'
 import { checkCanonicalGeneratedEnvironment, issueRepairAuthority, issuedRepairs } from './check.js'
-import { openCodeGrantFile } from './surface-outputs.js'
+import { openCodeGrantFile, staleMcpOutputsOnly } from './surface-outputs.js'
 import { readSiblingCheckouts } from '../sibling-checkouts.js'
 import { openCodeGrantDirectory, openCodePatternUnsafe } from '../served-checkout-grants.js'
 
@@ -49,7 +49,13 @@ async function prepareGeneratedEnvironmentSync(
             'pending team metadata writes overlap an authenticated input or its identity could not be checked; move the input to a separate file, update its declaration, then run npx --no cockpit sync --config <your cockpit.toml> again',
             overlap.kind === 'complete' ? overlap.path : 'team-metadata')
     }
-    const authority = issueRepairAuthority({ prepared: publication.prepared, plan: publication.plan, adapters })
+    // Restricting a server takes it out of a tool with no restriction mechanism. Waiting for a person
+    // there would leave every other tool unrestricted too, so a reduction does not take that approval.
+    const authorizeStaleRemoval: typeof adapters.authorizeStaleRemoval = async request =>
+        staleMcpOutputsOnly(request.entries.map(entry => entry.path), publication.prepared.configuredHarnesses)
+            ? { format: 'cockpit-stale-removal-approval/v1', digest: request.digest }
+            : adapters.authorizeStaleRemoval?.(request)
+    const authority = issueRepairAuthority({ prepared: publication.prepared, plan: publication.plan, adapters: { ...adapters, authorizeStaleRemoval } })
     return { kind: 'complete', authority, dryRun: request.dryRun === true }
 }
 
@@ -141,5 +147,6 @@ export async function applyGeneratedEnvironmentRepair(
             `the committed OpenCode settings were published, but ${local.message}; OpenCode refuses to start until it exists`,
             GUARD_LOCAL_PATHS.directory, 'fix the path, then run `npx --no cockpit sync --config <your cockpit.toml>` again in a terminal')
     }
-    return complete('sync', prepared, settings.dryRun === true, outcome.changes, settings.dryRun ? outcome.staleRemoval : undefined)
+    const needsApproval = outcome.staleRemoval && !staleMcpOutputsOnly(outcome.staleRemoval.entries.map(entry => entry.path), prepared.configuredHarnesses)
+    return complete('sync', prepared, settings.dryRun === true, outcome.changes, settings.dryRun && needsApproval ? outcome.staleRemoval : undefined)
 }

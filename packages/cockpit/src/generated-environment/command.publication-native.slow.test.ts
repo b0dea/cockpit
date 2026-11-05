@@ -17,6 +17,7 @@ import {
     consumeWorkApplicationAuthorities,
 } from '../environment/generated-application/authorities.js'
 import { observeGeneratedApplicationSurfaces } from '../environment/generated-application/surface-observation.js'
+import { staleMcpOutputsOnly } from '../environment/generated-application/surface-outputs.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './command.js'
 import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
 import { writeSiblingCheckouts } from '../environment/sibling-checkouts.js'
@@ -62,6 +63,56 @@ describe('public surface publication transaction', () => {
             })
             expect(stale.status).toBe(2)
             expect(stale.stderr).toContain('widens what agents may do')
+        })
+
+        it('applies a tool restriction under stale_delete = person, removing only the unchanged MCP file of a tool still listed', async () => {
+            const fixture = await surfaceConsumer('stale-mcp', { mcp: { command: '/usr/bin/true' } })
+            expect(spawnSync('git', ['init', '--quiet', fixture.root]).status).toBe(0)
+            const config = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
+            config.surfaces.tools = ['claudecode', 'codexcli', 'cursor', 'grokcli']
+            config.autonomy.stale_delete = 'person'
+            await writeFile(fixture.configPath, stringifyToml(config))
+            await writeFile(join(fixture.siblingDirectory, 'package-lock.json'), '{}')
+            await writeFile(join(fixture.siblingDirectory, '.mcp.json'), JSON.stringify({ mcpServers: { 'approved-server': { command: '/usr/bin/true' } } }))
+            const first = await syncGeneratedEnvironment({ configPath: fixture.configPath })
+            expect(first, JSON.stringify(first.diagnostics)).toMatchObject({ kind: 'complete' })
+            const cursorPath = join(fixture.root, '.cursor/mcp.json')
+            const cursorBytes = await readFile(cursorPath, 'utf8')
+            expect(cursorBytes).toContain('approved-server')
+            expect(await readFile(join(fixture.root, '.grok/config.toml'), 'utf8')).toContain('approved-server')
+
+            config.mcp.allowed_tools = { 'approved-server': ['read_record'] }
+            await writeFile(fixture.configPath, stringifyToml(config))
+            const codexEnabledTools = async () => (parseToml(await readFile(join(fixture.root, '.codex/config.toml'), 'utf8')) as { mcp_servers: Record<string, { enabled_tools?: unknown }> }).mcp_servers['approved-server']!.enabled_tools
+
+            // A hand edit is not ours to delete, and nothing narrows until it is resolved.
+            await writeFile(cursorPath, `${cursorBytes}\n`)
+            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'SURFACE_STATE_CONFLICT', target: '.cursor/mcp.json' })] })
+            expect(await codexEnabledTools()).toBeUndefined()
+            expect(await readFile(cursorPath, 'utf8')).toBe(`${cursorBytes}\n`)
+            await writeFile(cursorPath, cursorBytes)
+
+            const reported = await checkGeneratedEnvironment({ configPath: fixture.configPath })
+            expect(reported).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_ARTIFACT_DRIFT', target: '.cursor/mcp.json', fix: 'run npx --no cockpit sync --config <your cockpit.toml>' })] })
+            const preview = await syncGeneratedEnvironment({ configPath: fixture.configPath, dryRun: true })
+            expect(preview).toMatchObject({ kind: 'complete', result: { changes: expect.arrayContaining([{ operation: 'remove', path: '.cursor/mcp.json' }]) } })
+            expect(preview.result).not.toHaveProperty('staleRemoval')
+
+            const narrowed = await syncGeneratedEnvironment({ configPath: fixture.configPath })
+            expect(narrowed, JSON.stringify(narrowed.diagnostics)).toMatchObject({ kind: 'complete' })
+            expect(await codexEnabledTools()).toEqual(['read_record'])
+            const settings = JSON.parse(await readFile(join(fixture.root, '.claude/settings.json'), 'utf8'))
+            expect(new RegExp(settings.hooks.PreToolUse[0].matcher).test('mcp__approved-server__write_record')).toBe(true)
+            await expect(lstat(cursorPath)).rejects.toMatchObject({ code: 'ENOENT' })
+            expect(await readFile(join(fixture.root, '.grok/config.toml'), 'utf8')).not.toContain('approved-server')
+            expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+
+            expect(staleMcpOutputsOnly(['.cursor/mcp.json'], ['claudecode'])).toBe(false)
+            expect(staleMcpOutputsOnly(['.grok/config.toml'], ['grokcli'])).toBe(false)
+            // Dropping a tool removes more than its MCP file, so that stays a person's approval.
+            config.surfaces.tools = ['claudecode', 'codexcli', 'grokcli']
+            await writeFile(fixture.configPath, stringifyToml(config))
+            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_STALE_APPROVAL_REQUIRED' })] })
         })
 
         it('checks only MCP metadata within a bounded native envelope and retains shell and edit limits', async () => {

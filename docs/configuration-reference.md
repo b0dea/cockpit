@@ -224,7 +224,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
 | `sync` | Who may run a sync that writes: agent, person or ci. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
-| `stale_delete` | Who approves sync deleting files cockpit generated before and no longer generates. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
+| `stale_delete` | Who approves sync deleting files cockpit generated before and no longer generates. Default agent. An unchanged MCP-only file of a listed tool whose servers are no longer written goes without this approval, because removing it only narrows access. | string |  | one of `"agent"`, `"person"`, `"ci"` |
 | `reset` | Who may apply a reset, which deletes stack data. Default person. | string |  | one of `"agent"`, `"person"`, `"ci"` |
 | `mcp_approve` | Who approves a declared MCP server: person records each digest in [mcp.approved]; agent lets sync enable every declared server as declared, so an agent that writes a sibling MCP source starts that process outside the guard. Default person. | string |  | one of `"agent"`, `"person"` |
 

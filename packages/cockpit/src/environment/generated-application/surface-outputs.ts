@@ -410,6 +410,18 @@ export function nativeMcpPaths(targets: readonly SurfaceTarget[]): Readonly<Part
     return Object.fromEntries(targets.map(target => [target, harnessFact(target).outputs.mcp]))
 }
 
+/**
+ * Whether every stale path is the MCP file of a tool still listed. Such a file goes stale only because
+ * none of its servers are written any more, so removing it can only narrow access. A file that also
+ * holds a tool's permissions can go stale for another reason, so it is not one of these. Publication has
+ * already refused a stale path whose bytes differ from what cockpit generated.
+ */
+export function staleMcpOutputsOnly(paths: readonly string[], configuredHarnesses: readonly string[]): boolean {
+    const removable = SURFACE_TARGETS.filter(target => configuredHarnesses.includes(target)).map(target => harnessFact(target).outputs)
+        .filter(outputs => !outputs.permissions.some(path => path === outputs.mcp)).map(outputs => outputs.mcp as string)
+    return paths.length > 0 && paths.every(path => removable.includes(path))
+}
+
 export function nativeGrantPaths(targets: readonly SurfaceTarget[]): Readonly<Partial<Record<SurfaceTarget, string>>> {
     return Object.fromEntries(targets.map(target => [target, harnessFact(target).outputs.permissions[0]]))
 }

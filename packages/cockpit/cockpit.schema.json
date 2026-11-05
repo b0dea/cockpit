@@ -844,7 +844,7 @@
           ]
         },
         "stale_delete": {
-          "description": "Who approves sync deleting files cockpit generated before and no longer generates. Default agent.",
+          "description": "Who approves sync deleting files cockpit generated before and no longer generates. Default agent. An unchanged MCP-only file of a listed tool whose servers are no longer written goes without this approval, because removing it only narrows access.",
           "type": "string",
           "enum": [
             "agent",

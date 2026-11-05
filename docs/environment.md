@@ -741,7 +741,9 @@ while the generated-file transaction reports its own recovery result.
 Removing a stale file needs a separate approval of the exact path, operation and current bytes that
 the dry run showed. Plain `sync` refuses to apply it; `sync --interactive` shows the request and
 asks you to type its exact digest. After approval and a final recheck, cockpit can remove an
-unchanged whole file, or its own region in a shared file. Files cockpit did not write,
+unchanged whole file, or its own region in a shared file. When every stale path is the MCP-only file
+of a tool still listed, its servers are no longer written, so removing it only narrows access and
+`sync` applies it without that approval. Files cockpit did not write,
 and bytes outside its regions, are kept. A stale path that changed or is unsafe needs manual
 reconciliation before you retry.
 

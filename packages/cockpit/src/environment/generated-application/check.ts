@@ -41,6 +41,7 @@ import {
     surfacePlanRefusal,
 } from './publication.js'
 import { prepareSurfaces } from './surfaces.js'
+import { staleMcpOutputsOnly } from './surface-outputs.js'
 
 interface RepairRecord {
     readonly prepared: PreparedEnvironment
@@ -164,10 +165,13 @@ export async function checkCanonicalGeneratedEnvironment(
     const comparison = planObservedSurfaces(prepared, effectivePriorSurfaces, surfaceState)
     if (comparison.kind !== 'complete') return surfacePlanRefusal(prepared, comparison.diagnostic)
     const drift = comparison.actions.map(action => action.path)
-    // Removing a formerly owned path is plain sync's to do only where [autonomy] stale_delete is agent;
-    // otherwise it needs a person's approval of its exact digest, so send the reader to the one command that can.
-    const stale = comparison.actions.find(action => action.kind === 'remove')
+    // Removing a formerly owned path is plain sync's to do only where [autonomy] stale_delete is agent or
+    // the removal only narrows MCP access; otherwise it needs a person's approval of its exact digest, so
+    // send the reader to the one command that can.
+    const removals = comparison.actions.filter(action => action.kind === 'remove')
+    const stale = removals[0]
     if (stale) return prepared.workEnvironment.policy.autonomy.stale_delete === 'agent'
+        || staleMcpOutputsOnly(removals.map(action => action.path), prepared.configuredHarnesses)
         ? refuse('GENERATED_ARTIFACT_DRIFT', 'a formerly generated path is still on disk and in the ownership record', stale.path, 'run npx --no cockpit sync --config <your cockpit.toml>')
         : refuse('GENERATED_ARTIFACT_DRIFT', 'a formerly generated path is still on disk and in the ownership record', stale.path,
             'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows')
