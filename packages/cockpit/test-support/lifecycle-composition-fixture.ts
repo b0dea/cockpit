@@ -11,6 +11,7 @@ import { createLifecycleCommandAdapters } from '../src/environment/lifecycle-com
 import { recordLifecycleStarted } from '../src/environment/lifecycle-stage.js'
 import { composeProjectName } from '../src/environment/identity.js'
 import { syncGeneratedEnvironment } from '../src/generated-environment/command.js'
+import { publishComposeOwnership } from './compose-ownership-fixture.js'
 import { recordSyntheticMeasurement } from './runtime-measurement-fixture.js'
 
 const run = promisify(execFile)
@@ -162,15 +163,7 @@ async function configureStackDocker(
     healthcheck = true,
     profiles?: readonly string[],
 ) {
-    // sync publishes the ownership override up hands Compose; it reads the state root from HOME.
-    const home = process.env.HOME
-    process.env.HOME = candidate.home
-    try {
-        const synced = await syncGeneratedEnvironment({ configPath: candidate.configPath })
-        if (synced.kind !== 'complete') throw new Error(JSON.stringify(synced.diagnostics))
-    } finally {
-        process.env.HOME = home
-    }
+    await publishComposeOwnership(candidate.checkout, context)
     const containerId = 'a'.repeat(64)
     const projectName = composeProjectName({ cockpitName: 'stack-environment', stackId: context.stackId as StackId })
     const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
@@ -287,8 +280,21 @@ exit 64
     return { containerId }
 }
 
-async function runStackScenario(options: Readonly<{ seed?: readonly string[]; memoryMb?: number; healthcheck?: boolean; profiles?: readonly string[] }> = {}) {
+// `synced` runs the real sync first, for a test that goes on to sync or check that ownership. The
+// other scenarios only need the override up hands Compose, and a sync costs dozens of child processes.
+async function runStackScenario(options: Readonly<{ seed?: readonly string[]; memoryMb?: number; healthcheck?: boolean; profiles?: readonly string[]; synced?: boolean }> = {}) {
     const candidate = await stackFixture(options)
+    if (options.synced) {
+        // sync reads the state root from HOME.
+        const home = process.env.HOME
+        process.env.HOME = candidate.home
+        try {
+            const synced = await syncGeneratedEnvironment({ configPath: candidate.configPath })
+            if (synced.kind !== 'complete') throw new Error(JSON.stringify(synced.diagnostics))
+        } finally {
+            process.env.HOME = home
+        }
+    }
     const steps: ExecutionStep[] = []
     const adapters = createLifecycleCommandAdapters({
         configPath: candidate.configPath,

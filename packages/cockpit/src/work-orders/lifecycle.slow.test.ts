@@ -34,7 +34,6 @@ async function cockpit(policy: string): Promise<string> {
     writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => a + b\n')
     writeFileSync(join(root, 'test/add.test.mjs'), "import { add } from '../src/add.mjs'\nif (add(2, 3) !== 5) process.exit(1)\nconsole.log('add(2, 3) returned 5')\n")
     git(root, 'init', '-q', '-b', 'main')
-    expect((await work(root, ['sync'])).status).toBe(0)
     git(root, 'add', '-A'); git(root, 'commit', '-qm', 'cockpit')
     return root
 }

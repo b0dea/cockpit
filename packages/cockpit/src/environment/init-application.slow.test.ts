@@ -41,9 +41,17 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
     let defaultsDocument: string | undefined
     const adapters: InitApplicationAdapters = {
         ...f.adapters,
-        prepareBootstrap: prepareSelectedBootstrapSurface,
-        resumeBootstrap: resumeSelectedBootstrapSurface,
-        applyBootstrap: applySelectedBootstrapSurface,
+        // The large case stops at the defaults review, which reads the draft and not the published
+        // setup skill; each answer would otherwise render that skill again through real processes.
+        ...largePurpose ? {} : {
+            prepareBootstrap: prepareSelectedBootstrapSurface,
+            resumeBootstrap: resumeSelectedBootstrapSurface,
+            applyBootstrap: applySelectedBootstrapSurface,
+            observeDestination: async ({ path }: { path: string }) => {
+                if (!existsSync(path)) return { kind: 'absent' as const }
+                return { kind: 'available' as const, sha256: createHash('sha256').update(await readFile(path)).digest('hex') }
+            },
+        },
         document: async input => {
             const outcome = await draftFromEstate(input)
             if (outcome.question?.field === 'configuration.defaults') defaultsDocument = outcome.artifact ?? undefined
@@ -51,10 +59,6 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
         },
         classifyEstate: input => classifyEstateObservation(input, { observe: observePublicEstate }),
         composeFindings,
-        observeDestination: async ({ path }) => {
-            if (!existsSync(path)) return { kind: 'absent' }
-            return { kind: 'available', sha256: createHash('sha256').update(await readFile(path)).digest('hex') }
-        },
         validateConfig: loadCockpitConfig,
         synchronize: input => {
             synchronizeInputs.push(input.bootstrapState !== undefined)
@@ -303,11 +307,10 @@ it.each(['scalar', 'artifact'] as const)('refuses an unreviewable defaults draft
         }
     }
     let defaultsDocument: string | undefined
+    // The bound is on the real draft; the published setup skill plays no part, so the fixture's
+    // bootstrap stands in for rendering it again after every answer.
     const adapters: InitApplicationAdapters = {
         ...f.adapters,
-        prepareBootstrap: prepareSelectedBootstrapSurface,
-        resumeBootstrap: resumeSelectedBootstrapSurface,
-        applyBootstrap: applySelectedBootstrapSurface,
         document: async input => {
             const outcome = await draftFromEstate(input)
             if (outcome.question?.field === 'configuration.defaults') defaultsDocument = outcome.artifact ?? undefined
