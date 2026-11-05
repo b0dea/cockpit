@@ -27,7 +27,7 @@ import {
 } from './contract.js'
 import type { SetupObservation, SetupPathEvidence } from './setup.js'
 import { gitEnvironment } from './setup.js'
-import { GIT_CHILD_CONFIG, observationSearchPath, resolveGitExecutable, resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
+import { GIT_CHILD_CONFIG, observationEnvironment, resolveGitExecutable, resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
 import { createGitRunner } from './sibling-checkouts.js'
 import { checkoutId as deriveCheckoutId } from './identity.js'
 import { cockpitId as deriveCockpitId } from './identity.js'
@@ -1404,9 +1404,9 @@ export async function observeGeneratedCheckoutIdentity(input: {
     let checkout: SetupCheckoutBinding | undefined
     let consumed: ConsumedSetupCheckoutObservation | undefined
     if (hasCheckout) {
-        const search = observationSearchPath(searchEnvironment)
+        const search = observationEnvironment(searchEnvironment)
         if (search.state !== 'available') return setupCheckoutFailure(search.reason)
-        searchEnvironment = { ...searchEnvironment, PATH: search.path }
+        searchEnvironment = search.env
         const git = await resolveGitExecutable(searchEnvironment)
         if (git.state !== 'available') return setupCheckoutFailure(git.reason)
         const env = gitEnvironment(searchEnvironment)
@@ -1485,11 +1485,11 @@ async function askGitForCheckout(
     env: Readonly<Record<string, string | undefined>>,
 ): Promise<GeneratedCheckoutFailure | Readonly<{ reason: string }>
     | Readonly<{ topLevel: string; gitDirectory: string; commonDirectory: string; mainCheckoutPath: string }>> {
-    const search = observationSearchPath(env)
+    const search = observationEnvironment(env)
     if (search.state !== 'available') {
         return search.noAbsoluteDirectory ? { reason: `Git cannot be looked up to read ${gitEntry}: ${search.reason}` } : setupCheckoutFailure(search.reason)
     }
-    const runner = await createGitRunner({ ...env, PATH: search.path }, executeProbe)
+    const runner = await createGitRunner(search.env, executeProbe)
     if ('unavailable' in runner) return { reason: `Git cannot be looked up to read ${gitEntry}: ${runner.unavailable}` }
     const answer = await runner.run(root, 'surfaces:observe:checkout', CHECKOUT_REV_PARSE, { timeoutMs: 10_000 })
     if (answer.kind === 'failed') {

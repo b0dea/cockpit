@@ -178,6 +178,13 @@ export function observationSearchPath(env: Readonly<Record<string, string | unde
         : { ...miss('Observation search path has no absolute directories; relative entries are excluded'), noAbsoluteDirectory: true }
 }
 
+/** `env` with its PATH narrowed to what an observation may search, or why it cannot be. */
+export function observationEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<{ state: 'available'; env: Readonly<Record<string, string | undefined>> }>
+    | Exclude<ReturnType<typeof observationSearchPath>, { state: 'available' }> {
+    const search = observationSearchPath(env)
+    return search.state === 'available' ? { state: search.state, env: { ...env, PATH: search.path } } : search
+}
+
 // Validates the search path once and tries each directory in order; `probe` decides what a hit is.
 async function searchExecutable<T extends Readonly<{ state: string }>>(
     name: string,

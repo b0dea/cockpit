@@ -8,7 +8,7 @@ import type { OwnershipManifest } from '../../surfaces/ownership.js'
 import { surfaceModelSha256, type CustomSurfaceReceipt } from '../../surfaces/render.js'
 import { readAnchoredFile, readAnchoredBatches, type DirectoryIdentity } from '../../generated-environment/transaction.js'
 import { snapshotExecutionStep, snapshotGeneratedJson, RefusalError, hasErrorCode } from '../contract.js'
-import { observationSearchPath, resolveExecutablePath, resolveGitExecutable } from '../executable.js'
+import { observationEnvironment, resolveExecutablePath, resolveGitExecutable } from '../executable.js'
 import { cockpitId } from '../identity.js'
 import { NATIVE_HOOK_COST_SCRIPT, projectNativeHooks, type NativeHookEntry, type NativeHookPolicy } from '../../testing/hooks.js'
 import { exactKeys } from '../../exact-keys.js'
@@ -183,9 +183,8 @@ export async function projectExplicitNativeHooks(
         bytes: policyBytes,
     }
     const source = { path: policyDeclaration.path, sha256: policyRead.sha256, identity: policyRead.identity }
-    const environment = adapters.observationEnv ?? process.env
-    const search = observationSearchPath(environment)
-    const git = search.state === 'available' ? await resolveGitExecutable({ ...environment, PATH: search.path }) : search
+    const search = observationEnvironment(adapters.observationEnv ?? process.env)
+    const git = search.state === 'available' ? await resolveGitExecutable(search.env) : search
     if (git.state !== 'available') return {
         projection: { kind: 'refusal' as const, reason: git.reason },
         source,

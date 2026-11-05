@@ -22,7 +22,7 @@ import {
     type ExecutionStep,
 } from './contract.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
-import { observationSearchPath, resolveDockerExecutable, resolveGitExecutable } from './executable.js'
+import { observationEnvironment, resolveDockerExecutable, resolveGitExecutable } from './executable.js'
 import { inspectMachineStacksForDoctor, type OwnCheckout } from './stack-inventory.js'
 import { createGitObservationStep, observeGit, observeRunningCheckout } from './git-observation.js'
 import { inspectProjectReadiness } from './readiness-composition.js'
@@ -464,18 +464,9 @@ export function createHealthCommandAdapters(
     execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
 ): HealthCommandAdapterComposition {
     const inherited = captureInput(rawInput)
-    const search = inherited ? observationSearchPath(inherited.env) : undefined
-    const input = inherited && search?.state === 'available'
-        ? { ...inherited, env: { ...inherited.env, PATH: search.path } } : undefined
-    return composeHealthCommandAdapters(input, inherited, execute, search?.state === 'unavailable' ? search.reason : undefined)
-}
-
-function composeHealthCommandAdapters(
-    input: CapturedInput | undefined,
-    inherited: CapturedInput | undefined,
-    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
-    searchRefusal?: string,
-): HealthCommandAdapterComposition {
+    const search = inherited ? observationEnvironment(inherited.env) : undefined
+    const input = inherited && search?.state === 'available' ? { ...inherited, env: search.env } : undefined
+    const searchRefusal = search?.state === 'unavailable' ? search.reason : undefined
     let selectedNamespace: StateNamespace | undefined
     let loadedConfig: LoadedCockpitConfigResult | undefined
     let selectedOwn: (OwnCheckout & Readonly<{ configPath: string }>) | undefined

@@ -1,5 +1,5 @@
 import type { ENVIRONMENT_CODES, EnvironmentDiagnostic } from './contract.js'
-import { locateExecutable, observationSearchPath } from './executable.js'
+import { locateExecutable, observationEnvironment } from './executable.js'
 import { guardSearchPathRelativeEntry } from '../guards/protected-locations.js'
 import type { McpServer } from '../surfaces/mcp.js'
 
@@ -21,9 +21,9 @@ async function launchProblem(command: string, cwd: string, env: Readonly<Record<
     const located = await locateExecutable(command, env, cwd)
     if (located.state === 'present') return undefined
     const entry = command.includes('/') ? null : guardSearchPathRelativeEntry(env.PATH ?? '')
-    const search = observationSearchPath(env)
+    const search = observationEnvironment(env)
     if (entry === null || env.PATH === undefined || env.PATH === '' || search.state === 'unavailable' && !search.noAbsoluteDirectory) return { kind: 'unresolved', reason: located.reason }
-    const absolute = search.state === 'available' ? await locateExecutable(command, { ...env, PATH: search.path }, cwd) : undefined
+    const absolute = search.state === 'available' ? await locateExecutable(command, search.env, cwd) : undefined
     return { kind: 'relative-path', entry, absolute: absolute?.state === 'present' ? absolute.path : undefined }
 }
 
