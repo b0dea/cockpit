@@ -338,7 +338,7 @@ Varlock resolver expressions or external-provider references under
 `env/.secrets/<cockpit-project>/<component>`; the generated ignore block in the cockpit's `.gitignore`
 must be current, the directory mode 0700, and resolver files mode 0600 before use. Ignoring, encryption and redaction
 do not prevent same-user code from reading a resolved value. The agent receives schema and redacted
-status, never a plaintext source. `cockpit doctor` and `preflight` run `varlock load`, which runs a
+status, never a plaintext source. `./node_modules/.bin/cockpit doctor --config cockpit.toml` and `preflight` run `varlock load`, which runs a
 schema's resolvers, including an `exec()` command, with the caller's environment, and the guard does
 not deny editing a schema. Declared testing commands also run edited code, and cockpit is not a
 sandbox. Tell the person to review schema changes as they review code, and to run `doctor` with a
@@ -371,7 +371,7 @@ the cockpit root's own, with the central path when it exists; a failing or unava
 keys. An unavailable row can mean a secret provider is signed out or unreachable: a person signs in
 and reruns. To diagnose, a person runs `VARLOCK_TELEMETRY_DISABLED=true varlock load --path
 <schema-directory> --path <central-directory>`. Agents use cockpit preflight for key-only status, or
-`cockpit doctor` on a cockpit that declares no runtime, where preflight refuses; raw Varlock output is
+`./node_modules/.bin/cockpit doctor --config cockpit.toml` on a cockpit that declares no runtime, where preflight refuses; raw Varlock output is
 not safe to read.
 
 Treat Varlock output as secret-tainted even in agent mode. Report variable names, validation state,
