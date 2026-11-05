@@ -1,8 +1,9 @@
-import { dirname } from 'node:path'
+import { dirname, posix } from 'node:path'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { formatShellCommand } from '../fix-catalogue.js'
 import {
+    DOTENV_DOCUMENTATION,
     RefusalError,
     ENVIRONMENT_CODES,
     OBSERVATION_REASON_BYTE_LIMIT,
@@ -591,10 +592,18 @@ export function gitRepositoryRefusal(stderr: Buffer):
         fix: 'fix what Git reports, then rerun this command' }
 }
 
-// The names the guard denies agents from reading: `.env` and `.env.<suffix>`, except the templates
-// meant to be committed. Values are never read; only Git's index is asked which names it tracks.
+// What the guard denies agents from reading: `.env` and `.env.<suffix>` except the documentation
+// names and declared templates, and anything below a `.secrets` directory. Values are never read;
+// only Git's index is asked which names it tracks.
 const SECRET_FILE = /^\.env(?:\.[^/]+)?$/
-const SECRET_TEMPLATE = /\.(?:example|sample|template|dist)$/
+function secretShaped(path: string, templates: ReadonlySet<string>): boolean {
+    const segments = path.split('/')
+    const name = segments.at(-1)!
+    // The generated ignore block leaves a secrets directory's own ignore file trackable: it holds
+    // patterns, and telling someone to rotate credentials over it would be noise.
+    if (segments.slice(0, -1).includes('.secrets')) return name !== '.gitignore'
+    return SECRET_FILE.test(name) && !DOTENV_DOCUMENTATION.has(name) && !templates.has(path)
+}
 const TRACKED_SECRET_LIMIT = 65_536
 
 /**
@@ -604,7 +613,8 @@ const TRACKED_SECRET_LIMIT = 65_536
  */
 export async function inspectTrackedSecretFiles(input: {
     readonly executable: ResolvedExecutable
-    readonly repositories: readonly Readonly<{ slug: string; root: string }>[]
+    /** `templates` are the repository-relative environment templates its declaration names. */
+    readonly repositories: readonly Readonly<{ slug: string; root: string; templates?: readonly string[] }>[]
     readonly timeoutMs: number
 }, execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): Promise<readonly EnvironmentDiagnostic[]> {
     const executable = resolvedGitExecutable(input.executable)
@@ -613,7 +623,7 @@ export async function inspectTrackedSecretFiles(input: {
     const perRepository = await Promise.all(input.repositories.map(async (repository): Promise<readonly EnvironmentDiagnostic[]> => {
         const step = snapshotExecutionStep({
             id: `git:tracked-secrets:${repository.slug}`,
-            argv: [executable.canonicalPath, '-C', repository.root, 'ls-files', '-z', '--', '.env', '*/.env', '.env.*', '*/.env.*'],
+            argv: [executable.canonicalPath, '-C', repository.root, 'ls-files', '-z', '--', '.env', '*/.env', '.env.*', '*/.env.*', '.secrets/*', '*/.secrets/*'],
             argv0: executable.invocationPath, cwd: repository.root, env: {}, timeoutMs: input.timeoutMs,
             stdoutLimitBytes: TRACKED_SECRET_LIMIT, stderrLimitBytes: COMPARISON_OUTPUT_LIMIT,
             paths: [repository.root], ports: [], labels: { sibling: repository.slug },
@@ -647,10 +657,8 @@ export async function inspectTrackedSecretFiles(input: {
                 fix: `run git -C ${repository.root} ls-files to see why Git cannot list the repository, fix that, then rerun this command`,
             }]
         }
-        const tracked = outcome.stdout.toString('utf8').split('\0').filter((path) => {
-            const name = path.slice(path.lastIndexOf('/') + 1)
-            return path !== '' && SECRET_FILE.test(name) && !SECRET_TEMPLATE.test(name)
-        })
+        const templates = new Set((repository.templates ?? []).map((path) => posix.normalize(path)))
+        const tracked = outcome.stdout.toString('utf8').split('\0').filter((path) => path !== '' && secretShaped(path, templates))
         if (tracked.length === 0) return []
         const shown = tracked.slice(0, 8).join(', ')
         return [{

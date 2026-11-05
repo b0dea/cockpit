@@ -457,6 +457,10 @@ export function hasErrorCode(error: unknown, ...codes: readonly string[]): boole
     return typeof code === 'string' && codes.includes(code)
 }
 
+// Environment files conventionally named for the variables they document, never their values. The
+// guard and the tracked-secret check share this so they cannot disagree about a file.
+export const DOTENV_DOCUMENTATION: ReadonlySet<string> = new Set(['.env.example', '.env.sample', '.env.template', '.env.schema'])
+
 export function isMissing(error: unknown): boolean {
     return hasErrorCode(error, 'ENOENT', 'ENOTDIR')
 }

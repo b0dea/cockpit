@@ -1,5 +1,5 @@
 import { posix } from 'node:path'
-import { errorCause, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
+import { DOTENV_DOCUMENTATION, errorCause, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 import { GUARD_INPUT_LIMITS, isParsedGuardInput, shownGuardWord, type ParsedInvocation } from './invocation-parser.js'
 import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from './host.js'
 import { GuardCommandArgv, McpAllowedTools } from '../schema.js'
@@ -140,8 +140,6 @@ const GUARD_CONTROL_FILES = [
 const GUARD_CONTROL_DIRECTORIES = ['.opencode/plugin', '.opencode/plugins', '.cockpit/bundles/claudecode-plugin', '.cockpit/mcp', GUARD_LOCAL_PATHS.directory,
     '.cockpit/work-orders'] as const
 const SECRETS_ROOT = 'env/.secrets'
-// Environment files conventionally named for the variables they document, never their values.
-const DOTENV_DOCUMENTATION: ReadonlySet<string> = new Set(['.env.example', '.env.sample', '.env.template', '.env.schema'])
 /**
  * Bounds on the locations the policy and the path inspector carry, one per quantity, each set above
  * what an honest checkout holds so that only an unwalkable tree or a broken install reaches it.
