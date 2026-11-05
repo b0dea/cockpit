@@ -666,7 +666,7 @@ export function createHealthCommandAdapters(
         }
     }
     // Codex skips a project hook nobody on this machine has trusted, so doctor says so.
-    const inspectHookTrust = inherited ? () => inspectCodexHookTrust({ root: dirname(inherited.configPath), env: inherited.env })
+    const inspectHookTrust = inherited ? () => inspectCodexHookTrust({ root: dirname(inherited.configPath), env: inherited.env, timeoutMs: inherited.timeoutMs }, execute)
         : undefined
     const inspectEvaluator = inherited ? (evaluators: readonly EvaluatorTool[]) => inspectWorkEvaluator(dirname(inherited.configPath), inherited.env, evaluators) : undefined
     const inspectReadiness = inherited ? () => inspectProjectReadiness({ root: dirname(inherited.configPath), configPath: inherited.configPath,

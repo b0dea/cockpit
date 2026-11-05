@@ -66,6 +66,21 @@ diagnostic disappear.
 `REGISTRY_INPUT_INVALID` means a declared sibling row cannot produce one valid registry. Correct
 the named row or its derived MCP source, then retry the preview.
 
+### Codex hooks in linked worktrees
+
+`CODEX_HOOK_SOURCE_MISMATCH` means Codex sources project hooks from the original Git checkout,
+where the matching generated definitions are missing or different. A person must review and roll
+out those definitions through the original checkout's normal change process, then run
+`npx --no cockpit doctor --config <your cockpit.toml>` again. Repeatedly restarting Codex or
+trusting the worktree-local file cannot repair the source mismatch. Cockpit leaves that checkout
+and Codex's trust configuration untouched.
+
+After the definitions match, `CODEX_HOOK_UNTRUSTED` names the actual hook source whose trust is
+missing, disabled or outdated. If the warning instead says discovery could not be verified,
+resolve the reported Git or file-access failure first. Follow
+[Trust the Codex hook](harness-surfaces.md#trust-the-codex-hook) for source review, cwd-relative
+guard dispatch and native verification after rollout.
+
 ### Merge, ownership, and generation
 
 `SURFACE_INPUT_INVALID`, `SURFACE_BOUNDS`, `SURFACE_NAME_DUPLICATE`,
@@ -242,7 +257,8 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `BROWSER_ROUTE_FINDINGS` | this run asked for a clean route (--fail-on-findings). Read result.receipt.surfaces[].diagnostics, including excerpt.messages where present: fix the product for each console error, uncaught page error and failed request that matters, then rerun npx --no cockpit browser drive --config <your cockpit.toml> --route <name> --fail-on-findings; third-party traffic never counts |
 | `CLAIM_CO_TENANT` | [see above](#common-refusal-guidance) |
 | `COCKPIT_REVISION_UNSTAMPED` | install a released @b00dea/cockpit when the resolved data must name the exact cockpit source commit |
-| `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
+| `CODEX_HOOK_SOURCE_MISMATCH` | have a person review and roll out the matching generated hooks in the original checkout through its normal change process; cockpit does not copy hooks or change that checkout; rerun npx --no cockpit doctor --config <your cockpit.toml>, then review and trust the reported source in interactive Codex; [see above](#codex-hooks-in-linked-worktrees) |
+| `CODEX_HOOK_UNTRUSTED` | if the hook source could not be verified, resolve the reported discovery failure first; otherwise a person runs codex -C <hook source directory> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml>; [see above](#codex-hooks-in-linked-worktrees) |
 | `COMPOSE_FILE_UNREADABLE` | make environment.compose_files name a readable Compose file inside the cockpit root, then run npx --no cockpit check --config <your cockpit.toml> |
 | `CONFIG_ENCODING_INVALID` | save the configuration as UTF-8, then retry |
 | `DATA_SEED_UNAVAILABLE` | make sure the Docker daemon this stack runs on answers docker volume ls, then rerun npx --no cockpit up --config <your cockpit.toml> |
