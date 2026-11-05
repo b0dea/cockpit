@@ -103,6 +103,17 @@ describe('decision record integrity', () => {
         ])
     })
 
+    it.each(['the retry clause of ADR 0014', 'the retry clause of 0014', 'part of [ADR 0014](0014-retries.md)', 'section 3 in ADR 0014'])(
+        'keeps a clause-qualified record partial after a whole one in the same sentence: %s', part => {
+            expect(inspect({
+                '0013-policy.md': 'Status: Accepted\n',
+                '0014-retries.md': 'Status: Accepted\n',
+                '0018-update.md': `Status: Accepted\nSupersedes ADR 0013 and ${part}.\n`,
+            })).toEqual([
+                'DECISION_SUPERSEDED_STALE decision record docs/adr/0013-policy.md still has status "Accepted", but docs/adr/0018-update.md:2 supersedes it',
+            ])
+        })
+
     // `work decide --supersedes` marks the old record with this; a status only the check could read
     // left the record unmarkable, and the check then reported it stale.
     it('marks a record superseded wherever the check reads its status, in the form it was written', () => {
