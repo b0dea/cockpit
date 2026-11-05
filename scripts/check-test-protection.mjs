@@ -14,6 +14,7 @@ const protectedPaths = new Set([
     'scripts/run-changed-tests.mjs',
     'scripts/skip-allowlist-reporter.mjs',
     '.github/scripts/tested-tree.mjs',
+    '.github/scripts/release-gate.sh',
     'package.json',
 ])
 

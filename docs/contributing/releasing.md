@@ -16,7 +16,8 @@ Releases are automated with Changesets and GitHub Actions.
    version in `package-lock.json`.
 3. **A maintainer starts CI on the Version Packages pull request** by closing and reopening it,
    as described in [Merging the Version Packages pull request](#merging-the-version-packages-pull-request).
-4. **Merging the Version Packages pull request publishes.** The workflow's `publish` job
+4. **Merging the Version Packages pull request publishes,** once a gate job confirms the commit's
+   tests passed. The workflow's `publish` job
    publishes to npm through Trusted Publishing (OIDC, with provenance, no stored token), stamps
    the source commit into the package's `cockpitSourceRevision`, and creates the GitHub release.
    Only that job runs in the `npm`
@@ -54,8 +55,13 @@ costs a full run, as nothing tested its tree. A pull request that moves the pack
 field, or that runs while the current version is unpublished, gets every platform too, because the
 release workflow publishes any version that is not on npm yet.
 
-Merge soon after the run: `ci-ok` does not require an up-to-date branch, so a merge made before the
-workflow rebuilds the pull request publishes commits this run did not check.
+`ci-ok` does not require an up-to-date branch, so a green run can be stale by the time it merges. The
+release workflow's `tested before publishing` job therefore reads what passed on the commit about to
+publish, and refuses unless every test cell passed on its tree, or on its parent's tree when the
+commit only moves the version. Merge soon after the run, because a merge made before the workflow
+rebuilds the pull request can stop here. If it refuses, nothing was published: wait for CI on that
+commit or re-run its failed or cancelled cells, then re-run the release workflow with
+`gh run rerun <run-id> --repo b0dea/cockpit`.
 
 `ci-ok` includes the `version pull request scope` check, which fails when the pull request
 changes anything besides version fields in `package.json` and `package-lock.json`, `CHANGELOG.md`

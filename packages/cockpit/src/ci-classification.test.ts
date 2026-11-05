@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -38,14 +38,18 @@ const VERSION_BUMP = { 'packages/cockpit/package.json': manifest('1.1.0'), 'CHAN
 type Run = Readonly<{ sha: string; jobs: readonly { name: string; conclusion?: string }[]; conclusion?: string; path?: string; repository?: string }>
 const cellJobs = (cells: readonly string[], tree: string) => cells.map(cell => ({ name: `test (${cell}) tree ${tree}` }))
 
-function classify(options: Readonly<{
+type Scenario = Readonly<{
     changed: Record<string, string | null>
     env?: Record<string, string>
     published?: string | null
+    /** The whole stand-in npm, for a case that depends on how it was called. */
+    npm?: string
     /** Runs the API reports, from the base and head trees; `null` makes every API call fail. */
     runs?: ((trees: { base: string; head: string; baseSha: string; headSha: string }) => readonly Run[]) | null
     baseFiles?: Record<string, string>
-}>) {
+}>
+
+function scenario(options: Scenario) {
     const root = scratch('repository')
     const git = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', ...args], { encoding: 'utf8' }).trim()
     const write = (files: Record<string, string | null>) => {
@@ -64,7 +68,7 @@ function classify(options: Readonly<{
     const bin = scratch('bin')
     const fixtures = scratch('fixtures')
     const published = options.published === undefined ? '1.0.0' : options.published
-    writeFileSync(join(bin, 'npm'), published === null ? '#!/bin/sh\nexit 1\n' : `#!/bin/sh\necho ${published}\n`, { mode: 0o700 })
+    writeFileSync(join(bin, 'npm'), options.npm ?? (published === null ? '#!/bin/sh\nexit 1\n' : `#!/bin/sh\necho ${published}\n`), { mode: 0o700 })
     // A path with no fixture fails like an unreachable API.
     writeFileSync(join(bin, 'gh'), `#!/bin/sh\nf="${fixtures}/$(printf '%s' "$2" | tr '/?&=' '____')"\n[ -f "$f" ] && exec cat "$f"\nexit 1\n`, { mode: 0o700 })
     const fixture = (path: string, value: unknown) => writeFileSync(join(fixtures, path.replace(/[/?&=]/g, '_')), JSON.stringify(value))
@@ -78,10 +82,14 @@ function classify(options: Readonly<{
         }
         runs.forEach((run, index) => fixture(`repos/${SLUG}/actions/runs/${index + 1}/jobs?per_page=100`, { jobs: run.jobs.map(job => ({ conclusion: 'success', ...job })) }))
     }
+    return { root, trees, env: { ...process.env, GITHUB_REPOSITORY: SLUG, PATH: `${bin}:${process.env.PATH}`, ...options.env } }
+}
+
+function classify(options: Scenario) {
+    const { root, trees, env } = scenario(options)
     const output = join(scratch('output'), 'github-output')
-    const ran = spawnSync('bash', ['-c', step], { cwd: root, encoding: 'utf8', env: { ...process.env,
-        EVENT_NAME: 'pull_request', HEAD_REF: 'ordinary', MACOS_LABEL: 'false', GITHUB_REPOSITORY: SLUG, GITHUB_OUTPUT: output, RUNNER_TEMP: scratch('temp'),
-        PATH: `${bin}:${process.env.PATH}`, ...options.env } })
+    const ran = spawnSync('bash', ['-c', step], { cwd: root, encoding: 'utf8', env: {
+        EVENT_NAME: 'pull_request', HEAD_REF: 'ordinary', MACOS_LABEL: 'false', ...env, GITHUB_OUTPUT: output, RUNNER_TEMP: scratch('temp') } })
     expect(ran.status, ran.stderr).toBe(0)
     const values = Object.fromEntries(readFileSync(output, 'utf8').trim().split('\n').map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]))
     const cells = (JSON.parse(values.cells!) as { os: string; node: string; gate: string; shard?: string }[])
@@ -149,6 +157,15 @@ describe('any other pull request', () => {
         expect(classify({ changed, ...options })).toMatchObject({ code, smoke: 'false', cells })
     })
 
+    it('does not let the change answer for the registry or receive the token through its own npm configuration', () => {
+        const tokenSeen = join(scratch('token'), 'seen')
+        // Answers "published" only inside the checkout, where npm would read the change's .npmrc.
+        const npm = `#!/bin/sh\n[ -z "$GH_TOKEN" ] || : > ${tokenSeen}\n[ -f .npmrc ] && echo 1.0.0\nexit 0\n`
+        expect(classify({ changed: { 'src.ts': 'changed\n', '.npmrc': 'registry=https://forged.invalid/\n' }, npm, env: { GH_TOKEN: 'synthetic' } }))
+            .toMatchObject({ cells: [...LINUX, ...PLATFORMS] })
+        expect(existsSync(tokenSeen)).toBe(false)
+    })
+
     it('reports the tree of the commit it checked out, for a later run to compare', () => {
         const { tree, trees } = classify({ changed: { 'src.ts': 'changed\n' } })
         expect(tree).toBe(trees.head)
@@ -203,6 +220,44 @@ describe('the required check', () => {
     it('runs the scope check on the short path and on the version branch whatever the diff holds', () => {
         const scope = /\n  version-pr-scope:\n(?<body>[\s\S]*?)\n {4}runs-on/.exec(workflow)?.groups?.body ?? ''
         expect(scope).toContain("github.head_ref == 'changeset-release/main' || needs.changes.outputs.smoke == 'true'")
+    })
+})
+
+// A required check can be stale when it merges, and an administrator can bypass it. This is what stands between that and npm.
+describe('the release gate', () => {
+    const gate = (options: Scenario) => {
+        const { root, env } = scenario(options)
+        return spawnSync('bash', [join(REPOSITORY, '.github/scripts/release-gate.sh')], { cwd: root, encoding: 'utf8', env })
+    }
+    const source = { 'src.ts': 'changed\n' }
+
+    it.each([
+        ['every cell passed on this tree', source, ({ head, headSha }: { head: string; headSha: string }) => [{ sha: headSha, jobs: cellJobs([...LINUX, ...PLATFORMS], head) }]],
+        ['this commit only moves the version and every cell passed on its parent', VERSION_BUMP, everyCellPassedOnBase],
+    ] as const)('publishes when %s', (_name, changed, runs) => {
+        const ran = gate({ changed, runs: runs as never })
+        expect(ran.status, ran.stderr).toBe(0)
+    })
+
+    it.each([
+        ['a stale green bump merged over a later commit whose macOS cell failed', VERSION_BUMP, ({ base, baseSha }: { base: string; baseSha: string }) => [{ sha: baseSha, jobs: [...cellJobs([...LINUX, ...PLATFORMS.slice(1)], base), { name: `test (${PLATFORMS[0]}) tree ${base}`, conclusion: 'failure' }] }]],
+        ['the parent passed but this commit changes source', source, everyCellPassedOnBase],
+        ['only the Linux cells passed on this tree', source, ({ head, headSha }: { head: string; headSha: string }) => [{ sha: headSha, jobs: cellJobs(LINUX, head) }]],
+        ['the cells passed on another tree', source, ({ headSha }: { headSha: string }) => [{ sha: headSha, jobs: cellJobs([...LINUX, ...PLATFORMS], 'c'.repeat(40)) }]],
+        ['the API cannot answer', VERSION_BUMP, null],
+    ] as const)('refuses when %s', (_name, changed, runs) => {
+        const ran = gate({ changed, runs: runs as never })
+        expect(ran.status).toBe(1)
+        expect(ran.stderr).toContain('Refusing to publish')
+    })
+
+    it('runs before the publish job, which cannot start without it', () => {
+        const release = readFileSync(join(REPOSITORY, '.github/workflows/release.yml'), 'utf8')
+        expect(/\n  publish:\n(?<body>[\s\S]*)/.exec(release)?.groups?.body).toContain('needs: [select-mode, release-gate]')
+        const body = /\n  release-gate:\n(?<body>[\s\S]*?)\n\n/.exec(release)?.groups?.body ?? ''
+        expect(body).toContain("if: needs.select-mode.outputs.mode == 'publish'")
+        expect(body).toContain('run: bash .github/scripts/release-gate.sh')
+        expect(body).not.toContain('id-token')
     })
 })
 

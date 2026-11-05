@@ -84,7 +84,10 @@ jobs:
             if git show HEAD^1:.github/scripts/tested-tree.mjs > "$RUNNER_TEMP/tested-tree.mjs" 2>/dev/null; then
               missing="$(node "$RUNNER_TEMP/tested-tree.mjs" "$1" "$2")" || missing=''
             fi
-            printf '%s\n' "${missing:-linux platforms}"
+            case "$missing" in
+              none | linux | platforms | $'linux\nplatforms') printf '%s\n' "$missing" ;;
+              *) printf '%s\n' linux platforms ;;
+            esac
           }
           # `>/dev/null`, never `grep -q`: under pipefail, a reader that stops at its first match kills
           # the writer on a long list, and the failed pipeline read as "no code changed" and skipped the tests.
@@ -129,7 +132,9 @@ jobs:
             version_at() { git show "$1:packages/cockpit/package.json" | node -p 'JSON.parse(require("node:fs").readFileSync(0)).version'; }
             base_version="$(version_at HEAD^1)"
             head_version="$(version_at HEAD)"
-            published="$(npm view "@b00dea/cockpit@$base_version" version 2>/dev/null || true)"
+            # Outside the checkout and without the token: npm would read the change's own .npmrc, which
+            # can name a registry, expand environment variables and so forge this answer.
+            published="$(cd "$RUNNER_TEMP" && env -u GH_TOKEN npm view "@b00dea/cockpit@$base_version" version 2>/dev/null || true)"
             # Only the diff can earn the short path; the branch name can only ask for more.
             if [[ "$head_version" != "$base_version" && "$published" == "$base_version" && "$MACOS_LABEL" != true ]] && version_only \
               && [[ "$(missing_cells "$(git rev-parse HEAD^1)" "$(git rev-parse 'HEAD^1^{tree}')")" == none ]]; then
