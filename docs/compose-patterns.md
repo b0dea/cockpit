@@ -1,12 +1,8 @@
 # Compose patterns
 
-cockpit runs your Compose files as written, so a stub vendor, a TLS front end or a data restore is
-a few lines of plain Compose rather than a cockpit setting. Each pattern below keeps to what
-[`check`](environment.md#compose-first-stacks) expects of a Compose file: published ports come from
-a `[ports.bases]` variable and bind `127.0.0.1`, and a container gets only the bind mounts
-`cockpit.toml` declares. `check` also warns about a service with no healthcheck and an image pinned
-by tag rather than digest; pin the tags below before you rely on them. A build context is not a
-bind mount, so the patterns copy their files in with a small Dockerfile instead of mounting them.
+cockpit runs your Compose files as written, so a stub vendor, a TLS front end or a data restore is a few lines of plain Compose.
+Each pattern keeps to what [`check`](environment.md#compose-first-stacks) expects; pin the tags below before you rely on them. A build
+context is not a bind mount, so the patterns copy their files in with a small Dockerfile.
 
 ## Stub a vendor
 

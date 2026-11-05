@@ -48,8 +48,8 @@ ask when scope is missing or an exact preview still needs acceptance:
 Done when the exact project-local executable lists the commands.
 
 1. Follow *Install cockpit* in `docs/getting-started.md`, from the same sources as the guide above:
-   an exact dev dependency of the repository, with *Install from source* as the fallback while the
-   package is not on npm. Show the human the manifest and lockfile change before installing.
+   an exact dev dependency of the repository, with *Install from source* as the fallback for an
+   unreleased build. Show the human the manifest and lockfile change before installing.
 2. For several repositories, the human may prefer a cockpit directory beside them; that is their
    call. Leave the product repositories untouched unless the human agrees.
 3. Verify without permitting an implicit download:

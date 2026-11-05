@@ -1,18 +1,12 @@
 # Tutorial: the compose-first example end to end
 
-This walkthrough is for anyone evaluating cockpit before pointing it at a real product. It runs
-cockpit on the compose-first example in this repository: you generate agent surfaces, watch a
-drift check catch a hand edit, and optionally bring the two-service stack up. It needs no
-credentials. `check` reads the Compose file through `docker compose config`, so you need the Docker
-CLI with Compose; only the last, optional step starts containers.
+Run cockpit on the compose-first example in this repository: generate agent surfaces, watch a drift
+check catch a hand edit, and optionally bring the two-service stack up. It needs no credentials. You
+need the [Node.js and Git prerequisites](getting-started.md#install-cockpit) and the Docker CLI with
+Compose, because `check` reads the Compose file; only the last, optional step starts containers.
 
-Outputs below were captured from a real run on macOS; long lines and repeated rows are trimmed
-with `...`, and absolute paths are shortened to `…`.
-
-## Install cockpit
-
-You need the Node.js and Git prerequisites from [Install cockpit](getting-started.md#install-cockpit).
-The package itself is installed in the next step, inside the demo directory.
+Outputs were captured from a real run on macOS; long lines and repeated rows are trimmed with `...`,
+and absolute paths shortened to `…`.
 
 ## Create the demo directory
 
@@ -48,16 +42,14 @@ write ".agents/skills/cockpit-explain/SKILL.md"
 write ".opencode/plugin/cockpit-guards.js"
 write ".opencode/skills/cockpit-setup/references/test-data-and-personas.md"
 write ".cockpit/generated-environment-ownership.json"
-WARNING SURFACE_GENERATOR_TRUST_WARNING [claudecode:.claude/settings.json]: Claude Code permissions: writing 2 trust-affecting settings to .claude/settings.json; review them as you would a hook because synced agent settings can widen filesystem access, approve project servers or run commands without asking. 'permissions.additionalDirectories' — moves the boundary of what Claude Code may read and edit outside the project: "api", "web"; 'permissions.allow' — lets Claude Code run 46 command patterns without asking; the file lists each one.
+WARNING SURFACE_GENERATOR_TRUST_WARNING [claudecode:.claude/settings.json]: Claude Code permissions: writing trust-affecting settings to .claude/settings.json; review them as you would a hook because synced agent settings can widen filesystem access, approve project servers or run commands without asking. ...
 ```
 
 Nothing is written yet. `package.json` and `.gitignore` get the `cockpit:*` scripts and a marked
 ignore block. **compose.cockpit.yml** is the override cockpit owns: it labels every service, network
-and volume of your Compose file so runtime commands can tell what belongs to this stack. The
-warning is deliberate: the generated Claude Code settings grant access to the sibling directories
-and let Claude Code run cockpit's own commands without asking, which deserves the same review as a
-hook. It appears only when a sync writes those settings. Add `--json` to get the result,
-diagnostics and invocation metadata as one JSON document on stdout.
+and volume of your Compose file so runtime commands can tell what belongs to this stack. The warning
+is deliberate: the generated Claude Code settings grant access to the sibling directories and let
+Claude Code run cockpit's own commands without asking, which deserves the same review as a hook.
 
 ## Apply the sync and check it
 
@@ -72,7 +64,8 @@ diagnostics and invocation metadata as one JSON document on stdout.
 WARNING CODEX_HOOK_UNTRUSTED [.codex/hooks.json]: Codex has not trusted the guard hook in …/cockpit-demo/.codex/hooks.json on this machine, so a Codex session started there skips it and runs tool calls without the guard Guidance: if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" ...
 ```
 
-Exit code 0: nothing has drifted. The warning only matters if you use Codex: it names the one-time trust step Codex needs before it runs the guard hook.
+Exit code 0: nothing has drifted. The warning only matters if you use Codex: it names the one-time
+trust step Codex needs before it runs the guard hook.
 
 ## Look at what was generated
 
@@ -85,8 +78,8 @@ Exit code 0: nothing has drifted. The warning only matters if you use Codex: it 
 | .cockpit/generated-environment-ownership.json | The ownership manifest: what cockpit wrote and the bytes it expects |
 | .cockpit/local/guard-identity | This machine's Node and cockpit handler identity for the guard. It ignores itself in Git, so the committed files stay identical on every clone; each clone's `sync` writes its own |
 
-Open **.claude/settings.json** to see the guard wired in as a Claude Code PreToolUse hook. The
-Codex and OpenCode files wire the same guard through their own hook mechanisms.
+Open **.claude/settings.json** to see the guard wired in as a Claude Code PreToolUse hook. The Codex
+and OpenCode files wire the same guard through their own hook mechanisms.
 
 ## Catch drift
 
@@ -139,8 +132,8 @@ compose_files = ["compose.yml"]   # the stack, run as written
 
 The rest declares the second sibling, how the product is reached locally (`addressing`,
 `authentication`) and the least the container runtime must offer (`[environment.machine]`). The
-[configuration reference](configuration-reference.md) documents every field; to fill the stack
-with data, add `resettable_volumes` and `seed` as
+[configuration reference](configuration-reference.md) documents every field; to fill the stack with
+data, add `resettable_volumes` and `seed` as
 [Demo data, test users and roles](environment.md#demo-data-test-users-and-roles) describes.
 
 ## Bring the stack up
@@ -157,8 +150,8 @@ docker pull node:22-alpine
 ./node_modules/.bin/cockpit down --config cockpit.toml
 ```
 
-`up` leases a free port family, so the api answers on the port it prints rather than always on
-4200; `session` hands that port to its command as `API_HOST_PORT`. For everyday work, see
+`up` leases a free port family, so the api answers on the port it prints rather than always on 4200;
+`session` hands that port to its command as `API_HOST_PORT`. For everyday work, see
 [Bring the product up](getting-started.md#bring-the-product-up) and
 [Run an agent inside the environment](getting-started.md#run-an-agent-inside-the-environment).
 

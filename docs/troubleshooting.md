@@ -1,13 +1,7 @@
 # Troubleshooting
 
-This page is for anyone holding a cockpit diagnostic code: what it means and what to do. Every
-diagnostic message names what failed and how to fix it; the sections below cover the codes that
-need more than that, and [Codes with a fixed remedy](#codes-with-a-fixed-remedy) at the end lists
-every code whose remedy never changes.
-
-Human output spells common refusals as **What failed**, **Why it matters** and **Fix**. Use
-`--json` only when a program needs the machine-readable envelope. Each command's flags are in its
-help, for example `cockpit sync --help`.
+Every diagnostic message names what failed and how to fix it. The sections below cover the codes that need more, and
+[Codes with a fixed remedy](#codes-with-a-fixed-remedy) lists every code whose remedy never changes. Each command's flags are in its help.
 
 ## Common refusal guidance
 
@@ -31,10 +25,8 @@ help, for example `cockpit sync --help`.
 
 ## GENERATED_ARTIFACT_DRIFT
 
-**Cause.** An owned whole file, symlink target or shared region differs from what the environment
-and surface declarations and their sources now produce. As
-[Check and sync](environment.md#check-and-sync) describes, `check` reports the mismatch without
-changing any owned file.
+**Cause.** An owned whole file, symlink target or shared region differs from what the declarations and
+their sources now produce ([Check and sync](environment.md#check-and-sync)).
 
 **Remedy.** Inspect the target named in the diagnostic, then run:
 
@@ -115,8 +107,7 @@ before removing that directory, then retry.
 `SURFACE_GENERATOR_TRUST_WARNING` is a warning from a `sync` that writes `.claude/settings.json`
 granting something: the sibling directories Claude Code may edit, the MCP servers it approves, and
 the command patterns it runs without asking. It names each grant; review them before applying the
-sync. A sync that leaves the file unchanged, and `check`, do not repeat it. A warning does not mean
-the harness enforces anything.
+sync. A warning does not mean the harness enforces anything.
 
 ### MCP and restrictions
 
