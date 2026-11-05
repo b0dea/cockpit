@@ -77,11 +77,34 @@ export function shippedSkillSources(
     return rows.every(row => row !== undefined) ? rows : undefined
 }
 
+/** The browser MCP server as the cockpit writes it for Claude Code, with its tool restriction if one is declared. */
+export type EvaluatorBrowser = Readonly<{ name: string; allowedTools?: readonly string[] }>
+
+// Claude Code 2.1.318 offered a subagent only the tools its `tools` front matter listed and refused a
+// Write and a Bash call by name, while a control whose key was misspelled wrote and ran both (measured
+// 2026-11-05). The evaluator gets file reads and exactly the browser tools this cockpit lets Claude Code
+// call, so a grade keeps its browser and nothing else: `mcp__<server>` admits every tool of an
+// unrestricted server, and Claude Code names a tool with a dot in it with an underscore instead.
+export function evaluatorClaudeTools(browser: EvaluatorBrowser | undefined): readonly string[] {
+    const browserTools = browser === undefined ? [] : browser.allowedTools === undefined ? [`mcp__${browser.name}`]
+        : browser.allowedTools.map(tool => `mcp__${browser.name}__${tool.replaceAll('.', '_')}`)
+    return ['Read', 'Grep', 'Glob', ...browserTools]
+}
+
+// Rulesync carries the `claudecode` section into Claude Code's agent front matter only.
+function withClaudeTools(evaluator: string, claudeTools: readonly string[]): string | undefined {
+    const end = evaluator.indexOf('\n---\n', 4)
+    if (!evaluator.startsWith('---\n') || end < 0) return undefined
+    return `${evaluator.slice(0, end)}\nclaudecode:\n  tools:\n${claudeTools.map(tool => `    - ${JSON.stringify(tool)}\n`).join('')}${evaluator.slice(end + 1)}`
+}
+
 export function coreSurfaceDeclarations(
     assets: ReadonlyMap<string, CoreAsset>,
     tools: readonly SurfaceTarget[],
+    evaluatorBrowser?: EvaluatorBrowser,
 ): readonly SurfaceDeclaration[] | undefined {
-    const evaluator = assets.get(CORE_EVALUATOR_ASSET)?.bytes
+    const shipped = assets.get(CORE_EVALUATOR_ASSET)?.bytes
+    const evaluator = shipped === undefined ? undefined : withClaudeTools(shipped, evaluatorClaudeTools(evaluatorBrowser))
     const skills = shippedSkillSources(assets, tools)
     if (evaluator === undefined || !skills) return undefined
     const declarations: SurfaceDeclaration[] = [{

@@ -11,8 +11,8 @@ on:
     types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main]
-  # The supported Node range's upper edge gets its full suite once a week instead of on every
-  # change: a Node-version regression is rare and a week is an acceptable time to find it.
+  # The supported Node range's upper edge also gets its full suite once a week, so a Node-version
+  # regression surfaces even when no release is being prepared.
   schedule:
     - cron: '17 4 * * 1'
 
@@ -20,9 +20,8 @@ on:
 # nothing; each job that checks out code asks for contents: read and no more.
 permissions: {}
 
-# A superseded pull request push has nothing left to prove. A push to main is never cancelled,
-# so the post-merge record is complete for every commit. The event name keeps the weekly run
-# out of the push queue, where a newer pending run would replace an older one.
+# The event name keeps the weekly run out of the push queue, where a newer pending run would
+# replace an older one.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   # A newer push supersedes the run in progress: its commit contains everything the older one
@@ -32,17 +31,28 @@ concurrency:
 jobs:
   # Decides which heavy jobs a change needs, inside the workflow. A workflow-level paths-ignore
   # would leave required checks pending forever on docs-only pull requests.
+  #
+  # Each cell runs once per tree where it can still count. Pull requests run the Linux cells. A push
+  # to main runs what has not passed on its exact tree, which is usually the macOS and Node line
+  # cells, since a pull request does not run them. A version-only pull request whose base has passed
+  # every cell runs the scope check and the package smoke instead; that is how a failure of those
+  # main cells stops a release, because a missing cell sends the pull request to the full matrix.
   changes:
     name: classify changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read        # which cells passed on which tree
+      pull-requests: read  # the pull request heads of a commit
     outputs:
       code: ${{ steps.classify.outputs.code }}
       lockfile: ${{ steps.classify.outputs.lockfile }}
       release: ${{ steps.classify.outputs.release }}
       changeset: ${{ steps.classify.outputs.changeset }}
+      smoke: ${{ steps.classify.outputs.smoke }}
+      cells: ${{ steps.classify.outputs.cells }}
+      tree: ${{ steps.classify.outputs.tree }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -52,30 +62,93 @@ jobs:
       - id: classify
         env:
           EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          MACOS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'test-macos') }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [[ "$EVENT_NAME" != pull_request ]]; then
-            # main and the weekly run always test: a push can carry several commits, and the
-            # post-merge record must not depend on a filter.
-            printf '%s\n' code=true lockfile=true release=false changeset=false >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          # The Linux suite runs in four shards: on one runner it took about 32 minutes, and the
+          # shards together take about 20. One shard holds the platform-independent extras.
+          linux_cells='{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"1/4","extras":true},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"2/4"},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"3/4"},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"4/4"}'
+          platform_cells='{"os":"macos-latest","node":"22.22.0","gate":"full"},{"os":"ubuntu-latest","node":"24","gate":"compatibility"},{"os":"ubuntu-latest","node":"26","gate":"compatibility"}'
+          weekly_cells='{"os":"ubuntu-latest","node":"26","gate":"full"}'
+          tree="$(git rev-parse 'HEAD^{tree}')"
+          # The guards come from the base parent, not from the change they judge. Without a base
+          # copy the change does not count as version-only and no cell counts as passed.
+          version_only() {
+            git show HEAD^1:.github/scripts/check-version-pr-scope.sh > "$RUNNER_TEMP/check-version-pr-scope.sh" 2>/dev/null \
+              && bash "$RUNNER_TEMP/check-version-pr-scope.sh" HEAD^1 HEAD >/dev/null 2>&1
+          }
+          missing_cells() {
+            local missing=''
+            if git show HEAD^1:.github/scripts/tested-tree.mjs > "$RUNNER_TEMP/tested-tree.mjs" 2>/dev/null; then
+              missing="$(node "$RUNNER_TEMP/tested-tree.mjs" "$1" "$2")" || missing=''
+            fi
+            case "$missing" in
+              none | linux | platforms | $'linux\nplatforms') printf '%s\n' "$missing" ;;
+              *) printf '%s\n' linux platforms ;;
+            esac
+          }
+          # `>/dev/null`, never `grep -q`: under pipefail, a reader that stops at its first match kills
+          # the writer on a long list, and the failed pipeline read as "no code changed" and skipped the tests.
           changed="$(git diff --name-only --no-renames HEAD^1 HEAD)"
-          added_changesets="$(git diff --name-only --no-renames --diff-filter=A HEAD^1 HEAD -- '.changeset/*.md' | grep -v '^\.changeset/README\.md$' || true)"
           printf 'changed files:\n%s\n' "$changed"
           # Documentation-only: the files that no build, test or package inventory reads. Package
           # READMEs and anything under packages/ are code, because the tarball ships them.
           docs_only='^(docs/.*|[^/]+\.md|\.changeset/.*\.md|\.github/ISSUE_TEMPLATE/.*|\.github/PULL_REQUEST_TEMPLATE\.md)$'
           code=false
-          if printf '%s\n' "$changed" | grep -Ev "$docs_only" | grep -q .; then code=true; fi
+          if printf '%s\n' "$changed" | grep -Ev "$docs_only" >/dev/null; then code=true; fi
           lockfile=false
-          if printf '%s\n' "$changed" | grep -Eq '^(package\.json|package-lock\.json|packages/[^/]+/package\.json)$'; then lockfile=true; fi
-          # A user-visible change is shipped source or surfaces. Tests and test support are not.
           release=false
-          if printf '%s\n' "$changed" | grep -E '^packages/cockpit/(src|surfaces)/' | grep -Ev '\.test\.ts$|/test-support/' | grep -q .; then release=true; fi
           changeset=false
-          if [[ -n "$added_changesets" ]]; then changeset=true; fi
-          printf '%s\n' "code=$code" "lockfile=$lockfile" "release=$release" "changeset=$changeset" >> "$GITHUB_OUTPUT"
+          smoke=false
+          cells=''
+          if [[ "$EVENT_NAME" == schedule ]]; then
+            code=true
+            cells="$weekly_cells"
+          elif [[ "$EVENT_NAME" == push ]]; then
+            # A push to main cannot stop a publish: the release workflow runs beside this one. Its
+            # cells count through the Version Packages pull request and the release gate, which read
+            # them. The diff decides nothing here: a push can carry several commits, and a newer push
+            # cancels the run of the one before it, so the last commit's diff does not say what was
+            # tested. A cell is skipped only when it passed on this exact tree.
+            missing="$(missing_cells "$(git rev-parse HEAD)" "$tree")"
+            if [[ "$missing" == *linux* ]]; then cells="$linux_cells"; fi
+            if [[ "$missing" == *platforms* ]]; then cells="${cells:+$cells,}$platform_cells"; fi
+            code=false
+            if [[ -n "$cells" ]]; then code=true; fi
+          else
+            added_changesets="$(git diff --name-only --no-renames --diff-filter=A HEAD^1 HEAD -- '.changeset/*.md' | grep -v '^\.changeset/README\.md$' || true)"
+            if printf '%s\n' "$changed" | grep -E '^(package\.json|package-lock\.json|packages/[^/]+/package\.json)$' >/dev/null; then lockfile=true; fi
+            # A user-visible change is shipped source or surfaces. Tests and test support are not.
+            if printf '%s\n' "$changed" | grep -E '^packages/cockpit/(src|surfaces)/' | grep -Ev '\.test\.ts$|/test-support/' >/dev/null; then release=true; fi
+            if [[ -n "$added_changesets" ]]; then changeset=true; fi
+            # The release workflow publishes any package version that is not on npm yet, whichever
+            # commit is at the head of main. So every platform runs on the Version Packages branch,
+            # on anything else that moves the version, and on anything merging while the current
+            # version is unpublished, as it is after a failed publish. A registry error reads as
+            # unpublished. The label asks for the same cells on a change likely to behave
+            # differently on macOS.
+            version_at() { git show "$1:packages/cockpit/package.json" | node -p 'JSON.parse(require("node:fs").readFileSync(0)).version'; }
+            base_version="$(version_at HEAD^1)"
+            head_version="$(version_at HEAD)"
+            # Outside the checkout and without the token: npm would read the change's own .npmrc, which
+            # can name a registry, expand environment variables and so forge this answer.
+            published="$(cd "$RUNNER_TEMP" && env -u GH_TOKEN npm view "@b00dea/cockpit@$base_version" version 2>/dev/null || true)"
+            # Only the diff can earn the short path; the branch name can only ask for more.
+            if [[ "$head_version" != "$base_version" && "$published" == "$base_version" && "$MACOS_LABEL" != true ]] && version_only \
+              && [[ "$(missing_cells "$(git rev-parse HEAD^1)" "$(git rev-parse 'HEAD^1^{tree}')")" == none ]]; then
+              smoke=true
+              code=false
+            elif [[ "$HEAD_REF" == changeset-release/main || "$MACOS_LABEL" == true \
+              || "$head_version" != "$base_version" || "$published" != "$base_version" ]]; then
+              code=true
+              cells="$linux_cells,$platform_cells"
+            elif [[ "$code" == true ]]; then
+              cells="$linux_cells"
+            fi
+          fi
+          printf '%s\n' "code=$code" "lockfile=$lockfile" "release=$release" "changeset=$changeset" "smoke=$smoke" "cells=[$cells]" "tree=$tree" >> "$GITHUB_OUTPUT"
 
   # Its own job rather than a step inside the matrix, so a red build names which rule broke.
   # "tests failed" and "the tree leaked" are different emergencies and must not look alike in
@@ -87,7 +160,7 @@ jobs:
   # shapes and private absolute paths are universal and are enforced here on every push. The
   # site-specific names live in an ignored file that exists only in the maintainer's checkout,
   # so THIS JOB CANNOT CATCH A SITE-NAME LEAK. That class is enforced where commits originate,
-  # by running the suite locally, and the scan prints which classes it covered.
+  # by the commit hook, and the scan prints which classes it covered.
   hygiene:
     name: anonymisation scan and documentation
     runs-on: ubuntu-latest
@@ -154,13 +227,22 @@ jobs:
         run: |
           npm run references
           git diff --exit-code
-      # The documentation tests read docs/ directly. On a code change the full matrix runs
-      # them again; this keeps them on the docs-only path the matrix is skipped for.
+      # Every test that reads the tracked Markdown, and the packaged guide, since docs/ ships in
+      # the tarball. On a code change the full matrix runs them again; this keeps them on the
+      # docs-only path the matrix is skipped for.
+      # fix-catalogue runs printed commands through the built CLI and its installed guard handler.
+      - run: npm run build
       - name: documentation contracts
-        run: npm test -- packages/cockpit/src/docs-ownership.test.ts packages/cockpit/src/docs-decisions.test.ts packages/cockpit/src/docs-lint.test.ts packages/cockpit/src/references.test.ts
+        run: npm test -- packages/cockpit/src/docs-ownership.test.ts packages/cockpit/src/docs-decisions.test.ts packages/cockpit/src/docs-lint.test.ts packages/cockpit/src/references.test.ts packages/cockpit/src/example-cockpit.test.ts packages/cockpit/src/fix-catalogue.test.ts
+      # One case of the packaging file: it packs through the real prepack and reads the installed
+      # guide, and the rest of that file is the matrix's. vitest passes a name that matches nothing,
+      # so ci-classification.test.ts holds this name to the case.
+      - name: packaged guide
+        run: npm test -- packages/cockpit/src/packaging.slow.test.ts -t 'ships the user guide without contributor pages'
 
   test:
-    name: test (${{ matrix.os }}, node ${{ matrix.node }}, ${{ matrix.gate }}${{ matrix.shard && format(' {0}', matrix.shard) || '' }})
+    # The tree is what .github/scripts/tested-tree.mjs reads to skip this cell on a later identical tree.
+    name: test (${{ matrix.os }}, node ${{ matrix.node }}, ${{ matrix.gate }}${{ matrix.shard && format(' {0}', matrix.shard) || '' }}) tree ${{ needs.changes.outputs.tree }}
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
@@ -172,24 +254,13 @@ jobs:
       # what this matrix exists to find.
       fail-fast: false
       matrix:
-        # Three lists, chosen by event, because macOS runners have a lower concurrency limit than
-        # Linux runners (and cost ten times as much in a private repository), and the full suite
-        # is long: about 15 minutes at four workers on a developer machine, longer on a hosted
-        # runner with fewer cores. The step timeouts below leave room for that.
-        # - pull request: the full suite on Linux at the supported floor, plus macOS running
-        #   only the tests adjacent to the change (`changed`).
-        # - weekly: the full suite at the upper edge of the supported Node range.
-        # The Linux full suite is split into four shards that run in parallel: on one runner
-        # it took about 32 minutes, and one shard holds the platform-independent extras.
-        # - push to main: the full suite on Linux and on macOS at the floor, and the
-        #   launcher-level compatibility subset on the other supported Node lines, so a
-        #   platform or Node regression a pull request missed is caught within one merge.
-        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"1/4","extras":true},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"2/4"},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"3/4"},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"4/4"},{"os":"macos-latest","node":"22.22.0","gate":"changed"}]' || github.event_name == 'schedule' && '[{"os":"ubuntu-latest","node":"26","gate":"full"}]' || '[{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"1/4","extras":true},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"2/4"},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"3/4"},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"4/4"},{"os":"macos-latest","node":"22.22.0","gate":"full"},{"os":"ubuntu-latest","node":"24","gate":"compatibility"},{"os":"ubuntu-latest","node":"26","gate":"compatibility"}]') }}
+        # The classify job picks the cells. A macOS minute costs ten times a Linux minute in a private
+        # repository, and macOS does not run a test subset on pull requests: selecting the tests
+        # that import a change chose 150 to 163 of 164 files in every recorded run.
+        include: ${{ fromJSON(needs.changes.outputs.cells) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The merge commit and its base parent, so the `changed` gate can diff against it.
-          fetch-depth: 2
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -210,11 +281,6 @@ jobs:
         env:
           SHARD: ${{ matrix.shard }}
         run: npm test -- ${SHARD:+--shard=$SHARD}
-      # Both tiers, for the tests that own what the pull request changed. A selection error fails
-      # the cell; it never narrows what runs.
-      - if: matrix.gate == 'changed'
-        timeout-minutes: 65
-        run: npm run test:changed -- HEAD^1
       - if: matrix.gate == 'compatibility'
         timeout-minutes: 15
         run: npm test -- packages/cockpit/src/launcher.test.ts packages/cockpit/src/package-metadata.test.ts packages/cockpit/src/environment/runtime-probe.slow.test.ts
@@ -329,7 +395,7 @@ jobs:
           set -euo pipefail
           if [[ "$CHANGESET_ADDED" == true ]]; then
             echo 'changeset found'
-          elif printf '%s' "$LABELS" | grep -Fq '"no-changeset"'; then
+          elif printf '%s' "$LABELS" | grep -F '"no-changeset"' >/dev/null; then
             echo 'no-changeset label present: skipping the changeset requirement'
           else
             echo "::error::This pull request changes packages/cockpit/src or packages/cockpit/surfaces without a changeset. Run 'npx changeset' and commit the new .changeset/*.md file, or ask a maintainer to add the 'no-changeset' label if no consumer-visible behavior changed."
@@ -341,7 +407,8 @@ jobs:
   # cannot ride along with the bump. See .github/scripts/check-version-pr-scope.sh.
   version-pr-scope:
     name: version pull request scope
-    if: github.event_name == 'pull_request' && github.head_ref == 'changeset-release/main'
+    needs: changes
+    if: github.event_name == 'pull_request' && (github.head_ref == 'changeset-release/main' || needs.changes.outputs.smoke == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -363,6 +430,30 @@ jobs:
             exit 1
           fi
           bash "$RUNNER_TEMP/check-version-pr-scope.sh" HEAD^1 HEAD
+
+  # Stands in for the test matrix on a version-only pull request, whose code already passed every
+  # cell on its base tree. The supply-chain checks read the lockfile and registry the bump changed.
+  package-smoke:
+    name: package smoke
+    needs: changes
+    if: needs.changes.outputs.smoke == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.22.0'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: bash .github/scripts/package-smoke.sh
+      - run: npm run lint:supply-chain
+      - run: node scripts/supply-chain-check.ts --sbom "$RUNNER_TEMP/cockpit-sbom.cdx.json"
+      - run: npm audit signatures
 
   # Needs a public repository (or GitHub Advanced Security), so it skips itself in a private
   # repository instead of failing every dependency change there.
@@ -389,7 +480,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, hygiene, test, test-protection, runtime-floor-negative, changeset, version-pr-scope, dependency-review]
+    needs: [changes, hygiene, test, test-protection, runtime-floor-negative, changeset, version-pr-scope, package-smoke, dependency-review]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions: {}

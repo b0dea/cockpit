@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { sha256Hex } from '../sha256.js'
 import { lstatSync, readFileSync, realpathSync } from 'node:fs'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { delimiter, dirname, isAbsolute, join } from 'node:path'
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
 import { parseDocument } from 'yaml'
-import { ENVIRONMENT_CODES, errorCause, parseJsonText, RefusalError, type ConsumedFile, type ExecutionStep } from '../environment/contract.js'
+import { ENVIRONMENT_CODES, errorCause, hasErrorCode, parseJsonText, RefusalError, type ConsumedFile, type ExecutionStep } from '../environment/contract.js'
 import { resolveExecutablePath } from '../environment/executable.js'
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
-import { EVALUATOR_COMMANDS, runningEvaluatorTool, type EvaluatorTool } from '../schema.js'
+import { EVALUATOR_COMMANDS, runningEvaluatorTool, type CustomHarness, type EvaluatorTool } from '../schema.js'
 
 // One run of an agent tool apart from the agent that did the work: a fresh headless session started in a
 // private directory of its own, held read-only by the tool's own mechanism, whose answer is checked
@@ -212,6 +212,19 @@ const missingMessage = (tool: EvaluatorTool, reason: string | undefined) => {
     return `${spec.name} (${EVALUATOR_COMMANDS[tool]}) is not on PATH${reason === undefined ? '' : ` (${reason})`}; install it with ${spec.install} and sign in with ${spec.signIn}`
 }
 
+/** The canonical directories of PATH, the only ones the evaluator search looks in. */
+export async function evaluatorSearchDirectories(env: Readonly<Record<string, string | undefined>>): Promise<readonly string[]> {
+    const directories: string[] = []
+    for (const directory of (env.PATH ?? '').split(delimiter)) {
+        if (!directory || !isAbsolute(directory) || resolve(directory) !== directory) continue
+        try { if (await realpath(directory) === directory) directories.push(directory) } catch (error) {
+            if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'EACCES')) continue
+            throw error
+        }
+    }
+    return directories
+}
+
 /** The listed tools found on the search path, without running them: what doctor reports. */
 export async function findEvaluators(tools: readonly EvaluatorTool[], directories: readonly string[]): Promise<Readonly<{
     found: readonly EvaluatorTool[]; missing: readonly EvaluationAttempt[]
@@ -230,7 +243,22 @@ export function evaluatorUnavailable(message: string) {
     return {
         code: 'EVALUATOR_UNAVAILABLE' as const satisfies typeof ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE,
         message,
-        fix: 'install and sign in to an agent tool work.evaluators lists (codexcli: npm install -g @openai/codex, then codex login; claudecode: npm install -g @anthropic-ai/claude-code, then claude auth login; opencode: npm install -g opencode-ai, then opencode auth login), or list one you have, then run npx --no cockpit doctor --config <your cockpit.toml>',
+        fix: 'install and sign in to an agent tool work.evaluators lists (codexcli: npm install -g @openai/codex, then codex login; claudecode: npm install -g @anthropic-ai/claude-code, then claude auth login; opencode: npm install -g opencode-ai, then opencode auth login), or list one you have in work.evaluators; or have a person move [work] grading to checks, self or off, and accept it with npx --no cockpit sync --config <your cockpit.toml> --interactive; then run npx --no cockpit doctor --config <your cockpit.toml>',
+    }
+}
+
+/**
+ * Why [work] grading = "subagent" would parse and do nothing here: a declared harness has no generated
+ * evaluator definition for the agent to spawn. Every shipped tool generates one (the harness registry
+ * test pins each row's features), so only a custom harness can lack it. One literal fix so the
+ * diagnostic inventory captures it.
+ */
+export function subagentGradingProblem(harnesses: readonly Readonly<{ name: string; capabilities: readonly Pick<CustomHarness['capabilities'][number], 'feature' | 'state'>[] }>[]) {
+    const unsupported = harnesses.filter(harness => harness.capabilities.some(row => row.feature === 'subagents' && row.state === 'unavailable')).map(harness => harness.name)
+    return unsupported.length === 0 ? undefined : {
+        code: 'EVALUATOR_UNAVAILABLE' as const satisfies typeof ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE,
+        message: `[work] grading = "subagent" needs the generated evaluator definition, and cockpit generates none for ${unsupported.join(', ')}`,
+        fix: 'set [work] grading = "independent" with work.evaluators naming a tool you have, which is stronger, or have a person move it to checks, self or off; or remove that tool from the surfaces it is listed under',
     }
 }
 
@@ -388,5 +416,5 @@ export async function evaluate(request: EvaluationRequest): Promise<EvaluationRe
     if (attempts.every(row => row.code === ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE)) return { kind: 'refusal', attempts, ...evaluatorUnavailable(message) }
     return { kind: 'refusal', attempts, message,
         code: 'EVALUATOR_RUN_FAILED' as const satisfies typeof ENVIRONMENT_CODES.EVALUATOR_RUN_FAILED,
-        fix: 'read the message for the cause each evaluator reported: sign in to it, wait out its usage limit, or raise work.evaluator_timeout_seconds, then rerun the command' }
+        fix: 'read the message for the cause each evaluator reported: sign in to it, wait out its usage limit, raise work.evaluator_timeout_seconds, run it where its sandbox or network allows, or list another tool in work.evaluators, then rerun the command; or have a person move [work] grading to checks, self or off, and accept it with npx --no cockpit sync --config <your cockpit.toml> --interactive' }
 }

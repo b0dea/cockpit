@@ -1,9 +1,11 @@
 // Sequences `cockpit confirm <answer>`: refuse an answer only a person may confirm, run the existing
-// observation that verifies the rest against this machine and the running product, record what ran,
-// then drop the answer from `unconfirmed` in cockpit.toml. The record goes first, so a failed edit
+// observation that verifies an answer one settles, or, for an answer `[autonomy] confirm_answers`
+// hands to the agent, take the agent's decision, record what confirmed it, then drop the answer from
+// `unconfirmed` in cockpit.toml. The record goes first, so a failed edit
 // leaves a record nothing uses, never a removed entry the guard cannot account for.
 import { dirname, join } from 'node:path'
 
+import { effectivePolicy } from '../../autonomy.js'
 import { canonicalJson } from '../../canonical-json.js'
 import { loadCockpitConfig, readBoundedInput } from '../../config/load.js'
 import { removeUnconfirmedAnswer } from '../../config/unconfirmed-toml.js'
@@ -11,7 +13,7 @@ import { writeVerifiedConfig } from '../../config/verified-write.js'
 import { cockpitCommand } from '../../fix-catalogue.js'
 import {
     ANSWER_CONFIRMATION_PATH, ANSWER_CONFIRMATIONS, type AnswerConfirmationRecord, type ConfirmingObservation,
-    confirmationConfigurationSha256, encodeAnswerConfirmations, parseAnswerConfirmations, personConfirmationFix,
+    confirmationConfigurationSha256, DELEGATED_UNDER, encodeAnswerConfirmations, parseAnswerConfirmations, personConfirmationFix,
     type UnconfirmedAnswerName,
 } from '../../guards/answer-confirmation.js'
 import { writeCockpitLocalFiles } from '../../guards/local-identity.js'
@@ -92,15 +94,14 @@ async function readConfirmations(root: string): Promise<Uint8Array | undefined> 
 export async function runConfirm(input: ConfirmCommandInput, adapters: ConfirmCommandAdapters): Promise<ConfirmCommandOutcome> {
     const { answer } = input
     const confirmation = ANSWER_CONFIRMATIONS[answer]
-    if (confirmation.by === 'person') {
-        return refusalOutcome('CONFIRM_PERSON_REQUIRED' satisfies typeof ENVIRONMENT_CODES.CONFIRM_PERSON_REQUIRED,
-            `${answer} is confirmed only by a person: ${confirmation.trustDecision ? `it is a trust decision, because ${confirmation.why}` : confirmation.why}`,
-            answer, personConfirmationFix([answer], input.configPath))
-    }
+    const personOnly = (why: string) => refusalOutcome('CONFIRM_PERSON_REQUIRED' satisfies typeof ENVIRONMENT_CODES.CONFIRM_PERSON_REQUIRED,
+        `${answer} is confirmed only by a person: ${why}`, answer, personConfirmationFix([answer], input.configPath))
+    if (confirmation.by === 'person' && confirmation.trustDecision) return personOnly(`it is a trust decision, because ${confirmation.why}`)
     const loaded = await loadCockpitConfig(input.configPath)
     if (loaded.kind !== 'complete') return { status: 2, artifact: null, destination: null, result: null, diagnostics: loaded.diagnostics }
     const configPath = loaded.result.source.path
     const config = loaded.result.config
+    if (confirmation.by === 'person' && effectivePolicy(config).autonomy.confirm_answers !== 'agent') return personOnly(confirmation.why)
     if (!config.unconfirmed?.includes(answer)) {
         return refusalOutcome('CONFIRM_ANSWER_NOT_LISTED' satisfies typeof ENVIRONMENT_CODES.CONFIRM_ANSWER_NOT_LISTED,
             `${answer} is not listed under unconfirmed in ${configPath}, so there is nothing to confirm`, 'unconfirmed',
@@ -108,12 +109,16 @@ export async function runConfirm(input: ConfirmCommandInput, adapters: ConfirmCo
     }
 
     const ranAt = adapters.now().toISOString()
-    const verdict = await observe(confirmation.observation, configPath, config, adapters)
-    if (!verdict.passed) {
-        const refused = refusalOutcome('CONFIRM_OBSERVATION_FAILED' satisfies typeof ENVIRONMENT_CODES.CONFIRM_OBSERVATION_FAILED,
-            `${answer} stays unconfirmed: ${verdict.reason}; confirming it needs ${confirmation.verifies}`, answer,
-            `clear the diagnostics reported beside this one, then run ${cockpitCommand('confirm', { config: configPath, operand: answer })} again; if the value itself is wrong, correct it in cockpit.toml first`)
-        return { ...refused, diagnostics: [...refused.diagnostics, ...verdict.diagnostics] }
+    let evidence: unknown = null
+    if (confirmation.by === 'observation') {
+        const verdict = await observe(confirmation.observation, configPath, config, adapters)
+        if (!verdict.passed) {
+            const refused = refusalOutcome('CONFIRM_OBSERVATION_FAILED' satisfies typeof ENVIRONMENT_CODES.CONFIRM_OBSERVATION_FAILED,
+                `${answer} stays unconfirmed: ${verdict.reason}; confirming it needs ${confirmation.verifies}`, answer,
+                `clear the diagnostics reported beside this one, then run ${cockpitCommand('confirm', { config: configPath, operand: answer })} again; if the value itself is wrong, correct it in cockpit.toml first`)
+            return { ...refused, diagnostics: [...refused.diagnostics, ...verdict.diagnostics] }
+        }
+        evidence = verdict.evidence
     }
 
     // The observation re-reads cockpit.toml itself, so the record binds to what it observed only if the
@@ -126,8 +131,10 @@ export async function runConfirm(input: ConfirmCommandInput, adapters: ConfirmCo
             `run ${cockpitCommand('confirm', { config: configPath, operand: answer })} again`)
     }
     const root = dirname(configPath)
-    const record: AnswerConfirmationRecord = { observation: confirmation.observation, ranAt, result: 'passed',
-        evidenceSha256: sha256Hex(canonicalJson(verdict.evidence)), configurationSha256: confirmationConfigurationSha256(config) }
+    const configurationSha256 = confirmationConfigurationSha256(config)
+    const evidenceSha256 = sha256Hex(canonicalJson(evidence))
+    const record: AnswerConfirmationRecord = confirmation.by === 'person' ? { decidedBy: 'agent', under: DELEGATED_UNDER, ranAt, configurationSha256 }
+        : { observation: confirmation.observation, ranAt, result: 'passed', evidenceSha256, configurationSha256 }
     const written = await writeCockpitLocalFiles(root, [{ name: 'answer-confirmations',
         bytes: encodeAnswerConfirmations({ ...parseAnswerConfirmations(await readConfirmations(root)), [answer]: record }) }])
     if (written.kind !== 'complete') {
@@ -160,11 +167,16 @@ export async function runConfirm(input: ConfirmCommandInput, adapters: ConfirmCo
     if (edited.kind !== 'complete') return refusalOutcome(edited.code, edited.message, configPath, edited.fix)
 
     const sync = cockpitCommand('sync', { config: configPath })
+    const apply = `Run ${sync} to apply the edit; an agent may where [autonomy] sync = "agent", because the record makes the removal non-widening.\n`
+    if (confirmation.by === 'person') return {
+        status: 0, destination: null, diagnostics: [],
+        artifact: `Confirmed ${answer} as the agent's decision under [autonomy] confirm_answers = "agent"; no person stated it. Removed it from unconfirmed in ${configPath} and recorded that decision in ${ANSWER_CONFIRMATION_PATH}.\n${apply}`,
+        result: { answer, decidedBy: 'agent', under: DELEGATED_UNDER, ranAt, record: ANSWER_CONFIRMATION_PATH, unconfirmed: remaining, next: sync },
+    }
     return {
         status: 0, destination: null, diagnostics: [],
-        artifact: `Confirmed ${answer}: ${confirmation.verifies}. Removed it from unconfirmed in ${configPath} and recorded the observation in ${ANSWER_CONFIRMATION_PATH}.\n`
-            + `Run ${sync} to apply the edit; an agent may where [autonomy] sync = "agent", because the recorded observation makes the removal non-widening.\n`,
-        result: { answer, observation: confirmation.observation, ranAt, outcome: 'passed', evidenceSha256: record.evidenceSha256,
+        artifact: `Confirmed ${answer}: ${confirmation.verifies}. Removed it from unconfirmed in ${configPath} and recorded the observation in ${ANSWER_CONFIRMATION_PATH}.\n${apply}`,
+        result: { answer, observation: confirmation.observation, ranAt, outcome: 'passed', evidenceSha256,
             record: ANSWER_CONFIRMATION_PATH, unconfirmed: remaining, next: sync },
     }
 }

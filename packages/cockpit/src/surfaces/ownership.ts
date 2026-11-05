@@ -758,10 +758,9 @@ function captureNativeBytes(input: unknown): Uint8Array | undefined {
         if (prototype !== Uint8Array.prototype && prototype !== Buffer.prototype) return undefined
         const length = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), 'byteLength')!.get!.call(input) as number
         if (length > SHARED_FILE_MAX_BYTES) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(input)
-        const keys = Reflect.ownKeys(descriptors)
-        if (keys.length !== length || keys.some(key => typeof key !== 'string'
-            || !/^(?:0|[1-9]\d*)$/.test(key) || Number(key) >= length || !('value' in descriptors[key]!))) return undefined
+        // Every index below length is an own data property of any typed array, so one extra own key
+        // shows in the count. Describing each byte was the largest in-process cost of a generated read.
+        if (Reflect.ownKeys(input).length !== length) return undefined
         const bytes = new Uint8Array(length)
         Uint8Array.prototype.set.call(bytes, input)
         return bytes

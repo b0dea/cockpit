@@ -14,7 +14,7 @@ import { z } from 'zod'
 import { isProcessGone, observeProcessStart, processHost } from '../environment/claims.js'
 import { hasErrorCode, RefusalError } from '../environment/contract.js'
 import { executeProbe } from '../environment-exec/execute.js'
-import { DECIDERS, WORK_GRADING } from '../schema.js'
+import { DECIDERS, GRADE_MODES } from '../schema.js'
 import { WORK_ORDER_ID, WorkOrderFrontMatter } from './contract.js'
 
 export const WORK_RECORD_DIRECTORY = '.cockpit/work-orders'
@@ -36,7 +36,7 @@ export type CheckResult = z.infer<typeof CheckResult>
 
 const Verdict = z.object({ id: z.string().max(64), verdict: z.enum(['met', 'unmet', 'unclear']), note: z.string().max(4_096) }).strict()
 const Grade = z.object({
-    at, digest: z.string().length(64), mode: z.enum(WORK_GRADING), passed: z.boolean(),
+    at, digest: z.string().length(64), mode: z.enum(GRADE_MODES), passed: z.boolean(),
     criteria: z.array(Verdict).max(64), outOfScope: z.array(z.string().max(1_100)).max(512),
     // Which evaluator answered and those passed over on the way; absent when no evaluator ran.
     evaluator: z.object({ tool: z.string().max(64), fallbacks: z.array(z.object({ tool: z.string().max(64), code: z.string().max(64), message: z.string().max(8_192) }).strict()).max(8) }).strict().optional(),
@@ -67,11 +67,16 @@ export const WorkRecord = z.object({
     // A grade found the agent's amendments lowered the bar. It outlives the grade a later check or grade
     // replaces, and only an amendment a person or CI accepts clears it, so the next amendment stays theirs.
     amendmentsFailedReview: z.object({ at, note: z.string().max(4_096) }).strict().optional(),
+    // A separate evaluator found the work unmet. Under subagent grading a relayed verdict must not replace
+    // it, or an agent could ask the evaluator first and relay a pass after. An amendment the agent accepts
+    // keeps it, or rewording a criterion would let its own relayed pass through; like amendmentsFailedReview,
+    // only an amendment a person or CI accepts clears it.
+    evaluatorFailed: z.object({ at }).strict().optional(),
     // A decision is resolved by a later `resolution` note naming it in `resolves`: with `record`, the decision
     // record it is written in; without, `text` says why it made no lasting decision. The latest resolution counts.
     notes: z.array(z.object({ at, by: z.enum(['agent', 'person', 'ci']), kind: z.enum(['note', 'question', 'answer', 'decision', 'resolution']), text: note,
         answers: z.number().int().min(1).optional(), resolves: z.number().int().min(1).optional(), record: z.string().max(1_100).optional() }).strict()).max(1_024),
-    closure: z.object({ at, by, how: z.enum(['graded', 'checks-passed', 'self-reported', 'partial', 'abandoned']), note: note.optional() }).strict().optional(),
+    closure: z.object({ at, by, how: z.enum(['graded', 'subagent-reported', 'checks-passed', 'self-reported', 'ungraded', 'partial', 'abandoned']), note: note.optional() }).strict().optional(),
     // Each lock `work recover --apply` removed: the holder it named and what was checked to call it gone.
     recoveries: z.array(z.object({ at, holder: z.string().max(1_024), checked: z.array(z.string().max(1_024)).max(16) }).strict()).max(256).optional(),
 }).strict()

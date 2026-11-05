@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { loadCockpitConfig } from '../config/load.js'
-import { ANSWER_CONFIRMATION_PATH } from '../guards/answer-confirmation.js'
+import { ANSWER_CONFIRMATION_PATH, confirmationConfigurationSha256 } from '../guards/answer-confirmation.js'
 import { guardConfigChange } from '../guards/policy-change.js'
 import { sha256Hex } from '../sha256.js'
 import { runConfirm, type ConfirmCommandAdapters } from './application/confirm.js'
@@ -19,12 +19,12 @@ const BODY = ['[cockpit]', 'name = "synthetic"', 'siblings_root = "."', '',
     '[environment]', 'compose_files = ["compose.yml"]',
     'machine = { runtime_memory_mb = 1024, runtime_cpus = 1, free_disk_mb = 1000, cold_start_seconds = 60 }', ''].join('\n')
 
-function cockpit(unconfirmed: string) {
+function cockpit(unconfirmed: string, tail = '') {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-confirm-')))
     scratch.push(root)
     mkdirSync(join(root, '.cockpit'))
     const configPath = join(root, 'cockpit.toml')
-    const text = `${HEAD}${unconfirmed}\n${BODY}`
+    const text = `${HEAD}${unconfirmed}\n${BODY}${tail}`
     writeFileSync(configPath, text)
     return { root, configPath, text }
 }
@@ -85,6 +85,46 @@ describe('confirm', () => {
             { sha256: current.result.source.sha256, config: current.result.config }, confirmations)
         expect(change(readFileSync(join(root, ANSWER_CONFIRMATION_PATH)))).toEqual({ kind: 'non-widening' })
         expect(change(undefined)).toEqual({ kind: 'widening', fields: ['unconfirmed'] })
+    })
+
+    it('lets the agent confirm an answer that is no trust decision only where [autonomy] confirm_answers delegates it, and records it as the agent\'s', async () => {
+        const delegation = '\n[autonomy]\nconfirm_answers = "agent"\n'
+        const { root, configPath, text } = cockpit('unconfirmed = ["cockpit.name", "guards"]', delegation)
+        const observing = adapters()
+        // A trust decision stays a person's however the confirmation is delegated.
+        expect((await runConfirm({ configPath, answer: 'guards' }, observing)).diagnostics).toEqual([expect.objectContaining({
+            code: 'CONFIRM_PERSON_REQUIRED', message: expect.stringContaining('it is a trust decision') })])
+
+        const name = await runConfirm({ configPath, answer: 'cockpit.name' }, observing)
+        expect(name).toMatchObject({ status: 0, diagnostics: [], result: { answer: 'cockpit.name', decidedBy: 'agent', under: 'autonomy.confirm_answers', unconfirmed: ['guards'] },
+            artifact: expect.stringContaining('as the agent\'s decision under [autonomy] confirm_answers = "agent"; no person stated it') })
+        expect(observing.preflight).not.toHaveBeenCalled()
+        expect(observing.check).not.toHaveBeenCalled()
+        expect(JSON.parse(readFileSync(join(root, ANSWER_CONFIRMATION_PATH), 'utf8')).confirmations).toEqual({ 'cockpit.name': {
+            decidedBy: 'agent', under: 'autonomy.confirm_answers', ranAt: '2026-11-04T10:00:00.000Z', configurationSha256: expect.stringMatching(/^[a-f0-9]{64}$/) } })
+
+        const current = await loadCockpitConfig(configPath)
+        if (current.kind !== 'complete') throw new Error('the confirmed configuration does not load')
+        const record = readFileSync(join(root, ANSWER_CONFIRMATION_PATH))
+        expect(guardConfigChange(sha256Hex(text), Buffer.from(text), { sha256: current.result.source.sha256, config: current.result.config }, record))
+            .toEqual({ kind: 'non-widening' })
+        // The record binds the configuration it was taken under, delegation included, so it admits
+        // nothing once that is withdrawn; and none confirms a trust decision, so one for guards widens.
+        const undelegated = { ...current.result.config, autonomy: {} }
+        expect(guardConfigChange(sha256Hex(text), Buffer.from(text), { sha256: current.result.source.sha256, config: undelegated }, record))
+            .toMatchObject({ kind: 'widening' })
+        const withoutGuards = { ...current.result.config, unconfirmed: undefined }
+        const delegatedRecord = { decidedBy: 'agent', under: 'autonomy.confirm_answers', ranAt: '2026-11-04T10:00:00.000Z',
+            configurationSha256: confirmationConfigurationSha256(withoutGuards) }
+        const forged = Buffer.from(JSON.stringify({ format: 'cockpit-answer-confirmations/v1',
+            confirmations: { 'cockpit.name': delegatedRecord, guards: delegatedRecord } }))
+        expect(guardConfigChange(sha256Hex(text), Buffer.from(text), { sha256: current.result.source.sha256, config: withoutGuards }, forged))
+            .toEqual({ kind: 'widening', fields: ['unconfirmed'] })
+
+        // Without the delegation the same answer is refused, and the refusal names the setting.
+        const { configPath: held } = cockpit('unconfirmed = ["cockpit.name"]')
+        expect((await runConfirm({ configPath: held, answer: 'cockpit.name' }, observing)).diagnostics).toEqual([expect.objectContaining({
+            code: 'CONFIRM_PERSON_REQUIRED', fix: expect.stringContaining('[autonomy] confirm_answers = "agent"') })])
     })
 
     it('drops the whole unconfirmed line once its last answer is confirmed', async () => {

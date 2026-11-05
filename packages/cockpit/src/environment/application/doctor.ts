@@ -1,7 +1,7 @@
 import { dirname, join, resolve } from 'node:path'
 import { ENVIRONMENT_CODES, errorCause, type EnvironmentDiagnostic, snapshotJson } from '../contract.js'
-import type { EvaluatorTool } from '../../schema.js'
-import { effectivePolicy, policyWeakening, policyWeakeningDiagnostic, readRecordedPolicy } from '../../autonomy.js'
+import type { CockpitConfig, EvaluatorTool } from '../../schema.js'
+import { effectivePolicy, policyWeakening, policyWeakeningDiagnostic, readRecordedPolicy, trustInForce } from '../../autonomy.js'
 import type { SkippedStateNamespace } from '../state.js'
 import { prepareGeneratedEnvironmentCurrentness } from '../generated-application/check.js'
 import { type GeneratedEnvironmentCurrentness } from '../generated-application/shared.js'
@@ -61,8 +61,8 @@ export interface DoctorCommandAdapters extends ObservationCommandAdapters {
     readonly discoverReleaseFreshness?: () => Promise<ReleaseFreshness>
     /** Warnings when an agent tool on this machine would skip the generated guard hook. */
     readonly inspectHookTrust?: () => Promise<readonly EnvironmentDiagnostic[]>
-    /** A warning when work orders exist but their independent evaluator cannot run on this machine. */
-    readonly inspectEvaluator?: (evaluators: readonly EvaluatorTool[]) => Promise<readonly EnvironmentDiagnostic[]>
+    /** A finding when the configured grading cannot run on this machine, and how each order closed. */
+    readonly inspectEvaluator?: (work: WorkGradingInspection) => Promise<readonly EnvironmentDiagnostic[]>
     /** Warnings about what each approved MCP server needs before a tool can start it; never starts one. */
     readonly inspectMcpStartup?: (servers: readonly McpServer[]) => Promise<readonly EnvironmentDiagnostic[]>
     /** Warnings about prerequisites the stack checks do not cover: the local install, sibling remotes, committed secrets. */
@@ -74,6 +74,10 @@ export interface DoctorCommandAdapters extends ObservationCommandAdapters {
         | Readonly<{ kind: 'complete'; skipped: readonly SkippedStateNamespace[] }>
         | Readonly<{ kind: 'refusal'; diagnostics: readonly EnvironmentDiagnostic[] }>>
 }
+
+/** `stated` is whether cockpit.toml writes [work] grading, rather than leaving it to its default. */
+export type WorkGradingInspection = Readonly<{ grading: CockpitConfig['work']['grading']; stated: boolean; evaluators: readonly EvaluatorTool[]
+    harnesses: CockpitConfig['surfaces']['harnesses'] }>
 
 interface DoctorFreshness {
     // Only whether the generated files are current. The full check result, with every owned path's
@@ -155,13 +159,14 @@ async function doctorGuardHostDiagnostics(loading: Promise<LoadedDoctorConfig>):
     }]
 }
 
-// A product with no declared gate gives test-run nothing to run, so no work in it can be graded PASS;
-// a docs-only cockpit has no product to test and stays quiet.
 async function doctorEvaluatorDiagnostics(loading: Promise<LoadedDoctorConfig>, adapters: DoctorCommandAdapters): Promise<readonly EnvironmentDiagnostic[]> {
     const loaded = await loading
-    return loaded.kind === 'complete' && adapters.inspectEvaluator ? adapters.inspectEvaluator(evaluatorTools(loaded.result.config)) : []
+    return loaded.kind === 'complete' && adapters.inspectEvaluator ? adapters.inspectEvaluator({ grading: effectivePolicy(loaded.result.config).grading, stated: loaded.result.gradingStated,
+        evaluators: evaluatorTools(loaded.result.config), harnesses: loaded.result.config.surfaces.harnesses }) : []
 }
 
+// A product with no declared gate gives test-run nothing to run, so no work in it can be graded PASS;
+// a docs-only cockpit has no product to test and stays quiet.
 async function doctorTestingGateDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {
     const loaded = await loading
     if (loaded.kind !== 'complete' || loaded.result.config.testing || declaredRuntime(loaded.result.config.environment) === 'none') {
@@ -183,11 +188,13 @@ async function doctorTestingGateDiagnostics(loading: Promise<LoadedDoctorConfig>
 async function doctorUnconfirmedDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {
     const loaded = await loading
     if (loaded.kind !== 'complete' || !loaded.result.config.unconfirmed) return []
+    const { held } = trustInForce(loaded.result.config)
     return [{
         severity: 'warning' as const,
         // A literal, so the diagnostic inventory captures the fix beside the code.
         code: 'DECLARATION_UNCONFIRMED' satisfies typeof ENVIRONMENT_CODES.DECLARATION_UNCONFIRMED,
-        message: `${loaded.result.config.unconfirmed.join(', ')} in cockpit.toml were chosen by the setup agent or by no one named, not stated by a person, so they may not describe this product`,
+        message: `${loaded.result.config.unconfirmed.join(', ')} in cockpit.toml were chosen by the setup agent or by no one named, not stated by a person, so they may not describe this product`
+            + (held.length ? `; awaiting confirmation, ${held.map(row => `${row.field} is held at ${row.inForce} rather than the declared ${row.declared}`).join(', and ')}` : ''),
         target: 'unconfirmed',
         fix: unconfirmedFix(loaded.result.config.unconfirmed),
     }]

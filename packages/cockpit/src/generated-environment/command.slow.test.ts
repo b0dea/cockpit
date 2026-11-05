@@ -512,6 +512,9 @@ native_hooks = { install = "inspect" }
         'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt; git status',
         'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt | cat',
         'npx --no cockpit reset --config cockpit.toml', 'npx --no cockpit test-run --config cockpit.toml --gate undeclared',
+        // [autonomy] reset and instruction_files default to person, so neither runs unprompted here.
+        'npx --no cockpit reset --config cockpit.toml --apply', 'npx --no cockpit setup --config cockpit.toml --write-instruction-files',
+        'npx --no cockpit setup --config cockpit.toml --write-instruction-pointers',
         'npx --no cockpit work accept --config cockpit.toml --work-order WO-001 --interactive', `node ${join(root, 'app/server.mjs')} doctor --config cockpit.toml`,
         // A session runs only what the agent could run directly.
         'npx --no cockpit session --config cockpit.toml -- rm -rf fixtures',
@@ -551,6 +554,28 @@ native_hooks = { install = "inspect" }
     await writeFile(bin, '#!/bin/sh\n', { mode: 0o755 })
     expect(decision('npx --no cockpit doctor --config cockpit.toml')).toBe('ask')
     expect(decision('./node_modules/.bin/cockpit doctor --config cockpit.toml')).toBe('ask')
+}, 120_000)
+
+it('admits a writing sync, an applied reset and setup\'s sibling instruction writes unprompted where [autonomy] gives them to the agent', async () => {
+    const { root, configPath } = await surfaceConsumer('autonomy-grants', { custom: '\n[autonomy]\nsync = "agent"\nreset = "agent"\ninstruction_files = "agent"\n' })
+    expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
+    await writeFile(join(root, 'app/package-lock.json'), '{}')
+    expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+    const hook = (JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8')).hooks.PreToolUse
+        .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('bash-guard.sh')).command) as string
+    await mkdir(join(root, 'node_modules/.bin'), { recursive: true })
+    await symlink(fileURLToPath(new URL('../../bin/cockpit.mjs', import.meta.url)), join(root, 'node_modules/.bin/cockpit'))
+    // Only the search path this cockpit's own install provides, as in the launcher spellings case.
+    const path = (process.env.PATH ?? '').split(':').filter(entry => !entry.endsWith('/node_modules/.bin')).join(':')
+    const decision = (command: string) => {
+        const result = spawnSync('/bin/sh', ['-c', hook], { cwd: root, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: root, PATH: path },
+            input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: root, tool_input: { command } }) })
+        return result.stdout ? JSON.parse(result.stdout).hookSpecificOutput.permissionDecision as string : result.status === 0 ? 'allow' : result.stderr
+    }
+    for (const command of ['npx --no cockpit sync --config cockpit.toml', 'npx --no cockpit reset --config cockpit.toml --apply',
+        'npx --no cockpit setup --config cockpit.toml --write-instruction-files', 'npx --no cockpit setup --config cockpit.toml --write-instruction-pointers']) {
+        expect(decision(command), command).toBe('allow')
+    }
 }, 120_000)
 
 it('rolls back the whole guard publication when a staged registration cannot be published', async () => {

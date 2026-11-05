@@ -12,7 +12,7 @@ import {
     type SourceProvenance,
     snapshotJson,
 } from '../environment/contract.js'
-import { effectivePolicy, readRecordedPolicy, type EffectivePolicy } from '../autonomy.js'
+import { effectivePolicy, readRecordedPolicy, trustInForce, type EffectivePolicy, type HeldAnswer } from '../autonomy.js'
 import { browserDataQualifies, CockpitConfig, EVALUATOR_COMMANDS, runtimeDeclarationSha256, type EvaluatorTool } from '../schema.js'
 
 /** An explicit request_preapproval wins; otherwise preapproval follows the declared data posture. */
@@ -38,6 +38,7 @@ export interface ConsumedLoadedConfig {
     /** Identifies the stack this configuration runs; `source.sha256` identifies the file that was read. */
     readonly runtimeSha256: string
     readonly guardHostsStated: boolean
+    readonly gradingStated: boolean
 }
 
 export interface LoadedCockpitConfig {
@@ -50,6 +51,8 @@ export interface LoadedCockpitConfig {
      * empty list, so only the parsed source can tell "none exists" from "never answered".
      */
     readonly guardHostsStated: boolean
+    /** [work] grading is written in the file, rather than left to its default. */
+    readonly gradingStated: boolean
     readonly [loadedConfigProjectionBrand]: never
 }
 
@@ -72,6 +75,8 @@ export interface ConsumedWorkEnvironmentConfig {
     readonly source: SourceProvenance
     readonly siblings: readonly Readonly<{ slug: string; dir: string; environmentFiles: readonly Readonly<{ template: string; instance: string }>[] }>[]
     readonly policy: EffectivePolicy
+    /** The trust answers held at a stronger value until a person confirms them. */
+    readonly held: readonly HeldAnswer[]
     readonly wipCap: number
     readonly attemptCap: number
     readonly verificationTimeoutSeconds: number
@@ -165,6 +170,7 @@ export function projectWorkEnvironmentConfig(
             environmentFiles: (environment_files ?? []).map(row => ({ template: row.template, instance: row.instance })),
         }))),
         policy: effectivePolicy(loaded.config),
+        held: Object.freeze([...trustInForce(loaded.config).held]),
         wipCap: loaded.config.work.wip_cap,
         attemptCap: loaded.config.work.attempt_cap,
         verificationTimeoutSeconds: loaded.config.work.verification_timeout_seconds,
@@ -439,6 +445,8 @@ export async function loadCockpitConfig(
     const writtenGuards = (parsed as { guards?: unknown }).guards
     const guardHostsStated = writtenGuards !== null && typeof writtenGuards === 'object'
         && Object.hasOwn(writtenGuards, 'hosted_db_hosts') && Object.hasOwn(writtenGuards, 'vendor_endpoint_hosts')
+    const writtenWork = (parsed as { work?: unknown }).work
+    const gradingStated = writtenWork !== null && typeof writtenWork === 'object' && Object.hasOwn(writtenWork, 'grading')
     const immutableConfig = snapshotJson(reconstructed.data) as unknown as CockpitConfig
     const runtimeSha256 = runtimeDeclarationSha256(immutableConfig)
     const bound = {
@@ -446,8 +454,9 @@ export async function loadCockpitConfig(
         source: { ...provenance },
         runtimeSha256,
         guardHostsStated,
+        gradingStated,
     }
-    const result = { config: validated.data, source: provenance, runtimeSha256, guardHostsStated } as LoadedCockpitConfig
+    const result = { config: validated.data, source: provenance, runtimeSha256, guardHostsStated, gradingStated } as LoadedCockpitConfig
     issuedConfigProjections.set(result, bound)
     return {
         kind: 'complete',

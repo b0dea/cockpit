@@ -6,7 +6,7 @@ import { loadCockpitConfig } from '../config/load.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { readinessReport } from '../readiness.js'
 import { STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
-import { inspectProjectReadiness } from './readiness-composition.js'
+import { inspectProjectReadiness, proposeInitGrading } from './readiness-composition.js'
 
 const scratch: string[] = []
 afterEach(async () => { await Promise.all(scratch.splice(0).map(path => rm(path, { recursive: true, force: true }))) })
@@ -151,5 +151,18 @@ describe('project readiness', () => {
         expect(findings.filter(({ code }) => code.startsWith('SIBLING_INSTRUCTIONS_'))).toEqual([expect.objectContaining({
             severity: 'warning', code: 'SIBLING_INSTRUCTIONS_AGENTS_ONLY', target: 'sibling:api',
         })])
+    })
+
+    it('recommends grading from the listed tools found on PATH, never one a first grade would refuse', async () => {
+        const tools = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-grading-path-')))
+        try {
+            const proposed = (listed: readonly string[]) => proposeInitGrading(listed, { PATH: tools })
+            // Cursor cannot grade, and a Claude Code nobody listed is not the cockpit's evaluator.
+            await writeFile(join(tools, 'claude'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+            expect(await proposed(['cursor', 'codexcli'])).toMatchObject({ value: 'checks', source: expect.stringContaining('codexcli') })
+            expect(await proposed(['cursor', 'claudecode'])).toMatchObject({ value: 'independent', reason: expect.stringContaining('only claudecode is on PATH') })
+            await writeFile(join(tools, 'codex'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+            expect(await proposed(['claudecode', 'codexcli'])).toMatchObject({ value: 'independent', reason: expect.stringContaining('each grades the other') })
+        } finally { await rm(tools, { recursive: true, force: true }) }
     })
 })

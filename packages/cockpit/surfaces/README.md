@@ -8,11 +8,8 @@ tests and contributor configuration never become inputs to them.
 
 ## Rendering
 
-Templates are filled from the resolved configuration: the sibling repositories, mount modes,
-guard tables and configured harnesses. A generated skill therefore names that product's
-repositories and commands instead of describing them generically.
-
-cockpit merges the core templates with the consumer's overlays itself and hands the generator
+Templates are filled from the resolved configuration, so a generated skill names that product's
+repositories and commands. cockpit merges the core templates with the consumer's overlays itself and hands the generator
 one merged source, so a generator upgrade cannot change how the merge works.
 
 ## Golden behavior

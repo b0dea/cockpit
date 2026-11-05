@@ -61,6 +61,8 @@ describe('policyChange', () => {
         ['an autonomy decision moved toward agent', config => { config.autonomy = { reset: 'agent' } }, ['autonomy.reset']],
         ['a work gate moved toward agent', config => { config.work.gates.accept = 'agent' }, ['work.gates.accept']],
         ['weaker grading', config => { config.work.grading = 'self' }, ['work.grading']],
+        ['relayed grading', config => { config.work.grading = 'subagent' }, ['work.grading']],
+        ['no grading', config => { config.work.grading = 'off' }, ['work.grading']],
         ['a raised attempt cap', config => { config.work.attempt_cap = 2 }, ['work.attempt_cap']],
         ['a new MCP approval and a changed digest', config => { config.mcp.approved = { docs: 'b'.repeat(64), search: 'c'.repeat(64) } },
             ['mcp.approved.docs', 'mcp.approved.search']],

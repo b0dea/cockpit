@@ -1,20 +1,15 @@
 # Work, grading, browser and testing
 
-This page is for anyone deciding whether a change needs a direct fix or a durable
-[work order](concepts.md#work-order), and then getting it graded, checked in a browser, and proven
-with the right test tier.
-
-Each command's `--help` is its current contract. Most changes are fixes: the `cockpit-fix` skill
-proves one with the declared test gate before and after, with no order. Write a work order when the
-result must be held to criteria someone else set, graded by something other than the agent that did
-the work, or carried across sessions. The `cockpit-work` skill walks an agent through the loop below;
-the `cockpit-browser` skill runs the commands in [Browser evidence](#browser-evidence).
+Most changes are fixes: the `cockpit-fix` skill proves one with the declared test gate before and
+after, with no [work order](concepts.md#work-order). Write a work order when the result must be held
+to criteria someone else set, graded by something other than the agent that did the work, or carried
+across sessions. The `cockpit-work` skill walks an agent through the loop below; the
+`cockpit-browser` skill runs the commands in [Browser evidence](#browser-evidence).
 
 ## Write a work order
 
 A work order is `workorders/<id>.md`. Its YAML front-matter is the whole contract cockpit accepts,
-checks and grades; the Markdown body below it is yours, for notes and a plan, and cockpit never reads
-it.
+checks and grades; the Markdown body is yours, and cockpit never reads it.
 
 ```markdown
 ---
@@ -53,15 +48,16 @@ Notes and plan go here.
 | `source` | A file the criterion comes from. Its bytes are part of the contract, so a changed source makes the order stale. |
 | `non_goals` | What the order deliberately leaves alone. |
 
-One schema validates the front-matter; a refusal names each field it rejects. The digest an acceptance
-binds covers the front-matter, the bytes of every `source`, and the commit each repository stood at
-when the order was accepted. A check is the product's own test command, so it runs like a product test
-stage: from the directory holding `cockpit.toml`, with `PATH` and the same non-secret variables,
-judged by exit status, keeping the end of long output, for at most `work.verification_timeout_seconds`.
+A refusal names each field it rejects. The digest an acceptance binds covers the front-matter, the
+bytes of every `source`, and the commit each repository stood at when accepted. A check runs like a
+product test stage: from the directory holding `cockpit.toml`, with `PATH` and the same non-secret
+variables, judged by exit status, for at most `work.verification_timeout_seconds`.
 
 ## Accept, check, grade and close
 
-<!-- cockpit:ref command=work status --> <!-- cockpit:ref command=work accept --> <!-- cockpit:ref command=work check --> <!-- cockpit:ref command=work grade --> <!-- cockpit:ref command=work acknowledge --> <!-- cockpit:ref command=work signoff -->
+<!-- cockpit:ref command=work status --> <!-- cockpit:ref command=work accept -->
+<!-- cockpit:ref command=work check --> <!-- cockpit:ref command=work grade -->
+<!-- cockpit:ref command=work acknowledge --> <!-- cockpit:ref command=work signoff -->
 
 ```sh
 npx --no cockpit work accept --config cockpit.toml --work-order WO-1
@@ -81,38 +77,40 @@ at `work.attempt_cap` the order is blocked until it is amended or closed, by who
 
 - **accept** records the contract. Run it again after editing an accepted order to accept the change
   (an [amendment](#amendments)). The check base stays the commits recorded at first acceptance.
-- **check** runs every criterion's check and the order's gates, in the order the contract lists them.
+- **check** runs every criterion's check and the order's gates, in the order the contract lists
+  them.
 - **grade** grades the order the way [`[work] grading`](#how-an-order-earns-done) says, and reports
-  every changed file outside `scope` since the base commits under `outOfScope`. Where a model grades,
-  each such change is judged by the standing criterion `scope-changes-necessary`; under `checks`
-  grading any change outside scope fails the grade. [Weakened tests](#test-protection) are judged the
-  same way.
-- **signoff** closes a graded order as done. `--partial --note <what is left>` or `--abandon --note <why>`
-  closes any open order without a passing grade. Every closure first needs each
-  [decision](#decisions) recorded on the order to be resolved.
-- <!-- cockpit:ref command=work note --> <!-- cockpit:ref command=work answer --> **note** records a note; `--ask` records an open question, which blocks the order until
+  every changed file outside `scope` since the base commits under `outOfScope`. Where a model
+  grades, each such change is judged by the standing criterion `scope-changes-necessary`; under
+  `checks` grading any change outside scope fails the grade. [Weakened tests](#test-protection) are
+  judged the same way.
+- **signoff** closes a graded order as done; under `off` it closes any open order, as `ungraded`
+  unless it already holds a passing grade. `--partial --note <what is left>` or
+  `--abandon --note <why>` closes any open order without a passing grade. Every closure first needs
+  each [decision](#decisions) recorded on the order to be resolved.
+- <!-- cockpit:ref command=work note --> <!-- cockpit:ref command=work answer --> **note** records a
+  note; `--ask` records an open question, which blocks the order until
   `work answer --question <n> --text <answer>` answers it.
-- <!-- cockpit:ref command=work recover --> **recover** inspects the lock a crashed command left on an order, naming its holder and
-  what it checked. `--apply`, which an agent may run, removes the lock only once the holder is shown
-  gone: the lock records the writer's host and whether it ran in a container, a holder on another host
-  or in a container this machine's Docker does not list stays unknown, a container cockpit labels
-  counts as gone only when it is stopped, and a holder on this machine is probed by process. When Docker
-  is installed but cannot be read, it refuses. What it checked goes into the order's record under
-  `recoveries`.
+- <!-- cockpit:ref command=work recover --> **recover** inspects the lock a crashed command left on
+  an order, naming its holder and what it checked. `--apply`, which an agent may run, removes the
+  lock only once the holder is shown gone: the lock records the writer's host and whether it ran in
+  a container, a holder on another host or in a container this machine's Docker does not list stays
+  unknown, a container cockpit labels counts as gone only when it is stopped, and a holder on this
+  machine is probed by process. When Docker is installed but cannot be read, it refuses. What it
+  checked goes into the order's record under `recoveries`.
 
-<!-- cockpit:ref path=packages/cockpit/src/guards/evaluator.ts --> cockpit keeps what happened in `.cockpit/work-orders/<id>.json`, committed with the work. It
-records who passed each step (`agent`, `person` or `ci`), each check's result, the grade with the
-evaluator that answered and those passed over, notes, and how the order closed. Only cockpit writes
-those records: the guard denies an agent's writes below `.cockpit/work-orders/` as
-[guard controls](safety-and-autonomy.md#configuration-git-and-guard-controls), because a record carries
-no key and one an agent wrote would read as a person's. That holds only for the tool calls the guard
-inspects; a process outside the guard can still replace a record.
+<!-- cockpit:ref path=packages/cockpit/src/guards/evaluator.ts --> cockpit keeps what happened in
+`.cockpit/work-orders/<id>.json`, committed with the work: who passed each step, each check's
+result, the grade with the evaluator that answered and those passed over, notes, and how the order
+closed. The guard denies an agent's writes there as
+[guard controls](safety-and-autonomy.md#configuration-git-and-guard-controls). That holds only for
+the tool calls the guard inspects; a process outside the guard can still replace a record.
 
 ## Who passes each gate
 
-<!-- cockpit:ref schema=work.gates.accept --> `[work.gates]` in `cockpit.toml` says who passes each step: `accept`, `amend` (accepting a changed
-contract), `answer`, `signoff` and `acknowledge` (accepting that an order weakened tests). Every default
-is `agent`.
+<!-- cockpit:ref schema=work.gates.accept --> `[work.gates]` in `cockpit.toml` says who passes each
+step: `accept`, `amend` (accepting a changed contract), `answer`, `signoff` and `acknowledge`
+(accepting that an order weakened tests). Every default is `agent`.
 
 | Value | What happens |
 | --- | --- |
@@ -120,19 +118,22 @@ is `agent`.
 | `person` | The command shows what is being decided and its digest, and records the step only after a person types that digest in a terminal with `--interactive`. Without a terminal it refuses with `WORK_PERSON_REQUIRED`. |
 | `ci` | The command records the step as awaiting CI, and it counts once the required `work verify` job passes. |
 
-Removing an accepted criterion or gate is never the agent's to certify: under `amend = "agent"` such an
-amendment still needs a person. [Amendments](#amendments) says what happens to the rest.
+Removing an accepted criterion or gate is never the agent's to certify: under `amend = "agent"` such
+an amendment still needs a person. [Amendments](#amendments) says what happens to the rest. Under
+`checks` grading, acknowledging a test weakening is likewise a person's or CI's under
+`acknowledge = "agent"`, as [Test protection](#test-protection) says.
 
-These local gates are best-effort. The guard keeps an agent's tool call from passing `--interactive`,
-and the command needs a terminal on both standard input and standard output, but cockpit cannot tell a
-person from a program driving a terminal. The only enforced human gate is `ci`: a required
-`work verify` job behind a protected environment whose reviewers must approve it before it runs.
+These local gates are best-effort. The guard keeps an agent's tool call from passing
+`--interactive`, and the command needs a terminal on both standard input and output, but cockpit
+cannot tell a person from a program driving a terminal. The only enforced human gate is `ci`: a
+required `work verify` job behind a protected environment whose reviewers must approve it before it
+runs.
 
-<!-- cockpit:ref command=work verify --> `work verify` checks every record against its order: an open order whose contract changed since
-acceptance fails, and so does a done order without a passing grade of its accepted contract, and so
-does a [decision record](#decisions) an order cites that is gone or no longer names the order. Run in
-CI (where `CI` is set), it reports the steps gated on `ci` as confirmed; run locally it lists them as
-awaiting CI. A workflow job for it:
+<!-- cockpit:ref command=work verify --> `work verify` checks every record against its order: an
+open order whose contract changed since acceptance fails, and so does a done order without a passing
+grade of its accepted contract, and so does a [decision record](#decisions) an order cites that is
+gone or no longer names the order. Run in CI (where `CI` is set), it reports the steps gated on `ci`
+as confirmed; run locally it lists them as awaiting CI. A workflow job for it:
 
 ```yaml
 work-verify:
@@ -146,62 +147,119 @@ work-verify:
     - run: npx --no cockpit work verify --config cockpit.toml
 ```
 
-Make the job a required status check on the protected branch, so an order's `ci` steps reach the branch
-only through it.
+Make the job a required status check on the protected branch, so an order's `ci` steps reach the
+branch only through it.
 
 ## How an order earns done
 
-<!-- cockpit:ref schema=work.grading --> `[work] grading` says what `work grade` does, and the record, `work status` and `doctor` always say
-which way each order closed:
+<!-- cockpit:ref schema=work.grading --> `[work] grading` says what `work grade` does, and the
+record, `work status` and `doctor` always say which way each order closed:
 
 | `grading` | `work grade` | Closes as |
 | --- | --- | --- |
 | `independent` (default) | runs the checks, then an evaluator grades each criterion against them and the change | `graded` |
 | `checks` | runs the checks; every criterion needs one, and the grade passes only when cockpit ran each and all passed and nothing changed outside `scope` | `checks-passed` |
+| `subagent` | runs the checks, then records the verdict the working agent submits with `--from-subagent`, `--verdict` and `--note`, under the same rules as `self`; with none of the three, a separate evaluator grades as under `independent` and the record says so | `subagent-reported`, or `graded` when the evaluator answered |
 | `self` | runs the checks, then records the agent's `--verdict met` or `unmet` with a `--note` saying what it checked; the verdict covers the standing criteria too, so the note must name each path changed outside `scope` and each flagged test file (or a directory above it), and a failed check still fails it | `self-reported` |
+| `off` | refuses, because nothing grades; `work signoff` closes the order, whatever its checks showed | `ungraded`, unless it already holds a passing grade of its accepted contract |
 
-The signoff gate applies on top in every mode.
+The signoff gate applies on top in every mode. A grade counts only if it was made under a mode at least
+as strong as the one now in force: after `[work] grading` moves to a stronger mode, `work signoff`
+refuses to close an order as done on an older, weaker grade until it is graded again, and `work verify`
+reports a done order whose grade is weaker than the current mode. `partial` and `abandoned` stay open.
 
-Under `independent` and `self` grading cockpit adds standing criteria when they apply, judged with the
-order's own: `scope-changes-necessary` when files changed outside `scope`, `test-changes-justified`
-when [test protection](#test-protection) flags a change, `amendments-hold-bar` when an agent
-[amended](#amendments) the contract, and the [decision and documentation](#decisions) criteria when
-`[docs]` is declared. An order may not name a criterion with one of these ids. Under `checks` no model
-reads the change, so a change outside scope, an unacknowledged weakening and an unjudgeable amendment
-are decided by rule instead.
+While `work.grading` is listed under `unconfirmed` (the setup agent chose it, or an answers file
+supplied it), the default `independent` is in force whatever it declares, and `work status` names it
+under `awaitingConfirmation`; a person makes the declared mode effective by deleting the entry and
+running `sync`, which asks them to accept the weakening.
+
+### How grading can run
+
+The grader is optional. Moving to a weaker choice takes a person; an automatic fallback only ever
+moves to one at least as strong.
+
+| Choice | Configure | Who answers cockpit | What it proves | Falls back to, and when it cannot run |
+| --- | --- | --- | --- | --- |
+| Another CLI | `evaluators = ["codexcli"]` from a Claude Code session, or both tools listed | cockpit reads that process directly | a separate process of another tool judged the change, read-only by its tool's mechanism | the next listed tool, when one is missing, signed out, rate-limited, timed out or refused by its environment; when none answers, a refusal names each cause |
+| Same CLI, separate run | one tool listed, or `--evaluator <tool>` | cockpit reads that process directly, with a warning | the same, but one tool is judging its own kind of work | as above for a list; `--evaluator` runs only that tool. The warning (`EVALUATOR_IS_RUNNING_TOOL`) appears only where the running tool is detected: Claude Code and Codex |
+| Native subagent in the session | `grading = "subagent"` | the working agent relays it | only that the working agent says a subagent answered: cockpit cannot verify one ran; read-only is enforced by the generated tool list in Claude Code and instructed elsewhere | a separate process as above, stronger, when the agent runs `work grade` with nothing submitted because it cannot spawn one; refused when no process answers either. Once that process finds the work unmet, a relayed verdict cannot replace it, not even after an amendment the agent accepts; only one a person or CI accepts clears it |
+| Checks only | `grading = "checks"` | nothing judged by a model | cockpit ran every criterion's check, all passed, and nothing changed outside `scope`; it cannot judge whether a test proves its criterion, or a change's quality, documentation or decisions | needs no agent tool, so it always runs; a criterion with no check makes `work grade` refuse, so it cannot pass |
+| The agent itself | `grading = "self"` | the working agent | only the agent's own claim; a failed check still fails it | needs no agent tool, so it always runs |
+| No grader | `grading = "off"` | nothing | nothing is judged; the order is a tracked record, and a failed or unrun check stays on it | needs nothing, so it always runs |
+
+The independent choices are stronger because cockpit reads the grader's answer directly, whereas a
+subagent's answer is relayed by the agent being graded. When no process answers, the refusal lists
+what you can do: sign in, list another tool in `work.evaluators`, or have a person move
+`[work] grading` to `checks`, `self` or `off`.
+
+`doctor` reports `EVALUATOR_UNAVAILABLE` when `independent` or `subagent` cannot run here, once the
+cockpit has a `workorders/` directory or `cockpit.toml` sets `[work] grading`. It observes only `PATH` and the listed tools, so signing in, network and a sandbox
+refusing a nested run show only when a grade runs; whether an agent can spawn a subagent cannot be
+observed ahead of time (`SUBAGENT_AVAILABILITY_UNOBSERVED` says so). Under `checks`, `self` or `off`
+it says nothing about evaluators, though `cockpit grade --criteria` runs one in every mode.
+
+`subagent` needs the generated evaluator definition: `check` and `sync` refuse it for a declared
+harness without one. Every shipped tool has one, and the [capability matrix](capability-matrix.md)
+records which tools were shown to offer it. Cursor and Grok Build have no guard, cannot be listed in
+`work.evaluators` and are only ever listed beside a guarded tool. From them, `independent` runs a
+listed Claude Code, Codex or OpenCode on `PATH`; `subagent` writes the definition, which no run has
+shown either tool offering; `checks`, `self` and `off` need no tool.
+
+Under `off`, nothing inside a work order judges standing criteria, test protection or
+documentation: `test-run` still reports weakened tests but does not fail on them, and a
+test-protection check you run in CI is a separate guard and unchanged. Orders still accept, note,
+answer and close as `done`, with an optional `--note`, or as `partial` or `abandoned`, which need
+one as ever; `[work.gates]` still applies, and a decision recorded on an order must still be
+resolved before it closes. The attempt cap does not apply. `cockpit grade --criteria` stays an
+explicit independent grade in every mode.
+
+Under `independent` and `self` grading cockpit adds standing criteria when they apply, judged with
+the order's own: `scope-changes-necessary` when files changed outside `scope`,
+`test-changes-justified` when [test protection](#test-protection) flags a change,
+`amendments-hold-bar` when an agent [amended](#amendments) the contract, and the
+[decision and documentation](#decisions) criteria when `[docs]` is declared. An order may not name a
+criterion with one of these ids. Under `subagent` the relayed verdict covers them as under `self`.
+Under `checks` no model reads the change, so a change outside scope, an unacknowledged weakening and
+an unjudgeable amendment are decided by rule instead.
 
 ### Amendments
 
 Editing an accepted order and running `work accept` again records an amendment in the record's
-`amendments`, with who passed it, what it removed and, under `review`, each part that changed in a way
-that may lower the bar, before and after:
+`amendments`, with who passed it, what it removed and, under `review`, each part that changed in a
+way that may lower the bar, before and after:
 
 | Change | Under `amend = "agent"` |
 | --- | --- |
 | A criterion or gate removed | needs a person, in every grading mode |
-| A criterion rewritten (its text, check or source), `scope` widened | under `independent` and `self`, passes and is judged at the next grade; under `checks`, needs a person |
+| A criterion rewritten (its text, check or source), `scope` widened | under `independent` and `self`, passes and is judged at the next grade; under `subagent`, passes and is judged by the verdict the agent relays, so by the agent whose rewrite it is, unless a separate evaluator already found the work unmet (see below); under `checks`, needs a person |
 | A non-goal dropped or reworded, the objective changed | passes, and is judged at the next grade where a model grades |
 | A criterion or gate added, `scope` narrowed, a non-goal added | passes |
 
 The next grade carries `amendments-hold-bar`, with the before and after of every amendment the agent
-made since a person or CI last accepted the contract; under `independent` the evaluator also sees them
-as the change to `workorders/<id>.md`. When it is not met the grade fails, and the next amendment and
-any closure are a person's: revert or rewrite the order, then a person runs `work accept --interactive`. The order
-records the finding, so a later `work check` or grade does not clear it; only an amendment a person or
-CI accepts does.
+made since a person or CI last accepted the contract; under `independent` the evaluator also sees
+them as the change to `workorders/<id>.md`. When it is not met the grade fails, and the next
+amendment and any closure are a person's: revert or rewrite the order, then a person runs
+`work accept --interactive`. The order records the finding, so a later `work check` or grade does
+not clear it; only an amendment a person or CI accepts does.
 
-<!-- cockpit:ref command=grade --> For a change that needs no order, `cockpit grade --config cockpit.toml --criteria <file>` (a file inside the repository, relative or absolute) runs the
-checks and the independent evaluator against the uncommitted change, and records nothing. The file has
-the same front-matter `criteria` list, and optionally `scope`, `gates` and `objective`. Changes outside
-that `scope` and flagged test changes become the standing criteria `scope-changes-necessary` and
-`test-changes-justified`, judged by the evaluator.
+Under `subagent` the same holds for a separate evaluator's `unmet`: an agent cannot reword the
+criterion, accept that itself and relay a pass. Until a person or CI accepts an amendment, the order
+is graded only by running `work grade` with nothing submitted.
+
+<!-- cockpit:ref command=grade --> For a change that needs no order,
+`cockpit grade --config cockpit.toml --criteria <file>` (a file inside the repository, relative or
+absolute) runs the checks and the independent evaluator against the uncommitted change, and records
+nothing. The file has the same front-matter `criteria` list, and optionally `scope`, `gates` and
+`objective`. Changes outside that `scope` and flagged test changes become the standing criteria
+`scope-changes-necessary` and `test-changes-justified`, judged by the evaluator.
 
 ## Test protection
 
 An agent can make a check pass by weakening the tests behind it. Every `work grade`, in any
 `[work] grading` mode, and `cockpit grade` therefore compare each checkout's tests with the base
-commits the order recorded at acceptance (committed, staged, unstaged and new files; `cockpit grade`,
-which has no order, compares with `HEAD`). Over the files cockpit treats as tests it flags:
+commits the order recorded at acceptance (committed, staged, unstaged and new files;
+`cockpit grade`, which has no order, compares with `HEAD`). Over the files cockpit treats as tests
+it flags:
 
 - a test file deleted or moved out of the tests (`test-file-removed`);
 - a test skipped, focused, marked todo or expected to fail: `it.skip`, `describe.only`, `test.todo`,
@@ -213,43 +271,42 @@ which has no order, compares with `HEAD`). Over the files cockpit treats as test
 - a runner's configuration or `package.json` test script that now excludes, ignores or tolerates the
   absence of tests (`test-selection-narrowed`).
 
-A diff cannot prove that a replacement keeps its force, so a removal is flagged as a candidate and
-something that reads the change decides. The detection is textual, for JavaScript and TypeScript first
-and the common Python forms; it is not a parser.
+A diff cannot prove a replacement keeps its force, so a removal is flagged as a candidate and
+something that reads the change decides. The detection is textual, for JavaScript and TypeScript
+first and the common Python forms; it is not a parser.
 
 Which files are tests comes from `[testing] test_files`, globs relative to each checkout, when
 declared. Otherwise cockpit uses its built-in patterns for common layouts (`*.test.*`, `*.spec.*`,
-`__tests__/`, `tests/`, `test/`, `e2e/`, `test_*.py`, `*_test.py`, `conftest.py`, and a few others). The
-grade result names which applied in `result.testProtection.testFiles`. Runner configuration
-(`vitest.config.*`, `jest.config.*`, `playwright.config.*`, `pytest.ini`, `package.json` and similar) is
-always watched.
+`__tests__/`, `tests/`, `test/`, `e2e/`, `test_*.py`, `*_test.py`, `conftest.py`, and a few others).
+The grade result names which applied in `result.testProtection.testFiles`. Runner configuration
+(`vitest.config.*`, `jest.config.*`, `playwright.config.*`, `pytest.ini`, `package.json` and
+similar) is always watched.
 
-How a finding is decided depends on [`[work] grading`](#how-an-order-earns-done):
+How a finding is decided depends on [`[work] grading`](#how-an-order-earns-done): under
+`independent`, and in `cockpit grade`, the findings become the standing criterion
+`test-changes-justified`, judged against the diff with any acknowledgement notes as context; under
+`self` and `subagent`, the submitted verdict covers it and its `--note` must name each flagged file;
+under `checks`, a finding fails the grade as the criterion `test-protection` until it is
+acknowledged; under `off`, nothing decides it and `test-run` only reports it.
 
-- `independent`: the findings become the standing criterion `test-changes-justified`, which the
-  evaluator judges against the diff, with any acknowledgement notes recorded on the order as context.
-  `cockpit grade` does the same.
-- `self`: the agent's verdict covers it, and its `--note` must name each flagged file.
-- `checks`: no model reads the change, so a finding fails the grade as the criterion `test-protection`
-  until it is acknowledged.
+An unmet verdict on either criterion reports `WORK_TEST_WEAKENED` with a fix. `test-run` runs the
+same comparison against the base of each open order and reports under `testProtection`; under
+`checks` grading an unacknowledged finding fails the run with `WORK_TEST_WEAKENED` even when the
+gate passed. With no open order it says it had nothing to compare with.
 
-An unmet verdict on either criterion reports `WORK_TEST_WEAKENED` with a fix. `test-run` runs the same
-comparison against the base of each open order and reports the findings under `testProtection`; under
-`checks` grading an unacknowledged finding fails the run with `WORK_TEST_WEAKENED` even when the gate
-passed, and otherwise the grade judges it. With no open order it says in `testProtection` that it had
-nothing to compare with.
-
-`work acknowledge --work-order <id> --note <why it is not a weakening>` records an acknowledgement with
-who passed it. It covers exactly the findings it showed, so a test deleted or skipped later fails a
-`checks` grade again. `[work.gates] acknowledge` defaults to `agent`; a cockpit that sets it to `person`
-has a person run it with `--interactive`, read the findings and type the digest, and an agent's run
-without a terminal is refused with `WORK_PERSON_REQUIRED`.
+`work acknowledge --work-order <id> --note <why it is not a weakening>` records an acknowledgement
+with who passed it. It covers exactly the findings it showed, so a test deleted or skipped later
+fails a `checks` grade again. Where `[work.gates] acknowledge` is `person`, and under `checks`
+grading wherever it is not `ci`, a person runs it with `--interactive` and types the digest; an
+agent's run without a terminal is refused with `WORK_PERSON_REQUIRED`. Under `checks` no model reads
+the change, so an acknowledgement the agent recorded does not pass the check.
 
 ## Decisions
 
-<!-- cockpit:ref schema=docs.decisions --> <!-- cockpit:ref command=work decide --> A work order can record the lasting decisions it makes, and cockpit holds the order open until
-each one is written down. This needs a directory of decision records in `cockpit.toml`; without it,
-both commands refuse and name the setting:
+<!-- cockpit:ref schema=docs.decisions --> <!-- cockpit:ref command=work decide --> A work order can
+record the lasting decisions it makes, and cockpit holds the order open until each one is written
+down. This needs a directory of decision records in `cockpit.toml`; without it, both commands refuse
+and name the setting:
 
 ```toml
 [docs]
@@ -263,33 +320,32 @@ npx --no cockpit work decide --config cockpit.toml --work-order WO-1 --decision 
 ```
 
 `work note --decision` records the decision on the order; `work status` lists it under
-`openDecisions` until `work decide` resolves it in one of three ways:
+`openDecisions` until `work decide` resolves it:
 
-- `--record` writes a new record, `NNNN-<slug>.md` with the next free number (a directory whose
-  records are named by date gets `YYYY-MM-DD-<slug>.md` instead). It holds the title,
-  `Status: accepted`, a `Work order: <id>` line and body sections whose placeholders the agent replaces.
-  It is appended to `decisions_index` when one is declared. `--supersedes <number>` adds a
-  `Supersedes:` line and sets that older record's status to `superseded by NNNN`.
-- `--record-file <path>` cites an existing record under `decisions` that has a `Work order: <id>` line
-  (or a `work_order:` front-matter field), such as one the agent wrote itself. `--record` takes no
-  path: it always writes a new record. `--supersedes` applies only with `--record`; a cited record
+- `--record` writes a new record, `NNNN-<slug>.md` with the next free number (or
+  `YYYY-MM-DD-<slug>.md` in a directory named by date), with the title, `Status: accepted`, a
+  `Work order: <id>` line and placeholder sections the agent replaces, appended to `decisions_index`
+  when declared. `--supersedes <number>` adds a `Supersedes:` line and sets that older record's
+  status to `superseded by NNNN`.
+- `--record-file <path>` cites an existing record under `decisions` that has a `Work order: <id>`
+  line (or a `work_order:` front-matter field). `--supersedes` does not apply: a cited record
   carries its own `Supersedes:` line, and the older record's status is the agent's to change.
 - `--none --reason <why>` says the decision is not a lasting one.
 
 `work signoff` refuses any closure, partial and abandoned too, while a decision is unresolved or its
 record is missing, no longer cites the order, or still holds the template's placeholders. A `--none`
-resolution and its reason are shown in the signoff prompt, so the signoff gate covers them. The
-`decisions` directory and `decisions_index` never count as outside an order's `scope`, whatever the
-order lists and under every grading mode, because writing records there is part of every order's
-work. A criteria file passed to `cockpit grade --criteria` has no such allowance. `work verify` checks each cited
-record still exists and names its order; it does not compare record bodies, because superseding a
-decision legitimately edits an older record.
+resolution and its reason are shown in the signoff prompt. The `decisions` directory and
+`decisions_index` never count as outside an order's `scope`, under every grading mode; a criteria
+file passed to `cockpit grade --criteria` has no such allowance. `work verify` checks each cited
+record still exists and names its order, but does not compare bodies, because superseding
+legitimately edits an older record.
 
 `work accept` and `work status` list, under `relatedDecisions`, the records whose text names a path
 inside the order's `scope`, so earlier decisions about that code are in front of the agent.
 
 When `[docs]` is declared, every grade under `independent` or `self` grading carries standing
-criteria. A model judges them: the evaluator in `independent` mode, the agent's own verdict in `self`.
+criteria. A model judges them: the evaluator in `independent` mode, the agent's own verdict in
+`self`.
 
 - `decisions-recorded`, when `decisions` is set: every lasting decision in the change is recorded on
   the order or in a decision record.
@@ -299,20 +355,33 @@ criteria. A model judges them: the evaluator in `independent` mode, the agent's 
 Under `checks` grading no model reads the change, so both are instructions in the work skill and are
 not enforced. Recording a decision at all is also instructed: an agent that never runs
 `work note --decision` is caught only by the `decisions-recorded` criterion, and only where a model
-grades.
+grades. A relayed `subagent` verdict counts as a model's here; under `off` neither is enforced.
 
 ## The independent evaluator
 
-<!-- cockpit:ref schema=work.evaluators --> <!-- cockpit:ref schema=work.evaluator_timeout_seconds --> The grader runs headless in an agent tool from `work.evaluators`, whichever agent tool did the work,
-so `independent` grading needs one of them on `PATH` and signed in. The list is tried in order (by
-default the tools `surfaces.tools` lists that can evaluate, in that order, so a Claude Code-only cockpit
-grades with Claude Code; when the command runs inside Claude Code or Codex, detected from `CLAUDECODE` or `CODEX_THREAD_ID` as measured 2026-11-03, that tool moves last so another listed tool grades first, and a list you write is used exactly as written; `--evaluator <tool>` on `work grade` or `grade --criteria` runs only that one tool for that run, with no fallback): a tool that is missing, too old for the flags below, signed out,
-rate-limited or timed out is passed over and the next is tried, and the grade record names which tool
-answered and which were passed over. When the tool that answered is the one running the command, the
-command also prints a warning naming each tool passed over and why, because that is the weaker grade. An answer that fails cockpit's checks is refused rather than
-retried with another tool, and nothing falls back to the agent grading its own work. Each grade is a
-new run of its own, with no session saved to resume, so it never sees the session of the agent that did
-the work; an answer from a session that already answered is refused:
+<!-- cockpit:ref schema=work.evaluators -->
+<!-- cockpit:ref schema=work.evaluator_timeout_seconds -->
+<!-- cockpit:ref schema=work.evaluators -->
+<!-- cockpit:ref schema=work.evaluator_timeout_seconds --> The grader runs headless in an agent tool
+from `work.evaluators`, whichever tool did the work, so `independent` grading needs one on `PATH`
+and signed in.
+
+- **Order.** By default the tools `surfaces.tools` lists that can evaluate, in that order. When the
+  command runs inside Claude Code or Codex, detected from `CLAUDECODE` or `CODEX_THREAD_ID` as
+  measured 2026-11-03, that tool moves last so another listed tool grades first. A list you write is
+  used exactly as written, and `--evaluator <tool>` runs only that tool for that run, with no
+  fallback.
+- **Falling over.** A tool that is missing, too old, signed out, rate-limited or timed out is passed
+  over, and the record names who answered and who was passed over. When the tool that answered is
+  the one running the command, a warning names each tool passed over and why, because that is the
+  weaker grade. An answer that fails cockpit's checks is refused rather than retried, and nothing
+  falls back to the agent grading its own work. When no listed tool answers, the refusal names each
+  cause and its fix.
+- **Isolation.** Each grade is a new run with no session saved to resume, so it never sees the
+  session that did the work; an answer from a session that already answered is refused. Each run
+  starts in a private directory outside the repository, so the tool does not load the repository's
+  `AGENTS.md`, `CLAUDE.md` or project configuration, which the agent being graded can write. Each
+  may take `work.evaluator_timeout_seconds`.
 
 | Tool | Runs | Read-only by | Install and sign in |
 |---|---|---|---|
@@ -320,70 +389,148 @@ the work; an answer from a session that already answered is refused:
 | `claudecode` | `claude --print --no-session-persistence --safe-mode --strict-mcp-config` | `--tools Read,Grep,Glob`, so no tool that writes or runs commands exists; `--permission-mode dontAsk` | `npm install -g @anthropic-ai/claude-code`, then `claude auth login` |
 | `opencode` | `opencode run --pure` | `OPENCODE_PERMISSION` denying its edit, shell, task, web, skill, question, to-do and LSP tools, so they are not offered | `npm install -g opencode-ai`, then `opencode auth login` |
 
-Each read-only mechanism was measured on 2026-11-03 beside a control without it: Codex 0.166.0 refused a shell write that `--sandbox workspace-write` made, Claude Code 2.1.317 wrote a file only once `Write` joined its tools, and OpenCode 1.19.5 offered only its read, glob, grep and list tools under the denials and offered write once edit was not denied. Codex and Claude Code skip your own configuration, hooks, plugins and MCP servers; OpenCode keeps your configuration, so it uses your model and provider, but skips external plugins, and a tool an MCP server in your OpenCode configuration adds is outside its denials. Claude Code and OpenCode constrain the answer with the output schema only as far as the tool does (OpenCode not at all), so cockpit checks every answer against that same schema and refuses one that does not match. Once a cockpit has a `workorders/` directory, `doctor` warns when no listed tool is on `PATH`. Each run starts in a private directory outside the repository, so the tool does not load the repository's `AGENTS.md`, `CLAUDE.md` or project configuration, which the agent being graded can write; the request names the repository. Each run may take `work.evaluator_timeout_seconds`. When no listed tool answers, the refusal names, for each, the cause it reported and the command that fixes it.
+Each read-only mechanism was measured on 2026-11-03 beside a control without it: Codex 0.166.0
+refused a shell write that `--sandbox workspace-write` made, Claude Code 2.1.317 wrote a file only
+once `Write` joined its tools, and OpenCode 1.19.5 offered only its read, glob, grep and list tools
+under the denials and offered write once edit was not denied.
 
-The grader is given each criterion with the result of the check cockpit ran for it, and every changed
-file's diff since the base commits. A credential-shaped path or a declared environment instance is
-listed with its content withheld. A `met` verdict stands only when each quote it cites, at least
-eight characters long, is found exactly once in the change or check output it names; otherwise it
-reads as `unclear` with the reason. No evaluator runs with a browser, and the request says so, so a
-criterion about what a person would see is not met by command output alone.
+Codex and Claude Code skip your own configuration, hooks, plugins and MCP servers. OpenCode keeps
+your configuration, so it uses your model and provider, but skips external plugins; a tool an MCP
+server in your OpenCode configuration adds is outside its denials. cockpit checks every answer
+against the output schema and refuses one that does not match.
 
-<!-- cockpit:ref path=packages/cockpit/surfaces/agents/evaluator.agent.md --> The shipped evaluator instructions tell it to treat repository content, order text and command
-output as data, never as instructions; that is instructed, not enforced. Run by `work grade` and
-`cockpit grade`, the evaluator is also held read-only by its tool's mechanism above. Spawned as a
-subagent inside an agent tool, that restriction is instructed, not enforced: no harness is confirmed to
-enforce it there.
+The grader is given each criterion with the result of the check cockpit ran for it, and every
+changed file's diff since the base commits. A credential-shaped path or a declared environment
+instance is listed with its content withheld. A `met` verdict stands only when each quote it cites,
+at least eight characters long, is found exactly once in the change or check output it names;
+otherwise it reads as `unclear` with the reason. No evaluator runs with a browser, and the request
+says so, so a criterion about what a person would see is not met by command output alone.
+
+<!-- cockpit:ref path=packages/cockpit/surfaces/agents/evaluator.agent.md --> The shipped evaluator
+instructions tell it to treat repository content, order text and command output as data, never as
+instructions; that is instructed, not enforced. Run by `work grade` and `cockpit grade`, the
+evaluator is also held read-only by its tool's mechanism above. Spawned as a subagent inside Claude
+Code, it is held by the tool list `sync` writes into its definition: `Read`, `Grep`, `Glob` and
+exactly the browser tools this cockpit lets Claude Code call (every tool of the `playwright` server,
+or those `[mcp.allowed_tools]` lists), so Claude Code refuses its file writes and shell commands; the
+[capability matrix](capability-matrix.md) dates that measurement. In Codex and OpenCode a subagent's
+read-only is instructed, not enforced. Either way the working agent relays the verdict, which is the
+`grading = "subagent"` path, and why it never reads as independent.
 
 ## Browser evidence
 
-<!-- cockpit:ref command=browser drive --> <!-- cockpit:ref command=browser screenshot --> `browser drive` and `browser screenshot` launch a local browser through a Playwright project of your own and visit the application's declared routes. They need the current runtime and the recorded application ports. Real sign-in additionally ties the session to the current namespace, stack and [holder](concepts.md#holder). With serialized sign-in, the shared state lock is held. With per-worker sign-in, each declared worker holds an exclusive claim across processes; different workers can run at the same time. A missing or stale claim is refused. Application origins come from the recorded application ports.
+<!-- cockpit:ref command=browser drive --> <!-- cockpit:ref command=browser screenshot -->
+`browser drive` and `browser screenshot` launch a local browser through a Playwright project of your
+own and visit the application's declared routes. They need the current runtime and the recorded
+application ports. Real sign-in also ties the session to the current namespace, stack and
+[holder](concepts.md#holder): serialized sign-in holds the shared state lock, and per-worker sign-in
+holds an exclusive claim per worker, so different workers can run at once. A missing or stale claim
+is refused.
 
-Declared application routes select the starting destinations for driving. Automated operations drive one page; secondary top-level page navigation is refused. HTTP requests and redirects use the browser's native networking, cookies and DNS. A record is made only after navigation ends successfully on a stable page on the current application origin. These checks validate what the browser saw; they do not sandbox outgoing network traffic. Requests to any loopback or `browser.resolver` host outside the application origin are refused, but Playwright does not route a request the browser follows as a redirect, so a redirect to another loopback port still reaches it.
+Automated operations drive one page; secondary top-level navigation is refused. HTTP requests and
+redirects use the browser's native networking, cookies and DNS. A record is made only after
+navigation ends successfully on a stable page on the current application origin. These checks
+validate what the browser saw; they do not sandbox outgoing traffic. Requests to any loopback or
+`browser.resolver` host outside the application origin are refused, but Playwright does not route a
+request the browser follows as a redirect, so a redirect to another loopback port still reaches it.
 
-<!-- cockpit:ref path=packages/cockpit/src/browser/commands.ts --> A screenshot record holds the path of the saved image, which must be inside the project, and its digest. Every distinct declared application route is covered.
-
-`--route <name-or-path>` drives or captures one declared route instead of all of them. It takes a declared route's name or its declared path, and anything else is refused with the list of declared routes before a browser starts.
+<!-- cockpit:ref path=packages/cockpit/src/browser/commands.ts --> A screenshot record holds the
+path of the saved image, which must be inside the project, and its digest. `--route <name-or-path>`
+drives or captures one declared route; anything undeclared is refused with the list before a browser
+starts.
 
 ### Route findings
 
-A page can answer 2xx and still be broken. `browser drive` also records, for each route, what the page did wrong while it loaded and for up to a second after:
+A page can answer 2xx and still be broken. `browser drive` also records, for each route, what the
+page did wrong while it loaded and for up to a second after:
 
-- **Console errors**, as a count and, for each, the script path and line when the script is from the application. Console warnings are only counted.
+- **Console errors**, as a count and, for each, the script path and line when the script is from the
+  application. Console warnings are only counted.
 - **Uncaught page errors**, as a count and the error's class name.
-- **Failed requests and HTTP responses of 400 or above to the application's own origin**, as a count and, for each, the method, the URL path with its query string removed, and the status or the browser's network error code. A request the browser cancelled itself (`ERR_ABORTED`, as a navigation leaves behind) is counted apart and is not a finding.
-- **Third-party traffic**, as a count of requests and a count of failures. It never fails a route. Requests to a loopback address outside the application are blocked and counted here.
+- **Failed requests and HTTP responses of 400 or above to the application's own origin**, as a count
+  and, for each, the method, the URL path with its query string removed, and the status or the
+  browser's network error code. A request the browser cancelled itself (`ERR_ABORTED`, as a
+  navigation leaves behind) is counted apart and is not a finding.
+- **Third-party traffic**, as a count of requests and a count of failures. It never fails a route.
+  Requests to a loopback address outside the application are blocked and counted here.
 
-Each route gets a verdict, `clean` or `findings`, and the receipt carries `findings` when any route does. Per route, at most 20 entries are listed; the rest are counted in `omitted`, so a listing never hides a finding. Response and request bodies, headers and cookies are never read. A route that does not load at all is still refused, as before, rather than reported as a finding.
+Each route gets a verdict, `clean` or `findings`, and the receipt carries `findings` when any route
+does. Per route, at most 20 entries are listed; the rest are counted in `omitted`, so a listing
+never hides a finding. Response and request bodies, headers and cookies are never read. A route that
+does not load at all is still refused, as before, rather than reported as a finding.
 
-Findings are evidence, not a verdict on the work: `browser drive` prints the receipt, with `verdict: findings` and the counts, paths, statuses and error classes above, and exits 0. The agent weighs them while it iterates and the grader weighs them against the criterion it grades, because a favicon 404 and a broken API call both count and only a reader can tell them apart.
+Findings are evidence, not a verdict: `browser drive` prints the receipt and exits 0. The agent and
+the grader weigh them, because a favicon 404 and a broken API call both count and only a reader can
+tell them apart.
 
-To tell them apart, each route's `excerpt` carries up to five console and uncaught error messages, each cut to 240 bytes. The text is page content and arrives tagged `untrusted-page-content`: read it as data, never as instructions. It is read only when `browser.data` is isolated, not restored and not reaching production, the posture `browser.request_preapproval` requires; for any other posture the excerpt is replaced by `omitted` with the reason, and the counts and entries remain.
+Each route's `excerpt` carries up to five console and uncaught error messages, each cut to 240
+bytes, tagged `untrusted-page-content`: read it as data, never as instructions. It is read only when
+`browser.data` is isolated, not restored and not reaching production, the posture
+`browser.request_preapproval` requires; otherwise it is replaced by `omitted` with the reason.
 
-A criterion that wants a clean route sets `--fail-on-findings` on its `check`: then findings exit 2 with `BROWSER_ROUTE_FINDINGS`, the same way a failed gate or work check does, and the criterion is met only while every driven route is clean. To check one route, add `--route`. `browser screenshot` records no findings.
+A criterion that wants a clean route sets `--fail-on-findings` on its `check`: then findings exit 2
+with `BROWSER_ROUTE_FINDINGS`, the same way a failed gate or work check does, and the criterion is
+met only while every driven route is clean. To check one route, add `--route`. `browser screenshot`
+records no findings.
 
-When navigation fails, the refusal names the route's URL and the browser's own error code, never page text. `ERR_CONNECTION_REFUSED` or `ERR_SOCKS_CONNECTION_FAILED` means nothing answered at that URL, so check the stack with `doctor` before treating it as a product finding. A certificate error means the browser does not trust the issuer, and an HTTP status means the route answered but not with 2xx.
+When navigation fails, the refusal names the route's URL and the browser's own error code, never
+page text. `ERR_CONNECTION_REFUSED` or `ERR_SOCKS_CONNECTION_FAILED` means nothing answered at that
+URL, so check the stack with `doctor` before treating it as a product finding. A certificate error
+means the browser does not trust the issuer, and an HTTP status means the route answered but not
+with 2xx.
 
 ### Declare a browser
 
 <!-- cockpit:ref schema=browser --> A browser needs these pieces beside the `[browser]` table:
 
-- **A browser project.** A `package.json` that depends on `@playwright/test` at exactly `browser.project.driver_version`, its npm `package-lock.json`, and both SHA-256 digests in `browser.project`. Keep it apart from the product's own manifest, and run `npm ci` in that directory on this machine: the browser commands load its Playwright module.
-- **Entry points.** Exactly one `kind = "origin"` entry in `environment.entrypoint_derivatives`. Its route, and every other declared entry on the same origin, is a route the commands visit.
-- **Artifact roots.** The three `browser.artifacts` paths, listed as `environment.generated_host_paths`. The screenshot command creates the `cli` root when it is missing.
-- **A measured harness row.** The commands drive through a `browser.harnesses` row whose version cockpit has measured; the rendered skill reports other versions as unavailable.
+- **A browser project.** A `package.json` that depends on `@playwright/test` at exactly
+  `browser.project.driver_version`, its npm `package-lock.json`, and both SHA-256 digests in
+  `browser.project`. Keep it apart from the product's own manifest, and run `npm ci` in that
+  directory on this machine: the browser commands load its Playwright module.
+- **Entry points.** Exactly one `kind = "origin"` entry in `environment.entrypoint_derivatives`. Its
+  route, and every other declared entry on the same origin, is a route the commands visit.
+- **Artifact roots.** The three `browser.artifacts` paths, listed as
+  `environment.generated_host_paths`. The screenshot command creates the `cli` root when it is
+  missing.
+- **A measured harness row.** The commands drive through a `browser.harnesses` row whose version
+  cockpit has measured; the rendered skill reports other versions as unavailable.
 
-cockpit does not run a browser service or a browser debugger. To let an agent drive a browser through its own Playwright MCP tools, run a browser service in your own Compose file and name its loopback address in `browser.endpoint`. cockpit then publishes the Playwright MCP declaration, which you approve by setting `playwright` under `[mcp.approved]` to the sha256 `sync` reports (its server must be declared in a JSON file with an `mcpServers` object, listed in a sibling's `derives.mcp_sources`), and the `cockpit-browser` skill. Without an endpoint, the Playwright MCP server and the skill are reported unavailable and not rendered; `browser drive` and `browser screenshot` are the working path. The published MCP points at the endpoint as declared, so it reaches the stack started on the base port and does not follow a leased port offset of a second parallel stack. The MCP transports are not measured in any tool; the [capability matrix](capability-matrix.md) says so.
+cockpit does not run a browser service or a browser debugger. To let an agent drive a browser
+through its own Playwright MCP tools, run a browser service in your own Compose file and name its
+loopback address in `browser.endpoint`. cockpit then publishes the Playwright MCP declaration, which
+you approve by setting `playwright` under `[mcp.approved]` to the sha256 `sync` reports (its server
+must be declared in a JSON file with an `mcpServers` object, listed in a sibling's
+`derives.mcp_sources`), and the `cockpit-browser` skill. Without an endpoint, the Playwright MCP
+server and the skill are reported unavailable and not rendered; `browser drive` and
+`browser screenshot` are the working path. The published MCP points at the endpoint as declared, so
+it reaches the stack started on the base port and does not follow a leased port offset of a second
+parallel stack. The MCP transports are not measured in any tool; the
+[capability matrix](capability-matrix.md) says so.
 
 ## Choose the proving test tier
 
-<!-- cockpit:ref command=test-run --> <!-- cockpit:ref schema=testing.gates --> Product stages and gates are declared in configuration. Use the narrowest proving gate for isolated behavior, and the complete declared gate for shared behavior. Documentation-only changes need no behavioral gate when behavior is unchanged. `init` proposes stages and gates from the test entry points it finds. With no `[testing]` declared, the generated guide tells agents to add a characterization test in the product's own runner and never to report work as passing, and `doctor` warns that nothing can be graded PASS.
+<!-- cockpit:ref command=test-run --> <!-- cockpit:ref schema=testing.gates --> Use the narrowest
+proving gate for isolated behavior, and the complete declared gate for shared behavior.
+Documentation-only changes need no behavioral gate when behavior is unchanged. `init` proposes
+stages and gates from the test entry points it finds. With no `[testing]` declared, the generated
+guide tells agents to add a characterization test in the product's own runner and never to report
+work as passing, and `doctor` warns that nothing can be graded PASS.
 
 ### Choosing stage commands
 
-<!-- cockpit:ref schema=testing.stages --> Let the product's build or test tool decide what a change affects; cockpit runs it and reports the verdict. Declare the tool's affected or changed-since run as a targeted gate and its complete run as a full gate. A stage command is an argv array run without a shell, from the directory holding `cockpit.toml`. Its environment is `PATH` plus `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE` and `TZ` when set; every other variable, including credentials, is withheld. A stage that outlives its `timeout_seconds` is stopped and the gate reports DEGRADED, naming the field to raise; the default and ceiling are in the [configuration reference](configuration-reference.md). Output past the capture limit is dropped from the front and the stage is still judged by its exit status.
+<!-- cockpit:ref schema=testing.stages --> Let the product's build or test tool decide what a change
+affects: declare its affected or changed-since run as a targeted gate and its complete run as a full
+gate. A stage command is an argv array run without a shell, from the directory holding
+`cockpit.toml`. Its environment is `PATH` plus `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `LANG`,
+`LC_ALL`, `LC_CTYPE` and `TZ` when set; every other variable, including credentials, is withheld. A
+stage that outlives its `timeout_seconds` is stopped and the gate reports DEGRADED. Output past the
+capture limit is dropped from the front and the stage is still judged by its exit status.
 
-<!-- cockpit:ref schema=testing.stages --> `test-run --select <kind>:<value>` narrows a gate, where kind is `spec`, `file`, `test` or `route`. A stage receives the selection through its own `select` table: for each kind it accepts, the arguments to append in its tool's spelling, with `{value}` replaced by the selected value. A stage that declares no arguments for the selected kind is not run and reports DEGRADED rather than running unselected:
+<!-- cockpit:ref schema=testing.stages --> `test-run --select <kind>:<value>` narrows a gate, where
+kind is `spec`, `file`, `test` or `route`. A stage receives the selection through its own `select`
+table: for each kind it accepts, the arguments to append in its tool's spelling, with `{value}`
+replaced by the selected value. A stage that declares no arguments for the selected kind is not run
+and reports DEGRADED rather than running unselected:
 
 ```toml
 stages = [
@@ -391,7 +538,8 @@ stages = [
 ]
 ```
 
-The same shape fits other runners: Jest takes `file = ["{value}"]` and `test = ["-t", "{value}"]`, pytest takes `file = ["{value}"]` and `test = ["-k", "{value}"]`, and `go test ./...` takes `test = ["-run", "{value}"]`.
+Jest takes the same table, pytest uses `test = ["-k", "{value}"]`, and `go test ./...` takes
+`test = ["-run", "{value}"]`.
 
 This Nx example assumes the product checkout is at `../web` and its mainline is `origin/main`:
 
@@ -407,14 +555,29 @@ gates = [
 ]
 ```
 
-Nx compares the base with the current working tree, so uncommitted edits count. For other tools, keep the stage shape and change the command:
+Nx compares the base with the current working tree, so uncommitted edits count. For other tools,
+keep the stage shape and change the command:
 
-- **Bazel:** `bazel test //...` for both gates. With the default `--cache_test_results=auto`, Bazel reports cached results for tests whose inputs did not change and passed before, so the full run is already change-aware.
-- **Turborepo:** `npx turbo run test --affected` for the targeted stage and `npx turbo run test` for the full one. Turborepo documents `--affected` as `--filter=...[main...HEAD]`, a comparison of commits, so commit work in progress before relying on it.
-- **A runner's changed-file mode:** `npx vitest run --changed origin/main` or `npx jest --changedSince=origin/main` for the targeted stage, and the plain run for the full one.
+- **Bazel:** `bazel test //...` for both gates. With the default `--cache_test_results=auto`, Bazel
+  reports cached results for tests whose inputs did not change and passed before, so the full run is
+  already change-aware.
+- **Turborepo:** `npx turbo run test --affected` for the targeted stage and `npx turbo run test` for
+  the full one. Turborepo documents `--affected` as `--filter=...[main...HEAD]`, a comparison of
+  commits, so commit work in progress before relying on it.
+- **A runner's changed-file mode:** `npx vitest run --changed origin/main` or
+  `npx jest --changedSince=origin/main` for the targeted stage, and the plain run for the full one.
 
-<!-- cockpit:ref path=packages/cockpit/src/testing/verdict.ts --> Only a complete, stable declared gate whose checks all pass can report PASS. If a check ran and failed, the result is FAIL. If results are unavailable or malformed, it is DEGRADED. Otherwise, if the listed files changed or are stale, it is VOID. Otherwise, a subset or staged run is PARTIAL. A target selector passes your selection to the product's own tool and never substitutes a made-up pass. Every verdict returns the same result, with each stage's observation; any verdict but PASS also exits non-zero with `TEST_GATE_UNSATISFIED`.
+<!-- cockpit:ref path=packages/cockpit/src/testing/verdict.ts --> Only a complete, stable declared
+gate whose checks all pass can report PASS. If a check ran and failed, the result is FAIL. If
+results are unavailable or malformed, it is DEGRADED. Otherwise, if the listed files changed or are
+stale, it is VOID. Otherwise, a subset or staged run is PARTIAL. A target selector passes your
+selection to the product's own tool and never substitutes a made-up pass. Every verdict returns the
+same result, with each stage's observation; any verdict but PASS also exits non-zero with
+`TEST_GATE_UNSATISFIED`.
 
-<!-- cockpit:ref schema=testing.native_hooks.install --> Native hooks are inspect-only by default. Writing native hook output needs a policy tied to cockpit's ownership record and a measurement of its cost. Rendering a hook and describing how to activate it does not switch on the Git hook path. A person must install it and check separately that it works. Leave `native_hooks` out to keep that default; declare `native_hooks = { install = "explicit-native" }` only together with `native_hook_policy`.
-
-See the generated [CLI reference](cli-reference.md), [configuration reference](configuration-reference.md), [capability matrix](capability-matrix.md) and [diagnostic index](troubleshooting.md) for the current declared surfaces and how far each is confirmed.
+<!-- cockpit:ref schema=testing.native_hooks.install --> Native hooks are inspect-only by default.
+Writing native hook output needs a policy tied to cockpit's ownership record and a measurement of
+its cost. Rendering a hook and describing how to activate it does not switch on the Git hook path. A
+person must install it and check separately that it works. Leave `native_hooks` out to keep that
+default; declare `native_hooks = { install = "explicit-native" }` only together with
+`native_hook_policy`.

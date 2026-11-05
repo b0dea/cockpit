@@ -3,15 +3,25 @@
 // measured `codex exec` ran a push the guard refuses once the hook was trusted. Codex records trust
 // per user as `[hooks.state."<hooks.json path>:<event>:<group>:<handler>"] trusted_hash`, the SHA-256
 // of a normalized hook identity, so this module recomputes that identity from the published
-// hooks.json and compares. It never writes Codex's configuration and never reports a value from it;
+// hooks.json and compares. Linked worktrees source hooks from the main checkout, so matching the
+// generated definitions there comes before checking their trust. Codex 0.166.0's app-server hooks/list,
+// measured 2026-11-05 on synthetic layouts beside a malformed hooks.json it named, sourced a directory's
+// own .codex/hooks.json outside Git and in a bare repository's worktree, a submodule and a checkout with
+// a separate Git directory; only a linked worktree whose common directory is named .git used the main
+// checkout. Outside Git it read no parent directory's hooks, so there the session must start in the
+// directory itself. It never writes either checkout
+// or Codex's configuration and never reports a value from that configuration;
 // anything it cannot read or reproduce is reported as unverified, not as trusted.
 import { createHash } from 'node:crypto'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { parse as parseToml, TomlError } from 'smol-toml'
+import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 
-import type { ENVIRONMENT_CODES, EnvironmentDiagnostic } from './contract.js'
+import type { ENVIRONMENT_CODES, EnvironmentDiagnostic, ExecutionStep } from './contract.js'
 import { RefusalError, tryParseJson, errorCause, hasErrorCode } from './contract.js'
+import { observationEnvironment, resolveGitExecutable } from './executable.js'
+import { checkoutLayout, mainCheckoutOf, type CheckoutLayout } from './git-observation.js'
 
 const HOOKS_PATH = '.codex/hooks.json'
 const MAX_FILE_BYTES = 4 * 1024 * 1024
@@ -31,6 +41,7 @@ type Trust = 'trusted' | 'untrusted' | 'modified' | 'disabled'
 export interface CodexHookTrustInput {
     readonly root: string
     readonly env: Readonly<Record<string, string | undefined>>
+    readonly timeoutMs: number
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -112,8 +123,18 @@ function warning(message: string): EnvironmentDiagnostic {
         code: 'CODEX_HOOK_UNTRUSTED' satisfies typeof ENVIRONMENT_CODES.CODEX_HOOK_UNTRUSTED,
         message,
         target: HOOKS_PATH,
-        fix: 'if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml>',
+        fix: 'if the hook source could not be verified, resolve the reported discovery failure first; otherwise a person runs codex -C <hook source directory> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml>',
     }
+}
+
+function sourceMismatch(source: string, expected: string, reason: string): readonly EnvironmentDiagnostic[] {
+    return [{
+        severity: 'warning',
+        code: 'CODEX_HOOK_SOURCE_MISMATCH' satisfies typeof ENVIRONMENT_CODES.CODEX_HOOK_SOURCE_MISMATCH,
+        message: `Codex discovers ${source} for this linked worktree, but ${reason}; it does not load the generated definitions in ${expected}, and trusting that worktree file cannot repair the discovery mismatch`,
+        target: HOOKS_PATH,
+        fix: 'have a person review and roll out the matching generated hooks in the original checkout through its normal change process; cockpit does not copy hooks or change that checkout; rerun npx --no cockpit doctor --config <your cockpit.toml>, then review and trust the reported source in interactive Codex',
+    }]
 }
 
 /**
@@ -121,9 +142,10 @@ function warning(message: string): EnvironmentDiagnostic {
  * verified; nothing when every hook is trusted, no Codex hook is published, or Codex has never run
  * as this user.
  */
-export async function inspectCodexHookTrust(input: CodexHookTrustInput): Promise<readonly EnvironmentDiagnostic[]> {
+export async function inspectCodexHookTrust(input: CodexHookTrustInput,
+    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): Promise<readonly EnvironmentDiagnostic[]> {
     const root = resolve(input.root)
-    const hooksPath = join(root, HOOKS_PATH)
+    let hooksPath = join(root, HOOKS_PATH)
     const unverified = (reason: string) => [warning(
         `cockpit could not verify whether Codex trusts the guard hook in ${hooksPath} (${reason}); Codex skips a project hook until a person trusts it, and then runs tool calls without the guard`)]
     let hooksBytes: string | 'missing'
@@ -139,6 +161,31 @@ export async function inspectCodexHookTrust(input: CodexHookTrustInput): Promise
     try { await stat(home) } catch (error) {
         if (hasErrorCode(error, 'ENOENT')) return []
         return unverified(`reading ${home} failed: ${errorCause(error)}`)
+    }
+    const search = observationEnvironment(input.env)
+    if (search.state !== 'available') return unverified(`the hook source cannot be established: ${search.reason}`)
+    const git = await resolveGitExecutable(search.env)
+    if (git.state !== 'available') return unverified(`the hook source cannot be established: ${git.reason}`)
+    let layout: CheckoutLayout
+    try {
+        layout = await checkoutLayout({ executable: git.value, directory: root, timeoutMs: input.timeoutMs }, execute)
+    } catch (error) { return unverified(`the hook source cannot be established: ${errorCause(error)}`) }
+    if (layout.kind === 'unavailable') return unverified('Git could not establish the original checkout hook source')
+    let canonical: string
+    try { canonical = await realpath(root) } catch (error) { return unverified(`resolving ${root} failed: ${errorCause(error)}`) }
+    const sourceRoot = mainCheckoutOf(layout) ?? canonical
+    if (sourceRoot !== canonical) {
+        const expected = hooksPath
+        hooksPath = join(sourceRoot, HOOKS_PATH)
+        let sourceBytes: string | 'missing'
+        try { sourceBytes = await bounded(hooksPath) } catch (error) { return unverified(`reading the discovered source failed: ${errorCause(error)}`) }
+        if (sourceBytes === 'missing') return sourceMismatch(hooksPath, expected, 'that source is missing')
+        const sourceHooks = codexHooks(sourceBytes)
+        if (typeof sourceHooks === 'string') return sourceMismatch(hooksPath, expected, sourceHooks)
+        const identities = new Map(sourceHooks.map(hook => [hook.suffix, hook.hash]))
+        if (identities.size !== hooks.length || hooks.some(hook => identities.get(hook.suffix) !== hook.hash)) {
+            return sourceMismatch(hooksPath, expected, 'its hook definitions differ')
+        }
     }
     const codexConfig = join(home, 'config.toml')
     let states: Record<string, unknown> = {}
@@ -158,11 +205,10 @@ export async function inspectCodexHookTrust(input: CodexHookTrustInput): Promise
     }
     // Codex keys trust by the hooks.json path as the session directory spells it, which may or may
     // not resolve symbolic links, so trust recorded under either spelling counts.
-    let canonical = root
-    try { canonical = await realpath(root) } catch (error) { return unverified(`resolving ${root} failed: ${errorCause(error)}`) }
-    const results = [...new Set([hooksPath, join(canonical, HOOKS_PATH)])].map(source => trustFor(states, source, hooks))
+    const sources = sourceRoot === canonical ? [hooksPath, join(canonical, HOOKS_PATH)] : [hooksPath]
+    const results = [...new Set(sources)].map(source => trustFor(states, source, hooks))
     if (results.includes('trusted')) return []
-    const consequence = 'a Codex session started there skips it and runs tool calls without the guard'
+    const consequence = `a Codex session in ${root} skips it and runs tool calls without the guard; its hook source directory is ${sourceRoot}`
     const message = results.includes('disabled') ? `the guard hook in ${hooksPath} is disabled in ${codexConfig}, so ${consequence}`
         : results.includes('modified') ? `Codex trusted an earlier version of the guard hook in ${hooksPath}; until a person trusts the current one, ${consequence}`
             : `Codex has not trusted the guard hook in ${hooksPath} on this machine, so ${consequence}`

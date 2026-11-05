@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { walkMarkdownProse } from './docs/markdown.js'
@@ -59,7 +60,7 @@ describe('effective documentation ownership', () => {
         const contributing = readFileSync(new URL('../../../CONTRIBUTING.md', import.meta.url), 'utf8')
 
         expect(contributing).toContain('## Verification')
-        expect(contributing).toContain('```sh\nnpm test\nnpm run typecheck\nnpm run lint:docs\nnpm run lint:markdown\nnpm run lint:links\nnpm run lint:supply-chain\n```')
+        expect(contributing).toContain('```sh\nnpm test -- <test files>\nnpm run typecheck\nnpm run lint:docs\nnpm run lint:markdown\nnpm run lint:links\nnpm run lint:supply-chain\n```')
         expect(contributing).toContain('npm run lint:docs')
         expect(contributing).toContain('## What will not be accepted')
         expect(contributing).toContain('## Governance')
@@ -150,5 +151,11 @@ describe('effective documentation ownership', () => {
             .map(line => line.trim()).filter(line => line !== '' && !line.startsWith('#'))
         // GitHub applies the last matching rule, so the catch-all must come first to leave later rules effective.
         expect(rules[0]).toMatch(/^\*\s+@[A-Za-z0-9][A-Za-z0-9-]*$/)
+    })
+
+    it('labels an upgrade step Upgrade:, the only line cockpit upgrade prints', () => {
+        const notes = [...readdirSync(join(ROOT, '.changeset')).filter(name => name.endsWith('.md') && name !== 'README.md').map(name => join('.changeset', name)),
+            'packages/cockpit/CHANGELOG.md']
+        expect(notes.filter(path => /\b(?:Migration|Migrating|Upgrade note)\b\**:/i.test(readFileSync(join(ROOT, path), 'utf8')))).toEqual([])
     })
 })

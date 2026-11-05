@@ -10,6 +10,7 @@ import { resolveLifecycleStage } from '../environment/lifecycle-stage.js'
 import { resolveObservationPostures } from '../environment/observations.js'
 import { deriveEntrypoints, projectPortLeaseResult } from '../environment/ports.js'
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
+import { evaluatorClaudeTools } from '../surfaces/core-declarations.js'
 import { isPackageDescendant } from './package-paths.js'
 import { resolveBrowserRuntime } from './runtime.js'
 import { executeBrowserProjectOperation, observeBrowserProjectPackage, renderBrowserSurfaces, withBrowserProjectOperationAdmission,
@@ -258,6 +259,11 @@ describe('browser transport surfaces', () => {
         const evaluator = await readFile('packages/cockpit/surfaces/agents/evaluator.agent.md', 'utf8')
         expect(evaluator).toContain('Retain browser tools')
         expect(evaluator).not.toMatch(/^(?:tools|allowed-tools):/m)
+        // The shipped template carries no list; sync gives Claude Code one that keeps every browser tool this cockpit allows.
+        expect(evaluatorClaudeTools(undefined)).toEqual(['Read', 'Grep', 'Glob'])
+        expect(evaluatorClaudeTools({ name: 'playwright' })).toEqual(['Read', 'Grep', 'Glob', 'mcp__playwright'])
+        expect(evaluatorClaudeTools({ name: 'playwright', allowedTools: ['browser_snapshot', 'browser.click'] }))
+            .toEqual(['Read', 'Grep', 'Glob', 'mcp__playwright__browser_snapshot', 'mcp__playwright__browser_click'])
     })
 
     it('emits the pinned test-package CLI only for measured eligible harnesses', async () => {

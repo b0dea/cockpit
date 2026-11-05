@@ -542,6 +542,11 @@ native_hooks = { install = "inspect" }
                 }
                 expect(Object.keys(codex.mcp_servers).sort()).toEqual(variant.endpoint ? ['playwright', 'unrelated'] : ['unrelated'])
                 if (variant.restricted) expect(codex.mcp_servers.playwright).toMatchObject({ enabled_tools: ['browser_snapshot'] })
+                // Claude Code offers the evaluator subagent file reads and exactly the browser tools it may call here; the other tools get no such list.
+                const browserTools = !variant.endpoint ? [] : variant.restricted ? ['mcp__playwright__browser_snapshot'] : ['mcp__playwright']
+                expect(await readFile(join(fixture.root, '.claude/agents/evaluator.md'), 'utf8'))
+                    .toContain(`\ntools:\n${['Read', 'Grep', 'Glob', ...browserTools].map(tool => `  - ${tool}\n`).join('')}disallowedTools:`)
+                for (const path of ['.codex/agents/evaluator.toml', '.opencode/agents/evaluator.md']) expect(await readFile(join(fixture.root, path), 'utf8')).not.toContain('Glob')
                 expect(/"playwright"\s*:/.test(await readFile(join(fixture.root, 'opencode.jsonc'), 'utf8'))).toBe(variant.endpoint && !variant.restricted)
                 for (const prefix of ['.claude', '.agents', '.opencode']) {
                     const skill = expect(lstat(join(fixture.root, prefix, 'skills/cockpit-browser/SKILL.md')))

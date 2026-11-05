@@ -10,10 +10,10 @@ import { parse as parseToml, TomlError } from 'smol-toml'
 
 import { type BoundedRead, readBoundedFile } from './bounded-read.js'
 import { type EnvironmentDiagnostic, type ENVIRONMENT_CODES, hasErrorCode, RefusalError } from './environment/contract.js'
-import type { CockpitConfig, Decider, WorkGrading } from './schema.js'
+import { GRADING, type CockpitConfig, type Decider, type WorkGrading } from './schema.js'
 
 export type WorkGate = 'accept' | 'amend' | 'answer' | 'signoff' | 'acknowledge'
-type AutonomyDecision = 'sync' | 'stale_delete' | 'reset' | 'mcp_approve'
+type AutonomyDecision = 'sync' | 'stale_delete' | 'reset' | 'mcp_approve' | 'confirm_answers' | 'instruction_files'
 export interface EffectivePolicy {
     readonly grading: WorkGrading
     readonly gates: Readonly<Record<WorkGate, Decider>>
@@ -25,18 +25,55 @@ export interface EffectivePolicy {
 // MCP source is an ordinary file an agent writes, and a harness starts an enabled server outside every
 // guard boundary, so an agent approving MCP servers could run any command it wrote there. Test
 // weakening is judged by the grading model where one grades, so acknowledging it is the agent's too.
+// Confirming a non-trust answer and writing sibling instruction files are process gates a team may
+// hand to the agent; they default to a person because a recorded policy that predates them reads them
+// as person, and any other default would hold every existing cockpit for a weakening nobody made.
 export const GATE_DEFAULTS: Readonly<Record<WorkGate, Decider>> = Object.freeze({ accept: 'agent', amend: 'agent', answer: 'agent', signoff: 'agent', acknowledge: 'agent' })
-export const AUTONOMY_DEFAULTS: Readonly<Record<AutonomyDecision, Decider>> = Object.freeze({ sync: 'agent', stale_delete: 'agent', reset: 'person', mcp_approve: 'person' })
+export const AUTONOMY_DEFAULTS: Readonly<Record<AutonomyDecision, Decider>> = Object.freeze({ sync: 'agent', stale_delete: 'agent', reset: 'person', mcp_approve: 'person',
+    confirm_answers: 'person', instruction_files: 'person' })
 
-export function effectivePolicy(config: Readonly<{ work: Readonly<Pick<CockpitConfig['work'], 'grading'> & { gates: Readonly<CockpitConfig['work']['gates']> }>
+/** A trust answer listed under `unconfirmed` that cockpit holds at a stronger value until a person confirms it. */
+export interface HeldAnswer { readonly field: 'work.grading' | 'environment.install_policies'; readonly declared: string; readonly inForce: string }
+type TrustDeclarations = Readonly<{ unconfirmed?: Readonly<CockpitConfig['unconfirmed']>; work: Readonly<Pick<CockpitConfig['work'], 'grading'>>
+    environment?: Readonly<Pick<CockpitConfig['environment'], 'install_policies'>> }>
+
+/**
+ * The trust answers in force. One listed under `unconfirmed` (an agent chose it, or an answers file,
+ * which cannot show who wrote it, supplied it) waits for a person, and until one confirms it the
+ * stronger of it and the default holds, so an agent cannot lower a bar by writing an answer. Each
+ * trust answer init records:
+ * - work.grading: independent, the default and the strongest mode.
+ * - environment.install_policies: none, the default, for the build and test commands the guard admits.
+ *   Setup still selects a policy by lockfile to install, since the install command is the toolchain's, not the answer's.
+ * - guards: as declared; its hosts only add denials to the default, which denies none.
+ * - testing: as declared; a gate only adds a bar, and the agent writes its criteria's checks anyway.
+ * - sibling and environment.posture: as declared; neither has a default to fall back to (posture states
+ *   facts that preflight judges), so doctor names them until a person confirms them.
+ */
+export function trustInForce(config: TrustDeclarations): Readonly<{ grading: WorkGrading
+    installPolicies: CockpitConfig['environment']['install_policies']; held: readonly HeldAnswer[] }> {
+    const waiting = new Set<string>(config.unconfirmed ?? [])
+    const declaredPolicies = config.environment?.install_policies ?? []
+    const grading = waiting.has('work.grading') ? 'independent' : config.work.grading
+    const installPolicies = waiting.has('environment.install_policies') ? [] : declaredPolicies
+    return { grading, installPolicies, held: [
+        ...grading !== config.work.grading ? [{ field: 'work.grading' as const, declared: config.work.grading, inForce: grading }] : [],
+        ...installPolicies.length < declaredPolicies.length ? [{ field: 'environment.install_policies' as const,
+            declared: `${declaredPolicies.length} polic${declaredPolicies.length === 1 ? 'y' : 'ies'}`, inForce: 'none' }] : [],
+    ] }
+}
+
+export function effectivePolicy(config: Readonly<{ unconfirmed?: Readonly<CockpitConfig['unconfirmed']>
+    work: Readonly<Pick<CockpitConfig['work'], 'grading'> & { gates: Readonly<CockpitConfig['work']['gates']> }>
     autonomy: Readonly<CockpitConfig['autonomy']> }>): EffectivePolicy {
     const pick = <K extends string>(declared: Partial<Record<K, Decider>>, defaults: Readonly<Record<K, Decider>>) => Object.fromEntries(
         Object.entries(defaults).map(([key, value]) => [key, declared[key as K] ?? value])) as Record<K, Decider>
     return {
-        grading: config.work.grading,
+        grading: trustInForce(config).grading,
         gates: pick<WorkGate>(config.work.gates, GATE_DEFAULTS),
         autonomy: pick<AutonomyDecision>({ sync: config.autonomy.sync, stale_delete: config.autonomy.stale_delete,
-            reset: config.autonomy.reset, mcp_approve: config.autonomy.mcp_approve }, AUTONOMY_DEFAULTS),
+            reset: config.autonomy.reset, mcp_approve: config.autonomy.mcp_approve,
+            confirm_answers: config.autonomy.confirm_answers, instruction_files: config.autonomy.instruction_files }, AUTONOMY_DEFAULTS),
     }
 }
 
@@ -58,15 +95,13 @@ export function decide(decider: Decider, env: Readonly<Record<string, string | u
 
 // Stronger is later: an agent decision is the weakest, CI behind reviewers the strongest.
 const DECIDER_RANK: Readonly<Record<Decider, number>> = Object.freeze({ agent: 0, person: 1, ci: 2 })
-const GRADING_RANK: Readonly<Record<WorkGrading, number>> = Object.freeze({ self: 0, checks: 1, independent: 2 })
-
 
 export interface PolicyWeakening { readonly field: string; readonly from: string; readonly to: string }
 
 /** Every field `current` sets weaker than `recorded`, named as cockpit.toml spells it. */
 export function policyWeakening(recorded: EffectivePolicy, current: EffectivePolicy): readonly PolicyWeakening[] {
     const rows: PolicyWeakening[] = []
-    if (GRADING_RANK[current.grading] < GRADING_RANK[recorded.grading]) rows.push({ field: 'work.grading', from: recorded.grading, to: current.grading })
+    if (GRADING[current.grading].rank < GRADING[recorded.grading].rank) rows.push({ field: 'work.grading', from: recorded.grading, to: current.grading })
     for (const [table, field] of [['gates', 'work.gates'], ['autonomy', 'autonomy']] as const) {
         for (const [key, was] of Object.entries(recorded[table]) as [string, Decider][]) {
             const now = (current[table] as Record<string, Decider>)[key]!
@@ -110,7 +145,7 @@ function recordedPolicy(value: unknown): EffectivePolicy | undefined {
     const row = value as Record<keyof EffectivePolicy, unknown>
     const gates = deciders(row.gates, GATE_DEFAULTS)
     const autonomy = deciders(row.autonomy, AUTONOMY_DEFAULTS)
-    return Object.hasOwn(GRADING_RANK, row.grading as string) && gates && autonomy ? { grading: row.grading as WorkGrading, gates, autonomy } : undefined
+    return Object.hasOwn(GRADING, row.grading as string) && gates && autonomy ? { grading: row.grading as WorkGrading, gates, autonomy } : undefined
 }
 
 // Restoring the committed copy helps only where the damage is uncommitted; where the committed copy is the

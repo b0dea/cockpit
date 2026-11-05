@@ -215,7 +215,7 @@ describe('one-row generated surface integration', () => {
         expect(openCode.mcp['row-server']?.enabled).toBe(false)
         // The guard refuses an agent's approval, so the fix names who approves.
         expect(addedSync.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'MCP_NOT_APPROVED', target: 'row-server',
-            fix: expect.stringMatching(/^a person reviews its declaration, sets its name to the sha256/) }))
+            fix: 'a person reviews its declaration, sets its name to the sha256 in this message under [mcp.approved] in cockpit.toml and runs npx --no cockpit sync --config <your cockpit.toml>; while [autonomy] mcp_approve is person, the default, the guard refuses an agent enabling or changing approvals or widening tool access. Agents may remove unchanged approvals and add or narrow exact tool allowlists under [mcp.allowed_tools]. To keep it off, nothing is needed' }))
 
         const evidence = [
             JSON.stringify(addedSync),

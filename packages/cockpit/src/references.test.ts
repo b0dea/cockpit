@@ -288,7 +288,8 @@ describe('reference pages', () => {
         expect(page.endsWith(`${end}\n`)).toBe(true)
         // A person looks this warning up to learn how to trust the hook, so the row carries the remedy.
         const real = (await renderReferences(shipped)).find(file => file.path === 'docs/troubleshooting.md')!.bytes
-        expect(real).toMatch(/^\| `CODEX_HOOK_UNTRUSTED` \| .*codex -C <cockpit root>.*Trust all and continue.* \|$/m)
+        expect(real).toMatch(/^\| `CODEX_HOOK_UNTRUSTED` \| .*codex -C <hook source directory>.*Trust all and continue.* \|$/m)
+        expect(real).toMatch(/^\| `CODEX_HOOK_SOURCE_MISMATCH` \| .*review and roll out.*original checkout.* \|$/m)
         // A gap's fix is chosen per gap, so the table presents none as the code's fix.
         expect(real).not.toContain('`DOCUMENT_GAP`')
     })
@@ -326,13 +327,14 @@ describe('reference pages', () => {
         // One row per harness, one column per capability. Guard firing is enforced only where a dated
         // run of the real tool showed a refusal, and Codex's holds only once a person trusts the hook.
         // Every tool stays in the matrix; the unmeasured ones are written only when listed. The session-start
-        // check is generated only where a dated run saw the hook fire and reach the agent.
-        expect(matrix).toContain('| Tool | Written | Guard firing | Instruction loading | Skills | Session-start check | Remote MCP servers | MCP tool restrictions | Worktree grants |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
-            + '| Claude Code (`claudecode`) | by default | enforced | instructed | instructed | instructed | instructed (needs a person) | enforced (needs a person) | enforced (needs a person) |\n'
-            + '| Codex (`codexcli`) | by default | enforced (needs a person) | instructed | instructed | instructed (needs a person) | instructed | enforced | unavailable |\n'
-            + '| OpenCode (`opencode`) | by default | enforced | instructed | instructed | unavailable | instructed | unavailable | enforced |\n'
-            + '| Cursor (`cursor`) | when listed | unavailable | generated | generated | unavailable | unavailable | unavailable | unavailable |\n'
-            + '| Grok Build (`grokcli`) | when listed | unavailable | generated | generated | unavailable | unavailable | unavailable | unavailable |\n')
+        // check is generated only where a dated run saw the hook fire and reach the agent. The evaluator
+        // subagent is instructed only where a dated run saw the tool offer the generated definition.
+        expect(matrix).toContain('| Tool | Written | Guard firing | Instruction loading | Skills | Session-start check | Evaluator subagent | Remote MCP servers | MCP tool restrictions | Worktree grants |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
+            + '| Claude Code (`claudecode`) | by default | enforced | instructed | instructed | instructed | enforced | instructed (needs a person) | enforced (needs a person) | enforced (needs a person) |\n'
+            + '| Codex (`codexcli`) | by default | enforced (needs a person) | instructed | instructed | instructed (needs a person) | instructed | instructed | enforced | unavailable |\n'
+            + '| OpenCode (`opencode`) | by default | enforced | instructed | instructed | unavailable | generated | instructed | unavailable | enforced |\n'
+            + '| Cursor (`cursor`) | when listed | unavailable | generated | generated | unavailable | generated | unavailable | unavailable | unavailable |\n'
+            + '| Grok Build (`grokcli`) | when listed | unavailable | generated | generated | unavailable | generated | unavailable | unavailable | unavailable |\n')
         expect(section('Without a measurement')).toContain('- Remote MCP servers in Cursor and Grok Build: cockpit writes no remote MCP server for this tool')
         expect(section('Measurements')).toMatch(/^- Codex, guard firing \(\d{4}-\d{2}-\d{2}, version [^)]+\): only after a person trusts the hook: [^\n]+\.$/m)
         expect(section('Measurements')).toMatch(/^- Codex, MCP tool restrictions \(\d{4}-\d{2}-\d{2}, version [^)]+\): [^\n]+No hook trust was granted\.$/m)

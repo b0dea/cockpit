@@ -9,8 +9,7 @@ metadata:
 
 # Verify a harness capability
 
-**This skill is for developing cockpit; cockpit does not ship it to consumers.** It answers "does this
-harness really do what its documentation says", which is a question only a cockpit contributor asks.
+**This skill is for developing cockpit; cockpit does not ship it to consumers.**
 
 A capability-matrix cell is one of four states, and only driving the tool tells them apart:
 

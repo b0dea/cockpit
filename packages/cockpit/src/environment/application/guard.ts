@@ -31,7 +31,7 @@ import {
     type GuardProjectCommand,
 } from '../../guards/evaluator.js'
 import { commandSpelling, ordinarySessionCommand, resolveOrdinaryInvocation, UNSYNCED_ADMITTED_COMMANDS, UNSYNCED_ADMITTED_PROSE, type OrdinaryGrant } from '../../command-table.js'
-import { effectivePolicy } from '../../autonomy.js'
+import { effectivePolicy, trustInForce } from '../../autonomy.js'
 import { GUARD_INPUT_LIMITS, parseGuardInput } from '../../guards/invocation-parser.js'
 import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../../generated-environment/transaction.js'
 import { parseOwnershipManifest } from '../../surfaces/ownership.js'
@@ -515,7 +515,8 @@ export async function runGuardEvaluationApplication(
 function ordinaryGrants(config: CockpitConfig): readonly OrdinaryGrant[] {
     const policy = effectivePolicy(config)
     return [...config.browser && browserPreapprovalRequested(config.browser) ? ['browser-preapproval' as const] : [],
-        ...policy.autonomy.sync === 'agent' ? ['autonomy-sync' as const] : [], ...policy.autonomy.reset === 'agent' ? ['autonomy-reset' as const] : []]
+        ...policy.autonomy.sync === 'agent' ? ['autonomy-sync' as const] : [], ...policy.autonomy.reset === 'agent' ? ['autonomy-reset' as const] : [],
+        ...policy.autonomy.instruction_files === 'agent' ? ['autonomy-instruction-files' as const] : []]
 }
 
 // `up --profile` and `session --profile` start that profile's services for one run. Only the default
@@ -701,7 +702,7 @@ export async function prepareGuardEvaluationPolicy(
         const boundaries = result.result.policy
         const projectCommands: GuardProjectCommand[] = []
         for (const { index: siblingIndex, sibling, root: checkoutRoot } of checkoutRoots) {
-            const policies = guardConfig.environment.install_policies
+            const policies = trustInForce(guardConfig).installPolicies
             if (!policies.some(policy => policy.toolchain === sibling.toolchain && (policy.build || policy.test))) continue
             const checkoutId = deriveCheckoutId({ checkoutPath: checkoutRoot })
             const evaluatedAt = Date.now()

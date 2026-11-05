@@ -77,6 +77,8 @@ describe('guard policy pin', () => {
 
     it('denies an edit, write or patch that changes [work], [work.gates], [autonomy] or a person-approved [mcp], and admits one elsewhere', () => {
         expect(edit('grading = "independent"', 'grading = "self"')).toBe('deny')
+        expect(edit('grading = "independent"', 'grading = "subagent"')).toBe('deny')
+        expect(edit('grading = "independent"', 'grading = "off"')).toBe('deny')
         expect(edit('accept = "person"', 'accept = "agent"')).toBe('deny')
         expect(edit('mcp_approve = "person"', 'mcp_approve = "agent"')).toBe('deny')
         expect(edit('approved = {}', 'approved = { docs = "' + 'a'.repeat(64) + '" }')).toBe('deny')

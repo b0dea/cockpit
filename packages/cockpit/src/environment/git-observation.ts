@@ -608,19 +608,20 @@ function secretShaped(path: string, templates: ReadonlySet<string>): boolean {
 }
 const TRACKED_SECRET_LIMIT = 65_536
 
-/**
- * The directory at the same place below the main checkout as `directory` is below its own working
- * tree, from what Git says: a directory nested in a linked worktree has no `.git` entry to read, and
- * Git is the authority on the entry one does have. The main checkout is the parent of a common
- * directory named `.git`; any other layout, or Git failing, names none.
- */
-export async function mainCheckoutDirectory(input: {
+export type CheckoutLayout =
+    | Readonly<{ kind: 'not-a-repository' }>
+    | Readonly<{ kind: 'unavailable' }>
+    /** Real paths of the working tree holding `directory`, its common Git directory, and `directory` itself. */
+    | Readonly<{ kind: 'repository'; toplevel: string; commonDirectory: string; directory: string }>
+
+/** Where `directory` sits in Git, from what Git says, or that it is in no repository. */
+export async function checkoutLayout(input: {
     readonly executable: ResolvedExecutable
     readonly directory: string
     readonly timeoutMs: number
-}, execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): Promise<string | undefined> {
+}, execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): Promise<CheckoutLayout> {
     const executable = resolvedGitExecutable(input.executable)
-    if (!executable) return undefined
+    if (!executable) return { kind: 'unavailable' }
     const step = snapshotExecutionStep({
         id: 'git:main-checkout',
         argv: [executable.canonicalPath, '-C', input.directory, ...GIT_CHILD_CONFIG, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'],
@@ -632,19 +633,38 @@ export async function mainCheckoutDirectory(input: {
             argvIndexes: [0], executable: true, executionMode: executable.executionMode }],
         filesystemChecks: [], compensation: [],
     })
-    if (!step) return undefined
+    if (!step) return { kind: 'unavailable' }
     const outcome = authenticatedExecutionOutcome(await execute(step), step)
-    if (outcome?.kind !== 'complete') return undefined
+    if (outcome?.kind !== 'complete') {
+        return outcome?.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED && gitRepositoryRefusal(outcome.stderr).kind === 'not-a-repository'
+            ? { kind: 'not-a-repository' } : { kind: 'unavailable' }
+    }
     const lines = outcome.stdout.toString('utf8').trimEnd().split('\n')
-    if (lines.length !== 2) return undefined
-    let toplevel: string, common: string, directory: string
-    try { [toplevel, common, directory] = await Promise.all([realpath(lines[0]!), realpath(lines[1]!), realpath(input.directory)]) }
-    catch (error) {
-        if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'ELOOP')) return undefined
+    if (lines.length !== 2) return { kind: 'unavailable' }
+    try {
+        const [toplevel, commonDirectory, directory] = await Promise.all([realpath(lines[0]!), realpath(lines[1]!), realpath(input.directory)])
+        return { kind: 'repository', toplevel, commonDirectory, directory }
+    } catch (error) {
+        if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'ELOOP')) return { kind: 'unavailable' }
         throw error
     }
-    const offset = relative(toplevel, directory)
-    return basename(common) === '.git' && !offset.startsWith('..') ? join(dirname(common), offset) : undefined
+}
+
+/**
+ * The directory at the same place below the main checkout as `directory` is below its own working
+ * tree, from what Git says: a directory nested in a linked worktree has no `.git` entry to read, and
+ * Git is the authority on the entry one does have. The main checkout is the parent of a common
+ * directory named `.git`; any other layout, or Git failing, names none.
+ */
+export function mainCheckoutOf(layout: CheckoutLayout): string | undefined {
+    if (layout.kind !== 'repository') return undefined
+    const offset = relative(layout.toplevel, layout.directory)
+    return basename(layout.commonDirectory) === '.git' && !offset.startsWith('..') ? join(dirname(layout.commonDirectory), offset) : undefined
+}
+
+export async function mainCheckoutDirectory(input: Parameters<typeof checkoutLayout>[0],
+    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): Promise<string | undefined> {
+    return mainCheckoutOf(await checkoutLayout(input, execute))
 }
 
 export type TrackedEnvSchemas =
@@ -675,6 +695,40 @@ export async function listTrackedEnvSchemas(input: {
     if (!step) return { kind: 'unavailable', reason: 'the Git listing could not be planned' }
     const outcome = authenticatedExecutionOutcome(await execute(step), step)
     if (outcome?.kind === 'complete') return { kind: 'listed', paths: outcome.stdout.toString('utf8').split('\0').filter(Boolean) }
+    if (outcome?.code !== ENVIRONMENT_CODES.EXECUTION_STEP_FAILED) return { kind: 'unavailable', reason: `Git did not answer (${outcome?.code ?? 'unauthenticated Git outcome'})` }
+    const refused = gitRepositoryRefusal(outcome.stderr)
+    return refused.kind === 'not-a-repository' ? refused : { kind: 'unavailable', reason: refused.reason }
+}
+
+/** Regular stage-zero files directly at a component boundary; no file contents are opened. */
+export async function listTrackedSchemaComponentFiles(input: {
+    readonly executable: ResolvedExecutable
+    readonly root: string
+    readonly directory: string
+    readonly timeoutMs: number
+}, execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): Promise<TrackedEnvSchemas> {
+    const executable = resolvedGitExecutable(input.executable)
+    if (!executable) return { kind: 'unavailable', reason: 'no resolved Git executable' }
+    const step = snapshotExecutionStep({
+        id: 'git:tracked-schema-component',
+        argv: [executable.canonicalPath, '-C', input.root, ...GIT_CHILD_CONFIG, 'ls-files', '--stage', '-z', '--', `:(glob)${input.directory}/*`],
+        argv0: executable.invocationPath, cwd: input.root, env: {}, timeoutMs: input.timeoutMs,
+        stdoutLimitBytes: TRACKED_SECRET_LIMIT, stderrLimitBytes: COMPARISON_OUTPUT_LIMIT,
+        paths: [input.root], ports: [], labels: { source: input.directory },
+        expected: [{ kind: 'path', target: input.root, state: 'repository' }],
+        consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912,
+            argvIndexes: [0], executable: true, executionMode: executable.executionMode }],
+        filesystemChecks: [], compensation: [],
+    })
+    if (!step) return { kind: 'unavailable', reason: 'the component listing could not be planned' }
+    const outcome = authenticatedExecutionOutcome(await execute(step), step)
+    if (outcome?.kind === 'complete') {
+        const paths = outcome.stdout.toString('utf8').split('\0').flatMap((entry) => {
+            const match = /^100(?:644|755) [a-f0-9]+ 0\t(.+)$/.exec(entry)
+            return match ? [match[1]!] : []
+        })
+        return { kind: 'listed', paths }
+    }
     if (outcome?.code !== ENVIRONMENT_CODES.EXECUTION_STEP_FAILED) return { kind: 'unavailable', reason: `Git did not answer (${outcome?.code ?? 'unauthenticated Git outcome'})` }
     const refused = gitRepositoryRefusal(outcome.stderr)
     return refused.kind === 'not-a-repository' ? refused : { kind: 'unavailable', reason: refused.reason }

@@ -466,23 +466,53 @@ export function runningEvaluatorTool(env: Readonly<Record<string, string | undef
 export const DECIDERS = ['agent', 'person', 'ci'] as const
 export type Decider = typeof DECIDERS[number]
 const Decider = z.enum(DECIDERS)
-export const WORK_GRADING = ['independent', 'checks', 'self'] as const
+/** The modes a grade is recorded under; off never grades. */
+export const GRADE_MODES = ['independent', 'subagent', 'checks', 'self'] as const
+export type GradeMode = typeof GRADE_MODES[number]
+export const WORK_GRADING = [...GRADE_MODES, 'off'] as const
 export type WorkGrading = typeof WORK_GRADING[number]
+/** Whether work grade grades at all; under off nothing does and nothing blocks on it. */
+export const isGradeMode = (grading: WorkGrading): grading is GradeMode => grading !== 'off'
+
+interface GradingProperties {
+    /** Moving to a lower rank weakens the policy. A subagent's verdict reaches cockpit through the agent
+     * being graded, so it ranks with that agent's own; off ranks below both, since under self a failed check still fails the grade. */
+    readonly rank: number
+    /** How an order closes on a passing grade recorded under this mode, or with none under off. */
+    readonly closure: 'graded' | 'subagent-reported' | 'checks-passed' | 'self-reported' | 'ungraded'
+    /** A model reads the change and judges each criterion, cockpit's standing criteria and amendments included. */
+    readonly judged: boolean
+    /** work grade may run a separate evaluator process from work.evaluators. */
+    readonly evaluator: boolean
+    /** What work grade takes on its command line: nothing, a verdict and note, or a relayed verdict and note or nothing. */
+    readonly submission: 'none' | 'verdict' | 'relayed-or-none'
+    /** What a grade says answered it under this mode, given the evaluator tool that ran, if any. */
+    readonly answeredBy?: (evaluatorTool: string | undefined) => string
+}
+export const GRADING: Readonly<Record<WorkGrading, GradingProperties>> = Object.freeze({
+    independent: { rank: 3, closure: 'graded', judged: true, evaluator: true, submission: 'none' },
+    subagent: { rank: 1, closure: 'subagent-reported', judged: true, evaluator: true, submission: 'relayed-or-none',
+        answeredBy: tool => tool ? `a separate ${tool} process, read directly, in place of the relayed verdict [work] grading = "subagent" names; this is the stronger of the two`
+            : 'the working agent relayed this verdict as its subagent\'s; cockpit did not see a subagent run and cannot verify that one did, and read-only is instructed there, not enforced' },
+    checks: { rank: 2, closure: 'checks-passed', judged: false, evaluator: false, submission: 'none' },
+    self: { rank: 1, closure: 'self-reported', judged: true, evaluator: false, submission: 'verdict' },
+    off: { rank: 0, closure: 'ungraded', judged: false, evaluator: false, submission: 'none' },
+})
 
 const WorkGates = z
     .object({
         accept: Decider.optional().describe('Who accepts a draft work order: agent, person or ci. Default agent.'),
-        amend: Decider.optional().describe('Who accepts a changed contract. Default agent. Removing an accepted criterion or gate always needs a person or ci; an agent\'s rewrite of a criterion, scope, non-goal or objective is judged at the next grade, and needs a person under checks grading.'),
+        amend: Decider.optional().describe('Who accepts a changed contract. Default agent. Removing an accepted criterion or gate always needs a person or ci; an agent\'s rewrite of a criterion, scope, non-goal or objective is judged at the next grade, and needs a person under checks grading; under off nothing judges it.'),
         answer: Decider.optional().describe('Who answers an open question on an order. Default agent.'),
         signoff: Decider.optional().describe('Who closes a graded order. Default agent.'),
-        acknowledge: Decider.optional().describe('Who acknowledges that an order weakened tests, which checks grading otherwise fails; under independent and self grading the acknowledgement is context for the verdict. Default agent.'),
+        acknowledge: Decider.optional().describe('Who acknowledges that an order weakened tests, which checks grading otherwise fails; under checks a person or CI acknowledges even where this says agent, because the acknowledgement alone passes the check there; under independent, subagent and self grading the acknowledgement is context for the verdict, and under off it is only recorded. Default agent.'),
     })
     .strict()
 
 export const Work = z
     .object({
         grading: z.enum(WORK_GRADING).default('independent')
-            .describe("How an order earns done: independent (an evaluator grades it), checks (cockpit ran every criterion's check and all passed) or self (the agent reports met or unmet with a note)."),
+            .describe("How an order earns done: independent (a separate agent tool process grades it and cockpit reads that process directly), subagent (the working agent relays the verdict of a read-only subagent it spawned, which cockpit cannot verify), checks (cockpit ran every criterion's check and all passed), self (the agent reports met or unmet with a note) or off (the grader is optional: nothing judges and nothing blocks on grading, and the order closes as ungraded)."),
         // An ordered fallback list: the first that runs answers, and one that is missing, signed out or
         // rate-limited is recorded and passed over. It never falls back to the agent grading itself.
         evaluators: z.array(z.enum(['codexcli', 'claudecode', 'opencode'] as const satisfies readonly EvaluatorTool[])).min(1).max(3)
@@ -506,6 +536,10 @@ export const Autonomy = z
         reset: Decider.optional().describe('Who may apply a reset, which deletes stack data. Default person.'),
         // CI adds nothing here: an approval is a digest in [mcp.approved], which only a person edits.
         mcp_approve: z.enum(['agent', 'person']).optional().describe('Who approves a declared MCP server: person records each digest in [mcp.approved]; agent lets sync enable every declared server as declared, so an agent that writes a sibling MCP source starts that process outside the guard. Default person.'),
+        // Process gates: a person adds a step here, not protection, since what each grants an agent
+        // reaches nothing it could not already do or claim. CI adds nothing to either.
+        confirm_answers: z.enum(['agent', 'person']).optional().describe('Who confirms an unconfirmed init answer that is neither a trust decision nor settled by an observation (cockpit.name, estate.runnable, environment.test_data): person, or agent, which lets cockpit confirm record it as the agent\'s decision. Trust decisions stay a person\'s. Default person.'),
+        instruction_files: z.enum(['agent', 'person']).optional().describe('Who may run setup --write-instruction-files and --write-instruction-pointers, which write the sibling AGENTS.md, CLAUDE.md and guide links setup proposes: person, or agent, which the guard then admits. An agent can make the same edits with its own tools. Default person.'),
     })
     .strict()
 
@@ -881,7 +915,7 @@ export function configurationDefaults() {
  */
 export const UNCONFIRMABLE_ANSWERS = ['cockpit.name', 'sibling', 'estate.runnable', 'ports.bases', 'environment.install_policies',
     'environment.test_data', 'environment.compose_files', 'environment.machine', 'environment.posture',
-    'testing', 'guards'] as const
+    'testing', 'guards', 'work.grading'] as const
 
 // `path` in the cockpit's own repository, or `<sibling slug>:path` in a sibling, spelt as a work
 // order's scope is. Living documents may be globs; the decision paths name one file or directory.

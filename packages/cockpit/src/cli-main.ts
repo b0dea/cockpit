@@ -54,7 +54,7 @@ import { runServiceExec, runServicePs, runServiceRestart } from './environment/a
 import { executeForegroundProcess, executePlan, executeProbe, foregroundTerminal } from './environment-exec/execute.js'
 import { createDestructiveCommandAdapters, selectDestructiveDaemon } from './environment/destructive-composition.js'
 import { createHealthCommandAdapters } from './environment/health-composition.js'
-import { inspectInitReadiness, measureInitMachine } from './environment/readiness-composition.js'
+import { inspectInitReadiness, measureInitMachine, proposeInitGrading } from './environment/readiness-composition.js'
 import { createLifecycleCommandAdapters } from './environment/lifecycle-composition.js'
 import { isProcessStart, observeProcessStart, processHost, type HolderProcess } from './environment/claims.js'
 import { createReadCommandAdapters } from './environment/read-composition.js'
@@ -520,8 +520,8 @@ function weakenedTestsDiagnostic(operation: WorkApplicationRequest['operation'],
     return { severity: 'error', message,
         code: 'WORK_TEST_WEAKENED' satisfies typeof ENVIRONMENT_CODES.WORK_TEST_WEAKENED,
         fix: operation === 'work-grade'
-            ? 'read result.testProtection.findings and the verdict on them: restore each test weakened to make the change pass. Under [work] grading = "independent" the evaluator judged the test changes unjustified in the diff; under "self" your --note names each flagged file and why; under "checks" acknowledge a legitimate change with npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why it is not a weakening>, which [work.gates] acknowledge = "person" leaves to a person at a terminal with --interactive; never type the digest for them'
-            : 'read result.testProtection: restore each deleted, skipped, suppressed or loosened test. A grade without an order has the evaluator judge the test changes; an order records the base they are compared with, and under [work] grading = "checks" a legitimate change is acknowledged with npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why>, with --interactive by a person where [work.gates] acknowledge = "person"' }
+            ? 'read result.testProtection.findings and the verdict on them: restore each test weakened to make the change pass. Under [work] grading = "independent" the evaluator judged the test changes unjustified in the diff; under "self" or "subagent" your --note names each flagged file and why; under "checks" a person acknowledges a legitimate change at a terminal with npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why it is not a weakening> --interactive, or CI where [work.gates] acknowledge = "ci"; never type the digest for them'
+            : 'read result.testProtection: restore each deleted, skipped, suppressed or loosened test. A grade without an order has the evaluator judge the test changes; an order records the base they are compared with, and under [work] grading = "checks" a person acknowledges a legitimate change with npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why> --interactive, or CI where [work.gates] acknowledge = "ci"' }
 }
 
 // A person gate binds what the person reads to the digest they type, so it never completes for an agent.
@@ -532,9 +532,13 @@ function personRequired(handler: 'work-accept' | 'work-answer' | 'work-signoff' 
 }
 
 // A grade by the same tool that did the work is weaker than one by another tool, so it is never silent.
+// Only Claude Code and Codex are detected, so a run from any other tool cannot warn.
 function sameToolGradeWarnings(value: unknown, env: Readonly<Record<string, string | undefined>>): Diagnostic[] {
     const evaluator = (value as { evaluator?: { tool?: unknown; fallbacks?: readonly { tool: string; message: string }[] } } | null)?.evaluator
-    if (!evaluator?.fallbacks?.length || evaluator.tool !== runningEvaluatorTool(env)) return []
+    if (!evaluator || evaluator.tool !== runningEvaluatorTool(env)) return []
+    if (!evaluator.fallbacks?.length) return [{ severity: 'warning', code: 'EVALUATOR_IS_RUNNING_TOOL' satisfies typeof ENVIRONMENT_CODES.EVALUATOR_IS_RUNNING_TOOL,
+        message: `graded by ${EVALUATOR_COMMANDS[evaluator.tool as EvaluatorTool]}, the tool running this command, as a separate process: cockpit read its answer directly, but one tool is judging its own kind of work`,
+        fix: 'list a second tool in work.evaluators so another tool grades the work, or accept this as the grade you chose' }]
     return [{ severity: 'warning', code: 'EVALUATOR_FELL_BACK_TO_RUNNING_TOOL' satisfies typeof ENVIRONMENT_CODES.EVALUATOR_FELL_BACK_TO_RUNNING_TOOL,
         message: `graded by ${EVALUATOR_COMMANDS[evaluator.tool as EvaluatorTool]}, the tool running this command, because the others were passed over: ${evaluator.fallbacks.map(row => `${row.tool}: ${row.message}`).join('; ')}`,
         fix: 'install and sign in to the passed-over tool so another tool grades the work, or name the grader you accept with --evaluator <tool>' }]
@@ -650,6 +654,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             composeFindings,
             inspectReadiness: input => inspectInitReadiness(input, { env, timeoutMs: RUNTIME_STEP_TIMEOUT_MS, execute: executeProbe }),
             measureMachine: input => measureInitMachine(input, { env, timeoutMs: RUNTIME_STEP_TIMEOUT_MS, execute: executeProbe }),
+            proposeGrading: tools => proposeInitGrading(tools, env),
             observeDestination: async ({ path, byteLimit }) => {
                 const node = await nodeAuthority()
                 const read = node ? await readAnchoredBatches(dirname(path), [
@@ -689,7 +694,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             // Codex hook trust concerns a Codex user only; a leftover hooks.json of an unlisted Codex is stale, which check reports.
             const [outcome, hookTrust] = await Promise.all([checkGeneratedEnvironment(input),
                 loaded.result.config.surfaces.tools.includes('codexcli')
-                    ? inspectCodexHookTrust({ root: dirname(resolve(input.configPath)), env }) : Promise.resolve([])])
+                    ? inspectCodexHookTrust({ root: dirname(resolve(input.configPath)), env, timeoutMs: RUNTIME_STEP_TIMEOUT_MS }, executeProbe) : Promise.resolve([])])
             if (weakened.length || guardChange.some(row => row.severity === 'error')) return { kind: 'refusal', status: 2, result: null,
                 diagnostics: [...weakened.length ? [policyWeakeningDiagnostic(weakened)] : [], ...guardChange, ...outcome.diagnostics, ...hookTrust] }
             return { ...outcome, diagnostics: [...guardChange, ...outcome.diagnostics, ...hookTrust], result: outcome.report
@@ -1039,7 +1044,8 @@ async function decodeRequest(
         } else if (handler === 'work-grade') {
             const verdict = text('verdict'), note = text('note')
             if (verdict !== undefined && verdict !== 'met' && verdict !== 'unmet') return usageOutcome('CLI_USAGE_INVALID', '--verdict is met or unmet', '--verdict')
-            request = { operation: handler, workOrderId: workOrderId!, ...(verdict ? { verdict } : {}), ...(note ? { note } : {}) }
+            if (verdict !== undefined && text('evaluator') !== undefined) return usageOutcome('CLI_USAGE_INVALID', '--evaluator picks the process cockpit starts to grade, so it cannot accompany a submitted --verdict', '--evaluator')
+            request = { operation: handler, workOrderId: workOrderId!, ...(verdict ? { verdict } : {}), ...(note ? { note } : {}), ...(values['from-subagent'] === true ? { fromSubagent: true } : {}) }
         } else if (handler === 'work-signoff') {
             if (values.partial === true && values.abandon === true) return usageOutcome('CLI_USAGE_INVALID', 'pass at most one of --partial and --abandon')
             const note = text('note')

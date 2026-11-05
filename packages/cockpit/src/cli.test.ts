@@ -127,7 +127,7 @@ describe('invocation publication', () => {
 describe('closed ordinary invocation metadata', () => {
     const authority = { executable: '/workspace/bin/cockpit', canonicalRoot: '/workspace/product',
         allowedRoots: ['/workspace/product', '/workspace/app'], configPath: '/workspace/product/cockpit.toml', services: ['app'], gates: ['quick'],
-        grants: ['browser-preapproval', 'autonomy-sync', 'autonomy-reset'] as const, profiles: ['jobs', 'mail.v2'] }
+        grants: ['browser-preapproval', 'autonomy-sync', 'autonomy-reset', 'autonomy-instruction-files'] as const, profiles: ['jobs', 'mail.v2'] }
     const ordinary = (argv: string[], patch = {}) => resolveOrdinaryInvocation({ executable: authority.executable, cwd: authority.canonicalRoot, argv, ...patch }, authority, () => true)
     // The words each available config-bearing row needs besides --config.
     const requiredWords: Readonly<Record<string, readonly string[]>> = {
@@ -252,13 +252,6 @@ describe('closed ordinary invocation metadata', () => {
         }
     })
 
-    // Writes into a product repository change what every agent session there loads, so a person runs them.
-    it('leaves setup writes into sibling repositories to a person', () => {
-        for (const flag of ['--write-instruction-pointers', '--write-instruction-files']) {
-            expect(ordinary(['setup', flag, '--config', authority.configPath]), flag).toBeUndefined()
-        }
-    })
-
     it('refuses all ambiguous, repeated, escaping, unavailable or differently spelled forms', () => {
         const cases = [
             ['registry-resolve', '--registry', 'registry.sh'], ['registry-resolve', '.', '--registry', 'registry.sh', '--siblings-root', '.', '--adoption', 'adoption'],
@@ -318,12 +311,14 @@ describe('closed ordinary invocation metadata', () => {
             }
         }
         // Browser commands run unprompted only where cockpit.toml preapproves them, and a writing sync, an
-        // upgrade (whose sync child writes) or an applied reset only where [autonomy] gives the decision to
+        // upgrade (whose sync child writes), an applied reset or setup's writes into sibling repositories,
+        // which change what every agent session there loads, only where [autonomy] gives the decision to
         // the agent. A dry run writes nothing, so no grant gates it.
         const resolve = (argv: readonly string[], source: Parameters<typeof resolveOrdinaryInvocation>[1]) => resolveOrdinaryInvocation({ executable: authority.executable,
             cwd: authority.canonicalRoot, argv: [...argv, '--config', authority.configPath] }, source, () => true)
         for (const [argv, grant] of [[['browser', 'drive'], 'browser-preapproval'], [['sync'], 'autonomy-sync'], [['upgrade'], 'autonomy-sync'],
-            [['upgrade', '1.2.3'], 'autonomy-sync'], [['reset', '--apply'], 'autonomy-reset']] as const) {
+            [['upgrade', '1.2.3'], 'autonomy-sync'], [['reset', '--apply'], 'autonomy-reset'],
+            [['setup', '--write-instruction-files'], 'autonomy-instruction-files'], [['setup', '--write-instruction-pointers'], 'autonomy-instruction-files']] as const) {
             const without = { ...authority, grants: authority.grants.filter(row => row !== grant) }
             expect(resolve(argv, authority), argv.join(' ')).toBeDefined()
             expect(resolve(argv, without), argv.join(' ')).toBeUndefined()

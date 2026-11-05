@@ -14,7 +14,6 @@ When a cockpit that upgrades needs more than `cockpit sync`, end the entry with 
 then run cockpit sync`. People and agents upgrading read the changelog between their old and new
 version for exactly those lines, so an entry without one promises that sync alone is enough.
 
-A pull request that touches the package's source or shipped surfaces needs a changeset unless it
-carries the `no-changeset` label; if nothing a consumer sees changed, ask a maintainer to add the
-`no-changeset` label. The release flow is described in
+A pull request that touches the package's source or shipped surfaces needs a changeset; if nothing a
+consumer sees changed, ask a maintainer for the `no-changeset` label. See
 [Releasing](../docs/contributing/releasing.md).

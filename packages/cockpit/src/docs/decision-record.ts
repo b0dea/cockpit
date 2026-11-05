@@ -16,6 +16,10 @@ const KEYWORD = /\b(supersedes|superseded\s+by)\b/gi
 // number counts only right after the keyword, so a year later in the sentence is not read as a record.
 const REFERENCE = /\[\[([^\]]+)\]\]|(?:\b(?:adr|decision|record)s?[-\s]?#?|#|\b(?:of|in)\s+(?=0))(\d{1,5})\b|([\w./-]+\.md)\b/gi
 
+// What may stand between two references that each name a whole record: a list separator and the
+// record's own label.
+const CONNECTIVE = /^[\s,:&()]*(?:(?:and|or)\b[\s,]*)?(?:(?:adr|decision|record)s?[-\s]?#?|#)?\s*$/i
+
 /** Whether a record file is named by date, and so carries no number. */
 export const isDatedRecordName = (name: string) => DATED.test(name)
 
@@ -39,9 +43,11 @@ export interface ParsedRecord {
     readonly supersedes: readonly SupersedesReference[]
 }
 
-// A link becomes [[target]] so its target survives as one token; code spans keep their text.
+// A link becomes [[target]] so its target survives as one token; retain an explicit record label
+// without treating its digits as a second reference. Code spans keep their text.
 function referenceText(prose: string): string {
-    return prose.replace(/\[([^\]]*)\]\(([^)\s]*)[^)]*\)/g, (_match, _label: string, target: string) => ` [[${target}]] `).replace(/`/g, ' ')
+    return prose.replace(/\[([^\]]*)\]\(([^)\s]*)[^)]*\)/g, (_match, label: string, target: string) =>
+        ` ${/\b(?:adr|decision|record)\b/i.test(label) || /^\s*#?\d{1,5}\s*$/.test(label) ? 'ADR ' : ''}[[${target}]] `).replace(/`/g, ' ')
 }
 
 function referencesIn(line: number, text: string, record: string): SupersedesReference[] {
@@ -58,17 +64,31 @@ function referencesIn(line: number, text: string, record: string): SupersedesRef
         // A number that runs on into a name (`2026-09-cache.md`, `0012-x.md`) is a file name, read below.
         const bare = /^\s*:?\s*(\d{1,5})\b(?![-.]\w)/.exec(clause)
         const leading = /^\s*:?\s*(?:\[\[|(?:adr|decision|record)s?\b|#|[\w./-]+\.md\b)/i.test(clause) || bare !== null
+        // Where the previous reference ended: "0012 and the retry clause of 0013" replaces 0013 only in
+        // part, which only the words between the two references say.
+        let previous = 0
         // "Supersedes 0012 (ADR-0012)" names one record twice; it is one reference.
-        const add = (reference: Omit<SupersedesReference, 'line' | 'text' | 'full'>, text: string) => {
-            if (!found.some(row => row.number === reference.number && row.file === reference.file)) found.push({ line, text, full: outgoing && leading, ...reference })
+        const add = (reference: Omit<SupersedesReference, 'line' | 'text' | 'full'>, text: string, start: number, end: number) => {
+            const partial = /^\s*(?:['’]s\b|only\s+for\b)/i.test(clause.slice(end)) || !CONNECTIVE.test(clause.slice(previous, start))
+            if (!found.some(row => row.number === reference.number && row.file === reference.file)) found.push({ line, text, full: outgoing && leading && !partial, ...reference })
         }
-        if (bare) add({ number: Number(bare[1]) }, bare[1]!)
+        if (bare) {
+            add({ number: Number(bare[1]) }, bare[1]!, 0, bare[0].length)
+            previous = bare[0].length
+        }
         for (const match of clause.matchAll(REFERENCE)) {
+            const end = match.index + match[0].length
+            // "decision 2 of ADR 0012" numbers a part, not another record.
+            if (/^decision\b/i.test(match[0]) && /^\s+of\b/i.test(clause.slice(end))) continue
             const target = match[1] ?? match[3]
             if (target !== undefined) {
                 const file = resolveLinkTarget(posix.dirname(record), target)
-                if (file?.endsWith('.md')) add({ file }, target)
-            } else add({ number: Number(match[2]) }, match[0].trim())
+                // Other documentation can be revised in the same sentence; it is not a record link.
+                const before = clause.slice(0, match.index)
+                const explicit = /^\s*:?\s*$/.test(before) || /\bADR\s*$/i.test(before) || /\bdecision\s+\d+\s+of\s*$/i.test(before)
+                if (file?.endsWith('.md') && (explicit || posix.dirname(file) === posix.dirname(record))) add({ file }, target, match.index, end)
+            } else add({ number: Number(match[2]) }, match[0].trim(), end - match[2]!.length, end)
+            previous = end
         }
     })
     return found

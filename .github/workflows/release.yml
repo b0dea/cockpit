@@ -90,12 +90,34 @@ jobs:
           pr-title: Version Packages
           commit-message: Version Packages
 
+  # Publishing does not wait for CI, and a pull request's required check can be stale by the time
+  # it merges. This reads what passed on the commit about to publish, and holds no OIDC token.
+  release-gate:
+    name: tested before publishing
+    needs: select-mode
+    if: needs.select-mode.outputs.mode == 'publish'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read        # which cells passed on which tree
+      pull-requests: read  # the pull request heads of a commit
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # This commit and its parent, to compare them.
+          fetch-depth: 2
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/release-gate.sh
+
   # The package is built here, under the OIDC token, by its prepack script. A separate pack job
   # without the token would not contain a compromised build: the tarball it produced is what this
   # job publishes. So the build stays where the stamp and the publish are, in one checkout.
   publish:
     name: publish to npm
-    needs: select-mode
+    needs: [select-mode, release-gate]
     if: needs.select-mode.outputs.mode == 'publish'
     runs-on: ubuntu-latest
     timeout-minutes: 30

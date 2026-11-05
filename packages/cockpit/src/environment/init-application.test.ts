@@ -4,7 +4,8 @@ import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { runInitApplication, type InitApplicationAdapters, type InitApplicationInput } from './init-application.js'
-import { deriveInferredFacts } from '../init/derive.js'
+import { deriveInferredFacts, recommendGrading } from '../init/derive.js'
+import { parse as parseToml } from 'smol-toml'
 import { runInitOperatorCommand, type InitCommandIo } from '../init/command.js'
 import { initCommand } from '../fix-catalogue.js'
 import { classifyEstateObservation, draftFromEstate, observePublicEstate, type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult } from '../init/draft.js'
@@ -477,7 +478,7 @@ describe('init application', () => {
             question: { field: 'testing' } } })
         expect(pending.result!.interview!.answered).toEqual(['cockpit.name', 'sibling', 'ports.bases',
             'environment.install_policies', 'environment.test_data', 'environment.compose_files'])
-        expect(pending.result!.interview!.outstanding.map(row => row.field)).toEqual(['testing', 'guards', 'configuration.defaults'])
+        expect(pending.result!.interview!.outstanding.map(row => row.field)).toEqual(['testing', 'guards', 'work.grading', 'configuration.defaults'])
         const beforeResume = measurements
         expect(await run(answers)).toMatchObject({ kind: 'pending', result: { question: pending.result!.question } })
         expect(measurements).toBe(beforeResume)
@@ -500,7 +501,7 @@ describe('init application', () => {
         const testing = { stages: [{ id: 'unit', command: ['make', 'test'], requires_stack: false }],
             gates: [{ id: 'full', tier: 'full', stages: ['unit'], changes: 'Any behavior' }] }
         const completeAnswers = { ...answers, testing,
-            guards: { hosted_db_hosts: ['db.shared.example.invalid'], vendor_endpoint_hosts: ['api.vendor.example.invalid'] } }
+            guards: { hosted_db_hosts: ['db.shared.example.invalid'], vendor_endpoint_hosts: ['api.vendor.example.invalid'] }, work: { grading: 'independent' } }
         const defaults = await run(completeAnswers)
         expect(defaults).toMatchObject({ kind: 'pending', result: { question: { field: 'configuration.defaults' } } })
         const completed = await run(completeAnswers, defaults.result!.question!.expectedSha256)
@@ -512,6 +513,59 @@ describe('init application', () => {
         } } })
         expect(await adapters.preflight({ configPath: f.destination })).toMatchObject({ kind: 'blocked', status: 2,
             diagnostics: [{ severity: 'error', code: 'ENVIRONMENT_NOT_DECLARED' }] })
+    })
+
+    it('recommends a grading mode from the listed tools on PATH with its reason, which an agent may accept, and keeps any other choice of an agent unconfirmed', async () => {
+        expect(['checks', 'independent', 'independent'].map((value, found) => recommendGrading(['claudecode', 'codexcli'], ['claudecode', 'codexcli'].slice(0, found))))
+            .toEqual([
+                expect.objectContaining({ value: 'checks', reason: expect.stringContaining('checks needs no agent tool') }),
+                expect.objectContaining({ value: 'independent', reason: expect.stringContaining('only claudecode is on PATH, so a separate claudecode process grades') }),
+                expect.objectContaining({ value: 'independent', reason: expect.stringContaining('claudecode and codexcli are on PATH, so each grades the other') })])
+        const interview = () => {
+            const f = fixture()
+            mkdirSync(join(f.root, 'app'))
+            const seen = { written: '' }
+            const adapters: InitApplicationAdapters = { ...f.adapters, classifyEstate: input => classifyEstateObservation(input, { observe: observePublicEstate }),
+                document: draftFromEstate, infer: deriveInferredFacts, proposeGrading: async tools => recommendGrading(tools, tools) }
+            const io: InitCommandIo = { terminal: false, confirm: async () => undefined, writeArtifact: async (_path, artifact) => {
+                seen.written = artifact
+                f.setDestination({ kind: 'available', sha256: createHash('sha256').update(artifact).digest('hex') })
+            } }
+            const run = (answers: Record<string, unknown>, defaultsSha256?: string) => runInitOperatorCommand({ root: f.root, target: 'codexcli',
+                sessionId: 'synthetic-session', platform: 'linux', home: f.input.home, xdgStateHome: f.input.xdgStateHome },
+            { interactive: false, json: true, unattended: { previewSha256: digest('3'), answers, ...(defaultsSha256 ? { defaultsSha256 } : {}) } }, io, input => runInitApplication(input, adapters))
+            return { run, seen, preview: () => runInitApplication({ ...f.input, registry: undefined }, adapters) }
+        }
+        const answers = { cockpit: { name: 'synthetic' }, sibling: [{ slug: 'app', dir: 'app', mount: 'none', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic application' }],
+            ports: { bases: {} }, guards: { hosted_db_hosts: [], vendor_endpoint_hosts: [] } }
+        const complete = async (run: ReturnType<typeof interview>['run'], file: Record<string, unknown>) => {
+            const defaults = await run(file)
+            expect(defaults, JSON.stringify(defaults.diagnostics)).toMatchObject({ kind: 'pending', result: { question: { field: 'configuration.defaults' } } })
+            return run(file, defaults.result!.question!.expectedSha256)
+        }
+        const first = interview()
+        const asked = (await first.preview()).result!.interview!.outstanding.find(row => row.field === 'work.grading')!
+        // A trust decision: the recommendation and its reason are shown, and a person decides.
+        expect(asked).toMatchObject({ confirmedBy: 'person', why: expect.stringContaining('or off (the grader is optional; reasonable when tracking matters but grading is not wanted)'),
+            proposals: [{ target: 'work.grading', value: 'independent', provenance: { kind: 'inferred', source: expect.stringContaining('and PATH'), reason: expect.stringContaining('on PATH') } }] })
+        // An agent cannot call its choice observed, so no mode reaches cockpit.toml as read rather than chosen.
+        expect(await first.run({ ...answers, work: { grading: 'independent' }, provenance: { 'work.grading': 'derived' } })).toMatchObject({ kind: 'refusal', diagnostics: [
+            { code: 'GREENFIELD_ANSWER_INVALID' }, { code: 'DOCUMENT_CONFIGURATION_ANSWER_NOT_DERIVED', message: expect.stringContaining('work.grading') }] })
+        expect(await first.run({ ...answers, work: { grading: 'lenient' } })).toMatchObject({ kind: 'refusal', diagnostics: [
+            { code: 'GREENFIELD_ANSWER_INVALID' }, { code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID', message: expect.stringContaining('"subagent"') }] })
+
+        const chosen = interview()
+        const byAgent = await complete(chosen.run, { ...answers, work: { grading: 'independent' }, provenance: { 'work.grading': 'agent-default' } })
+        expect(byAgent, JSON.stringify(byAgent.diagnostics)).toMatchObject({ kind: 'complete', result: { unconfirmed: [{ field: 'sibling', provenance: 'unattributed' },
+            { field: 'guards', provenance: 'unattributed' }, { field: 'work.grading', provenance: 'agent-default' }] } })
+        expect(parseToml(chosen.seen.written)).toMatchObject({ unconfirmed: ['sibling', 'guards', 'work.grading'], work: { grading: 'independent' } })
+        expect(chosen.seen.written).toContain('# Unconfirmed: work.grading was chosen by the setup agent as a default; no person stated it.')
+
+        // A file that claims a person chose the mode cannot show it, so the mode waits for a person all the same.
+        const stated = interview()
+        await complete(stated.run, { ...answers, work: { grading: 'off' }, provenance: { work: { grading: 'human' } } })
+        expect(parseToml(stated.seen.written)).toMatchObject({ unconfirmed: ['sibling', 'guards', 'work.grading'], work: { grading: 'off' } })
+        expect(stated.seen.written).toContain('# Unconfirmed: work.grading came from an answers file, which cannot show who chose it; no person is known to have stated it.')
     })
 
     it('lets the setup agent accept what init read from exact sources, and keeps security boundaries and guesses with a person', async () => {
@@ -538,7 +592,7 @@ describe('init application', () => {
         expect(Object.fromEntries(outstanding.map(row => [row.field, row.confirmedBy]))).toEqual({ 'cockpit.name': 'agent', sibling: 'person',
             'ports.bases': 'agent', 'environment.install_policies': 'person', 'environment.test_data': 'person',
             'environment.compose_files': 'agent', 'environment.machine': 'person', 'environment.posture': 'person', testing: 'person',
-            guards: 'person', 'configuration.defaults': 'person' })
+            guards: 'person', 'work.grading': 'person', 'configuration.defaults': 'person' })
         expect(outstanding.find(row => row.field === 'ports.bases')!.proposals).toEqual([{ target: 'ports.bases', value: { APP_PORT: 4100 },
             provenance: { kind: 'derived', source: 'app/compose.yml:4', reason: expect.stringContaining('app/compose.yml publishes APP_PORT') } }])
         // Memory comes from the Compose limit; nothing records the CPUs, so this machine's runtime is measured for them.
@@ -551,7 +605,7 @@ describe('init application', () => {
             environment: { install_policies: [], test_data: { seeded_data: false, signed_in_users: false },
                 machine: { runtime_memory_mb: 768, runtime_cpus: 4, free_disk_mb: 2048, cold_start_seconds: 120 },
                 posture: { addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] } },
-            testing: 'none', guards: { hosted_db_hosts: [], vendor_endpoint_hosts: [] },
+            testing: 'none', guards: { hosted_db_hosts: [], vendor_endpoint_hosts: [] }, work: { grading: 'independent' },
             // A derived field needs no value: init answers it with what it read.
             provenance: { cockpit: { name: 'derived' }, 'ports.bases': 'derived', 'environment.compose_files': 'derived' },
         }
@@ -581,10 +635,12 @@ describe('init application', () => {
         expect(complete, JSON.stringify(complete.diagnostics)).toMatchObject({ kind: 'complete', result: {
             derived: [{ field: 'cockpit.name', source: 'the cockpit root directory name' }, { field: 'ports.bases', source: 'app/compose.yml:4' },
                 { field: 'environment.compose_files', source: 'app/compose.yml' }],
-            // The machine floor holds a free disk and cold start no file records, so it stays the person's to confirm.
-            unconfirmed: [{ field: 'environment.machine', provenance: 'unattributed' }] } })
+            // The machine floor holds a free disk and cold start no file records, and an answers file cannot show a
+            // person made a trust decision, so each stays the person's to confirm.
+            unconfirmed: ['sibling', 'environment.install_policies', 'environment.machine', 'environment.posture', 'testing', 'guards', 'work.grading']
+                .map(field => ({ field, provenance: 'unattributed' })) } })
         expect(written).toContain('# Derived: ports.bases was read from app/compose.yml:4 and accepted by the setup agent; bring-up proves it.')
-        expect(written).toContain('unconfirmed = [ "environment.machine" ]\n')
+        expect(written).toContain('unconfirmed = [ "sibling", "environment.install_policies", "environment.machine", "environment.posture", "testing", "guards", "work.grading" ]\n')
         // An answer an observation can verify points the agent at the command that does, not at a person.
         expect(written).toMatch(/# To confirm: run npx --no cockpit confirm environment\.machine\b/)
     })
@@ -895,7 +951,7 @@ describe('init application', () => {
         // The name is asked even when the directory name is a valid one: agents renamed cockpits by hand
         // afterwards, and a rename after sync is a migration, not an edit.
         expect(planned.map(row => row.field)).toEqual(['cockpit.name', 'sibling', 'ports.bases', 'environment.install_policies',
-            'environment.test_data', 'environment.compose_files', 'environment.machine', 'environment.posture', 'testing', 'guards', 'configuration.defaults'])
+            'environment.test_data', 'environment.compose_files', 'environment.machine', 'environment.posture', 'testing', 'guards', 'work.grading', 'configuration.defaults'])
         expect(planned.find(row => row.field === 'cockpit.name')!.proposals).toEqual([{ target: 'cockpit.name', value: 'checkout',
             provenance: { kind: 'derived', source: f.root, reason: 'the cockpit root directory name' } }])
         expect(planned.find(row => row.field === 'ports.bases')!.proposals).toEqual([{ target: 'app.container_ports', value: [3000],
@@ -912,7 +968,7 @@ describe('init application', () => {
         expect(second.result!.interview).toMatchObject({ answered: ['cockpit.name', 'sibling'] })
         expect(second.result!.interview!.outstanding.map(row => row.field)).toEqual(['ports.bases',
             'environment.install_policies', 'environment.test_data', 'environment.compose_files', 'environment.machine',
-            'environment.posture', 'testing', 'guards', 'configuration.defaults'])
+            'environment.posture', 'testing', 'guards', 'work.grading', 'configuration.defaults'])
     })
 
     it('refuses a different target after bootstrap state is bound', async () => {

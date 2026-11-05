@@ -7,11 +7,10 @@ files and runs read-only Git; it changes nothing.
 
 ## Declare what to check
 
-<!-- cockpit:ref schema=docs.living --> List the documents that must stay true under `[docs]` in
-`cockpit.toml`. Each entry is a glob in the cockpit's own repository, or `<sibling slug>:<glob>` in
-a sibling, spelt as a work order's scope is. `decisions` and `decisions_index` are optional and
-name a directory of decision records and the file that links them. Full entry:
-[`[docs]`](configuration-reference.md#docs).
+<!-- cockpit:ref schema=docs.living --> List the documents that must stay true under
+[`[docs]`](configuration-reference.md#docs). Each entry is a glob in the cockpit's own repository, or
+`<sibling slug>:<glob>` in a sibling. `decisions` and `decisions_index` optionally name a directory of
+decision records and the file that links them.
 
 ```toml
 [docs]
@@ -32,11 +31,9 @@ npx --no cockpit docs check --config cockpit.toml
 npx --no cockpit docs check --config cockpit.toml --json
 ```
 
-It exits 2 when it reports anything, so a CI job runs it the way it runs `work verify`. The guard
-admits it for agents without asking, because it writes nothing. `doctor` names it when `[docs]` is
-declared but does not run it, and `check` does not run it either: both report on the environment
-and its generated files, while this reads every repository's history and judges prose, which is a
-different verdict and a slower one.
+It exits 2 when it reports anything, so a CI job can run it, and the guard admits it for agents without
+asking. `doctor` names it when `[docs]` is declared, but neither `doctor` nor `check` runs it: it reads
+every repository's history and judges prose, a different and slower verdict.
 
 ## Stale references
 
@@ -49,9 +46,11 @@ not exist now:
   where it went.
 - `DOCS_TARGET_REMOVED`: a Makefile once defined the target and none does now.
 
-Keying on history keeps proposals quiet: "add `make park`" names a target that never existed, so
-it is not reported, and no allowlist is needed. A link that never resolved is a link checker's
-job, not this one. npm and pnpm scripts are not checked.
+A directory counts only as an explicit path such as `output/` or `docs/output`, or a link target: a
+bare identifier such as `output` may name a table or API, so it is reported only when Git deleted a
+file of exactly that name. Keying on history keeps proposals quiet: "add `make park`" names a target
+that never existed. A link that never resolved is a link checker's job. npm and pnpm scripts are not
+checked.
 
 ## Decision records
 
@@ -70,7 +69,10 @@ and any file named as a template.
 The status is read from `status:` in YAML front matter, a `Status:` line (bold or not), or the
 first line under a `## Status` heading. A supersedes reference is a link, a file name, `ADR-12`,
 `#12`, or a number right after the keyword. "Supersedes 0012" replaces the whole record;
-"supersedes the retry clause of 0012" replaces part of it, so 0012 only has to exist.
+"supersedes the retry clause of 0012", "decision 2 of ADR 0012", "ADR 0012 only for retries" and
+"0012's retry clause" replace part of it, so 0012 only has to exist. A path to other documentation
+outside the records' directory is not a reference unless it directly follows the keyword or its link
+is labelled ADR, decision, record or a number.
 
 What this cannot see is a decision that was made and never written down; nothing here makes an
 agent record one.

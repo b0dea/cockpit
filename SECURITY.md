@@ -1,8 +1,5 @@
 # Security policy
 
-This policy is for anyone who finds a security problem in cockpit: how to report it privately,
-what response to expect, and what is in scope.
-
 ## Supported versions
 
 Fixes land on the newest minor release only; upgrading to it is the fix. There is no long-term

@@ -68,6 +68,17 @@ const mcpToolRestriction = (fact: { mechanism: 'hook' | 'enabled-tools' | 'unava
 })
 const noMcpToolRestriction = mcpToolRestriction({ mechanism: 'unavailable', state: 'unavailable', evidence: 'not_applicable', measuredVersion: null,
     provenance: 'no MCP tool restriction transport is implemented; restricted servers are omitted' })
+// Whether the tool offers the generated evaluator definition to the working agent, which is what
+// [work] grading = "subagent" spawns. Each run sent a request to a loopback model from an isolated
+// home with synthetic credentials, beside a broken control definition in the same directory. Where no
+// subagent ran, read-only stays instructed; enforced means the spawned evaluator was refused the file
+// writes and shell its generated tool list leaves out. The verdict the working agent relays is its word either way.
+const subagentOffered = (measuredVersion: string, provenance: string) => Object.freeze({ state: 'instructed' as const, evidence: 'not_applicable' as const,
+    measuredOn: '2026-11-05', measuredVersion, provenance })
+const claudeSubagentGrader = Object.freeze({ state: 'enforced' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-05', measuredVersion: '2.1.318',
+    provenance: 'claude -p listed the generated evaluator in the Agent tool description and left out a definition with no front-matter beside it. The spawned evaluator was offered only Read, Grep, Glob and the browser server\'s tools from its generated tools list, and Claude Code refused its Write and Bash calls by name while a browser tool and Read ran; a twin whose tools key was misspelled ran Bash, and without disallowedTools also wrote. No workspace trust was given' })
+const subagentUnmeasured = Object.freeze({ state: 'generated' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-05', measuredVersion: null,
+    provenance: 'cockpit writes the evaluator definition, but no run of the tool beside a broken control has shown that it offers it to the working agent' })
 const completeRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const)
 const nonPermissionRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks'] as const)
 
@@ -77,6 +88,7 @@ export const HARNESS_REGISTRY = Object.freeze([
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'CLAUDE.md', skills: '.claude/skills', mcp: '.mcp.json', permissions: Object.freeze(['.claude/settings.json']) }),
         guard: Object.freeze({ capability: 'instructed' as const, firing: claudeFiring }), native: reviewedNative, sessionStart: claudeSessionStart,
+        subagentGrader: claudeSubagentGrader,
         mcpToolRestriction: mcpToolRestriction({ mechanism: 'hook', state: 'enforced', evidence: 'human_needed', measuredVersion: '2.1.318',
             provenance: 'claude -p with generated settings and a loopback synthetic model left the listed read tool denied by native permissions without a grant; with a grant it called only that tool, including with large arguments, and denied write, dispatcher and new tools despite readOnlyHint annotations. Unrestricted server tools ran even with a missing guard; restricted calls were held, an oversized envelope was refused, and a broken hook file was named. Project hooks still require workspace trust. Claude Code rewrites a dot in a tool name to an underscore before the hook sees it and keeps only the first of two tools that collide, so read.record and read_record are one name here' }),
         remoteMcp: remoteMcpMeasured({ evidence: 'human_needed', measuredVersion: '2.1.318', helper: true,
@@ -89,6 +101,7 @@ export const HARNESS_REGISTRY = Object.freeze([
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.agents/skills', mcp: '.codex/config.toml', permissions: Object.freeze(['.codex/config.toml']) }),
         guard: Object.freeze({ capability: 'instructed' as const, firing: codexFiring }), native: reviewedNative, sessionStart: codexSessionStart,
+        subagentGrader: subagentOffered('0.166.0', 'codex exec in a project a person had trusted listed the generated evaluator under the spawn_agent roles it sent to the model, and named and left out a malformed definition beside it'),
         mcpToolRestriction: mcpToolRestriction({ mechanism: 'enabled-tools', state: 'enforced', evidence: 'not_applicable', measuredVersion: '0.166.0',
             provenance: 'codex exec with generated project enabled_tools and a loopback synthetic model called the listed read tool and rejected forced write, dispatcher and new tool calls as unsupported. The unrestricted control called all four; an empty list made no server call; a string-valued enabled_tools twin was named and rejected before startup. enabled_tools matches the server\'s raw tool name, so read.record and read_record stay distinct. No hook trust was granted' }),
         remoteMcp: remoteMcpMeasured({ evidence: 'not_applicable', measuredVersion: '0.166.0', helper: true,
@@ -100,7 +113,7 @@ export const HARNESS_REGISTRY = Object.freeze([
         target: 'opencode', type: 'agent' as const, displayName: 'OpenCode', rulesyncTarget: 'opencodev1',
         rulesyncFeatures: nonPermissionRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.opencode/skills', mcp: 'opencode.jsonc', permissions: Object.freeze(['opencode.jsonc']) }),
-        guard: Object.freeze({ capability: 'instructed' as const, firing: openCodeFiring }), native: reviewedNative,
+        guard: Object.freeze({ capability: 'instructed' as const, firing: openCodeFiring }), native: reviewedNative, subagentGrader: subagentUnmeasured,
         mcpToolRestriction: noMcpToolRestriction,
         // OpenCode 1.19.5 delivered session.created to a project plugin beside a misspelled hook that
         // never ran, but its model call failed, so no plugin hook was shown to put text in the agent's context.
@@ -115,7 +128,7 @@ export const HARNESS_REGISTRY = Object.freeze([
         rulesyncFeatures: completeRulesyncFeatures,
         // Rules overlays only: cockpit's own instructions reach Cursor through the root AGENTS.md.
         outputs: Object.freeze({ instruction: '.cursor/rules', skills: '.cursor/skills', mcp: '.cursor/mcp.json', permissions: Object.freeze(['.cursor/cli.json']) }),
-        guard: noGuardAdapter, native: generatedNative, sessionStart: noSessionStart('cockpit generates no hook for this tool'),
+        guard: noGuardAdapter, native: generatedNative, sessionStart: noSessionStart('cockpit generates no hook for this tool'), subagentGrader: subagentUnmeasured,
         mcpToolRestriction: noMcpToolRestriction,
         remoteMcp: noRemoteMcp, servedCheckoutGrant: noServedGrant,
     }),
@@ -123,7 +136,7 @@ export const HARNESS_REGISTRY = Object.freeze([
         target: 'grokcli', type: 'agent' as const, displayName: 'Grok Build', rulesyncTarget: 'grokcli',
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.grok/skills', mcp: '.grok/config.toml', permissions: Object.freeze(['.grok/config.toml']) }),
-        guard: noGuardAdapter, native: generatedNative, sessionStart: noSessionStart('cockpit generates no hook for this tool'),
+        guard: noGuardAdapter, native: generatedNative, sessionStart: noSessionStart('cockpit generates no hook for this tool'), subagentGrader: subagentUnmeasured,
         mcpToolRestriction: noMcpToolRestriction,
         remoteMcp: noRemoteMcp, servedCheckoutGrant: noServedGrant,
     }),

@@ -90,6 +90,19 @@ started it, even where it lives outside this root.
    - **The non-local hosts** for `guards`: the database and live vendor API hosts of every
      production, staging or shared environment. Env templates give variable names only; each host
      comes from the person.
+   - **How grading runs** for `work.grading`. Offer the person the choices in the *How grading can run*
+     section of `./node_modules/@b00dea/cockpit/docs/work-and-browser.md`, with init's proposal and
+     its reason: `independent` with two or more listed tools on `PATH`, so each grades the other's
+     work; `independent` as a separate run with one, with a warning where the running tool is detected;
+     `checks` with none. The grader is optional: `off` is reasonable when tracking matters but grading
+     is not wanted. A tool without subagents, or a sandbox that blocks a nested CLI, changes the
+     path and not the rule: list another tool, or let the person choose `checks`, `self` or `off`,
+     and never pick something weaker yourself without marking it.
+   - **How much the agent decides.** Offer the person the three columns of the table in *Who
+     decides* in `./node_modules/@b00dea/cockpit/docs/safety-and-autonomy.md`: the shipped defaults,
+     a stricter setting, or the *Fully agentic setup*, which hands every process gate to the agent and
+     keeps every guardrail. The `[autonomy]` and `[work.gates]` fields are theirs to write: never
+     write or loosen one yourself.
    - **Environment access.** Inspect filenames and declared scripts without opening plaintext
      dotenv or credential files. If a repository has dotenv files or templates, follow **Secret
      handling** even when `.env.schema` is absent. Reuse an existing Varlock setup; otherwise
@@ -105,8 +118,11 @@ started it, even where it lives outside this root.
    chose it, and `doctor` reports `DECLARATION_UNCONFIRMED` until it is confirmed (step 7). Mark a
    field with `confirmedBy = "agent"` as `"derived"` instead, with no value needed: init answers it
    with what it read, refuses one that differs (`DOCUMENT_CONFIGURATION_ANSWER_NOT_DERIVED`), and
-   records the file it came from. An unmarked answer is recorded as the person's. Done when the file holds every answer and marks each one you
-   chose.
+   records the file it came from. An unmarked answer is recorded as the person's, except a trust
+   decision (`sibling`, `environment.install_policies`, `environment.posture`, `testing`, `guards`,
+   `work.grading`): the file cannot show a person made it, so init writes it under `unconfirmed`
+   whatever the file says, and the stronger default holds until a person confirms it (step 7).
+   Done when the file holds every answer and marks each one you chose.
 5. **Accept.** Show the person the answers file and the preview digest, then rerun with
    `--accept-preview <previewSha256> --answers <file>`. The run stops at `configuration.defaults`:
    once the person has read the values the draft in `result.question.document` lists under
@@ -163,8 +179,15 @@ started it, even where it lives outside this root.
      "agent"`, or hand it to the person, before confirming the next one. A refusal
      (`CONFIRM_OBSERVATION_FAILED`) names what the observation saw: fix that, or the value, and
      confirm again. Never delete an `unconfirmed` entry by hand: `CONFIRM_PERSON_REQUIRED` marks the
-     answers only a person confirms (the trust decisions, `cockpit.name`, `estate.runnable`,
-     `environment.test_data`), so list them in your report with their values.
+     answers only a person confirms (the trust decisions, `work.grading` among them, `cockpit.name`,
+     `estate.runnable`, `environment.test_data`), so list them in your report with their values and
+     tell the person to confirm each: delete its entry, then run
+     `./node_modules/.bin/cockpit sync --config cockpit.toml --interactive` in a terminal outside the
+     agent. Until then grading runs as `independent` and the guard admits no install policy's commands.
+     Where `[autonomy] confirm_answers = "agent"`, confirm `cockpit.name`, `estate.runnable` and
+     `environment.test_data` yourself instead, as in
+     `./node_modules/.bin/cockpit confirm cockpit.name --config cockpit.toml --json`; the record says
+     you decided them.
    Done when `doctor` reports no required gap and every other gap is cleared or reported.
 8. **Put product changes where the person reviews them.** A Dockerfile, Compose file or
    `.env.schema` the product needs goes on a new branch in that sibling's checkout: start the branch

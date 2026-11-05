@@ -15,7 +15,7 @@ import { lifecycleHistoryAddress, transactState } from './state.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { createHealthCommandAdapters } from './health-composition.js'
 import { observeGeneratedApplicationSurfaces } from './generated-application/surface-observation.js'
-import { syncGeneratedEnvironment } from './generated-application/sync.js'
+import { syncGeneratedEnvironment, syncTeamGeneratedEnvironment } from './generated-application/sync.js'
 import { createHealthCompositionFixture } from '../../test-support/health-composition-fixture.js'
 
 const run = promisify(execFile)
@@ -324,6 +324,31 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         expect(claudeOnly.diagnostics.map(({ code }) => code)).not.toContain('CODEX_HOOK_UNTRUSTED')
     })
 
+    it('reports the root-checkout discovery mismatch from both doctor readiness and check', async () => {
+        const candidate = await fixture({ unseeded: true })
+        const linked = join(candidate.root, 'linked')
+        await run('git', ['-C', candidate.checkout, 'worktree', 'add', '--quiet', '--detach', linked])
+        const configPath = join(linked, 'cockpit.toml')
+        await writeFile(configPath, (await readFile(configPath, 'utf8')).split('[environment]')[0]!)
+        await mkdir(join(linked, 'siblings/api'), { recursive: true })
+        await mkdir(join(candidate.home, '.codex'))
+        expect(await syncTeamGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete', status: 0 })
+        const env = { PATH: '/usr/bin:/bin', HOME: candidate.home, NO_UPDATE_NOTIFIER: '1' }
+        for (const command of ['doctor', 'check']) {
+            let stdout = ''
+            const status = await runCli([command, '--config', configPath, '--json'], {
+                stdout: { write: text => ((stdout += text), true) }, stderr: { write: () => true },
+            }, {}, { env })
+            expect(status, stdout).toBe(0)
+            const report = JSON.parse(stdout)
+            expect(report.diagnostics).toContainEqual(expect.objectContaining({ code: 'CODEX_HOOK_SOURCE_MISMATCH',
+                message: expect.stringContaining(join(candidate.checkout, '.codex/hooks.json')) }))
+            if (command === 'doctor') expect(report.result.readiness.gaps).toContainEqual(expect.objectContaining({
+                id: 'codex-hook-trusted', findings: expect.arrayContaining([expect.objectContaining({ code: 'CODEX_HOOK_SOURCE_MISMATCH' })]),
+            }))
+        }
+    })
+
     it('gives preflight the observation path doctor has, and says why when it cannot select Git', async () => {
         const candidate = await fixture({ configuredRuntime: true, unseeded: true })
         const preflight = async (PATH: string) => runPreflight({ configPath: candidate.configPath }, createHealthCommandAdapters({
@@ -362,13 +387,14 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
             message: expect.stringContaining('an empty entry is the working directory') }))
     })
 
-    it('warns from doctor when the cockpit has work orders but no evaluator work.evaluators lists is on PATH, and says how each order closed', async () => {
+    it('warns from doctor once the cockpit has work orders or chose its grading, when no evaluator work.evaluators lists is on PATH, and says how each order closed', async () => {
         const candidate = await fixture({ configuredRuntime: true, unseeded: true })
         const doctor = async () => runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({
             configPath: candidate.configPath, env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home }, timeoutMs: 5_000,
         }, executeProbe))
-        const warning = expect.objectContaining({ severity: 'warning', code: 'EVALUATOR_UNAVAILABLE', target: 'workorders' })
+        const warning = expect.objectContaining({ severity: 'warning', code: 'EVALUATOR_UNAVAILABLE', target: 'work.grading' })
 
+        // On the default mode with no work orders, nothing would run an evaluator yet.
         expect((await doctor()).diagnostics).not.toContainEqual(warning)
         await mkdir(join(candidate.checkout, 'workorders'))
         expect((await doctor()).diagnostics).toContainEqual(warning)
@@ -401,6 +427,26 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
             amendments: [], acknowledgements: [], attempts: 0, notes: [], closure: { at, by: 'agent', how: 'checks-passed' } }))
         expect((await doctor()).diagnostics).toContainEqual(expect.objectContaining({ severity: 'info', code: 'WORK_ORDER_CLOSED',
             target: 'workorders/WO-1.md', message: 'WO-1 closed as checks-passed, signed off by agent' }))
+    })
+
+    it('reports whether the configured grading can run here, and says what it could not observe', async () => {
+        const doctorWith = async (work: string, onPath: boolean) => {
+            const candidate = await fixture({ configuredRuntime: true, unseeded: true })
+            await writeFile(candidate.configPath, `${await readFile(candidate.configPath, 'utf8')}\n${work}\n`)
+            if (onPath) await writeFile(join(candidate.root, 'claude'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+            const report = await runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({
+                configPath: candidate.configPath, env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home }, timeoutMs: 5_000 }, executeProbe))
+            return report.diagnostics.filter(row => row.target === 'work.grading')
+        }
+        for (const grading of ['checks', 'self', 'off']) expect(await doctorWith(`[work]\ngrading = "${grading}"`, false), grading).toEqual([])
+        const subagent = '[work]\ngrading = "subagent"\nevaluators = ["claudecode"]'
+        expect(await doctorWith(subagent, true)).toEqual([expect.objectContaining({ severity: 'info', code: 'SUBAGENT_AVAILABILITY_UNOBSERVED',
+            message: expect.stringContaining('cannot observe ahead of time whether the working agent can spawn a subagent, so this was not checked') })])
+        expect(await doctorWith(subagent, false)).toEqual([expect.objectContaining({ severity: 'warning', code: 'EVALUATOR_UNAVAILABLE',
+            message: expect.stringMatching(/no stronger path if the working agent cannot spawn a subagent, which cockpit cannot observe ahead of time, because .*Claude Code \(claude\) is not on PATH/) })])
+        const rows = ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'].map(feature => `{ feature = "${feature}", state = "unavailable", measured_on = "2026-09-26", reason = "The harness has no such mechanism" }`).join(', ')
+        expect(await doctorWith(`${subagent}\n\n[surfaces]\nharnesses = [{ name = "team-tool", capabilities = [${rows}] }]`, true)).toEqual([expect.objectContaining({
+            severity: 'warning', code: 'EVALUATOR_UNAVAILABLE', message: expect.stringContaining('cockpit generates none for team-tool'), fix: expect.stringContaining('[work] grading = "independent"') })])
     })
 
     it('preserves a lifecycle owner refusal before observing Docker', async () => {

@@ -701,6 +701,7 @@ Reads `cockpit.toml` from `--config`.
 | `--work-order` | string | unset |
 | `--verdict` | string | unset |
 | `--note` | string | unset |
+| `--from-subagent` | boolean | `false` |
 | `--evaluator` | string | unset |
 
 | Exit | Meaning |

@@ -106,10 +106,21 @@ describe('the compose-first and docs-only example cockpits', () => {
         return root
     }
 
+    // One sync, then a private copy for each test: these tests edit what they read, and a sync costs
+    // far more than copying its result. The tracked output is the same at any path, but the guard
+    // identity under .cockpit/local names the directory, device and inode it was synced in, so a
+    // copy would run guards bound to the template. Each copy drops it, as a clone has none.
+    let syncedTemplate: string | undefined
     function syncedComposeFirst(name: string) {
-        const root = copyPlainExample('compose-first', name)
-        const sync = run(root, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json'])
-        expect(sync.status, `${sync.stdout}\n${sync.stderr}`).toBe(0)
+        if (syncedTemplate === undefined) {
+            const template = copyPlainExample('compose-first', 'compose-first-synced-template')
+            const sync = run(template, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json'])
+            expect(sync.status, `${sync.stdout}\n${sync.stderr}`).toBe(0)
+            syncedTemplate = template
+        }
+        const root = join(scratch, name)
+        cpSync(syncedTemplate, root, { recursive: true })
+        rmSync(join(root, '.cockpit/local'), { recursive: true })
         return root
     }
 

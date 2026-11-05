@@ -1131,7 +1131,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
     })
 
     it('refuses an up after a runtime change with one recovery that removes the old stack and starts the new one', async () => {
-        const first = await runStackScenario()
+        const first = await runStackScenario({ synced: true })
         expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
         const input = {
             configPath: first.candidate.configPath,
@@ -1177,7 +1177,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
     })
 
     it('refuses a rename while a stack is recorded under the old name until down runs under it, then syncs the rename', async () => {
-        const first = await runStackScenario()
+        const first = await runStackScenario({ synced: true })
         expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
         const input = {
             configPath: first.candidate.configPath,

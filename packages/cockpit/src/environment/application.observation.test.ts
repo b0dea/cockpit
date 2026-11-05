@@ -244,6 +244,10 @@ describe('observation application runners', () => {
                 // The agent confirms what an observation verifies; a trust decision stays a person's.
                 fix: 'run npx --no cockpit confirm environment.machine --config <your cockpit.toml>, which confirms environment.machine only if the container runtime measured on this machine meets the declared memory, CPU and free-disk floor; '
                     + 'a person confirms guards with whoever owns the product, corrects cockpit.toml if a value is wrong, deletes its entry from unconfirmed, then runs npx --no cockpit sync --config <your cockpit.toml> in a terminal outside the agent' }])
+            // A trust answer that waits for a person is held at the stronger default meanwhile, and doctor says so.
+            expect(await doctorFor('unconfirmed = ["work.grading"]\n[work]\ngrading = "off"\n')).toEqual([expect.objectContaining({
+                message: expect.stringMatching(/; awaiting confirmation, work\.grading is held at independent rather than the declared off$/),
+                fix: expect.stringContaining('a person confirms work.grading with whoever owns the product') })])
             expect(await doctorFor('')).toEqual([])
             // A policy the last sync recorded stronger than cockpit.toml now declares is reported, not silently weaker.
             mkdirSync(join(directory, '.cockpit'))

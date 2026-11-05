@@ -424,6 +424,8 @@ describe('public estate observation', () => {
         pending = await draftFromEstate({ root: canonical, configuration })
         configuration.answers.push(answerQuestion(pending.question!, guardHosts))
         pending = await draftFromEstate({ root: canonical, configuration })
+        configuration.answers.push(answerQuestion(pending.question!, 'independent'))
+        pending = await draftFromEstate({ root: canonical, configuration })
         configuration.answers.push(answerQuestion(pending.question!, {
             confirmed: true, sha256: pending.question!.expectedSha256,
         }))
@@ -675,15 +677,19 @@ describe('operator-confirmed document completion', () => {
             ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer],
         } })
         const guardAnswer = answer(guards.question!, guardHosts)
-        const defaults = await draftFromRegistry({ ...input, configuration: {
+        const gradingDraft = await draftFromRegistry({ ...input, configuration: {
             ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer],
+        } })
+        const gradingAnswer = answer(gradingDraft.question!, 'independent')
+        const defaults = await draftFromRegistry({ ...input, configuration: {
+            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer],
         } })
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: {
             field: 'configuration.defaults', expectedSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         } })
         expect(defaults.diagnostics.some(item => item.code === 'DOCUMENT_DEFAULT')).toBe(true)
         const complete = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, confirmDefaults(defaults.question!)],
+            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer, confirmDefaults(defaults.question!)],
         } })
 
         expect(complete).toMatchObject({ kind: 'complete', status: 0, question: null })
@@ -730,13 +736,16 @@ describe('operator-confirmed document completion', () => {
         const guards = await draftFromRegistry({ ...input, configuration: {
             ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, composeAnswer, machineAnswer, postureAnswer, testingAnswer] } })
         const guardAnswer = answer(guards.question!, guardHosts)
-        const defaults = await draftFromRegistry({ ...input, configuration: {
+        const gradingDraft = await draftFromRegistry({ ...input, configuration: {
             ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, composeAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer] } })
+        const gradingAnswer = answer(gradingDraft.question!, 'independent')
+        const defaults = await draftFromRegistry({ ...input, configuration: {
+            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, composeAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer] } })
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
         expect(defaults.artifact).not.toContain('# [default] environment.compose_files')
         expect(defaults.artifact).toContain('# [default] environment.resettable_volumes = []')
         const complete = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, composeAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, confirmDefaults(defaults.question!)] } })
+            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, composeAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer, confirmDefaults(defaults.question!)] } })
         expect(complete).toMatchObject({ kind: 'complete', status: 0 })
         const document = parseToml(complete.artifact!) as { environment: { compose_files: string[]; machine?: unknown } }
         expect(document.environment.compose_files).toEqual(['compose.yml'])
@@ -750,7 +759,7 @@ describe('operator-confirmed document completion', () => {
         const declaredTesting = { stages: [{ id: 'app-test', command: ['make', 'test'], requires_stack: false }],
             gates: [{ id: 'app-full', tier: 'full', stages: ['app-test'], changes: 'Any behavior' }] }
         const throughTesting = (value: unknown) => [nameAnswer, portAnswer, policyAnswer, composeAnswer, machineAnswer, postureAnswer,
-            answer(testingDraft.question!, value), guardAnswer]
+            answer(testingDraft.question!, value), guardAnswer, gradingAnswer]
         expect(await draftFromRegistry({ ...input, configuration: { ...configuration, answers: throughTesting({ stages: [] }) } })).toMatchObject({
             kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID', message: expect.stringContaining('"none" or a [testing] table') }] })
         const testedDefaults = await draftFromRegistry({ ...input, configuration: { ...configuration, answers: throughTesting(declaredTesting) } })
@@ -779,6 +788,9 @@ describe('operator-confirmed document completion', () => {
         pending = await draftFromRegistry({ ...input, configuration })
         expect(pending.question).toMatchObject({ field: 'guards' })
         configuration.answers.push(answer(pending.question!, guardHosts))
+        pending = await draftFromRegistry({ ...input, configuration })
+        expect(pending.question).toMatchObject({ field: 'work.grading' })
+        configuration.answers.push(answer(pending.question!, 'independent'))
         pending = await draftFromRegistry({ ...input, configuration })
         configuration.answers.push(confirmDefaults(pending.question!))
         const complete = await draftFromRegistry({ ...input, configuration })
@@ -855,8 +867,12 @@ describe('operator-confirmed document completion', () => {
             ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer],
         } })
         const guardAnswer = answer(guards.question!, guardHosts)
-        const defaults = await draftFromRegistry({ ...base, configuration: {
+        const gradingDraft = await draftFromRegistry({ ...base, configuration: {
             ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer],
+        } })
+        const gradingAnswer = answer(gradingDraft.question!, 'independent')
+        const defaults = await draftFromRegistry({ ...base, configuration: {
+            ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer],
         } })
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
         // There is no registry here, so no default may be explained by one.
@@ -864,7 +880,7 @@ describe('operator-confirmed document completion', () => {
         expect(defaults.artifact).not.toMatch(/registry dialect|source registry/)
         const complete = await draftFromRegistry({ ...base, configuration: {
             ...base.configuration,
-            answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer,
+            answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer,
                 confirmDefaults(defaults.question!)],
         } })
         expect(complete).toMatchObject({ kind: 'complete', status: 0 })
@@ -876,14 +892,14 @@ describe('operator-confirmed document completion', () => {
         const unresolvedDefaults = await draftFromRegistry({ ...base, configuration: {
             ...base.configuration,
             answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, requiredTestData, composeAnswer, machineAnswer, postureAnswer, testingAnswer,
-                guardAnswer],
+                guardAnswer, gradingAnswer],
         } })
         expect(unresolvedDefaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
         expect(unresolvedDefaults.artifact).not.toContain('# [default] environment.compose_files')
         const unresolved = await draftFromRegistry({ ...base, configuration: {
             ...base.configuration,
             answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, requiredTestData, composeAnswer, machineAnswer, postureAnswer, testingAnswer,
-                guardAnswer, confirmDefaults(unresolvedDefaults.question!)],
+                guardAnswer, gradingAnswer, confirmDefaults(unresolvedDefaults.question!)],
         } })
         expect(unresolved).toMatchObject({ kind: 'complete', status: 0 })
         expect(unresolved.artifact).toContain('# Decision: seeded data: required but unresolved')
@@ -948,8 +964,12 @@ describe('operator-confirmed document completion', () => {
             sourceObservationSha256, answers: [nameAnswer, valid, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer],
         } })
         const guardAnswer = answer(guards.question!, guardHosts)
-        const defaults = await draftFromRegistry({ ...input, configuration: {
+        const gradingDraft = await draftFromRegistry({ ...input, configuration: {
             sourceObservationSha256, answers: [nameAnswer, valid, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer],
+        } })
+        const gradingAnswer = answer(gradingDraft.question!, 'independent')
+        const defaults = await draftFromRegistry({ ...input, configuration: {
+            sourceObservationSha256, answers: [nameAnswer, valid, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer],
         } })
         const cases = [
             [nameAnswer, { ...valid, questionId: `question:${'b'.repeat(64)}` }],
@@ -961,7 +981,7 @@ describe('operator-confirmed document completion', () => {
                 .toMatchObject({ kind: 'refusal', status: 2 })
         }
         expect(await draftFromRegistry({ ...input, configuration: { sourceObservationSha256,
-            answers: [nameAnswer, valid, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, confirmDefaults(defaults.question!), valid] } }))
+            answers: [nameAnswer, valid, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer, confirmDefaults(defaults.question!), valid] } }))
             .toMatchObject({ kind: 'refusal', status: 2,
                 diagnostics: [expect.objectContaining({ code: 'DOCUMENT_CONFIGURATION_ANSWER_EXTRA' })] })
 
@@ -1000,13 +1020,17 @@ describe('operator-confirmed document completion', () => {
             sourceObservationSha256, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer],
         } })
         const guardAnswer = answer(guards.question!, guardHosts)
-        const defaults = await draftFromRegistry({ ...input, configuration: {
+        const gradingDraft = await draftFromRegistry({ ...input, configuration: {
             sourceObservationSha256, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer],
+        } })
+        const gradingAnswer = answer(gradingDraft.question!, 'independent')
+        const defaults = await draftFromRegistry({ ...input, configuration: {
+            sourceObservationSha256, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer],
         } })
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
         const changed = answer(defaults.question!, { confirmed: true, sha256: 'f'.repeat(64) })
         expect(await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, changed],
+            sourceObservationSha256, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer, changed],
         } })).toMatchObject({ kind: 'refusal', status: 2 })
     })
 
@@ -1018,7 +1042,7 @@ describe('operator-confirmed document completion', () => {
             let pending = await draftFromRegistry({ root: estateRoot, configuration })
             for (const value of ['single-product', generatedConfig.sibling, { APP_HOST_PORT: 4100 },
                 generatedConfig.environment.install_policies, { seeded_data: false, signed_in_users: false },
-                ['compose.yml'], machineFloor, localPosture, 'none', guardHosts]) {
+                ['compose.yml'], machineFloor, localPosture, 'none', guardHosts, 'independent']) {
                 configuration.answers.push(answer(pending.question!, value))
                 pending = await draftFromRegistry({ root: estateRoot, configuration })
             }
@@ -1064,7 +1088,7 @@ describe('operator-confirmed document completion', () => {
         const cockpitRoot = join(parent, 'shop-cockpit')
         let pending = await draftFromEstate({ root: cockpitRoot, estate: siblings, configuration })
         for (const value of ['shop-cockpit', [{ slug: 'shop', dir: 'shop', mount: 'none', acquire: 'none', var: 'SHOP_DIR', purpose: 'The shop' }],
-            {}, { hosted_db_hosts: [], vendor_endpoint_hosts: [] }]) {
+            {}, { hosted_db_hosts: [], vendor_endpoint_hosts: [] }, 'independent']) {
             configuration.answers.push(answer(pending.question!, value))
             pending = await draftFromEstate({ root: cockpitRoot, estate: siblings, configuration })
         }
@@ -1146,6 +1170,8 @@ describe('operator-confirmed document completion', () => {
             answer(pending.question!, { hosted_db_hosts: [] })] } })).toMatchObject({ kind: 'refusal',
             diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID' }] })
         configuration.answers.push(answer(pending.question!, { hosted_db_hosts: [], vendor_endpoint_hosts: [] }))
+        pending = await draftFromRegistry({ root: estateRoot, configuration })
+        configuration.answers.push(answer(pending.question!, 'independent'))
         pending = await draftFromRegistry({ root: estateRoot, configuration })
         expect(pending).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
         expect(pending.diagnostics.map(row => row.target)).not.toContain('guards.hosted_db_hosts')

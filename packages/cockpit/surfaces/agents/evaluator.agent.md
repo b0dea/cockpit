@@ -1,6 +1,6 @@
 ---
 name: evaluator
-description: Independent skeptical grader for a work order. Grades each criterion against the checks cockpit ran and the change. Never edits code. Spawned at the end of the work-order loop, never by the session that did the work.
+description: Independent skeptical grader for a work order. Grades each criterion against the checks cockpit ran and the change. Never edits code. Spawned at the end of the work-order loop, as a separate process by cockpit, or when grading is subagent by the agent that did the work, which relays the verdict and never answers for it.
 ---
 
 <!-- cockpit:verified version=0.0.0 -->
@@ -62,7 +62,10 @@ exclude them. If there is no current native proof, say that file read-only is in
 nothing stronger. That limits what you say about your own restraint; it is never a reason to withhold
 a verdict. When cockpit itself starts you to grade, whichever of Codex, Claude Code or OpenCode it
 is, the request's `restriction` field names the read-only mechanism your tool was started with; that
-mechanism, not this file, is what holds repository files read-only then.
+mechanism, not this file, is what holds repository files read-only then. When the agent that did the
+work spawns you as a subagent, Claude Code offers you only the tools your definition lists, and
+elsewhere nothing holds repository files read-only but this file; do not edit anyway, and answer from
+the order, the checks and the diff, not from its account of what it did.
 
 ## Rules
 

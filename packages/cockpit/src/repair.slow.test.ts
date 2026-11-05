@@ -1,9 +1,11 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { loadAutonomyPolicy, observeConfigSource } from './config/load.js'
 import { writeRecordedPolicy } from './autonomy.js'
+import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, writeGuardLocalIdentity } from './guards/local-identity.js'
 import { executeProbe } from './environment-exec/execute.js'
 import { checkGeneratedEnvironment, prepareGeneratedEnvironmentCurrentness } from './environment/generated-application/check.js'
 import { applyGeneratedEnvironmentRepair, syncGeneratedEnvironment } from './environment/generated-application/sync.js'
@@ -22,23 +24,47 @@ const overridePath = 'compose.cockpit.yml'
 const surfacePath = 'AGENTS.md'
 
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
+afterAll(async () => { if (syncedTemplate) await rm((await syncedTemplate).root, { recursive: true, force: true }) })
 
-async function consumer() {
-    const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-repair-')))
-    roots.push(root)
+const image = `node@sha256:${'8'.repeat(64)}`
+let syncedTemplate: Promise<{ readonly root: string; readonly paths: readonly string[] }> | undefined
+
+async function syncTemplate() {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-repair-template-')))
     const configPath = join(root, 'cockpit.toml')
     await mkdir(join(root, 'app'))
     await writeFile(configPath, `${(await readFile(resolve('fixtures/registries/generated-environment.toml'), 'utf8')).replace(
         'name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."',
     )}\n[environment]\ncompose_files = ["compose.yml"]\n`)
-    const image = `node@sha256:${'8'.repeat(64)}`
     await writeFile(join(root, 'compose.yml'), `services:\n  first:\n    image: ${image}\n    volumes: ["./app:/app"]\n`)
     const synced = await syncGeneratedEnvironment({ configPath }, { now: () => firstInstant })
     expect(synced).toMatchObject({ kind: 'complete' })
     if (synced.kind !== 'complete') throw new Error('Synthetic repair fixture failed')
+    return { root, paths: synced.result.paths }
+}
+
+// One sync, then a private copy for each test: every test corrupts what it was given, and copying
+// costs far less than the dozens of child processes a sync runs. The guard identity under
+// .cockpit/local names the directory, device and inode sync ran in, so each copy gets its own
+// through the write sync makes, with the same Node and cockpit: what a sync of the copy records.
+async function consumer() {
+    const template = await (syncedTemplate ??= syncTemplate())
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-repair-')))
+    roots.push(root)
+    await cp(template.root, root, { recursive: true })
+    const configPath = join(root, 'cockpit.toml')
+    const identityPath = join(root, GUARD_LOCAL_PATHS.identity)
+    const templateIdentity = parseGuardLocalIdentity(await readFile(identityPath, 'utf8'))
+    if (!templateIdentity) throw new Error('Synthetic repair fixture has no guard identity')
+    const configBytes = await readFile(configPath)
+    const [rootStatus, configStatus] = await Promise.all([lstat(root), lstat(configPath)])
+    expect(await writeGuardLocalIdentity(root, { ...templateIdentity, root, rootDevice: String(rootStatus.dev), rootInode: String(rootStatus.ino),
+        configPath, configSha256: createHash('sha256').update(configBytes).digest('hex'),
+        configDevice: String(configStatus.dev), configInode: String(configStatus.ino) }, configBytes.toString('utf8'))).toEqual({ kind: 'complete' })
+    expect(parseGuardLocalIdentity(await readFile(identityPath, 'utf8'))).toMatchObject({ root, rootInode: String(rootStatus.ino), configPath })
     // What Compose reports for compose.yml, for a check run against stubComposeTopology.
     const services = { first: { image, volumes: [{ type: 'bind', source: join(root, 'app'), target: '/app' }] } }
-    return { root, configPath, paths: [...synced.result.paths, ledgerPath], services }
+    return { root, configPath, paths: [...template.paths, ledgerPath], services }
 }
 
 // A service added to compose.yml changes the ownership override the next sync writes.

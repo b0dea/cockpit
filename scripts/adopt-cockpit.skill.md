@@ -38,18 +38,26 @@ ask when scope is missing or an exact preview still needs acceptance:
    answer only on the human's word.
 5. Ask the human for the database and live vendor API hosts of every non-local environment
    (production, staging, shared) for the `guards` answer; env templates give variable names only, and once a cockpit exists `npx --no cockpit env keys --config cockpit.toml` lists them.
-6. "Use sensible defaults" covers `init` answers only, never another change inside a product
+6. Offer the human `work.grading` as a real choice with `init`'s proposal and reason: the grader is
+   optional, and `off` is reasonable when tracking matters but grading is not wanted.
+7. "Use sensible defaults" covers `init` answers only, never another change inside a product
    repository: an **AGENTS.md** pointer or a `package.json` change needs explicit product-change
    authorization covering its reviewed scope, which can already have been given. Mark every answer you chose as `"agent-default"` in the answers file's
    `[provenance]` table, and end your report with every default you chose, its field and value.
+8. Every trust answer the answers file supplies (`sibling`, `environment.install_policies`,
+   `environment.posture`, `testing`, `guards`, `work.grading`) lands under `unconfirmed` whatever the
+   file says, and the stronger default holds until a person confirms it. End your report by telling
+   the human to confirm each: delete its entry from `unconfirmed`, then run
+   `npx --no cockpit sync --config cockpit.toml --interactive` in a terminal outside the agent
+   (the confirm command refuses these).
 
 ## Install cockpit if it is missing
 
 Done when the exact project-local executable lists the commands.
 
 1. Follow *Install cockpit* in `docs/getting-started.md`, from the same sources as the guide above:
-   an exact dev dependency of the repository, with *Install from source* as the fallback while the
-   package is not on npm. Show the human the manifest and lockfile change before installing.
+   an exact dev dependency of the repository, with *Install from source* as the fallback for an
+   unreleased build. Show the human the manifest and lockfile change before installing.
 2. For several repositories, the human may prefer a cockpit directory beside them; that is their
    call. Leave the product repositories untouched unless the human agrees.
 3. Verify without permitting an implicit download:

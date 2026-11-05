@@ -1,13 +1,7 @@
 # Troubleshooting
 
-This page is for anyone holding a cockpit diagnostic code: what it means and what to do. Every
-diagnostic message names what failed and how to fix it; the sections below cover the codes that
-need more than that, and [Codes with a fixed remedy](#codes-with-a-fixed-remedy) at the end lists
-every code whose remedy never changes.
-
-Human output spells common refusals as **What failed**, **Why it matters** and **Fix**. Use
-`--json` only when a program needs the machine-readable envelope. Each command's flags are in its
-help, for example `cockpit sync --help`.
+Every diagnostic message names what failed and how to fix it. The sections below cover the codes that need more, and
+[Codes with a fixed remedy](#codes-with-a-fixed-remedy) lists every code whose remedy never changes. Each command's flags are in its help.
 
 ## Common refusal guidance
 
@@ -31,10 +25,8 @@ help, for example `cockpit sync --help`.
 
 ## GENERATED_ARTIFACT_DRIFT
 
-**Cause.** An owned whole file, symlink target or shared region differs from what the environment
-and surface declarations and their sources now produce. As
-[Check and sync](environment.md#check-and-sync) describes, `check` reports the mismatch without
-changing any owned file.
+**Cause.** An owned whole file, symlink target or shared region differs from what the declarations and
+their sources now produce ([Check and sync](environment.md#check-and-sync)).
 
 **Remedy.** Inspect the target named in the diagnostic, then run:
 
@@ -65,6 +57,14 @@ diagnostic disappear.
 
 `REGISTRY_INPUT_INVALID` means a declared sibling row cannot produce one valid registry. Correct
 the named row or its derived MCP source, then retry the preview.
+
+### Codex hooks in linked worktrees
+
+`CODEX_HOOK_SOURCE_MISMATCH` means Codex loads this linked worktree's hooks from the original
+checkout, where the generated definitions are missing or differ; trusting the worktree's own file
+cannot fix it. `CODEX_HOOK_UNTRUSTED` names the hook source whose trust is missing, disabled or
+outdated, or the Git or file-access failure that kept discovery from being verified, which comes
+first. [Trust the Codex hook](harness-surfaces.md#trust-the-codex-hook) covers both.
 
 ### Merge, ownership, and generation
 
@@ -115,8 +115,7 @@ before removing that directory, then retry.
 `SURFACE_GENERATOR_TRUST_WARNING` is a warning from a `sync` that writes `.claude/settings.json`
 granting something: the sibling directories Claude Code may edit, the MCP servers it approves, and
 the command patterns it runs without asking. It names each grant; review them before applying the
-sync. A sync that leaves the file unchanged, and `check`, do not repeat it. A warning does not mean
-the harness enforces anything.
+sync. A warning does not mean the harness enforces anything.
 
 ### MCP and restrictions
 
@@ -127,8 +126,10 @@ reference or `headersHelper` named by the message.
 server disabled because `[mcp.approved]` has no entry for it, or its declaration changed since it
 was approved; a person, only after reviewing its command, arguments, working directory, environment
 names and sources, sets its name to the sha256 in the message under `[mcp.approved]` and runs `sync`.
-While `[autonomy] mcp_approve` is `person`, the default, the guard refuses an agent's edit of `[mcp]`. `MCP_APPROVAL_UNKNOWN` means the allowlist names no
-declaration. `MCP_EXECUTABLE_UNAVAILABLE` comes from the generated wrapper when its declared
+While `[autonomy] mcp_approve` is `person`, the default, the guard refuses an agent adding or
+changing an approval or widening tool access; an agent may remove an unchanged approval and add or
+narrow an exact allowlist under `[mcp.allowed_tools]`, which grant nothing new.
+`MCP_APPROVAL_UNKNOWN` means the allowlist names no declaration. `MCP_EXECUTABLE_UNAVAILABLE` comes from the generated wrapper when its declared
 executable is absent or not executable; restore that executable rather than changing the wrapper.
 `MCP_TRANSPORT_UNAVAILABLE` names a remote server left out of the tools that cannot carry its
 credential, such as OpenCode for a server with a `headersHelper`; see
@@ -240,7 +241,8 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `BROWSER_ROUTE_FINDINGS` | this run asked for a clean route (--fail-on-findings). Read result.receipt.surfaces[].diagnostics, including excerpt.messages where present: fix the product for each console error, uncaught page error and failed request that matters, then rerun npx --no cockpit browser drive --config <your cockpit.toml> --route <name> --fail-on-findings; third-party traffic never counts |
 | `CLAIM_CO_TENANT` | [see above](#common-refusal-guidance) |
 | `COCKPIT_REVISION_UNSTAMPED` | install a released @b00dea/cockpit when the resolved data must name the exact cockpit source commit |
-| `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
+| `CODEX_HOOK_SOURCE_MISMATCH` | have a person review and roll out the matching generated hooks in the original checkout through its normal change process; cockpit does not copy hooks or change that checkout; rerun npx --no cockpit doctor --config <your cockpit.toml>, then review and trust the reported source in interactive Codex; [see above](#codex-hooks-in-linked-worktrees) |
+| `CODEX_HOOK_UNTRUSTED` | if the hook source could not be verified, resolve the reported discovery failure first; otherwise a person runs codex -C <hook source directory> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml>; [see above](#codex-hooks-in-linked-worktrees) |
 | `COMPOSE_FILE_UNREADABLE` | make environment.compose_files name a readable Compose file inside the cockpit root, then run npx --no cockpit check --config <your cockpit.toml> |
 | `CONFIG_ENCODING_INVALID` | save the configuration as UTF-8, then retry |
 | `DATA_SEED_UNAVAILABLE` | make sure the Docker daemon this stack runs on answers docker volume ls, then rerun npx --no cockpit up --config <your cockpit.toml> |
@@ -261,6 +263,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `ENV_SCHEMA_UNCOMMITTED` | commit the schema to have it validated, or have a person review it and run the load this message names |
 | `ENV_SCHEMA_UNDECLARED` | consider adopting Varlock: install it if needed, then ask a person to run VARLOCK_TELEMETRY_DISABLED=true varlock init in this directory and review .env.schema without copying secret values into it |
 | `EVALUATOR_FELL_BACK_TO_RUNNING_TOOL` | install and sign in to the passed-over tool so another tool grades the work, or name the grader you accept with --evaluator <tool> |
+| `EVALUATOR_IS_RUNNING_TOOL` | list a second tool in work.evaluators so another tool grades the work, or accept this as the grade you chose |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [see above](#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [see above](#generated_artifact_drift) |
 | `GENERATED_ARTIFACT_MISSING` | run npx --no cockpit sync --config <your cockpit.toml> |
@@ -319,8 +322,8 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SETUP_REMOTE_MISMATCH` | [see above](#common-refusal-guidance) |
 | `SETUP_REMOTE_UNRESOLVABLE` | make the remote path readable, or declare the remote as a URL or an absolute path to an existing repository, then run npx --no cockpit setup --config <your cockpit.toml> again |
 | `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
-| `SIBLING_INSTRUCTIONS_AGENTS_ONLY` | run npx --no cockpit setup --config <your cockpit.toml> to see the CLAUDE.md it proposes (one line, @AGENTS.md); once a person approves it, run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-files |
-| `SIBLING_INSTRUCTIONS_CLAUDE_ONLY` | run npx --no cockpit setup --config <your cockpit.toml> to see the move it proposes (CLAUDE.md copied byte for byte to AGENTS.md, CLAUDE.md replaced by @AGENTS.md) and, once a person approves it, rerun it with --write-instruction-files; when CLAUDE.md imports other files with @, setup proposes nothing and a person moves the shared instructions into AGENTS.md by hand |
+| `SIBLING_INSTRUCTIONS_AGENTS_ONLY` | run npx --no cockpit setup --config <your cockpit.toml> to see the CLAUDE.md it proposes (one line, @AGENTS.md); once a person approves it, or without one where [autonomy] instruction_files = "agent", run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-files |
+| `SIBLING_INSTRUCTIONS_CLAUDE_ONLY` | run npx --no cockpit setup --config <your cockpit.toml> to see the move it proposes (CLAUDE.md copied byte for byte to AGENTS.md, CLAUDE.md replaced by @AGENTS.md) and, once a person approves it, or without one where [autonomy] instruction_files = "agent", rerun it with --write-instruction-files; when CLAUDE.md imports other files with @, setup proposes nothing and a person moves the shared instructions into AGENTS.md by hand |
 | `SIBLING_INSTRUCTIONS_MISSING` | a person writes AGENTS.md with what an agent must know to work in the repository, then runs npx --no cockpit setup --config <your cockpit.toml> --write-instruction-files to add the CLAUDE.md that imports it |
 | `SIBLING_INSTRUCTIONS_TOOL_ONLY` | a person moves the instructions every tool needs from those files into AGENTS.md, and keeps only settings specific to one tool where they are |
 | `SIBLING_INSTRUCTIONS_UNLINKED` | a person merges the instructions every tool needs into AGENTS.md, then makes CLAUDE.md a line reading @AGENTS.md followed only by instructions that apply to Claude Code alone |

@@ -6,6 +6,7 @@ import { renderBrowserSurfaces } from '../../browser/surfaces.js'
 import { resolveBrowserRuntime } from '../../browser/runtime.js'
 import { resolveObservationPostures } from '../posture-observation.js'
 import { SURFACE_FEATURES, SURFACE_TARGETS, type RenderedSurfaceFile, type SurfaceSourceFile, type SurfaceTarget } from '../../surfaces/contract.js'
+import { subagentGradingProblem } from '../../grading/evaluate.js'
 import { GUARD_SURFACE_TARGETS, harnessFact, isGuardSurfaceTarget, listedSurfaceTargets } from '../../surfaces/harness-registry.js'
 import { mergeAdoptedSurface } from '../../surfaces/adoption.js'
 import { generateSurfaceEstate } from '../../surfaces/generator-adapter.js'
@@ -107,6 +108,9 @@ export async function prepareSurfaces(
     // Only the listed tools are rendered and drift-checked; an unlisted tool's files become stale.
     const tools = listedSurfaceTargets(config.surfaces.tools)
     const guardedTools = GUARD_SURFACE_TARGETS.filter(target => tools.includes(target))
+    // Accepted, this would tell an agent to spawn a definition that was never written.
+    const noDefinition = config.work.grading === 'subagent' ? subagentGradingProblem(config.surfaces.harnesses) : undefined
+    if (noDefinition) return refuse(noDefinition.code, noDefinition.message, 'work.grading', noDefinition.fix)
     // Generated files are one per checkout, so they follow the declared default profile set; a
     // profile one run adds with `up --profile` reaches the stack, not the agents' instructions.
     const selected = mounted(config, config.environment.profiles)
@@ -331,7 +335,9 @@ export async function prepareSurfaces(
         return refuse('SURFACE_INPUT_INVALID', nativeHooks.reason, '.githooks/pre-push')
     }
     const coreAssets = new Map(assets.map(row => [row.path, row] as const))
-    const coreDeclarations = coreSurfaceDeclarations(coreAssets, tools)
+    // The browser server as Claude Code gets it, so the evaluator's tool list admits exactly its tools.
+    const claudeBrowser = browser ? mcp.result.harnesses.find(row => row.target === 'claudecode')?.servers.find(server => server.name === 'playwright') : undefined
+    const coreDeclarations = coreSurfaceDeclarations(coreAssets, tools, claudeBrowser)
     if (!coreDeclarations) return refuse('SURFACE_INPUT_INVALID', 'the shipped core surface declarations could not be read', 'skills/collection.json')
     const shippedSkills = coreDeclarations.filter(declaration => declaration.feature === 'skills').map(declaration => declaration.name)
     const merge = mergeSurfaceDeclarations(coreDeclarations, config.surfaces.overlays)

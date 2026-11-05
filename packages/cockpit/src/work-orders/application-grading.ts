@@ -2,9 +2,10 @@
 // run apply, `work grade` against an order's accepted contract and `grade --criteria` with no order.
 import { posix } from 'node:path'
 
+import type { EffectivePolicy } from '../autonomy.js'
 import { RefusalError } from '../environment/contract.js'
 import type { GradingSubject, Verdict } from '../grading/grade.js'
-import type { Decider } from '../schema.js'
+import { GRADING, isGradeMode, type Decider, type GradeMode, type WorkGrading } from '../schema.js'
 import { runGate } from '../testing/gates.js'
 import { describeWeakening, testWeakeningDigest, type RepositoryWeakening } from '../testing/weakening.js'
 import { scopeMatcher, type AmendmentReview, type WorkOrderCriterion } from './contract.js'
@@ -32,12 +33,26 @@ const unaddressed = (note: string, paths: readonly string[]) => paths.filter(pat
 
 type Weakening = Awaited<ReturnType<WorkApplicationComposition['testWeakening']>>
 const ACKNOWLEDGE = 'npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why this is not a weakening>'
+export interface AcknowledgeRule {
+    /** Who passes `work acknowledge`. */
+    readonly decider: Decider
+    /** Whether a recorded acknowledgement passes test protection now. */
+    readonly counts: (row: Readonly<{ by: Decider }>) => boolean
+}
+// Under checks no model reads the change, so the acknowledgement alone passes test protection, and an
+// agent acknowledging its own weakened tests would pass them unseen. There a person or CI acknowledges
+// whatever [work.gates] says, and an acknowledgement the agent recorded under another mode does not count.
+export function acknowledgeRule(policy: Pick<EffectivePolicy, 'grading' | 'gates'>): AcknowledgeRule {
+    const checks = policy.grading === 'checks'
+    return { decider: checks && policy.gates.acknowledge === 'agent' ? 'person' : policy.gates.acknowledge, counts: row => !checks || row.by !== 'agent' }
+}
 // Tests weakened since the base, judged by rule where no model reads the change. An acknowledgement
 // covers exactly the findings it was recorded for, so any further weakening fails again.
-function protection(weak: Weakening, record: WorkRecord | undefined, gate: Decider) {
+function protection(weak: Weakening, record: WorkRecord | undefined, rule: AcknowledgeRule) {
     const rows = weak.findings.map(describeWeakening)
     const digest = testWeakeningDigest(weak.findings)
-    const acknowledged = weak.findings.length ? record?.acknowledgements.find(row => row.digest === digest) : undefined
+    const acknowledged = weak.findings.length ? record?.acknowledgements.find(row => row.digest === digest && rule.counts(row)) : undefined
+    const gate = rule.decider
     const how = !record ? 'a work order lets it be acknowledged; there is none for this grade'
         : gate === 'person' ? `a person records it with ${ACKNOWLEDGE} --interactive` : gate === 'ci' ? `acknowledge it with ${ACKNOWLEDGE}, which the work verify job confirms in CI`
             : `acknowledge it with ${ACKNOWLEDGE}`
@@ -48,9 +63,10 @@ function protection(weak: Weakening, record: WorkRecord | undefined, gate: Decid
 }
 
 type StandingInput = Readonly<{ docs?: WorkApplicationComposition['docs']; record?: WorkRecord; outOfScope: readonly string[]; weak: Weakening
-    amendments: readonly AmendmentReview[]; acknowledge: Decider }>
+    amendments: readonly AmendmentReview[]; acknowledge: AcknowledgeRule }>
 // A criterion cockpit adds to every grade. Where a model grades, it judges `text` (the evaluator in
-// independent grading, the agent's verdict in self grading). Under checks no model reads the change:
+// independent grading, the agent's verdict in self grading, a verdict the agent relays in subagent
+// grading). Under checks no model reads the change:
 // a criterion with `underChecks` binds there by rule, under that id; the rest stay instructions in the
 // work skill, and scope binds as its own rule, failing on any change outside it.
 interface StandingCriterion {
@@ -122,28 +138,48 @@ export async function testRun(captured: Extract<WorkApplicationRequest, { operat
         if (!observed.has(key)) observed.set(key, composition.testWeakening(base))
         return observed.get(key)!
     }
-    const guards = await Promise.all(open.map(async row => ({ id: row.id, ...protection(await weakeningSince(row.accepted.base), row, composition.policy.gates.acknowledge) })))
+    const guards = await Promise.all(open.map(async row => ({ id: row.id, ...protection(await weakeningSince(row.accepted.base), row, acknowledgeRule(composition.policy)) })))
     const binding = composition.policy.grading === 'checks'
     const testProtection = guards.length ? { comparedWith: guards.map(row => `${row.id}'s base`), orders: guards.map(row => ({ id: row.id, ...row.value })),
-        ...!binding && guards.some(row => row.value.findings.length) ? { note: `under [work] grading = "${composition.policy.grading}" each order's grade judges these findings as ${TESTS_JUSTIFIED}` } : {} }
+        ...!binding && guards.some(row => row.value.findings.length) ? { note: !isGradeMode(composition.policy.grading)
+            ? 'under [work] grading = "off" nothing judges these findings; they are reported only, and test protection in CI is a separate guard'
+            : `under [work] grading = "${composition.policy.grading}" each order's grade judges these findings as ${TESTS_JUSTIFIED}` } : {} }
         : { comparedWith: [], note: 'no open work order records a base commit to compare tests with; accept an order before changing tests' }
     const weakening = binding ? guards.flatMap(row => row.verdict?.verdict === 'unmet' ? [`${row.id}: ${row.verdict.note}`] : []).join(' | ') : ''
     const failure = run.satisfiesGate ? '' : `${run.verdict}: ${run.reasons.join('; ') || 'declared gate was not satisfied'}`
     return !failure && !weakening ? complete(operation, { ...run, testProtection }) : unsatisfied(operation, { ...run, testProtection }, failure, weakening || undefined)
 }
 
+// Under subagent an order's grade either relays a subagent's verdict or, with nothing submitted, runs the
+// separate evaluator, which is stronger, because not every agent can spawn a subagent.
+const SUBAGENT_SUBMISSION = '[work] grading = "subagent": submit the evaluator subagent\'s verdict with --from-subagent, --verdict met|unmet and --note <what it checked>, '
+    + 'or pass none of the three and cockpit runs a separate evaluator process instead'
+function submissionProblem(grading: WorkGrading, request: Extract<WorkRequest, { operation: 'work-grade' }>): string | undefined {
+    const parts = [request.verdict, request.note, request.fromSubagent].filter(row => row !== undefined).length
+    const { submission } = GRADING[grading]
+    if (submission === 'relayed-or-none') return parts === 0 || parts === 3 ? undefined : SUBAGENT_SUBMISSION
+    if (request.fromSubagent) return `--from-subagent applies only under [work] grading = "subagent"; this cockpit grades with ${grading}`
+    if (submission === 'verdict') return request.verdict && request.note ? undefined : `[work] grading = "${grading}": pass --verdict met|unmet and --note <what you checked>`
+    return parts === 0 ? undefined : `--verdict and --note apply only under [work] grading = "self" or "subagent"; this cockpit grades with ${grading}`
+}
+
 export async function gradeOrder(request: Extract<WorkRequest, { operation: 'work-grade' }>, context: WorkContext): Promise<WorkApplicationOutcome> {
     const { composition, operation, policy, store, current, runChecks } = context
+    if (!isGradeMode(policy.grading)) return refusal(operation, `[work] grading = "off": nothing grades an order; close it with npx --no cockpit work signoff --config <your cockpit.toml> --work-order ${request.workOrderId}`)
     const { order, record } = await current(request.workOrderId)
-    if (policy.grading === 'self' ? !request.verdict || !request.note : request.verdict !== undefined || request.note !== undefined) {
-        return refusal(operation, policy.grading === 'self' ? '[work] grading = "self": pass --verdict met|unmet and --note <what you checked>'
-            : `--verdict and --note apply only under [work] grading = "self"; this cockpit grades with ${policy.grading}`)
-    }
+    const problem = submissionProblem(policy.grading, request)
+    if (problem) return refusal(operation, problem)
+    if (request.fromSubagent && record.evaluatorFailed) return refusal(operation,
+        `a separate evaluator already found ${order.id}'s accepted contract unmet, and a relayed verdict cannot replace that, nor after an amendment the agent accepted; `
+        + `fix the work and run work grade with none of --from-subagent, --verdict and --note, or have a person or CI accept an amendment of workorders/${order.id}.md`)
+    // What actually answers, which the record keeps: `subagent` with nothing submitted is the evaluator's grade.
+    const mode: GradeMode = policy.grading === 'subagent' && !request.fromSubagent ? 'independent' : policy.grading
+    const reported = GRADING[mode].submission !== 'none'
     let verdicts: readonly Verdict[]
     let evaluator: NonNullable<WorkRecord['grade']>['evaluator']
     const unchecked = order.criteria.filter(criterion => !criterion.check).map(criterion => criterion.id)
-    if (policy.grading === 'checks' && unchecked.length) return refusal(operation, `[work] grading = "checks" closes an order only when cockpit ran a check for every criterion; ${unchecked.join(', ')} declare none`)
-    const judged = policy.grading !== 'checks'
+    if (mode === 'checks' && unchecked.length) return refusal(operation, `[work] grading = "checks" closes an order only when cockpit ran a check for every criterion; ${unchecked.join(', ')} declare none`)
+    const { judged } = GRADING[mode]
     const taken = judged ? order.criteria.filter(criterion => RESERVED.has(criterion.id)).map(criterion => criterion.id) : []
     if (taken.length) return refusal(operation, `${order.id} names a criterion ${taken.join(', ')}, which cockpit adds to grades itself; rename it in workorders/${order.id}.md`)
     // Checks bind in every mode, so an agent's own `met` never covers a failed check. Changes are read
@@ -154,17 +190,17 @@ export async function gradeOrder(request: Extract<WorkRequest, { operation: 'wor
     const decisionFiles = [composition.docs?.decisions, composition.docs?.decisionsIndex].filter((path): path is string => path !== undefined)
     const inScope = scopeMatcher([...order.scope, ...decisionFiles])
     const outOfScope = changes.map(change => change.path).filter(path => !inScope(path))
-    const guarded = protection(weak, record, policy.gates.acknowledge)
+    const guarded = protection(weak, record, acknowledgeRule(policy))
     const amendments = judged ? amendmentsToReview(record) : []
-    const standingInput: StandingInput = { docs: composition.docs, record, outOfScope, weak, amendments, acknowledge: policy.gates.acknowledge }
+    const standingInput: StandingInput = { docs: composition.docs, record, outOfScope, weak, amendments, acknowledge: acknowledgeRule(policy) }
     const standing = judged ? standingCriteria(standingInput) : []
-    if (policy.grading === 'self') {
-        // The agent's verdict covers the standing criteria too, so its note must at least name what they list.
+    if (reported) {
+        // The reported verdict covers the standing criteria too, so its note must at least name what they list.
         const missing = unaddressed(request.note!, [...outOfScope, ...weak.findings.map(weakeningPath)])
-        if (missing.length) return refusal(operation, `[work] grading = "self": --note must name each path changed outside scope and each flagged test file, or a directory above it, `
+        if (missing.length) return refusal(operation, `[work] grading = "${mode}": --note must name each path changed outside scope and each flagged test file, or a directory above it, `
             + `and say why its change is needed; it does not name ${listed(missing, ', ', 1_000)}`)
         verdicts = [...order.criteria, ...standing].map(criterion => ({ id: criterion.id, verdict: request.verdict!, note: request.note! }))
-    } else if (policy.grading === 'checks') {
+    } else if (mode === 'checks') {
         verdicts = order.criteria.map(criterion => { const result = checks.find(row => row.criterion === criterion.id)!
             return { id: criterion.id, verdict: result.passed ? 'met' : 'unmet', note: `cockpit ran the check: ${result.outcome}` } })
         // No model reads the change under checks, so weakened tests fail the grade until acknowledged.
@@ -181,16 +217,18 @@ export async function gradeOrder(request: Extract<WorkRequest, { operation: 'wor
     }
     // Where a model grades, whether a change outside scope was needed is its standing criterion; under checks nothing can judge it, so any fails.
     const passed = verdicts.every(row => row.verdict === 'met') && checks.every(row => row.passed) && (judged || outOfScope.length === 0)
-    const grade: NonNullable<WorkRecord['grade']> = { at: now(), digest: record.accepted.digest, mode: policy.grading, passed,
+    const grade: NonNullable<WorkRecord['grade']> = { at: now(), digest: record.accepted.digest, mode, passed,
         criteria: [...verdicts], outOfScope: [...outOfScope], ...evaluator ? { evaluator } : {}, ...request.note ? { note: request.note } : {} }
     const loweredBar = verdicts.find(row => row.id === AMENDMENTS_HOLD && row.verdict !== 'met')
     await store.update(order.id, async existing => {
         if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while it was graded; rerun work grade`)
         return { record: { ...existing, state: passed ? 'graded' : 'accepted', attempts: existing.attempts + (passed ? 0 : 1), grade,
             ...loweredBar ? { amendmentsFailedReview: { at: grade.at, note: loweredBar.note } } : {},
+            ...mode === 'independent' && !passed ? { evaluatorFailed: { at: grade.at } } : {},
             ...checks.length ? { checks: { at: now(), digest: record.accepted.digest, results: [...checks] } } : {} }, value: undefined }
     })
-    const value = { id: order.id, state: passed ? 'graded' : 'accepted', mode: policy.grading, criteria: verdicts, checks, outOfScope, testProtection: guarded.value, ...evaluator ? { evaluator } : {} }
+    const answeredBy = GRADING[policy.grading].answeredBy?.(evaluator?.tool)
+    const value = { id: order.id, state: passed ? 'graded' : 'accepted', mode, ...answeredBy ? { answeredBy } : {}, criteria: verdicts, checks, outOfScope, testProtection: guarded.value, ...evaluator ? { evaluator } : {} }
     if (passed) return complete(operation, value)
     return unsatisfied(operation, value, [...split(verdicts).others.map(row => `${row.id} ${row.verdict}: ${row.note}${remedyOf(row.id, order.id)}`),
         ...checks.filter(row => !row.passed).map(row => `check ${row.criterion}: ${row.outcome}`),
@@ -213,7 +251,7 @@ export async function gradeCriteriaFile(request: Extract<WorkRequest, { operatio
     const inScope = scopeMatcher(file.scope)
     const outOfScope = file.scope.length ? changes.map(change => change.path).filter(path => !inScope(path)) : []
     const weak = review.weakening
-    const criteria = [...file.criteria, ...standingCriteria({ outOfScope, weak, amendments: [], acknowledge: policy.gates.acknowledge })]
+    const criteria = [...file.criteria, ...standingCriteria({ outOfScope, weak, amendments: [], acknowledge: acknowledgeRule(policy) })]
     const subject: GradingSubject = { ...file.objective ? { objective: file.objective } : {}, criteria, nonGoals: [], scope: file.scope, checks, changes, outOfScope }
     const graded = await composition.evaluate(subject)
     if ('refusal' in graded) return refusal(operation, `${graded.refusal.code}: ${graded.refusal.message}; ${graded.refusal.fix}`)
