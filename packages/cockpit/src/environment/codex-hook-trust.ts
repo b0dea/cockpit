@@ -4,7 +4,12 @@
 // per user as `[hooks.state."<hooks.json path>:<event>:<group>:<handler>"] trusted_hash`, the SHA-256
 // of a normalized hook identity, so this module recomputes that identity from the published
 // hooks.json and compares. Linked worktrees source hooks from the main checkout, so matching the
-// generated definitions there comes before checking their trust. It never writes either checkout
+// generated definitions there comes before checking their trust. Codex 0.166.0's app-server hooks/list,
+// measured 2026-11-05 on synthetic layouts beside a malformed hooks.json it named, sourced a directory's
+// own .codex/hooks.json outside Git and in a bare repository's worktree, a submodule and a checkout with
+// a separate Git directory; only a linked worktree whose common directory is named .git used the main
+// checkout. Outside Git it read no parent directory's hooks, so there the session must start in the
+// directory itself. It never writes either checkout
 // or Codex's configuration and never reports a value from that configuration;
 // anything it cannot read or reproduce is reported as unverified, not as trusted.
 import { createHash } from 'node:crypto'
@@ -16,7 +21,7 @@ import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import type { ENVIRONMENT_CODES, EnvironmentDiagnostic, ExecutionStep } from './contract.js'
 import { RefusalError, tryParseJson, errorCause, hasErrorCode } from './contract.js'
 import { observationEnvironment, resolveGitExecutable } from './executable.js'
-import { mainCheckoutDirectory } from './git-observation.js'
+import { checkoutLayout, mainCheckoutOf, type CheckoutLayout } from './git-observation.js'
 
 const HOOKS_PATH = '.codex/hooks.json'
 const MAX_FILE_BYTES = 4 * 1024 * 1024
@@ -161,13 +166,14 @@ export async function inspectCodexHookTrust(input: CodexHookTrustInput,
     if (search.state !== 'available') return unverified(`the hook source cannot be established: ${search.reason}`)
     const git = await resolveGitExecutable(search.env)
     if (git.state !== 'available') return unverified(`the hook source cannot be established: ${git.reason}`)
-    let sourceRoot: string | undefined
+    let layout: CheckoutLayout
     try {
-        sourceRoot = await mainCheckoutDirectory({ executable: git.value, directory: root, timeoutMs: input.timeoutMs }, execute)
+        layout = await checkoutLayout({ executable: git.value, directory: root, timeoutMs: input.timeoutMs }, execute)
     } catch (error) { return unverified(`the hook source cannot be established: ${errorCause(error)}`) }
-    if (!sourceRoot) return unverified('Git could not establish the original checkout hook source')
+    if (layout.kind === 'unavailable') return unverified('Git could not establish the original checkout hook source')
     let canonical: string
     try { canonical = await realpath(root) } catch (error) { return unverified(`resolving ${root} failed: ${errorCause(error)}`) }
+    const sourceRoot = mainCheckoutOf(layout) ?? canonical
     if (sourceRoot !== canonical) {
         const expected = hooksPath
         hooksPath = join(sourceRoot, HOOKS_PATH)

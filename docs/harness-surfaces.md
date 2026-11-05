@@ -97,7 +97,11 @@ and skips an untrusted hook without saying so: every tool call then runs unguard
 worktree, Codex
 [loads project hooks from the original checkout](https://github.com/openai/codex/pull/21969), at
 the same checkout-relative directory, so the worktree's own hooks file is neither run nor what
-needs trust. `cockpit doctor` and `cockpit check` compare the generated hooks with that source first
+needs trust. That holds only where the shared Git directory is named `.git`: in a bare repository's
+worktree, a submodule, a checkout with a separate Git directory and a cockpit root outside Git, Codex
+reads the directory's own hooks file, and doctor checks trust there. Outside Git, Codex reads no
+parent directory's hooks, so a session started in a subdirectory of the cockpit root runs without
+the guard. `cockpit doctor` and `cockpit check` compare the generated hooks with that source first
 and report `CODEX_HOOK_SOURCE_MISMATCH` when it is missing or differs: a person reviews and rolls out
 the generated hooks in the original checkout through its normal change process, or validates in an
 independent clone instead. Cockpit never writes that checkout. Matching definitions are not native
