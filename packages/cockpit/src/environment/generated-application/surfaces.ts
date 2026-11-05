@@ -109,7 +109,7 @@ export async function prepareSurfaces(
     const tools = listedSurfaceTargets(config.surfaces.tools)
     const guardedTools = GUARD_SURFACE_TARGETS.filter(target => tools.includes(target))
     // Accepted, this would tell an agent to spawn a definition that was never written.
-    const noDefinition = config.work.grading === 'subagent' ? subagentGradingProblem(tools, config.surfaces.harnesses) : undefined
+    const noDefinition = config.work.grading === 'subagent' ? subagentGradingProblem(config.surfaces.harnesses) : undefined
     if (noDefinition) return refuse(noDefinition.code, noDefinition.message, 'work.grading', noDefinition.fix)
     // Generated files are one per checkout, so they follow the declared default profile set; a
     // profile one run adds with `up --profile` reaches the stack, not the agents' instructions.

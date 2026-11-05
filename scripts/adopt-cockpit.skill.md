@@ -44,6 +44,12 @@ ask when scope is missing or an exact preview still needs acceptance:
    repository: an **AGENTS.md** pointer or a `package.json` change needs explicit product-change
    authorization covering its reviewed scope, which can already have been given. Mark every answer you chose as `"agent-default"` in the answers file's
    `[provenance]` table, and end your report with every default you chose, its field and value.
+8. Every trust answer the answers file supplies (`sibling`, `environment.install_policies`,
+   `environment.posture`, `testing`, `guards`, `work.grading`) lands under `unconfirmed` whatever the
+   file says, and the stronger default holds until a person confirms it. End your report by telling
+   the human to confirm each: delete its entry from `unconfirmed`, then run
+   `npx --no cockpit sync --config cockpit.toml --interactive` in a terminal outside the agent
+   (`cockpit confirm` refuses these).
 
 ## Install cockpit if it is missing
 

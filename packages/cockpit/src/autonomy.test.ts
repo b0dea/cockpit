@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { decide, effectivePolicy, policyWeakening, readRecordedPolicy, writeRecordedPolicy } from './autonomy.js'
-import { Autonomy, Work } from './schema.js'
+import { decide, effectivePolicy, policyWeakening, readRecordedPolicy, trustInForce, writeRecordedPolicy } from './autonomy.js'
+import { Autonomy, Environment, Work } from './schema.js'
 
 const policy = (autonomy: Record<string, string> = {}, work: Record<string, unknown> = {}) => effectivePolicy({ work: Work.parse(work), autonomy: Autonomy.parse(autonomy) })
 
@@ -14,6 +14,17 @@ describe('autonomy policy', () => {
         expect(policy({ reset: 'ci' }, { gates: { signoff: 'person', acknowledge: 'person' } })).toEqual({ grading: 'independent',
             gates: { accept: 'agent', amend: 'agent', answer: 'agent', signoff: 'person', acknowledge: 'person' },
             autonomy: { sync: 'agent', stale_delete: 'agent', reset: 'ci', mcp_approve: 'person' } })
+    })
+
+    it('holds a trust answer no person confirmed at the stronger default, and releases it once it leaves unconfirmed', () => {
+        const environment = Environment.parse({ install_policies: [{ toolchain: 'node', lockfile: 'package-lock.json', build: ['npm', 'run', 'build'] }] })
+        const declared = { work: Work.parse({ grading: 'off' }), autonomy: Autonomy.parse({}), environment }
+        const waiting = { ...declared, unconfirmed: ['work.grading', 'environment.install_policies', 'guards'] as const }
+        expect(effectivePolicy(waiting).grading).toBe('independent')
+        expect(trustInForce(waiting)).toEqual({ grading: 'independent', installPolicies: [], held: [
+            { field: 'work.grading', declared: 'off', inForce: 'independent' }, { field: 'environment.install_policies', declared: '1 policy', inForce: 'none' }] })
+        expect(effectivePolicy(declared).grading).toBe('off')
+        expect(trustInForce(declared)).toEqual({ grading: 'off', installPolicies: environment.install_policies, held: [] })
     })
 
     it('passes ci only where CI is set, and never passes person', () => {

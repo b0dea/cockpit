@@ -362,13 +362,16 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
             message: expect.stringContaining('an empty entry is the working directory') }))
     })
 
-    it('warns from doctor before any work starts when no evaluator work.evaluators lists is on PATH, and says how each order closed', async () => {
+    it('warns from doctor once the cockpit has work orders or chose its grading, when no evaluator work.evaluators lists is on PATH, and says how each order closed', async () => {
         const candidate = await fixture({ configuredRuntime: true, unseeded: true })
         const doctor = async () => runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({
             configPath: candidate.configPath, env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home }, timeoutMs: 5_000,
         }, executeProbe))
         const warning = expect.objectContaining({ severity: 'warning', code: 'EVALUATOR_UNAVAILABLE', target: 'work.grading' })
 
+        // On the default mode with no work orders, nothing would run an evaluator yet.
+        expect((await doctor()).diagnostics).not.toContainEqual(warning)
+        await mkdir(join(candidate.checkout, 'workorders'))
         expect((await doctor()).diagnostics).toContainEqual(warning)
         await writeFile(join(candidate.root, 'codex'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
         expect((await doctor()).diagnostics).not.toContainEqual(warning)

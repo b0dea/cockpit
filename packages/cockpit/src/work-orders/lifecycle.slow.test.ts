@@ -186,9 +186,19 @@ describe('work-order lifecycle', () => {
             answeredBy: expect.stringMatching(/relayed .* cannot verify that one did, and read-only is instructed there, not enforced/) })
         expect(record(root, 'WO-2').grade).toMatchObject({ mode: 'subagent' })
         expect(record(root, 'WO-2').grade.evaluator).toBeUndefined()
+        // A grade weaker than the mode now in force does not close the order as done.
+        const toml = readFileSync(join(root, 'cockpit.toml'), 'utf8')
+        writeFileSync(join(root, 'cockpit.toml'), toml.replace('grading = "subagent"', 'grading = "independent"'))
+        expect((await work(root, ['work', 'signoff', '--work-order', 'WO-2'])).diagnostics[0]?.message)
+            .toMatch(/WO-2 was graded under subagent, weaker than the current \[work\] grading = "independent"; grade it again under the current mode/)
+        writeFileSync(join(root, 'cockpit.toml'), toml)
         expect((await work(root, ['work', 'signoff', '--work-order', 'WO-2'])).result).toMatchObject({ closedAs: 'subagent-reported' })
         expect((await work(root, ['work', 'status'])).result).toMatchObject({ grading: 'subagent', orders: [{ id: 'WO-2', closedAs: 'subagent-reported', grade: { mode: 'subagent' } }] })
         expect((await work(root, ['work', 'verify'])).status).toBe(0)
+        writeFileSync(join(root, 'cockpit.toml'), toml.replace('grading = "subagent"', 'grading = "independent"'))
+        expect(await work(root, ['work', 'verify'])).toMatchObject({ status: 2,
+            result: { problems: [expect.stringMatching(/^WO-2 is done on a subagent grade, weaker than the current \[work\] grading = "independent"/)] } })
+        writeFileSync(join(root, 'cockpit.toml'), toml)
         // Other modes take no such statement.
         const other = await cockpit('[work]\ngrading = "self"')
         writeFileSync(join(other, 'workorders/WO-3.md'), order('WO-3'))
@@ -225,6 +235,11 @@ describe('work-order lifecycle', () => {
         expect(await work(root, ['work', 'grade', '--work-order', 'WO-4'], env)).toMatchObject({ status: 2, result: { state: 'accepted', mode: 'independent' } })
         expect((await work(root, ['work', 'grade', '--work-order', 'WO-4', '--from-subagent', '--verdict', 'met', '--note', 'read the diff'], env)).diagnostics[0]?.message)
             .toMatch(/a separate evaluator already found WO-4's accepted contract unmet, and a relayed verdict cannot replace that/)
+        // Rewording the criterion and accepting that itself does not let the agent's relayed pass through.
+        writeFileSync(join(root, 'workorders/WO-4.md'), order('WO-4', '  - id: AC1\n    text: add(2, 3) returns 5 when called.\n    check: [node, test/add.test.mjs]'))
+        expect((await work(root, ['work', 'accept', '--work-order', 'WO-4'], env)).result).toMatchObject({ amended: true, by: 'agent' })
+        expect((await work(root, ['work', 'grade', '--work-order', 'WO-4', '--from-subagent', '--verdict', 'met', '--note', 'read the diff'], env)).diagnostics[0]?.message)
+            .toMatch(/a relayed verdict cannot replace that, nor after an amendment the agent accepted/)
         writeFileSync(join(tools, 'verdict'), 'met')
         // The record says what answered: the process, never the subagent the mode names.
         const graded = await work(root, ['work', 'grade', '--work-order', 'WO-4'], env)
@@ -266,7 +281,12 @@ describe('work-order lifecycle', () => {
         writeFileSync(join(root, 'workorders/WO-9.md'), order('WO-9'))
         await work(root, ['work', 'accept', '--work-order', 'WO-9'])
         expect(await work(root, ['work', 'check', '--work-order', 'WO-9'])).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_CHECK_FAILED' }] })
-        expect((await work(root, ['work', 'status', '--work-order', 'WO-9'])).result).toMatchObject({ orders: [{ id: 'WO-9', state: 'accepted', attempts: 1 }] })
+        expect((await work(root, ['work', 'status', '--work-order', 'WO-9'])).result).toMatchObject({ orders: [{ id: 'WO-9', state: 'accepted', attempts: 0 }] })
+        // Nor does it count against the cap once a stronger mode is in force.
+        const offToml = readFileSync(join(root, 'cockpit.toml'), 'utf8')
+        writeFileSync(join(root, 'cockpit.toml'), offToml.replace('grading = "off"', 'grading = "checks"'))
+        expect((await work(root, ['work', 'status', '--work-order', 'WO-9'])).result).toMatchObject({ orders: [{ id: 'WO-9', state: 'accepted' }] })
+        writeFileSync(join(root, 'cockpit.toml'), offToml)
         const failed = await work(root, ['work', 'signoff', '--work-order', 'WO-9', '--note', 'shipped with the failure known'])
         expect(failed.result).toMatchObject({ state: 'done', closedAs: 'ungraded', checksFailed: [expect.stringMatching(/^AC1: /)], checksNotRun: [] })
         expect(record(root, 'WO-9')).toMatchObject({ closure: { how: 'ungraded', note: 'shipped with the failure known' }, checks: { results: [{ criterion: 'AC1', passed: false }] } })
@@ -279,6 +299,17 @@ describe('work-order lifecycle', () => {
             expect((await work(root, ['work', 'signoff', '--work-order', id, close, '--note', 'stopped'])).result).toMatchObject({ closedAs: close === '--partial' ? 'partial' : 'abandoned' })
         }
         expect((await work(root, ['work', 'verify'])).status).toBe(0)
+
+        // Off that no person confirmed is not in force: the default grades until a person removes it from unconfirmed.
+        writeFileSync(join(root, 'cockpit.toml'), `unconfirmed = ["work.grading"]\n${readFileSync(join(root, 'cockpit.toml'), 'utf8')}`)
+        expect((await work(root, ['work', 'status'])).result).toMatchObject({ grading: 'independent', awaitingConfirmation: [{ field: 'work.grading', declared: 'off',
+            inForce: 'independent', confirm: expect.stringContaining('deletes its entry from unconfirmed, then runs npx --no cockpit sync') }] })
+        writeFileSync(join(root, 'workorders/WO-16.md'), order('WO-16'))
+        await work(root, ['work', 'accept', '--work-order', 'WO-16'])
+        expect((await work(root, ['work', 'signoff', '--work-order', 'WO-16'])).diagnostics[0]?.message).toMatch(/WO-16 is accepted, not graded/)
+        writeFileSync(join(root, 'cockpit.toml'), readFileSync(join(root, 'cockpit.toml'), 'utf8').replace('unconfirmed = ["work.grading"]\n', ''))
+        expect((await work(root, ['work', 'status'])).result).not.toHaveProperty('awaitingConfirmation')
+        expect((await work(root, ['work', 'signoff', '--work-order', 'WO-16'])).result).toMatchObject({ closedAs: 'ungraded' })
     }, 120_000)
 
     it('keeps the signoff gate with the grader off, and an earlier real grade closes as what it was', async () => {

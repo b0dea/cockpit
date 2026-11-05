@@ -7,6 +7,7 @@
 import { executeBrowserCommand, type BrowserCommandReceipt, type BrowserCommandResult } from '../browser/commands.js'
 import { evaluateUiGate } from '../browser/ui-gate.js'
 import { policyWeakening } from '../autonomy.js'
+import { personConfirmationFix } from '../guards/answer-confirmation.js'
 import { errorCause, RefusalError } from '../environment/contract.js'
 import { GRADING, isGradeMode, type Decider } from '../schema.js'
 import { describeWeakening, testWeakeningDigest } from '../testing/weakening.js'
@@ -70,7 +71,8 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         const rows = await Promise.all(ids.map(observe))
         const closed = new Set(rows.filter(row => row.record?.state === 'done').map(row => row.id))
         return complete(operation, {
-            grading: policy.grading, gates: policy.gates, wip: { open: await wip(), cap: composition.caps.wip },
+            grading: policy.grading, ...composition.held.length ? { awaitingConfirmation: composition.held.map(row => ({ ...row, confirm: personConfirmationFix([row.field]) })) } : {},
+            gates: policy.gates, wip: { open: await wip(), cap: composition.caps.wip },
             orders: await Promise.all(rows.map(async row => ({
                 id: row.id, state: displayState(row, attemptCap),
                 ...row.record?.closure ? { closedAs: row.record.closure.how, closedBy: row.record.closure.by, ...row.record.closure.how === 'ungraded' ? checkFacts(row.record) : {} } : {},
@@ -122,7 +124,7 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
             ...review.map(row => `Changed ${row.field}: "${row.before}" -> "${row.after}"`), ...shownOrder], 'amend', async by => store.update(order.id, async existing => {
             if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while this prompt was open; rerun work accept`)
             const next: WorkRecord = { ...existing, state: 'accepted', attempts: 0, checks: undefined, grade: undefined,
-                ...by === 'agent' ? {} : { amendmentsFailedReview: undefined },
+                ...by === 'agent' ? {} : { amendmentsFailedReview: undefined, evaluatorFailed: undefined },
                 accepted: { at: now(), by, digest, order, sources, base: existing.accepted.base },
                 amendments: [...existing.amendments, { at: now(), by, from: existing.accepted.digest, to: digest, weakened: [...weakened], review: [...review] }] }
             return { record: next, value: complete(operation, { id: order.id, state: 'accepted', by, digest, amended: true, weakened,
@@ -136,7 +138,7 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         const passed = results.every(row => row.passed)
         await store.update(order.id, async existing => {
             if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while its checks ran; rerun work check`)
-            return { record: { ...existing, state: passed ? 'checked' : 'accepted', attempts: existing.attempts + (passed ? 0 : 1), grade: undefined,
+            return { record: { ...existing, state: passed ? 'checked' : 'accepted', attempts: existing.attempts + (passed || !isGradeMode(policy.grading) ? 0 : 1), grade: undefined,
                 checks: { at: now(), digest: record.accepted.digest, results: [...results] } }, value: undefined }
         })
         const value = { id: order.id, state: passed ? 'checked' : 'accepted', results }

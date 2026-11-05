@@ -282,7 +282,7 @@ describe('init operator command', () => {
                 message: 'the answers file gave environment.machine, environment.posture, which the interview never asked for' }] })
         })
 
-        it('records who chose each answer: the human, the setup agent as a default, or for the machine floor no one said', async () => {
+        it('records who chose each answer: the human, the setup agent as a default, or no one known for the machine floor and for every trust decision', async () => {
             const provenances = async (answersFile: Record<string, unknown>) => {
                 const recorded: string[] = []
                 const { application } = walk([])
@@ -295,10 +295,12 @@ describe('init operator command', () => {
                 return { outcome, recorded }
             }
             const marked = await provenances({ ...answers, provenance: { 'environment.compose_files': 'agent-default',
-                environment: { machine: 'human' }, guards: 'agent-default' } })
+                environment: { machine: 'human' }, guards: 'agent-default', sibling: 'human', work: { grading: 'human' } } })
             expect(marked.outcome.kind).toBe('complete')
-            expect(marked.recorded).toEqual(['operator-confirmed', 'operator-confirmed', 'operator-confirmed', 'operator-confirmed',
-                'agent-default', 'operator-confirmed', 'operator-confirmed', 'agent-default', 'operator-confirmed', 'operator-confirmed'])
+            // An agent can write the file, so its claim that a person chose a trust decision (sibling, install
+            // policies, posture, guards, grading) is not taken: each waits under unconfirmed for a person.
+            expect(marked.recorded).toEqual(['unattributed', 'operator-confirmed', 'unattributed', 'operator-confirmed',
+                'agent-default', 'operator-confirmed', 'unattributed', 'agent-default', 'unattributed', 'operator-confirmed'])
             // cockpit proposes at most part of a machine floor, so an unmarked one is not attributed to the human.
             expect((await provenances(answers)).recorded[5]).toBe('unattributed')
 

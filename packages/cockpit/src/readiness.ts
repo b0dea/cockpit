@@ -95,7 +95,7 @@ export const READINESS_CATALOGUE: readonly ReadinessEntry[] = [
         needs: 'Codex runs the guard hook only once a person on this machine has trusted it',
         fix: 'a person trusts the hook from codex in a terminal in the cockpit root' },
     { id: 'work-evaluator', level: 'recommended', appliesTo: BOTH, codes: [C.EVALUATOR_UNAVAILABLE],
-        needs: 'under [work] grading = "independent", work grade and cockpit grade run the first agent tool work.evaluators lists that can run, as the evaluator independent of the agent that did the work; under "subagent" that process is the stronger path when no subagent can be spawned, and each listed tool must have the generated evaluator definition. Only PATH and the listed tools are observed here, not sign-in, network, a sandbox or whether a subagent can spawn. Checks, self and off need none of it',
+        needs: 'under [work] grading = "independent", work grade and cockpit grade run the first agent tool work.evaluators lists that can run, as the evaluator independent of the agent that did the work; under "subagent" that process is the stronger path when no subagent can be spawned, and each listed tool must have the generated evaluator definition. Only PATH and the listed tools are observed here, not sign-in, network, a sandbox or whether a subagent can spawn. Doctor checks this once workorders/ exists or cockpit.toml sets [work] grading. Checks, self and off grade orders without an evaluator, so doctor says nothing there, but cockpit grade --criteria runs one in every mode',
         fix: 'install and sign in to an evaluator tool work.evaluators lists, list one you have, or have a person move [work] grading to checks, self or off' },
 ]
 

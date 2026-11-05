@@ -2,7 +2,7 @@
 // job, checks every closure and confirms the steps that awaited CI.
 import { runningInCi } from '../autonomy.js'
 import { RefusalError } from '../environment/contract.js'
-import { GRADING, isGradeMode } from '../schema.js'
+import { GRADING, isGradeMode, type GradeMode, type WorkGrading } from '../schema.js'
 import type { WorkRecord } from './store.js'
 import { checkIds, complete, now, refusal, TERMINAL, unsatisfied, type WorkApplicationOutcome, type WorkContext, type WorkRequest } from './application-context.js'
 import { decisions, recordProblem, unresolvedDecisions } from './application-decisions.js'
@@ -21,6 +21,8 @@ export function checkFacts(record: WorkRecord) {
         checksNotRun: declared.filter(id => !results.some(row => row.criterion === id)) }
 }
 
+const weakerThanPolicy = (mode: GradeMode, grading: WorkGrading) => GRADING[mode].rank < GRADING[grading].rank
+
 export async function signoff(request: Extract<WorkRequest, { operation: 'work-signoff' }>, context: WorkContext): Promise<WorkApplicationOutcome> {
     const { composition, operation, policy, store, current, gated } = context
     const record = await store.read(request.workOrderId)
@@ -33,6 +35,9 @@ export async function signoff(request: Extract<WorkRequest, { operation: 'work-s
         if (!grade && isGradeMode(policy.grading)) {
             return refusal(operation, `${order.id} is ${record.state}, not graded; run npx --no cockpit work grade --config <your cockpit.toml> --work-order ${order.id}`)
         }
+        // A grade made under a weaker mode than the one now in force closes nothing as done; off still closes ungraded.
+        if (grade && weakerThanPolicy(grade.mode, policy.grading)) return refusal(operation, `${order.id} was graded under ${grade.mode}, weaker than the current [work] grading = "${policy.grading}"; `
+            + `grade it again under the current mode with npx --no cockpit work grade --config <your cockpit.toml> --work-order ${order.id}, or close it with --partial or --abandon`)
         const open = await Promise.all(order.depends_on.map(async dependency => (await store.read(dependency))?.state === 'done' ? undefined : dependency))
         if (open.some(Boolean)) return refusal(operation, `${order.id} depends on ${open.filter(Boolean).join(', ')}, which ${open.filter(Boolean).length === 1 ? 'is' : 'are'} not done`)
         how = GRADING[grade?.mode ?? policy.grading].closure
@@ -63,7 +68,7 @@ export async function signoff(request: Extract<WorkRequest, { operation: 'work-s
 }
 
 export async function verify(context: WorkContext): Promise<WorkApplicationOutcome> {
-    const { composition, operation, store, observe } = context
+    const { composition, operation, policy, store, observe } = context
     const problems: string[] = []
     const awaiting: string[] = []
     for (const record of await store.list()) {
@@ -71,6 +76,9 @@ export async function verify(context: WorkContext): Promise<WorkApplicationOutco
         if (!TERMINAL.has(record.state) && row.digest !== record.accepted.digest) problems.push(`${record.id} changed since it was accepted; accept the change or revert it`)
         // An ungraded closure has no grade to check by design; everything else that is done must have passed one.
         if (record.state === 'done' && (!record.closure || record.closure.how !== 'ungraded' && (!record.grade?.passed || record.grade.digest !== record.accepted.digest))) problems.push(`${record.id} is done without a passing grade of its accepted contract`)
+        else if (record.state === 'done' && record.closure?.how !== 'ungraded' && record.grade && weakerThanPolicy(record.grade.mode, policy.grading)) {
+            problems.push(`${record.id} is done on a ${record.grade.mode} grade, weaker than the current [work] grading = "${policy.grading}"`)
+        }
         for (const row of decisions(record)) {
             const cited = row.resolution?.record
             const problem = cited && recordProblem(await composition.readDocsFile(cited), cited, record.id, false)

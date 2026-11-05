@@ -1,3 +1,4 @@
+import { lstat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { loadCockpitConfig } from '../config/load.js'
 import { evaluatorSearchDirectories, evaluatorUnavailable, findEvaluators, subagentGradingProblem } from '../grading/evaluate.js'
@@ -430,6 +431,14 @@ async function checkoutProjection(
     }, consumeSetupCheckoutProjection)
 }
 
+async function hasWorkOrders(root: string): Promise<boolean> {
+    try { return (await lstat(join(root, 'workorders'))).isDirectory() }
+    catch (error) {
+        if (hasErrorCode(error, 'ENOENT')) return false
+        throw error
+    }
+}
+
 // Whether the configured grading can run here, before a grade fails on it, and how each closed order closed.
 // Only PATH and the listed tools are observed: sign-in, network and a sandbox refusing a nested run show
 // only when a grade runs, and whether an agent can spawn a subagent shows only when it tries.
@@ -437,13 +446,14 @@ async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, s
     const closed = (await createWorkStore(root).list()).flatMap(record => record.closure ? [{ severity: 'info' as const,
         code: ENVIRONMENT_CODES.WORK_ORDER_CLOSED, target: `workorders/${record.id}.md`,
         message: `${record.id} closed as ${record.closure.how}, signed off by ${record.closure.by}${record.closure.note ? `: ${record.closure.note}` : ''}` }] : [])
-    // Self, checks and off start no evaluator, so its absence is no finding there.
-    if (!GRADING[work.grading].evaluator) return closed
+    // Self, checks and off start no evaluator, so its absence is no finding there. Nor is it on the default
+    // mode in a cockpit that has no work orders and never chose a mode, such as one used only for docs.
+    if (!GRADING[work.grading].evaluator || !work.stated && !await hasWorkOrders(root)) return closed
     const { found, missing } = await findEvaluators(work.evaluators, await evaluatorSearchDirectories(env))
     const missingCause = `no evaluator work.evaluators lists is on PATH: ${missing.map(row => row.message).join('; ')}`
     if (work.grading === 'independent') return found.length ? closed : [{ severity: 'warning' as const, target: 'work.grading',
         ...evaluatorUnavailable(`[work] grading = "independent" runs work grade and cockpit grade in a separate agent tool process, but ${missingCause}`) }, ...closed]
-    const unsupported = subagentGradingProblem(work.tools, work.harnesses)
+    const unsupported = subagentGradingProblem(work.harnesses)
     if (unsupported) return [{ severity: 'warning' as const, target: 'work.grading', ...unsupported }, ...closed]
     return [found.length ? { severity: 'info' as const, target: 'work.grading', code: ENVIRONMENT_CODES.SUBAGENT_AVAILABILITY_UNOBSERVED,
         message: `[work] grading = "subagent": cockpit cannot observe ahead of time whether the working agent can spawn a subagent, so this was not checked; if it cannot, work grade with nothing submitted runs ${found.join(', ')} as a separate process, which is stronger` }

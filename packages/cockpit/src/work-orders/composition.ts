@@ -10,7 +10,7 @@ import { isProxy } from 'node:util/types'
 import { readBoundedFile } from '../bounded-read.js'
 import { tmpdir } from 'node:os'
 import type { ConsumedWorkEnvironmentConfig } from '../config/load.js'
-import { readRecordedPolicy, type EffectivePolicy } from '../autonomy.js'
+import { readRecordedPolicy, type EffectivePolicy, type HeldAnswer } from '../autonomy.js'
 import { defaultEvaluatorOrder, evaluate, locateEvaluators, type EvaluatorChain } from '../grading/evaluate.js'
 import { gradingDocument, gradingSchema, readGradingAnswer, type ChangedFile, type GradingSubject, type Verdict } from '../grading/grade.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, INHERITED_TOOL_ENVIRONMENT, type ConsumedFile, type FilesystemCheck, type SourceProvenance, type ExecutionStep, RefusalError } from '../environment/contract.js'
@@ -87,6 +87,8 @@ type GradingResult = Readonly<{ criteria: readonly Verdict[]; evaluator: Readonl
 
 export interface WorkApplicationComposition {
     readonly policy: EffectivePolicy
+    /** The trust answers held at a stronger value until a person confirms them. */
+    readonly held: readonly HeldAnswer[]
     readonly caps: Readonly<{ wip: number; attempts: number }>
     readonly env: Readonly<Record<string, string | undefined>>
     readonly store: WorkStore
@@ -878,7 +880,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         return { state: 'listed', context: daemon.dockerContext, containers: listed.resources.filter(row => row.kind === 'container').map(({ id, name, running }) => ({ id, name, running })) }
     }
     const composition: WorkApplicationComposition = {
-        policy: config.policy, caps: { wip: config.wipCap, attempts: config.attemptCap }, env: authorities.env,
+        policy: config.policy, held: config.held, caps: { wip: config.wipCap, attempts: config.attemptCap }, env: authorities.env,
         store: createWorkStore(root), recordedPolicy: () => readRecordedPolicy(root), orderIds, readOrder,
         readCriteriaFile: async (path: string) => parseCriteriaFile(readBounded(root, path, 65_536)),
         sourceDigests: async (order: Pick<WorkOrder, 'criteria'>) => Object.fromEntries(order.criteria.flatMap(row => row.source ? [row.source] : [])

@@ -118,7 +118,7 @@ export function workContext(composition: WorkApplicationComposition, operation: 
         const base = record?.accepted.base ?? await composition.heads()
         return { id: orderId, order: parsed.value, problems: [], ...(record ? { record } : {}), digest: workOrderDigest(parsed.value, sources, base) }
     }
-    // Off means nothing blocks on grading, and the cap counts failed checks and grades.
+    // The cap counts failed checks and grades. Off counts none and lifts the cap, so an order an earlier mode capped can still close.
     const attemptCap = isGradeMode(policy.grading) ? composition.caps.attempts : Infinity
     const wip = async () => (await store.list()).filter(record => !TERMINAL.has(record.state)).length
     let records: Promise<ReadonlyMap<string, string>> | undefined

@@ -47,10 +47,10 @@ describe('shipped harness registry', () => {
             && Object.isFrozen(row.guard) && Object.isFrozen(row.native))).toBe(true)
     })
 
-    it('offers subagent grading only where the evaluator definition is generated, naming each tool and harness without one', () => {
+    it('offers subagent grading only where a custom harness takes the evaluator definition, naming each harness without one', () => {
         const harness = (name: string, state: 'instructed' | 'unavailable') => ({ name, capabilities: [{ feature: 'subagents' as const, state }] })
-        expect(subagentGradingProblem(SURFACE_TARGETS, [harness('team-tool', 'instructed')])).toBeUndefined()
-        expect(subagentGradingProblem(['claudecode'], [harness('team-tool', 'unavailable'), harness('other-tool', 'instructed')]))
+        expect(subagentGradingProblem([harness('team-tool', 'instructed')])).toBeUndefined()
+        expect(subagentGradingProblem([harness('team-tool', 'unavailable'), harness('other-tool', 'instructed')]))
             .toMatchObject({ code: 'EVALUATOR_UNAVAILABLE', message: expect.stringMatching(/generates none for team-tool$/) })
         // A definition the tool was shown to offer is measured; one only written is not called more than that.
         expect(HARNESS_REGISTRY.map(row => [row.target, row.subagentGrader.state, row.subagentGrader.measuredVersion])).toEqual([

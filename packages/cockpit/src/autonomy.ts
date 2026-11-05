@@ -28,12 +28,44 @@ export interface EffectivePolicy {
 export const GATE_DEFAULTS: Readonly<Record<WorkGate, Decider>> = Object.freeze({ accept: 'agent', amend: 'agent', answer: 'agent', signoff: 'agent', acknowledge: 'agent' })
 export const AUTONOMY_DEFAULTS: Readonly<Record<AutonomyDecision, Decider>> = Object.freeze({ sync: 'agent', stale_delete: 'agent', reset: 'person', mcp_approve: 'person' })
 
-export function effectivePolicy(config: Readonly<{ work: Readonly<Pick<CockpitConfig['work'], 'grading'> & { gates: Readonly<CockpitConfig['work']['gates']> }>
+/** A trust answer listed under `unconfirmed` that cockpit holds at a stronger value until a person confirms it. */
+export interface HeldAnswer { readonly field: 'work.grading' | 'environment.install_policies'; readonly declared: string; readonly inForce: string }
+type TrustDeclarations = Readonly<{ unconfirmed?: Readonly<CockpitConfig['unconfirmed']>; work: Readonly<Pick<CockpitConfig['work'], 'grading'>>
+    environment?: Readonly<Pick<CockpitConfig['environment'], 'install_policies'>> }>
+
+/**
+ * The trust answers in force. One listed under `unconfirmed` (an agent chose it, or an answers file,
+ * which cannot show who wrote it, supplied it) waits for a person, and until one confirms it the
+ * stronger of it and the default holds, so an agent cannot lower a bar by writing an answer. Each
+ * trust answer init records:
+ * - work.grading: independent, the default and the strongest mode.
+ * - environment.install_policies: none, the default, for the build and test commands the guard admits.
+ *   Setup still selects a policy by lockfile to install, since the install command is the toolchain's, not the answer's.
+ * - guards: as declared; its hosts only add denials to the default, which denies none.
+ * - testing: as declared; a gate only adds a bar, and the agent writes its criteria's checks anyway.
+ * - sibling and environment.posture: as declared; neither has a default to fall back to (posture states
+ *   facts that preflight judges), so doctor names them until a person confirms them.
+ */
+export function trustInForce(config: TrustDeclarations): Readonly<{ grading: WorkGrading
+    installPolicies: CockpitConfig['environment']['install_policies']; held: readonly HeldAnswer[] }> {
+    const waiting = new Set<string>(config.unconfirmed ?? [])
+    const declaredPolicies = config.environment?.install_policies ?? []
+    const grading = waiting.has('work.grading') ? 'independent' : config.work.grading
+    const installPolicies = waiting.has('environment.install_policies') ? [] : declaredPolicies
+    return { grading, installPolicies, held: [
+        ...grading !== config.work.grading ? [{ field: 'work.grading' as const, declared: config.work.grading, inForce: grading }] : [],
+        ...installPolicies.length < declaredPolicies.length ? [{ field: 'environment.install_policies' as const,
+            declared: `${declaredPolicies.length} polic${declaredPolicies.length === 1 ? 'y' : 'ies'}`, inForce: 'none' }] : [],
+    ] }
+}
+
+export function effectivePolicy(config: Readonly<{ unconfirmed?: Readonly<CockpitConfig['unconfirmed']>
+    work: Readonly<Pick<CockpitConfig['work'], 'grading'> & { gates: Readonly<CockpitConfig['work']['gates']> }>
     autonomy: Readonly<CockpitConfig['autonomy']> }>): EffectivePolicy {
     const pick = <K extends string>(declared: Partial<Record<K, Decider>>, defaults: Readonly<Record<K, Decider>>) => Object.fromEntries(
         Object.entries(defaults).map(([key, value]) => [key, declared[key as K] ?? value])) as Record<K, Decider>
     return {
-        grading: config.work.grading,
+        grading: trustInForce(config).grading,
         gates: pick<WorkGate>(config.work.gates, GATE_DEFAULTS),
         autonomy: pick<AutonomyDecision>({ sync: config.autonomy.sync, stale_delete: config.autonomy.stale_delete,
             reset: config.autonomy.reset, mcp_approve: config.autonomy.mcp_approve }, AUTONOMY_DEFAULTS),

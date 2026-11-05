@@ -161,7 +161,15 @@ record, `work status` and `doctor` always say which way each order closed:
 | `self` | runs the checks, then records the agent's `--verdict met` or `unmet` with a `--note` saying what it checked; the verdict covers the standing criteria too, so the note must name each path changed outside `scope` and each flagged test file (or a directory above it), and a failed check still fails it | `self-reported` |
 | `off` | refuses, because nothing grades; `work signoff` closes the order, whatever its checks showed | `ungraded`, unless it already holds a passing grade of its accepted contract |
 
-The signoff gate applies on top in every mode.
+The signoff gate applies on top in every mode. A grade counts only if it was made under a mode at least
+as strong as the one now in force: after `[work] grading` moves to a stronger mode, `work signoff`
+refuses to close an order as done on an older, weaker grade until it is graded again, and `work verify`
+reports a done order whose grade is weaker than the current mode. `partial` and `abandoned` stay open.
+
+While `work.grading` is listed under `unconfirmed` (the setup agent chose it, or an answers file
+supplied it), the default `independent` is in force whatever it declares, and `work status` names it
+under `awaitingConfirmation`; a person makes the declared mode effective by deleting the entry and
+running `sync`, which asks them to accept the weakening.
 
 ### How grading can run
 
@@ -172,7 +180,7 @@ moves to one at least as strong.
 | --- | --- | --- | --- | --- |
 | Another CLI | `evaluators = ["codexcli"]` from a Claude Code session, or both tools listed | cockpit reads that process directly | a separate process of another tool judged the change, read-only by its tool's mechanism | the next listed tool, when one is missing, signed out, rate-limited, timed out or refused by its environment; when none answers, a refusal names each cause |
 | Same CLI, separate run | one tool listed, or `--evaluator <tool>` | cockpit reads that process directly, with a warning | the same, but one tool is judging its own kind of work | as above for a list; `--evaluator` runs only that tool. The warning (`EVALUATOR_IS_RUNNING_TOOL`) appears only where the running tool is detected: Claude Code and Codex |
-| Native subagent in the session | `grading = "subagent"` | the working agent relays it | only that the working agent says a subagent answered: cockpit cannot verify one ran, and read-only is instructed, not enforced | a separate process as above, stronger, when the agent runs `work grade` with nothing submitted because it cannot spawn one; refused when no process answers either. Once that process finds the contract unmet, a relayed verdict cannot replace it until the order is amended |
+| Native subagent in the session | `grading = "subagent"` | the working agent relays it | only that the working agent says a subagent answered: cockpit cannot verify one ran, and read-only is instructed, not enforced | a separate process as above, stronger, when the agent runs `work grade` with nothing submitted because it cannot spawn one; refused when no process answers either. Once that process finds the work unmet, a relayed verdict cannot replace it, not even after an amendment the agent accepts; only one a person or CI accepts clears it |
 | Checks only | `grading = "checks"` | nothing judged by a model | cockpit ran every criterion's check, all passed, and nothing changed outside `scope`; it cannot judge whether a test proves its criterion, or a change's quality, documentation or decisions | needs no agent tool, so it always runs; a criterion with no check makes `work grade` refuse, so it cannot pass |
 | The agent itself | `grading = "self"` | the working agent | only the agent's own claim; a failed check still fails it | needs no agent tool, so it always runs |
 | No grader | `grading = "off"` | nothing | nothing is judged; the order is a tracked record, and a failed or unrun check stays on it | needs nothing, so it always runs |
@@ -182,11 +190,11 @@ subagent's answer is relayed by the agent being graded. When no process answers,
 what you can do: sign in, list another tool in `work.evaluators`, or have a person move
 `[work] grading` to `checks`, `self` or `off`.
 
-`doctor` reports `EVALUATOR_UNAVAILABLE` before work starts when `independent` or `subagent` cannot
-run here. It observes only `PATH` and the listed tools, so signing in, network and a sandbox
+`doctor` reports `EVALUATOR_UNAVAILABLE` when `independent` or `subagent` cannot run here, once the
+cockpit has a `workorders/` directory or `cockpit.toml` sets `[work] grading`. It observes only `PATH` and the listed tools, so signing in, network and a sandbox
 refusing a nested run show only when a grade runs; whether an agent can spawn a subagent cannot be
 observed ahead of time (`SUBAGENT_AVAILABILITY_UNOBSERVED` says so). Under `checks`, `self` or `off`
-it says nothing about evaluators.
+it says nothing about evaluators, though `cockpit grade --criteria` runs one in every mode.
 
 `subagent` needs the generated evaluator definition: `check` and `sync` refuse it for a declared
 harness without one. Every shipped tool has one, and the [capability matrix](capability-matrix.md)
@@ -221,7 +229,7 @@ way that may lower the bar, before and after:
 | Change | Under `amend = "agent"` |
 | --- | --- |
 | A criterion or gate removed | needs a person, in every grading mode |
-| A criterion rewritten (its text, check or source), `scope` widened | under `independent` and `self`, passes and is judged at the next grade; under `checks`, needs a person |
+| A criterion rewritten (its text, check or source), `scope` widened | under `independent` and `self`, passes and is judged at the next grade; under `subagent`, passes and is judged by the verdict the agent relays, so by the agent whose rewrite it is, unless a separate evaluator already found the work unmet (see below); under `checks`, needs a person |
 | A non-goal dropped or reworded, the objective changed | passes, and is judged at the next grade where a model grades |
 | A criterion or gate added, `scope` narrowed, a non-goal added | passes |
 
@@ -231,6 +239,10 @@ them as the change to `workorders/<id>.md`. When it is not met the grade fails, 
 amendment and any closure are a person's: revert or rewrite the order, then a person runs
 `work accept --interactive`. The order records the finding, so a later `work check` or grade does
 not clear it; only an amendment a person or CI accepts does.
+
+Under `subagent` the same holds for a separate evaluator's `unmet`: an agent cannot reword the
+criterion, accept that itself and relay a pass. Until a person or CI accepts an amendment, the order
+is graded only by running `work grade` with nothing submitted.
 
 <!-- cockpit:ref command=grade --> For a change that needs no order,
 `cockpit grade --config cockpit.toml --criteria <file>` (a file inside the repository, relative or
@@ -396,7 +408,10 @@ instructions tell it to treat repository content, order text and command output 
 instructions; that is instructed, not enforced. Run by `work grade` and `cockpit grade`, the
 evaluator is also held read-only by its tool's mechanism above. Spawned as a subagent inside an
 agent tool, that restriction is instructed, not enforced: no harness is confirmed to enforce it
-there. That is the `grading = "subagent"` path, and why it never reads as independent.
+there. That is the `grading = "subagent"` path, and why it never reads as independent. Claude Code
+would take a tool allowlist in the definition's front matter, which the generator carries through,
+but cockpit writes none: the evaluator keeps the browser tools, whose names depend on the cockpit's
+browser declaration, and no probe has measured whether such a list holds a subagent read-only.
 
 ## Browser evidence
 

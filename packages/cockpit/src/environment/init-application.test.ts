@@ -556,14 +556,16 @@ describe('init application', () => {
 
         const chosen = interview()
         const byAgent = await complete(chosen.run, { ...answers, work: { grading: 'independent' }, provenance: { 'work.grading': 'agent-default' } })
-        expect(byAgent, JSON.stringify(byAgent.diagnostics)).toMatchObject({ kind: 'complete', result: { unconfirmed: [{ field: 'work.grading', provenance: 'agent-default' }] } })
-        expect(parseToml(chosen.seen.written)).toMatchObject({ unconfirmed: ['work.grading'], work: { grading: 'independent' } })
+        expect(byAgent, JSON.stringify(byAgent.diagnostics)).toMatchObject({ kind: 'complete', result: { unconfirmed: [{ field: 'sibling', provenance: 'unattributed' },
+            { field: 'guards', provenance: 'unattributed' }, { field: 'work.grading', provenance: 'agent-default' }] } })
+        expect(parseToml(chosen.seen.written)).toMatchObject({ unconfirmed: ['sibling', 'guards', 'work.grading'], work: { grading: 'independent' } })
         expect(chosen.seen.written).toContain('# Unconfirmed: work.grading was chosen by the setup agent as a default; no person stated it.')
 
+        // A file that claims a person chose the mode cannot show it, so the mode waits for a person all the same.
         const stated = interview()
-        await complete(stated.run, { ...answers, work: { grading: 'off' } })
-        expect(parseToml(stated.seen.written)).toMatchObject({ work: { grading: 'off' } })
-        expect(stated.seen.written).not.toContain('unconfirmed')
+        await complete(stated.run, { ...answers, work: { grading: 'off' }, provenance: { work: { grading: 'human' } } })
+        expect(parseToml(stated.seen.written)).toMatchObject({ unconfirmed: ['sibling', 'guards', 'work.grading'], work: { grading: 'off' } })
+        expect(stated.seen.written).toContain('# Unconfirmed: work.grading came from an answers file, which cannot show who chose it; no person is known to have stated it.')
     })
 
     it('lets the setup agent accept what init read from exact sources, and keeps security boundaries and guesses with a person', async () => {
@@ -633,10 +635,12 @@ describe('init application', () => {
         expect(complete, JSON.stringify(complete.diagnostics)).toMatchObject({ kind: 'complete', result: {
             derived: [{ field: 'cockpit.name', source: 'the cockpit root directory name' }, { field: 'ports.bases', source: 'app/compose.yml:4' },
                 { field: 'environment.compose_files', source: 'app/compose.yml' }],
-            // The machine floor holds a free disk and cold start no file records, so it stays the person's to confirm.
-            unconfirmed: [{ field: 'environment.machine', provenance: 'unattributed' }] } })
+            // The machine floor holds a free disk and cold start no file records, and an answers file cannot show a
+            // person made a trust decision, so each stays the person's to confirm.
+            unconfirmed: ['sibling', 'environment.install_policies', 'environment.machine', 'environment.posture', 'testing', 'guards', 'work.grading']
+                .map(field => ({ field, provenance: 'unattributed' })) } })
         expect(written).toContain('# Derived: ports.bases was read from app/compose.yml:4 and accepted by the setup agent; bring-up proves it.')
-        expect(written).toContain('unconfirmed = [ "environment.machine" ]\n')
+        expect(written).toContain('unconfirmed = [ "sibling", "environment.install_policies", "environment.machine", "environment.posture", "testing", "guards", "work.grading" ]\n')
         // An answer an observation can verify points the agent at the command that does, not at a person.
         expect(written).toMatch(/# To confirm: run npx --no cockpit confirm environment\.machine\b/)
     })

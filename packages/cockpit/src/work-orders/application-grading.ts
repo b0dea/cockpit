@@ -154,8 +154,9 @@ export async function gradeOrder(request: Extract<WorkRequest, { operation: 'wor
     const { order, record } = await current(request.workOrderId)
     const problem = submissionProblem(policy.grading, request)
     if (problem) return refusal(operation, problem)
-    if (request.fromSubagent && record.evaluatorFailed?.digest === record.accepted.digest) return refusal(operation,
-        `a separate evaluator already found ${order.id}'s accepted contract unmet, and a relayed verdict cannot replace that; fix the work and run work grade with none of --from-subagent, --verdict and --note, or amend the order`)
+    if (request.fromSubagent && record.evaluatorFailed) return refusal(operation,
+        `a separate evaluator already found ${order.id}'s accepted contract unmet, and a relayed verdict cannot replace that, nor after an amendment the agent accepted; `
+        + `fix the work and run work grade with none of --from-subagent, --verdict and --note, or have a person or CI accept an amendment of workorders/${order.id}.md`)
     // What actually answers, which the record keeps: `subagent` with nothing submitted is the evaluator's grade.
     const mode: GradeMode = policy.grading === 'subagent' && !request.fromSubagent ? 'independent' : policy.grading
     const reported = GRADING[mode].submission !== 'none'
@@ -208,7 +209,7 @@ export async function gradeOrder(request: Extract<WorkRequest, { operation: 'wor
         if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while it was graded; rerun work grade`)
         return { record: { ...existing, state: passed ? 'graded' : 'accepted', attempts: existing.attempts + (passed ? 0 : 1), grade,
             ...loweredBar ? { amendmentsFailedReview: { at: grade.at, note: loweredBar.note } } : {},
-            ...mode === 'independent' && !passed ? { evaluatorFailed: { at: grade.at, digest: record.accepted.digest } } : {},
+            ...mode === 'independent' && !passed ? { evaluatorFailed: { at: grade.at } } : {},
             ...checks.length ? { checks: { at: now(), digest: record.accepted.digest, results: [...checks] } } : {} }, value: undefined }
     })
     const answeredBy = GRADING[policy.grading].answeredBy?.(evaluator?.tool)

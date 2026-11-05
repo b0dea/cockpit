@@ -152,6 +152,14 @@ Each such field is written under `unconfirmed` at the top of `cockpit.toml`, lis
 An `environment.machine` floor the file does not attribute is recorded as unattributed, because no
 file records its free disk or cold start time.
 
+An agent can write an answers file, so the file cannot show that a person made a trust decision.
+Every trust answer it supplies (`sibling`, `environment.install_policies`, `environment.posture`,
+`testing`, `guards`, `work.grading`) is written under `unconfirmed` whatever its `[provenance]` says.
+Until a person confirms it, the stronger default holds where one exists: grading runs as
+`independent`, and the guard admits no install policy's build or test command. A person driving
+onboarding with an answers file confirms each one afterwards, as below: `cockpit confirm` refuses
+them.
+
 Three answers are facts about this machine and the running product, so an agent confirms them by
 observation, one at a time:
 
@@ -176,7 +184,8 @@ it.
 
 Every other answer is refused with `CONFIRM_PERSON_REQUIRED`. A person confirms the value with
 whoever owns the product, corrects it if it is wrong, deletes its `unconfirmed` entry and runs
-`cockpit sync` in a terminal.
+`cockpit sync` in a terminal outside the agent, with `--interactive` when the confirmed value is
+weaker than the default held meanwhile, such as `work.grading = "off"`.
 
 A field whose `interview.outstanding` entry says `confirmedBy = "agent"` can instead be marked
 `"derived"`, with or without a value: `init` answers it with the value it read, refuses

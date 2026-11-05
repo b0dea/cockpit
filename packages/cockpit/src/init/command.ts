@@ -3,6 +3,7 @@ import { initCommand } from '../fix-catalogue.js'
 import { canonicalJson } from '../canonical-json.js'
 import type { SurfaceTarget } from '../surfaces/contract.js'
 import {
+    isTrustDecision,
     runInitApplication,
     unsupportedInitPlatformOutcome,
     type CockpitRootQuestion,
@@ -63,7 +64,8 @@ const ANSWER_FIELDS = ['cockpit.root', 'cockpit.name', 'sibling', 'estate.runnab
     'environment.machine', 'environment.posture', 'testing', 'guards', 'work.grading'] as const
 
 /**
- * The answers file's optional [provenance] table says who chose an answer: "human" (the default),
+ * The answers file's optional [provenance] table says who chose an answer: "human" (the default, except
+ * for a trust decision, which a file cannot show a person made),
  * "agent-default" when the setup agent picked it because the person let it choose, or "derived" when
  * the setup agent accepts the value init read from exact sources. Without it, every value an agent
  * invented was written into cockpit.toml as something the operator stated. A derived field needs no
@@ -121,10 +123,17 @@ function answerProvenance(answers: Readonly<Record<string, unknown>>, answered: 
         : { refusal: refusal('INIT_ANSWER_INVALID', `${problems.join('; ')}; the [provenance] table says who chose each answer and is optional`) }
 }
 
-/** Who chose the answer to one question, as the answers file records it. */
+/**
+ * Who chose the answer to one question, as the answers file records it. An agent can write that file,
+ * so its word is not evidence a person decided: a trust decision it supplies is never recorded as the
+ * operator's, whatever its [provenance] says, and waits under unconfirmed for a person.
+ */
 function provenanceFor(field: string, marks: ReadonlyMap<string, AnswerProvenance>): AnswerProvenance {
     if (field === 'configuration.defaults') return 'operator-confirmed'
-    return marks.get(field) ?? (UNATTRIBUTED_UNLESS_MARKED.includes(field) ? 'unattributed' : 'operator-confirmed')
+    const marked = marks.get(field)
+    // One marked derived is still checked against what init read, and refused where it read nothing.
+    if (isTrustDecision(field)) return marked === 'agent-default' || marked === 'derived' ? marked : 'unattributed'
+    return marked ?? (UNATTRIBUTED_UNLESS_MARKED.includes(field) ? 'unattributed' : 'operator-confirmed')
 }
 
 /** Future questions can disappear after an answer; only actual questions and recorded answers count as used. */

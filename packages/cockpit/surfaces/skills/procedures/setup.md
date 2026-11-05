@@ -113,8 +113,11 @@ started it, even where it lives outside this root.
    chose it, and `doctor` reports `DECLARATION_UNCONFIRMED` until it is confirmed (step 7). Mark a
    field with `confirmedBy = "agent"` as `"derived"` instead, with no value needed: init answers it
    with what it read, refuses one that differs (`DOCUMENT_CONFIGURATION_ANSWER_NOT_DERIVED`), and
-   records the file it came from. An unmarked answer is recorded as the person's. Done when the file holds every answer and marks each one you
-   chose.
+   records the file it came from. An unmarked answer is recorded as the person's, except a trust
+   decision (`sibling`, `environment.install_policies`, `environment.posture`, `testing`, `guards`,
+   `work.grading`): the file cannot show a person made it, so init writes it under `unconfirmed`
+   whatever the file says, and the stronger default holds until a person confirms it (step 7).
+   Done when the file holds every answer and marks each one you chose.
 5. **Accept.** Show the person the answers file and the preview digest, then rerun with
    `--accept-preview <previewSha256> --answers <file>`. The run stops at `configuration.defaults`:
    once the person has read the values the draft in `result.question.document` lists under
@@ -172,7 +175,10 @@ started it, even where it lives outside this root.
      (`CONFIRM_OBSERVATION_FAILED`) names what the observation saw: fix that, or the value, and
      confirm again. Never delete an `unconfirmed` entry by hand: `CONFIRM_PERSON_REQUIRED` marks the
      answers only a person confirms (the trust decisions, `work.grading` among them, `cockpit.name`,
-     `estate.runnable`, `environment.test_data`), so list them in your report with their values.
+     `estate.runnable`, `environment.test_data`), so list them in your report with their values and
+     tell the person to confirm each: delete its entry, then run
+     `./node_modules/.bin/cockpit sync --config cockpit.toml --interactive` in a terminal outside the
+     agent. Until then grading runs as `independent` and the guard admits no install policy's commands.
    Done when `doctor` reports no required gap and every other gap is cleared or reported.
 8. **Put product changes where the person reviews them.** A Dockerfile, Compose file or
    `.env.schema` the product needs goes on a new branch in that sibling's checkout: start the branch

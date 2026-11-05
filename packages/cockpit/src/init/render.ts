@@ -6,7 +6,8 @@ import type { DocumentedSibling, Gap } from '../registry-resolve/registry.js'
 
 /**
  * Who gave an interview answer: a person, the setup agent choosing a default it was allowed to
- * choose, no one said (an answers file that does not attribute a value cockpit never proposes), or
+ * choose, no one known (an answers file that does not attribute a value cockpit never proposes, or that
+ * supplies a trust decision, which the file cannot show a person made), or
  * the setup agent accepting the value init read from exact sources, which init checks against what
  * it reads. A person's answer is written as stated and a derived one with its source; the others
  * are listed under `unconfirmed`.
@@ -21,7 +22,7 @@ export type DerivedAnswer = Readonly<{ field: UnconfirmableAnswer; source: strin
 export function unconfirmedReason(row: UnconfirmedAnswer): string {
     return row.provenance === 'agent-default'
         ? `${row.field} was chosen by the setup agent as a default; no person stated it`
-        : `${row.field} came from an answers file that did not say who chose it; no person is known to have stated it`
+        : `${row.field} came from an answers file, which cannot show who chose it; no person is known to have stated it`
 }
 
 function renderUnconfirmed(rows: readonly UnconfirmedAnswer[] = []): string {

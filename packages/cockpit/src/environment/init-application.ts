@@ -10,6 +10,7 @@ import {
     type DerivedAnswer, type GradingProposal, type UnconfirmedAnswer,
     type EstateObservationInput,
 } from '../init/draft.js'
+export { isTrustDecision } from '../init/draft.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from '../surfaces/contract.js'
 import { ENVIRONMENT_CODES, snapshotJson, errorCause } from './contract.js'
 import { bootstrapHolderId } from './identity.js'

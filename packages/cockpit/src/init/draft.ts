@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { unconfirmedFix } from '../guards/answer-confirmation.js'
+import { ANSWER_CONFIRMATIONS, isUnconfirmedAnswerName, unconfirmedFix } from '../guards/answer-confirmation.js'
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path'
 import { parse as parseYaml } from 'yaml'
@@ -117,6 +117,12 @@ interface DocumentConfigurationQuestion {
 }
 export type { GradingProposal } from './derive.js'
 export type { AnswerProvenance, DerivedAnswer, UnconfirmedAnswer } from './render.js'
+
+/** Whether an interview field is a trust decision, which only a person may state or confirm. */
+export function isTrustDecision(field: string): boolean {
+    const confirmation = isUnconfirmedAnswerName(field) ? ANSWER_CONFIRMATIONS[field] : undefined
+    return confirmation?.by === 'person' && confirmation.trustDecision
+}
 
 export function isAnswerProvenance(value: unknown): value is AnswerProvenance {
     return (ANSWER_PROVENANCES as readonly unknown[]).includes(value)
@@ -770,7 +776,7 @@ const QUESTION_WHY = {
 const STATED_BY: Readonly<Record<AnswerProvenance, string>> = {
     'operator-confirmed': 'the operator stated that',
     'agent-default': 'the setup agent assumed, as a default, that',
-    unattributed: 'the answers file, without saying who chose it, states that',
+    unattributed: 'the answers file, which cannot show who chose it, states that',
     derived: 'init read from the product files that',
 }
 

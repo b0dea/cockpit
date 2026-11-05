@@ -182,6 +182,8 @@ cold_start_seconds = 300
                 runtimeSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
                 // The fixture writes no guard host keys, so their empty defaults are not an operator statement.
                 guardHostsStated: false,
+                // Nor does it write [work] grading, so its default is not a choice anyone made.
+                gradingStated: false,
             },
         })
     })
