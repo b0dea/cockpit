@@ -58,9 +58,12 @@ release workflow publishes any version that is not on npm yet.
 `ci-ok` does not require an up-to-date branch, so a green run can be stale by the time it merges. The
 release workflow's `tested before publishing` job therefore reads what passed on the commit about to
 publish, and refuses unless every test cell passed on its tree, or on its parent's tree when the
-commit only moves the version. Merge soon after the run, because a merge made before the workflow
+commit only moves the version, and `ci-ok` passed on its tree too, in the Version Packages pull
+request's run or in the push's own. It counts only runs of pushes to the default branch and of pull
+requests into it from this repository, since a run on any other branch executes that branch's
+`ci.yml`. Merge soon after the run, because a merge made before the workflow
 rebuilds the pull request can stop here. If it refuses, nothing was published: wait for CI on that
-commit or re-run its failed or cancelled cells, then re-run the release workflow with
+commit or re-run its failed or cancelled jobs, then re-run the release workflow with
 `gh run rerun <run-id> --repo b0dea/cockpit`.
 
 `ci-ok` includes the `version pull request scope` check, which fails when the pull request

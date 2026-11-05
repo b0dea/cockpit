@@ -38,8 +38,12 @@ const VERSION_BUMP = { 'packages/cockpit/package.json': manifest('1.1.0'), 'CHAN
 type Cell = { os: string; node: string; gate: string; shard?: string }
 // How the test job's name spells its matrix row, and so what tested-tree.mjs reads back.
 const cellName = ({ os, node, gate, shard }: Cell) => `${os}, node ${node}, ${gate}${shard ? ` ${shard}` : ''}`
-type Run = Readonly<{ sha: string; jobs: readonly { name: string; conclusion?: string }[]; conclusion?: string; path?: string; repository?: string }>
+/** A ci.yml run the API reports. By default a push to the default branch, whose head commit has the tree of its sha. */
+type Run = Readonly<{ sha: string; jobs: readonly { name: string; conclusion?: string }[]; conclusion?: string; path?: string; repository?: string
+    event?: 'push' | 'pull_request'; branch?: string; base?: string; tree?: string }>
 const cellJobs = (cells: readonly string[], tree: string) => cells.map(cell => ({ name: `test (${cell}) tree ${tree}` }))
+const CI_OK = { name: 'ci-ok' }
+type Trees = { base: string; head: string; baseSha: string; headSha: string }
 
 type Scenario = Readonly<{
     changed: Record<string, string | null>
@@ -48,8 +52,12 @@ type Scenario = Readonly<{
     /** The whole stand-in npm, for a case that depends on how it was called. */
     npm?: string
     /** Runs the API reports, from the base and head trees; `null` makes every API call fail. */
-    runs?: ((trees: { base: string; head: string; baseSha: string; headSha: string }) => readonly Run[]) | null
+    runs?: ((trees: Trees) => readonly Run[]) | null
+    /** The heads of the pull requests that hold the last commit. */
+    pulls?: readonly string[]
     baseFiles?: Record<string, string>
+    /** A commit between the base files and `changed`, so the last commit's parent is not the base. */
+    before?: Record<string, string | null>
 }>
 
 function scenario(options: Scenario) {
@@ -65,6 +73,7 @@ function scenario(options: Scenario) {
     }
     git('init', '--quiet')
     write(options.baseFiles ?? BASE_FILES)
+    if (options.before) write(options.before)
     write(options.changed)
     const trees = { base: git('rev-parse', 'HEAD^^{tree}'), head: git('rev-parse', 'HEAD^{tree}'), baseSha: git('rev-parse', 'HEAD^'), headSha: git('rev-parse', 'HEAD') }
 
@@ -77,10 +86,14 @@ function scenario(options: Scenario) {
     const fixture = (path: string, value: unknown) => writeFileSync(join(fixtures, path.replace(/[/?&=]/g, '_')), JSON.stringify(value))
     if (options.runs !== null) {
         const runs = options.runs?.(trees) ?? []
-        for (const sha of [trees.baseSha, trees.headSha]) {
-            fixture(`repos/${SLUG}/commits/${sha}/pulls`, [])
+        const treeOf = (sha: string) => sha === trees.baseSha ? trees.base : sha === trees.headSha ? trees.head : undefined
+        fixture(`repos/${SLUG}`, { default_branch: 'main' })
+        for (const sha of [trees.baseSha, trees.headSha]) fixture(`repos/${SLUG}/commits/${sha}/pulls`, sha === trees.headSha ? (options.pulls ?? []).map(head => ({ head: { sha: head } })) : [])
+        for (const sha of new Set([trees.baseSha, trees.headSha, ...(options.pulls ?? [])])) {
             fixture(`repos/${SLUG}/actions/workflows/ci.yml/runs?head_sha=${sha}&status=success&per_page=100`, { workflow_runs: runs.flatMap((run, index) => run.sha === sha ? [{
                 id: index + 1, path: run.path ?? '.github/workflows/ci.yml', conclusion: run.conclusion ?? 'success', head_repository: { full_name: run.repository ?? SLUG },
+                event: run.event ?? 'push', head_branch: run.branch ?? 'main', head_commit: { id: sha, tree_id: run.tree ?? treeOf(sha) },
+                pull_requests: run.event === 'pull_request' ? [{ base: { ref: run.base ?? 'main' } }] : [],
             }] : []) })
         }
         runs.forEach((run, index) => fixture(`repos/${SLUG}/actions/runs/${index + 1}/jobs?per_page=100`, { jobs: run.jobs.map(job => ({ conclusion: 'success', ...job })) }))
@@ -125,6 +138,9 @@ describe('a version-only pull request', () => {
         ['the run that holds them failed', ({ base, baseSha }: { base: string; baseSha: string }) => [{ sha: baseSha, conclusion: 'failure', jobs: cellJobs([...LINUX, ...PLATFORMS], base) }]],
         ['the run came from a fork', ({ base, baseSha }: { base: string; baseSha: string }) => [{ sha: baseSha, repository: 'stranger/cockpit', jobs: cellJobs([...LINUX, ...PLATFORMS], base) }]],
         ['the run is another workflow', ({ base, baseSha }: { base: string; baseSha: string }) => [{ sha: baseSha, path: '.github/workflows/other.yml', jobs: cellJobs([...LINUX, ...PLATFORMS], base) }]],
+        // A branch's own ci.yml names its jobs, so only runs headed for the default branch count.
+        ['the run is a pull request into another base', ({ base, baseSha }: Trees) => [{ sha: baseSha, event: 'pull_request', base: 'scratch', jobs: cellJobs([...LINUX, ...PLATFORMS], base) }]],
+        ['the run is a push to another branch', ({ base, baseSha }: Trees) => [{ sha: baseSha, branch: 'scratch', jobs: cellJobs([...LINUX, ...PLATFORMS], base) }]],
         ['the API cannot answer', null],
     ] as const)('falls back to the full matrix when %s', (_name, runs) => {
         expect(classify({ changed: VERSION_BUMP, runs: runs as never })).toMatchObject({ code: 'true', smoke: 'false', cells: [...LINUX, ...PLATFORMS] })
@@ -183,6 +199,8 @@ describe('a push to main', () => {
             .toMatchObject({ code: 'false', cells: [] })
         expect(classify({ changed, env: push, runs: ({ head, headSha }) => [{ sha: headSha, jobs: cellJobs(LINUX, head) }] }))
             .toMatchObject({ code: 'true', cells: PLATFORMS })
+        expect(classify({ changed, env: push, pulls: ['d'.repeat(40)], runs: ({ head }) => [{ sha: 'd'.repeat(40), event: 'pull_request', jobs: cellJobs([...LINUX, ...PLATFORMS], head) }] }))
+            .toMatchObject({ code: 'false', cells: [] })
     })
 
     it.each([
@@ -196,9 +214,14 @@ describe('a push to main', () => {
         expect(outcome.cells).toEqual(expect.arrayContaining(LINUX))
     })
 
-    it('runs no cell for a documentation change or a merged version bump', () => {
-        expect(classify({ changed: { 'README.md': 'changed\n' }, env: push, runs: null })).toMatchObject({ code: 'false', cells: [] })
-        expect(classify({ changed: VERSION_BUMP, env: push, runs: null })).toMatchObject({ code: 'false', cells: [] })
+    // The last commit's diff says nothing about what was tested, so only the tree can skip a cell.
+    it.each([
+        ['a push of several commits whose last changes only documentation', { before: changed, changed: { 'README.md': 'changed\n' } }, () => []],
+        ['a documentation push that cancelled the run of the code push before it', { before: changed, changed: { 'README.md': 'changed\n' } },
+            ({ base, baseSha }: Trees) => [{ sha: baseSha, conclusion: 'cancelled', jobs: cellJobs([...LINUX, ...PLATFORMS], base).map(job => ({ ...job, conclusion: 'cancelled' })) }]],
+        ['a merged version bump', { changed: VERSION_BUMP }, () => []],
+    ] as const)('runs every cell for %s whose tree no run tested', (_name, commits, runs) => {
+        expect(classify({ ...commits, env: push, runs })).toMatchObject({ code: 'true', cells: [...LINUX, ...PLATFORMS] })
     })
 })
 
@@ -252,11 +275,16 @@ describe('the release gate', () => {
     }
     const source = { 'src.ts': 'changed\n' }
 
+    const versionPull = 'd'.repeat(40)
+    // The Version Packages pull request's run, on a head whose tree is this commit's unless it says otherwise.
+    const pullRun = (overrides: Partial<Run> = {}) => ({ head }: Trees): Run => ({ sha: versionPull, event: 'pull_request', tree: head, jobs: [CI_OK], ...overrides })
+
     it.each([
-        ['every cell passed on this tree', source, ({ head, headSha }: { head: string; headSha: string }) => [{ sha: headSha, jobs: cellJobs([...LINUX, ...PLATFORMS], head) }]],
-        ['this commit only moves the version and every cell passed on its parent', VERSION_BUMP, everyCellPassedOnBase],
+        ['every cell and ci-ok passed on this tree', source, ({ head, headSha }: Trees) => [{ sha: headSha, jobs: [...cellJobs([...LINUX, ...PLATFORMS], head), CI_OK] }]],
+        ['this commit only moves the version, every cell passed on its parent, and ci-ok on its pull request head with this tree', VERSION_BUMP,
+            (trees: Trees) => [...everyCellPassedOnBase(trees), pullRun()(trees)]],
     ] as const)('publishes when %s', (_name, changed, runs) => {
-        const ran = gate({ changed, runs: runs as never })
+        const ran = gate({ changed, pulls: [versionPull], runs: runs as never })
         expect(ran.status, ran.stderr).toBe(0)
     })
 
@@ -266,8 +294,12 @@ describe('the release gate', () => {
         ['only the Linux cells passed on this tree', source, ({ head, headSha }: { head: string; headSha: string }) => [{ sha: headSha, jobs: cellJobs(LINUX, head) }]],
         ['the cells passed on another tree', source, ({ headSha }: { headSha: string }) => [{ sha: headSha, jobs: cellJobs([...LINUX, ...PLATFORMS], 'c'.repeat(40)) }]],
         ['the API cannot answer', VERSION_BUMP, null],
+        // The cells do not hold the scope check, the package smoke, the scan or test protection.
+        ['every cell passed on this tree but ci-ok failed', source, ({ head, headSha }: Trees) => [{ sha: headSha, jobs: [...cellJobs([...LINUX, ...PLATFORMS], head), { ...CI_OK, conclusion: 'failure' }] }]],
+        ['ci-ok passed only on a pull request head with another tree', VERSION_BUMP, (trees: Trees) => [...everyCellPassedOnBase(trees), pullRun({ tree: 'e'.repeat(40) })(trees)]],
+        ['ci-ok passed only in a pull request into another base', VERSION_BUMP, (trees: Trees) => [...everyCellPassedOnBase(trees), pullRun({ base: 'scratch' })(trees)]],
     ] as const)('refuses when %s', (_name, changed, runs) => {
-        const ran = gate({ changed, runs: runs as never })
+        const ran = gate({ changed, pulls: [versionPull], runs: runs as never })
         expect(ran.status).toBe(1)
         expect(ran.stderr).toContain('Refusing to publish')
     })
@@ -279,6 +311,26 @@ describe('the release gate', () => {
         expect(body).toContain("if: needs.select-mode.outputs.mode == 'publish'")
         expect(body).toContain('run: bash .github/scripts/release-gate.sh')
         expect(body).not.toContain('id-token')
+    })
+})
+
+// A documentation-only change skips the matrix, so every test that reads the tracked Markdown has to run beside the scan.
+describe('the documentation-only path', () => {
+    const hygiene = /\n  hygiene:\n(?<body>[\s\S]*?)\n  test:\n/.exec(workflow)?.groups?.body ?? ''
+
+    it('runs the tests that list or open the tracked Markdown, and the packaged guide', () => {
+        const contracts = (/name: documentation contracts\n {8}run: npm test -- (?<files>.+)\n/.exec(hygiene)?.groups?.files ?? '').split(' ')
+        const readers = execFileSync('git', ['ls-files', '-z', 'packages/*.test.ts'], { cwd: REPOSITORY, encoding: 'utf8' }).split('\0')
+            .filter(path => path !== '' && !path.endsWith('.slow.test.ts')).filter(path => {
+                const source = readFileSync(join(REPOSITORY, path), 'utf8')
+                return /'ls-files'[\s\S]{0,300}?'(?:\*\.md|docs|README\.md|CONTRIBUTING\.md)'/.test(source) || /new URL\('(?:\.\.\/){3}(?:docs\/|[^'/]+\.md')/.test(source)
+            })
+        expect(readers).toEqual(expect.arrayContaining(['packages/cockpit/src/example-cockpit.test.ts', 'packages/cockpit/src/fix-catalogue.test.ts']))
+        expect(contracts).toEqual(expect.arrayContaining(readers))
+        // vitest passes a name that matches nothing, so the name has to be the case's.
+        const packaged = /run: npm test -- packages\/cockpit\/src\/packaging\.slow\.test\.ts -t '(?<name>[^']+)'\n/.exec(hygiene)?.groups?.name
+        expect(packaged).toBeDefined()
+        expect(readFileSync(join(REPOSITORY, 'packages/cockpit/src/packaging.slow.test.ts'), 'utf8')).toContain(`it('${packaged}`)
     })
 })
 

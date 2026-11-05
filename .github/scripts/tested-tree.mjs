@@ -1,11 +1,13 @@
-// Says which test cells have not passed on one exact tree, so the push to main and the Version
-// Packages pull request run only those. Usage: tested-tree.mjs <commit> <tree>. Prints one missing
-// group per line, or `none`. The workflow runs every cell on a failed lookup or on no output, so
-// nothing can pass by failing to say anything.
+// Says which checks have not passed on one exact tree, so the push to main, the Version Packages pull
+// request and the release gate run or wait for only those. Usage: tested-tree.mjs <commit> <tree>
+// [group...]. The groups are `linux` and `platforms`, the test cells, which are the default, and
+// `ci-ok`, the required check. Prints one missing group per line, or `none`. Every caller treats a
+// failed lookup or no output as everything missing, so nothing can pass by failing to say anything.
 //
 // A pull request run tests the merge of its head with the base of that moment, which can differ from
 // the head and from what lands on main. So a cell's job name carries the tree it checked out, and a
-// run's commit only says where to look; the tree in the name is what must match.
+// run's commit only says where to look; the tree in the name is what must match. ci-ok's name carries
+// no tree, so it counts only from a run whose head commit has this tree.
 //
 // Runs from a copy taken from the base revision, like the other change guards, so it must stay
 // self-contained.
@@ -18,23 +20,37 @@ const CELLS = {
 }
 const CELL_JOB = /^test \((?<cell>.+)\) tree (?<tree>[0-9a-f]{40})$/
 
-function missingGroups(runs, tree, repository) {
-    const passed = new Set()
-    for (const run of runs) {
-        // A fork's run executes the fork's workflow, so its job names prove nothing here.
-        if (run.path !== '.github/workflows/ci.yml' || run.conclusion !== 'success' || run.head_repository?.full_name !== repository) continue
-        for (const job of run.jobs) {
-            const match = CELL_JOB.exec(job.name)
-            if (match?.groups.tree === tree && job.conclusion === 'success') passed.add(match.groups.cell)
-        }
-    }
-    return Object.entries(CELLS).filter(([, cells]) => !cells.every(cell => passed.has(cell))).map(([group]) => group)
+// Job names are whatever the workflow file of that run says, and anyone who can push a branch can
+// run an edited ci.yml: through a pull request into a scratch base, or a push trigger added on their
+// branch. Only the default branch's own pushes, and pull requests into it from this repository, run
+// a workflow that reached review or is headed there.
+function qualifies(run, repository, defaultBranch) {
+    if (run.path !== '.github/workflows/ci.yml' || run.conclusion !== 'success' || run.head_repository?.full_name !== repository) return false
+    if (run.event === 'push') return run.head_branch === defaultBranch
+    // Every pull request the run lists, so a branch that is also open against a scratch base counts for nothing.
+    return run.event === 'pull_request' && run.pull_requests?.length > 0 && run.pull_requests.every(pull => pull.base?.ref === defaultBranch)
 }
 
-const [commit, tree] = process.argv.slice(2)
+function missingGroups(runs, tree, repository, defaultBranch, groups) {
+    const passed = new Set()
+    for (const run of runs) {
+        if (!qualifies(run, repository, defaultBranch)) continue
+        for (const job of run.jobs) {
+            if (job.conclusion !== 'success') continue
+            const match = CELL_JOB.exec(job.name)
+            if (match?.groups.tree === tree) passed.add(match.groups.cell)
+            if (job.name === 'ci-ok' && run.head_commit?.tree_id === tree) passed.add('ci-ok')
+        }
+    }
+    return groups.filter(group => group === 'ci-ok' ? !passed.has('ci-ok') : !CELLS[group].every(cell => passed.has(cell)))
+}
+
+const [commit, tree, ...requested] = process.argv.slice(2)
+const groups = requested.length > 0 ? requested : Object.keys(CELLS)
 const repository = process.env.GITHUB_REPOSITORY
-if (!/^[0-9a-f]{40}$/.test(commit ?? '') || !/^[0-9a-f]{40}$/.test(tree ?? '') || !repository) {
-    throw new Error('usage: tested-tree.mjs <commit> <tree>, with GITHUB_REPOSITORY set')
+if (!/^[0-9a-f]{40}$/.test(commit ?? '') || !/^[0-9a-f]{40}$/.test(tree ?? '') || !repository
+    || !groups.every(group => group === 'ci-ok' || Object.hasOwn(CELLS, group))) {
+    throw new Error('usage: tested-tree.mjs <commit> <tree> [linux|platforms|ci-ok ...], with GITHUB_REPOSITORY set')
 }
 // Any failed lookup rejects, so the script exits non-zero and prints nothing.
 const api = async path => {
@@ -42,9 +58,11 @@ const api = async path => {
     process.stderr.write(stderr)
     return JSON.parse(stdout)
 }
+const defaultBranch = (await api(`repos/${repository}`)).default_branch
+if (typeof defaultBranch !== 'string' || defaultBranch === '') throw new Error(`repos/${repository} reported no default branch`)
 const heads = (await api(`repos/${repository}/commits/${commit}/pulls`)).map(pull => pull.head.sha)
 const runs = (await Promise.all([...new Set([commit, ...heads])].map(async sha =>
     (await api(`repos/${repository}/actions/workflows/ci.yml/runs?head_sha=${sha}&status=success&per_page=100`)).workflow_runs))).flat()
 const withJobs = await Promise.all(runs.map(async run => ({ ...run, jobs: (await api(`repos/${repository}/actions/runs/${run.id}/jobs?per_page=100`)).jobs })))
-const missing = missingGroups(withJobs, tree, repository)
+const missing = missingGroups(withJobs, tree, repository, defaultBranch, groups)
 console.log(missing.length === 0 ? 'none' : missing.join('\n'))

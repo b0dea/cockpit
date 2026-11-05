@@ -108,13 +108,13 @@ jobs:
             cells="$weekly_cells"
           elif [[ "$EVENT_NAME" == push ]]; then
             # A push to main cannot stop a publish: the release workflow runs beside this one. Its
-            # cells count through the Version Packages pull request, which reads them. Merging that
-            # pull request needs no cell, since its own run checked the bump against this tree.
-            if [[ "$code" == true ]] && ! version_only; then
-              missing="$(missing_cells "$(git rev-parse HEAD)" "$tree")"
-              if [[ "$missing" == *linux* ]]; then cells="$linux_cells"; fi
-              if [[ "$missing" == *platforms* ]]; then cells="${cells:+$cells,}$platform_cells"; fi
-            fi
+            # cells count through the Version Packages pull request and the release gate, which read
+            # them. The diff decides nothing here: a push can carry several commits, and a newer push
+            # cancels the run of the one before it, so the last commit's diff does not say what was
+            # tested. A cell is skipped only when it passed on this exact tree.
+            missing="$(missing_cells "$(git rev-parse HEAD)" "$tree")"
+            if [[ "$missing" == *linux* ]]; then cells="$linux_cells"; fi
+            if [[ "$missing" == *platforms* ]]; then cells="${cells:+$cells,}$platform_cells"; fi
             code=false
             if [[ -n "$cells" ]]; then code=true; fi
           else
@@ -227,10 +227,16 @@ jobs:
         run: |
           npm run references
           git diff --exit-code
-      # The documentation tests read docs/ directly. On a code change the full matrix runs
-      # them again; this keeps them on the docs-only path the matrix is skipped for.
+      # Every test that reads the tracked Markdown, and the packaged guide, since docs/ ships in
+      # the tarball. On a code change the full matrix runs them again; this keeps them on the
+      # docs-only path the matrix is skipped for.
       - name: documentation contracts
-        run: npm test -- packages/cockpit/src/docs-ownership.test.ts packages/cockpit/src/docs-decisions.test.ts packages/cockpit/src/docs-lint.test.ts packages/cockpit/src/references.test.ts
+        run: npm test -- packages/cockpit/src/docs-ownership.test.ts packages/cockpit/src/docs-decisions.test.ts packages/cockpit/src/docs-lint.test.ts packages/cockpit/src/references.test.ts packages/cockpit/src/example-cockpit.test.ts packages/cockpit/src/fix-catalogue.test.ts
+      # One case of the packaging file: it packs through the real prepack and reads the installed
+      # guide, and the rest of that file is the matrix's. vitest passes a name that matches nothing,
+      # so ci-classification.test.ts holds this name to the case.
+      - name: packaged guide
+        run: npm test -- packages/cockpit/src/packaging.slow.test.ts -t 'ships the user guide without contributor pages'
 
   test:
     # The tree is what .github/scripts/tested-tree.mjs reads to skip this cell on a later identical tree.
