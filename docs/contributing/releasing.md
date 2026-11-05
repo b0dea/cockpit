@@ -61,7 +61,9 @@ publish, and refuses unless every test cell passed on its tree, or on its parent
 commit only moves the version, and `ci-ok` passed on its tree too, in the Version Packages pull
 request's run or in the push's own. It counts only runs of pushes to the default branch and of pull
 requests into it from this repository, since a run on any other branch executes that branch's
-`ci.yml`. Merge soon after the run, because a merge made before the workflow
+`ci.yml`. Evidence from a pull request into the default branch can still come from that pull
+request's own edited `ci.yml`, which a reviewer sees in the diff and which then merges into the tree
+the evidence names. Merge soon after the run, because a merge made before the workflow
 rebuilds the pull request can stop here. If it refuses, nothing was published: wait for CI on that
 commit or re-run its failed or cancelled jobs, then re-run the release workflow with
 `gh run rerun <run-id> --repo b0dea/cockpit`.
