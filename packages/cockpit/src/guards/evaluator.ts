@@ -1,8 +1,8 @@
 import { posix } from 'node:path'
-import { errorCause, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
+import { DOTENV_DOCUMENTATION, errorCause, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 import { GUARD_INPUT_LIMITS, isParsedGuardInput, shownGuardWord, type ParsedInvocation } from './invocation-parser.js'
 import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from './host.js'
-import { GuardCommandArgv } from '../schema.js'
+import { GuardCommandArgv, McpAllowedTools } from '../schema.js'
 import { renderGuardProjectCommand } from '../environment/install-policy.js'
 import { GUARD_LOCAL_PATHS } from './local-identity.js'
 import { classifyReadOnlyInvocation, cockpitLauncherPrefix, type ReadOnlyAccess } from './read-only.js'
@@ -34,6 +34,8 @@ export interface GuardInvocationProfile {
     readonly argv: readonly string[]
     /** Files the admitted command reads and may echo back, checked like a read-only command's reads. */
     readonly reads?: readonly string[]
+    /** Admitted only as the whole call: its reads are proved now, and a chain could change them first. */
+    readonly alone?: true
 }
 export interface GuardProjectCommand {
     readonly executable: string
@@ -94,6 +96,7 @@ export interface GuardEvaluationPolicy {
      */
     readonly cockpitLaunchers: readonly GuardInvocationProfile[]
     readonly projectCommands: readonly GuardProjectCommand[]
+    readonly mcpAllowedTools?: Readonly<Record<string, readonly string[]>>
 }
 interface PathInspectionRequest {
     readonly path: string
@@ -139,8 +142,6 @@ const GUARD_CONTROL_FILES = [
 const GUARD_CONTROL_DIRECTORIES = ['.opencode/plugin', '.opencode/plugins', '.cockpit/bundles/claudecode-plugin', '.cockpit/mcp', GUARD_LOCAL_PATHS.directory,
     '.cockpit/work-orders'] as const
 const SECRETS_ROOT = 'env/.secrets'
-// Environment files conventionally named for the variables they document, never their values.
-const DOTENV_DOCUMENTATION: ReadonlySet<string> = new Set(['.env.example', '.env.sample', '.env.template', '.env.schema'])
 /**
  * Bounds on the locations the policy and the path inspector carry, one per quantity, each set above
  * what an honest checkout holds so that only an unwalkable tree or a broken install reaches it.
@@ -174,6 +175,16 @@ export function foldGuardSpelling(path: string): string {
     return path.normalize('NFC').toUpperCase().toLowerCase().normalize('NFC')
 }
 const fold = foldGuardSpelling
+/** A name the guard treats as an environment file or secrets directory, under any spelling. */
+export function isSensitiveGuardName(name: string): boolean {
+    const folded = fold(name)
+    return folded.startsWith('.env') || folded === '.secrets'
+}
+/** Every location the guard protects by path: its controls, the secrets root, the configuration and each declared instance. */
+export function guardProtectedLocations(input: Readonly<{ canonicalRoot: string; configPath: string; instances: readonly string[] }>): readonly Readonly<{ path: string; type: 'file' | 'directory' }>[] {
+    return [...GUARD_ROOT_PROTECTIONS.map(({ path, type }) => ({ path: posix.join(input.canonicalRoot, path), type })),
+        { path: input.configPath, type: 'file' as const }, ...input.instances.map((path) => ({ path, type: 'file' as const }))]
+}
 const unavailable = (reason: string): GuardDecision => ({ decision: 'unavailable', reason })
 const ask = (reason: string): GuardDecision => ({ decision: 'ask', reason })
 const UNPROVEN_LAUNCHER = 'This cockpit command requires human approval: the guard could not prove it starts the installed cockpit. '
@@ -223,7 +234,8 @@ function projectTuple(value: JsonSnapshotObject): boolean {
 }
 function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     const p = snapshotJson(value)
-    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'searchPathRelativeEntry', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands'])
+    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'searchPathRelativeEntry', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands', ...p.mcpAllowedTools === undefined ? [] : ['mcpAllowedTools']])
+        || p.mcpAllowedTools !== undefined && !McpAllowedTools.safeParse(p.mcpAllowedTools).success
         || !canonical(p.canonicalRoot) || !canonical(p.configPath) || posix.dirname(p.configPath) !== p.canonicalRoot || !strings(p.allowedRoots) || !p.allowedRoots.includes(p.canonicalRoot) || !p.allowedRoots.every(canonical)
         || !strings(p.protectedBranches) || !strings(p.hostedDatabaseHosts) || !strings(p.vendorHosts)
         || !Array.isArray(p.instances) || !strings(p.templates) || p.templates.length > GUARD_LOCATION_LIMITS.templates || !Array.isArray(p.protectedIdentities) || !Array.isArray(p.declaredAllows) || !Array.isArray(p.declaredDenies)
@@ -248,7 +260,8 @@ function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
             || !keys(item, item.fix === undefined ? ['match', 'argv', 'reason'] : ['match', 'argv', 'reason', 'fix'])
             || !['prefix', 'contains'].includes(String(item.match)) || !ruleArgv(item.argv) || !scalar(item.reason)
             || item.fix !== undefined && !scalar(item.fix))
-        || p.cockpitInvocations.some((item) => !record(item) || !keys(item, item.reads === undefined ? ['executable', 'cwd', 'argv'] : ['executable', 'cwd', 'argv', 'reads'])
+        || p.cockpitInvocations.some((item) => !record(item) || !keys(item, ['executable', 'cwd', 'argv', ...item.reads === undefined ? [] : ['reads'], ...item.alone === undefined ? [] : ['alone']])
+            || item.alone !== undefined && item.alone !== true
             || !scalar(item.executable) || item.executable.includes('*') || !confined(item.cwd) || !argv(item.argv)
             || item.reads !== undefined && (!strings(item.reads) || item.reads.length > GUARD_INPUT_LIMITS.paths))
         || p.cockpitLaunchers.length > GUARD_INPUT_LIMITS.invocations || p.cockpitLaunchers.some((item) => !record(item) || !keys(item, ['executable', 'cwd', 'argv'])
@@ -693,6 +706,17 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     if (!isParsedGuardInput(input)) return unavailable('Guard input is unavailable or was not captured by the invocation parser.')
     const resolved = capturePolicy(policy)
     if (!resolved) return unavailable('Guard policy is incomplete or malformed.')
+    if (input.tool.startsWith('mcp__')) {
+        if (resolved.mcpAllowedTools === undefined) return unavailable('MCP tool policy is missing from the authenticated guard request.')
+        for (const [server, allowed] of Object.entries(resolved.mcpAllowedTools)) {
+            const prefix = `mcp__${server}__`
+            // Claude Code calls a tool `read.record` by the native name `read_record`, the only name this hook receives.
+            if (input.tool.startsWith(prefix) && !allowed.some(tool => input.tool === `${prefix}${tool.replaceAll('.', '_')}`)) {
+                return deny(`MCP tool ${shownGuardWord(input.tool)} is outside the exact allowlist for ${server}. Fix: use a listed tool or have a person review [mcp.allowed_tools] and sync.`)
+            }
+        }
+        return { decision: 'allow', reason: 'MCP tool satisfies the declared tool restrictions.' }
+    }
     const absolute = (path: string) => `${resolved.canonicalRoot}/${path}`
     const secretRoot = absolute(SECRETS_ROOT)
     const controlFiles = GUARD_CONTROL_FILES.map(absolute)
@@ -703,7 +727,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     const secretDenial = deny('Refusing mutation or staging below a secrets directory.')
     const instanceDenial = deny('Refusing mutation or staging of a declared environment instance.')
     // `git add -A`, `git add .` and a directory operand stage everything below them.
-    const coveringStageDenial = deny(`Refusing to stage a path that contains ${SECRETS_ROOT} or a declared environment instance: \`git add -A\`, \`git add .\` and a directory operand stage everything below them. Stage the changed files by name instead.`)
+    const coveringStageDenial = deny(`Refusing to stage a path that contains a secrets directory or a declared environment instance: \`git add -A\`, \`git add .\` and a directory operand stage everything below them. Stage the changed files by name instead.`)
     const controlDenial = deny('Refusing mutation of the guard, its hook registration or its ownership manifest.')
     const gitMetadataDenial = deny('Refusing direct mutation of Git metadata: its configuration chooses programs that read-only Git commands run.')
     const readDenial = deny('Refusing to read a declared environment instance or secrets directory into the agent context.')
@@ -714,7 +738,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     // no tool reads or writes one by default: the guard only asked for `cat .env` and allowed an edit.
     const dotenvSecret = (folded: string) => { const name = posix.basename(folded); return (name === '.env' || name.startsWith('.env.')) && !documentation(folded) }
     const dotenvDenial = deny('Refusing to read or write an environment file: `.env` and `.env.*` hold secrets unless named .env.example, .env.sample, .env.template or .env.schema, or declared as a template. '
-        + 'Fix: run what needs its values as `varlock run -- <cmd>`, which never prints them, or read the variable names from the .env.schema.')
+        + 'Fix: an agent runs the trusted process through a declared project command or script that wraps Varlock; a person in a terminal runs that same command, or `VARLOCK_TELEMETRY_DISABLED=true varlock run -- <cmd>`, without `--redact-stdout`, which Varlock refuses on a terminal. List variable names with `npx --no cockpit env keys --config <your cockpit.toml>`.')
     const manifestPath = absolute(GUARD_CONTROL_FILES[1])
     const structural = [resolved.configPath, manifestPath]
     const structuralDenial = deny(`Refusing to delete, rename, truncate, relink or make unreadable ${posix.basename(resolved.configPath)} or ${GUARD_CONTROL_FILES[1]}: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit ${posix.basename(resolved.configPath)} in place instead.`)
@@ -817,6 +841,20 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (request.operation === 'write' && (controlFiles.some(is) || controlDirectories.some(below)
             || controlCoverage && (controlFiles.some(covers) || controlDirectories.some(covers)))) hold(controlDenial)
         return evidence
+    }
+    // `.`, `-A` and a directory operand stage everything below them, so a secrets directory anywhere
+    // in the tree is as much at stake as the root one: `git add services` only asked, and an approved
+    // prompt would have staged its contents wherever an ignore rule did not cover them.
+    const inspectStage = (invocation: ParsedInvocation, path: string, cwd: string) => {
+        if (!inspectPath({ path, cwd, operation: 'stage' })) return
+        const walked = resolvedEvidence({ path, cwd, operation: 'search' })
+        if (!walked) {
+            hold(unavailable(`Guard could not walk ${path} to prove staging it holds no secrets directory${inspectionFailure === undefined ? '' : ` (${inspectionFailure})`}.`))
+            return
+        }
+        const found = walked.sensitive as readonly string[] | null
+        if (found === null) holdAsk(invocation, ask(`Staging ${path} covers more than the guard walks to prove it holds no secrets directory. Stage the changed files by name.`))
+        else if (found.some((item) => fold(item).split('/').includes('.secrets'))) hold(coveringStageDenial)
     }
     // Removing a control, anything below a control directory, or a directory containing one can
     // disable the guard before its next invocation. Missing evidence never softens a spelling denial.
@@ -1063,6 +1101,9 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             if (!inspectReadOnly({ cwd: profile.cwd, reads: profile.reads, trees: [], listings: [] })) {
                 holdAsk(invocation, ask('This cockpit command reads a file the guard cannot prove safe to read: a symlink, an undeclared .env file or one outside the configured roots.'))
             }
+            if (profile.alone && (input.invocations.length !== 1 || invocation.redirects.length > 0)) {
+                holdAsk(invocation, ask('env schema --replace-from runs without a prompt only as the whole command: another command in this call could change the draft after the guard proved it safe. Run it on its own.'))
+            }
         }
         if (!git) continue
         // Git changes directory as the system does, resolving `..` from where a link leads, so each
@@ -1084,13 +1125,13 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
                 if (options && arg.startsWith('-')) {
                     if (['-A', '--all', '-u', '--update'].includes(arg)) {
                         // These forms can stage an instance even without a literal operand.
-                        inspectPath({ path: '.', cwd: git.cwd, operation: 'stage' })
+                        inspectStage(invocation, '.', git.cwd)
                     } else if (!['-f', '--force', '-v', '--verbose', '-n', '--dry-run'].includes(arg)) hold(unavailable('Unsupported Git staging option. Stage with `git add <paths>`, `-A` or `-u`; a person runs any other staging form.'))
                 } else {
                     operands++
                     pathCount++
                     if (arg.startsWith(':') || /[*?\[]/.test(arg)) hold(unavailable('Unproven Git staging pathspec grammar.'))
-                    else inspectPath({ path: arg, cwd: git.cwd, operation: 'stage' })
+                    else inspectStage(invocation, arg, git.cwd)
                 }
             }
             if (!operands) holdAsk(invocation, ask('Staging without explicit paths requires human approval.'))

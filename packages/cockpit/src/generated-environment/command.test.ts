@@ -1,11 +1,14 @@
-import { readFile, stat, symlink, writeFile, mkdir, realpath, lstat } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { readFile, rm, stat, symlink, writeFile, mkdir, realpath, lstat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { mkdtemp } from 'node:fs/promises'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { observeConfigSource } from '../config/load.js'
+import { executeProbe } from '../environment-exec/execute.js'
 import { type GeneratedEnvironmentCommandAdapters } from '../environment/generated-application/shared.js'
+import { checkGeneratedEnvironment } from '../environment/generated-application/check.js'
 import { applyGeneratedEnvironmentRepair, applySelectedBootstrapSurface, prepareGeneratedEnvironmentCurrentness,
     prepareSelectedBootstrapSurface, syncGeneratedEnvironment } from './command.js'
 
@@ -26,6 +29,58 @@ describe('public generated repair', () => {
         expect(result.diagnostics[0]!.code).toBe('GENERATED_SOURCE_CHANGED')
         expect(await readFile(path, 'utf8')).toBe(bytes)
         await expect(lstat(join(root, '.cockpit/generated-environment-ownership.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+})
+
+describe('surfaces-only checkout binding', () => {
+    it('checks while Git changes the Git directory between the two checkout observations', async () => {
+        const { root, configPath } = await consumer('git-activity')
+        execFileSync('git', ['init', '--quiet', root])
+        expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        let steps = 0
+        const outcome = await checkGeneratedEnvironment({ configPath }, { execute: async (step) => {
+            steps += 1
+            await writeFile(join(root, '.git/index.lock'), '')
+            await rm(join(root, '.git/index.lock'))
+            return executeProbe(step)
+        } })
+        expect(outcome, JSON.stringify(outcome.diagnostics)).toMatchObject({ kind: 'complete' })
+        expect(steps).toBeGreaterThan(0)
+    })
+
+    it.each([
+        ['a repository-local include', async (root: string) => {
+            execFileSync('git', ['init', '--quiet', root])
+            execFileSync('git', ['-C', root, 'config', 'include.path', 'included-config'])
+        }, false],
+        ['no repository', async () => undefined, true],
+        ['an empty .git directory', (root: string) => mkdir(join(root, '.git')), true],
+        ['a stale .git file', (root: string) => writeFile(join(root, '.git'), 'gitdir: /synthetic/missing\n'), true],
+    ] as const)('publishes and checks with %s, where a runtime would refuse', async (name, arrange, warned) => {
+        const { root, configPath } = await consumer(`surfaces-${name.replaceAll(/[ .-]+/g, '-')}`)
+        await arrange(root)
+        const synced = await syncGeneratedEnvironment({ configPath })
+        const checked = await checkGeneratedEnvironment({ configPath })
+        for (const outcome of [synced, checked]) {
+            expect(outcome, JSON.stringify(outcome.diagnostics)).toMatchObject({ kind: 'complete' })
+            const codes = outcome.diagnostics.map(({ code }) => code)
+            if (warned) expect(outcome.diagnostics).toContainEqual(expect.objectContaining({ code: 'GENERATED_CHECKOUT_STANDALONE',
+                message: expect.stringContaining('generated files stay valid, but the guard needs a Git repository it can read and holds'),
+                fix: expect.stringContaining('run git init if this directory has no repository') }))
+            else expect(codes).not.toContain('GENERATED_CHECKOUT_STANDALONE')
+        }
+    })
+
+    it('checks without Git on PATH what was published with it, and says the checkout was not read', async () => {
+        const { root, configPath } = await consumer('git-absent')
+        execFileSync('git', ['init', '--quiet', root])
+        expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        const empty = join(root, 'empty-bin')
+        await mkdir(empty)
+        const checked = await checkGeneratedEnvironment({ configPath }, { observationEnv: { PATH: empty } })
+        expect(checked, JSON.stringify(checked.diagnostics)).toMatchObject({ kind: 'complete' })
+        expect(checked.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'GENERATED_CHECKOUT_STANDALONE',
+            message: expect.stringContaining('Git cannot be looked up') }))
     })
 })
 

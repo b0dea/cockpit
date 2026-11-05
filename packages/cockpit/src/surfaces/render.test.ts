@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import { describe, expect, it } from 'vitest'
+import { parse as parseToml } from 'smol-toml'
 
 import { RULESYNC_VERSION } from './generator-adapter.js'
 import { renderSurfaceSet, surfaceModelSha256 } from './render.js'
@@ -260,6 +261,31 @@ describe('surface rendering', () => {
         value.customReceipts[0] = { ...(value.customReceipts[0] as unknown as Record<string, unknown>), export: 'renderRules',
             files: [], resultSha256: surfaceModelSha256([])! } as never
         expect(renderSurfaceSet(value)).toMatchObject({ kind: 'refusal' })
+    })
+
+    it('retains an exact Codex tool allowlist when replacing the browser launch transport', () => {
+        const value = input()
+        const path = '.codex/config.toml'
+        const base = '[mcp_servers.playwright]\ncommand = "original"\nenabled_tools = ["browser_snapshot"]\n'
+        const replacement = '[mcp_servers.playwright]\ncommand = "replacement"\n'
+        value.generated.files.push(file('codexcli', path, base))
+        value.mcp.result.servers.push({ name: 'playwright', enabled: true, sources: [], allowedTools: ['browser_snapshot'] } as never)
+        value.mcp.result.harnesses.push({ target: 'codexcli', servers: [
+            { name: 'playwright', command: 'original', args: [], enabled: true, allowedTools: ['browser_snapshot'] },
+        ] } as never)
+        value.nativeMcp = { modelSha256: surfaceModelSha256(value.mcp.result)!, fragments: [
+            { target: 'codexcli', path, baseSha256: digest(base), bytes: base, sha256: digest(base) } as never,
+        ] }
+        const browser = { files: [file('codexcli', path, replacement)], rows: [], clients: [], graderBrowserAccess: 'retained',
+            mcp: { kind: 'complete', result: { servers: [{ name: 'playwright', enabled: true, sources: [], allowedTools: ['browser_snapshot'] }], wrappers: [], harnesses: [] }, diagnostics: [] } }
+        const result = renderSurfaceSet({ ...value, browser, browserReference: '# Browser reference\n' })
+        expect(result, JSON.stringify(result)).toMatchObject({ kind: 'complete' })
+        if (result.kind !== 'complete') throw new Error(result.diagnostic.message)
+        const entry = result.entries.find(entry => entry.path === path)
+        if (entry?.kind !== 'file') throw new Error('expected a generated Codex configuration file')
+        expect(parseToml(entry.bytes)).toMatchObject({
+            mcp_servers: { playwright: { command: 'replacement', enabled_tools: ['browser_snapshot'] } },
+        })
     })
 
     it('merges browser and testing projections through the existing physical owners', () => {

@@ -51,6 +51,13 @@ database and vendor hosts the guard must keep agents away from. Each accepted an
 it came from, and `init` writes a commented `[work.gates]` and `[autonomy]` block showing how to add
 human gates. The details are under [The init interview](#the-init-interview).
 
+To adopt the instructions and guards before the runtime, answer `environment.compose_files` with
+`[]`, even if the repository already runs or has Compose files. `init` keeps the product's runnable
+classification, install policies, testing and guard declarations, and skips the machine floor and
+runtime posture questions. It records the choice and who made it in `cockpit.toml`. Initialization
+can finish with no runtime declared; standalone `preflight` and runtime commands still refuse until
+you [add the Compose stack](#chapter-2-several-repositories-and-a-compose-stack).
+
 ### Generate, check and commit
 
 ```sh
@@ -141,6 +148,9 @@ see [Safety and autonomy](safety-and-autonomy.md).
   [CLI reference](cli-reference.md), not from memory.
 - `init` exits 0 when it stops at a question. Read `result.stage`, `result.question` and
   `result.interview.outstanding` for the pending decision.
+- A cockpit that declares no runtime ends at stage `surfaces-verified`, not `environment-verified`:
+  its generated files are checked, and nothing verified a running environment. `doctor` reports its
+  schema status.
 
 ### Mark the answers you chose
 
@@ -206,6 +216,10 @@ warns), `needs` (why cockpit needs it) and `findings` (each diagnostic with its 
 `noFinding` lists the prerequisites no check reported; a check that could not run reports nothing, so
 it is not proof. Take the gaps one at a time, required first: what is missing, why, and the exact change
 you propose.
+
+Run readiness checks with the installed Cockpit copy. A package-manager link, such as pnpm's package
+link, is recognized when it resolves to that running copy; the guard binding and launcher still have
+to pass their own checks.
 
 Whether the existing tests prove anything is the agent's judgement, made on evidence. For each
 proposed gate, name the behaviours its tests exercise, then break one of them on purpose, run the
@@ -316,9 +330,9 @@ vendor_endpoint_hosts = []
 | `ports.bases` | the host-published base port map; `{}` means none |
 | `environment.install_policies` | the build and test commands per toolchain and lockfile; `[]` for none |
 | `environment.test_data` | exactly the boolean keys `seeded_data` and `signed_in_users`; `false` states it is not needed |
-| `environment.compose_files` | the Compose files that run the product, relative to the cockpit root |
-| `environment.machine` | the runtime floor: `runtime_memory_mb`, `runtime_cpus`, `free_disk_mb`, `cold_start_seconds`; memory and CPUs are proposed, free disk and cold start never |
-| `environment.posture` | `addressing`, `authentication` and `posture_requirements` ([Declare environment postures](environment.md#declare-environment-postures)) |
+| `environment.compose_files` | the Compose files that run the product, relative to the cockpit root; `[]` defers runtime adoption as in [chapter 1](#chapter-1-one-repository-one-tool-no-docker) |
+| `environment.machine` | asked when Compose files are declared; the runtime floor: `runtime_memory_mb`, `runtime_cpus`, `free_disk_mb`, `cold_start_seconds`; memory and CPUs are proposed, free disk and cold start never |
+| `environment.posture` | asked when Compose files are declared; `addressing`, `authentication` and `posture_requirements` ([Declare environment postures](environment.md#declare-environment-postures)) |
 | `testing` | the product's `[testing]` stages and gates; `"none"` records that it has no tests yet, so no work can be graded PASS and `doctor` warns (`TESTING_GATE_UNDECLARED`) |
 | `guards` | `hosted_db_hosts` and `vendor_endpoint_hosts` of every non-local environment; `[]` for both records that none exists |
 | `provenance` | optional; `"human"` (the default), `"agent-default"` or `"derived"` per field. An `"agent-default"` answer stays under `unconfirmed` until `cockpit confirm` observes it or a person confirms it ([Mark the answers you chose](#mark-the-answers-you-chose)) |
@@ -389,7 +403,7 @@ time of the services it started.
 | Repositories scattered across the disk | Moving them is the human's call. Otherwise `sibling add <slug> --from <path> --purpose "<purpose>"` records each checkout's `origin` with `acquire = "auto"`, and `setup` clones a fresh copy into the cockpit. It never moves, changes or deletes the original. |
 | A service that has only ever run in CI, staging or a cluster | Follow **Create a local setup** in the shipped [setup procedure](../packages/cockpit/surfaces/skills/procedures/setup.md#create-a-local-setup): derive each value from manifests, CI workflows and deployment files, record it as inferred with its source, and keep every unknown a named gap. |
 | Committed `.claude/settings.json`, `.codex/config.toml` or `.codex/hooks.json` | [Adopt existing agent settings](#adopt-existing-agent-settings), after the human agrees. |
-| A sibling with a `.env.schema` (Varlock) | `preflight` and `doctor` check each schema through Varlock and report key names and validity, never values. Follow **Secret handling** in the [setup procedure](../packages/cockpit/surfaces/skills/procedures/setup.md#secret-handling) and [Secret sources and environment schemas](environment.md#secret-sources-and-environment-schemas). `varlock init`, provider login, encryption and moving secrets are the human's actions. |
+| A repository with dotenv files, environment templates or a `.env.schema` | Decide whether to adopt Varlock even when no schema exists; record adoption or the reason for deferral. `preflight` and `doctor` check existing schemas through Varlock with telemetry disabled and report key names and validity, never values. Follow **Secret handling** in the [setup procedure](../packages/cockpit/surfaces/skills/procedures/setup.md#secret-handling) and [Secret sources and environment schemas](environment.md#secret-sources-and-environment-schemas). `varlock init`, provider login, encryption and moving secrets are the human's actions. |
 
 ## Adopt an existing setup
 
@@ -658,7 +672,7 @@ remote daemon or on a context switched mid-command
 ```
 
 `upgrade [<version>]` moves the exact pin to a newer version and re-runs `sync`; `--dry-run` prints
-the commands and runs nothing. Until `sync` finishes, the guard holds every agent tool call, because
+the commands and runs nothing. Until `sync` finishes, the guard holds every guarded agent tool call, because
 it trusts only the cockpit, Node and `cockpit.toml` it was generated for. Review and commit the
 regenerated files. [Upgrade cockpit](harness-surfaces.md#upgrade-cockpit) has the details.
 

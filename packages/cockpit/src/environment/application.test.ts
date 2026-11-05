@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, renameSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, type Stats } from 'node:fs'
+import { chmodSync, existsSync, renameSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, type Stats } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -11,7 +11,7 @@ import { executeProbe } from '../environment-exec/execute.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolveDockerExecutable } from './executable.js'
 import { evaluateGuard, GUARD_ROOT_PROTECTIONS, guardIdentity } from '../guards/evaluator.js'
 import { parseGuardInput } from '../guards/invocation-parser.js'
-import { encodeGuardLocalIdentity, parseGuardLocalIdentity } from '../guards/local-identity.js'
+import { encodeGuardLocalIdentity, GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from '../guards/local-identity.js'
 import { shellPayload } from '../guards/fixtures/invocation-corpus.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import type { ExecutionStep } from './contract.js'
@@ -347,7 +347,7 @@ describe('guard policy construction', () => {
         })
         expect(result).toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining(
             change === 'changed' ? 'publication changed during evaluation'
-                : change === 'missing' ? `.cockpit/guards/bash-guard.sh is missing; it authenticates the guard and the hook that launches it, so every tool call is held, including a sync run through this agent. Fix: a human must restore it with \`git -C ${root} restore -- .cockpit/guards/bash-guard.sh\``
+                : change === 'missing' ? `.cockpit/guards/bash-guard.sh is missing; it authenticates the guard and the hook that launches it, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are held, including a sync run through this agent, while file reads and unrestricted MCP tools continue. Fix: a human must restore it with \`git -C ${root} restore -- .cockpit/guards/bash-guard.sh\``
                     : 'could not be read or revalidated',
         ) } })
         expect(observeCheckout).toHaveBeenCalledTimes(change === 'changed' ? 1 : 0)
@@ -367,7 +367,7 @@ describe('guard policy construction', () => {
         try {
             const { decision } = await runGuardEvaluationApplication(request, adapters)
             expect(decision.decision).toBe('unavailable')
-            expect(decision.reason).toContain(`${file === 'cockpit.toml' ? configPath : file} is missing; ${why}, so every tool call is held`)
+            expect(decision.reason).toContain(`${file === 'cockpit.toml' ? configPath : file} is missing; ${why}, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are held`)
             expect(decision.reason).toContain(restorable
                 ? `Fix: a human must restore it with \`git -C ${root} restore -- ${file}\` (it is committed), or run \`npx --no cockpit sync --config ${configPath}\``
                 : `Fix: a human must run \`npx --no cockpit sync --config ${configPath}\` in a terminal, outside the agent`)
@@ -489,15 +489,125 @@ describe('guard policy construction', () => {
         const canonicalConfig = realpathSync(configPath)
         const sync = { ...request, searchPath: '/usr/bin:/bin', payload: shellPayload(`${resolve(dirname(identity.module), '../bin/cockpit.mjs')} sync --config ${canonicalConfig}`, root) }
         expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({ decision: { decision: 'unavailable', reason:
-            `${canonicalConfig} changed since the guards were generated without widening what agents may do; every tool call except cockpit sync and check is held until it is synced. Fix: run \`npx --no cockpit sync --config ${canonicalConfig}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files.` },
+            `${canonicalConfig} changed since the guards were generated without widening what agents may do; shell commands, file edits and writes, and restricted MCP tools under Claude Code are held, except cockpit sync and check, until it is synced, while file reads and unrestricted MCP tools continue. Fix: run \`npx --no cockpit sync --config ${canonicalConfig}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files. If sync refuses the edit, undo it: one edit or write of ${canonicalConfig} that leaves it byte-identical to .cockpit/local/guard-config is admitted; an agent can restore only what was recorded, so authority never exceeds the recorded policy, and this may also discard a person's unsynced narrowing edit.` },
         diagnostics: [{ code: 'GUARD_CONFIG_UNSYNCED' }] })
         expect(await runGuardEvaluationApplication(sync, adapters)).toMatchObject({ decision: { decision: 'allow' } })
+        const restricted = parse(readFileSync(configPath, 'utf8')) as { guards: { deny: unknown[] } }
+        restricted.guards.deny.push({ contains: ['--force'], reason: 'Forced writes require review.' })
+        writeFileSync(configPath, stringify(restricted))
+        expect(await runGuardEvaluationApplication(sync, adapters)).toMatchObject({ decision: { decision: 'allow' } })
+        expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({
+            decision: { decision: 'unavailable' }, diagnostics: [{ code: 'GUARD_CONFIG_UNSYNCED' }],
+        })
         // An edit that widens it holds every call, that sync included, until a human regenerates, and the reason names what widened.
         const widened = parse(readFileSync(configPath, 'utf8')) as { guards: { allow: unknown[] } }
         widened.guards.allow.push({ argv: ['make', 'release'], reason: 'Releases are routine.' })
         writeFileSync(configPath, stringify(widened))
         for (const call of [request, sync]) expect(await runGuardEvaluationApplication(call, adapters)).toMatchObject({ decision: { decision: 'unavailable', reason:
-            `${canonicalConfig} changed since the guards were generated and it widens what agents may do (guards.allow); guard policy comes from it and an edit that may widen it takes effect only once a human approves it, so every tool call is held, including a sync run through this agent. Fix: a human must run \`npx --no cockpit sync --config ${canonicalConfig}\` in a terminal, outside the agent, then commit any regenerated files.` } })
+            `${canonicalConfig} changed since the guards were generated and it widens what agents may do (guards.allow); guard policy comes from it and an edit that may widen it takes effect only once a human approves it, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are held, including a sync run through this agent, while file reads and unrestricted MCP tools continue. Fix: a human must run \`npx --no cockpit sync --config ${canonicalConfig}\` in a terminal, outside the agent, then commit any regenerated files.` } })
+    }, 120_000)
+
+    it('admits only the exact restoration of the recorded configuration out of a hold sync cannot clear', async () => {
+        const { root, configPath, request, adapters } = await installedGuardRequest()
+        const recorded = readFileSync(configPath, 'utf8')
+        const call = (tool_name: string, tool_input: unknown): GuardEvaluationApplicationInput => ({ ...request, payload: { hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input } })
+        const write = (content: string, file_path = configPath) => call('Write', { file_path, content })
+        const decision = async (input: GuardEvaluationApplicationInput, using = adapters) => (await runGuardEvaluationApplication(input, using)).decision
+        const table = '[mcp.allowed_tools]\n'
+        const addition = 'nosuchserver = []\n'
+        const edited = recorded.replace(table, `${table}${addition}`)
+
+        // The edit reduces, so the guard admits it, and only then does sync find it cannot publish it.
+        expect(await decision(write(edited))).toMatchObject({ decision: 'allow' })
+        writeFileSync(configPath, edited)
+        expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'MCP_DECLARATION_INVALID' }] })
+
+        const patch = (path: string) => `*** Begin Patch\n*** Update File: ${path}\n@@\n [mcp.allowed_tools]\n-nosuchserver = []\n*** End Patch\n`
+        // Each hands the file back byte for byte, whichever tool spells it, though removing a restriction is otherwise pinned.
+        for (const restore of [write(recorded), write(recorded, 'cockpit.toml'), call('Edit', { file_path: configPath, old_string: addition, new_string: '' }),
+            call('apply_patch', { command: patch('cockpit.toml') })]) {
+            expect(await decision(restore)).toMatchObject({ decision: 'allow' })
+        }
+        // The hold says so, and every other call stays held, nearly identical or not provably exact.
+        const held = await runGuardEvaluationApplication(write(`${recorded}\n`), adapters)
+        expect(held).toMatchObject({ decision: { decision: 'unavailable' }, diagnostics: [{ code: 'GUARD_CONFIG_UNSYNCED' }] })
+        expect(held.decision.reason).toContain('.cockpit/local/guard-config')
+        for (const other of [
+            write(`${recorded}\n`), write(''),
+            call('Edit', { file_path: configPath, old_string: 'nosuchserver = []', new_string: '' }),
+            call('Edit', { file_path: configPath, old_string: addition, new_string: addition.replace('[]', '["read"]') }),
+            // Applied more than once, or not at all, the result is not proven.
+            call('Edit', { file_path: configPath, old_string: '\n', new_string: '' }),
+            call('Edit', { file_path: configPath, old_string: 'not in the file', new_string: '' }),
+            // The same bytes anywhere else restore nothing, and a call doing more than this is more than a restoration.
+            write(recorded, join(root, 'app/cockpit.toml')), write(recorded, 'app/../cockpit.toml'),
+            call('apply_patch', { command: `${patch('cockpit.toml').replace('*** End Patch\n', '')}*** Add File: app/notes.txt\n+added\n*** End Patch\n` }),
+            { ...request, payload: shellPayload(`git -C ${root} restore -- cockpit.toml`, root) },
+        ]) expect(await decision(other)).toMatchObject({ decision: 'unavailable' })
+
+        // A hold whose policy cannot be built has the same way out, because restoring needs no policy.
+        const unobserved = { ...adapters, observeCheckout: (async () => ({ state: 'unavailable', reason: 'synthetic' })) as unknown as typeof adapters.observeCheckout }
+        expect(await decision(write(`${recorded}\n`), unobserved)).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('cannot build its policy') })
+        expect(await decision(write(recorded), unobserved)).toMatchObject({ decision: 'allow' })
+
+        // A configuration that does not load has the same way out, however it fails to.
+        const declared = '[ports.bases]'
+        const undeclared = '[ports.not_bases]'
+        const invalid = recorded.replace(declared, undeclared)
+        for (const broken of [invalid, `${recorded}\n[[[ not toml\n`, `${recorded}\n${'#'.repeat(1_100_000)}\n`]) {
+            writeFileSync(configPath, broken)
+            const unloaded = await decision(write(`${recorded}\n`))
+            expect(unloaded).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('does not load') })
+            expect(unloaded.reason).toContain('.cockpit/local/guard-config')
+            expect(await decision({ ...request, payload: shellPayload('ls', root) })).toMatchObject({ decision: 'unavailable' })
+            expect(await decision(write(recorded))).toMatchObject({ decision: 'allow' })
+        }
+        writeFileSync(configPath, invalid)
+        expect(await decision(call('Edit', { file_path: configPath, old_string: undeclared, new_string: declared }))).toMatchObject({ decision: 'allow' })
+        expect(await decision(call('Edit', { file_path: configPath, old_string: undeclared, new_string: `${declared}\n` }))).toMatchObject({ decision: 'unavailable' })
+        // Admitting it still rests on the publication sync wrote for this machine.
+        const localIdentity = join(root, GUARD_LOCAL_PATHS.identity)
+        const localBytes = readFileSync(localIdentity)
+        writeFileSync(localIdentity, encodeGuardLocalIdentity({ ...parseGuardLocalIdentity(localBytes.toString('utf8'))!, moduleSha256: 'f'.repeat(64) }))
+        expect(await decision(write(recorded))).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('machine-local record') })
+        writeFileSync(localIdentity, localBytes)
+
+        // Restoring out of a widening edit is a person's, as every other call there is.
+        const widened = parse(recorded) as { guards: { allow: unknown[] } }
+        widened.guards.allow.push({ argv: ['make', 'release'], reason: 'Releases are routine.' })
+        writeFileSync(configPath, stringify(widened))
+        expect(await decision(write(recorded))).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('widens what agents may do') })
+    }, 120_000)
+
+    it.each([
+        ['no repository', 'Git could not authenticate', (root: string) => { renameSync(join(root, '.git'), join(root, '.git-aside')) }],
+        ['a rejected .git entry', 'Git could not authenticate', (root: string) => { renameSync(join(root, '.git'), join(root, '.git-aside')); mkdirSync(join(root, '.git')) }],
+        ['a repository-local include', 'Git configuration origins are unsupported', (root: string) => { execFileSync('git', ['-C', root, 'config', 'include.path', 'included-config']) }],
+    ] as const)('holds guarded calls with %s, saying generated files stay valid and why', async (_name, stated, arrange) => {
+        const { root, request, adapters } = await installedGuardRequest()
+        const config = readFileSync(join(root, '.git/config'))
+        arrange(root)
+        try {
+            const held = await runGuardEvaluationApplication({ ...request, payload: shellPayload('ls', root) }, adapters)
+            expect(held).toMatchObject({ decision: { decision: 'unavailable' }, diagnostics: [{ code: 'GUARD_AUTHORITY_UNAVAILABLE' }] })
+            expect(held.decision.reason).toContain('Generated files stay valid, but the guard needs a Git repository it can read and holds')
+            expect(held.decision.reason).toContain(stated)
+            expect(held.decision.reason).toContain(`git -C ${root} init`)
+        } finally {
+            if (existsSync(join(root, '.git-aside'))) {
+                rmSync(join(root, '.git'), { recursive: true, force: true })
+                renameSync(join(root, '.git-aside'), join(root, '.git'))
+            }
+            writeFileSync(join(root, '.git/config'), config)
+        }
+    }, 120_000)
+
+    it('removes credentials and control characters from a checkout failure it forwards', async () => {
+        const { root, request, adapters } = await installedGuardRequest()
+        const failed = async () => ({ state: 'failed', reason: 'Git failed: https://someone:hunter2@git.example.test/repo.git\ntoken=hunter3' }) as unknown as ReturnType<typeof adapters.observeCheckout>
+        const { decision } = await runGuardEvaluationApplication({ ...request, payload: shellPayload('ls', root) }, { ...adapters, observeCheckout: failed })
+        expect(decision.reason).toContain('Git failed: https://[redacted]@git.example.test/repo.git')
+        expect(decision.reason).not.toMatch(/hunter[23]/)
     }, 120_000)
 
     it('carries distinct declared vendor and database authority with authenticated roots and exact instance paths', async () => {

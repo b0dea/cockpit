@@ -127,12 +127,13 @@ function provenanceFor(field: string, marks: ReadonlyMap<string, AnswerProvenanc
     return marks.get(field) ?? (UNATTRIBUTED_UNLESS_MARKED.includes(field) ? 'unattributed' : 'operator-confirmed')
 }
 
-/** Records every field the interview has asked or will ask, so a supplied field it never asks is reported. */
+/** Future questions can disappear after an answer; only actual questions and recorded answers count as used. */
 function noteInterview(asked: Set<string>, outcome: InitApplicationOutcome): void {
     const interview = outcome.result?.interview
     if (!interview) return
     if (interview.cockpitRoot !== undefined) asked.add('cockpit.root')
-    for (const field of [...interview.answered, ...interview.outstanding.map(row => row.field)]) asked.add(field)
+    for (const field of interview.answered) asked.add(field)
+    if (outcome.result?.question !== undefined) asked.add(outcome.result.question.field)
 }
 
 type UnattendedAnswer = { kind: 'answer'; bytes: string } | { kind: 'missing' } | { kind: 'refusal'; outcome: InitApplicationOutcome }

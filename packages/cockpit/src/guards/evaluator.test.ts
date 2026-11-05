@@ -54,6 +54,32 @@ function decide(command: string, configured = policy(), cwd = root) {
 }
 
 describe('resolved guard evaluation', () => {
+    it('allows only exact declared MCP tools, including when a dispatcher claims to read', () => {
+        const configured = { ...policy(), mcpAllowedTools: { reports: ['read_record'], closed: [] } }
+        const invoke = (tool: string, toolInput: Record<string, unknown> = {}) => evaluateGuard(parseGuardInput({
+            hook_event_name: 'PreToolUse', tool_name: tool, cwd: root, tool_input: toolInput,
+        }), configured, inspect)
+        expect(invoke('mcp__reports__read_record').decision).toBe('allow')
+        expect(invoke('mcp__reports__write_record').decision).toBe('deny')
+        expect(invoke('mcp__reports__execute_tool', { tool: 'read_record', readOnlyHint: true }).decision).toBe('deny')
+        expect(invoke('mcp__reports__new_tool').decision).toBe('deny')
+        expect(invoke('mcp__closed__read_record').decision).toBe('deny')
+        expect(invoke('mcp__unrestricted__write_record').decision).toBe('allow')
+        expect(invoke('mcp__reports__nested__read_record').decision).toBe('deny')
+        expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'mcp__reports__read_record',
+            cwd: root, tool_input: {} }), policy(), inspect).decision).toBe('unavailable')
+    })
+
+    it('matches a dotted allowed MCP tool under the name Claude Code calls it, and nothing wider', () => {
+        const configured = { ...policy(), mcpAllowedTools: { reports: ['read.record'] } }
+        const invoke = (tool: string) => evaluateGuard(parseGuardInput({
+            hook_event_name: 'PreToolUse', tool_name: tool, cwd: root, tool_input: {},
+        }), configured, inspect).decision
+        expect(invoke('mcp__reports__read_record')).toBe('allow')
+        expect(invoke('mcp__reports__read_records')).toBe('deny')
+        expect(invoke('mcp__reports__readXrecord')).toBe('deny')
+    })
+
     it('applies declared deny and allow rules in precedence order to normalized invocations', () => {
         const configured = policy()
         configured.declaredAllows.push(
@@ -309,6 +335,20 @@ describe('resolved guard evaluation', () => {
         expect(decide('git add -A')).toEqual(covering)
         expect(evaluateGuard(parseGuardInput(shellPayload('git add -f env')), noInstances, inspect)).toEqual(covering)
         expect(decide('git add config/active.instance')).toEqual({ decision: 'deny', reason: 'Refusing mutation or staging of a declared environment instance.' })
+        // A secrets directory anywhere below a covering operand is denied like the root one, in any repository the walk reaches.
+        const walking = (found: (below: string) => string[] | null) => (request: Parameters<typeof inspect>[0]) => ({ ...inspect(request),
+            ...(searches(request.operation) ? { sensitive: found(posix.resolve(request.cwd, request.path)) } : {}) })
+        const nestedSecrets = walking((below) => [`${below}/web/.SECRETS`])
+        for (const command of ['git add services', 'git add -f services', 'git add -A', 'git add -u', `git -C ${other} add .`]) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), noInstances, nestedSecrets), command).toEqual(covering)
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('git add services')), noInstances, walking((below) => [`${below}/web/.env.schema`])).decision).toBe('ask')
+        // A tree past the walk's bound is unproven, and a walk that fails is missing evidence.
+        expect(evaluateGuard(parseGuardInput(shellPayload('git add services')), noInstances, walking(() => null))).toEqual({ decision: 'ask', reason: expect.stringContaining('covers more than the guard walks') })
+        expect(evaluateGuard(parseGuardInput(shellPayload('git add services')), noInstances, (request) => {
+            if (searches(request.operation)) throw new Error('synthetic walk failure')
+            return inspect(request)
+        })).toEqual({ decision: 'unavailable', reason: expect.stringContaining('could not walk services') })
         // Staging writes the index, not the file, so naming a guard control is the person's call to approve, like any staging.
         expect(decide('git add .claude/settings.json .codex/hooks.json cockpit.toml')).toEqual({ decision: 'ask', reason: expect.stringContaining('`git add .claude/settings.json .codex/hooks.json cockpit.toml` requires human approval') })
     })
@@ -788,7 +828,7 @@ describe('built-in read-only profile', () => {
     it('denies reads and writes of an environment file unless its name or a declared template marks it as documentation', () => {
         const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
         const refusal = { decision: 'deny', reason: 'Refusing to read or write an environment file: `.env` and `.env.*` hold secrets unless named .env.example, .env.sample, .env.template or .env.schema, or declared as a template. '
-            + 'Fix: run what needs its values as `varlock run -- <cmd>`, which never prints them, or read the variable names from the .env.schema.' }
+            + 'Fix: an agent runs the trusted process through a declared project command or script that wraps Varlock; a person in a terminal runs that same command, or `VARLOCK_TELEMETRY_DISABLED=true varlock run -- <cmd>`, without `--redact-stdout`, which Varlock refuses on a terminal. List variable names with `npx --no cockpit env keys --config <your cockpit.toml>`.' }
         const judge = (input: object, configured = policy()) => evaluateGuard(parseGuardInput(input), configured, withGit)
         // An undeclared `.env` at any depth is where a product keeps its values, so no tool reads or writes it.
         for (const file of ['.env', 'apps/web/.env.local', '.ENV.Production', '.env.example.local']) {
@@ -809,6 +849,45 @@ describe('built-in read-only profile', () => {
         const templated = { ...policy(), templates: [`${root}/config/defaults.env.dist`, `${root}/.env.ci`] }
         expect(judge(shellPayload('cat .env.ci'), templated).decision).toBe('allow')
         expect(judge(shellPayload('cat .env.ci'))).toEqual(refusal)
+    })
+
+    // Claude Code's native rules refuse Edit and Write of this name, so replacing it from a draft is the
+    // edit route the docs give an agent; the guard's answer here is what makes that route true.
+    it('answers the route that replaces a schema from a draft, in the cockpit root and a sibling', () => {
+        for (const [cwd, command] of [[root, 'cp draft.txt .env.schema'], [root, 'mv draft.txt .env.schema'], [root, "printf 'KEY=\\n' >> .env.schema"],
+            [other, 'cp draft.txt .env.schema'], [other, 'mv draft.txt .env.schema'], [other, "printf 'KEY=\\n' >> .env.schema"]] as const) {
+            const answer = evaluateGuard(parseGuardInput(shellPayload(command, cwd)), policy(), withGit)
+            expect(answer, `${cwd}: ${command}`).toEqual({ decision: 'ask', reason: expect.stringContaining('requires human approval') })
+        }
+    })
+
+    // Docs state this per tool. A native rule may still refuse what the guard allows: Claude Code's does.
+    it('allows every file tool to write a schema, in the cockpit root and a sibling', () => {
+        const payload = (tool_name: string, tool_input: object, cwd: string) => ({ hook_event_name: 'PreToolUse', tool_name, cwd, tool_input })
+        for (const cwd of [root, other]) {
+            const schema = `${cwd}/.env.schema`
+            for (const [name, input] of [
+                ['apply_patch add', payload('apply_patch', { command: `*** Begin Patch\n*** Add File: ${schema}\n+KEY=\n*** End Patch` }, cwd)],
+                ['apply_patch update', payload('apply_patch', { command: `*** Begin Patch\n*** Update File: ${schema}\n@@\n-A=\n+B=\n*** End Patch` }, cwd)],
+                ['Edit', payload('Edit', { file_path: schema, old_string: 'A=', new_string: 'B=' }, cwd)],
+                ['Write', payload('Write', { file_path: schema, content: 'KEY=\n' }, cwd)],
+            ] as const) expect(evaluateGuard(parseGuardInput(input), policy(), withGit).decision, `${cwd}: ${name}`).toBe('allow')
+        }
+    })
+
+    it('admits a schema replacement without a prompt only as the whole call', () => {
+        const words = ['--no', 'cockpit', 'env', 'schema', '--config', 'cockpit.toml', '--path', 'api:.env.schema', '--replace-from', 'draft.txt']
+        const configured = { ...policy(), cockpitLaunchers: [candidate('npx', ['--no', 'cockpit'])],
+            cockpitInvocations: [{ executable: 'npx', cwd: root, argv: words, reads: [`${root}/draft.txt`], alone: true as const }] }
+        const decideIt = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command)), configured, withGit)
+        const command = `npx ${words.join(' ')}`
+        expect(decideIt(command).decision).toBe('allow')
+        for (const compound of [`${command} && git status`, `git status && ${command}`, `${command}; git status`, `${command} | cat`, `${command} > out.txt`]) {
+            expect(decideIt(compound), compound).toEqual({ decision: 'ask', reason: expect.stringContaining('only as the whole command') })
+        }
+        // Without the marker the same chain is judged part by part, which is what the marker exists to stop.
+        const unmarked = { ...configured, cockpitInvocations: [{ executable: 'npx', cwd: root, argv: words, reads: [`${root}/draft.txt`] }] }
+        expect(evaluateGuard(parseGuardInput(shellPayload(`${command} && git status`)), unmarked, withGit).decision).toBe('allow')
     })
 
     it('denies direct writes to Git metadata, whose configuration chooses what read-only Git runs', () => {

@@ -24,7 +24,8 @@ file. The ownership manifest records the expected type, bytes and sources. Its d
 accidental changes; it does not prove who wrote a file in the past.
 
 Removing a stale entry needs your separate approval of those exact paths and bytes: plain `sync`
-refuses, and `sync --interactive` asks you to type the digest the dry run showed. A stale path whose
+refuses, and `sync --interactive` asks you to type the digest the dry run showed. The exception is a
+removal that only narrows MCP access, under [`[mcp.allowed_tools]`](#mcp-servers-and-restrictions). A stale path whose
 contents changed stays a conflict for you to resolve; [Check and sync](environment.md#check-and-sync)
 has the full procedure.
 
@@ -249,6 +250,71 @@ environment and pass `PATH`, the same non-secret variables product test stages r
 `USER`, `LOGNAME`, `TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`) and the declared environment
 names.
 
+For a local server whose helper has its own defaults, declare optional caller overrides by name:
+
+```json
+{ "mcpServers": {
+  "local-reader": { "command": "bin/local-reader", "optionalEnv": ["LOCAL_PORT", "LOCAL_CONFIG_FILE"] }
+} }
+```
+
+`optionalEnv` forwards a named variable only when it is set, preserving an explicitly empty value.
+An absent variable stays absent, so the helper can use its default. Required variables remain in
+`env`, with same-name references such as `"TOKEN": "${TOKEN}"`; a name cannot be both required and
+optional. No other ambient variables are added. The approval digest includes optional names and
+whether a variable is required, so changing this access needs a new declaration review. Doctor
+reports missing required variables; an absent optional override is not a startup gap.
+
+### Restrict a server's tools
+
+Server approval permits a connection; it does not make the server read-only. Declare a positive
+list of reviewed tool names in `cockpit.toml`, then run `sync`:
+
+```toml
+[mcp.allowed_tools]
+reports = ["read_record", "search_records"]
+```
+
+Each name is exact. Every other tool from that server, including a newly added tool, is denied.
+An empty list denies all tools; an absent server has no tool restriction. The server must be
+declared, and overlapping native server namespaces are refused. Widening this list changes the
+guard policy and requires the same approval as other increases in agent authority. Adding a
+restriction or removing tools from a list narrows access and can be synced by an agent when
+`[autonomy] sync = "agent"`, whatever `stale_delete` says: when the restriction leaves a listed tool
+with no servers, `sync` removes that tool's MCP-only file (`.mcp.json` or `.cursor/mcp.json`) as long
+as its bytes are still what cockpit generated. A hand-edited file is a conflict, and any other stale
+path in the same sync still needs the stale-removal approval.
+Removing a server's list makes it unrestricted and requires a person.
+
+Codex receives `enabled_tools` in its generated server configuration. Claude Code receives an
+authenticated `PreToolUse` guard scoped to the restricted server namespaces. It denies unlisted
+tools and defers listed tools to Claude Code's existing permission rules; listing a tool grants no
+native permission. Unrestricted servers and plugin tools do not pass through this MCP guard.
+Start Claude Code from the cockpit checkout and trust the workspace so its project hooks load.
+Write each name as the server publishes it. Claude Code rewrites a dot in a tool name to an
+underscore before the guard sees it, and keeps only the first of two tools that collide. So under
+Claude Code a listed `read_record` also admits a server tool named `read.record`; Codex matches the
+raw name and keeps them apart. Check the server's tool list when it publishes dotted names.
+These restrictions have their own dated row in the
+[capability matrix](capability-matrix.md); Codex's native tool filter does not depend on hook trust.
+Other harnesses omit restricted servers and report `MCP_TRANSPORT_UNAVAILABLE`: use Claude Code or
+Codex for them. Restricted servers cannot currently be included in the Claude plugin bundle,
+whose tool namespace has not been measured; remove that bundle from `[surfaces].bundles` to use
+the checkout's guarded server.
+
+Review what each allowed tool actually does. A name, a token scope or `readOnlyHint` is not an
+enforcement boundary. A generic dispatcher such as `execute_tool` can expose writes through its
+arguments; listing it permits all of those operations. Leave such a tool out unless every operation
+it can dispatch is acceptable. Cockpit does not filter tool arguments or proxy server requests.
+Claude's guard reads only tool metadata from a bounded native JSON envelope (at most 1 MiB); larger envelopes are refused. Shell
+and file-edit inputs retain their separate, smaller bound.
+
+This policy covers MCP **tool calls**, not resources, resource templates or prompts. It restricts
+one declared server namespace, not every route to the service. With `[autonomy] mcp_approve = "agent"`,
+an agent can register a new server or alias without that list, so this is not a read-only
+sandbox against delegated approval. Use `mcp_approve = "person"` when new connections must require
+human review, and review every approved process and route independently.
+
 ### Remote servers
 
 A remote (streamable HTTP) server is declared in the same file, in Claude Code's spelling:
@@ -293,7 +359,8 @@ changes to the sibling and passes the same inherited variables, without the head
 `doctor` checks each approved server without starting it or using the network: a local server's
 command and a remote server's helper must resolve (`MCP_COMMAND_UNRESOLVED`), and every environment
 name it reads must be set where doctor runs (`MCP_ENVIRONMENT_UNSET`). It names variables, never
-values.
+values. A relative entry in the `PATH` doctor runs with stops it looking up a bare command, so
+`MCP_COMMAND_UNRESOLVED` then names that entry and says whether the absolute entries hold the command.
 
 Browser transport is published only for harnesses that can use it. A harness with no applicable
 MCP server receives no MCP-only output; its instructions, skills and permissions still publish.
@@ -485,7 +552,7 @@ does not do), or the npm page when the package has no changelog.
 
 An agent may run `upgrade` exactly where it may run a writing `sync`: under `[autonomy] sync =
 "agent"`, the default. Under `person` or `ci` the guard asks, as it does for `sync`, and the sync child
-refuses outside CI under `ci`. `upgrade --dry-run` writes nothing, so it is never gated. Until `sync` finishes, the guard holds every agent tool call,
+refuses outside CI under `ci`. `upgrade --dry-run` writes nothing, so it is never gated. Until `sync` finishes, the guard holds every guarded agent tool call,
 because it trusts only the cockpit it was generated for. A built-in that one of your overlays replaces and that the new release
 changed is reported as `OVERRIDDEN_CORE_CHANGED`: review the new built-in against your override
 before updating its recorded hash. Then review `git diff` and commit `package.json`, the lockfile and

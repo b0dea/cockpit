@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
-import { chmodSync, mkdtempSync, realpathSync, rmSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { isResolvedDockerExecutable, isResolvedExecutable, isResolvedGitExecutable, locateExecutable, resolveDiskCapacityExecutable, resolveDockerExecutable, resolveExecutable, resolveExecutablePath, resolveGitExecutable, resolvePathRemovalExecutable } from './executable.js'
+import { isResolvedDockerExecutable, isResolvedExecutable, isResolvedGitExecutable, locateExecutable, observationSearchPath, resolveDiskCapacityExecutable, resolveDockerExecutable, resolveExecutable, resolveExecutablePath, resolveGitExecutable, resolvePathRemovalExecutable } from './executable.js'
 
 const digest = 'a'.repeat(64)
 const scratch: string[] = []
@@ -16,6 +16,36 @@ function directory(): string {
     scratch.push(path)
     return path
 }
+
+describe('observation executable discovery', () => {
+    it('preserves absolute symlink lookup and keeps the caller, strict resolver and MCP lookup unchanged', async () => {
+        const root = directory()
+        const target = join(root, 'target')
+        const link = join(root, 'linked')
+        mkdirSync(target)
+        symlinkSync(target, link)
+        writeFileSync(join(target, 'git'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+        const PATH = `:../relative:./node_modules/.bin:.:${link}:/usr/bin:`
+        const env = Object.freeze({ PATH })
+        const observed = observationSearchPath(env)
+        expect(observed).toEqual({ state: 'available', path: `${link}:/usr/bin` })
+        if (observed.state !== 'available') throw new Error(observed.reason)
+        expect(await resolveGitExecutable({ PATH: observed.path })).toMatchObject({ state: 'available', value: {
+            invocationPath: join(link, 'git'), canonicalPath: realpathSync(join(target, 'git')),
+        } })
+        expect(env.PATH).toBe(PATH)
+        expect(await resolveExecutable('git', env)).toMatchObject({ state: 'unavailable' })
+        expect(await locateExecutable('git', env, root)).toMatchObject({ state: 'unavailable' })
+        expect(observationSearchPath({ PATH: `${link}/../target:/usr/bin` })).toMatchObject({ state: 'unavailable' })
+    })
+
+    it('refuses unbounded or ambiguous paths before observation discovery', () => {
+        for (const PATH of [undefined, '', '.', ':../bin:./bin/../tools:', '/usr/bin/../bin:/bin',
+            '/usr//bin:/bin', '/usr/bin\0:/bin', './node_modules/.bin', Array(257).fill('/bin').join(':'), '/'.padEnd(65_537, 'a')]) {
+            expect(observationSearchPath({ PATH }), JSON.stringify(PATH?.slice(0, 100))).toMatchObject({ state: 'unavailable' })
+        }
+    })
+})
 
 describe('resolved executable identity', () => {
     it('separates canonical bytes from the bound invocation identity', () => {

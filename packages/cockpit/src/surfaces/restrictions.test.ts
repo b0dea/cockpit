@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, symlink, writeFile, realpath } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile, realpath } from 'node:fs/promises'
 import { lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { stringify } from 'smol-toml'
+import { GUARD_HELD_CALLS, GUARD_UNHELD_CALLS } from './harness-registry.js'
 import { encodeOwnershipManifest } from './ownership.js'
 import { publicationCockpitId } from '../environment/identity.js'
 import { spawn, spawnSync } from 'node:child_process'
@@ -195,6 +196,9 @@ describe('restriction expansion', () => {
         })
 
         const expanded = complete(expandRestrictions(pureInput(shipped)))
+        const matcher = new RegExp(JSON.parse(target(expanded, 'claudecode').files[0]!.bytes).hooks.PreToolUse[0].matcher)
+        expect(matcher.test('Bash')).toBe(true)
+        expect(matcher.test('mcp__unrestricted__Write')).toBe(false)
         expect(expanded.targets.map(({ target, capability, evidenceStatus, measuredOn, measuredVersion, provenance }) =>
             ({ target, capability, evidenceStatus, measuredOn, measuredVersion, provenance })))
             .toEqual(inspected.kind === 'complete' ? inspected.targets : [])
@@ -253,6 +257,13 @@ describe('restriction expansion', () => {
         ]) expect(validateGuardRegistration(changed).kind).toBe('refusal')
         expect(complete(expandRestrictions(captured))).toEqual(legacy)
         expect(RESTRICTION_OUTPUT_LIMITS).toEqual({ scalarBytes: 65_536, aggregateBytes: 102_400, fileCount: 8 })
+    })
+
+    it('rejects restricted server names that could broaden the native hook matcher', async () => {
+        const value = pureInput(await shippedInputs())
+        for (const restrictedMcpServers of [['reports|.*'], ['reports\n'], ['reports', 'reports']]) {
+            expect(expandRestrictions({ ...value, restrictedMcpServers })).toMatchObject({ kind: 'refusal', code: 'RESTRICTION_INPUT_INVALID' })
+        }
     })
 
     it('refuses accessors without invoking them', async () => {
@@ -367,7 +378,7 @@ describe('restriction expansion', () => {
         const anchor = lines.find(line => line.trim() && lines.filter(other => other === line).length === 1)!
         expect(call('edit', { filePath: config, oldString: anchor, newString: `${anchor}\n` })).toMatchObject({ status: 0, stderr: '' })
         expect(call('edit', { filePath: config, oldString: anchor, newString: `[autonomy]\nreset = "agent"\n\n${anchor}` }))
-            .toMatchObject({ status: 1, stderr: expect.stringContaining('Refusing to change [work], [work.gates] and [autonomy]') })
+            .toMatchObject({ status: 1, stderr: expect.stringContaining('Refusing to change gate authority or widen MCP access in [work], [work.gates], [autonomy]') })
     }, 60_000)
 
     it('runs the generated Codex hook from a cockpit directory inside a larger Git repository', async () => {
@@ -422,7 +433,13 @@ describe('restriction expansion', () => {
                 const run = spawnSync('/bin/sh', ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: directory } })
                 expect({ status: run.status, stderr: run.stderr }, `${name} exit ${exit}`).toEqual({ status, stderr })
             }
+            // A missing guard blocks with what it holds, printed intact through the hook's shell quoting.
+            await rm(join(directory, result.sharedGuard.path))
+            const missing = spawnSync('/bin/sh', ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: directory } })
+            expect(missing.status).toBe(2)
+            expect(missing.stderr).toContain(`so ${GUARD_HELD_CALLS} are held while ${GUARD_UNHELD_CALLS} continue.`)
         }
+        expect(result.sharedGuard.bytes).toContain(`so ${GUARD_HELD_CALLS} are refused.`)
     })
 
     it('renders every neutral policy field through versioned transport-only adapters', async () => {

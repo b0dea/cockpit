@@ -39,6 +39,7 @@ The values cockpit uses for a key the configuration leaves out.
     "deny": []
   },
   "mcp": {
+    "allowed_tools": {},
     "approved": {}
   },
   "work": {
@@ -85,7 +86,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `sibling` | Product repositories the cockpit works across. | array of table: [`[[sibling]]`](#sibling) |  | required; at least 1 item |
 | `ports` | Port leasing for running stacks side by side. | table: [`[ports]`](#ports) |  | required |
 | `guards` | Rules that restrict what agents may run. | table: [`[guards]`](#guards) | `{}` |  |
-| `mcp` | Approval of MCP servers. | table: [`[mcp]`](#mcp) | `{}` |  |
+| `mcp` | Approval of MCP servers and exact per-server tool restrictions. | table: [`[mcp]`](#mcp) | `{}` |  |
 | `work` | How work orders are accepted, graded and closed. | table: [`[work]`](#work) | `{}` |  |
 | `autonomy` | Which decisions an agent may take without a person. | table: [`[autonomy]`](#autonomy) | `{}` |  |
 | `browser` | Browser automation for the stack. | table: [`[browser]`](#browser) |  |  |
@@ -193,6 +194,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
+| `allowed_tools` | Exact tool names permitted per declared MCP server. An empty list denies every tool; an absent server has no tool restriction. Review the tool implementation: names and read-only annotations do not establish read-only behavior. Unsupported harnesses receive no restricted server. | table of array of string | `{}` | at most 256 entrys; each key: pattern `^(?=[\s\S]{0,128}$)(?:^[a-zA-Z0-9][a-zA-Z0-9_-]*$)`; each value: at most 256 items, unique items, each item: pattern `^[a-zA-Z0-9_.-]+$`, at most 128 characters |
 | `approved` | Approved MCP servers, each mapped to the sha256 of the declaration a person reviewed; others stay disabled. | table of string | `{}` | each key: pattern `^(?=[\s\S]{0,128}$)(?:^[a-zA-Z0-9][a-zA-Z0-9_-]*$)`; each value: pattern `^[a-f0-9]{64}$` |
 
 ### `[work]`
@@ -222,7 +224,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
 | `sync` | Who may run a sync that writes: agent, person or ci. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
-| `stale_delete` | Who approves sync deleting files cockpit generated before and no longer generates. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
+| `stale_delete` | Who approves sync deleting files cockpit generated before and no longer generates. Default agent. An unchanged MCP-only file of a listed tool whose servers are no longer written goes without this approval, because removing it only narrows access. | string |  | one of `"agent"`, `"person"`, `"ci"` |
 | `reset` | Who may apply a reset, which deletes stack data. Default person. | string |  | one of `"agent"`, `"person"`, `"ci"` |
 | `mcp_approve` | Who approves a declared MCP server: person records each digest in [mcp.approved]; agent lets sync enable every declared server as declared, so an agent that writes a sibling MCP source starts that process outside the guard. Default person. | string |  | one of `"agent"`, `"person"` |
 
@@ -631,6 +633,6 @@ Agent tools load every skill's frontmatter into each session and its entry point
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 12 | `packages/cockpit/surfaces/skills/procedures/fix.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 9 | `packages/cockpit/surfaces/skills/procedures/work.md` |
 
-Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `f8aa06a781db377ce38e34517f64a523f631e9c6122a13073e38cba46f1d7a0e`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `3055cd5929e13266151a1f5657e6ed6a0d9f2a43545770bda5a0dbe6b9a2c0f9`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `ccb7c2e0c568d0a218c1c4bd8cdb31e5fad67e65df5018b73fe71207b0b555aa`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `037ac35ad0c49202a19a6ee7a65104a9ed052917ac4fb3e15d4f49127103ba20`).
+Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `60aec39cd122c6ff53e54e7f15be1eeae6dacd79d04bf110ac71f5a0473d5574`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `677eeab59ad55240e7281c7bba3d7425b9da1d5ddfdbcbd01617cf3df02772a3`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `f9008b15acddc0ee3c5f6c16e9fb7f053aac44500d102b7dba87f8a4bce81a88`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `77e47c984069d4ad145b76f4b17542ad6fd9511549ed6f4993263eb54aef3d01`).
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.

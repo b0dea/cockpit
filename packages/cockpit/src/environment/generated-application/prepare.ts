@@ -8,12 +8,12 @@ import { SURFACE_TARGETS } from '../../surfaces/contract.js'
 import { parseOwnershipManifest, type OwnershipManifest } from '../../surfaces/ownership.js'
 import { nodeAuthority, readAnchoredFile, readAnchoredConfigSource, type FileIdentity } from '../../generated-environment/transaction.js'
 import { ENVIRONMENT_CODES, hasErrorCode } from '../contract.js'
-import { checkoutId, cockpitId, publicationCockpitId, stackId } from '../identity.js'
+import { publicationCockpitId, stackId } from '../identity.js'
 import { composePublishedPorts, variableName } from '../compose-topology.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from '../compose-ownership.js'
 import { earlierNameRefusalMessage, findStackUnderEarlierName } from '../lifecycle-stage.js'
 import { selectStateRoot } from '../state.js'
-import { observeGeneratedCheckoutIdentity } from '../setup-observation.js'
+import { observeGeneratedCheckoutIdentity, observeSurfacesCheckoutIdentity } from '../setup-observation.js'
 import { exactKeys } from '../../exact-keys.js'
 import { refusalOutcome as refuse } from '../../refusal.js'
 import {
@@ -124,8 +124,9 @@ export async function expectedOutputExists(prepared: PreparedEnvironment): Promi
 // name is safe for the files, but a stack still recorded under the old one would be left where
 // down cannot reach it, so the rename waits until that stack is down.
 export async function renamedStackRefusal(prepared: PreparedEnvironment): Promise<RefusalOutcome | undefined> {
-    const checkout = prepared.runtimeCheckout
-    if (!checkout || process.platform !== 'darwin' && process.platform !== 'linux') return undefined
+    const checkout = prepared.checkoutIdentity
+    if (prepared.composeSources.length === 0 && !prepared.workEnvironment.browser
+        || process.platform !== 'darwin' && process.platform !== 'linux') return undefined
     const namespace = await selectStateRoot({ platform: process.platform, home: process.env.HOME,
         xdgStateHome: process.env.XDG_STATE_HOME,
         checkoutRoots: [checkout.currentCheckoutPath, checkout.mainCheckoutPath], cockpitId: checkout.cockpitId })
@@ -191,15 +192,19 @@ export async function prepare(input: unknown, adapters: GeneratedEnvironmentComm
         authenticatedSiblings.fix,
     )
     const siblingRoots = authenticatedSiblings.roots
-    const runtimeCheckout = workEnvironment.browser || config.environment.compose_files.length > 0
-        ? await observeGeneratedCheckoutIdentity({ source: loaded.result.source, cockpitName: config.cockpit.name,
-            env: process.env }) : undefined
-    if (runtimeCheckout?.state === 'failed') return refuse('GENERATED_INPUT_INVALID',
-        `generated checkout identity is unavailable: ${runtimeCheckout.reason}`, loaded.result.source.path,
-        'restore the configuration checkout and Git installation, then run npx --no cockpit sync --config <your cockpit.toml>')
-    const currentCockpit = runtimeCheckout?.cockpitId ?? cockpitId({ name: config.cockpit.name, mainCheckoutPath: root })
+    // Surface observations and health must name the same checkout, including a linked worktree
+    // or a configuration below its root. The observer also authenticates standalone directories.
+    // Only a declared runtime's stack and ports need setup's stricter view of the checkout.
+    const observeCheckout = workEnvironment.browser || config.environment.compose_files.length > 0
+        ? observeGeneratedCheckoutIdentity : observeSurfacesCheckoutIdentity
+    const checkoutIdentity = await observeCheckout({ source: loaded.result.source, cockpitName: config.cockpit.name,
+        env: adapters.observationEnv ?? process.env })
+    if (checkoutIdentity.state === 'failed') return refuse('GENERATED_INPUT_INVALID',
+        `generated checkout identity is unavailable: ${checkoutIdentity.reason}`, loaded.result.source.path,
+        'correct what the reason names (restore the checkout or Git installation, or make each absolute PATH entry canonical), then run npx --no cockpit sync --config <your cockpit.toml>')
+    const currentCockpit = checkoutIdentity.cockpitId
     const publishedCockpit = publicationCockpitId({ name: config.cockpit.name })
-    const currentCheckout = runtimeCheckout?.checkoutId ?? checkoutId({ checkoutPath: root })
+    const currentCheckout = checkoutIdentity.checkoutId
     const currentStack = stackId({ cockpitId: currentCockpit, checkoutId: currentCheckout, variant: { kind: 'shared' } })
     // Derived from the runtime declarations, not the file bytes, so rewording a purpose or a guard
     // keeps the running stack's identity.
@@ -263,7 +268,7 @@ export async function prepare(input: unknown, adapters: GeneratedEnvironmentComm
         root,
         cockpitId: publishedCockpit,
         stackId: currentStack,
-        ...(runtimeCheckout ? { runtimeCheckout } : {}),
+        checkoutIdentity,
         configPath: loaded.result.source.path,
         sourceSha256: loaded.result.source.sha256,
         runtimeSha256: loaded.result.runtimeSha256,

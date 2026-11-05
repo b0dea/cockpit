@@ -2,7 +2,7 @@ import { exactKeys } from '../exact-keys.js'
 import { createHash } from 'node:crypto'
 import { constants, type BigIntStats } from 'node:fs'
 import { lstat, open, readFile, readdir, realpath } from 'node:fs/promises'
-import { dirname, isAbsolute, normalize, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, normalize, relative, resolve, sep } from 'node:path'
 import { isProxy } from 'node:util/types'
 import { EnvironmentFile, type EnvironmentFile as EnvironmentFileValue } from '../schema.js'
 import { loadCockpitConfig } from '../config/load.js'
@@ -27,7 +27,8 @@ import {
 } from './contract.js'
 import type { SetupObservation, SetupPathEvidence } from './setup.js'
 import { gitEnvironment } from './setup.js'
-import { resolveGitExecutable, resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
+import { GIT_CHILD_CONFIG, observationEnvironment, resolveGitExecutable, resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
+import { createGitRunner } from './sibling-checkouts.js'
 import { checkoutId as deriveCheckoutId } from './identity.js'
 import { cockpitId as deriveCockpitId } from './identity.js'
 
@@ -243,7 +244,7 @@ function ignoreProbeStep(
 ): ExecutionStep {
     return probeStep(
         id,
-        [input.gitExecutable.canonicalPath, '-c', 'core.excludesFile=/dev/null', '-C', input.siblingRoot, ...args],
+        [input.gitExecutable.canonicalPath, '-c', 'core.excludesFile=/dev/null', ...GIT_CHILD_CONFIG, '-C', input.siblingRoot, ...args],
         input.siblingRoot,
         input.env,
         input.gitExecutable,
@@ -414,6 +415,7 @@ async function ignoreRepositoryChecks(
             input.gitExecutable.canonicalPath,
             '-c',
             'core.excludesFile=/dev/null',
+            ...GIT_CHILD_CONFIG,
             '-C',
             input.siblingRoot,
             'rev-parse',
@@ -714,6 +716,9 @@ function validRefName(value: string): boolean {
         && !component.startsWith('.') && !component.endsWith('.lock'))
 }
 
+// What cockpit itself passes with -c. Anything else on the command line did not come from it.
+const COMMAND_LINE_CONFIG = new Map([['core.excludesfile', '/dev/null'], ['core.fsmonitor', 'false'], ['core.hookspath', '/dev/null']])
+
 async function validConfigurationInventory(
     bytes: Buffer,
     checkout: string,
@@ -740,7 +745,7 @@ async function validConfigurationInventory(
         const value = entry.slice(separator + 1)
         if (key === 'include.path' || key.startsWith('includeif.')) return false
         if (origin === 'command line:') {
-            if (key !== 'core.excludesfile' || value !== '/dev/null') return false
+            if (COMMAND_LINE_CONFIG.get(key) !== value) return false
             continue
         }
         if (!origin.startsWith('file:')) return false
@@ -801,17 +806,30 @@ async function authorityFingerprint(checks: readonly FilesystemCheck[]): Promise
     return JSON.stringify(result)
 }
 
-async function authenticatedProbeOutcome(step: ExecutionStep) {
+// Every Git command that locks the index changes the Git directory's timestamps, so a moved authority
+// says Git was active, not that its answer was wrong. 'moved' keeps that apart from a refused probe,
+// including one the executor refused for a replaced Git executable, which no retry would change.
+async function probeWatchingAuthority(step: ExecutionStep) {
     const before = await authorityFingerprint(step.filesystemChecks)
-    if (!before) return undefined
+    if (!before) return 'moved' as const
     const outcome = authenticatedExecutionOutcome(await executeProbe(step), step)
     const after = await authorityFingerprint(step.filesystemChecks)
-    return after === before ? outcome : undefined
+    return after === before ? outcome : 'moved' as const
+}
+
+async function authenticatedProbeOutcome(step: ExecutionStep) {
+    const outcome = await probeWatchingAuthority(step)
+    return outcome === 'moved' ? undefined : outcome
 }
 
 async function authenticatedProbe(step: ExecutionStep): Promise<Buffer | undefined> {
     const outcome = await authenticatedProbeOutcome(step)
     return outcome?.kind === 'complete' ? outcome.stdout : undefined
+}
+
+async function checkoutProbe(step: ExecutionStep): Promise<Buffer | 'moved' | undefined> {
+    const outcome = await probeWatchingAuthority(step)
+    return outcome === 'moved' ? outcome : outcome?.kind === 'complete' ? outcome.stdout : undefined
 }
 
 function setupProbeStep(
@@ -824,7 +842,7 @@ function setupProbeStep(
 ): ExecutionStep {
     return probeStep(
         id,
-        [executable.canonicalPath, '-c', 'core.excludesFile=/dev/null', '-C', checkout, ...args],
+        [executable.canonicalPath, '-c', 'core.excludesFile=/dev/null', ...GIT_CHILD_CONFIG, '-C', checkout, ...args],
         checkout,
         env,
         executable,
@@ -914,15 +932,16 @@ async function worktreeAdministrativeAuthority(commonDirectory: string): Promise
     return { paths: [root, ...directories], optionalFiles }
 }
 
+const CHECKOUT_REV_PARSE = ['rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'] as const
+
 async function gitIdentity(
     id: string,
     checkout: string,
     input: SetupCheckoutInput,
     filesystemChecks: readonly FilesystemCheck[] = [],
-): Promise<Readonly<{ topLevel: string; gitDirectory: string; commonDirectory: string }> | undefined> {
-    const output = await authenticatedProbe(setupProbeStep(id, input.gitExecutable, input.env, checkout, [
-        'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir',
-    ], filesystemChecks))
+): Promise<Readonly<{ topLevel: string; gitDirectory: string; commonDirectory: string }> | 'moved' | undefined> {
+    const output = await checkoutProbe(setupProbeStep(id, input.gitExecutable, input.env, checkout, CHECKOUT_REV_PARSE, filesystemChecks))
+    if (output === 'moved') return output
     const lines = output && exactLines(output, 3)
     if (!lines || !lines.every(canonicalAbsolutePath)) return undefined
     const [topLevel, gitDirectory, commonDirectory] = await Promise.all(lines.map(async (path) => {
@@ -941,10 +960,27 @@ function sameGitIdentity(
         && left.commonDirectory === right.commonDirectory
 }
 
+const CHECKOUT_OBSERVATION_ATTEMPTS = 3
+const GIT_ACTIVE_REASON = 'the checkout\'s Git directory changed while it was being read, most likely because another Git command was running there; retry once that command has finished'
+
+type CheckoutAttempt = SetupCheckoutObservation | Readonly<{ state: 'moved'; reason: string }>
+
+function checkoutMoved(reason = GIT_ACTIVE_REASON): CheckoutAttempt {
+    return { state: 'moved', reason }
+}
+
 export async function observeSetupCheckout(input: unknown): Promise<SetupCheckoutObservation> {
     const supplied = snapshotSetupCheckoutInput(input)
     if (!supplied) return setupCheckoutFailure('setup checkout observation input is malformed')
     const value = { ...supplied, env: gitEnvironment(supplied.env) }
+    for (let attempt = 1; ; attempt += 1) {
+        const result = await attemptSetupCheckout(value)
+        if (result.state !== 'moved') return result
+        if (attempt === CHECKOUT_OBSERVATION_ATTEMPTS) return setupCheckoutFailure(result.reason)
+    }
+}
+
+async function attemptSetupCheckout(value: SetupCheckoutInput): Promise<CheckoutAttempt> {
     const issuedAt = Date.now()
     const observedAt = Date.parse(value.observedAt)
     if (observedAt > issuedAt || issuedAt - observedAt > SETUP_CHECKOUT_OBSERVATION_LIFETIME_MS) {
@@ -967,6 +1003,7 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
         value,
         sourceChecks,
     )
+    if (current === 'moved') return checkoutMoved()
     if (!current || !confined(current.topLevel, value.source.path)) {
         return setupCheckoutFailure('Git could not authenticate the current checkout; setup requires a Git working tree to bound repository writes. '
             + `Inspect it with ${formatShellCommand(['git', '-C', startingDirectory.canonicalPath, 'rev-parse', '--show-toplevel'])}; `
@@ -976,9 +1013,9 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
     const currentDirectories = await Promise.all(
         [...new Set([current.topLevel, current.gitDirectory, current.commonDirectory])].map(canonicalDirectory),
     )
-    if (currentDirectories.some((entry) => !entry)) return setupCheckoutFailure('current checkout identity paths are unavailable')
+    if (currentDirectories.some((entry) => !entry)) return checkoutMoved('current checkout identity paths are unavailable')
     const currentAdministrative = await worktreeAdministrativeAuthority(current.commonDirectory)
-    if (!currentAdministrative) return setupCheckoutFailure('worktree administrative authority is unavailable')
+    if (!currentAdministrative) return checkoutMoved('worktree administrative authority is unavailable')
     const currentWorktreeConfiguration = resolve(current.gitDirectory, 'config.worktree')
     const currentChecks = await setupFilesystemChecks({
         sourcePath: value.source.path,
@@ -987,9 +1024,9 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
         administrativePaths: [resolve(current.topLevel, '.git'), ...currentAdministrative.paths],
         optionalFilePaths: [...currentAdministrative.optionalFiles, currentWorktreeConfiguration],
     })
-    if (!currentChecks) return setupCheckoutFailure('current checkout authority is unavailable')
+    if (!currentChecks) return checkoutMoved('current checkout authority is unavailable')
     const configurationArguments = ['config', '--show-origin', '--null', '--list'] as const
-    const configurationInventory = await authenticatedProbe(setupProbeStep(
+    const configurationInventory = await checkoutProbe(setupProbeStep(
         'setup:observe:checkout-config-origins',
         value.gitExecutable,
         value.env,
@@ -997,12 +1034,13 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
         configurationArguments,
         currentChecks,
     ))
+    if (configurationInventory === 'moved') return checkoutMoved()
     const allowedCurrentConfigurations = [resolve(current.commonDirectory, 'config'), currentWorktreeConfiguration]
     if (!configurationInventory
         || !await validConfigurationInventory(configurationInventory, current.topLevel, allowedCurrentConfigurations)) {
         return setupCheckoutFailure('Git configuration origins are unsupported')
     }
-    const worktrees = await authenticatedProbe(setupProbeStep(
+    const worktrees = await checkoutProbe(setupProbeStep(
         'setup:observe:checkout-worktrees',
         value.gitExecutable,
         value.env,
@@ -1010,6 +1048,7 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
         ['worktree', 'list', '--porcelain', '-z'],
         currentChecks,
     ))
+    if (worktrees === 'moved') return checkoutMoved()
     const inventory = worktrees && worktreeInventory(worktrees)
     if (!inventory) return setupCheckoutFailure('Git returned an invalid worktree inventory')
     const first = inventory[0]
@@ -1024,6 +1063,7 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
     // When the current checkout is the main one, probing its top level again would repeat the first answer.
     const main = mainProbeRoot === current.topLevel ? current
         : await gitIdentity('setup:observe:checkout-main', mainProbeRoot, value, currentChecks)
+    if (main === 'moved') return checkoutMoved()
     if (!main || main.topLevel !== mainProbeRoot || main.commonDirectory !== current.commonDirectory) {
         return setupCheckoutFailure('Git could not authenticate the main checkout; setup requires its Git working-tree identity to bound repository writes. '
             + `Inspect it with ${formatShellCommand(['git', '-C', mainProbeRoot, 'rev-parse', '--show-toplevel'])}, `
@@ -1044,9 +1084,9 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
         main.commonDirectory,
     ])]
     const observedDirectories = await Promise.all(paths.map(canonicalDirectory))
-    if (observedDirectories.some((entry) => !entry)) return setupCheckoutFailure('checkout identity paths are unavailable')
+    if (observedDirectories.some((entry) => !entry)) return checkoutMoved('checkout identity paths are unavailable')
     const allAdministrative = await worktreeAdministrativeAuthority(current.commonDirectory)
-    if (!allAdministrative) return setupCheckoutFailure('worktree administrative authority is unavailable')
+    if (!allAdministrative) return checkoutMoved('worktree administrative authority is unavailable')
     const worktreeConfigurationPaths = [...new Set([
         resolve(current.gitDirectory, 'config.worktree'), resolve(main.gitDirectory, 'config.worktree'),
     ])]
@@ -1057,9 +1097,9 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
         administrativePaths: [resolve(current.topLevel, '.git'), resolve(main.topLevel, '.git'), ...allAdministrative.paths],
         optionalFilePaths: [...allAdministrative.optionalFiles, ...worktreeConfigurationPaths],
     })
-    if (!allChecks) return setupCheckoutFailure('checkout authority is unavailable')
+    if (!allChecks) return checkoutMoved('checkout authority is unavailable')
     if (main.topLevel !== current.topLevel) {
-        const mainConfigurationInventory = await authenticatedProbe(setupProbeStep(
+        const mainConfigurationInventory = await checkoutProbe(setupProbeStep(
             'setup:observe:checkout-main-config-origins',
             value.gitExecutable,
             value.env,
@@ -1067,6 +1107,7 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
             configurationArguments,
             allChecks,
         ))
+        if (mainConfigurationInventory === 'moved') return checkoutMoved()
         const allowedMainConfigurations = [
             resolve(main.commonDirectory, 'config'), resolve(main.gitDirectory, 'config.worktree'),
         ]
@@ -1078,9 +1119,10 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
     const confirmedCurrent = await gitIdentity('setup:observe:checkout-current-confirm', current.topLevel, value, allChecks)
     const confirmedMain = main.topLevel === current.topLevel ? confirmedCurrent
         : await gitIdentity('setup:observe:checkout-main-confirm', main.topLevel, value, allChecks)
+    if (confirmedCurrent === 'moved' || confirmedMain === 'moved') return checkoutMoved()
     if (!confirmedCurrent || !confirmedMain || !sameGitIdentity(current, confirmedCurrent)
         || !sameGitIdentity(main, confirmedMain)) {
-        return setupCheckoutFailure('checkout identity changed during observation')
+        return checkoutMoved('checkout identity changed during observation')
     }
     const administrativeDirectories: { canonicalPath: string; identity: DirectoryIdentity }[] = []
     const administrativeFiles: [string, StableFile][] = []
@@ -1092,17 +1134,17 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
             const status = await lstat(path)
             if (status.isDirectory() && !status.isSymbolicLink()) {
                 const directory = await stableDirectory(path)
-                if (!directory) return setupCheckoutFailure('Git administrative entry is unavailable')
+                if (!directory) return checkoutMoved('Git administrative entry is unavailable')
                 administrativeDirectories.push(directory)
             } else if (status.isFile() && !status.isSymbolicLink()) {
                 const file = await stableFile(path)
-                if (!file) return setupCheckoutFailure('Git administrative entry is unavailable')
+                if (!file) return checkoutMoved('Git administrative entry is unavailable')
                 administrativeFiles.push([path, file])
             } else return setupCheckoutFailure('Git administrative entry is invalid')
         } catch (error) {
             if ((allAdministrative.optionalFiles.includes(path) || worktreeConfigurationPaths.includes(path))
                 && hasErrorCode(error, 'ENOENT')) continue
-            return setupCheckoutFailure('Git administrative entry is unavailable')
+            return checkoutMoved('Git administrative entry is unavailable')
         }
     }
     const directoryIdentities = Object.fromEntries(
@@ -1114,7 +1156,7 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
         resolve(main.commonDirectory, 'config'),
     ])]
     const configurationFiles = await Promise.all(configurationPaths.map(stableFile))
-    if (configurationFiles.some((entry) => !entry)) return setupCheckoutFailure('Git configuration is unavailable')
+    if (configurationFiles.some((entry) => !entry)) return checkoutMoved('Git configuration is unavailable')
     const fileIdentities = Object.fromEntries([
         ...configurationPaths.map((path, index): [string, StableFile] => [path, configurationFiles[index] as StableFile]),
         ...administrativeFiles,
@@ -1203,11 +1245,11 @@ async function checkoutBindingCurrent(binding: SetupCheckoutBinding, publication
     if (!source || !sameFileIdentity(source.identity, binding.sourceIdentity)
         || source.byteLength !== binding.source.byteLength || source.sha256 !== binding.source.sha256) return false
     for (const [path, identity] of Object.entries(binding.directoryIdentities)) {
-        const current = await stableDirectory(path)
-        // Publishing files changes checkout directory timestamps, but never its inode or Git administration.
-        const matches = current && (publication && (path === binding.currentCheckoutPath || path === binding.mainCheckoutPath)
-            ? sameDirectoryNode(current.identity, identity) : sameDirectoryIdentity(current.identity, identity))
-        if (!matches) return false
+        // Publishing files changes the checkout's timestamps and any Git command that locks the index
+        // changes the Git directory's, so a publication binds directories by node. Git's configuration
+        // and worktree records below are still compared by content.
+        const current = publication ? await stableDirectoryNode(path) : await stableDirectory(path)
+        if (!current || !(publication ? sameDirectoryNode : sameDirectoryIdentity)(current.identity, identity)) return false
     }
     for (const [path, identity] of Object.entries(binding.fileIdentities)) {
         const current = await stableFile(path)
@@ -1233,6 +1275,8 @@ export interface GeneratedCheckoutIdentity {
     readonly checkoutId: CheckoutId
     readonly currentCheckoutPath: string
     readonly mainCheckoutPath: string
+    /** Why a `.git` entry above the configuration was not taken as its checkout. */
+    readonly standaloneReason?: string
 }
 
 interface GeneratedCheckoutBinding {
@@ -1243,7 +1287,14 @@ interface GeneratedCheckoutBinding {
     readonly directories: ReadonlyMap<string, DirectoryIdentity>
     readonly absentGitEntries: readonly string[]
     readonly checkout?: SetupCheckoutBinding
+    readonly surfacesOnly?: Readonly<{ gitEntry?: ObservedGitEntry }>
     readonly observedAt: number
+}
+
+interface ObservedGitEntry {
+    readonly path: string
+    readonly directory: boolean
+    readonly identity: DirectoryIdentity
 }
 
 const issuedGeneratedCheckoutIdentities = new WeakMap<object, GeneratedCheckoutBinding>()
@@ -1282,11 +1333,57 @@ async function pathAbsent(path: string): Promise<boolean> {
     }
 }
 
+type GeneratedCheckoutFailure = Extract<SetupCheckoutObservation, { state: 'failed' }>
+
+// Walks up from the configuration to the nearest `.git` entry; the directories it passes and the
+// entries found absent are what a later revalidation holds still.
+async function nearestGitEntry(root: string): Promise<GeneratedCheckoutFailure | Readonly<{
+    directories: Map<string, DirectoryIdentity>
+    absentGitEntries: readonly string[]
+    gitEntry?: ObservedGitEntry
+}>> {
+    const directories = new Map<string, DirectoryIdentity>()
+    const absentGitEntries: string[] = []
+    let candidate = root
+    for (;;) {
+        if (directories.size >= 256) return setupCheckoutFailure('generated checkout ancestor discovery exceeds its bound')
+        const directory = await stableDirectoryNode(candidate)
+        if (!directory) return setupCheckoutFailure('generated checkout ancestor cannot be authenticated')
+        directories.set(candidate, directory.identity)
+        const gitEntry = resolve(candidate, '.git')
+        try {
+            const status = await lstat(gitEntry, { bigint: true })
+            return { directories, absentGitEntries,
+                gitEntry: { path: gitEntry, directory: status.isDirectory(), identity: directoryIdentity(status) } }
+        } catch (error) {
+            if (!hasErrorCode(error, 'ENOENT')) return setupCheckoutFailure('generated checkout Git entry cannot be observed')
+        }
+        absentGitEntries.push(gitEntry)
+        const parent = dirname(candidate)
+        if (parent === candidate) return { directories, absentGitEntries }
+        candidate = parent
+    }
+}
+
+async function issueGeneratedCheckoutIdentity(
+    identity: GeneratedCheckoutIdentity,
+    binding: GeneratedCheckoutBinding,
+): Promise<GeneratedCheckoutIdentity | GeneratedCheckoutFailure> {
+    const current = await generatedCheckoutBindingCurrent(binding)
+    const completedAt = Date.now()
+    if (!current || !Number.isSafeInteger(completedAt) || completedAt < binding.observedAt
+        || completedAt - binding.observedAt > SETUP_CHECKOUT_OBSERVATION_LIFETIME_MS) {
+        return setupCheckoutFailure('generated checkout identity changed or expired during observation')
+    }
+    issuedGeneratedCheckoutIdentities.set(identity, binding)
+    return identity
+}
+
 export async function observeGeneratedCheckoutIdentity(input: {
     readonly source: SourceProvenance
     readonly cockpitName: string
     readonly env: Readonly<Record<string, string | undefined>>
-}): Promise<GeneratedCheckoutIdentity | Extract<SetupCheckoutObservation, { state: 'failed' }>> {
+}): Promise<GeneratedCheckoutIdentity | GeneratedCheckoutFailure> {
     const value = captureGeneratedCheckoutInput(input)
     if (!value) {
         return setupCheckoutFailure('generated checkout identity input is malformed')
@@ -1297,34 +1394,19 @@ export async function observeGeneratedCheckoutIdentity(input: {
         return setupCheckoutFailure('generated checkout configuration source is unavailable or changed')
     }
     const root = dirname(source.path)
-    const directories = new Map<string, DirectoryIdentity>()
-    const absentGitEntries: string[] = []
-    let candidate = root
-    let hasCheckout = false
-    for (;;) {
-        if (directories.size >= 256) return setupCheckoutFailure('generated checkout ancestor discovery exceeds its bound')
-        const directory = await stableDirectoryNode(candidate)
-        if (!directory) return setupCheckoutFailure('generated checkout ancestor cannot be authenticated')
-        directories.set(candidate, directory.identity)
-        const gitEntry = resolve(candidate, '.git')
-        try {
-            await lstat(gitEntry)
-            hasCheckout = true
-            break
-        } catch (error) {
-            if (!hasErrorCode(error, 'ENOENT')) return setupCheckoutFailure('generated checkout Git entry cannot be observed')
-        }
-        absentGitEntries.push(gitEntry)
-        const parent = dirname(candidate)
-        if (parent === candidate) break
-        candidate = parent
-    }
-    const searchEnvironment = value.env
+    const anchors = await nearestGitEntry(root)
+    if ('state' in anchors) return anchors
+    const { directories, absentGitEntries } = anchors
+    const hasCheckout = anchors.gitEntry !== undefined
+    let searchEnvironment = value.env
     const observedAt = Date.now()
     if (!Number.isSafeInteger(observedAt)) return setupCheckoutFailure('generated checkout observation time is invalid')
     let checkout: SetupCheckoutBinding | undefined
     let consumed: ConsumedSetupCheckoutObservation | undefined
     if (hasCheckout) {
+        const search = observationEnvironment(searchEnvironment)
+        if (search.state !== 'available') return setupCheckoutFailure(search.reason)
+        searchEnvironment = search.env
         const git = await resolveGitExecutable(searchEnvironment)
         if (git.state !== 'available') return setupCheckoutFailure(git.reason)
         const env = gitEnvironment(searchEnvironment)
@@ -1344,17 +1426,103 @@ export async function observeGeneratedCheckoutIdentity(input: {
         currentCheckoutPath: consumed?.currentCheckoutPath ?? root,
         mainCheckoutPath: consumed?.mainCheckoutPath ?? root,
     }
-    const binding: GeneratedCheckoutBinding = { source, sourceIdentity: sourceFile.identity,
+    return issueGeneratedCheckoutIdentity(identity, { source, sourceIdentity: sourceFile.identity,
         cockpitName: value.cockpitName, env: searchEnvironment, directories, absentGitEntries,
-        ...(checkout ? { checkout } : {}), observedAt }
-    const current = await generatedCheckoutBindingCurrent(binding)
-    const completedAt = Date.now()
-    if (!current || !Number.isSafeInteger(completedAt) || completedAt < observedAt
-        || completedAt - observedAt > SETUP_CHECKOUT_OBSERVATION_LIFETIME_MS) {
-        return setupCheckoutFailure('generated checkout identity changed or expired during observation')
+        ...(checkout ? { checkout } : {}), observedAt })
+}
+
+/**
+ * The checkout a surfaces-only publication belongs to. With no stack and no repository writes to
+ * bound, it asks Git only which working tree this is, so doctor's stack identity matches wherever
+ * doctor can observe the checkout at all. No `.git` entry, one Git rejects, or Git being absent makes
+ * the directory standalone, with the reason stated: publishing files there depends on none of them,
+ * though the guard those files install holds its calls until it can read a repository.
+ * What Git is asked here runs no repository-configured command: the Git runner neutralises fsmonitor
+ * and hooks, and rev-parse reads neither the index nor a remote.
+ */
+export async function observeSurfacesCheckoutIdentity(input: {
+    readonly source: SourceProvenance
+    readonly cockpitName: string
+    readonly env: Readonly<Record<string, string | undefined>>
+}): Promise<GeneratedCheckoutIdentity | GeneratedCheckoutFailure> {
+    const value = captureGeneratedCheckoutInput(input)
+    if (!value) return setupCheckoutFailure('generated checkout identity input is malformed')
+    const { source } = value
+    const sourceFile = await stableFile(source.path)
+    if (!sourceFile || sourceFile.sha256 !== source.sha256 || sourceFile.byteLength !== source.byteLength) {
+        return setupCheckoutFailure('generated checkout configuration source is unavailable or changed')
     }
-    issuedGeneratedCheckoutIdentities.set(identity, binding)
-    return identity
+    const root = dirname(source.path)
+    const anchors = await nearestGitEntry(root)
+    if ('state' in anchors) return anchors
+    const observedAt = Date.now()
+    if (!Number.isSafeInteger(observedAt)) return setupCheckoutFailure('generated checkout observation time is invalid')
+    const answer = anchors.gitEntry && await askGitForCheckout(anchors.gitEntry.path, root, source.path, value.env)
+    if (answer && 'state' in answer) return answer
+    const checkout = answer && 'topLevel' in answer ? answer : undefined
+    const standaloneReason = !anchors.gitEntry ? 'no Git repository holds it' : answer && 'reason' in answer ? answer.reason : undefined
+    if (checkout) for (const path of new Set([checkout.topLevel, checkout.gitDirectory, checkout.commonDirectory, checkout.mainCheckoutPath])) {
+        const directory = await stableDirectoryNode(path)
+        if (!directory) return setupCheckoutFailure(`Git named ${path} for this checkout, but it is not a canonical directory`)
+        anchors.directories.set(path, directory.identity)
+    }
+    return issueGeneratedCheckoutIdentity({
+        state: 'available', kind: checkout ? 'checkout' : 'standalone',
+        cockpitId: deriveCockpitId({ name: value.cockpitName, mainCheckoutPath: checkout?.mainCheckoutPath ?? root }),
+        checkoutId: deriveCheckoutId({ checkoutPath: checkout?.topLevel ?? root }),
+        currentCheckoutPath: checkout?.topLevel ?? root,
+        mainCheckoutPath: checkout?.mainCheckoutPath ?? root,
+        ...(standaloneReason ? { standaloneReason } : {}),
+    }, { source, sourceIdentity: sourceFile.identity, cockpitName: value.cockpitName, env: value.env,
+        directories: anchors.directories, absentGitEntries: anchors.absentGitEntries,
+        surfacesOnly: anchors.gitEntry ? { gitEntry: anchors.gitEntry } : {}, observedAt })
+}
+
+async function askGitForCheckout(
+    gitEntry: string,
+    root: string,
+    sourcePath: string,
+    env: Readonly<Record<string, string | undefined>>,
+): Promise<GeneratedCheckoutFailure | Readonly<{ reason: string }>
+    | Readonly<{ topLevel: string; gitDirectory: string; commonDirectory: string; mainCheckoutPath: string }>> {
+    const search = observationEnvironment(env)
+    if (search.state !== 'available') {
+        return search.noAbsoluteDirectory ? { reason: `Git cannot be looked up to read ${gitEntry}: ${search.reason}` } : setupCheckoutFailure(search.reason)
+    }
+    const runner = await createGitRunner(search.env, executeProbe)
+    if ('unavailable' in runner) return { reason: `Git cannot be looked up to read ${gitEntry}: ${runner.unavailable}` }
+    const answer = await runner.run(root, 'surfaces:observe:checkout', CHECKOUT_REV_PARSE, { timeoutMs: 10_000 })
+    if (answer.kind === 'failed') {
+        return answer.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED
+            ? { reason: `Git does not accept ${gitEntry} as a checkout: ${answer.detail.replace(`${answer.code}: `, '')}` }
+            : setupCheckoutFailure(`Git could not be asked which checkout holds ${root}: ${answer.detail}`)
+    }
+    const lines = answer.stdout.split('\n')
+    if (lines.length !== 3 || !lines.every(canonicalAbsolutePath)) return setupCheckoutFailure(`Git returned an unreadable checkout identity for ${root}`)
+    let topLevel: string, gitDirectory: string, commonDirectory: string
+    try {
+        [topLevel, gitDirectory, commonDirectory] = await Promise.all(lines.map(path => realpath(path))) as [string, string, string]
+    } catch (error) {
+        return setupCheckoutFailure(`Git named a checkout path that cannot be resolved: ${errorCause(error)}`)
+    }
+    if (!confined(topLevel, sourcePath)) return { reason: `Git's working tree for ${gitEntry} is ${topLevel}, which does not hold ${sourcePath}` }
+    // A linked checkout's common directory belongs to its main checkout. One kept outside a working
+    // tree names no other checkout, so it stands for the main checkout itself.
+    const mainCheckoutPath = gitDirectory === commonDirectory ? topLevel
+        : basename(commonDirectory) === '.git' ? dirname(commonDirectory) : commonDirectory
+    return { topLevel, gitDirectory, commonDirectory, mainCheckoutPath }
+}
+
+async function gitEntryCurrent(entry: ObservedGitEntry): Promise<boolean> {
+    try {
+        const status = await lstat(entry.path, { bigint: true })
+        // A `.git` directory's timestamps move with every command; a `.git` file's only when it is rewritten.
+        return status.isDirectory() === entry.directory
+            && (entry.directory ? sameDirectoryNode : sameDirectoryIdentity)(directoryIdentity(status), entry.identity)
+    } catch (error) {
+        if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return false
+        throw error
+    }
 }
 
 async function generatedCheckoutBindingCurrent(binding: GeneratedCheckoutBinding): Promise<boolean> {
@@ -1366,6 +1534,7 @@ async function generatedCheckoutBindingCurrent(binding: GeneratedCheckoutBinding
         if (!current || !sameDirectoryNode(current.identity, expected)) return false
     }
     for (const path of binding.absentGitEntries) if (!await pathAbsent(path)) return false
+    if (binding.surfacesOnly?.gitEntry && !await gitEntryCurrent(binding.surfacesOnly.gitEntry)) return false
     if (binding.checkout && !await checkoutBindingCurrent(binding.checkout, true)) return false
     return true
 }
@@ -1378,7 +1547,8 @@ export async function revalidateGeneratedCheckoutIdentity(identity: GeneratedChe
     const completedAt = Date.now()
     if (!Number.isSafeInteger(completedAt) || completedAt < now) return false
     if (completedAt - binding.observedAt > SETUP_CHECKOUT_OBSERVATION_LIFETIME_MS) {
-        const refreshed = await observeGeneratedCheckoutIdentity({ source: binding.source, cockpitName: binding.cockpitName, env: binding.env })
+        const observe = binding.surfacesOnly ? observeSurfacesCheckoutIdentity : observeGeneratedCheckoutIdentity
+        const refreshed = await observe({ source: binding.source, cockpitName: binding.cockpitName, env: binding.env })
         if (refreshed.state !== 'available' || refreshed.kind !== identity.kind
             || refreshed.cockpitId !== identity.cockpitId || refreshed.checkoutId !== identity.checkoutId
             || refreshed.mainCheckoutPath !== identity.mainCheckoutPath || refreshed.currentCheckoutPath !== identity.currentCheckoutPath) return false
@@ -1577,7 +1747,7 @@ export async function observeSetupPath(
 
     const identityStep = probeStep(
         'setup:observe:identity',
-        [executable.canonicalPath, '-C', target, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'],
+        [executable.canonicalPath, ...GIT_CHILD_CONFIG, '-C', target, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'],
         siblingsRoot,
         env,
         executable,
@@ -1634,7 +1804,7 @@ export async function observeSetupPath(
 
     const confirmedIdentity = await authenticatedProbe(probeStep(
         'setup:observe:identity-confirm',
-        [executable.canonicalPath, '-C', target, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'],
+        [executable.canonicalPath, ...GIT_CHILD_CONFIG, '-C', target, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'],
         siblingsRoot,
         env,
         executable,
@@ -1648,7 +1818,7 @@ export async function observeSetupPath(
 
     const configurationInventory = await authenticatedProbe(probeStep(
         'setup:observe:config-origins',
-        [executable.canonicalPath, '-c', 'core.excludesFile=/dev/null', '-C', target, 'config', '--show-origin', '--null', '--list'],
+        [executable.canonicalPath, '-c', 'core.excludesFile=/dev/null', ...GIT_CHILD_CONFIG, '-C', target, 'config', '--show-origin', '--null', '--list'],
         siblingsRoot,
         env,
         executable,
@@ -1662,7 +1832,7 @@ export async function observeSetupPath(
 
     const remote = await authenticatedProbeOutcome(probeStep(
         'setup:observe:origin',
-        [executable.canonicalPath, '-C', target, 'config', '--get', 'remote.origin.url'],
+        [executable.canonicalPath, ...GIT_CHILD_CONFIG, '-C', target, 'config', '--get', 'remote.origin.url'],
         siblingsRoot,
         env,
         executable,

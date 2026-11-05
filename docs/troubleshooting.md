@@ -239,7 +239,6 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `AUTONOMY_PERSON_REQUIRED` | a person runs the same command with --interactive in a terminal outside CI, or a person changes the field in cockpit.toml and accepts the change at sync |
 | `BROWSER_ROUTE_FINDINGS` | this run asked for a clean route (--fail-on-findings). Read result.receipt.surfaces[].diagnostics, including excerpt.messages where present: fix the product for each console error, uncaught page error and failed request that matters, then rerun npx --no cockpit browser drive --config <your cockpit.toml> --route <name> --fail-on-findings; third-party traffic never counts |
 | `CLAIM_CO_TENANT` | [see above](#common-refusal-guidance) |
-| `COCKPIT_LAUNCHER_UNPROVEN` | run cockpit as ./node_modules/.bin/cockpit <command> --config <your cockpit.toml> from the cockpit root, or remove what stops npx from proving it: a .npmrc in the cockpit root, a bin or directories.bin in its package.json, or a node_modules/.bin/cockpit that npm install did not link to the installed package |
 | `COCKPIT_REVISION_UNSTAMPED` | install a released @b00dea/cockpit when the resolved data must name the exact cockpit source commit |
 | `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
 | `COMPOSE_FILE_UNREADABLE` | make environment.compose_files name a readable Compose file inside the cockpit root, then run npx --no cockpit check --config <your cockpit.toml> |
@@ -254,13 +253,19 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `DOCS_TARGET_REMOVED` | cite the target or command that replaced it, or rewrite or delete the sentence if the step is gone; then rerun npx --no cockpit docs check --config <your cockpit.toml> |
 | `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` | declare one sibling for each repository the message says init observed, with that slug and dir, and no other; add any other repository after init with npx --no cockpit sibling add <slug> --config <your cockpit.toml> |
 | `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
-| `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files and run npx --no cockpit sync --config <your cockpit.toml> |
+| `DOCUMENT_RUNTIME_NOT_DECLARED` | to adopt a runtime, declare environment.compose_files, environment.machine and the environment postures, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your Compose file (for a small app with none, npx --no cockpit init <cockpit root> --scaffold-compose <app dir> --port <port> writes a starting one), then run npx --no cockpit sync --config <your cockpit.toml> |
+| `ENV_KEYS_SOURCE_SKIPPED` | replace it with a regular file in that directory |
+| `ENV_SCHEMA_OVERRIDDEN` | unset those variables in the shell, then rerun this command to check the schema's own sources |
+| `ENV_SCHEMA_TOOL_MISSING` | install Varlock (https://varlock.dev) and put it on PATH |
+| `ENV_SCHEMA_UNCOMMITTED` | commit the schema to have it validated, or have a person review it and run the load this message names |
+| `ENV_SCHEMA_UNDECLARED` | consider adopting Varlock: install it if needed, then ask a person to run VARLOCK_TELEMETRY_DISABLED=true varlock init in this directory and review .env.schema without copying secret values into it |
 | `EVALUATOR_FELL_BACK_TO_RUNNING_TOOL` | install and sign in to the passed-over tool so another tool grades the work, or name the grader you accept with --evaluator <tool> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [see above](#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [see above](#generated_artifact_drift) |
 | `GENERATED_ARTIFACT_MISSING` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_BROWSER_ENDPOINT_UNPUBLISHED` | publish the endpoint port from exactly one service in environment.compose_files as "127.0.0.1:${VAR}:<container port>" with VAR under [ports.bases] set to the endpoint port, or remove browser.endpoint to drive a local browser, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `GENERATED_CHECKOUT_STANDALONE` | in a terminal, outside the agent, run git init if this directory has no repository, remove a stale .git entry or repair it with git worktree repair, and install Git on an absolute PATH entry if it is missing; held calls then continue without a sync |
 | `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [see above](#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [see above](#merge-ownership-and-generation) |
@@ -269,13 +274,12 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `GUARD_AUTHORITY_UNAVAILABLE` | [see above](#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [see above](#common-refusal-guidance) |
-| `GUARD_SEARCH_PATH_RELATIVE` | remove every relative or empty entry from PATH where the shell profile or launcher that starts the agent harness sets it, then restart the harness |
+| `GUARD_SEARCH_PATH_RELATIVE` | check PATH in the shell or launcher that starts the agent harness; if it contains relative or empty entries, remove them there and restart the harness |
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | [see above](#common-refusal-guidance) |
 | `INIT_SCAFFOLD_COMPOSE_EXISTS` | run npx --no cockpit init <cockpit root> --target <tool>, which proposes the existing Compose file for environment.compose_files |
 | `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
 | `MCP_APPROVAL_UNKNOWN` | [see above](#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [see above](#mcp-and-restrictions) |
-| `MCP_COMMAND_UNRESOLVED` | install the command or correct it in the sibling's MCP declaration, then run npx --no cockpit sync --config <your cockpit.toml>; a changed declaration needs a person to approve its new sha256 under [mcp.approved] |
 | `MCP_DECLARATION_INVALID` | [see above](#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [see above](#mcp-and-restrictions) |
 | `MCP_NOT_APPROVED` | [see above](#mcp-and-restrictions) |

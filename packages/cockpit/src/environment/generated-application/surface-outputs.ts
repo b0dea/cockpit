@@ -159,9 +159,10 @@ export function emptyGeneration(): Extract<SurfaceGenerationOutcome, { kind: 'co
  * `/` rules refused root files, while the control stayed readable. Over-matching a deny is safe;
  * glob metacharacters in a path become `?` so a literal bracket cannot narrow the rule.
  *
- * Every `.env` and `.env.*` file is denied too, as the guard denies it. Claude applies a deny before
- * any allow, so these rules cannot carve out the documentation names the guard exempts: Claude's own
- * tools refuse `.env.example` and declared templates as well, which a shell `cat` still reads.
+ * Every `.env` and `.env.*` file is denied too. Claude's filesystem-root deny rules cannot carve out
+ * the documentation names the guard exempts. Native file tools and recognized shell reads refuse
+ * those names; a guard approval cannot override the native denial. Keep the broad protection until
+ * a supported exception can preserve instance denials across sibling directories.
  */
 function claudeReadDenials(
     siblings: readonly { slug: string; path: string }[],
@@ -235,7 +236,7 @@ const AGENT_COCKPIT_COMMANDS = [
     'check *', 'confirm *', 'doctor *', 'preflight *', 'logs *', 'ps *', 'restart *', 'rebuild *', 'exec *', 'sync *', 'reset * --apply', 'up *', 'sleep *', 'down *',
     'runtime measure *', 'test-run *',
     'work status *', 'work accept *', 'work check *', 'work note *', 'work decide *', 'work answer *', 'work acknowledge *', 'work grade *', 'work signoff *', 'work recover *',
-    'work verify *', 'grade *', 'upgrade *', 'docs check *', 'use *', 'pull *', 'stacks *',
+    'work verify *', 'grade *', 'upgrade *', 'docs check *', 'env keys *', 'env schema *', 'use *', 'pull *', 'stacks *',
     'browser drive *', 'browser screenshot *',
 ] as const
 
@@ -275,7 +276,9 @@ export function nativeSources(
             // Codex spells Claude Code's headersHelper http_headers_helper; Rulesync passes an unknown
             // key through to config.toml unchanged.
             const respelled = row.target === 'codexcli'
-                ? row.servers.filter(server => 'url' in server && server.headersHelper !== null).map(server => [server.name, native(server, 'http_headers_helper')] as const)
+                ? row.servers.filter(server => server.allowedTools !== undefined || 'url' in server && server.headersHelper !== null)
+                    .map(server => [server.name, { ...native(server, 'http_headers_helper'),
+                        ...(server.allowedTools === undefined ? {} : { enabled_tools: server.allowedTools }) }] as const)
                 : []
             return removed.length + respelled.length > 0 ? [[harnessFact(row.target).rulesyncTarget, {
                 mcpServers: Object.fromEntries([...removed, ...respelled]),
@@ -405,6 +408,18 @@ export function bindNativeGrantsToMcp(
 
 export function nativeMcpPaths(targets: readonly SurfaceTarget[]): Readonly<Partial<Record<SurfaceTarget, string>>> {
     return Object.fromEntries(targets.map(target => [target, harnessFact(target).outputs.mcp]))
+}
+
+/**
+ * Whether every stale path is the MCP file of a tool still listed. Such a file goes stale only because
+ * none of its servers are written any more, so removing it can only narrow access. A file that also
+ * holds a tool's permissions can go stale for another reason, so it is not one of these. Publication has
+ * already refused a stale path whose bytes differ from what cockpit generated.
+ */
+export function staleMcpOutputsOnly(paths: readonly string[], configuredHarnesses: readonly string[]): boolean {
+    const removable = SURFACE_TARGETS.filter(target => configuredHarnesses.includes(target)).map(target => harnessFact(target).outputs)
+        .filter(outputs => !outputs.permissions.some(path => path === outputs.mcp)).map(outputs => outputs.mcp as string)
+    return paths.length > 0 && paths.every(path => removable.includes(path))
 }
 
 export function nativeGrantPaths(targets: readonly SurfaceTarget[]): Readonly<Partial<Record<SurfaceTarget, string>>> {

@@ -10,6 +10,9 @@ import { GUARD_EXECUTABLE_SEARCH_PATH, resolveDockerExecutable, resolveGitExecut
 import { executeProbe } from './environment-exec/execute.js'
 import { loadCockpitConfig } from './config/load.js'
 
+// MCP arguments are opaque to a tool-name policy; bound the native envelope before parsing it.
+const NATIVE_INPUT_BYTES = 1_048_576
+
 // The guard runs before every agent tool call, so this module imports only what a guard decision needs;
 // the rest of the CLI loads only for the other commands.
 export async function runGuardCommand(
@@ -29,15 +32,21 @@ export async function runGuardCommand(
         for await (const chunk of io.stdin) {
             const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
             bytes += buffer.length
-            if (bytes > GUARD_INPUT_LIMITS.inputBytes) throw new RefusalError('Guard input exceeds its byte bound.')
+            if (bytes > NATIVE_INPUT_BYTES) throw new RefusalError('Guard input exceeds its byte bound.')
             chunks.push(buffer)
         }
         const raw = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes))
         const native = JSON.parse(raw)
+        const mcp = harness === 'claudecode' && typeof native?.tool_name === 'string' && native.tool_name.startsWith('mcp__')
+        if (!mcp && bytes > GUARD_INPUT_LIMITS.inputBytes) throw new RefusalError('Guard input exceeds its byte bound.')
+        if (mcp && (native.tool_input === null || typeof native.tool_input !== 'object' || Array.isArray(native.tool_input))) {
+            throw new RefusalError('Malformed MCP tool input.')
+        }
         const payload = harness === 'opencode' && native?.tool !== undefined
             ? normalizeOpenCodeInput(native)
             : { hook_event_name: native?.hook_event_name, tool_name: native?.tool_name,
-                tool_input: native?.tool_input, cwd: native?.cwd ?? process.cwd() }
+                // Only the bounded metadata reaches the own-data parser and authenticated evaluator.
+                tool_input: mcp ? {} : native?.tool_input, cwd: native?.cwd ?? process.cwd() }
         const identityBytes = env.COCKPIT_GUARD_IDENTITY
         if (!identityBytes || Buffer.byteLength(identityBytes) > GUARD_INPUT_LIMITS.inputBytes) throw new RefusalError('Installed guard identity is missing or oversized.')
         const guardRoot = env.COCKPIT_GUARD_ROOT

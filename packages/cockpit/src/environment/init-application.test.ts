@@ -10,6 +10,9 @@ import { initCommand } from '../fix-catalogue.js'
 import { classifyEstateObservation, draftFromEstate, observePublicEstate, type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult } from '../init/draft.js'
 import { readState, selectBootstrapStateRoot } from './state.js'
 import { digest, fixture, removeInitApplicationFixtures } from '../../test-support/init-application-fixture.js'
+import { loadCockpitConfig } from '../config/load.js'
+import { createHealthCommandAdapters } from './health-composition.js'
+import { runPreflight } from './application/health.js'
 
 function estate(root: string, classification: 'one-sibling' | 'incomplete-multi-repository' | 'no-runnable-product'): EstateClassificationOutcome {
     const multi = classification === 'incomplete-multi-repository'
@@ -133,8 +136,12 @@ describe('init application', () => {
         const notDeclared = { severity: 'error' as const, code: 'ENVIRONMENT_NOT_DECLARED', message: 'synthetic: no runtime is declared' }
         const completed = await runInitApplication(accepted, { ...f.adapters, preflight: async () => ({
             kind: 'blocked', status: 2, diagnostics: [notDeclared], result: { verdict: 'unavailable' } }) })
-        expect(completed).toMatchObject({ kind: 'complete', status: 0, result: { stage: 'environment-verified' },
+        expect(completed).toMatchObject({ kind: 'complete', status: 0, result: { stage: 'surfaces-verified' },
             diagnostics: [{ severity: 'info', code: 'ENVIRONMENT_NOT_DECLARED', message: notDeclared.message }] })
+        // A rerun moves between the two ends as cockpit.toml starts or stops declaring a runtime.
+        expect(await runInitApplication(accepted, f.adapters)).toMatchObject({ kind: 'complete', result: { stage: 'environment-verified' } })
+        expect(await runInitApplication(accepted, { ...f.adapters, preflight: async () => ({
+            kind: 'blocked', status: 2, diagnostics: [notDeclared], result: { verdict: 'unavailable' } }) })).toMatchObject({ kind: 'complete', result: { stage: 'surfaces-verified' } })
     })
 
     it('asks where the cockpit lives before publishing anything into a product repository', async () => {
@@ -433,6 +440,78 @@ describe('init application', () => {
         expect(outcome.result?.interview?.outstanding).not.toEqual(expect.arrayContaining([
             expect.objectContaining({ field: 'estate.runnable' }),
         ]))
+    })
+
+    it.each(['/usr/bin:/bin', '/usr/bin/../bin:/bin'])('resumes staged adoption of a runnable product with exact answers and a real no-runtime preflight on PATH %s', async PATH => {
+        const f = fixture()
+        mkdirSync(join(f.root, 'app'))
+        await writeFile(join(f.root, 'app', 'compose.yml'), 'services:\n  app:\n    image: synthetic.invalid/app:1\n')
+        let measurements = 0
+        const adapters: InitApplicationAdapters = { ...f.adapters,
+            classifyEstate: input => classifyEstateObservation(input, { observe: observePublicEstate }),
+            document: draftFromEstate, infer: deriveInferredFacts,
+            measureMachine: async () => { measurements += 1; return { kind: 'unavailable', reason: 'no container runtime' } },
+            validateConfig: loadCockpitConfig,
+            preflight: input => runPreflight(input, createHealthCommandAdapters({ configPath: f.destination,
+                env: { HOME: f.input.home, PATH }, timeoutMs: 5_000 }, async () => {
+                throw new Error('no runtime should be probed for an explicitly deferred runtime')
+            })),
+        }
+        const command = { root: f.root, target: 'codexcli' as const, sessionId: 'synthetic-session',
+            platform: 'linux' as const, home: f.input.home, xdgStateHome: f.input.xdgStateHome }
+        const io: InitCommandIo = { terminal: false, confirm: async () => undefined,
+            writeArtifact: async (path, artifact) => {
+                await writeFile(path, artifact)
+                f.setDestination({ kind: 'available', sha256: createHash('sha256').update(artifact).digest('hex') })
+            } }
+        const run = (answers: Record<string, unknown>, defaultsSha256?: string) => runInitOperatorCommand(command,
+            { interactive: false, json: true, unattended: { previewSha256: digest('3'), answers,
+                ...(defaultsSha256 ? { defaultsSha256 } : {}) } }, io, input => runInitApplication(input, adapters))
+        const answers = { cockpit: { name: 'app-cockpit' },
+            sibling: [{ slug: 'app', dir: 'app', mount: 'always', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic application' }],
+            ports: { bases: {} }, environment: { install_policies: [],
+                test_data: { seeded_data: false, signed_in_users: false }, compose_files: [] } }
+        const pending = await run(answers)
+        expect(pending, JSON.stringify(pending.diagnostics)).toMatchObject({ kind: 'pending', result: {
+            estate: { classification: 'one-sibling', runnable: [{ slug: 'app', disposition: 'confirmed' }] },
+            question: { field: 'testing' } } })
+        expect(pending.result!.interview!.answered).toEqual(['cockpit.name', 'sibling', 'ports.bases',
+            'environment.install_policies', 'environment.test_data', 'environment.compose_files'])
+        expect(pending.result!.interview!.outstanding.map(row => row.field)).toEqual(['testing', 'guards', 'configuration.defaults'])
+        const beforeResume = measurements
+        expect(await run(answers)).toMatchObject({ kind: 'pending', result: { question: pending.result!.question } })
+        expect(measurements).toBe(beforeResume)
+
+        expect(await run({ ...answers, environment: { ...answers.environment, compose_files: ['app/compose.yml'] } }))
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_CONFLICT' }] })
+        const resetInput = { ...f.input, registry: undefined, resetAnswer: { field: 'environment.compose_files' } }
+        const preview = await runInitApplication(resetInput, adapters)
+        expect(preview).toMatchObject({ kind: 'pending', result: { resetAnswer: {
+            invalidatedFields: ['environment.compose_files', 'testing'] } } })
+        const reset = preview.result!.resetAnswer!
+        const resetAccepted = { ...resetInput, resetAnswer: { ...resetInput.resetAnswer, acceptedPreviewSha256: reset.previewSha256 } }
+        expect(await runInitApplication({ ...resetInput, resetAnswer: { ...resetInput.resetAnswer,
+            acceptedPreviewSha256: digest('0') } }, adapters)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_RESET_STALE' }] })
+        expect(await runInitApplication(resetAccepted, adapters)).toMatchObject({ kind: 'pending', result: {
+            question: { field: 'environment.compose_files' } } })
+        expect(await runInitApplication(resetAccepted, adapters)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_RESET_STALE' }] })
+        expect(await run(answers)).toMatchObject({ kind: 'pending', result: { question: { field: 'testing' } } })
+
+        const testing = { stages: [{ id: 'unit', command: ['make', 'test'], requires_stack: false }],
+            gates: [{ id: 'full', tier: 'full', stages: ['unit'], changes: 'Any behavior' }] }
+        const completeAnswers = { ...answers, testing,
+            guards: { hosted_db_hosts: ['db.shared.example.invalid'], vendor_endpoint_hosts: ['api.vendor.example.invalid'] } }
+        const defaults = await run(completeAnswers)
+        expect(defaults).toMatchObject({ kind: 'pending', result: { question: { field: 'configuration.defaults' } } })
+        const completed = await run(completeAnswers, defaults.result!.question!.expectedSha256)
+        expect(completed, JSON.stringify(completed.diagnostics)).toMatchObject({ kind: 'complete', status: 0,
+            diagnostics: [{ severity: 'info', code: 'ENVIRONMENT_NOT_DECLARED' }] })
+        const loaded = await loadCockpitConfig(f.destination)
+        expect(loaded).toMatchObject({ kind: 'complete', result: { config: {
+            environment: { compose_files: [], install_policies: [] }, testing, guards: completeAnswers.guards,
+        } } })
+        expect(await adapters.preflight({ configPath: f.destination })).toMatchObject({ kind: 'blocked', status: 2,
+            diagnostics: [{ severity: 'error', code: 'ENVIRONMENT_NOT_DECLARED' }] })
     })
 
     it('lets the setup agent accept what init read from exact sources, and keeps security boundaries and guesses with a person', async () => {

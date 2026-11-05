@@ -189,8 +189,11 @@ export async function prepareSurfaces(
     const approved = effectivePolicy(config).autonomy.mcp_approve === 'agent'
         ? { ...config.mcp.approved, ...Object.fromEntries(declarations.map(row => [row.name, mcpApprovalDigest(row, prepared.root)])) }
         : config.mcp.approved
-    let mcp = collectMcpDeclarations({ cockpitDirectory: prepared.root, declarations, approved, targets: tools })
+    let mcp = collectMcpDeclarations({ cockpitDirectory: prepared.root, declarations, approved, allowedTools: config.mcp.allowed_tools, targets: tools })
     if (mcp.kind !== 'complete') return refuse(mcp.diagnostic.code, mcp.diagnostic.message, mcp.diagnostic.server)
+    if (config.surfaces.bundles.includes('claudecode-plugin') && mcp.result.servers.some(server => server.allowedTools !== undefined)) {
+        return refuse('MCP_DECLARATION_INVALID', 'Restricted MCP servers cannot be bundled as a Claude plugin: plugin-scoped tool names have no measured restriction transport; remove the bundle or use the project MCP configuration', 'claudecode-plugin')
+    }
     const unapprovedMcpServers = mcp.diagnostics.filter(row => row.code === 'MCP_NOT_APPROVED' && row.server !== undefined)
         .map(row => ({ name: row.server!, sha256: row.sha256!, sources: (row.sources ?? []).map(source =>
             source.kind === 'sibling' ? `${source.slug}:${source.path}` : source.path) }))
@@ -215,8 +218,7 @@ export async function prepareSurfaces(
     let browser: ReturnType<typeof renderBrowserSurfaces> | null = null
     let browserAuthority: ConsumedWorkApplicationAuthorities['browser']
     if (prepared.workEnvironment.browser) {
-        const checkout = prepared.runtimeCheckout
-        if (!checkout) return refuse('SURFACE_INPUT_INVALID', 'browser checkout identity is unavailable', prepared.configPath)
+        const checkout = prepared.checkoutIdentity
         const browserConfiguration = prepared.workEnvironment.browser
         const playwright = declarations.filter(row => row.name === 'playwright')
             .flatMap(row => 'command' in row ? [row] : [])
@@ -273,6 +275,7 @@ export async function prepareSurfaces(
                     ? [{ target: row.target, version: row.version }] : []),
                 mcp: browserMcp,
                 approved: true,
+                ...(config.mcp.allowed_tools.playwright === undefined ? {} : { allowedTools: config.mcp.allowed_tools.playwright }),
                 testPackage: null,
                 skillTemplate: browserSkill.bytes,
             })
@@ -281,6 +284,8 @@ export async function prepareSurfaces(
                 .map(row => row.target))
             const boundMcp = collectMcpDeclarations({
                 cockpitDirectory: prepared.root,
+                allowedTools: Object.fromEntries(Object.entries(config.mcp.allowed_tools)
+                    .filter(([name]) => name !== 'playwright' || browserTargets.size > 0)),
                 declarations: declarations.flatMap(row => row.name !== 'playwright' ? [row]
                     : browserTargets.size ? [browserMcp] : []),
                 // The leased endpoint rewrites an approved argument, so the bound server carries its own digest.
@@ -445,6 +450,7 @@ export async function prepareSurfaces(
         module: modulePath, moduleSha256: moduleRead.sha256 }
     const restrictions = expandRestrictions({
         canonicalProjectRoot: prepared.root,
+        restrictedMcpServers: Object.keys(config.mcp.allowed_tools).sort(compareCodeUnits),
         allowedProjectRoots: [...new Set([prepared.root, ...selected.map(row => siblingRoots.get(row.slug)!)])].sort(compareCodeUnits),
         guardTemplate: asset(RESTRICTION_ASSETS[0]).bytes, guardPath: '.cockpit/guards/bash-guard.sh',
         instances: prepared.registry.secretPaths.filter(row => siblingRoots.has(row.slug)).map(row => ({

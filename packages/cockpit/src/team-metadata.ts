@@ -3,6 +3,7 @@ import { constants } from 'node:fs'
 import { lstat, open, realpath, rename, unlink } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parse as parseYaml } from 'yaml'
 import { loadCockpitConfig, readBoundedInput } from './config/load.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, isMissing, parseJsonText, RefusalError, tryParseJson, type EnvironmentDiagnostic } from './environment/contract.js'
 import type { CockpitConfig } from './schema.js'
@@ -10,6 +11,7 @@ import { installedPackageMetadata } from './package-metadata.js'
 import { cockpitCommand } from './fix-catalogue.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from './guards/local-identity.js'
 import { guardLauncherEvidence } from './guards/protected-locations.js'
+import { EXACT_DEV_INSTALL, NODE_EXEC, nodeLockfile } from './init/derive.js'
 
 const PACKAGE = installedPackageMetadata.name
 const VERSION = installedPackageMetadata.version
@@ -206,6 +208,8 @@ function packageCandidate(bytes: string | undefined, verifiedLocalPin?: string):
 // exist and changed a dependency the user chose without asking. The installed copy is compared by
 // manifest bytes, not by location: the bootstrap route runs init from a temporary install of the
 // same archive, and requiring the running copy to be the root's own install refused that resume.
+// npm installs a real directory and pnpm a link into its store, so the layout selects whose lockfile
+// has to resolve the pin; a link beside npm's lockfile is `npm link`, which that lockfile does not describe.
 async function verifiedLocalPin(authority: RootAuthority, packageBytes: string | undefined): Promise<string | undefined> {
     // An unparseable package.json is refused by the caller's own parse of the same bytes.
     const manifest = packageBytes === undefined ? undefined : tryParseJson(packageBytes)
@@ -219,13 +223,19 @@ async function verifiedLocalPin(authority: RootAuthority, packageBytes: string |
         if (hasErrorCode(error, 'ENOENT')) return undefined
         throw error
     }
-    if (!installed.isDirectory() || installed.isSymbolicLink()) return undefined
-    if (await realpath(installedPath) !== await realpath(INSTALLED_PACKAGE_ROOT)) {
+    if (!installed.isDirectory() && !installed.isSymbolicLink()) return undefined
+    let installedTarget: string
+    try { installedTarget = await realpath(installedPath) } catch (error) {
+        if (isMissing(error) || hasErrorCode(error, 'ELOOP')) return undefined
+        throw error
+    }
+    if (installedTarget !== await realpath(INSTALLED_PACKAGE_ROOT)) {
         const installedManifest = await readBoundedInput(join(installedPath, 'package.json'))
         const runningManifest = await readBoundedInput(join(INSTALLED_PACKAGE_ROOT, 'package.json'))
         if (installedManifest.kind !== 'complete' || runningManifest.kind !== 'complete'
             || !Buffer.from(installedManifest.bytes).equals(Buffer.from(runningManifest.bytes))) return undefined
     }
+    if (installed.isSymbolicLink()) return await pnpmLockResolves(authority, spec) ? spec : undefined
 
     const lockFile = await readOptional(authority, join(authority.root, 'package-lock.json'))
     if (!lockFile) return undefined
@@ -240,6 +250,22 @@ async function verifiedLocalPin(authority: RootAuthority, packageBytes: string |
     return spec
 }
 
+async function pnpmLockResolves(authority: RootAuthority, spec: string): Promise<boolean> {
+    const lockFile = await readOptional(authority, join(authority.root, 'pnpm-lock.yaml'))
+    if (!lockFile) return false
+    let lock: unknown
+    // An unparseable lockfile verifies no pin; the caller then refuses the file: pin as unresolved.
+    try { lock = parseYaml(lockFile.bytes) } catch { return false }
+    const importers = object(lock) && object(lock.importers) ? lock.importers : undefined
+    const root = importers && object(importers['.']) ? importers['.'] : undefined
+    const dependency = root && object(root.devDependencies) ? root.devDependencies[PACKAGE] : undefined
+    const packages = object(lock) && object(lock.packages) ? lock.packages : undefined
+    if (!object(dependency) || dependency.specifier !== spec || typeof dependency.version !== 'string'
+        || !dependency.version.startsWith('file:') || !packages) return false
+    const resolved = packages[`${PACKAGE}@${dependency.version}`]
+    return object(resolved) && resolved.version === VERSION
+}
+
 // A checkout is its own Git repository; left visible inside the cockpit root, a `git add` embeds
 // it as a gitlink, or fails on one with no commit yet. Cloned rows are repositories by declaration.
 // `acquire = "none"` rows are local data the cockpit itself may track, except a directory that
@@ -249,7 +275,7 @@ async function ignoreBlock(root: string, config: Pick<CockpitConfig, 'cockpit' |
     const siblingsRoot = config.cockpit.siblings_root
     if (/[\0\r\n]/.test(siblingsRoot)) return undefined
     // Claude Code's machine-local settings, where `cockpit use` grants a served checkout.
-    const patterns = ['/node_modules/', '/.cockpit/local/', '/.claude/settings.local.json', '/env/.secrets/*', '!/env/.secrets/.gitignore']
+    const patterns = ['/node_modules/', '/.cockpit/local/', '/.claude/settings.local.json', '**/.secrets/*', '!/env/.secrets/.gitignore']
     const inside = (path: string, kind: 'directory' | 'any' = 'directory'): string | undefined => {
         const local = relative(root, path)
         if (local === '' || local === '..' || local.startsWith(`..${sep}`) || isAbsolute(local)) return undefined
@@ -272,6 +298,20 @@ async function ignoreBlock(root: string, config: Pick<CockpitConfig, 'cockpit' |
     }
     const body = patterns.join('\n')
     return `${blockHeader(body)}\n${body}\n${END}`
+}
+
+/** The lockfile and package manager this root uses; npm's when no lockfile names one. */
+async function rootPackageManager(root: string): Promise<Readonly<{ manager: keyof typeof NODE_EXEC; lockfile: string }>> {
+    const node = await nodeLockfile(async (name) => {
+        try {
+            await lstat(join(root, name))
+            return true
+        } catch (error) {
+            if (isMissing(error)) return false
+            throw error
+        }
+    })
+    return node ?? { manager: 'npm', lockfile: 'package-lock.json' }
 }
 
 async function holdsGitMetadata(directory: string): Promise<boolean> {
@@ -398,10 +438,16 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
             misplacedDependencyMessage(slots.misplaced), packagePath)
         const pinned = slots?.devDependencies[PACKAGE]
         if (typeof pinned === 'string' && pinned.startsWith('file:')) {
-            if (pinned !== await verifiedLocalPin(authority, current?.bytes)) return refuse('COCKPIT_VERSION_MISMATCH',
-                `package.json pins ${PACKAGE} to ${pinned}, but package-lock.json and node_modules do not resolve that archive to the running ${VERSION}; run npm install, then ${cockpitCommand('check')}`, packagePath)
-        } else if (pinned !== VERSION) return refuse('COCKPIT_VERSION_MISMATCH',
-            `package.json pins ${PACKAGE} ${String(pinned ?? '(missing)')}, but ${VERSION} is running; run npm install --save-dev --save-exact ${PACKAGE}@${VERSION}`, packagePath)
+            if (pinned !== await verifiedLocalPin(authority, current?.bytes)) {
+                const { manager, lockfile } = await rootPackageManager(root)
+                return refuse('COCKPIT_VERSION_MISMATCH',
+                    `package.json pins ${PACKAGE} to ${pinned}, but ${lockfile} and node_modules do not resolve that archive to the running ${VERSION}; run ${manager} install, then ${cockpitCommand('check')}`, packagePath)
+            }
+        } else if (pinned !== VERSION) {
+            const install = EXACT_DEV_INSTALL[(await rootPackageManager(root)).lockfile] ?? EXACT_DEV_INSTALL['package-lock.json']!
+            return refuse('COCKPIT_VERSION_MISMATCH',
+                `package.json pins ${PACKAGE} ${String(pinned ?? '(missing)')}, but ${VERSION} is running; run ${install.manager} ${install.verb} ${install.flags.join(' ')} ${PACKAGE}@${VERSION}`, packagePath)
+        }
         const scripts = object(parsed) && object(parsed.scripts) ? parsed.scripts : undefined
         if (!scripts || Object.entries(SCRIPTS).some(([name, command]) => scripts[name] !== command)) {
             return refuse('TEAM_METADATA_UNAVAILABLE', `package.json does not contain the exact cockpit:* scripts that sync writes; run ${cockpitCommand('sync', { config: configPath })}`, packagePath)
@@ -439,18 +485,36 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
     const root = dirname(resolve(configPath))
     const findings: EnvironmentDiagnostic[] = []
     const installed = join(root, 'node_modules', ...PACKAGE.split('/'))
-    const present = await lstat(installed).then((status) => status.isDirectory(), (error: unknown) => {
-        if (isMissing(error)) return false
-        throw error
-    })
-    if (!present) {
+    const running = await realpath(INSTALLED_PACKAGE_ROOT)
+    let own: string | undefined
+    let linkedCopy: string | undefined
+    try {
+        const status = await lstat(installed)
+        if (status.isDirectory()) own = await realpath(installed)
+        else if (status.isSymbolicLink()) {
+            const target = await realpath(installed)
+            // pnpm links its package directory; only the exact running copy authenticates that link.
+            if (target === running) own = target
+            else linkedCopy = target
+        }
+    } catch (error) {
+        // Missing or cyclic links establish no installed copy; other I/O failures must surface.
+        if (!isMissing(error) && !hasErrorCode(error, 'ELOOP')) throw error
+    }
+    if (own === undefined) {
+        const { manager } = await rootPackageManager(root)
+        const installedCopy = `${NODE_EXEC[manager].join(' ')} cockpit`
         findings.push({
             severity: 'warning' as const,
             // A literal, so the diagnostic inventory captures the fix beside the code.
             code: 'COCKPIT_NOT_INSTALLED' satisfies typeof ENVIRONMENT_CODES.COCKPIT_NOT_INSTALLED,
-            message: `cockpit is not installed in ${root}, so every npx --no cockpit command the generated instructions print fails there, and the guard hook runs whichever copy last ran sync`,
+            message: linkedCopy === undefined
+                ? `cockpit is not installed in ${root}, so every npx --no cockpit command the generated instructions print fails there, and the guard hook runs whichever copy last ran sync`
+                : `another copy of cockpit is running: this command runs ${running}, while ${installed} links to ${linkedCopy}, so nothing here proves the installed copy, and the guard hook runs whichever copy last ran sync`,
             target: 'node_modules',
-            fix: `in a terminal in ${root}, run npm install (package.json pins the version), then run npx --no cockpit sync --config <your cockpit.toml> so the guard hook runs the installed copy`,
+            fix: linkedCopy === undefined
+                ? `in a terminal in ${root}, run ${manager} install (package.json pins the version), then run ${installedCopy} sync --config <your cockpit.toml> so the guard hook runs the installed copy`
+                : `in a terminal in ${root}, run the installed copy instead: ${installedCopy} sync --config <your cockpit.toml>, which binds the guard hook to it; if that copy is out of date, run ${manager} install first`,
         })
     } else {
         const read = await readBoundedInput(join(root, GUARD_LOCAL_PATHS.identity)).catch((error: unknown) => {
@@ -458,7 +522,6 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
             throw error
         })
         const identity = read?.kind === 'complete' ? parseGuardLocalIdentity(Buffer.from(read.bytes).toString('utf8')) : undefined
-        const own = await realpath(installed)
         if (identity && relative(own, identity.module).startsWith('..')) findings.push({
             severity: 'warning' as const,
             // A literal, so the diagnostic inventory captures the fix beside the code.
@@ -472,16 +535,21 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
         // printed npx form asking a person.
         const launcher = join(own, 'bin/cockpit.mjs')
         if (!findings.length && guardLauncherEvidence('npx', ['--no', 'cockpit'], root, root, launcher, '') === undefined) {
-            const linked = guardLauncherEvidence('./node_modules/.bin/cockpit', [], root, root, launcher, '') !== undefined
+            // pnpm writes .bin/cockpit as a shell shim, which no path check can follow to the installed
+            // launcher, so only the package's own script is a route the guard can prove there.
+            const packageScript = `./node_modules/${PACKAGE}/bin/cockpit.mjs`
+            const route = ['./node_modules/.bin/cockpit', packageScript].find(path => guardLauncherEvidence(path, [], root, root, launcher, '') !== undefined)
             findings.push({
                 severity: 'warning' as const,
                 // A literal, so the diagnostic inventory captures the fix beside the code.
                 code: 'COCKPIT_LAUNCHER_UNPROVEN' satisfies typeof ENVIRONMENT_CODES.COCKPIT_LAUNCHER_UNPROVEN,
                 message: `the guard cannot prove that npx --no cockpit run in ${root} starts the cockpit installed there, so it asks a person before every such command and Codex and OpenCode refuse it; `
-                    + (linked ? './node_modules/.bin/cockpit <command> --config cockpit.toml is proven by its path and runs without asking'
-                        : 'node_modules/.bin/cockpit is not npm\'s link to the installed package either'),
+                    + (route === undefined ? 'node_modules/.bin/cockpit is not npm\'s link to the installed package either, and the package has no bin/cockpit.mjs'
+                        : `${route} <command> --config cockpit.toml is proven by its path and runs without asking${route === packageScript ? '; node_modules/.bin/cockpit is not, because it does not resolve to that script, as with the shell shim pnpm writes' : ''}`),
                 target: 'npx --no cockpit',
-                fix: 'run cockpit as ./node_modules/.bin/cockpit <command> --config <your cockpit.toml> from the cockpit root, or remove what stops npx from proving it: a .npmrc in the cockpit root, a bin or directories.bin in its package.json, or a node_modules/.bin/cockpit that npm install did not link to the installed package',
+                // Computed in every branch, so the diagnostic index does not present one route as the only remedy.
+                fix: route === undefined ? `reinstall cockpit with ${(await rootPackageManager(root)).manager} install in ${root}, then rerun doctor`
+                    : `run cockpit as ${route} <command> --config <your cockpit.toml> from the cockpit root${route === packageScript ? '' : `, or remove what stops npx from proving it: a .npmrc in ${root}, or a bin or directories.bin in its package.json`}`,
             })
         }
     }

@@ -309,9 +309,14 @@ export function renderHumanDiagnostics(
     if (review) {
         const { command, outcome } = review
         if (outcome.result === null || typeof outcome.result !== 'object') return ''
-        // Work, grade, browser and test commands return their whole result as the answer, and an unmet gate,
-        // grade or step returns one with a failing status: the person needs that evidence either way.
-        if (command !== undefined && /^(?:(?:work|browser) |test-run$|grade$)/.test(command)) return renderHumanValue(outcome.result)
+        // The file's own lines, which JSON output carries exactly; only what could steer a terminal is escaped.
+        if (command === 'env schema' && 'text' in outcome.result && typeof outcome.result.text === 'string') {
+            return outcome.result.text.replace(/[^\t\r\n]+/g, escapeForTerminal)
+        }
+        // Work, grade, browser, env and test commands return their whole result as the answer, and an unmet
+        // gate, grade, step or unreadable source returns one with a failing status: the person needs that
+        // evidence either way.
+        if (command !== undefined && /^(?:(?:work|browser|env) |test-run$|grade$)/.test(command)) return renderHumanValue(outcome.result)
         if (outcome.status !== 0) return ''
         if (command === 'sync' && 'dryRun' in outcome.result && outcome.result.dryRun === true
             && 'changes' in outcome.result && Array.isArray(outcome.result.changes)) {

@@ -2,7 +2,7 @@ import { sha256Hex } from '../sha256.js'
 import { isAbsolute, posix } from 'node:path'
 
 import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
-import { GUARD_SURFACE_TARGETS, type GuardSurfaceTarget } from './harness-registry.js'
+import { GUARD_HELD_CALLS, GUARD_SURFACE_TARGETS, GUARD_UNHELD_CALLS, type GuardSurfaceTarget } from './harness-registry.js'
 import { GUARD_HANDLER_ARGV } from '../guards/harness-adapter.js'
 import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from '../guards/host.js'
 import { exactKeys } from '../exact-keys.js'
@@ -68,6 +68,7 @@ export type RestrictionAdapter = NativeRestrictionAdapter | UnavailableRestricti
 export interface RestrictionExpansionInput {
     readonly canonicalProjectRoot: string
     readonly allowedProjectRoots?: readonly string[]
+    readonly restrictedMcpServers?: readonly string[]
     readonly guardTemplate: string
     readonly guardPath: string
     readonly instances: readonly InstancePathTarget[]
@@ -211,11 +212,12 @@ function capturedInput(input: unknown): CapturedRestrictionExpansionInput | unde
     if (!object(value)) return undefined
     const inputKeys = ['canonicalProjectRoot', 'guardTemplate', 'guardPath', 'instances', 'policy', 'adapters', 'configFile']
     const hasAllowedRoots = Object.hasOwn(value, 'allowedProjectRoots')
-    if (!exactKeys(value, hasAllowedRoots ? [...inputKeys, 'allowedProjectRoots'] : inputKeys)
+    if (!exactKeys(value, inputKeys, ['allowedProjectRoots', 'restrictedMcpServers'])
         || typeof value.canonicalProjectRoot !== 'string' || !canonicalRoot(value.canonicalProjectRoot)
         || typeof value.guardTemplate !== 'string' || value.guardPath !== GUARD_PATH
         || !Array.isArray(value.instances) || value.instances.length > MAX_INSTANCES || !Array.isArray(value.adapters)
         || typeof value.configFile !== 'string' || !confinedRelativePath(value.configFile)) return undefined
+    if (value.restrictedMcpServers !== undefined && !boundedUniqueStrings(value.restrictedMcpServers, /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/, 256)) return undefined
     const allowedProjectRoots = hasAllowedRoots ? value.allowedProjectRoots : [value.canonicalProjectRoot]
     if (!Array.isArray(allowedProjectRoots) || allowedProjectRoots.length === 0 || allowedProjectRoots.length > MAX_INSTANCES
         || !allowedProjectRoots.every((root) => typeof root === 'string' && canonicalRoot(root))
@@ -387,7 +389,7 @@ function hooksBytes(target: keyof typeof HOOK_ROOT, matcher: string, guardPath: 
     const root = HOOK_ROOT[target]
     // Both hook runners block only on exit 2; any other failure (a handler that cannot load, a killed
     // process, a missing shell) would let the tool call run, so it is folded into a blocking exit.
-    const guard = `R="${root.expression}"; H="$R/${guardPath}"; test -n "$R" && test -f "$H" && test -r "$H" || { printf 'cockpit restriction guard missing: %s (the hook finds the cockpit checkout through ${root.source}), so every tool call is held. Fix: start the agent from the cockpit checkout; if the file is gone, run git restore ${guardPath} there (it is committed), or have a human run npx --no cockpit sync --config <your cockpit.toml> in a terminal.\\n' "$H" >&2; exit 2; }; ${askIsDeny ? 'COCKPIT_ASK_IS_DENY=1 ' : ''}/bin/bash "$H" --harness ${target}; s=$?; case $s in 0|2) exit $s;; esac; printf 'cockpit guard failed (exit %s)\\n' "$s" >&2; exit 2`
+    const guard = `R="${root.expression}"; H="$R/${guardPath}"; test -n "$R" && test -f "$H" && test -r "$H" || { printf 'cockpit restriction guard missing: %s (the hook finds the cockpit checkout through ${root.source}), so ${GUARD_HELD_CALLS} are held while ${GUARD_UNHELD_CALLS} continue. Fix: start the agent from the cockpit checkout; if the file is gone, run git restore ${guardPath} there (it is committed), or have a human run npx --no cockpit sync --config <your cockpit.toml> in a terminal.\\n' "$H" >&2; exit 2; }; ${askIsDeny ? 'COCKPIT_ASK_IS_DENY=1 ' : ''}/bin/bash "$H" --harness ${target}; s=$?; case $s in 0|2) exit $s;; esac; printf 'cockpit guard failed (exit %s)\\n' "$s" >&2; exit 2`
     // Claude Code 2.1.317 and Codex 0.166.0 (a trusted hook) each ran a SessionStart command and put its
     // stdout in the agent's context, measured 2026-11-03 beside a misspelled event that never ran. A
     // drift report there tells the agent what to re-sync before it works; the hook never blocks.
@@ -413,9 +415,12 @@ function registration(adapter: NativeRestrictionAdapter, input: RestrictionExpan
     // The measured shapes pair OpenCode with its plugin and the other targets with hooks.json.
     // Codex and OpenCode have no ask tier, so a prompt they cannot show refuses instead of proceeding;
     // Claude Code shows the prompt.
+    const matcher = adapter.target === 'claudecode'
+        ? `^(?:${[adapter.registration.matcher, ...(input.restrictedMcpServers ?? []).map(name => `mcp__${name}__.*`)].join('|')})$`
+        : adapter.registration.matcher
     const bytes = adapter.target === 'opencode'
         ? opencodeBytes(input.guardPath, input.configFile)
-        : hooksBytes(adapter.target, adapter.registration.matcher, input.guardPath, adapter.target === 'codexcli', input.configFile)
+        : hooksBytes(adapter.target, matcher, input.guardPath, adapter.target === 'codexcli', input.configFile)
     return file(adapter.registration.path, bytes)
 }
 

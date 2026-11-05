@@ -1,6 +1,6 @@
 // Owns the guard's pin on the autonomy policy: an agent tool call that would change cockpit.toml's
-// [work] (with [work.gates]) or [autonomy] table, or [mcp] while a person approves MCP servers, is a
-// hard denial. An edit, write or patch is applied to the current text and the tables compared; a
+// [work] (with [work.gates]) or [autonomy] table, or widens [mcp] while a person approves MCP servers,
+// is a hard denial. An edit, write or patch is applied to the current text and the tables compared; a
 // shell command that names the file and is not a proven read, a Git record or cockpit's --config
 // operand cannot be applied, so it is denied too.
 // The decision is pure: the guard application supplies the current text and which targets are the
@@ -9,12 +9,14 @@ import { posix } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 import { pinnedPolicyTables } from '../autonomy.js'
+import { sha256Hex } from '../sha256.js'
+import { mcpPolicyWideningFields } from './policy-change.js'
 import { innerCommand, type GuardDecision } from './evaluator.js'
 import type { GuardFileContent, ParsedInvocation } from './invocation-parser.js'
 import { classifyReadOnlyInvocation, cockpitLauncherPrefix } from './read-only.js'
 
 const denial = (reason: string): GuardDecision => ({ decision: 'deny', reason })
-const PINNED = '[work], [work.gates] and [autonomy] (and [mcp] while [autonomy] mcp_approve is not agent)'
+const PINNED = '[work], [work.gates], [autonomy] and MCP tool restrictions (also MCP approvals while mcp_approve is not agent)'
 
 /** Applies one `*** Update File` section of a patch to `text`, or undefined when a hunk does not match exactly once. */
 function applyPatchSection(text: string, lines: readonly string[]): string | undefined {
@@ -108,6 +110,22 @@ function judgedInvocations(invocations: readonly ParsedInvocation[]): Array<Pars
 }
 
 /**
+ * Whether this edit leaves the configuration exactly the bytes `recordedSha256` names, the ones the
+ * guards were generated from. An agent can restore only what was recorded, so authority never exceeds
+ * the recorded policy, though this may also discard a person's unsynced narrowing edit. It is the way
+ * out of an edit the guard admitted and sync then refused. Every target must be the
+ * canonical path itself: a `..` can leave through a link, and a hard link or another spelling is left
+ * to the ordinary hold. An edit that does not apply exactly once proves nothing and is not admitted.
+ */
+export function restoresRecordedConfiguration(input: Readonly<{ cwd: string; content?: GuardFileContent; paths: readonly string[] }>,
+    current: string, configPath: string, recordedSha256: string): boolean {
+    const isConfig = (path: string) => !path.split('/').includes('..') && posix.resolve(input.cwd, path) === configPath
+    if (!input.content || !input.paths.length || !input.paths.every(isConfig)) return false
+    const proposed = proposedText(input.content, isConfig, current)
+    return proposed !== undefined && sha256Hex(proposed) === recordedSha256
+}
+
+/**
  * The denial for a tool call that would change the pinned policy tables, or undefined. `isConfig`
  * says whether a lexically resolved path is the configuration, by spelling or by file identity.
  */
@@ -133,18 +151,22 @@ export function pinnedPolicyDenial(input: Readonly<{
             const configOperand = (index: number) => prefix !== undefined && index >= prefix
                 && (invocation.argv[index]!.startsWith('--config=') || index > prefix && invocation.argv[index - 1] === '--config')
             if (!writes && naming.every(configOperand)) continue
-            return denial(`Refusing a shell command that names the cockpit configuration: the guard cannot tell whether it changes ${PINNED}, which only a person changes. Edit other tables with your editing tool, which the guard can check.`)
+            return denial(`Refusing a shell command that names the cockpit configuration: the guard cannot tell whether it changes ${PINNED} in a way that grants new authority. Use your editing tool so the guard can compare the exact change.`)
         }
         return undefined
     }
     if (!input.paths.some(resolved(input.cwd))) return undefined
-    if (!input.content) return denial(`Refusing an edit of the cockpit configuration whose new text the guard was not given, so it cannot show ${PINNED} unchanged.`)
+    if (!input.content) return denial(`Refusing an edit of the cockpit configuration whose new text the guard was not given, so it cannot prove the change to ${PINNED} is permitted.`)
     const proposed = proposedText(input.content, resolved(input.cwd), current)
     if (proposed === 'untouched') return undefined
-    if (proposed === undefined) return denial(`Refusing an edit of the cockpit configuration that does not apply exactly once to its current text, so the guard cannot show ${PINNED} unchanged.`)
+    if (proposed === undefined) return denial(`Refusing an edit of the cockpit configuration that does not apply exactly once to its current text, so the guard cannot prove the change to ${PINNED} is permitted.`)
     const before = pinnedPolicyTables(current)
     const after = pinnedPolicyTables(proposed)
-    if (!before || !after) return denial(`Refusing an edit that leaves the cockpit configuration unparseable, so the guard cannot show ${PINNED} unchanged.`)
-    if (!isDeepStrictEqual(before, after)) return denial(`Refusing to change ${PINNED} in the cockpit configuration: who may pass a gate is a person's decision, made outside the agent. Ask a person to edit it and run sync.`)
+    if (!before || !after) return denial(`Refusing an edit that leaves the cockpit configuration unparseable, so the guard cannot prove the change to ${PINNED} is permitted.`)
+    const { mcp: beforeMcp, ...beforePinned } = before
+    const { mcp: afterMcp, ...afterPinned } = after
+    if (!isDeepStrictEqual(beforePinned, afterPinned) || mcpPolicyWideningFields(beforeMcp, afterMcp).length) {
+        return denial(`Refusing to change gate authority or widen MCP access in ${PINNED}: a person must review this change outside the agent and run sync. Only unchanged MCP approval removals and exact tool restrictions may narrow access without that review.`)
+    }
     return undefined
 }

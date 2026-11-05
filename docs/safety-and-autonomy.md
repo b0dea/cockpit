@@ -47,15 +47,29 @@ cannot bypass any boundary below.
 The guard denies mutation or staging of a declared environment instance, and mutation below a
 secrets directory. That covers command and patch removals as well as writes, removing a directory
 that contains an instance or the secrets directory, and staging a containing directory that could
-include an instance.
+include an instance or a secrets directory.
 
 Every `.env` and `.env.*` file at any depth is treated as holding secrets, declared or not: reading,
 writing, removing, staging or linking one is a hard denial through every guarded tool. The
 conventional documentation names `.env.example`, `.env.sample`, `.env.template` and `.env.schema`
-are exempt, and so is every declared environment `template`. The refusal says what to do instead:
-run what needs the values as `varlock run -- <cmd>`, which never prints them, or read the variable
-names from the `.env.schema`. Another name that starts with `.env`, such as `.envrc`, is not denied,
-but reading it prompts.
+are exempt from the guard, and so is every declared environment `template`; native permissions may
+still refuse these documentation files (see [Reading secrets and instances](#reading-secrets-and-instances)),
+and `cockpit env keys` and `cockpit env schema` are the supported route to them. Run a trusted
+process instead of reading values: an agent uses a declared project command or script that wraps
+Varlock, because the guard asks about a bare `varlock run` and Codex and OpenCode refuse what it asks
+about. A person in a terminal runs that same command, or
+`VARLOCK_TELEMETRY_DISABLED=true varlock run -- <cmd>`, without `--redact-stdout`: Varlock refuses to
+force redaction on an interactive terminal, so the flag belongs inside a declared command whose output
+is piped. Redaction is an output safeguard, not confinement of the child process. Another name
+that starts with `.env`, such as `.envrc`, is not denied, but reading it prompts.
+
+A schema's exemption has a limit: it is documentation to the guard and code to Varlock. `cockpit
+doctor` and `cockpit preflight` run `varlock load`, which runs the schema's resolvers, including an
+`exec()` command. So an agent that can edit a schema can have commands run, with the caller's
+environment, by a command it may run unprompted. Declared testing commands also run code an agent
+edited, and cockpit is not a sandbox. Review schema changes as you review code, and run `doctor` with
+a provider sign-in only on schemas you trust. This was reasoned from Varlock's documented resolver
+behaviour plus a failing `exec()` measured with a synthetic schema.
 
 Executable use of a declared hosted database or vendor host is denied at hostname boundaries.
 Matching examines executable, argument and environment-assignment-value roles; redirects,
@@ -113,6 +127,28 @@ one, no command is allowed without a prompt, whatever profile or declared rule m
 reason names the entry. Keep relative entries off the `PATH` an agent harness starts with; `doctor`
 reports one in the `PATH` it runs with as `GUARD_SEARCH_PATH_RELATIVE`.
 
+That warning describes the CLI process, not a measurement of a running harness's environment: a
+wrapper that injects a relative bin directory, such as a package manager's, produces it for the
+command it starts. An injected relative entry is the shape these checks were measured against; the
+pnpm release tested put an absolute directory first under `pnpm exec`, and `doctor` gave no relative
+warning there, so do not read the warning as coming from pnpm. Check the shell or launcher that
+starts the harness before changing its configuration. For their own Git and Docker observations, `doctor`,
+`preflight`, `check` and `docs check` use only the absolute directories already on `PATH`, in their
+original order. Every relative entry is excluded, including empty entries, `.` and paths starting
+with `..`, so changing into a sibling cannot select a different tool. `up` and the other commands
+that start or change a stack keep their strict search and refuse, stating the reason. A noncanonical
+absolute entry, such as `/usr/bin/../bin`, still refuses the observation, and with it `sync` and
+`check` wherever they have Git to ask or Compose to read; no entry is normalized. Put the required
+tool in a canonical absolute directory and rerun the command. Git simply missing from `PATH` does
+not refuse a cockpit that declares no runtime: see [Environment modes](environment.md#environment-modes). This does
+not change the environment used to start sessions, discover evaluators or check MCP commands, or the
+guard's approval rules. A completed observation does not establish that a harness runs its generated
+hooks or that an external integration works.
+
+Generated checkout identity and native-hook revision observations use the same absolute-only
+Git search during `sync` and `check`. Publication authorization and the native hook's execution
+environment retain their existing rules.
+
 The Claude Code registration includes `NotebookEdit`, so notebook cell changes get the same
 protected-path checks as text edits. For a configuration in a repository subdirectory, these
 controls belong to the configuration's directory. Start Codex in that directory: its generated hook
@@ -154,8 +190,9 @@ staging by explicit path (a person approves or runs it), staging without explici
 profiles, and any removal without a grant. An explicit removal outside configured roots stays at
 `ask` even when a declared allow matches, because cockpit cannot verify a target outside the roots
 it manages; review the exact path and approve it, or move the work under a configured root. `git add -A`, `git add .` or a
-directory operand that covers a secrets directory or an environment instance is a hard denial:
-stage the changed files by name. Unsupported staging options or unproven pathspec grammar produce
+directory operand that covers a secrets directory at any depth or an environment instance is a hard
+denial: stage the changed files by name. The guard walks the operand to find nested secrets
+directories; a tree past the walk's bound stays at `ask`, and a walk that fails is `unavailable`. Unsupported staging options or unproven pathspec grammar produce
 `unavailable`. Any other refused command gets an `ask` that names the command and gives three ways
 forward: a person approves it, a person runs it in a terminal, or a person admits it under
 `[guards] allow`; for tests it points to `cockpit test-run`.
@@ -226,10 +263,11 @@ cockpit commands in
 
 | Command | Decision | Why |
 | --- | --- | --- |
-| `npx --no cockpit check --config cockpit.toml`, and likewise `doctor`, `preflight`, `ps`, `logs --service <service>`, `stacks`, `stacks prune`, `docs check` and `sync --dry-run` | allowed | They read and report; nothing they do changes a file the guard relies on. |
+| `npx --no cockpit check --config cockpit.toml`, and likewise `doctor`, `preflight`, `ps`, `logs --service <service>`, `stacks`, `stacks prune`, `docs check`, `env keys`, `env schema --path <schema reference>` and `sync --dry-run` | allowed | They read and report; nothing they do changes a file the guard relies on. A `--path` that names anything but `.env.schema`, or that climbs, is a prompt. |
 | `npx --no -- cockpit --help`, `npx --no cockpit up --help`, and the version | allowed | They print and exit before any command runs. |
 | `npx --no cockpit up --config cockpit.toml`, and likewise `sleep`, `down`, `restart --service <service>` and `rebuild --service <service>` | allowed | They act only on the stack cockpit declared and owns; `down` keeps data volumes, and deletes only from the local Docker daemon it fixes at the start of the run. |
 | `up --profile <profile>` | allowed for a profile in `environment.profiles` that mounts no sibling with `gate = "operator"`, otherwise a prompt | Another profile starts services no person declared for agents, and an operator-gated sibling touches live data or local hardware. |
+| `npx --no cockpit env schema --config cockpit.toml --path <schema reference> --replace-from <draft>` | allowed only as the whole command, for a draft the guard can prove safe to read; otherwise a prompt | A schema that is not committed is never run, and a draft that could hold a secret is refused, so a replacement cannot launder one back out through `env schema`. |
 | `npx --no cockpit exec --config cockpit.toml --service <service> -- <command>` | allowed when a `[guards] allow` rule or a declared build or test command admits `<command>`, otherwise a prompt | The command runs in a container whose files the guard cannot see, so it is never proven read-only, and the name-based denials still apply to it. |
 | `npx --no cockpit pull --config cockpit.toml` | allowed | It only fetches and fast-forwards, and leaves a modified or diverged checkout as it was. |
 | `npx --no cockpit use <slug> <checkout> --config cockpit.toml`, and `use <slug> --clear` | allowed for a checkout inside a directory the agent may already write, otherwise a prompt | The choice is recorded for this checkout of the cockpit only, so it never widens what the agent can reach. |
@@ -275,7 +313,9 @@ it starts its own installed package:
 
 Where npx cannot be proven, every npx spelling prompts, and Codex and OpenCode refuse it, while the
 same command spelled as a path, such as `./node_modules/.bin/cockpit doctor --config cockpit.toml`,
-still counts from the cockpit root.
+still counts from the cockpit root. pnpm writes `node_modules/.bin/cockpit` as a shell shim, which
+neither npx nor a path check can follow, so there the provable spelling is the package's own script:
+`./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml`.
 `doctor` reports this as `COCKPIT_LAUNCHER_UNPROVEN`, using the guard's own check, and names which
 spelling it can prove. The guard does not check which `npx` the command search path finds: it
 assumes that program behaves as npm's own, as the version-manager and package-firewall shims that
@@ -332,12 +372,60 @@ of every sibling, whether or not the
 sibling is mounted or granted to Claude. A sibling instance's rule is anchored on the path below the
 sibling's parent, so the committed file is identical on every clone; it can match more than the
 instance (any file with the same sibling-relative suffix), never less. An instance in the cockpit
-root itself is anchored at the project root. These rules match path spellings only: Claude's native
-tools cannot see filesystem identity, so a hard link or a symbolic link to an instance or secrets
-file, under a name outside the rules, stays readable to them. The guard's identity checks cover
-shell commands only. Claude applies a deny rule before any allow, so the `.env.*` rule cannot exempt
-the documentation names: Claude's own tools refuse `.env.example`, `.env.schema` and declared
-templates too, which `cat` in a shell still reads.
+root itself is anchored at the project root. In the native probe below, Claude refused a symbolic
+link whose target was protected. A hard link under a name outside the rules is not covered by these
+path rules; the guard's filesystem identity checks cover shell commands only.
+
+| Native read measurement | Observed result |
+| --- | --- |
+| Claude Code 2.1.318, macOS, 2026-11-05 | Ordinary Read succeeded; Read through an unmatched-name symlink to a synthetic `.env.private` was refused. Explicit `Bash(cat *)` permission let `cat ordinary.txt` run, while `cat .env.schema` was refused. |
+
+Claude's filesystem-root deny rules cannot exempt the documentation names:
+native file tools and recognized shell reads such as `cat` also refuse `.env.example`, `.env.sample`,
+`.env.schema`, `.env.template` and declared templates with a `.env.*` name. A guard approval does not
+override that native denial. Claude's ordered negation exceptions apply only to relative rules;
+using those here would leave sibling secrets outside the protection. See
+[Claude's permission rules](https://code.claude.com/docs/en/permissions#read-and-edit).
+The denials stay. The supported route is [`cockpit env keys`](environment.md#read-variable-names-and-schemas)
+for variable names and `cockpit env schema` for one schema's text, neither of which resolves anything.
+
+### Editing a schema under Claude Code
+
+| Native edit measurement | Observed result |
+| --- | --- |
+| Claude Code 2.1.318, generated `Read(//**/.env.*)` denials, no hook, 2026-11-05 | Read, Edit and Write of `.env.schema` were refused as covered by a Read deny rule; `cat` and `sed -i` were refused. `git show HEAD:.env.schema`, `printf ... >> .env.schema`, `cp draft .env.schema` and `mv draft .env.schema` worked. |
+
+An agent reads a schema with `env schema`, writes a draft with its normal tools, then runs
+`npx --no cockpit env schema --config cockpit.toml --path <schema reference> --replace-from <draft>`.
+The result is [not validated until it is committed](environment.md#a-schema-runs-only-once-committed),
+and committing is the guarded checkpoint, so an edit here is not itself a security boundary.
+
+The command refuses a draft whose path has a segment that is `.secrets` or starts with `.env`, under any
+case folding; a declared environment instance or any other location the guard protects; a symbolic or
+hard link; anything but a regular file; and a file over the bound. Otherwise `--replace-from .env`
+followed by `env schema` would print a secret. It refuses a target that is a link too, and replaces the
+bytes atomically, or creates a missing schema in a discovered directory.
+
+| Writing `.env.schema`, cockpit root and sibling | Guard evaluator, 2026-11-05 |
+| --- | --- |
+| `apply_patch`, adding or updating | allow |
+| `Edit`, `Write` | allow; Claude Code's native rules refuse them, as measured above |
+| `env schema --replace-from` with a safe draft, alone | allow |
+| that command compounded with `&&`, `;` or a pipe, or with a redirect | ask |
+| `cp`, `mv` or `printf ... >>` onto that name | ask, which a tool with no prompt tier refuses |
+
+The evaluator's answers do not show that a harness routes its tool through the guard, so these were
+also driven against a synthetic project installed from the package tarball, with a loopback model:
+
+| Measured | Result |
+| --- | --- |
+| Claude Code 2.1.318, generated settings and guard, 2026-11-05 | `env keys`, `env schema` and `--replace-from` with a draft from the Write tool ran without a prompt. `--replace-from .env` needed approval and `cat .env` was refused by the guard. A sentinel in `.env` appeared nowhere in the output. |
+| Codex CLI 0.166.0, hook not trusted, 2026-11-05 | The same commands ran. So did `cat .env`, which printed the sentinel: Codex skips an untrusted hook, which is why [the hook must be trusted](harness-surfaces.md#trust-the-codex-hook) before a session near real secrets. |
+| Generated Codex guard run directly on Codex-shaped calls, 2026-11-05 | Allowed `env keys`, `env schema`, a safe `--replace-from`, `cat .env.schema` and an `apply_patch` of the schema. Denied `--replace-from .env`, `cat .env`, an `apply_patch` of `.env` and a shell-written draft. This does not show Codex routing a call through a trusted hook. |
+
+OpenCode, Cursor and Grok were not driven. Cursor and Grok have no generated guard, so nothing here is
+enforced for them. The native results are dated and limited to those versions. A person's terminal has
+no such limit.
 
 ## Who decides
 
@@ -349,16 +437,20 @@ templates too, which `cat` in a shell still reads.
 | Field | Decides | Default |
 | --- | --- | --- |
 | `sync` | whether the guard lets an agent run a writing `sync`; under `ci` a writing sync runs only where `CI` is set | `agent` |
-| `stale_delete` | whether `sync` removes a file it generated before and no longer generates without a person typing the stale-removal digest | `agent` |
+| `stale_delete` | whether `sync` removes a file it generated before and no longer generates without a person typing the stale-removal digest; an unchanged MCP-only file of a listed tool whose servers are no longer written never waits, because removing it only narrows access | `agent` |
 | `reset` | whether `reset --apply`, and a `stacks prune --apply` that deletes volumes, delete stack data without a person; otherwise a person approves the preview with `--interactive` | `person` |
 | `mcp_approve` | `person`: sync enables only the MCP servers whose digest a person recorded in `[mcp.approved]`, and `MCP_NOT_APPROVED` names the rest; `agent`: sync enables every declared server as declared now, which lets an agent start processes outside the guard, because a sibling's MCP source is a file the agent can write and each harness starts an enabled server outside every guard boundary | `person` |
 
 <!-- cockpit:ref path=packages/cockpit/src/guards/policy-pin.ts --> The guard pins the policy: an agent's edit, write or patch that would change `[work]`,
-`[work.gates]` or `[autonomy]`, or `[mcp]` while `mcp_approve` is `person`, is a hard denial. It
+`[work.gates]` or `[autonomy]`, or widens MCP tool access, is a hard denial. MCP server approvals
+are also pinned while `mcp_approve` is `person`; delegating server approval does not delegate
+permission to remove tool restrictions.
+Removing unchanged MCP approvals and adding or narrowing exact tool allowlists is permitted:
+disabling a server or restricting its tools grants no new access. The guard
 applies the edit to the current text and compares the tables, so an edit elsewhere in the file stays
 permitted; an edit it cannot apply exactly, and a shell command that names the file and is not a
 proven read, a Git record or the `--config` operand of a cockpit command, are denied because the guard
-cannot show the tables unchanged. A cockpit session's command after `--` is judged as a command of its
+cannot prove the change preserves gate authority and grants no new MCP access. A cockpit session's command after `--` is judged as a command of its
 own, and a path or `node <script>` spelling of cockpit is admitted only where the guard proves it
 starts the installed cockpit. The pin holds only for the
 tool calls the guard inspects.
@@ -387,10 +479,21 @@ approve it, such as the [`work verify` job](work-and-browser.md#who-passes-each-
 <!-- cockpit:ref path=packages/cockpit/src/guards/policy-change.ts --> Once `cockpit.toml` differs
 from the configuration the guards were generated from, the guard loads both, the earlier from the
 copy sync keeps in `.cockpit/local/guard-config`, and compares them with defaults applied. An edit that does
-not widen what agents may do holds every tool call except `cockpit sync` and `cockpit check`, which
+not widen what agents may do holds every guarded call except `cockpit sync` and `cockpit check`, which
 the agent may run under the rules above, and the hold says so (`GUARD_CONFIG_UNSYNCED`). Any other
-edit holds every call, that sync included, until a person runs `sync` in a terminal, and the hold
-names each field that widens.
+edit holds every guarded call, that sync included, until a person runs `sync` in a terminal, and the
+hold names each field that widens.
+
+A guarded call is one a generated hook fires on: shell commands, file edits and writes, and restricted
+MCP tools under Claude Code. A hold stops nothing else, so file reads and unrestricted MCP tools continue.
+
+Sync can refuse an edit the guard admitted, such as a tool restriction naming an undeclared server.
+So the `GUARD_CONFIG_UNSYNCED` hold also admits one edit, write or patch of `cockpit.toml` itself that
+leaves it byte-identical to the recorded copy, and so does the hold on a file that does not load,
+whether its TOML cannot be parsed or the schema rejects it. An agent can restore only what was
+recorded, so authority never exceeds the recorded policy, and this may also discard a person's
+unsynced narrowing edit. An edit the guard cannot prove applies exactly once, or that also touches
+another file, stays held, and restoring out of a widening edit stays a person's.
 
 An edit does not widen only when every difference is one of these:
 
@@ -399,11 +502,16 @@ An edit does not widen only when every difference is one of these:
   `docs.living`;
 - added agent tools, `unconfirmed` answers and sibling operator gates;
 - removed Compose files, Compose profiles and resettable volumes, and an install policy that admits no
-  command it did not.
+  command it did not;
+- removed guard allow rules and unchanged MCP approvals, added or narrowed MCP tool allowlists;
+  added guard deny rules, protected branches,
+  hosted database hosts and vendor endpoint hosts;
+- any change to `[mcp.approved]` while `mcp_approve = "agent"` in both configurations, because that
+  setting already hands server approval to the agent.
 
-Every other difference widens. That includes any change, in either direction, to `[guards]`,
-`[work]`, `[autonomy]`, `[mcp]`, `[testing]` (whose stages `test-run` runs unprompted) and `[browser]`;
-a new sibling, wherever its directory is; a sibling's changed `dir`, `guides` (sync copies each guide
+Every other difference widens. That includes any change, in either direction, to
+`[work]`, `[autonomy]`, `[testing]` (whose stages `test-run` runs unprompted) and `[browser]`;
+new or changed MCP approvals outside that delegation, removed or expanded MCP tool allowlists, new guard allows or removed guard restrictions; a new sibling, wherever its directory is; a sibling's changed `dir`, `guides` (sync copies each guide
 into the root `AGENTS.md`), environment files or derived MCP sources; and every command field, such
 as `environment.seed`. A field the classification has no rule for widens too, so a field added to
 the schema is a person's decision until a rule says otherwise. A missing or mismatched

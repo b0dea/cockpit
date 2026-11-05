@@ -40,7 +40,21 @@ orders) and checks them for [drift](concepts.md#drift). A cockpit that declares 
 `[environment.machine]` still gets the machine-capacity checks in `preflight`, so it is not refused
 as surfaces only. `doctor` reports an undeclared runtime as not declared, not as healthy, and its
 `declarations` result says whether the runtime, the reset volumes and the seed command are
-declared. [`examples/docs-only`](../examples/docs-only/README.md) and
+declared. This also works from linked Git worktrees and configurations below the checkout root:
+`doctor` binds generated-surface checks to that checkout's identity without requiring a runtime.
+A passing surface check verifies generated files, not running services, hook enforcement or MCP
+startup. Hook enforcement and successful MCP startup require separate harness checks.
+With no runtime declared, `sync` and `check` only ask Git which checkout holds the configuration, and
+Git activity in that checkout does not disturb them. No repository, a `.git` entry Git rejects, or Git
+being absent from `PATH`, makes the directory standalone with a `GENERATED_CHECKOUT_STANDALONE`
+warning stating why. The generated files stay valid, but the guard needs a Git repository it can read
+and holds [guarded calls](safety-and-autonomy.md#edits-the-guard-has-not-applied) until it has one;
+its refusal states the reason, and held calls continue without a `sync` once the repository is
+readable. The guard reads a repository more strictly than `sync` and `check` do, so a
+repository-local `include.path` in Git's configuration raises nothing from them, and the first sign
+is the guard's refusal or the same reason from `doctor`. A declared runtime or browser still needs
+setup's stricter view of the checkout, because stack identity and repository writes depend on it.
+[`examples/docs-only`](../examples/docs-only/README.md) and
 [`examples/compose-first`](../examples/compose-first/README.md) show the two modes. Vendor stubs,
 TLS, seeding and restoring data are plain Compose; [Compose patterns](compose-patterns.md) shows
 each.
@@ -534,8 +548,8 @@ receive, gives the stack a new identity, and `up` refuses with `LIFECYCLE_PROGRE
 running stack in place. To apply such a change, for example a `[ports.bases]` edit:
 
 1. Edit `cockpit.toml`. This can happen while the stack runs.
-2. Run `cockpit sync --config cockpit.toml`. Until then, the agent guard holds every tool call
-   except that sync, because the configuration no longer matches what it was generated for, and
+2. Run `cockpit sync --config cockpit.toml`. Until then, the agent guard holds every
+   [guarded tool call](safety-and-autonomy.md#edits-the-guard-has-not-applied) except that sync, because the configuration no longer matches what it was generated for, and
    `sleep` and `down` refuse because they read the Compose files `sync` publishes. An agent may run
    it where `[autonomy] sync = "agent"` and the edit does not
    [widen what agents may do](safety-and-autonomy.md#edits-the-guard-has-not-applied), as a
@@ -677,29 +691,103 @@ resolver code and dependency lock as you would product code.
 
 Put encrypted resolver expressions or external-provider references in
 `env/.secrets/<cockpit-project>/<component>`, which the generated guards keep agents from changing
-or staging. Ignore `env/.secrets/` in the cockpit's `.gitignore` before any secret material exists,
-create the directories with mode 0700 and no symbolic links, and create resolver files with mode
+or staging. Let `sync` write the generated ignore block in the cockpit's `.gitignore` before any secret material
+exists, because that block covers the contents of every `.secrets` directory at any depth, and leave
+it as generated: ignoring the `env/.secrets/` directory itself would defeat its exception for
+`env/.secrets/.gitignore`. Create the directories with mode 0700 and no symbolic links, and create resolver files with mode
 0600 through your own approved provisioning process. cockpit does not create those files or their
 values.
 
-The shipped setup procedure explains how to adopt Varlock, optionally, through the product's
+During adoption, inspect environment filenames and declared commands without reading plaintext
+values. Existing dotenv files or templates trigger a Varlock adoption decision even without a
+schema; record adoption or the reason for deferring it. `init` and `doctor` recommend adoption with
+`ENV_SCHEMA_UNDECLARED` when an immediate cockpit or sibling root contains `.env`, `.env.*` or
+`env.template` without `.env.schema`. Discovery reads file names and types only; it does not open
+values, search nested directories, run providers or make Varlock a prerequisite. Existing schemas
+are validated separately. The shipped setup procedure explains how
+to adopt Varlock through the product's
 pinned dependency and an existing declared command or script. Use agent-mode validation for status
-and `run --inject vars --redact-stdout` for a trusted product process, and keep resolved
-credentials out of the agent's environment. Give both paths as absolute paths with repeated
+and `run --inject vars --redact-stdout` inside that declared command for a trusted product process,
+and keep resolved credentials out of the agent's environment. Varlock refuses `--redact-stdout` on an
+interactive terminal, so a person in a terminal runs the same `run` without the flag. Give both paths as absolute paths with repeated
 `--path`: the component schema root first, then its central resolver directory in the cockpit; the
 later path wins. Installation, initialization, provider login, encryption and migration need
 explicit permission from whoever owns the product and the provider. Current commands and
 limitations are in the [Varlock CLI reference](https://varlock.dev/reference/cli/load-and-run/) and
 [AI tools guide](https://varlock.dev/guides/ai-tools/).
 
-`cockpit preflight` and `cockpit doctor` check every sibling that contains a `.env.schema` and skip
-the rest. Each runs `varlock load --agent --format json-full --path <sibling>` from your `PATH`
-with the command's timeout and a 256 KiB output cap, and keeps only key names and a validity
-category; values and Varlock's messages are discarded. `ENV_SCHEMA_UNHEALTHY` fails the row and
-names the sibling and its keys, or reports the row as unavailable when Varlock times out, exits
-without a readable report, or a provider cannot resolve a value; run `varlock load` in that sibling
-to see why. `ENV_SCHEMA_TOOL_MISSING` is a warning, not a failure, when Varlock is not installed
+`cockpit preflight` and `cockpit doctor` look at every `.env.schema` a sibling tracks, asking Git with
+`git ls-files`, plus a sibling's root schema whether tracked or not and the cockpit root's own, and
+load each one that is [committed](#a-schema-runs-only-once-committed). In a sibling that is not a Git
+repository only the root is looked at; Git failing for another reason, or more than 64 tracked
+schemas, makes that sibling unavailable. On a cockpit that declares no runtime
+`preflight` refuses, so `doctor` is what reports schema status there. Each schema runs
+`varlock load --agent --format json-full --path <schema directory>` with
+`VARLOCK_TELEMETRY_DISABLED=true`, the command's timeout, a 256 KiB output cap and every `_VARLOCK_*`
+variable removed, adding `--path <cockpit root>/env/.secrets/<cockpit name>/<slug>[/<relative dir>]`
+when that directory exists; the cockpit root's own schema uses `env/.secrets/<cockpit name>` itself.
+That directory is checked with file metadata only and nothing inside it is read, and a symbolic link
+on the way to it, or a failure other than its absence, makes the schema unavailable. A sibling is
+read from the checkout `cockpit use` serves. The store is gitignored, so a linked worktree of the
+cockpit that has none uses its main checkout's, at the same place below the working tree. Git names
+the main checkout; a repository laid out any other way, or Git failing, leaves the schema with no store.
+
+Only key names and a category are kept; values and Varlock's messages are discarded.
+
+| Varlock reports | Row | Named as |
+| --- | --- | --- |
+| The required-empty message for a key | fails | `missing required <keys>` |
+| Any other key error, such as a failed resolver or a value that does not coerce | unavailable, unless another key is missing | `could not validate or resolve <keys>` |
+| An error at the root of the report, such as a bad plugin | fails | `schema could not be loaded` |
+| A timeout, or an exit without a readable report | unavailable | the cause |
+
+Each is `ENV_SCHEMA_UNHEALTHY`, and schemas are labelled `<slug> (<relative dir>)`. A provider's error
+messages cannot be enumerated, so a key that could not be resolved is not called invalid: the provider
+may be signed out or unreachable. Sign in to it and rerun. To diagnose, a person runs
+`VARLOCK_TELEMETRY_DISABLED=true varlock load --path <schema directory> --path <central directory>`,
+leaving out the second path where that directory does not exist. `ENV_SCHEMA_OVERRIDDEN` warns without
+failing the row when Varlock reports a key as satisfied by the shell that ran the command rather than
+by the schema's own sources; unset it and rerun to check those sources.
+
+### A schema runs only once committed
+
+Loading a schema runs its resolvers, including `exec()`, with the caller's environment, and a schema
+is exempt from the secret-file denial, so an edited one could otherwise run commands through an
+unprompted `doctor`. Before loading, the probe asks Git in the schema's directory, with
+`git status --porcelain=v1 -z` and `git ls-files -v`, whether the file is tracked and identical to
+HEAD, because a commit is a guarded, visible step and an edit is not. Only then does Varlock run.
+
+A schema that is edited, staged, untracked, ignored, hidden behind Git's assume-unchanged or
+skip-worktree flag, a symbolic link or outside a repository is not run. Its row keeps passing, and
+`ENV_SCHEMA_UNCOMMITTED` warns, naming the schema and the fix: commit it to have it validated, or
+have a person review it and run the `VARLOCK_TELEMETRY_DISABLED=true varlock load` the warning prints
+with both paths. Git failing for any other reason makes the schema unavailable, again without running
+Varlock. An edited schema is therefore not validated until it is committed.
+
+This does not cover an agent's commit that a person approves, local plugin or `@import` files beside a
+schema, or declared test commands, which also run edited code. Cockpit is not a sandbox.
+
+### Varlock on PATH
+
+The probe uses `varlock` from your `PATH`, not the product's locked copy, so a product with only a
+local install sees `ENV_SCHEMA_TOOL_MISSING`, a warning rather than a failure
 (<https://varlock.dev>).
+
+Secret-manager resolvers, such as vault or 1Password, may need their own sign-in and environment. The
+probe passes your environment through, never prompts because its stdin is closed, and reports a
+timeout as unavailable. This was measured only with a failing synthetic resolver, not a real provider.
+
+The probe has an execution limit. `varlock load` runs the schema's resolvers, including an `exec()`
+command, and the guard exempts a schema from secret-file denial as documentation, so an agent that
+can edit a schema can have commands run, with your environment, by a `doctor` or `preflight` it may
+run unprompted. Declared testing commands also run code an agent edited, and cockpit is not a
+sandbox. Review schema changes as you review code, and run `doctor` with a provider sign-in only on
+schemas you trust. This was reasoned from Varlock's documented resolver behaviour plus a failing
+`exec()` measured with a synthetic schema.
+
+Set `VARLOCK_TELEMETRY_DISABLED=true` in product-owned Varlock wrappers too. Cockpit's probes
+always disable Varlock telemetry; they do not modify global Varlock settings. See
+[Varlock's privacy documentation](https://varlock.dev/privacy/) for the opt-out contract.
 
 Report only variable names, validation state, exit status and where each value came from. Raw
 resolver output, resolved values and browser state do not belong in work-order results. Generated
@@ -708,6 +796,43 @@ of the central store; whether a harness can natively block reads of these files 
 tested. Git ignore rules, filesystem permissions, encryption and output redaction do not protect
 secrets from malicious code running as the same user, and trusted product child processes receive
 plaintext variables. A stronger boundary needs a separately tested sandbox and provider policy.
+
+### Read variable names and schemas
+
+Native rules can refuse an agent these documentation files
+([measured](safety-and-autonomy.md#reading-secrets-and-instances)), so two commands read them. Both
+find the same directories as the probe, in the checkout `cockpit use` serves, run no Varlock and no
+resolver, never follow a symbolic or hard link, and an agent runs them without a prompt.
+
+`npx --no cockpit env keys --config cockpit.toml` is the narrower choice when only names are needed;
+add `--json` for a machine-readable answer. For each `.env.schema`, or a directory's
+`.env.example`, `.env.sample` and `.env.template` where it has none, it prints the path, whether it is a
+`schema` or `template` source and each key's `name`. A key shows `required`, `sensitive` and a bare
+`type` only when a decorator on the lines directly above it declares them, or `@defaultRequired` or
+`@defaultSensitive` above the `# ---` divider does; a missing field means the file states no static
+answer, not false. A value, default, resolver expression, comment's text or unparsed line is never
+shown: `unparsed` counts those lines, which include any key name that is not a plain identifier. A
+symbolic or hard link is reported by name and warns with `ENV_KEYS_SOURCE_SKIPPED`. No source at all exits 0
+and names what was looked for; a file or sibling that could not be read exits 2 naming why, beside what
+could be read. Output is bounded, and `truncated` says what was left out. Varlock also honours a
+decorator after a value, measured on 2026-11-05 with Varlock 1.23.0; `env keys` does not read those, so
+it states no default for such a key.
+
+`npx --no cockpit env schema --config cockpit.toml --path api:services/web/.env.schema` prints one
+schema's text verbatim, which includes every resolver expression and comment
+(in human output, a control character is shown escaped; `--json` carries the exact text). A schema must
+hold no secret values: the guard treats this name as documentation and Git already reaches a committed
+copy. `--path` is the `reference` that `env keys` prints for a schema source:
+`<slug>:<relative directory>/.env.schema` in a sibling, or `.env.schema` in the cockpit root. It refuses
+with `ENV_SCHEMA_READ_REFUSED`, naming the fix, any other file name (matched exactly, including case), a
+symbolic or hard link, a non-regular file, a directory the probe does not discover and an oversized
+file.
+
+To change one, write a draft with your normal tools and add `--replace-from <draft>` to that command,
+with the draft relative to the cockpit root.
+[What it refuses](safety-and-autonomy.md#editing-a-schema-under-claude-code) is what stops a secret
+being laundered through a draft. The result is
+[not validated until it is committed](#a-schema-runs-only-once-committed).
 
 ## Check and sync
 
@@ -726,7 +851,9 @@ while the generated-file transaction reports its own recovery result.
 Removing a stale file needs a separate approval of the exact path, operation and current bytes that
 the dry run showed. Plain `sync` refuses to apply it; `sync --interactive` shows the request and
 asks you to type its exact digest. After approval and a final recheck, cockpit can remove an
-unchanged whole file, or its own region in a shared file. Files cockpit did not write,
+unchanged whole file, or its own region in a shared file. When every stale path is the MCP-only file
+of a tool still listed, its servers are no longer written, so removing it only narrows access and
+`sync` applies it without that approval. Files cockpit did not write,
 and bytes outside its regions, are kept. A stale path that changed or is unsafe needs manual
 reconciliation before you retry.
 

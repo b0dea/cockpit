@@ -261,6 +261,27 @@ describe('init operator command', () => {
             ])
         })
 
+        it('reports runtime answers made irrelevant when an empty Compose answer changes the interview', async () => {
+            const offered = asking('environment.compose_files')
+            const fields = ['environment.compose_files', 'environment.machine', 'environment.posture']
+            const preview: InitApplicationOutcome = { ...offered, result: { ...offered.result!, interview: {
+                answered: [], inferenceSkipped: [], outstanding: fields.map(field => ({ field, why: 'runtime declaration',
+                    confirmedBy: 'person' as const, proposals: [] })),
+            } } }
+            const sent: string[] = []
+            const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
+                { interactive: false, json: true, unattended: { previewSha256: digest,
+                    answers: { environment: { compose_files: [], machine, posture } } } }, noTerminal, async input => {
+                    if (!input.greenfieldAnswer) return preview
+                    sent.push(input.greenfieldAnswer.bytes)
+                    return { ...pending(), kind: 'complete', status: 0, result: { ...pending().result!,
+                        interview: { answered: ['environment.compose_files'], outstanding: [], inferenceSkipped: [] } } }
+                })
+            expect(sent).toEqual(['[]'])
+            expect(outcome).toMatchObject({ kind: 'complete', diagnostics: [{ severity: 'warning', code: 'INIT_ANSWER_UNUSED',
+                message: 'the answers file gave environment.machine, environment.posture, which the interview never asked for' }] })
+        })
+
         it('records who chose each answer: the human, the setup agent as a default, or for the machine floor no one said', async () => {
             const provenances = async (answersFile: Record<string, unknown>) => {
                 const recorded: string[] = []

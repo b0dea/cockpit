@@ -1,6 +1,7 @@
 import { prepareTeamMetadata, applyTeamMetadata, type TeamMetadataChange } from '../../team-metadata.js'
 import { basename } from 'node:path'
 import { GUARD_LOCAL_PATHS, writeCockpitLocalFiles, writeGuardLocalIdentity } from '../../guards/local-identity.js'
+import { GUARD_HELD_CALLS } from '../../surfaces/harness-registry.js'
 import { portablePublicationPaths, authorizePublicationPlan, runPublicationPlan } from '../../generated-environment/transaction.js'
 import { refusalOutcome as refuse } from '../../refusal.js'
 import { readBoundedInput } from '../../config/load.js'
@@ -19,7 +20,7 @@ import {
 import { syncCommandInput } from './prepare.js'
 import { inputSourcesCurrent, ownedInputOverlap, preparePublication } from './publication.js'
 import { checkCanonicalGeneratedEnvironment, issueRepairAuthority, issuedRepairs } from './check.js'
-import { openCodeGrantFile } from './surface-outputs.js'
+import { openCodeGrantFile, staleMcpOutputsOnly } from './surface-outputs.js'
 import { readSiblingCheckouts } from '../sibling-checkouts.js'
 import { openCodeGrantDirectory, openCodePatternUnsafe } from '../served-checkout-grants.js'
 
@@ -49,7 +50,13 @@ async function prepareGeneratedEnvironmentSync(
             'pending team metadata writes overlap an authenticated input or its identity could not be checked; move the input to a separate file, update its declaration, then run npx --no cockpit sync --config <your cockpit.toml> again',
             overlap.kind === 'complete' ? overlap.path : 'team-metadata')
     }
-    const authority = issueRepairAuthority({ prepared: publication.prepared, plan: publication.plan, adapters })
+    // Restricting a server takes it out of a tool with no restriction mechanism. Waiting for a person
+    // there would leave every other tool unrestricted too, so a reduction does not take that approval.
+    const authorizeStaleRemoval: typeof adapters.authorizeStaleRemoval = async request =>
+        staleMcpOutputsOnly(request.entries.map(entry => entry.path), publication.prepared.configuredHarnesses)
+            ? { format: 'cockpit-stale-removal-approval/v1', digest: request.digest }
+            : adapters.authorizeStaleRemoval?.(request)
+    const authority = issueRepairAuthority({ prepared: publication.prepared, plan: publication.plan, adapters: { ...adapters, authorizeStaleRemoval } })
     return { kind: 'complete', authority, dryRun: request.dryRun === true }
 }
 
@@ -118,11 +125,11 @@ export async function applyGeneratedEnvironmentRepair(
         // again and must still be that text.
         const configRead = await readBoundedInput(prepared.configPath)
         if (configRead.kind !== 'complete' || sha256(configRead.bytes) !== prepared.guardHandler.configSha256) return refuse('GENERATED_SOURCE_CHANGED',
-            'the configuration changed after generated files were published, so the guard identity was not recorded; the guard refuses every agent tool call until it is',
+            `the configuration changed after generated files were published, so the guard identity was not recorded; the guard refuses ${GUARD_HELD_CALLS} until it is`,
             prepared.configSource.path, 'run `npx --no cockpit sync --config <your cockpit.toml>` again')
         const local = await writeGuardLocalIdentity(prepared.root, prepared.guardHandler, configRead.bytes.toString('utf8'))
         if (local.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
-            `the committed guard files were published, but ${local.message}; the guard refuses every agent tool call until it exists`,
+            `the committed guard files were published, but ${local.message}; the guard refuses ${GUARD_HELD_CALLS} until it exists`,
             GUARD_LOCAL_PATHS.identity, 'fix the path, then run `npx --no cockpit sync --config <your cockpit.toml>` again in a terminal')
     }
     if (prepared.openCodeGrantRoots.length > 0 && settings.dryRun !== true) {
@@ -141,5 +148,6 @@ export async function applyGeneratedEnvironmentRepair(
             `the committed OpenCode settings were published, but ${local.message}; OpenCode refuses to start until it exists`,
             GUARD_LOCAL_PATHS.directory, 'fix the path, then run `npx --no cockpit sync --config <your cockpit.toml>` again in a terminal')
     }
-    return complete('sync', prepared, settings.dryRun === true, outcome.changes, settings.dryRun ? outcome.staleRemoval : undefined)
+    const needsApproval = outcome.staleRemoval && !staleMcpOutputsOnly(outcome.staleRemoval.entries.map(entry => entry.path), prepared.configuredHarnesses)
+    return complete('sync', prepared, settings.dryRun === true, outcome.changes, settings.dryRun && needsApproval ? outcome.staleRemoval : undefined)
 }

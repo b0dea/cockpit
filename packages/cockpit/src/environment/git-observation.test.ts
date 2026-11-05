@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type CheckoutId, type StackId } from './contract.js'
@@ -21,6 +21,7 @@ import {
     observeComparisonRemoteUrl,
     decodeGitObservation,
     inspectTrackedSecretFiles,
+    listTrackedEnvSchemas,
     observeGit,
     observeRunningCheckout,
 } from './git-observation.js'
@@ -285,6 +286,40 @@ describe('Git adjacency evidence', () => {
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
+})
+
+describe('a repository that configures an fsmonitor', () => {
+    it('never runs it for a Git observation', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-fsmonitor-')))
+        try {
+            execFileSync('git', ['init', '--quiet', '-b', 'main', root])
+            await writeFile(join(root, 'tracked.txt'), 'stable\n')
+            execFileSync('git', ['-C', root, 'add', 'tracked.txt'])
+            execFileSync('git', ['-C', root, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'fixture'])
+            const marker = join(root, 'monitor-ran')
+            const monitor = join(root, 'monitor.sh')
+            await writeFile(monitor, `#!/bin/sh\ntouch ${marker}\n`, { mode: 0o755 })
+            execFileSync('git', ['-C', root, 'config', 'core.fsmonitor', monitor])
+            const resolved = await resolveGitExecutable({ PATH: process.env.PATH ?? '' })
+            if (resolved.state !== 'available') throw new Error('Git unavailable in fsmonitor fixture')
+            const executable = resolved.value
+            const ran = async () => { try { await access(marker); return true } catch { return false } }
+            // The control: without the override this repository does run it, so silence below means something.
+            execFileSync('git', ['-C', root, 'ls-files'], { stdio: 'pipe' })
+            expect(await ran()).toBe(true)
+            await rm(marker)
+
+            const step = createGitObservationStep({ executable, checkoutRoot: root, env: {}, timeoutMs: 10_000, stackId, source: root, checkoutId })!
+            expect(observeGit(step, await executeProbe(step), { stackId, checkoutId, source: root })).toMatchObject({ kind: 'complete' })
+            expect(await ran(), 'status').toBe(false)
+            expect(await listTrackedEnvSchemas({ executable, slug: 'api', root, timeoutMs: 10_000 }, executeProbe)).toMatchObject({ kind: 'listed' })
+            expect(await ran(), 'the tracked schema listing').toBe(false)
+            expect(await inspectTrackedSecretFiles({ executable, timeoutMs: 10_000, repositories: [{ slug: 'api', root }] }, executeProbe)).toEqual([])
+            expect(await ran(), 'the tracked secret listing').toBe(false)
+        } finally {
+            await rm(root, { recursive: true, force: true })
+        }
+    })
 })
 
 describe('comparison remote identity evidence', () => {
@@ -558,24 +593,31 @@ describe('tracked secret files', () => {
         try {
             const repository = join(root, 'api')
             await mkdir(join(repository, 'config'), { recursive: true })
+            await mkdir(join(repository, 'deploy', '.secrets'), { recursive: true })
             const value = 'synthetic-value-never-reported'
             await Promise.all([
                 writeFile(join(repository, '.env'), `API_TOKEN=${value}\n`),
                 writeFile(join(repository, 'config', '.env.production'), `API_TOKEN=${value}\n`),
                 writeFile(join(repository, '.env.example'), 'API_TOKEN=\n'),
+                writeFile(join(repository, '.env.schema'), 'API_TOKEN=\n'),
+                writeFile(join(repository, '.env.dist'), `API_TOKEN=${value}\n`),
+                writeFile(join(repository, '.env.declared'), 'API_TOKEN=\n'),
                 writeFile(join(repository, '.environment-notes'), 'not a secret file\n'),
+                writeFile(join(repository, 'deploy', '.secrets', 'resolver'), `API_TOKEN=${value}\n`),
+                writeFile(join(repository, 'deploy', '.secrets', '.gitignore'), '*\n'),
             ])
             execFileSync('git', ['init', '--quiet', repository])
-            execFileSync('git', ['-C', repository, 'add', '--force', '.env', 'config/.env.production', '.env.example', '.environment-notes'])
+            execFileSync('git', ['-C', repository, 'add', '--force', '.env', '.env.dist', 'config/.env.production', '.env.example', '.env.schema', '.env.declared',
+                '.environment-notes', 'deploy/.secrets/resolver', 'deploy/.secrets/.gitignore'])
             await writeFile(join(repository, '.env.local'), `API_TOKEN=${value}\n`)
             const git = await resolveGitExecutable(process.env)
             if (git.state !== 'available') throw new Error('git is unavailable')
 
             const findings = await inspectTrackedSecretFiles({ executable: git.value, timeoutMs: 5_000,
-                repositories: [{ slug: 'api', root: repository }, { slug: 'docs', root }] }, executeProbe)
+                repositories: [{ slug: 'api', root: repository, templates: ['.env.declared'] }, { slug: 'docs', root }] }, executeProbe)
 
             expect(findings).toEqual([expect.objectContaining({ severity: 'warning', code: 'SECRET_FILE_TRACKED', target: 'sibling:api',
-                message: expect.stringContaining('(.env, config/.env.production)') })])
+                message: expect.stringContaining('(.env, .env.dist, config/.env.production, deploy/.secrets/resolver)') })])
             expect(JSON.stringify(findings)).not.toContain(value)
             // A probe whose outcome cannot be trusted is not a clean repository.
             const forged = await inspectTrackedSecretFiles({ executable: git.value, timeoutMs: 5_000,

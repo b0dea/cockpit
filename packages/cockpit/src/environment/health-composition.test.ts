@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
+import { runCli } from '../cli.js'
 import { runDoctor } from './application/doctor.js'
 import { runPreflight } from './application/health.js'
 import { runUp } from './application/lifecycle.js'
@@ -15,7 +16,6 @@ import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { createHealthCommandAdapters } from './health-composition.js'
 import { observeGeneratedApplicationSurfaces } from './generated-application/surface-observation.js'
 import { syncGeneratedEnvironment } from './generated-application/sync.js'
-import { observeEnvSchemas } from './env-schema-observation.js'
 import { createHealthCompositionFixture } from '../../test-support/health-composition-fixture.js'
 
 const run = promisify(execFile)
@@ -63,6 +63,46 @@ sources = [
 // publication helpers, Git and runtime probes), so its wall time scales with machine load rather
 // than with the work under test. The budget is sized for four concurrent workers on a busy host.
 describe('production health adapter composition', { timeout: 180_000 }, () => {
+    it.each(['linked', 'nested'] as const)('reports surfaces-only readiness from a %s checkout without inventing runtime evidence', async (layout) => {
+        const candidate = await fixture({ unseeded: true })
+        await writeFile(candidate.configPath, (await readFile(candidate.configPath, 'utf8')).split('[environment]')[0]!)
+        await writeFile(join(candidate.checkout, '.gitignore'), '*\n!.gitignore\n!cockpit.toml\n')
+        await run('git', ['-C', candidate.checkout, 'add', 'cockpit.toml', '.gitignore'])
+        await run('git', ['-C', candidate.checkout, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid',
+            'commit', '--quiet', '-m', 'declare synthetic surfaces'])
+        const root = layout === 'linked' ? join(candidate.root, 'linked') : join(candidate.checkout, 'nested')
+        if (layout === 'linked') await run('git', ['-C', candidate.checkout, 'worktree', 'add', '--quiet', '--detach', root])
+        else await mkdir(root)
+        const configPath = join(root, 'cockpit.toml')
+        if (layout === 'nested') await writeFile(configPath, await readFile(candidate.configPath, 'utf8'))
+        await mkdir(join(root, 'siblings/api'), { recursive: true })
+        expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete', status: 0 })
+        const env = { PATH: '/usr/bin:/bin', HOME: candidate.home, NO_UPDATE_NOTIFIER: '1' }
+        const doctor = async () => {
+            let stdout = ''
+            expect(await runCli(['doctor', '--config', configPath, '--json'], {
+                stdout: { write: text => ((stdout += text), true) }, stderr: { write: () => true },
+            }, {}, { env })).toBe(0)
+            return JSON.parse(stdout)
+        }
+        const report = await doctor()
+        expect(report.diagnostics, JSON.stringify(report.diagnostics)).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: 'LIFECYCLE_EVIDENCE_INVALID' }),
+        ]))
+        expect(report.diagnostics).toContainEqual(expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED' }))
+        expect(report.result.checks).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: 'HARNESS_SURFACE_UNAVAILABLE', verdict: 'pass' }),
+            expect.objectContaining({ code: 'STATE_UNSEEDED', verdict: 'not-applicable' }),
+            expect.objectContaining({ code: 'RUNTIME_UNMEASURED', verdict: 'not-applicable' }),
+            expect.objectContaining({ code: 'RUNNING_CHECKOUT_MISMATCH', verdict: 'not-applicable' }),
+        ]))
+        expect(report.result.verdict).not.toBe('pass')
+        await writeFile(join(root, 'AGENTS.md'), 'Changed generated guidance.\n')
+        const changed = await doctor()
+        expect(changed.result.freshness.local.status).toBe(2)
+        expect(changed.result.checks).not.toContainEqual(expect.objectContaining({ code: 'HARNESS_SURFACE_UNAVAILABLE', verdict: 'pass' }))
+    })
+
     it('passes seeded machine-floor health through public routes and refuses changed published surfaces', async () => {
         const candidate = await fixture({ machineOnly: true })
         const address = candidate.namespace.paths.lifecycle(candidate.stack)
@@ -282,6 +322,30 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         await writeFile(candidate.configPath, `${await readFile(candidate.configPath, 'utf8')}\n[surfaces]\ntools = ["claudecode"]\n`)
         const claudeOnly = await runDoctor({ configPath: candidate.configPath }, adapters)
         expect(claudeOnly.diagnostics.map(({ code }) => code)).not.toContain('CODEX_HOOK_UNTRUSTED')
+    })
+
+    it('gives preflight the observation path doctor has, and says why when it cannot select Git', async () => {
+        const candidate = await fixture({ configuredRuntime: true, unseeded: true })
+        const preflight = async (PATH: string) => runPreflight({ configPath: candidate.configPath }, createHealthCommandAdapters({
+            configPath: candidate.configPath, env: { PATH, HOME: candidate.home }, timeoutMs: 5_000,
+        }, executeProbe))
+        const absolutePath = `${candidate.root}:/usr/bin:/bin`
+        const codes = async (PATH: string) => (await preflight(PATH)).diagnostics.map(({ code }) => code)
+        expect(await codes(`./node_modules/.bin:${absolutePath}`)).toEqual(await codes(absolutePath))
+        const noGit = join(candidate.root, 'no-git')
+        await mkdir(noGit)
+        const unavailable = (await preflight(noGit)).diagnostics
+        expect(unavailable).toContainEqual(expect.objectContaining({ code: 'EVIDENCE_UNAVAILABLE', target: 'PATH',
+            message: expect.stringContaining('preflight cannot find Git to observe the checkout: Executable was not found in the supplied search path: git') }))
+        expect((await preflight('/usr/bin/../bin:/bin')).diagnostics).toContainEqual(expect.objectContaining({ code: 'EVIDENCE_UNAVAILABLE', target: 'PATH',
+            message: expect.stringContaining('preflight\'s observation tools cannot be selected') }))
+        // With nothing declared there is nothing to observe, so the answer does not depend on PATH; doctor still observes the checkout.
+        const surfacesOnly = await fixture({ unseeded: true })
+        const noncanonical = { configPath: surfacesOnly.configPath, env: { PATH: '/usr/bin/../bin:/bin', HOME: surfacesOnly.home }, timeoutMs: 5_000 }
+        expect((await runPreflight({ configPath: surfacesOnly.configPath }, createHealthCommandAdapters(noncanonical, executeProbe))).diagnostics)
+            .toEqual([expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED' })])
+        expect((await runDoctor({ configPath: surfacesOnly.configPath }, createHealthCommandAdapters(noncanonical, executeProbe))).diagnostics)
+            .toContainEqual(expect.objectContaining({ code: 'EVIDENCE_UNAVAILABLE', target: 'PATH' }))
     })
 
     it('warns from doctor when PATH holds a relative entry, under which the guard asks before every command', async () => {
@@ -771,8 +835,14 @@ describe('env schema health', () => {
     const SECRET = 'sentinel-resolved-value-7c1e94'
     const schemaOwner = 'env-schema-observation'
 
+    async function commitSchema(repository: string, file: string) {
+        await writeFile(join(repository, file), 'API_KEY=\n')
+        await run('git', ['-C', repository, 'add', '--force', '--', file])
+        await run('git', ['-C', repository, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '--quiet', '-m', 'schema'])
+    }
+
     async function withVarlock(candidate: Awaited<ReturnType<typeof fixture>>, body: string | undefined) {
-        await writeFile(join(candidate.checkout, 'siblings', 'api', '.env.schema'), 'API_KEY=\n')
+        await commitSchema(candidate.checkout, join('siblings', 'api', '.env.schema'))
         if (body === undefined) return
         const path = join(candidate.root, 'varlock')
         await writeFile(path, `#!/bin/sh\n${body}\n`, { mode: 0o700 })
@@ -788,11 +858,11 @@ describe('env schema health', () => {
     const printing = (json: string, exitCode: number) =>
         `cat <<'JSON'\n${json}\nJSON\nprintf '%s\\n' '${SECRET}' >&2\nexit ${exitCode}`
 
-    async function health(candidate: Awaited<ReturnType<typeof fixture>>, options: { readonly path?: string; readonly timeoutMs?: number } = {}) {
+    async function health(candidate: Awaited<ReturnType<typeof fixture>>, options: { readonly path?: string; readonly timeoutMs?: number; readonly env?: Record<string, string> } = {}) {
         const execute = vi.fn(executeProbe)
         const adapters = createHealthCommandAdapters({
             configPath: candidate.configPath,
-            env: { PATH: options.path ?? `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            env: { PATH: options.path ?? `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home, ...options.env },
             timeoutMs: options.timeoutMs ?? 5_000,
         }, execute)
         const doctor = await runDoctor({ configPath: candidate.configPath }, adapters)
@@ -817,7 +887,7 @@ describe('env schema health', () => {
 
     it('reports a valid env schema for a sibling that contains .env.schema', async () => {
         const candidate = await fixture({ machineOnly: true })
-        await withVarlock(candidate, printing(report(), 0))
+        await withVarlock(candidate, `test "$VARLOCK_TELEMETRY_DISABLED" = true || exit 42\n${printing(report(), 0)}`)
 
         const { execute, doctor, preflight, row } = await health(candidate)
 
@@ -830,6 +900,23 @@ describe('env schema health', () => {
                 code: 'ENV_SCHEMA_UNHEALTHY', verdict: 'pass', measured: [{ sibling: 'api', state: 'valid', keys: 2 }],
             })
         }
+    })
+
+    it('validates the checkout cockpit use serves, not the declared directory', async () => {
+        const candidate = await fixture({ machineOnly: true })
+        await withVarlock(candidate, printing(report(), 0))
+        const worktree = join(candidate.root, 'api-worktree')
+        await mkdir(worktree, { recursive: true })
+        await run('git', ['init', '--quiet', worktree])
+        await commitSchema(worktree, '.env.schema')
+        const local = join(dirname(candidate.configPath), '.cockpit', 'local')
+        await mkdir(local, { recursive: true })
+        await writeFile(join(local, 'sibling-checkouts'), `${JSON.stringify({ format: 'cockpit-sibling-checkouts/v1', checkouts: { api: worktree } })}\n`)
+
+        const { execute } = await health(candidate)
+
+        expect(varlockCalls(execute).map(({ argv }) => argv[argv.indexOf('--path') + 1])).toContain(worktree)
+        expect(varlockCalls(execute).map(({ argv }) => argv[argv.indexOf('--path') + 1])).not.toContain(join(candidate.checkout, 'siblings', 'api'))
     })
 
     it('does not run varlock for a sibling without .env.schema', async () => {
@@ -871,19 +958,86 @@ describe('env schema health', () => {
         }
     })
 
+    it('warns, without failing the row or running Varlock, about a schema that is not committed', async () => {
+        const candidate = await fixture({ machineOnly: true })
+        const marker = join(candidate.root, 'varlock-ran')
+        await withVarlock(candidate, `touch '${marker}'\n${printing(report(), 0)}`)
+        const api = join(candidate.checkout, 'siblings', 'api')
+        await writeFile(join(api, '.env.schema'), 'API_KEY=exec("synthetic")\n')
+
+        const { doctor, preflight, row } = await health(candidate)
+
+        for (const result of [doctor, preflight]) {
+            expect(row(result)).toMatchObject({ verdict: 'pass', measured: [{ sibling: 'api', state: 'not-run' }] })
+            expect(result.diagnostics).toContainEqual({
+                severity: 'warning', code: 'ENV_SCHEMA_UNCOMMITTED', target: 'api',
+                message: expect.stringMatching(new RegExp(`^api has an \\.env\\.schema that is not committed.*A person who reviewed it can run VARLOCK_TELEMETRY_DISABLED=true varlock load --path ${api}$`)),
+                fix: 'commit the schema to have it validated, or have a person review it and run the load this message names',
+            })
+        }
+        await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
     it('fails preflight naming the invalid keys and the fix', async () => {
         const candidate = await fixture({ machineOnly: true })
         await withVarlock(candidate, printing(report({ DATABASE_URL: 'Value is required but is currently empty', PORT: 'Unable to coerce string to number' }), 1))
 
         const { preflight, row } = await health(candidate)
 
-        expect(row(preflight)).toMatchObject({ verdict: 'fail', remedy: expect.stringContaining('varlock load') })
+        expect(row(preflight)).toMatchObject({ verdict: 'fail', remedy: expect.stringContaining('have a person run `VARLOCK_TELEMETRY_DISABLED=true varlock load --path <schema directory> --path') })
         expect(preflight.diagnostics).toContainEqual(expect.objectContaining({
             severity: 'error',
             code: 'ENV_SCHEMA_UNHEALTHY',
-            message: expect.stringMatching(/api .*missing required DATABASE_URL.*invalid PORT/),
-            fix: expect.stringContaining('varlock load'),
+            message: expect.stringMatching(/api .*missing required DATABASE_URL.*could not validate or resolve PORT/),
+            fix: expect.stringContaining('have a person run `VARLOCK_TELEMETRY_DISABLED=true varlock load --path <schema directory> --path'),
         }))
+    })
+
+    it('blocks preflight on a provider it cannot resolve through, as unavailable and naming keys only', async () => {
+        const candidate = await fixture({ machineOnly: true })
+        await withVarlock(candidate, printing(report({ API_KEY: `exec(): command failed (exit code 3): ${SECRET}` }), 1))
+
+        const { doctor, preflight, row } = await health(candidate)
+
+        expect(row(preflight)).toMatchObject({ verdict: 'unavailable', remedy: expect.stringContaining('sign in to it, then rerun') })
+        expect(preflight).toMatchObject({ kind: 'blocked', status: 2 })
+        expect(row(doctor)).toMatchObject({ verdict: 'unavailable' })
+        expect(preflight.diagnostics).toContainEqual(expect.objectContaining({
+            severity: 'error', code: 'ENV_SCHEMA_UNHEALTHY', message: expect.stringMatching(/api .*could not validate or resolve API_KEY/),
+        }))
+        expect(JSON.stringify([doctor, preflight])).not.toContain(SECRET)
+    })
+
+    it('warns about keys the caller\'s shell satisfied, without failing the row or naming a value', async () => {
+        const candidate = await fixture({ machineOnly: true })
+        const overridden = JSON.stringify({ config: { API_KEY: { value: SECRET } }, overrideKeys: ['API_KEY'] })
+        await withVarlock(candidate, `env | grep -q '^_VARLOCK_' && exit 42\n${printing(overridden, 0)}`)
+
+        const { doctor, preflight, row } = await health(candidate, { env: { _VARLOCK_FILTER: 'REGION', API_KEY: SECRET } })
+
+        for (const result of [doctor, preflight]) {
+            expect(row(result)).toMatchObject({ verdict: 'pass' })
+            expect(result.diagnostics).toContainEqual(expect.objectContaining({
+                severity: 'warning', code: 'ENV_SCHEMA_OVERRIDDEN', target: 'api', message: expect.stringContaining('API_KEY came from the shell'),
+                fix: expect.stringContaining('unset those variables'),
+            }))
+        }
+        expect(JSON.stringify([doctor, preflight])).not.toContain(SECRET)
+    })
+
+    it('reports a required env schema gap from doctor on a cockpit that declares no runtime', async () => {
+        const candidate = await fixture({ unseeded: true })
+        await writeFile(candidate.configPath, (await readFile(candidate.configPath, 'utf8')).split('[environment]')[0]!)
+        await mkdir(join(candidate.checkout, 'siblings', 'api'), { recursive: true })
+        await withVarlock(candidate, printing(report({ API_KEY: 'Value is required but is currently empty' }), 1))
+        await expect(syncGeneratedEnvironment({ configPath: candidate.configPath })).resolves.toMatchObject({ kind: 'complete', status: 0 })
+
+        const { doctor, preflight, row } = await health(candidate)
+
+        expect(preflight.diagnostics).toEqual([expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED' })])
+        expect(row(doctor)).toMatchObject({ verdict: 'fail', remedy: expect.stringContaining('cockpit doctor on a cockpit that declares no runtime') })
+        expect(doctor.diagnostics).toContainEqual(expect.objectContaining({ code: 'ENV_SCHEMA_UNHEALTHY', message: expect.stringContaining('missing required API_KEY') }))
+        expect((doctor.result as { readiness?: { gaps: readonly { id: string; level: string }[] } }).readiness?.gaps).toContainEqual(expect.objectContaining({ id: 'env-schema', level: 'required' }))
     })
 
     it('names a varlock timeout instead of hanging', async () => {

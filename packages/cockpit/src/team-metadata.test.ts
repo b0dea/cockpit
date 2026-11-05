@@ -46,7 +46,7 @@ describe('team metadata', () => {
         expect(manifest).toEqual({ private: true, scripts: { test: 'vitest', 'cockpit:setup': 'cockpit setup --config cockpit.toml',
             'cockpit:sync': 'cockpit sync --config cockpit.toml', 'cockpit:check': 'cockpit check --config cockpit.toml' },
         devDependencies: { [installedPackageMetadata.name]: installedPackageMetadata.version } })
-        expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('operator-owned\n# cockpit:ignore:start sha256=1df8e5da6b53377d\n/node_modules/\n/.cockpit/local/\n/.claude/settings.local.json\n/env/.secrets/*\n!/env/.secrets/.gitignore\n/repositories/\n# cockpit:ignore:end\n')
+        expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('operator-owned\n# cockpit:ignore:start sha256=63feef9a9f96d7cc\n/node_modules/\n/.cockpit/local/\n/.claude/settings.local.json\n**/.secrets/*\n!/env/.secrets/.gitignore\n/repositories/\n# cockpit:ignore:end\n')
         expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toEqual({ kind: 'complete', changed: false, changes: [] })
     })
 
@@ -63,6 +63,17 @@ describe('team metadata', () => {
         await writeFile(join(root, 'generated/app.env'), 'KEY=value\n')
         expect(spawnSync('git', ['-C', root, 'check-ignore', '--quiet', 'generated/app.env']).status).toBe(0)
         expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'complete' })
+    })
+
+    it('ignores secrets directory contents at any depth but keeps the root ignore file trackable', async () => {
+        const root = await fixture('repositories')
+        expect(spawnSync('git', ['-C', root, 'init', '--quiet']).status).toBe(0)
+        expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'complete', changed: true })
+        const ignored = (path: string) => spawnSync('git', ['-C', root, 'check-ignore', '--no-index', '--quiet', '--', path]).status
+        expect(ignored('env/.secrets/project/api/resolver')).toBe(0)
+        expect(ignored('services/web/.secrets/resolver')).toBe(0)
+        expect(ignored('env/.secrets/.gitignore')).toBe(1)
+        expect(ignored('services/web/secrets/config.json')).toBe(1)
     })
 
     it('ignores literal sibling directory names without matching nearby directories', async () => {
@@ -159,6 +170,14 @@ purpose = "Synthetic local repository"
         await mkdir(join(installed, 'bin'))
         await writeFile(join(installed, 'bin/cockpit.mjs'), '#!/usr/bin/env node\n', { mode: 0o755 })
         await mkdir(join(root, 'node_modules/.bin'))
+        // pnpm writes .bin/cockpit as a shell shim, so its advice has to name the one route that proves.
+        await writeFile(join(root, 'node_modules/.bin/cockpit'), '#!/bin/sh\nexec node "$0"\n', { mode: 0o755 })
+        const packageScript = `./node_modules/${installedPackageMetadata.name}/bin/cockpit.mjs`
+        const [shimmed] = await inspectTeamReadiness(configPath)
+        expect(shimmed).toMatchObject({ code: 'COCKPIT_LAUNCHER_UNPROVEN', fix: `run cockpit as ${packageScript} <command> --config <your cockpit.toml> from the cockpit root`,
+            message: expect.stringContaining(`${packageScript} <command> --config cockpit.toml is proven by its path`) })
+        expect(shimmed!.fix).not.toContain('.bin/cockpit')
+        await rm(join(root, 'node_modules/.bin/cockpit'))
         await symlink('../@b00dea/cockpit/bin/cockpit.mjs'.replace('@b00dea/cockpit', installedPackageMetadata.name), join(root, 'node_modules/.bin/cockpit'))
         expect(await inspectTeamReadiness(configPath)).toEqual([])
         // npm applies a root .npmrc to npx, so only the path spelling stays provable.
@@ -171,6 +190,51 @@ purpose = "Synthetic local repository"
         expect(spawnSync('git', ['-C', join(root, 'app'), 'init', '--quiet']).status).toBe(0)
         expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({ code: 'SIBLING_REMOTE_UNRECORDED',
             target: 'sibling:app', fix: expect.stringContaining('sibling add app --remote <url>') })])
+    })
+
+    it('recognizes the exact linked installation without granting an unproven launcher or an unrelated package target', async () => {
+        const root = await fixture('.')
+        const configPath = join(root, 'cockpit.toml')
+        await mkdir(join(root, 'app'))
+        await initializeTeamMetadata(configPath)
+        const installed = join(root, 'node_modules', ...installedPackageMetadata.name.split('/'))
+        await mkdir(resolve(installed, '..'), { recursive: true })
+        await symlink(resolve('packages/cockpit'), installed)
+        await mkdir(join(root, 'node_modules/.bin'))
+        const launcher = join(root, 'node_modules/.bin/cockpit')
+        await writeFile(launcher, '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+        expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({
+            code: 'COCKPIT_LAUNCHER_UNPROVEN', target: 'npx --no cockpit',
+        })])
+        await rm(launcher)
+        await symlink(join(installed, 'bin/cockpit.mjs'), launcher)
+        expect(await inspectTeamReadiness(configPath)).toEqual([])
+
+        const unrelated = join(root, 'unrelated')
+        await mkdir(unrelated)
+        await writeFile(join(unrelated, 'package.json'), JSON.stringify(installedPackageMetadata))
+        await rm(installed)
+        await symlink(unrelated, installed)
+        // A valid link run by another copy is not a missing install, and pnpm's lockfile selects pnpm's command.
+        await writeFile(join(root, 'pnpm-lock.yaml'), 'lockfileVersion: \'9.0\'\n')
+        const [elsewhere] = await inspectTeamReadiness(configPath)
+        expect(elsewhere).toMatchObject({ code: 'COCKPIT_NOT_INSTALLED', target: 'node_modules',
+            message: expect.stringContaining('another copy of cockpit is running'), fix: expect.stringContaining('pnpm exec cockpit sync') })
+        expect(elsewhere!.message).toContain(await realpath(resolve('packages/cockpit')))
+        expect(elsewhere!.message).toContain(unrelated)
+        expect(elsewhere!.message).not.toContain('is not installed')
+        expect(elsewhere!.fix).toContain('pnpm install')
+        expect(elsewhere!.fix).not.toMatch(/\bnpm install|npx/)
+        await rm(join(root, 'pnpm-lock.yaml'))
+        await rm(unrelated, { recursive: true })
+        expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({
+            code: 'COCKPIT_NOT_INSTALLED', target: 'node_modules', message: expect.stringContaining('is not installed'),
+        })])
+        await rm(installed)
+        await symlink(installed, installed)
+        expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({
+            code: 'COCKPIT_NOT_INSTALLED', target: 'node_modules',
+        })])
     })
 
     it('reports the exact initialization writes during a read-only preview', async () => {
@@ -206,6 +270,9 @@ purpose = "Synthetic local repository"
         await writeFile(join(root, 'package.json'), JSON.stringify({ devDependencies: { [installedPackageMetadata.name]: '9.9.9' } }))
         expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'refusal', code: 'COCKPIT_VERSION_MISMATCH',
             message: expect.stringContaining(`npm install --save-dev --save-exact ${installedPackageMetadata.name}@${installedPackageMetadata.version}`) })
+        await writeFile(join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n')
+        expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'refusal', code: 'COCKPIT_VERSION_MISMATCH',
+            message: expect.stringContaining(`pnpm add --save-dev --save-exact ${installedPackageMetadata.name}@${installedPackageMetadata.version}`) })
     })
 
     // The parser quotes the text where it stopped, and a refusal may reach a reader who cannot open
@@ -286,6 +353,42 @@ purpose = "Synthetic local repository"
         expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({
             kind: 'refusal', code: 'COCKPIT_VERSION_MISMATCH', message: expect.stringContaining(`pins ${installedPackageMetadata.name} to ${spec}`),
         })
+    })
+
+    it('accepts a local-archive pin pnpm links and its lockfile resolves, and no other linked pin', async () => {
+        const root = await fixture()
+        const spec = 'file:/synthetic/archives/cockpit.tgz'
+        const name = installedPackageMetadata.name
+        const manifest = `${JSON.stringify({ private: true, scripts: {
+            'cockpit:setup': 'cockpit setup --config cockpit.toml', 'cockpit:sync': 'cockpit sync --config cockpit.toml',
+            'cockpit:check': 'cockpit check --config cockpit.toml',
+        }, devDependencies: { [name]: spec } }, null, 2)}\n`
+        await writeFile(join(root, 'package.json'), manifest)
+        const store = join(root, 'node_modules/.pnpm/cockpit-file/node_modules', name)
+        await mkdir(store, { recursive: true })
+        await writeFile(join(store, 'package.json'), await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+        const installed = join(root, 'node_modules', name)
+        await mkdir(resolve(installed, '..'), { recursive: true })
+        await symlink(store, installed)
+        const configPath = join(root, 'cockpit.toml')
+        // The importer keeps the pin as written and resolves it to a path relative to the lockfile.
+        const lock = (specifier: string) => `lockfileVersion: '9.0'\nimporters:\n  .:\n    devDependencies:\n      '${name}':\n        specifier: ${specifier}\n        version: file:../archives/cockpit.tgz\n`
+            + `packages:\n  '${name}@file:../archives/cockpit.tgz':\n    version: ${installedPackageMetadata.version}\n`
+        await writeFile(join(root, 'pnpm-lock.yaml'), lock(spec))
+        expect(await initializeTeamMetadata(configPath)).toMatchObject({ kind: 'complete' })
+        expect(await readFile(join(root, 'package.json'), 'utf8')).toBe(manifest)
+        expect(await validateTeamMetadata(configPath)).toMatchObject({ kind: 'complete' })
+
+        await writeFile(join(root, 'pnpm-lock.yaml'), lock('file:/synthetic/archives/another.tgz'))
+        expect(await validateTeamMetadata(configPath)).toMatchObject({ kind: 'refusal', code: 'COCKPIT_VERSION_MISMATCH',
+            message: expect.stringMatching(/pnpm-lock\.yaml and node_modules do not resolve .*run pnpm install/) })
+        // npm's lockfile describes no link: a linked copy beside it is `npm link`, not this pin.
+        await rm(join(root, 'pnpm-lock.yaml'))
+        await writeFile(join(root, 'package-lock.json'), `${JSON.stringify({ lockfileVersion: 3, packages: {
+            '': { devDependencies: { [name]: spec } },
+            [`node_modules/${name}`]: { version: installedPackageMetadata.version, resolved: spec },
+        } }, null, 2)}\n`)
+        expect(await validateTeamMetadata(configPath)).toMatchObject({ kind: 'refusal', code: 'COCKPIT_VERSION_MISMATCH' })
     })
 
     it('accepts a local-archive pin installed separately from the running copy of the same package', async () => {

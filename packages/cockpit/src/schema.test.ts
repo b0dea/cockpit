@@ -17,6 +17,15 @@ const provenance = { source: 'overlay.toml', observed_on: '2026-09-26', kind: 'd
 const publishedCockpitValidator = compileDraft04Schema(JSON.parse(renderCockpitSchema()))
 
 describe('bounded exact project command declarations', () => {
+    it('accepts closed MCP tool lists and rejects wildcard or duplicate capabilities', () => {
+        const schema = CockpitConfig.shape.mcp
+        expect(schema.parse({ allowed_tools: { reports: [], notes: ['get_record', 'search.v2'] } }).allowed_tools)
+            .toEqual({ reports: [], notes: ['get_record', 'search.v2'] })
+        for (const tools of [['*'], ['read_*'], ['read', 'read'], [''], ['read record'], Array(257).fill('read')]) {
+            expect(schema.safeParse({ allowed_tools: { reports: tools } }).success, JSON.stringify(tools)).toBe(false)
+        }
+    })
+
     it('requires sibling instruction pointers to be explicitly opted in', () => {
         const sibling = { slug: 'app', dir: 'app', mount: 'always', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic source' }
         expect(Sibling.parse(sibling).instruction_pointer).toBe(false)

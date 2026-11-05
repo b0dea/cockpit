@@ -22,7 +22,7 @@ import {
     type ExecutionStep,
 } from './contract.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
-import { resolveDockerExecutable, resolveGitExecutable } from './executable.js'
+import { observationEnvironment, resolveDockerExecutable, resolveGitExecutable } from './executable.js'
 import { inspectMachineStacksForDoctor, type OwnCheckout } from './stack-inventory.js'
 import { createGitObservationStep, observeGit, observeRunningCheckout } from './git-observation.js'
 import { inspectProjectReadiness } from './readiness-composition.js'
@@ -37,7 +37,7 @@ import {
     revalidatePortLeaseProjection,
 } from './ports.js'
 import { generatedApplicationProjection } from './generated-application/authorities.js'
-import { checkGeneratedEnvironment } from './generated-application/check.js'
+import { checkGeneratedEnvironment, prepareGeneratedEnvironmentCurrentness } from './generated-application/check.js'
 import { observeGeneratedApplicationSurfaces } from './generated-application/surface-observation.js'
 import { syncGeneratedEnvironment } from './generated-application/sync.js'
 import {
@@ -58,6 +58,7 @@ import {
 import { observeConfiguration, readState, selectStateRoot, type StateNamespace } from './state.js'
 import { observeTemplateHealth } from './templates.js'
 import { inspectServedSiblings } from './application/siblings.js'
+import { loadServedSiblings, servedPath } from './sibling-checkouts.js'
 import { observeServedCheckouts } from './sibling-observation.js'
 
 interface HealthCommandCompositionInput {
@@ -253,7 +254,7 @@ function producers(input: {
         const session = await runtimeSession
         if (runningStack && !session) return undefined
         const checked = await checkGeneratedEnvironment({ configPath: input.config.result.source.path },
-            { execute: input.execute })
+            { execute: input.execute, observationEnv: input.env })
         if (checked.kind !== 'complete') checkRefusal = checked.diagnostics.filter(({ severity }) => severity === 'error') as readonly EnvironmentDiagnostic[]
         return checked.kind === 'complete' ? generatedApplicationProjection(checked.result.application) : undefined
     })()
@@ -376,14 +377,21 @@ function producers(input: {
                 observeRuntimeMountMaterialization({ topology: session.readiness.topology,
                     services: [...services.values()], observedAt: observedAt() })]
         },
-        envSchema: async () => await observeEnvSchemas({
-            stackId: input.stack,
-            siblings: input.config.result.config.sibling.map((sibling) => ({
-                slug: sibling.slug, dir: sibling.dir, root: resolve(siblingRoot, sibling.dir),
-            })),
-            env: input.env,
-            timeoutMs: input.timeoutMs,
-        }, { execute: input.execute }),
+        envSchema: async () => {
+            const cockpitRoot = dirname(input.config.result.source.path)
+            const config = input.config.result.config
+            // The schema that counts is in the checkout `cockpit use` serves: the stack runs from it.
+            const served = await loadServedSiblings(cockpitRoot, config)
+            if (served.kind === 'refusal') throw new RefusalError(served.diagnostic.message)
+            return await observeEnvSchemas({
+                stackId: input.stack,
+                cockpit: { root: cockpitRoot, name: config.cockpit.name },
+                siblings: config.sibling.map((sibling) => ({ slug: sibling.slug, root: servedPath(served.siblings, sibling.slug) })),
+                git: input.git,
+                env: input.env,
+                timeoutMs: input.timeoutMs,
+            }, { execute: input.execute })
+        },
         state: async () => observeConfiguration({
             path: input.config.result.source.path, stackId: input.stack, observedAt: observedAt(),
         }),
@@ -450,31 +458,47 @@ async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, s
         ...evaluatorUnavailable(`this cockpit has work orders, but no evaluator work.evaluators lists is on PATH to run work grade and cockpit grade: ${missing.map(row => row.message).join('; ')}`) }, ...closed]
 }
 
+/** Doctor's and preflight's observations only read, so their subprocesses exclude relative bins without changing harness or evaluator discovery. */
 export function createHealthCommandAdapters(
     rawInput: HealthCommandCompositionInput,
     execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
 ): HealthCommandAdapterComposition {
-    const input = captureInput(rawInput)
+    const inherited = captureInput(rawInput)
+    const search = inherited ? observationEnvironment(inherited.env) : undefined
+    const input = inherited && search?.state === 'available' ? { ...inherited, env: search.env } : undefined
+    const searchRefusal = search?.state === 'unavailable' ? search.reason : undefined
     let selectedNamespace: StateNamespace | undefined
     let loadedConfig: LoadedCockpitConfigResult | undefined
     let selectedOwn: (OwnCheckout & Readonly<{ configPath: string }>) | undefined
     const load: HealthCommandAdapterComposition['load'] = async (command, issue, refuse, purpose) => {
         const requestedPath = commandConfigPath(command)
-        if (!input || typeof execute !== 'function' || typeof issue !== 'function'
-            || requestedPath !== input.configPath) return undefined
-        const loaded = await loadCockpitConfig(input.configPath)
-        // A malformed cockpit.toml is the user's to fix, so the loader's own diagnostics reach them.
+        const sourceInput = input ?? inherited
+        if (!sourceInput || typeof execute !== 'function' || typeof issue !== 'function'
+            || requestedPath !== sourceInput.configPath) return undefined
+        const loaded = await loadCockpitConfig(sourceInput.configPath)
+        // The configuration's own error comes first; an invalid PATH cannot make a missing file less specific.
         if (loaded.kind === 'refusal') return refuse?.(loaded.diagnostics)
         if (loaded.kind !== 'complete') return undefined
-        loadedConfig = loaded
         // Health is about a running stack or a machine floor; with neither declared it is not declared,
-        // never healthy, and preflight refuses. Doctor still checks what such a cockpit does depend on:
-        // its Git working tree, its siblings and its surfaces.
+        // never healthy, and preflight refuses, whatever PATH holds, because it observes nothing and
+        // a standalone init continues on that answer. Doctor still checks what such a cockpit does
+        // depend on: its Git working tree, its siblings and its surfaces.
         const notDeclared = declaresNothingToRun(loaded.result.config.environment)
             ? runtimeNotDeclared(loaded.result.source.path) : undefined
         if (notDeclared && purpose !== 'doctor') return refuse?.([notDeclared])
+        if (searchRefusal) return refuse?.([{
+            severity: 'error', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
+            message: `${purpose}'s observation tools cannot be selected: ${searchRefusal}`, target: 'PATH',
+            fix: `put the required observation tools in absolute PATH directories and remove noncanonical absolute entries, then rerun ${purpose}`,
+        }])
+        if (!input) return undefined
+        loadedConfig = loaded
         const git = await resolveGitExecutable(input.env)
-        if (git.state !== 'available') return undefined
+        if (git.state !== 'available') return refuse?.([{
+            severity: 'error', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
+            message: `${purpose} cannot find Git to observe the checkout: ${git.reason}`, target: 'PATH',
+            fix: `put Git in an absolute PATH directory, then rerun ${purpose}`,
+        }])
         const checkout = await checkoutProjection(input, loaded, git.value)
         if (checkout && 'failed' in checkout) return refuse?.([...notDeclared ? [notDeclared] : [], checkout.failed])
         if (!checkout || process.platform !== 'darwin' && process.platform !== 'linux') return undefined
@@ -608,7 +632,7 @@ export function createHealthCommandAdapters(
         try {
             const outcome = await syncGeneratedEnvironment(
                 { configPath: input.configPath, dryRun: true },
-                { execute },
+                { execute, observationEnv: input.env },
             )
             if (outcome.kind !== 'complete') {
                 const diagnostic = outcome.diagnostics[0]
@@ -642,11 +666,11 @@ export function createHealthCommandAdapters(
         }
     }
     // Codex skips a project hook nobody on this machine has trusted, so doctor says so.
-    const inspectHookTrust = input ? () => inspectCodexHookTrust({ root: dirname(input.configPath), env: input.env })
+    const inspectHookTrust = inherited ? () => inspectCodexHookTrust({ root: dirname(inherited.configPath), env: inherited.env })
         : undefined
-    const inspectEvaluator = input ? (evaluators: readonly EvaluatorTool[]) => inspectWorkEvaluator(dirname(input.configPath), input.env, evaluators) : undefined
-    const inspectReadiness = input ? () => inspectProjectReadiness({ root: dirname(input.configPath), configPath: input.configPath,
-        checkRoot: false, env: input.env, timeoutMs: input.timeoutMs }, execute) : undefined
+    const inspectEvaluator = inherited ? (evaluators: readonly EvaluatorTool[]) => inspectWorkEvaluator(dirname(inherited.configPath), inherited.env, evaluators) : undefined
+    const inspectReadiness = inherited ? () => inspectProjectReadiness({ root: dirname(inherited.configPath), configPath: inherited.configPath,
+        checkRoot: false, env: inherited.env, ...(input ? { observationEnv: input.env } : {}), timeoutMs: inherited.timeoutMs }, execute) : undefined
     // Read after load, which selects this cockpit's state namespace; before that there is no state root to read.
     const readUnreadableState: NonNullable<HealthCommandAdapterComposition['readUnreadableState']> = async () => {
         if (!selectedNamespace) return { kind: 'complete', skipped: [] }
@@ -659,7 +683,10 @@ export function createHealthCommandAdapters(
         const reuse = loaded ?? loadedConfig
         return inspectServedSiblings({ configPath: input.configPath, env: input.env, ...(reuse ? { loaded: reuse } : {}) }, { execute })
     } : undefined
+    const inspectGeneratedCurrentness = input ? () => prepareGeneratedEnvironmentCurrentness({ configPath: input.configPath },
+        { execute, observationEnv: input.env }) : undefined
     return { load, inspectSurfaceOverrides, ...(inspectHookTrust ? { inspectHookTrust } : {}), ...(inspectServed ? { inspectServedSiblings: inspectServed } : {}),
+        ...(inspectGeneratedCurrentness ? { inspectGeneratedCurrentness } : {}),
         ...(inspectEvaluator ? { inspectEvaluator } : {}), ...(inspectReadiness ? { inspectReadiness } : {}), readUnreadableState, inspectStacks,
         execute: (step: ExecutionStep) => execute(step) }
 }

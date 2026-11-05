@@ -6,8 +6,10 @@ import { parseDocument } from 'yaml'
 import { INHERITED_TOOL_ENVIRONMENT, snapshotJson, tryParseJson } from '../environment/contract.js'
 import { reservedPathSegment, SURFACE_TARGETS, type SurfaceSourceFile, type SurfaceTarget } from './contract.js'
 import { harnessFact } from './harness-registry.js'
+import { McpAllowedTools } from '../schema.js'
 
 const EnvironmentName = z.string().regex(/^[A-Z][A-Z0-9_]*$/).max(128)
+const EnvironmentNames = z.array(EnvironmentName).max(128).refine(names => new Set(names).size === names.length)
 const ServerName = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/).max(128)
 const RelativePath = z.string().min(1).max(4096).refine(path => !isAbsolute(path)
     && !/[\\\x00-\x1f\x7f]/.test(path) && !/^[a-z]:/i.test(path)
@@ -28,9 +30,11 @@ const StdioDeclaration = z.object({
     command: Command,
     args: z.array(Argument).max(256),
     cwd: WorkingDirectory,
-    envNames: z.array(EnvironmentName).max(128).refine(names => new Set(names).size === names.length),
+    envNames: EnvironmentNames,
+    optionalEnvNames: EnvironmentNames.optional(),
     source: Source,
-}).strict()
+}).strict().refine(({ envNames, optionalEnvNames = [] }) => envNames.length + optionalEnvNames.length <= 128
+    && optionalEnvNames.every(name => !envNames.includes(name)))
 
 const LOOPBACK_HOSTS = /^(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])$/
 const CREDENTIAL_NAME = /^(?:api[-_]?key|token|access[-_]?token|password|secret|authorization|credential)$/i
@@ -83,6 +87,7 @@ const Input = z.object({
     cockpitDirectory: WorkingDirectory,
     declarations: z.array(Declaration).max(256),
     approved: z.record(ServerName, Sha256).refine(approved => Object.keys(approved).length <= 256),
+    allowedTools: McpAllowedTools.default({}),
     targets: z.array(z.enum(SURFACE_TARGETS)).min(1).max(SURFACE_TARGETS.length).refine(targets => new Set(targets).size === targets.length),
 }).strict()
 
@@ -111,14 +116,14 @@ interface McpLaunch {
 
 export type McpServer = Readonly<{
     name: string; command: string; args: readonly string[]; cwd: string
-    envNames: readonly string[]; enabled: boolean; sources: readonly McpSource[]
+    envNames: readonly string[]; optionalEnvNames?: readonly string[]; enabled: boolean; sources: readonly McpSource[]; allowedTools?: readonly string[]
 }> | Readonly<{
     name: string; transport: 'http'; url: string; headers: Readonly<Record<string, string>>; helper: McpLaunch | null
-    envNames: readonly string[]; enabled: boolean; sources: readonly McpSource[]
+    envNames: readonly string[]; enabled: boolean; sources: readonly McpSource[]; allowedTools?: readonly string[]
 }>
 
-export type McpHarnessServer = Readonly<{ name: string; command: string; args: readonly string[]; enabled: boolean }>
-    | Readonly<{ name: string; url: string; headers: Readonly<Record<string, string>>; headersHelper: string | null; enabled: boolean }>
+export type McpHarnessServer = Readonly<{ name: string; command: string; args: readonly string[]; enabled: boolean; allowedTools?: readonly string[] }>
+    | Readonly<{ name: string; url: string; headers: Readonly<Record<string, string>>; headersHelper: string | null; enabled: boolean; allowedTools?: readonly string[] }>
 
 export interface McpCollection {
     readonly servers: readonly McpServer[]
@@ -149,8 +154,8 @@ function quote(value: string): string {
 // resolves `..` from the real root, against which the relative path was computed.
 // A headers helper runs through the same kind of wrapper: Claude Code and Codex start it with
 // `sh -c` from the directory the agent was launched in, and it prints the headers on stdout.
-function wrapper(launch: McpLaunch, envNames: readonly string[], cockpitDirectory: string): string {
-    const inherited = ['PATH', ...INHERITED_TOOL_ENVIRONMENT].filter(name => !envNames.includes(name))
+function wrapper(launch: McpLaunch, envNames: readonly string[], cockpitDirectory: string, optionalEnvNames: readonly string[] = []): string {
+    const inherited = ['PATH', ...INHERITED_TOOL_ENVIRONMENT].filter(name => !envNames.includes(name) && !optionalEnvNames.includes(name))
     return [
         '#!/bin/sh',
         'set -eu',
@@ -159,7 +164,7 @@ function wrapper(launch: McpLaunch, envNames: readonly string[], cockpitDirector
         '[ -f "$executable" ] && [ -x "$executable" ] || { printf \'%s\\n\' \'MCP_EXECUTABLE_UNAVAILABLE\' >&2; exit 2; }',
         // `npx`, `uvx` and most npm servers are `#!/usr/bin/env node` scripts: without PATH they
         // cannot start. The rest of the inherited set carries caches and locale, never a credential.
-        `exec /usr/bin/env -i ${inherited.map(name => `\${${name}+"${name}=$${name}"}`).join(' ')}`
+        `exec /usr/bin/env -i ${[...inherited, ...optionalEnvNames].map(name => `\${${name}+"${name}=$${name}"}`).join(' ')}`
             + `${envNames.map(name => ` ${name}="\${${name}?required environment name ${name} is unset}"`).join('')} "$executable"${launch.args.map(arg => ` ${quote(arg)}`).join('')}`,
         '',
     ].join('\n')
@@ -170,7 +175,7 @@ function mcpWrapperPath(name: string, kind: 'server' | 'headers'): string {
     return `.cockpit/mcp/${sha256Hex(name)}${kind === 'headers' ? '.headers' : ''}.sh`
 }
 
-type McpIdentity = Pick<McpStdioDeclaration, 'command' | 'args' | 'cwd' | 'envNames'>
+type McpIdentity = Pick<McpStdioDeclaration, 'command' | 'args' | 'cwd' | 'envNames' | 'optionalEnvNames'>
     | Pick<McpHttpDeclaration, 'transport' | 'url' | 'headers' | 'helper'>
 
 function isHttp<T extends object>(value: T): value is Extract<T, { transport: 'http' }> {
@@ -191,8 +196,10 @@ function identity(declaration: McpIdentity, cockpitDirectory: string): string {
             headers: Object.entries(declaration.headers).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0),
             helper: helper && { command: helper.command, args: helper.args, cwd: relative(cockpitDirectory, helper.cwd) || '.' } })
     }
-    const stdio = declaration as Pick<McpStdioDeclaration, 'command' | 'args' | 'cwd' | 'envNames'>
-    return JSON.stringify({ command: stdio.command, args: stdio.args, cwd: relative(cockpitDirectory, stdio.cwd) || '.', envNames: [...stdio.envNames].sort() })
+    const stdio = declaration as Pick<McpStdioDeclaration, 'command' | 'args' | 'cwd' | 'envNames' | 'optionalEnvNames'>
+    const optionalEnvNames = [...(stdio.optionalEnvNames ?? [])].sort()
+    return JSON.stringify({ command: stdio.command, args: stdio.args, cwd: relative(cockpitDirectory, stdio.cwd) || '.', envNames: [...stdio.envNames].sort(),
+        ...(optionalEnvNames.length > 0 ? { optionalEnvNames } : {}) })
 }
 
 /** The digest `[mcp.approved]` records for a server, so a changed declaration is no longer approved. */
@@ -204,7 +211,7 @@ export function collectMcpDeclarations(input: unknown): McpCollectionOutcome {
     const captured = snapshotJson(input)
     const parsed = Input.safeParse(captured)
     if (!parsed.success) return refuse('MCP_INPUT_INVALID', 'MCP declarations, approvals and targets must be bounded canonical data')
-    const { approved, cockpitDirectory } = parsed.data
+    const { approved, allowedTools, cockpitDirectory } = parsed.data
     const collected = new Map<string, { declaration: McpDeclaration; sources: McpSource[] }>()
     for (const declaration of parsed.data.declarations) {
         const prior = collected.get(declaration.name)
@@ -221,9 +228,17 @@ export function collectMcpDeclarations(input: unknown): McpCollectionOutcome {
             if (!prior.sources.some(source => JSON.stringify(source) === JSON.stringify(declaration.source))) prior.sources.push(declaration.source)
         } else collected.set(declaration.name, { declaration, sources: [declaration.source] })
     }
+    for (const name of Object.keys(allowedTools)) {
+        if (!collected.has(name)) return refuse('MCP_DECLARATION_INVALID', `Tool restrictions name undeclared MCP server ${name}; declare it before restricting its tools`)
+        // Native names join server and tool with __; overlapping server prefixes cannot identify a call uniquely.
+        if ([...collected.keys()].some(other => other !== name && (`${other}__`.startsWith(`${name}__`) || `${name}__`.startsWith(`${other}__`)))) {
+            return refuse('MCP_DECLARATION_INVALID', `Restricted MCP server ${name} has an ambiguous native tool namespace; rename the overlapping server`)
+        }
+    }
     const digests = new Map([...collected].map(([name, { declaration }]) => [name, mcpApprovalDigest(declaration, cockpitDirectory)]))
     const servers = [...collected.values()].map(({ declaration, sources }): McpServer => {
         const shared = {
+            ...(Object.hasOwn(allowedTools, declaration.name) ? { allowedTools: [...allowedTools[declaration.name]!].sort() } : {}),
             enabled: Object.hasOwn(approved, declaration.name) && approved[declaration.name] === digests.get(declaration.name),
             sources: sources.sort((left, right) => JSON.stringify(left) < JSON.stringify(right) ? -1 : JSON.stringify(left) > JSON.stringify(right) ? 1 : 0),
         }
@@ -231,7 +246,8 @@ export function collectMcpDeclarations(input: unknown): McpCollectionOutcome {
             ? { name: declaration.name, transport: 'http', url: declaration.url, headers: declaration.headers, helper: declaration.helper,
                 envNames: headerEnvironmentNames(declaration.headers), ...shared }
             : { name: declaration.name, command: declaration.command, args: declaration.args, cwd: declaration.cwd,
-                envNames: [...declaration.envNames].sort(), ...shared }
+                envNames: [...declaration.envNames].sort(),
+                ...(declaration.optionalEnvNames?.length ? { optionalEnvNames: [...declaration.optionalEnvNames].sort() } : {}), ...shared }
     }).sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0)
     const diagnostics: McpDiagnostic[] = servers.filter(server => !server.enabled).map(server => ({
         code: 'MCP_NOT_APPROVED', server: server.name, sources: server.sources, sha256: digests.get(server.name)!,
@@ -243,6 +259,7 @@ export function collectMcpDeclarations(input: unknown): McpCollectionOutcome {
     // A tool that cannot carry a remote server's credential gets nothing for it: written without
     // its headers, the server would start, fail to authenticate and still read as configured.
     const writes = (server: McpServer, target: SurfaceTarget): boolean => {
+        if (server.allowedTools !== undefined && harnessFact(target).mcpToolRestriction.mechanism === 'unavailable') return false
         if (!isHttp(server)) return true
         const support = harnessFact(target).remoteMcp
         return support.state !== 'unavailable' && (Object.keys(server.headers).length === 0 || support.headers)
@@ -253,7 +270,9 @@ export function collectMcpDeclarations(input: unknown): McpCollectionOutcome {
         const skipped = targets.filter(target => !writes(server, target))
         if (skipped.length > 0) diagnostics.push({
             code: 'MCP_TRANSPORT_UNAVAILABLE', server: server.name, sources: server.sources, targets: skipped,
-            message: `MCP server is not written for ${skipped.join(', ')}: ${skipped.map(target => harnessFact(target).remoteMcp.provenance).filter((reason, index, all) => all.indexOf(reason) === index).join('; ')}`,
+            message: `MCP server is not written for ${skipped.join(', ')}: ${skipped.map(target => server.allowedTools !== undefined && harnessFact(target).mcpToolRestriction.mechanism === 'unavailable'
+                ? `${harnessFact(target).mcpToolRestriction.provenance}. Use Claude Code or Codex for this server; keep its allowed_tools restriction until the other harness has a measured enforcement mechanism`
+                : harnessFact(target).remoteMcp.provenance).filter((reason, index, all) => all.indexOf(reason) === index).join('; ')}`,
         })
     }
     const wrappers: { path: string; bytes: string; sha256: string }[] = []
@@ -262,7 +281,7 @@ export function collectMcpDeclarations(input: unknown): McpCollectionOutcome {
         const launch = isHttp(server) ? server.helper : server
         if (launch === null || !targets.some(target => writes(server, target))) continue
         const path = mcpWrapperPath(server.name, isHttp(server) ? 'headers' : 'server')
-        const bytes = wrapper(launch, isHttp(server) ? [] : server.envNames, cockpitDirectory)
+        const bytes = wrapper(launch, isHttp(server) ? [] : server.envNames, cockpitDirectory, isHttp(server) ? [] : server.optionalEnvNames)
         wrappers.push({ path, bytes, sha256: sha256Hex(bytes) })
         launchers.set(server.name, path)
     }
@@ -270,8 +289,10 @@ export function collectMcpDeclarations(input: unknown): McpCollectionOutcome {
         servers, wrappers,
         harnesses: targets.map(target => ({ target, servers: servers.filter(server => writes(server, target)).map((server): McpHarnessServer => isHttp(server)
             ? { name: server.name, url: server.url, headers: server.headers,
-                headersHelper: launchers.has(server.name) ? `/bin/sh ${launchers.get(server.name)}` : null, enabled: server.enabled }
-            : { name: server.name, command: '/bin/sh', args: [launchers.get(server.name)!], enabled: server.enabled }) })),
+                headersHelper: launchers.has(server.name) ? `/bin/sh ${launchers.get(server.name)}` : null, enabled: server.enabled,
+                ...(server.allowedTools === undefined ? {} : { allowedTools: server.allowedTools }) }
+            : { name: server.name, command: '/bin/sh', args: [launchers.get(server.name)!], enabled: server.enabled,
+                ...(server.allowedTools === undefined ? {} : { allowedTools: server.allowedTools }) }) })),
     }
     const outcome = snapshotJson({ kind: 'complete', result, diagnostics })
     return outcome ? outcome as unknown as McpCollectionOutcome : refuse('MCP_INPUT_INVALID', 'Canonical MCP output exceeds the bounded data budget')
@@ -281,6 +302,7 @@ const NativeServer = z.object({
     type: z.literal('stdio').optional(), command: Command,
     args: z.array(Argument).max(256).default([]), cwd: RelativePath.or(z.literal('.')).optional(),
     env: z.record(EnvironmentName, z.string().max(128)).default({}),
+    optionalEnv: EnvironmentNames.optional(),
 }).strict()
 // Claude Code's `.mcp.json` spelling of a remote server; values are checked one by one below so a
 // refusal can say which part is wrong without repeating it.
@@ -290,8 +312,8 @@ const NativeHttpServer = z.object({
 }).strict()
 // Absence is inferred only from cockpit's neutral shape; other source forms retain generator validation.
 const GeneratedServer = z.union([
-    NativeServer.extend({ cwd: WorkingDirectory.optional(), disabled: z.boolean().optional() }),
-    NativeHttpServer.extend({ http_headers_helper: z.string().min(1).max(4096).optional(), disabled: z.boolean().optional() }),
+    NativeServer.extend({ cwd: WorkingDirectory.optional(), disabled: z.boolean().optional(), enabled_tools: z.array(z.string()).max(256).optional() }),
+    NativeHttpServer.extend({ http_headers_helper: z.string().min(1).max(4096).optional(), disabled: z.boolean().optional(), enabled_tools: z.array(z.string()).max(256).optional() }),
 ])
 const GeneratedServers = z.record(ServerName, GeneratedServer)
 const TargetServers = z.object({ mcpServers: z.record(ServerName, GeneratedServer.nullable()).optional() }).strict()
@@ -373,10 +395,16 @@ export function parseMcpDeclarationFile(input: unknown): McpParseOutcome {
         if (Object.entries(server.env).some(([key, reference]) => reference !== `\${${key}}`)) {
             return refuse('MCP_DECLARATION_INVALID', 'MCP environment entries must reference their same declared environment name')
         }
+        const envNames = Object.keys(server.env).sort()
+        const optionalEnvNames = [...(server.optionalEnv ?? [])].sort()
+        if (envNames.length + optionalEnvNames.length > 128 || optionalEnvNames.some(name => envNames.includes(name))) {
+            return refuse('MCP_DECLARATION_INVALID', 'MCP required and optional environment names must be disjoint and contain at most 128 names together')
+        }
         const cwd = resolve(workingDirectory, server.cwd ?? '.')
         const offset = relative(workingDirectory, cwd)
         if (offset === '..' || offset.startsWith('../') || isAbsolute(offset)) return refuse('MCP_DECLARATION_INVALID', 'MCP working directory escapes its declared sibling')
-        declarations.push({ name, command: server.command, args: server.args, cwd, envNames: Object.keys(server.env).sort(), source })
+        declarations.push({ name, command: server.command, args: server.args, cwd, envNames,
+            ...(optionalEnvNames.length > 0 ? { optionalEnvNames } : {}), source })
     }
     const captured = snapshotJson({ kind: 'complete', declarations })
     return captured ? captured as unknown as McpParseOutcome : refuse('MCP_DECLARATION_INVALID', 'MCP declarations exceed the bounded data budget')

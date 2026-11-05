@@ -56,6 +56,7 @@ export type DoctorSurfaceOverrideInspection =
     | DoctorSurfaceOverrideInspectionRefusal
 
 export interface DoctorCommandAdapters extends ObservationCommandAdapters {
+    readonly inspectGeneratedCurrentness?: () => Promise<GeneratedEnvironmentCurrentness>
     readonly inspectSurfaceOverrides?: (configPath: string) => Promise<DoctorSurfaceOverrideInspection>
     readonly discoverReleaseFreshness?: () => Promise<ReleaseFreshness>
     /** Warnings when an agent tool on this machine would skip the generated guard hook. */
@@ -297,7 +298,7 @@ export async function runDoctor(
         return loaded.kind === 'complete' && loaded.result.config.surfaces.tools.includes('codexcli')
             ? adapters.inspectHookTrust?.() ?? [] : []
     }
-    const currentness = prepareGeneratedEnvironmentCurrentness(input)
+    const currentness = adapters.inspectGeneratedCurrentness?.() ?? prepareGeneratedEnvironmentCurrentness(input)
     const mcpStartup = async (): Promise<readonly EnvironmentDiagnostic[]> => adapters.inspectMcpStartup?.((await currentness).mcpServers) ?? []
     // The machine-wide state reads are independent of the configuration checks, so they run beside them.
     const statePending = adapters.readUnreadableState?.()

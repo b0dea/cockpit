@@ -32,6 +32,10 @@ export function renderCockpitSchema(): string {
     const browser = properties.browser as JsonSchema
     const browserProperties = browser.properties as Record<string, JsonSchema>
     const testing = properties.testing as JsonSchema
+    const mcpProperties = properties.mcp.properties as Record<string, JsonSchema>
+    const toolLists = mcpProperties.allowed_tools
+    toolLists.maxProperties = 256
+    for (const list of Object.values(toolLists.patternProperties as Record<string, JsonSchema>)) list.uniqueItems = true
     const postureRequirement = environmentProperties.posture_requirements.items as JsonSchema
     postureRequirement.anyOf = [{ required: ['addressing'] }, { required: ['authentication'] }]
 

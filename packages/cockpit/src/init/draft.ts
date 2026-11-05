@@ -756,7 +756,7 @@ const QUESTION_WHY = {
     ports: 'no source establishes the host-published base port map; an explicit empty map means none',
     policies: 'declare one row per toolchain and lockfile with any build or test command the guard should allow',
     testData: 'answer with exactly { seeded_data: boolean, signed_in_users: boolean } to state whether this local setup needs seeded data and signed-in users; each false field records a precise not-declared decision, while true keeps the product-owned declaration work visible without claiming that data or authentication exists',
-    composeFiles: 'list the Compose files, relative to the cockpit root, that run the product, such as ["compose.yml"]; cockpit runs them as written. A small app with no Compose file gets a starting one, which it then owns, from npx --no cockpit init <cockpit root> --scaffold-compose <app dir> --port <port>',
+    composeFiles: 'list the Compose files, relative to the cockpit root, that run the product, such as ["compose.yml"]; cockpit runs them as written. Answer [] to defer runtime adoption and publish harness surfaces first, even when the product is runnable. A small app with no Compose file gets a starting one, which it then owns, from npx --no cockpit init <cockpit root> --scaffold-compose <app dir> --port <port>',
     machine: 'declare the machine floor the product needs from the container runtime: runtime_memory_mb, runtime_cpus, free_disk_mb and cold_start_seconds; init proposes memory and CPUs from the Compose file\'s service limits, or from this machine\'s measured runtime where no limit records them; nothing records free disk or the cold start time, so a person states those, or the setup agent marks its choice "agent-default"',
     posture: `preflight refuses a runtime until its posture is declared: addressing is "port" (localhost:<port>) or "hostname"; authentication is "none" (no sign-in), "bypassed" (sign-in turned off locally) or "real"; posture_requirements names what depends on them, each tagged with the posture it needs. For a plain localhost stack with no sign-in, answer ${JSON.stringify({ addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] })}`,
     testing: 'declare the product\'s test commands as [testing] stages and gates: a targeted gate agents run while iterating and a full gate they run before handing back shared changes; init proposes them from test entry points it finds on disk. Answer "none" when the product has no tests yet: no work can then be graded PASS, and doctor warns until gates are declared',
@@ -785,9 +785,9 @@ const runnableWhy = (gaps: EstateClassificationResult['gaps']) =>
     `resolve the exact current runnable gaps: ${gaps.map(gap => `${gap.field} from ${gap.source}`).join('; ')}`
 
 /**
- * The questions a greenfield estate interview asks, in order. Init lists them before any answer
+ * The questions a greenfield estate interview can ask, in order. Init lists them before any answer
  * exists so an unattended caller can prepare every answer in one pass; the loop in
- * completeConfigurationDocument asks the same questions in the same order.
+ * completeConfigurationDocument omits machine and posture when the Compose answer is empty.
  */
 export function plannedGreenfieldQuestions(input: Readonly<{
     root: string
@@ -1130,6 +1130,7 @@ async function completeConfigurationDocument(
     let testData: Readonly<{ seeded_data: boolean; signed_in_users: boolean; provenance: AnswerProvenance }> | undefined
     let testing: Testing | undefined
     let testingNone: AnswerProvenance | undefined
+    let runtimeDeferred: AnswerProvenance | undefined
     if (!surfacesOnly) {
         const policyQuestion = configurationQuestion(context, 'environment.install_policies', QUESTION_WHY.policies)
         const policyRead = readConfigurationAnswer(configuration.answers, answerIndex, policyQuestion)
@@ -1169,12 +1170,10 @@ async function completeConfigurationDocument(
         if (composeRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
             attributions, gaps: [] }, destination, composeQuestion)
         if (composeRead.kind === 'refusal') return composeRead.outcome
-        const parsedCompose = Array.isArray(composeRead.value) && composeRead.value.length > 0
-            ? CockpitConfig.shape.environment.safeParse({ ...defaults.environment,
-                install_policies: parsedPolicies.data, compose_files: composeRead.value }) : undefined
-        if (!parsedCompose?.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-            `the operator-confirmed Compose files do not match the schema: ${parsedCompose
-                ? issueSummary(parsedCompose.error) : 'compose_files must list at least one path'}`,
+        const parsedCompose = CockpitConfig.shape.environment.safeParse({ ...defaults.environment,
+            install_policies: parsedPolicies.data, compose_files: composeRead.value })
+        if (!parsedCompose.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+            `the operator-confirmed Compose files do not match the schema: ${issueSummary(parsedCompose.error)}`,
             composeQuestion.field)
         environment = parsedCompose.data
         const defaultIndex = attributions.findIndex(row => row.target === 'environment.compose_files')
@@ -1182,42 +1181,45 @@ async function completeConfigurationDocument(
         record('environment.compose_files', composeRead)
         answerIndex += 1
 
-        // Every runtime command refuses a declared runtime with no floor, so a configuration that
-        // declares one is incomplete until it is answered. The interview proposes memory and CPUs,
-        // but free disk and the cold start time have no source, so the answer is never derived.
-        const machineQuestion = configurationQuestion(context, 'environment.machine', QUESTION_WHY.machine)
-        const machineRead = readConfigurationAnswer(configuration.answers, answerIndex, machineQuestion)
-        if (machineRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
-            attributions, gaps: [] }, destination, machineQuestion)
-        if (machineRead.kind === 'refusal') return machineRead.outcome
-        const parsedMachine = MachineFloor.safeParse(machineRead.value)
-        if (!parsedMachine.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-            `the operator-confirmed machine floor does not match the schema: ${issueSummary(parsedMachine.error)}`, machineQuestion.field)
-        environment = { ...environment, machine: parsedMachine.data }
-        record('environment.machine', machineRead)
-        answerIndex += 1
+        if (environment.compose_files.length === 0) runtimeDeferred = composeRead.provenance
+        else {
+            // Every runtime command refuses a declared runtime with no floor, so a configuration that
+            // declares one is incomplete until it is answered. The interview proposes memory and CPUs,
+            // but free disk and the cold start time have no source, so the answer is never derived.
+            const machineQuestion = configurationQuestion(context, 'environment.machine', QUESTION_WHY.machine)
+            const machineRead = readConfigurationAnswer(configuration.answers, answerIndex, machineQuestion)
+            if (machineRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
+                attributions, gaps: [] }, destination, machineQuestion)
+            if (machineRead.kind === 'refusal') return machineRead.outcome
+            const parsedMachine = MachineFloor.safeParse(machineRead.value)
+            if (!parsedMachine.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+                `the operator-confirmed machine floor does not match the schema: ${issueSummary(parsedMachine.error)}`, machineQuestion.field)
+            environment = { ...environment, machine: parsedMachine.data }
+            record('environment.machine', machineRead)
+            answerIndex += 1
 
-        const postureQuestion = configurationQuestion(context, 'environment.posture', QUESTION_WHY.posture)
-        const postureRead = readConfigurationAnswer(configuration.answers, answerIndex, postureQuestion)
-        if (postureRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
-            attributions, gaps: [] }, destination, postureQuestion)
-        if (postureRead.kind === 'refusal') return postureRead.outcome
-        const postureAnswer = postureRead.value
-        const parsedPosture = postureAnswer && typeof postureAnswer === 'object' && !Array.isArray(postureAnswer)
-            && Object.keys(postureAnswer).sort().join(',') === 'addressing,authentication,posture_requirements'
-            ? CockpitConfig.shape.environment.safeParse({ ...environment, ...postureAnswer }) : undefined
-        if (!parsedPosture?.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-            `the operator-confirmed posture must be exactly { addressing, authentication, posture_requirements }${parsedPosture
-                ? `: ${issueSummary(parsedPosture.error)}` : ''}`, postureQuestion.field)
-        // The same judgement preflight gates on, so a posture that could never pass is refused here.
-        const postureFailures = judgePostureDeclaration({ addressing: parsedPosture.data.addressing ?? null,
-            authentication: parsedPosture.data.authentication ?? null }, parsedPosture.data.posture_requirements ?? [])
-            .filter(row => !row.pass)
-        if (postureFailures.length > 0) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-            `the operator-confirmed posture would fail preflight: ${postureFailures.map(row => row.reason).join('; ')}`, postureQuestion.field)
-        environment = parsedPosture.data
-        record('environment.posture', postureRead)
-        answerIndex += 1
+            const postureQuestion = configurationQuestion(context, 'environment.posture', QUESTION_WHY.posture)
+            const postureRead = readConfigurationAnswer(configuration.answers, answerIndex, postureQuestion)
+            if (postureRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
+                attributions, gaps: [] }, destination, postureQuestion)
+            if (postureRead.kind === 'refusal') return postureRead.outcome
+            const postureAnswer = postureRead.value
+            const parsedPosture = postureAnswer && typeof postureAnswer === 'object' && !Array.isArray(postureAnswer)
+                && Object.keys(postureAnswer).sort().join(',') === 'addressing,authentication,posture_requirements'
+                ? CockpitConfig.shape.environment.safeParse({ ...environment, ...postureAnswer }) : undefined
+            if (!parsedPosture?.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+                `the operator-confirmed posture must be exactly { addressing, authentication, posture_requirements }${parsedPosture
+                    ? `: ${issueSummary(parsedPosture.error)}` : ''}`, postureQuestion.field)
+            // The same judgement preflight gates on, so a posture that could never pass is refused here.
+            const postureFailures = judgePostureDeclaration({ addressing: parsedPosture.data.addressing ?? null,
+                authentication: parsedPosture.data.authentication ?? null }, parsedPosture.data.posture_requirements ?? [])
+                .filter(row => !row.pass)
+            if (postureFailures.length > 0) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+                `the operator-confirmed posture would fail preflight: ${postureFailures.map(row => row.reason).join('; ')}`, postureQuestion.field)
+            environment = parsedPosture.data
+            record('environment.posture', postureRead)
+            answerIndex += 1
+        }
 
         // Asked, never defaulted: a cockpit with no gate cannot grade work, and "none" is a decision
         // a person makes, not the absence of an answer.
@@ -1290,6 +1292,7 @@ async function completeConfigurationDocument(
         'configuration completion received an answer for no current question')
 
     const decisions = [
+        ...(runtimeDeferred ? [`runtime: ${STATED_BY[runtimeDeferred]} runtime adoption is deferred; declare environment.compose_files, environment.machine and the environment postures when adopting the runtime`] : []),
         ...(noGuardHosts ? [`guards: ${noGuardHostsDecision(guardRead.provenance)}; list those hosts under [guards] once one exists`] : []),
         ...(testingNone ? [`testing: no test gate is declared because ${STATED_BY[testingNone]} the product has no tests to run yet; declare [testing] once it does`] : []),
         ...(testData ? [testData.seeded_data
@@ -1311,9 +1314,9 @@ async function completeConfigurationDocument(
     if (noGuardHosts) diagnostics.push({ severity: 'info', code: 'DOCUMENT_GUARD_HOSTS_NONE', target: 'guards',
         message: `${noGuardHostsDecision(guardRead.provenance)}, so the guard denies no command by host`,
         fix: 'list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists' })
-    if (surfacesOnly) diagnostics.push({ severity: 'info', code: 'DOCUMENT_RUNTIME_NOT_DECLARED', target: 'environment',
-        message: 'no runnable product was observed, so this configuration declares no runtime environment and no Compose file: sync publishes the harness surfaces only, and up, logs and the other runtime commands refuse',
-        fix: 'once a product runs, declare environment.compose_files and run npx --no cockpit sync --config <your cockpit.toml>' })
+    if (surfacesOnly || runtimeDeferred) diagnostics.push({ severity: 'info', code: 'DOCUMENT_RUNTIME_NOT_DECLARED', target: 'environment',
+        message: `${runtimeDeferred ? `${STATED_BY[runtimeDeferred]} runtime adoption is deferred` : 'no runnable product was observed'}, so this configuration declares no runtime environment and no Compose file: sync publishes the harness surfaces only, and up, logs and the other runtime commands refuse`,
+        fix: 'to adopt a runtime, declare environment.compose_files, environment.machine and the environment postures, then run npx --no cockpit sync --config <your cockpit.toml>' })
     return { kind: 'complete', artifact, destination, diagnostics,
         result: { document: artifact, ...(unconfirmed.length === 0 ? {} : { unconfirmed }), ...(derived.length === 0 ? {} : { derived }) },
         status: 0, question: null }

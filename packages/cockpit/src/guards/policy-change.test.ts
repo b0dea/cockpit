@@ -87,15 +87,7 @@ describe('policyChange', () => {
             config.testing.stages.push({ id: 'e2e', command: ['npx', 'playwright', 'test'], requires_stack: true })
             config.testing.gates.push({ id: 'full', tier: 'full', stages: ['unit', 'e2e'], changes: 'a release' })
         }, ['testing.stages', 'testing.gates']],
-        // [guards], [work], [autonomy] and [mcp] are a person's in either direction.
-        ['an added deny rule, a removed allow rule and added hosts', config => {
-            config.guards.deny.push({ contains: ['--force'], reason: 'Forced writes are a person\'s.' })
-            config.guards.allow = []
-            config.guards.hosted_db_hosts.push('*.warehouse.example.test')
-            config.guards.protected_branches = ['main', 'master', 'release']
-        }, ['guards.hosted_db_hosts', 'guards.protected_branches', 'guards.allow', 'guards.deny']],
         ['a decision moved toward a person', config => { config.autonomy = { sync: 'person' }; config.work.gates.amend = 'ci' }, ['work.gates.amend', 'autonomy.sync']],
-        ['a removed MCP approval', config => { config.mcp.approved = {} }, ['mcp.approved.docs']],
         ['a removed unconfirmed answer', config => { delete config.unconfirmed }, ['unconfirmed']],
         ['a seed command, which no rule covers', config => { config.environment.seed = { argv: ['make', 'seed'], timeout_seconds: 60 } }, ['environment.seed']],
     ])('widens on %s', (_name, edit, fields) => {
@@ -104,6 +96,14 @@ describe('policyChange', () => {
 
     it.each<[string, (config: Declared) => void]>([
         ['an unchanged configuration', () => {}],
+        ['an added deny rule, a removed allow rule and added hosts', config => {
+            config.guards.deny.push({ contains: ['--force'], reason: 'Forced writes are a person\'s.' })
+            config.guards.allow = []
+            config.guards.hosted_db_hosts.push('*.warehouse.example.test')
+            config.guards.vendor_endpoint_hosts.push('second.vendor.example.test')
+            config.guards.protected_branches = ['main', 'master', 'release']
+        }],
+        ['a removed MCP approval', config => { config.mcp.approved = {} }],
         ['a reworded purpose', config => { config.sibling[0].purpose = 'the storefront' }],
         ['a new derived route', config => { config.environment.entrypoint_derivatives = [{ name: 'app', kind: 'origin', port: 'WEB_PORT', path: '/' }] }],
         ['a moved port base and a raised machine floor', config => {
@@ -119,6 +119,25 @@ describe('policyChange', () => {
         ['an added tool and unconfirmed answer', config => { config.surfaces.tools.push('opencode'); config.unconfirmed.push('testing') }],
     ])('does not widen on %s', (_name, edit) => {
         expect(changed(edit)).toEqual({ kind: 'non-widening' })
+    })
+
+    it('ignores MCP approvals only while both configurations delegate them to the agent', () => {
+        const declaring = (...edits: readonly ((config: Declared) => void)[]) => {
+            const config = structuredClone(declared)
+            for (const edit of edits) edit(config)
+            return CockpitConfig.parse(config)
+        }
+        const delegate = (config: Declared) => { config.autonomy = { mcp_approve: 'agent' } }
+        const approve = (config: Declared) => { config.mcp.approved = { docs: 'b'.repeat(64), search: 'c'.repeat(64) } }
+        const approvals = ['mcp.approved.docs', 'mcp.approved.search']
+        expect(policyChange(declaring(delegate), declaring(delegate, approve))).toEqual({ kind: 'non-widening' })
+        // Delegating or taking back approval is itself pinned, and neither side vouches for the other's approvals.
+        expect(policyChange(declaring(), declaring(delegate, approve))).toEqual({ kind: 'widening', fields: expect.arrayContaining(['autonomy.mcp_approve', ...approvals]) })
+        expect(policyChange(declaring(delegate), declaring(approve))).toEqual({ kind: 'widening', fields: expect.arrayContaining(['autonomy.mcp_approve', ...approvals]) })
+        expect(policyChange(declaring(), declaring(approve))).toEqual({ kind: 'widening', fields: approvals })
+        // Delegating which servers run does not delegate what their tools may do.
+        const restrict = (config: Declared) => { config.mcp.allowed_tools = { docs: ['read_record'] } }
+        expect(policyChange(declaring(delegate, restrict), declaring(delegate))).toEqual({ kind: 'widening', fields: ['mcp.allowed_tools.docs'] })
     })
 
     it('treats a field it has no rule for as widening', () => {
@@ -186,11 +205,12 @@ describe('guardConfigChange', () => {
                 'nodeFingerprint', 'module', 'moduleSha256'].map(key => [key, 'synthetic']))
             writeFileSync(join(root, GUARD_LOCAL_PATHS.identity), encodeGuardLocalIdentity({ ...identity, configSha256: sha256Hex(generated) } as never))
             writeFileSync(join(root, GUARD_LOCAL_PATHS.generatedConfig), generated)
-            const codes = async () => (await inspectGuardConfigChange(root, join(root, 'cockpit.toml'), { sha256: 'f'.repeat(64), config: edited() }))
-                .map(row => row.code)
-            expect(await codes()).toEqual(['GUARD_CONFIG_WIDENED'])
+            const reports = async () => inspectGuardConfigChange(root, join(root, 'cockpit.toml'), { sha256: 'f'.repeat(64), config: edited() })
+            // Each names what it holds: a hook cannot stop what its matcher leaves out.
+            const namesHeld = { message: expect.stringMatching(/holds shell commands, file edits and writes, and restricted MCP tools under Claude Code.*while file reads and unrestricted MCP tools continue$/) }
+            expect(await reports()).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED', ...namesHeld })])
             writeFileSync(join(root, ANSWER_CONFIRMATION_PATH), record('ports.bases'))
-            expect(await codes()).toEqual(['GUARD_CONFIG_UNSYNCED'])
+            expect(await reports()).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_UNSYNCED', ...namesHeld, fix: expect.stringContaining(GUARD_LOCAL_PATHS.generatedConfig) })])
         } finally { rmSync(root, { recursive: true, force: true }) }
     })
 })

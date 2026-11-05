@@ -118,7 +118,7 @@ describe('observation application runners', () => {
         mkdirSync(join(directory, 'bin'))
         writeFileSync(join(directory, 'bin/headers'), '#!/bin/sh\nexit 0\n', { mode: 0o700 })
         const servers = [
-            { name: 'local', command: 'bin/absent', args: [], cwd: directory, envNames: ['LOCAL_TOKEN'], enabled: true, sources: [source] },
+            { name: 'local', command: 'bin/absent', args: [], cwd: directory, envNames: ['LOCAL_TOKEN'], optionalEnvNames: ['OPTIONAL_LOCAL_PORT'], enabled: true, sources: [source] },
             { name: 'remote', transport: 'http', url: 'https://mcp.example.test/mcp', headers: { Authorization: 'Bearer ${REMOTE_TOKEN}' },
                 helper: { command: 'bin/headers', args: [], cwd: directory }, envNames: ['REMOTE_TOKEN'], enabled: true, sources: [source] },
             { name: 'off', command: 'bin/absent', args: [], cwd: directory, envNames: ['OFF_TOKEN'], enabled: false, sources: [source] },
@@ -138,6 +138,32 @@ describe('observation application runners', () => {
             ])
             expect(JSON.stringify(reported)).not.toContain('synthetic-credential-canary')
         } finally { prepare.mockRestore(); rmSync(directory, { recursive: true, force: true }) }
+    })
+
+    it('tells a relative PATH entry apart from a command that is not installed', async () => {
+        const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-doctor-mcp-path-')))
+        const server = (name: string, command: string) => ({ name, command, args: [], cwd: directory, envNames: [], enabled: true, sources: [] })
+        try {
+            const report = async (PATH: string, command = 'sh') => (await observeMcpStartup([server('local', command)], { PATH }))[0]
+            expect(await report('/usr/bin:/bin')).toBeUndefined()
+            const installed = await report('./node_modules/.bin:/bin:/usr/bin')
+            expect(installed).toMatchObject({ code: 'MCP_COMMAND_UNRESOLVED', target: 'local', fix: expect.stringContaining('the MCP declaration needs no change') })
+            expect(installed!.message).toContain('the dot-relative entry "./node_modules/.bin"')
+            expect(installed!.message).toContain('doctor excludes from observation')
+            expect(installed!.message).toContain('sh is at /bin/sh among the absolute entries')
+            expect(installed!.message).not.toContain('no tool can start')
+            expect((await report('../bin:/usr/bin:/bin'))!.message).toContain('the parent-relative entry "../bin"')
+            expect((await report('/usr/bin::/bin'))!.message).toContain('an empty entry, which is the working directory')
+            expect((await report('node_modules/.bin'))!.message).toContain('the bare relative entry "node_modules/.bin"')
+
+            const missing = await report('./node_modules/.bin:/usr/bin:/bin', 'cockpit-synthetic-absent')
+            expect(missing!.message).toContain('is in none of the absolute entries either')
+            expect(missing!.fix).toContain('has to be installed')
+            // Only a relative entry earns this text: a plain miss, or a path-spelled command, keeps the installation advice.
+            for (const [PATH, command] of [['/usr/bin:/bin', 'cockpit-synthetic-absent'], ['./node_modules/.bin:/usr/bin', 'bin/absent']] as const) {
+                expect((await report(PATH, command))!.message).toContain('so no tool can start it')
+            }
+        } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 
     it('warns that the guard denies no host when a declared runtime leaves both guard host lists empty', async () => {

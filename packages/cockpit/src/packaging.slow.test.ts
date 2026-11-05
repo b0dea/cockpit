@@ -717,8 +717,10 @@ it('keeps a verified local-archive pin through installed init, check and npm ci'
     const installedLock = readFileSync(join(root, 'package-lock.json'), 'utf8')
     const launcher = join(root, 'node_modules/@b00dea/cockpit/bin/cockpit.mjs')
     const run = (...args: string[]) => {
+        // A hosted macOS runner took past 30 s on one call of this installed init, while the same call
+        // normally finishes well inside it; the limit catches a hang, not a slow machine.
         const result = spawnSync(process.execPath, [launcher, 'init', root, '--target', 'opencode', ...args, '--json'], {
-            cwd: root, env, encoding: 'utf8', timeout: 30_000,
+            cwd: root, env, encoding: 'utf8', timeout: 90_000,
         })
         expect(result.error, JSON.stringify({ signal: result.signal, stdout: result.stdout, stderr: result.stderr })).toBeUndefined()
         return result
@@ -732,7 +734,7 @@ it('keeps a verified local-archive pin through installed init, check and npm ci'
     expect(defaults).toMatchObject({ field: 'configuration.defaults' })
     const third = run('--accept-preview', preview.previewSha256, '--answers', answers, '--accept-defaults', defaults.expectedSha256)
     expect(third.status, third.stdout + third.stderr).toBe(0)
-    expect(JSON.parse(third.stdout).result).toMatchObject({ stage: 'environment-verified' })
+    expect(JSON.parse(third.stdout).result).toMatchObject({ stage: 'surfaces-verified' })
 
     expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))).toMatchObject({
         name: 'synthetic-cockpit-root', private: true,
@@ -747,7 +749,7 @@ it('keeps a verified local-archive pin through installed init, check and npm ci'
     execFileSync('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], {
         cwd: root, env, stdio: 'ignore', timeout: 30_000,
     })
-}, 120_000)
+}, 360_000)
 
 
 // The installed-init cases share one HOME, as one operator's machine would; each case inits its own root.
@@ -847,7 +849,7 @@ it.each(initEstates)('runs installed init on $target for a $classification estat
         expect(JSON.parse(wrong.stdout).diagnostics[0].code).toBe('INIT_DEFAULTS_NOT_ACCEPTED')
         const done = finish('--accept-defaults', JSON.parse(awaiting.stdout).result.question.expectedSha256)
         expect(done.status, done.stdout + done.stderr).toBe(0)
-        expect(JSON.parse(done.stdout).result).toMatchObject({ stage: 'environment-verified' })
+        expect(JSON.parse(done.stdout).result).toMatchObject({ stage: 'surfaces-verified' })
         expect(JSON.parse(done.stdout).result).not.toHaveProperty('nextCommand')
         expect(readFileSync(join(root, 'cockpit.toml'), 'utf8')).toContain('[[sibling]]')
     } else {
@@ -970,7 +972,7 @@ it('finishes init across three runs without a terminal and lets a teammate clone
     expect(defaults).toMatchObject({ field: 'configuration.defaults' })
     const third = portableRun('--accept-preview', portableListed.previewSha256, '--answers', answersFile, '--accept-defaults', defaults.expectedSha256)
     expect(third.status, third.stdout + third.stderr).toBe(0)
-    expect(JSON.parse(third.stdout).result).toMatchObject({ stage: 'environment-verified' })
+    expect(JSON.parse(third.stdout).result).toMatchObject({ stage: 'surfaces-verified' })
     expect(existsSync(join(portable, 'cockpit.toml'))).toBe(true)
 
     // A teammate's clone has a different checkout path and HOME. The local tarball stands in for
@@ -1065,7 +1067,7 @@ it.each(['dedicated', 'in-repo'] as const)('finishes installed init for a produc
     expect(defaults).toMatchObject({ field: 'configuration.defaults' })
     const completed = run('--accept-preview', shown.previewSha256, '--answers', answers, '--accept-defaults', defaults.expectedSha256)
     expect(completed.status, completed.stdout + completed.stderr).toBe(0)
-    expect(JSON.parse(completed.stdout).result).toMatchObject({ root, stage: 'environment-verified' })
+    expect(JSON.parse(completed.stdout).result).toMatchObject({ root, stage: 'surfaces-verified' })
     expect(statSync(join(root, '.git')).isDirectory()).toBe(true)
     const completedManifest = readFileSync(join(product, 'package.json'), 'utf8')
     if (rootChoice === 'dedicated') expect(completedManifest).toBe(manifest)

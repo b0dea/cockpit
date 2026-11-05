@@ -49,6 +49,7 @@ import {
 } from './environment/application/lifecycle-context.js'
 import { runLogs as runLogsApplication } from './environment/application/logs.js'
 import { runDocsCheck } from './docs/check.js'
+import { runEnvKeys, runEnvSchema } from './environment/env-sources.js'
 import { runServiceExec, runServicePs, runServiceRestart } from './environment/application/services.js'
 import { executeForegroundProcess, executePlan, executeProbe, foregroundTerminal } from './environment-exec/execute.js'
 import { createDestructiveCommandAdapters, selectDestructiveDaemon } from './environment/destructive-composition.js'
@@ -159,6 +160,8 @@ interface WorkCommandInput { readonly configPath: string; readonly request: Work
 interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInput> {
     check: GeneratedEnvironmentCommandInput
     'docs-check': Readonly<{ configPath: string }>
+    'env-keys': Readonly<{ configPath: string }>
+    'env-schema': Readonly<{ configPath: string; reference: string; replaceFrom?: string }>
     confirm: ConfirmCommandInput
     init: InitApplicationInput & Readonly<{ unattended?: UnattendedInit }>
     doctor: DoctorCommandInput
@@ -737,7 +740,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         doctor: (input) => {
             const configPath = resolve(input.configPath)
             return runDoctorApplication({ configPath }, {
-                ...healthAdapters(configPath),
+                ...createHealthCommandAdapters({ configPath, env, timeoutMs: RUNTIME_STEP_TIMEOUT_MS }, executeProbe),
                 discoverReleaseFreshness: () => discoverReleaseFreshness({ verb: 'doctor', env,
                     ...(runtime.createReleaseMetadataTransport ? { createTransport: runtime.createReleaseMetadataTransport } : {}) }),
                 inspectMcpStartup: servers => observeMcpStartup(servers, env),
@@ -746,6 +749,8 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         runtime: (input) => runRuntimeMeasure({ ...input, env }, { execute: executeProbe, probe: probeInstalledRuntime }),
         stacks: (input) => runStacksInventory({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
         'docs-check': (input) => runDocsCheck({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
+        'env-keys': (input) => runEnvKeys({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
+        'env-schema': (input) => runEnvSchema({ configPath: resolve(input.configPath), reference: input.reference, ...input.replaceFrom === undefined ? {} : { replaceFrom: input.replaceFrom }, env }, { execute: executeProbe }),
         confirm: (input) => {
             const configPath = resolve(input.configPath)
             return runConfirm({ configPath, answer: input.answer }, {
@@ -1244,9 +1249,16 @@ async function decodeRequest(
     }
 
     if (handler === 'check' || handler === 'sleep' || handler === 'down' || handler === 'reset'
-        || handler === 'preflight' || handler === 'doctor' || handler === 'docs-check') {
+        || handler === 'preflight' || handler === 'doctor' || handler === 'docs-check' || handler === 'env-keys') {
         const values = parsed.values as { config?: string; json?: boolean }
         return namedOnly(handler, parsed.positionals) ?? (values.config ? { handler, input: { configPath: values.config } } as HandlerRequest : missingConfig())
+    }
+
+    if (handler === 'env-schema') {
+        const values = parsed.values as { config?: string; path?: string; 'replace-from'?: string }
+        if (!values.config) return missingConfig()
+        if (!values.path) return usageOutcome('CLI_USAGE_INVALID', 'provide --path <slug>:<relative directory>/.env.schema, or --path .env.schema for the cockpit root', '--path')
+        return namedOnly(handler, parsed.positionals) ?? { handler, input: { configPath: values.config, reference: values.path, ...values['replace-from'] === undefined ? {} : { replaceFrom: values['replace-from'] } } }
     }
 
     if (handler === 'logs') {
@@ -1484,6 +1496,8 @@ async function dispatchHandler(
     if (request.handler === 'sync') return runSyncOperatorCommand(request.input, options, io, handlers.sync ?? (async () => unavailable()), operators.loadPolicy ?? loadOperatorPolicy)
     if (request.handler === 'check') return handlers.check?.(request.input) ?? unavailable()
     if (request.handler === 'docs-check') return handlers['docs-check']?.(request.input) ?? unavailable()
+    if (request.handler === 'env-keys') return handlers['env-keys']?.(request.input) ?? unavailable()
+    if (request.handler === 'env-schema') return handlers['env-schema']?.(request.input) ?? unavailable()
     if (request.handler === 'confirm') return handlers.confirm?.(request.input) ?? unavailable()
     if (request.handler === 'selftest') {
         const selftest = handlers.selftest ?? (async () => unavailable())

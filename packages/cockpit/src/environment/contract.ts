@@ -233,6 +233,12 @@ export const ENVIRONMENT_CODES = Object.freeze({
     ENVIRONMENT_KEYS_STALE: 'ENVIRONMENT_KEYS_STALE',
     ENV_SCHEMA_UNHEALTHY: 'ENV_SCHEMA_UNHEALTHY',
     ENV_SCHEMA_TOOL_MISSING: 'ENV_SCHEMA_TOOL_MISSING',
+    ENV_SCHEMA_OVERRIDDEN: 'ENV_SCHEMA_OVERRIDDEN',
+    ENV_SCHEMA_UNCOMMITTED: 'ENV_SCHEMA_UNCOMMITTED',
+    ENV_KEYS_SOURCE_SKIPPED: 'ENV_KEYS_SOURCE_SKIPPED',
+    ENV_SCHEMA_READ_REFUSED: 'ENV_SCHEMA_READ_REFUSED',
+    ENV_SCHEMA_REPLACE_REFUSED: 'ENV_SCHEMA_REPLACE_REFUSED',
+    ENV_SCHEMA_UNDECLARED: 'ENV_SCHEMA_UNDECLARED',
     GENERATED_ENVIRONMENT_UNAVAILABLE: 'GENERATED_ENVIRONMENT_UNAVAILABLE',
     CLAIM_STATE_UNHEALTHY: 'CLAIM_STATE_UNHEALTHY',
     MOUNT_POSTURE_UNAVAILABLE: 'MOUNT_POSTURE_UNAVAILABLE',
@@ -455,6 +461,10 @@ export function hasErrorCode(error: unknown, ...codes: readonly string[]): boole
     const code: unknown = Object.getOwnPropertyDescriptor(error, 'code')?.value
     return typeof code === 'string' && codes.includes(code)
 }
+
+// Environment files conventionally named for the variables they document, never their values. The
+// guard and the tracked-secret check share this so they cannot disagree about a file.
+export const DOTENV_DOCUMENTATION: ReadonlySet<string> = new Set(['.env.example', '.env.sample', '.env.template', '.env.schema'])
 
 export function isMissing(error: unknown): boolean {
     return hasErrorCode(error, 'ENOENT', 'ENOTDIR')

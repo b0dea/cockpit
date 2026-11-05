@@ -1,8 +1,11 @@
-import { dirname } from 'node:path'
+import { realpath } from 'node:fs/promises'
+import { basename, dirname, join, posix, relative } from 'node:path'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { formatShellCommand } from '../fix-catalogue.js'
 import {
+    DOTENV_DOCUMENTATION,
+    hasErrorCode,
     RefusalError,
     ENVIRONMENT_CODES,
     OBSERVATION_REASON_BYTE_LIMIT,
@@ -15,7 +18,7 @@ import {
     type ExecutionStep,
     type StackId,
 } from './contract.js'
-import { resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
+import { GIT_CHILD_CONFIG, resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
 import { repositoryIdentity, type RepositoryIdentity } from './repository-identity.js'
 import { stackId as deriveStackId } from './identity.js'
 import { isRuntimeTopologyEvidence, type RuntimeTopologyEvidence } from './runtime.js'
@@ -101,7 +104,7 @@ export function createGitObservationStep(input: {
         || !safeEnvironment) return undefined
     const step = snapshotExecutionStep({
         id: 'git-health',
-        argv: [executable.canonicalPath, '-C', input.checkoutRoot, 'status', '--porcelain=v2', '--branch', '--untracked-files=normal'],
+        argv: [executable.canonicalPath, '-C', input.checkoutRoot, ...GIT_CHILD_CONFIG, 'status', '--porcelain=v2', '--branch', '--untracked-files=normal'],
         argv0: executable.invocationPath,
         cwd: input.checkoutRoot,
         env: Object.fromEntries(safeEnvironment),
@@ -416,7 +419,7 @@ export function createComparisonRemoteRefStep(input: {
     const binding = { ...git, sibling: input.sibling, expected: expected.identity, branch, revision, upstream }
     const step = comparisonStep({
         id: `git:${input.sibling}:comparison-ref`, binding, env: input.env, timeoutMs: input.timeoutMs,
-        argv: [executable.canonicalPath, '-C', input.checkoutRoot, 'for-each-ref',
+        argv: [executable.canonicalPath, '-C', input.checkoutRoot, ...GIT_CHILD_CONFIG, 'for-each-ref',
             '--format=%(objectname)%00%(refname)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream)',
             '--count=1', '--', `refs/heads/${branch}`],
     })
@@ -453,7 +456,7 @@ export function observeComparisonRemoteRef(stage: ComparisonRemoteRefStage, outc
     const { remoteName, upstreamRef } = decoded
     const step = comparisonStep({
         id: `git:${binding.sibling}:comparison-url`, binding, env: stage.step.env, timeoutMs: stage.step.timeoutMs,
-        argv: [binding.executable.canonicalPath, '-C', binding.checkoutRoot, 'remote', 'get-url', '--', remoteName],
+        argv: [binding.executable.canonicalPath, '-C', binding.checkoutRoot, ...GIT_CHILD_CONFIG, 'remote', 'get-url', '--', remoteName],
     })
     if (!step) return comparisonUnavailable(`comparison remote probe is unavailable for sibling ${binding.sibling}`, remoteName)
     const next = { kind: 'probe' as const, step, remoteName }
@@ -486,7 +489,7 @@ export function observeComparisonRemoteUrl(stage: ComparisonRemoteUrlStage, outc
         && observed.identity.repository === binding.expected.repository ? 'match' : 'mismatch'
     const step = comparisonStep({
         id: `git:${binding.sibling}:comparison-revalidate`, binding, env: stage.step.env, timeoutMs: stage.step.timeoutMs,
-        argv: [binding.executable.canonicalPath, '-C', binding.checkoutRoot, 'for-each-ref',
+        argv: [binding.executable.canonicalPath, '-C', binding.checkoutRoot, ...GIT_CHILD_CONFIG, 'for-each-ref',
             '--format=%(objectname)%00%(refname)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream)',
             '--', `refs/heads/${binding.branch}`, binding.upstreamRef],
     })
@@ -591,11 +594,136 @@ export function gitRepositoryRefusal(stderr: Buffer):
         fix: 'fix what Git reports, then rerun this command' }
 }
 
-// The names the guard denies agents from reading: `.env` and `.env.<suffix>`, except the templates
-// meant to be committed. Values are never read; only Git's index is asked which names it tracks.
+// What the guard denies agents from reading: `.env` and `.env.<suffix>` except the documentation
+// names and declared templates, and anything below a `.secrets` directory. Values are never read;
+// only Git's index is asked which names it tracks.
 const SECRET_FILE = /^\.env(?:\.[^/]+)?$/
-const SECRET_TEMPLATE = /\.(?:example|sample|template|dist)$/
+function secretShaped(path: string, templates: ReadonlySet<string>): boolean {
+    const segments = path.split('/')
+    const name = segments.at(-1)!
+    // The generated ignore block leaves a secrets directory's own ignore file trackable: it holds
+    // patterns, and telling someone to rotate credentials over it would be noise.
+    if (segments.slice(0, -1).includes('.secrets')) return name !== '.gitignore'
+    return SECRET_FILE.test(name) && !DOTENV_DOCUMENTATION.has(name) && !templates.has(path)
+}
 const TRACKED_SECRET_LIMIT = 65_536
+
+/**
+ * The directory at the same place below the main checkout as `directory` is below its own working
+ * tree, from what Git says: a directory nested in a linked worktree has no `.git` entry to read, and
+ * Git is the authority on the entry one does have. The main checkout is the parent of a common
+ * directory named `.git`; any other layout, or Git failing, names none.
+ */
+export async function mainCheckoutDirectory(input: {
+    readonly executable: ResolvedExecutable
+    readonly directory: string
+    readonly timeoutMs: number
+}, execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): Promise<string | undefined> {
+    const executable = resolvedGitExecutable(input.executable)
+    if (!executable) return undefined
+    const step = snapshotExecutionStep({
+        id: 'git:main-checkout',
+        argv: [executable.canonicalPath, '-C', input.directory, ...GIT_CHILD_CONFIG, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'],
+        argv0: executable.invocationPath, cwd: input.directory, env: {}, timeoutMs: input.timeoutMs,
+        stdoutLimitBytes: COMPARISON_OUTPUT_LIMIT, stderrLimitBytes: COMPARISON_OUTPUT_LIMIT,
+        paths: [input.directory], ports: [], labels: { source: input.directory },
+        expected: [{ kind: 'path', target: input.directory, state: 'repository' }],
+        consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912,
+            argvIndexes: [0], executable: true, executionMode: executable.executionMode }],
+        filesystemChecks: [], compensation: [],
+    })
+    if (!step) return undefined
+    const outcome = authenticatedExecutionOutcome(await execute(step), step)
+    if (outcome?.kind !== 'complete') return undefined
+    const lines = outcome.stdout.toString('utf8').trimEnd().split('\n')
+    if (lines.length !== 2) return undefined
+    let toplevel: string, common: string, directory: string
+    try { [toplevel, common, directory] = await Promise.all([realpath(lines[0]!), realpath(lines[1]!), realpath(input.directory)]) }
+    catch (error) {
+        if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'ELOOP')) return undefined
+        throw error
+    }
+    const offset = relative(toplevel, directory)
+    return basename(common) === '.git' && !offset.startsWith('..') ? join(dirname(common), offset) : undefined
+}
+
+export type TrackedEnvSchemas =
+    | Readonly<{ kind: 'listed'; paths: readonly string[] }>
+    | Readonly<{ kind: 'not-a-repository' }>
+    | Readonly<{ kind: 'unavailable'; reason: string }>
+
+/** The `.env.schema` paths a repository tracks, relative to `root`, from Git's index alone. */
+export async function listTrackedEnvSchemas(input: {
+    readonly executable: ResolvedExecutable
+    readonly slug: string
+    readonly root: string
+    readonly timeoutMs: number
+}, execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): Promise<TrackedEnvSchemas> {
+    const executable = resolvedGitExecutable(input.executable)
+    if (!executable) return { kind: 'unavailable', reason: 'no resolved Git executable' }
+    const step = snapshotExecutionStep({
+        id: `git:tracked-env-schemas:${input.slug}`,
+        argv: [executable.canonicalPath, '-C', input.root, ...GIT_CHILD_CONFIG, 'ls-files', '-z', '--', ':(glob)**/.env.schema'],
+        argv0: executable.invocationPath, cwd: input.root, env: {}, timeoutMs: input.timeoutMs,
+        stdoutLimitBytes: TRACKED_SECRET_LIMIT, stderrLimitBytes: COMPARISON_OUTPUT_LIMIT,
+        paths: [input.root], ports: [], labels: { sibling: input.slug },
+        expected: [{ kind: 'path', target: input.root, state: 'repository' }],
+        consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912,
+            argvIndexes: [0], executable: true, executionMode: executable.executionMode }],
+        filesystemChecks: [], compensation: [],
+    })
+    if (!step) return { kind: 'unavailable', reason: 'the Git listing could not be planned' }
+    const outcome = authenticatedExecutionOutcome(await execute(step), step)
+    if (outcome?.kind === 'complete') return { kind: 'listed', paths: outcome.stdout.toString('utf8').split('\0').filter(Boolean) }
+    if (outcome?.code !== ENVIRONMENT_CODES.EXECUTION_STEP_FAILED) return { kind: 'unavailable', reason: `Git did not answer (${outcome?.code ?? 'unauthenticated Git outcome'})` }
+    const refused = gitRepositoryRefusal(outcome.stderr)
+    return refused.kind === 'not-a-repository' ? refused : { kind: 'unavailable', reason: refused.reason }
+}
+
+export type SchemaCommitState =
+    | Readonly<{ kind: 'committed' }>
+    | Readonly<{ kind: 'uncommitted' }>
+    | Readonly<{ kind: 'not-a-repository' }>
+    | Readonly<{ kind: 'unavailable'; reason: string }>
+
+/** Whether one file in `directory` is tracked and identical to HEAD, by Git's own account. */
+export async function inspectSchemaCommit(input: {
+    readonly executable: ResolvedExecutable
+    readonly label: string
+    readonly directory: string
+    readonly file: string
+    readonly timeoutMs: number
+}, execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): Promise<SchemaCommitState> {
+    const executable = resolvedGitExecutable(input.executable)
+    if (!executable) return { kind: 'unavailable', reason: 'no resolved Git executable' }
+    const ask = async (args: readonly string[]): Promise<Buffer | Exclude<SchemaCommitState, { kind: 'committed' | 'uncommitted' }>> => {
+        const step = snapshotExecutionStep({
+            id: `git:schema-commit:${args[0]}:${input.label}`,
+            argv: [executable.canonicalPath, '-C', input.directory, ...GIT_CHILD_CONFIG, ...args],
+            argv0: executable.invocationPath, cwd: input.directory, env: {}, timeoutMs: input.timeoutMs,
+            stdoutLimitBytes: COMPARISON_OUTPUT_LIMIT, stderrLimitBytes: COMPARISON_OUTPUT_LIMIT,
+            paths: [input.directory], ports: [], labels: { sibling: input.label },
+            expected: [{ kind: 'path', target: input.directory, state: 'repository' }],
+            consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912,
+                argvIndexes: [0], executable: true, executionMode: executable.executionMode }],
+            filesystemChecks: [], compensation: [],
+        })
+        if (!step) return { kind: 'unavailable', reason: 'the Git status could not be planned' }
+        const outcome = authenticatedExecutionOutcome(await execute(step), step)
+        if (outcome?.kind === 'complete') return outcome.stdout
+        if (outcome?.code !== ENVIRONMENT_CODES.EXECUTION_STEP_FAILED) return { kind: 'unavailable', reason: `Git did not answer (${outcome?.code ?? 'unauthenticated Git outcome'})` }
+        const refused = gitRepositoryRefusal(outcome.stderr)
+        return refused.kind === 'not-a-repository' ? refused : { kind: 'unavailable', reason: refused.reason }
+    }
+    const status = await ask(['status', '--porcelain=v1', '-z', '--', input.file])
+    if (!Buffer.isBuffer(status)) return status
+    if (status.length > 0) return { kind: 'uncommitted' }
+    // An empty status also describes a gitignored file, and an edit hidden behind the assume-unchanged
+    // or skip-worktree flag, so only a plain tracked entry proves the content is the committed one.
+    const entry = await ask(['ls-files', '-v', '-z', '--', input.file])
+    if (!Buffer.isBuffer(entry)) return entry
+    return entry.toString('utf8').startsWith('H ') ? { kind: 'committed' } : { kind: 'uncommitted' }
+}
 
 /**
  * Secret-shaped files a repository commits. The guard keeps agents from reading them, which
@@ -604,7 +732,8 @@ const TRACKED_SECRET_LIMIT = 65_536
  */
 export async function inspectTrackedSecretFiles(input: {
     readonly executable: ResolvedExecutable
-    readonly repositories: readonly Readonly<{ slug: string; root: string }>[]
+    /** `templates` are the repository-relative environment templates its declaration names. */
+    readonly repositories: readonly Readonly<{ slug: string; root: string; templates?: readonly string[] }>[]
     readonly timeoutMs: number
 }, execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): Promise<readonly EnvironmentDiagnostic[]> {
     const executable = resolvedGitExecutable(input.executable)
@@ -613,7 +742,7 @@ export async function inspectTrackedSecretFiles(input: {
     const perRepository = await Promise.all(input.repositories.map(async (repository): Promise<readonly EnvironmentDiagnostic[]> => {
         const step = snapshotExecutionStep({
             id: `git:tracked-secrets:${repository.slug}`,
-            argv: [executable.canonicalPath, '-C', repository.root, 'ls-files', '-z', '--', '.env', '*/.env', '.env.*', '*/.env.*'],
+            argv: [executable.canonicalPath, '-C', repository.root, ...GIT_CHILD_CONFIG, 'ls-files', '-z', '--', '.env', '*/.env', '.env.*', '*/.env.*', '.secrets/*', '*/.secrets/*'],
             argv0: executable.invocationPath, cwd: repository.root, env: {}, timeoutMs: input.timeoutMs,
             stdoutLimitBytes: TRACKED_SECRET_LIMIT, stderrLimitBytes: COMPARISON_OUTPUT_LIMIT,
             paths: [repository.root], ports: [], labels: { sibling: repository.slug },
@@ -647,10 +776,8 @@ export async function inspectTrackedSecretFiles(input: {
                 fix: `run git -C ${repository.root} ls-files to see why Git cannot list the repository, fix that, then rerun this command`,
             }]
         }
-        const tracked = outcome.stdout.toString('utf8').split('\0').filter((path) => {
-            const name = path.slice(path.lastIndexOf('/') + 1)
-            return path !== '' && SECRET_FILE.test(name) && !SECRET_TEMPLATE.test(name)
-        })
+        const templates = new Set((repository.templates ?? []).map((path) => posix.normalize(path)))
+        const tracked = outcome.stdout.toString('utf8').split('\0').filter((path) => path !== '' && secretShaped(path, templates))
         if (tracked.length === 0) return []
         const shown = tracked.slice(0, 8).join(', ')
         return [{

@@ -8,7 +8,7 @@ import { SIBLING_GUIDE_MARKER } from '../../surfaces/projection.js'
 import type { SurfaceObservedEntry } from '../../surfaces/sync.js'
 import { nodeAuthority, readAnchoredFile, readAnchoredBatches, type PublicationPlan } from '../../generated-environment/transaction.js'
 import { errorCause, RefusalError } from '../contract.js'
-import { resolveDockerExecutable } from '../executable.js'
+import { observationEnvironment, resolveDockerExecutable } from '../executable.js'
 import { assessComposeTopology, composeProjectDirectory, observeComposeTopology } from '../compose-topology.js'
 import { declaredRuntime } from '../declaration.js'
 import { refusalOutcome as refuse } from '../../refusal.js'
@@ -41,6 +41,7 @@ import {
     surfacePlanRefusal,
 } from './publication.js'
 import { prepareSurfaces } from './surfaces.js'
+import { staleMcpOutputsOnly } from './surface-outputs.js'
 
 interface RepairRecord {
     readonly prepared: PreparedEnvironment
@@ -164,10 +165,13 @@ export async function checkCanonicalGeneratedEnvironment(
     const comparison = planObservedSurfaces(prepared, effectivePriorSurfaces, surfaceState)
     if (comparison.kind !== 'complete') return surfacePlanRefusal(prepared, comparison.diagnostic)
     const drift = comparison.actions.map(action => action.path)
-    // Removing a formerly owned path is plain sync's to do only where [autonomy] stale_delete is agent;
-    // otherwise it needs a person's approval of its exact digest, so send the reader to the one command that can.
-    const stale = comparison.actions.find(action => action.kind === 'remove')
+    // Removing a formerly owned path is plain sync's to do only where [autonomy] stale_delete is agent or
+    // the removal only narrows MCP access; otherwise it needs a person's approval of its exact digest, so
+    // send the reader to the one command that can.
+    const removals = comparison.actions.filter(action => action.kind === 'remove')
+    const stale = removals[0]
     if (stale) return prepared.workEnvironment.policy.autonomy.stale_delete === 'agent'
+        || staleMcpOutputsOnly(removals.map(action => action.path), prepared.configuredHarnesses)
         ? refuse('GENERATED_ARTIFACT_DRIFT', 'a formerly generated path is still on disk and in the ownership record', stale.path, 'run npx --no cockpit sync --config <your cockpit.toml>')
         : refuse('GENERATED_ARTIFACT_DRIFT', 'a formerly generated path is still on disk and in the ownership record', stale.path,
             'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows')
@@ -194,15 +198,20 @@ async function composeTopologyDiagnostics(
     configPath: string,
     sourceSha256: string,
     adapters: GeneratedEnvironmentCommandAdapters,
+    inherited: Readonly<Record<string, string | undefined>>,
 ): Promise<readonly Diagnostic[]> {
     const loaded = await loadCockpitConfig(configPath)
     if (loaded.kind !== 'complete' || loaded.result.source.sha256 !== sourceSha256) return [{ severity: 'error' as const,
         code: 'GENERATED_SOURCE_CHANGED', message: 'the configuration changed while check was reading the Compose topology', target: configPath }]
     const config = loaded.result.config
     if (declaredRuntime(config.environment) !== 'compose') return []
-    const env = { PATH: process.env.PATH, DOCKER_HOST: process.env.DOCKER_HOST, DOCKER_CONTEXT: process.env.DOCKER_CONTEXT,
-        DOCKER_TLS_VERIFY: process.env.DOCKER_TLS_VERIFY, DOCKER_CERT_PATH: process.env.DOCKER_CERT_PATH }
-    const [docker, node] = await Promise.all([resolveDockerExecutable(process.env), nodeAuthority()])
+    // Reading the topology changes nothing, so it searches like every other observation, whichever
+    // caller reached it: a package manager's relative bin must not select or refuse Docker here.
+    const search = observationEnvironment(inherited)
+    const environment = search.state === 'available' ? search.env : inherited
+    const env = { PATH: environment.PATH, DOCKER_HOST: environment.DOCKER_HOST, DOCKER_CONTEXT: environment.DOCKER_CONTEXT,
+        DOCKER_TLS_VERIFY: environment.DOCKER_TLS_VERIFY, DOCKER_CERT_PATH: environment.DOCKER_CERT_PATH }
+    const [docker, node] = await Promise.all([search.state === 'available' ? resolveDockerExecutable(environment) : search, nodeAuthority()])
     const observed = docker.state !== 'available' ? { kind: 'unavailable' as const, reason: docker.reason }
         : !node ? { kind: 'unavailable' as const, reason: 'the current Node executable could not be authenticated' }
             : await observeComposeTopology({ root: dirname(loaded.result.source.path), references: config.environment.compose_files,
@@ -230,7 +239,7 @@ export async function checkGeneratedEnvironment(
     const adapters = mergedAdapters(adapterOverrides)
     const currentness = await prepareGeneratedEnvironmentCurrentness(input, adapters)
     const findings = currentness.outcome.kind === 'complete'
-        ? await composeTopologyDiagnostics(input.configPath, currentness.outcome.result.sourceSha256, adapters) : []
+        ? await composeTopologyDiagnostics(input.configPath, currentness.outcome.result.sourceSha256, adapters, adapters.observationEnv ?? process.env) : []
     const diagnostics = [...currentness.outcome.diagnostics, ...findings]
     const outcome = findings.some(row => row.severity === 'error')
         ? { kind: 'refusal' as const, artifact: null, destination: null, result: null, status: 2 as const, diagnostics }
