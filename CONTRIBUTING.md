@@ -73,11 +73,11 @@ the other maintainer pages are in the [contributor documentation index](docs/con
 
 CI (`.github/workflows/ci.yml`) runs the build, tests, typecheck, documentation lint, the
 anonymisation scan, the changeset check and the test-protection check; `ci-ok` is the aggregate.
-A pull request runs the full suite on Linux. macOS and the other supported Node lines run on the
-[Version Packages pull request](docs/contributing/releasing.md#merging-the-version-packages-pull-request),
-where they can stop the release. Add the `test-macos` label to run them on a change that is likely
-to behave differently on macOS, such as shell, path or process handling. A push to main reruns only
-the scan, the documentation checks and test protection.
+A pull request runs the full suite on Linux. A push to main runs what has not passed on its exact
+tree, usually macOS and the other supported Node lines, and a failure there
+[stops the release](docs/contributing/releasing.md#merging-the-version-packages-pull-request). Add
+the `test-macos` label to run them on a pull request that is likely to behave differently on macOS,
+such as shell, path or process handling.
 The test-protection and version-pull-request-scope jobs run the base revision's copy of their
 script, so a change cannot loosen the guard that judges it.
 

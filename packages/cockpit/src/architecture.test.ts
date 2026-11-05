@@ -239,33 +239,25 @@ describe('clean-checkout controls', () => {
         expect(manifest.scripts?.['lint:docs']).toBe('tsx scripts/docs-lint.ts')
     })
 
-    it('runs the Linux suite per pull request, every platform before a release, the Node upper edge weekly, and the Node 20 negative control', () => {
+    it('holds the Linux, every-platform and weekly cell lists and the Node 20 negative control', () => {
         const workflow = read('.github/workflows/ci.yml')
         const supportedJob = /\n  test:\n(?<body>[\s\S]*?)(?=\n  test-protection:)/.exec(workflow)?.groups?.body ?? ''
         const hygieneJob = /\n  hygiene:\n(?<body>[\s\S]*?)(?=\n  test:)/.exec(workflow)?.groups?.body ?? ''
         const floorJob = /\n  runtime-floor-negative:\n(?<body>[\s\S]*)/.exec(workflow)?.groups?.body ?? ''
 
-        // The matrix is one fromJSON expression with a release, a weekly and a pull-request list, so
-        // each list is read as data rather than matched line by line.
-        const [releaseCells, weeklyCells, pullRequestCells] = [...supportedJob.matchAll(/'(\[\{[^']*\}\])'/g)]
-            .map((match) => (JSON.parse(match[1]) as { os: string; node: string; gate: string; shard?: string }[])
-                .map(({ os, node, gate, shard }) => ({ os, node, gate, ...(shard === undefined ? {} : { shard }) })))
+        // The classify step holds each cell list, so each is read as data rather than matched line by line.
+        const cells = (name: string) => (JSON.parse(`[${new RegExp(` ${name}='([^']*)'`).exec(workflow)?.[1]}]`) as { os: string; node: string; gate: string; shard?: string }[])
+            .map(({ os, node, gate, shard }) => ({ os, node, gate, ...(shard === undefined ? {} : { shard }) }))
         // The Linux full suite runs as four parallel shards; together they must cover it exactly once.
-        const linuxFull = ['1/4', '2/4', '3/4', '4/4'].map((shard) => ({ os: 'ubuntu-latest', node: '22.22.0', gate: 'full', shard }))
-        expect(supportedJob).toContain("needs.changes.outputs.platforms == 'true' && '[")
-        expect(supportedJob).toContain("github.event_name == 'schedule' && '[")
-        expect(workflow).toMatch(/\n  schedule:\n    - cron: '[^']+'\n/)
-        expect(pullRequestCells).toEqual(linuxFull)
-        expect(weeklyCells).toEqual([
-            { os: 'ubuntu-latest', node: '26', gate: 'full' },
-        ])
-        // macOS and the other Node lines must reach the pull request that publishes.
-        expect(releaseCells).toEqual([
-            ...linuxFull,
+        expect(cells('linux_cells')).toEqual(['1/4', '2/4', '3/4', '4/4'].map((shard) => ({ os: 'ubuntu-latest', node: '22.22.0', gate: 'full', shard })))
+        expect(cells('weekly_cells')).toEqual([{ os: 'ubuntu-latest', node: '26', gate: 'full' }])
+        expect(cells('platform_cells')).toEqual([
             { os: 'macos-latest', node: '22.22.0', gate: 'full' },
             { os: 'ubuntu-latest', node: '24', gate: 'compatibility' },
             { os: 'ubuntu-latest', node: '26', gate: 'compatibility' },
         ])
+        expect(supportedJob).toContain('include: ${{ fromJSON(needs.changes.outputs.cells) }}')
+        expect(workflow).toMatch(/\n  schedule:\n    - cron: '[^']+'\n/)
         expect(workflow).toContain('runtime-floor-negative:')
         expect(supportedJob).toContain('npm run build')
         expect(supportedJob).toContain("if: matrix.gate == 'full'")

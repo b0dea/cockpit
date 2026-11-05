@@ -14,9 +14,9 @@ Environment commands also need Git and, for the stack, Docker with Compose; see 
 CI tests that range:
 
 - on every pull request, the full suite on Linux at the lowest supported version;
-- before every release, the full suite on macOS and Linux at the lowest supported version, and a
-  compatibility subset (launcher, package metadata and runtime probe tests) on Linux at each other
-  supported line;
+- on what reaches main, and before any release can merge, the full suite on macOS at the lowest
+  supported version and a compatibility subset (launcher, package metadata and runtime probe tests)
+  on Linux at each other supported line;
 - weekly, the full suite on Linux at the newest supported line.
 
 Fixes land on the latest released minor only; older minors are deprecated when a new minor ships.

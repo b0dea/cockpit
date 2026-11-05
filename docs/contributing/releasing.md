@@ -32,20 +32,30 @@ check stays missing, and each later push to main leaves the newest commit unchec
 
 When you are ready to release:
 
-1. Close the Version Packages pull request and reopen it. The reopen is your event, so CI runs on
-   the current commit.
+1. Wait for CI on main's newest commit, then close the Version Packages pull request and reopen
+   it. The reopen is your event, so CI runs on the current commit.
 2. Review the version bump and the new changelog entry while CI runs.
 3. Merge it once `ci-ok` passes. If main moves before you merge, the workflow rebuilds the pull
    request; close and reopen it again.
 
-This run is the release gate: it is the only routine run with the full suite on macOS and the
-compatibility subset on the other supported Node lines, beside the full Linux suite and the
-supply-chain checks. A push to main does not rerun them, and it could not stop a publish if it did,
-because the release workflow runs beside it. The release workflow publishes any version that is not
-on npm yet, so a pull request that changes the package's `version` field, or that runs while the
-current version is unpublished, gets the same cells. Merge the Version Packages pull request soon
-after its run: `ci-ok` does not require an up-to-date branch, so a merge made before the workflow
-rebuilds the pull request publishes commits this run did not test.
+This run is the release gate, and the code it releases has already been tested. A pull request
+runs the full suite on Linux, and a push to main runs whatever has not passed on that exact tree:
+usually the full suite on macOS and the compatibility subset on the other supported Node lines. So
+when the diff holds only what the version step writes, and every cell passed on the tree of its base
+commit, this run is the scope check, the anonymisation scan, test protection, and a package smoke:
+build and pack through the real `prepack`, install the tarball, run the CLI, confirm the version it
+reports, and repeat the supply-chain checks.
+
+The diff decides that, never the branch name or title. Anything else runs the full matrix on
+every platform: a file outside the scope, a cell that failed on main or has not finished, a failed
+lookup, or a base with no guard. That is how a failure on main stops a release, since the release
+workflow does not wait for CI on main. It is also why a documentation merge just before a release
+costs a full run, as nothing tested its tree. A pull request that moves the package's `version`
+field, or that runs while the current version is unpublished, gets every platform too, because the
+release workflow publishes any version that is not on npm yet.
+
+Merge soon after the run: `ci-ok` does not require an up-to-date branch, so a merge made before the
+workflow rebuilds the pull request publishes commits this run did not check.
 
 `ci-ok` includes the `version pull request scope` check, which fails when the pull request
 changes anything besides version fields in `package.json` and `package-lock.json`, `CHANGELOG.md`
