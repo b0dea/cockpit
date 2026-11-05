@@ -9,6 +9,7 @@ import { posix } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 import { pinnedPolicyTables } from '../autonomy.js'
+import { sha256Hex } from '../sha256.js'
 import { mcpPolicyWideningFields } from './policy-change.js'
 import { innerCommand, type GuardDecision } from './evaluator.js'
 import type { GuardFileContent, ParsedInvocation } from './invocation-parser.js'
@@ -106,6 +107,21 @@ function judgedInvocations(invocations: readonly ParsedInvocation[]): Array<Pars
             contained: invocation.contained || inner.runs === 'container' })
     }
     return judged
+}
+
+/**
+ * Whether this edit leaves the configuration exactly the bytes `recordedSha256` names, the ones the
+ * guards were generated from. Restoring them cannot widen anything, whatever the edit it undoes, so it
+ * is the way out of an edit the guard admitted and sync then refused. Every target must be the
+ * canonical path itself: a `..` can leave through a link, and a hard link or another spelling is left
+ * to the ordinary hold. An edit that does not apply exactly once proves nothing and is not admitted.
+ */
+export function restoresRecordedConfiguration(input: Readonly<{ cwd: string; content?: GuardFileContent; paths: readonly string[] }>,
+    current: string, configPath: string, recordedSha256: string): boolean {
+    const isConfig = (path: string) => !path.split('/').includes('..') && posix.resolve(input.cwd, path) === configPath
+    if (!input.content || !input.paths.length || !input.paths.every(isConfig)) return false
+    const proposed = proposedText(input.content, isConfig, current)
+    return proposed !== undefined && sha256Hex(proposed) === recordedSha256
 }
 
 /**

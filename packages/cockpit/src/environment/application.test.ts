@@ -489,7 +489,7 @@ describe('guard policy construction', () => {
         const canonicalConfig = realpathSync(configPath)
         const sync = { ...request, searchPath: '/usr/bin:/bin', payload: shellPayload(`${resolve(dirname(identity.module), '../bin/cockpit.mjs')} sync --config ${canonicalConfig}`, root) }
         expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({ decision: { decision: 'unavailable', reason:
-            `${canonicalConfig} changed since the guards were generated without widening what agents may do; every tool call except cockpit sync and check is held until it is synced. Fix: run \`npx --no cockpit sync --config ${canonicalConfig}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files.` },
+            `${canonicalConfig} changed since the guards were generated without widening what agents may do; every tool call except cockpit sync and check is held until it is synced. Fix: run \`npx --no cockpit sync --config ${canonicalConfig}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files. If sync refuses the edit, undo it: one edit or write of ${canonicalConfig} that leaves it byte-identical to .cockpit/local/guard-config is admitted.` },
         diagnostics: [{ code: 'GUARD_CONFIG_UNSYNCED' }] })
         expect(await runGuardEvaluationApplication(sync, adapters)).toMatchObject({ decision: { decision: 'allow' } })
         const restricted = parse(readFileSync(configPath, 'utf8')) as { guards: { deny: unknown[] } }
@@ -505,6 +505,56 @@ describe('guard policy construction', () => {
         writeFileSync(configPath, stringify(widened))
         for (const call of [request, sync]) expect(await runGuardEvaluationApplication(call, adapters)).toMatchObject({ decision: { decision: 'unavailable', reason:
             `${canonicalConfig} changed since the guards were generated and it widens what agents may do (guards.allow); guard policy comes from it and an edit that may widen it takes effect only once a human approves it, so every tool call is held, including a sync run through this agent. Fix: a human must run \`npx --no cockpit sync --config ${canonicalConfig}\` in a terminal, outside the agent, then commit any regenerated files.` } })
+    }, 120_000)
+
+    it('admits only the exact restoration of the recorded configuration out of a hold sync cannot clear', async () => {
+        const { root, configPath, request, adapters } = await installedGuardRequest()
+        const recorded = readFileSync(configPath, 'utf8')
+        const call = (tool_name: string, tool_input: unknown): GuardEvaluationApplicationInput => ({ ...request, payload: { hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input } })
+        const write = (content: string, file_path = configPath) => call('Write', { file_path, content })
+        const decision = async (input: GuardEvaluationApplicationInput, using = adapters) => (await runGuardEvaluationApplication(input, using)).decision
+        const table = '[mcp.allowed_tools]\n'
+        const addition = 'nosuchserver = []\n'
+        const edited = recorded.replace(table, `${table}${addition}`)
+
+        // The edit reduces, so the guard admits it, and only then does sync find it cannot publish it.
+        expect(await decision(write(edited))).toMatchObject({ decision: 'allow' })
+        writeFileSync(configPath, edited)
+        expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'MCP_DECLARATION_INVALID' }] })
+
+        const patch = (path: string) => `*** Begin Patch\n*** Update File: ${path}\n@@\n [mcp.allowed_tools]\n-nosuchserver = []\n*** End Patch\n`
+        // Each hands the file back byte for byte, whichever tool spells it, though removing a restriction is otherwise pinned.
+        for (const restore of [write(recorded), write(recorded, 'cockpit.toml'), call('Edit', { file_path: configPath, old_string: addition, new_string: '' }),
+            call('apply_patch', { command: patch('cockpit.toml') })]) {
+            expect(await decision(restore)).toMatchObject({ decision: 'allow' })
+        }
+        // The hold says so, and every other call stays held, nearly identical or not provably exact.
+        const held = await runGuardEvaluationApplication(write(`${recorded}\n`), adapters)
+        expect(held).toMatchObject({ decision: { decision: 'unavailable' }, diagnostics: [{ code: 'GUARD_CONFIG_UNSYNCED' }] })
+        expect(held.decision.reason).toContain('.cockpit/local/guard-config')
+        for (const other of [
+            write(`${recorded}\n`), write(''),
+            call('Edit', { file_path: configPath, old_string: 'nosuchserver = []', new_string: '' }),
+            call('Edit', { file_path: configPath, old_string: addition, new_string: addition.replace('[]', '["read"]') }),
+            // Applied more than once, or not at all, the result is not proven.
+            call('Edit', { file_path: configPath, old_string: '\n', new_string: '' }),
+            call('Edit', { file_path: configPath, old_string: 'not in the file', new_string: '' }),
+            // The same bytes anywhere else restore nothing, and a call doing more than this is more than a restoration.
+            write(recorded, join(root, 'app/cockpit.toml')), write(recorded, 'app/../cockpit.toml'),
+            call('apply_patch', { command: `${patch('cockpit.toml').replace('*** End Patch\n', '')}*** Add File: app/notes.txt\n+added\n*** End Patch\n` }),
+            { ...request, payload: shellPayload(`git -C ${root} restore -- cockpit.toml`, root) },
+        ]) expect(await decision(other)).toMatchObject({ decision: 'unavailable' })
+
+        // A hold whose policy cannot be built has the same way out, because restoring needs no policy.
+        const unobserved = { ...adapters, observeCheckout: (async () => ({ state: 'unavailable', reason: 'synthetic' })) as unknown as typeof adapters.observeCheckout }
+        expect(await decision(write(`${recorded}\n`), unobserved)).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('cannot build its policy') })
+        expect(await decision(write(recorded), unobserved)).toMatchObject({ decision: 'allow' })
+
+        // Restoring out of a widening edit is a person's, as every other call there is.
+        const widened = parse(recorded) as { guards: { allow: unknown[] } }
+        widened.guards.allow.push({ argv: ['make', 'release'], reason: 'Releases are routine.' })
+        writeFileSync(configPath, stringify(widened))
+        expect(await decision(write(recorded))).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('widens what agents may do') })
     }, 120_000)
 
     it('carries distinct declared vendor and database authority with authenticated roots and exact instance paths', async () => {

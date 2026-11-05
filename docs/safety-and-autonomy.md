@@ -422,6 +422,11 @@ the agent may run under the rules above, and the hold says so (`GUARD_CONFIG_UNS
 edit holds every call, that sync included, until a person runs `sync` in a terminal, and the hold
 names each field that widens.
 
+Sync can refuse an edit the guard admitted, such as a tool restriction naming an undeclared server.
+So the `GUARD_CONFIG_UNSYNCED` hold also admits one edit, write or patch of `cockpit.toml` itself that
+leaves it byte-identical to the recorded copy, because restoring that copy cannot widen anything. An
+edit the guard cannot prove applies exactly once, or that also touches another file, stays held.
+
 An edit does not widen only when every difference is one of these:
 
 - descriptive or host-only fields: a sibling's `purpose`, `host_reason` and `rebuild_inputs`,
