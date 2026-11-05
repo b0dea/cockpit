@@ -104,7 +104,12 @@ const lockOwnerIdentity = /^(?:holder:[a-f0-9]{64}:session|bootstrap-holder:[a-f
 const surfaceTargets = new Set<string>(SURFACE_TARGETS)
 // The setup skill is at most three files per tool, published for every listed tool.
 const BOOTSTRAP_PUBLISHED_MAX = 3 * SURFACE_TARGETS.length
-const bootstrapStages = ['surface-previewed', 'surface-published', 'draft-prepared', 'draft-observed', 'environment-verified'] as const
+const bootstrapStages = ['surface-previewed', 'surface-published', 'draft-prepared', 'draft-observed', 'surfaces-verified', 'environment-verified'] as const
+// The two verified stages are alternative ends of one step: draft-observed reaches either, and a
+// rerun moves between them when cockpit.toml starts or stops declaring a runtime.
+function bootstrapStageRank(stage: typeof bootstrapStages[number]): number {
+    return bootstrapStages.indexOf(stage === 'environment-verified' ? 'surfaces-verified' : stage)
+}
 const BootstrapPathSchema = z.string().min(1).max(4_096)
     .regex(/^(?!\/)(?!.*\\)(?!.*[\x00-\x1f\x7f])[^/]+(?:\/[^/]+)*$/)
     .refine(path => path.split('/').every(segment => segment !== '.' && segment !== '..'))
@@ -216,7 +221,7 @@ const BootstrapStateRecordSchema = z.object({
     if ((value.stage === 'surface-previewed') !== (value.published.length === 0)) {
         context.addIssue({ code: 'custom', message: 'bootstrap publication rows do not match the stage' })
     }
-    const draftRequired = ['draft-prepared', 'draft-observed', 'environment-verified'].includes(value.stage)
+    const draftRequired = ['draft-prepared', 'draft-observed', 'surfaces-verified', 'environment-verified'].includes(value.stage)
     const draftFields = [value.destination, value.artifactBytes, value.artifactSha256]
     if (draftRequired !== draftFields.every(field => field !== null)
         || !draftRequired && draftFields.some(field => field !== null)) {
@@ -1220,7 +1225,7 @@ function validateRecordForAddress(
                 && record.value.previewSha256 === currentBootstrap.value.previewSha256
                 && JSON.stringify(record.value.sources) === JSON.stringify(currentBootstrap.value.sources)
         const stageDelta = currentBootstrap === null ? 0
-            : bootstrapStages.indexOf(record.value.stage) - bootstrapStages.indexOf(currentBootstrap.value.stage)
+            : bootstrapStageRank(record.value.stage) - bootstrapStageRank(currentBootstrap.value.stage)
         const stageAdvances = currentBootstrap === null || stageDelta === 0 || stageDelta === 1
         const publishedEvidenceMatches = currentBootstrap === null || currentBootstrap.value.published.length === 0
             || JSON.stringify(record.value.published) === JSON.stringify(currentBootstrap.value.published)

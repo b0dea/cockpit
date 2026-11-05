@@ -136,8 +136,12 @@ describe('init application', () => {
         const notDeclared = { severity: 'error' as const, code: 'ENVIRONMENT_NOT_DECLARED', message: 'synthetic: no runtime is declared' }
         const completed = await runInitApplication(accepted, { ...f.adapters, preflight: async () => ({
             kind: 'blocked', status: 2, diagnostics: [notDeclared], result: { verdict: 'unavailable' } }) })
-        expect(completed).toMatchObject({ kind: 'complete', status: 0, result: { stage: 'environment-verified' },
+        expect(completed).toMatchObject({ kind: 'complete', status: 0, result: { stage: 'surfaces-verified' },
             diagnostics: [{ severity: 'info', code: 'ENVIRONMENT_NOT_DECLARED', message: notDeclared.message }] })
+        // A rerun moves between the two ends as cockpit.toml starts or stops declaring a runtime.
+        expect(await runInitApplication(accepted, f.adapters)).toMatchObject({ kind: 'complete', result: { stage: 'environment-verified' } })
+        expect(await runInitApplication(accepted, { ...f.adapters, preflight: async () => ({
+            kind: 'blocked', status: 2, diagnostics: [notDeclared], result: { verdict: 'unavailable' } }) })).toMatchObject({ kind: 'complete', result: { stage: 'surfaces-verified' } })
     })
 
     it('asks where the cockpit lives before publishing anything into a product repository', async () => {

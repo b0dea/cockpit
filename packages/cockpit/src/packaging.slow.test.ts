@@ -732,7 +732,7 @@ it('keeps a verified local-archive pin through installed init, check and npm ci'
     expect(defaults).toMatchObject({ field: 'configuration.defaults' })
     const third = run('--accept-preview', preview.previewSha256, '--answers', answers, '--accept-defaults', defaults.expectedSha256)
     expect(third.status, third.stdout + third.stderr).toBe(0)
-    expect(JSON.parse(third.stdout).result).toMatchObject({ stage: 'environment-verified' })
+    expect(JSON.parse(third.stdout).result).toMatchObject({ stage: 'surfaces-verified' })
 
     expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))).toMatchObject({
         name: 'synthetic-cockpit-root', private: true,
@@ -847,7 +847,7 @@ it.each(initEstates)('runs installed init on $target for a $classification estat
         expect(JSON.parse(wrong.stdout).diagnostics[0].code).toBe('INIT_DEFAULTS_NOT_ACCEPTED')
         const done = finish('--accept-defaults', JSON.parse(awaiting.stdout).result.question.expectedSha256)
         expect(done.status, done.stdout + done.stderr).toBe(0)
-        expect(JSON.parse(done.stdout).result).toMatchObject({ stage: 'environment-verified' })
+        expect(JSON.parse(done.stdout).result).toMatchObject({ stage: 'surfaces-verified' })
         expect(JSON.parse(done.stdout).result).not.toHaveProperty('nextCommand')
         expect(readFileSync(join(root, 'cockpit.toml'), 'utf8')).toContain('[[sibling]]')
     } else {
@@ -970,7 +970,7 @@ it('finishes init across three runs without a terminal and lets a teammate clone
     expect(defaults).toMatchObject({ field: 'configuration.defaults' })
     const third = portableRun('--accept-preview', portableListed.previewSha256, '--answers', answersFile, '--accept-defaults', defaults.expectedSha256)
     expect(third.status, third.stdout + third.stderr).toBe(0)
-    expect(JSON.parse(third.stdout).result).toMatchObject({ stage: 'environment-verified' })
+    expect(JSON.parse(third.stdout).result).toMatchObject({ stage: 'surfaces-verified' })
     expect(existsSync(join(portable, 'cockpit.toml'))).toBe(true)
 
     // A teammate's clone has a different checkout path and HOME. The local tarball stands in for
@@ -1065,7 +1065,7 @@ it.each(['dedicated', 'in-repo'] as const)('finishes installed init for a produc
     expect(defaults).toMatchObject({ field: 'configuration.defaults' })
     const completed = run('--accept-preview', shown.previewSha256, '--answers', answers, '--accept-defaults', defaults.expectedSha256)
     expect(completed.status, completed.stdout + completed.stderr).toBe(0)
-    expect(JSON.parse(completed.stdout).result).toMatchObject({ root, stage: 'environment-verified' })
+    expect(JSON.parse(completed.stdout).result).toMatchObject({ root, stage: 'surfaces-verified' })
     expect(statSync(join(root, '.git')).isDirectory()).toBe(true)
     const completedManifest = readFileSync(join(product, 'package.json'), 'utf8')
     if (rootChoice === 'dedicated') expect(completedManifest).toBe(manifest)

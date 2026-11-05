@@ -132,7 +132,7 @@ export async function inspectProjectReadiness(
         return findings
     }
     // A greenfield root init writes into in place stays outside Git until someone runs git init, and
-    // setup refuses it only later; init reached environment-verified without saying so.
+    // setup refuses it only later; init reached its final stage without saying so.
     if (input.checkRoot && await isDirectory(input.root)) {
         const step = snapshotExecutionStep({
             id: 'git:readiness-working-tree', argv: [git.value.canonicalPath, '-C', input.root, 'rev-parse', '--show-toplevel'],

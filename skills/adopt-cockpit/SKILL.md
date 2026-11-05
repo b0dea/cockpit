@@ -216,7 +216,8 @@ started it, even where it lives outside this root.
      Git state in another directory, use `git -C <dir> status` or `cd ./<dir> && <command>`; a bare
      `cd <dir>` is refused.
    Done when the result reports `environment-verified`, or, for a cockpit that declares no runtime,
-   reports it with `ENVIRONMENT_NOT_DECLARED` as information and no bring-up.
+   reports `surfaces-verified` with `ENVIRONMENT_NOT_DECLARED` as information and no bring-up. That
+   stage verifies the surfaces only: step 7's `doctor` is what reports its env schemas.
 7. **Clear the readiness gaps.** Every `init` stop, and
    `./node_modules/.bin/cockpit doctor --config cockpit.toml --json`, carries `result.readiness`:
    `gaps` lists each prerequisite a check reported missing, with its `level` (a `required` one is
