@@ -264,7 +264,7 @@ started it, even where it lives outside this root.
      product has no **AGENTS.md**, show the exact proposed file as a draft; if it has one, show the
      marked block that would be appended without changing the team's text. After approval, set
      `instruction_pointer = true` on that sibling's table in `cockpit.toml`; the guard then holds
-     every tool call until a person runs `./node_modules/.bin/cockpit sync --config cockpit.toml` in
+     every guarded call until a person runs `./node_modules/.bin/cockpit sync --config cockpit.toml` in
      a terminal. Then continue from step 4 of **Add or remove a repository** at its `setup` command. An in-repository cockpit already uses the root guide and must not point it at itself.
    - After accepted initialization, and only with explicit permission to change the product's
      fixtures or auth setup, read `references/test-data-and-personas.md` beside the cockpit-setup
@@ -311,7 +311,7 @@ guesses. So derive each value from what the repository shows, record it as infer
    the product untouched. Done when each product file is on its branch with its diff in your report,
    or no product file was written.
 6. Finish the configuration with the init flow in **Bootstrap**. On an existing cockpit, an edit to
-   `cockpit.toml` makes the guard hold every tool call until it is synced. When the hold says the
+   `cockpit.toml` makes the guard hold every guarded call until it is synced. When the hold says the
    edit does not widen what agents may do, run
    `./node_modules/.bin/cockpit sync --config cockpit.toml` yourself where `[autonomy] sync =
    "agent"`; when it names fields that widen, a person runs it in a terminal. Then run

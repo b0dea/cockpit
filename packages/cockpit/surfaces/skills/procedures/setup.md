@@ -179,7 +179,7 @@ started it, even where it lives outside this root.
      product has no **AGENTS.md**, show the exact proposed file as a draft; if it has one, show the
      marked block that would be appended without changing the team's text. After approval, set
      `instruction_pointer = true` on that sibling's table in `cockpit.toml`; the guard then holds
-     every tool call until a person runs `./node_modules/.bin/cockpit sync --config cockpit.toml` in
+     every guarded call until a person runs `./node_modules/.bin/cockpit sync --config cockpit.toml` in
      a terminal. Then continue from step 4 of **Add or remove a repository** at its `setup` command. An in-repository cockpit already uses the root guide and must not point it at itself.
    - After accepted initialization, and only with explicit permission to change the product's
      fixtures or auth setup, read `references/test-data-and-personas.md` beside the cockpit-setup
@@ -226,7 +226,7 @@ guesses. So derive each value from what the repository shows, record it as infer
    the product untouched. Done when each product file is on its branch with its diff in your report,
    or no product file was written.
 6. Finish the configuration with the init flow in **Bootstrap**. On an existing cockpit, an edit to
-   `cockpit.toml` makes the guard hold every tool call until it is synced. When the hold says the
+   `cockpit.toml` makes the guard hold every guarded call until it is synced. When the hold says the
    edit does not widen what agents may do, run
    `./node_modules/.bin/cockpit sync --config cockpit.toml` yourself where `[autonomy] sync =
    "agent"`; when it names fields that widen, a person runs it in a terminal. Then run
@@ -292,7 +292,7 @@ report secure agent secret use as unavailable unless a sandbox that has been tes
 ## Add or remove an agent tool
 
 When the team starts or stops using an agent tool, the `tool` command edits only `[surfaces]
-tools` in `cockpit.toml`, and after the edit the guard holds every tool call until it is synced.
+tools` in `cockpit.toml`, and after the edit the guard holds every guarded call until it is synced.
 Adding a tool does not widen what agents may do, so you may run `tool add`; removing one deletes
 that tool's guard, so the guard asks before `tool remove`, and the hold then names `surfaces.tools`
 and waits for a person.
@@ -314,7 +314,7 @@ and waits for a person.
 Use this on an installed cockpit when a product gains or drops a repository. The `sibling`
 command edits `cockpit.toml` so the repository is declared once, with its purpose, instead of
 reached by path. The guard asks before every `sibling` command, and because the command writes
-`cockpit.toml` immediately, the guard then holds every tool call until it is synced.
+`cockpit.toml` immediately, the guard then holds every guarded call until it is synced.
 
 1. **Propose the declaration.** Read the repository and ask the person for its purpose when no
    source states it. Show the human the proposed sibling declaration before invoking the command:
@@ -378,7 +378,7 @@ belongs in AGENTS.md and CLAUDE.md starts with a line reading `@AGENTS.md`. The
 ## After upgrading cockpit
 
 An upgrade changes the generated files that guard and instruct every agent, so it is reviewed,
-never applied silently. Installing a new cockpit also makes the guard hold every tool call until
+never applied silently. Installing a new cockpit also makes the guard hold every guarded call until
 `sync` regenerates it for the new version.
 
 1. **Upgrade in one command where you may.**
@@ -388,12 +388,12 @@ never applied silently. Installing a new cockpit also makes the guard hold every
    names, runs `sync` in a new process, and prints the `Upgrade:` lines. An agent may run it where
    `[autonomy] sync = "agent"`, the default; otherwise the guard asks, and the person runs it. When
    its sync fails (`UPGRADE_SYNC_FAILED`, for example on stale removals that need approval), the new
-   version is already installed and the guard holds every tool call: a person acts on what sync
+   version is already installed and the guard holds every guarded call: a person acts on what sync
    reported and runs `./node_modules/.bin/cockpit sync --config cockpit.toml --interactive` in a
    terminal. Done when the command exits 0 and its sync wrote the new files.
 2. **Or by hand.** `npm update` does not move the exact pin, so install the reviewed release by
    version: `npm install --save-dev --save-exact @b00dea/cockpit@<version>`, and confirm the manifest
-   and lockfile show that exact version. From then on the guard holds every tool call, so a person
+   and lockfile show that exact version. From then on the guard holds every guarded call, so a person
    runs `./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run` and then
    `./node_modules/.bin/cockpit sync --config cockpit.toml --interactive` in a terminal. Done when
    that sync exits 0.
