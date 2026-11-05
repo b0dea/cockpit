@@ -418,7 +418,7 @@ stricter setting and the most agentic one that keeps every guardrail.
 | `reset --apply`, and a `stacks prune --apply` that deletes volumes | process: it deletes local stack data, which bring-up recreates, and loosens no constraint; otherwise a person approves the preview with `--interactive` | `[autonomy] reset` | `person` | `person` or `ci` | `agent` |
 | Accepting, answering and signing off a work order | process: the grade still judges the work | `[work.gates] accept`, `answer`, `signoff` | `agent` | `person` or `ci` | `agent` |
 | Amending an accepted contract | process for a rewrite the next grade judges; removing an accepted criterion or gate, or a rewrite under `checks` grading, which nothing judges, is a guardrail and needs a person or CI whatever the field says | `[work.gates] amend` | `agent` | `person` or `ci` | `agent` |
-| Acknowledging a test weakening | process where a model grades, which reads the acknowledgement as context; under `checks` grading the acknowledgement is what passes the test-protection check, so there it is a guardrail | `[work.gates] acknowledge` | `agent` | `person` or `ci` | `agent`; `person` under `checks` |
+| Acknowledging a test weakening | process where a model grades, which reads the acknowledgement as context; under `checks` grading the acknowledgement alone passes the test-protection check, so there it is a guardrail and needs a person or CI whatever the field says, and an acknowledgement the agent recorded under another mode does not count | `[work.gates] acknowledge` | `agent` | `person` or `ci` | `agent` |
 | Confirming an init answer that is no trust decision: `cockpit.name`, `estate.runnable`, `environment.test_data` | process: confirming changes no value, and the record names the agent and the field that let it decide | `[autonomy] confirm_answers` | `person` | `person` | `agent` |
 | `setup --write-instruction-files` and `--write-instruction-pointers` | process: they write sibling instruction files the agent may already edit with its own tools | `[autonomy] instruction_files` | `person` | `person` | `agent` |
 | `browser drive` and `screenshot` without a prompt | process on isolated data; on data that is not isolated, restored or reaches production, preapproval is refused | `[browser] request_preapproval` | on exactly where the data is isolated | `false` | as shipped |
@@ -448,7 +448,7 @@ accept = "agent"
 amend = "agent"
 answer = "agent"
 signoff = "agent"
-acknowledge = "agent"  # "person" if grading is "checks"
+acknowledge = "agent"  # under "checks" grading a person or CI acknowledges regardless
 
 [autonomy]
 sync = "agent"

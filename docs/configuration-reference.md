@@ -217,7 +217,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `amend` | Who accepts a changed contract. Default agent. Removing an accepted criterion or gate always needs a person or ci; an agent's rewrite of a criterion, scope, non-goal or objective is judged at the next grade, and needs a person under checks grading; under off nothing judges it. | string |  | one of `"agent"`, `"person"`, `"ci"` |
 | `answer` | Who answers an open question on an order. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
 | `signoff` | Who closes a graded order. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
-| `acknowledge` | Who acknowledges that an order weakened tests, which checks grading otherwise fails; under independent, subagent and self grading the acknowledgement is context for the verdict, and under off it is only recorded. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
+| `acknowledge` | Who acknowledges that an order weakened tests, which checks grading otherwise fails; under checks a person or CI acknowledges even where this says agent, because the acknowledgement alone passes the check there; under independent, subagent and self grading the acknowledgement is context for the verdict, and under off it is only recorded. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
 
 ### `[autonomy]`
 
@@ -635,6 +635,6 @@ Agent tools load every skill's frontmatter into each session and its entry point
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 12 | `packages/cockpit/surfaces/skills/procedures/fix.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 9 | `packages/cockpit/surfaces/skills/procedures/work.md` |
 
-Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `ea324591115c418321f69c7c2859dbe77d546e85bb3230616ae2c717a24f0c06`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `677eeab59ad55240e7281c7bba3d7425b9da1d5ddfdbcbd01617cf3df02772a3`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `f9008b15acddc0ee3c5f6c16e9fb7f053aac44500d102b7dba87f8a4bce81a88`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `6b4326757208d7d05e8200226eeebd7c1ee6fb8dc890ccf8bee18092817ceaea`).
+Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `ea324591115c418321f69c7c2859dbe77d546e85bb3230616ae2c717a24f0c06`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `677eeab59ad55240e7281c7bba3d7425b9da1d5ddfdbcbd01617cf3df02772a3`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `f9008b15acddc0ee3c5f6c16e9fb7f053aac44500d102b7dba87f8a4bce81a88`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `e72931b0c9e641462b618d7cdd36de7608a961e46643a2e104ac3a66588194b2`).
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.

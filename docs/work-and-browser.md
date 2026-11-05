@@ -119,7 +119,9 @@ step: `accept`, `amend` (accepting a changed contract), `answer`, `signoff` and 
 | `ci` | The command records the step as awaiting CI, and it counts once the required `work verify` job passes. |
 
 Removing an accepted criterion or gate is never the agent's to certify: under `amend = "agent"` such
-an amendment still needs a person. [Amendments](#amendments) says what happens to the rest.
+an amendment still needs a person. [Amendments](#amendments) says what happens to the rest. Under
+`checks` grading, acknowledging a test weakening is likewise a person's or CI's under
+`acknowledge = "agent"`, as [Test protection](#test-protection) says.
 
 These local gates are best-effort. The guard keeps an agent's tool call from passing
 `--interactive`, and the command needs a terminal on both standard input and output, but cockpit
@@ -294,9 +296,10 @@ gate passed. With no open order it says it had nothing to compare with.
 
 `work acknowledge --work-order <id> --note <why it is not a weakening>` records an acknowledgement
 with who passed it. It covers exactly the findings it showed, so a test deleted or skipped later
-fails a `checks` grade again. Where `[work.gates] acknowledge` is `person`, a person runs it with
-`--interactive` and types the digest; an agent's run without a terminal is refused with
-`WORK_PERSON_REQUIRED`.
+fails a `checks` grade again. Where `[work.gates] acknowledge` is `person`, and under `checks`
+grading wherever it is not `ci`, a person runs it with `--interactive` and types the digest; an
+agent's run without a terminal is refused with `WORK_PERSON_REQUIRED`. Under `checks` no model reads
+the change, so an acknowledgement the agent recorded does not pass the check.
 
 ## Decisions
 

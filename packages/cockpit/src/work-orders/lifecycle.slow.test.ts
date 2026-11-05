@@ -424,8 +424,9 @@ describe('work-order lifecycle', () => {
         expect(record(root, 'WO-3').amendments[1]).toMatchObject({ by: 'person', weakened: [], review: [{ field: 'scope', before: 'src/, test/', after: 'src/, test/, docs/' }] })
     }, 120_000)
 
-    it('fails a checks grade that deletes or skips tests until it is acknowledged, by a person where the cockpit sets acknowledge = "person"', async () => {
-        const root = await cockpit('[work]\ngrading = "checks"\n\n[work.gates]\nacknowledge = "person"')
+    // No model reads the change under checks, so the acknowledgement alone passes it: it is a person's even under acknowledge = "agent".
+    it('fails a checks grade that deletes or skips tests until a person acknowledges it, whatever [work.gates] acknowledge says', async () => {
+        const root = await cockpit('[work]\ngrading = "checks"\n\n[work.gates]\nacknowledge = "agent"')
         // A second test the order's check does not run, so only the protection can notice its loss.
         writeFileSync(join(root, 'test/extra.test.mjs'), "console.log('extra')\n")
         git(root, 'add', '-A'); git(root, 'commit', '-qm', 'extra test')
@@ -451,6 +452,13 @@ describe('work-order lifecycle', () => {
 
         // The acknowledgement covers what the person read: a test skipped afterwards fails the grade again.
         writeFileSync(join(root, 'test/later.test.mjs'), "test.skip('later', () => {})\n")
+        // An acknowledgement the agent recorded where a model grades neither passes checks once they are back in force nor stands in for a person's.
+        const config = readFileSync(join(root, 'cockpit.toml'), 'utf8')
+        writeFileSync(join(root, 'cockpit.toml'), config.replace('grading = "checks"', 'grading = "self"'))
+        const later = ['work', 'acknowledge', '--work-order', 'WO-4', '--note', 'the later test is not written yet']
+        expect(await work(root, later)).toMatchObject({ status: 0, result: { by: 'agent' } })
+        writeFileSync(join(root, 'cockpit.toml'), config)
+        expect((await work(root, later)).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
         expect(await work(root, ['work', 'grade', '--work-order', 'WO-4'])).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_TEST_WEAKENED',
             message: expect.stringContaining('test/later.test.mjs: test-skipped') }] })
     }, 120_000)

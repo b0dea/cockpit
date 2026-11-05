@@ -505,7 +505,7 @@ const WorkGates = z
         amend: Decider.optional().describe('Who accepts a changed contract. Default agent. Removing an accepted criterion or gate always needs a person or ci; an agent\'s rewrite of a criterion, scope, non-goal or objective is judged at the next grade, and needs a person under checks grading; under off nothing judges it.'),
         answer: Decider.optional().describe('Who answers an open question on an order. Default agent.'),
         signoff: Decider.optional().describe('Who closes a graded order. Default agent.'),
-        acknowledge: Decider.optional().describe('Who acknowledges that an order weakened tests, which checks grading otherwise fails; under independent, subagent and self grading the acknowledgement is context for the verdict, and under off it is only recorded. Default agent.'),
+        acknowledge: Decider.optional().describe('Who acknowledges that an order weakened tests, which checks grading otherwise fails; under checks a person or CI acknowledges even where this says agent, because the acknowledgement alone passes the check there; under independent, subagent and self grading the acknowledgement is context for the verdict, and under off it is only recorded. Default agent.'),
     })
     .strict()
 

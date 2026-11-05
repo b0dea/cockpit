@@ -2,6 +2,7 @@
 // run apply, `work grade` against an order's accepted contract and `grade --criteria` with no order.
 import { posix } from 'node:path'
 
+import type { EffectivePolicy } from '../autonomy.js'
 import { RefusalError } from '../environment/contract.js'
 import type { GradingSubject, Verdict } from '../grading/grade.js'
 import { GRADING, isGradeMode, type Decider, type GradeMode, type WorkGrading } from '../schema.js'
@@ -32,12 +33,26 @@ const unaddressed = (note: string, paths: readonly string[]) => paths.filter(pat
 
 type Weakening = Awaited<ReturnType<WorkApplicationComposition['testWeakening']>>
 const ACKNOWLEDGE = 'npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why this is not a weakening>'
+export interface AcknowledgeRule {
+    /** Who passes `work acknowledge`. */
+    readonly decider: Decider
+    /** Whether a recorded acknowledgement passes test protection now. */
+    readonly counts: (row: Readonly<{ by: Decider }>) => boolean
+}
+// Under checks no model reads the change, so the acknowledgement alone passes test protection, and an
+// agent acknowledging its own weakened tests would pass them unseen. There a person or CI acknowledges
+// whatever [work.gates] says, and an acknowledgement the agent recorded under another mode does not count.
+export function acknowledgeRule(policy: Pick<EffectivePolicy, 'grading' | 'gates'>): AcknowledgeRule {
+    const checks = policy.grading === 'checks'
+    return { decider: checks && policy.gates.acknowledge === 'agent' ? 'person' : policy.gates.acknowledge, counts: row => !checks || row.by !== 'agent' }
+}
 // Tests weakened since the base, judged by rule where no model reads the change. An acknowledgement
 // covers exactly the findings it was recorded for, so any further weakening fails again.
-function protection(weak: Weakening, record: WorkRecord | undefined, gate: Decider) {
+function protection(weak: Weakening, record: WorkRecord | undefined, rule: AcknowledgeRule) {
     const rows = weak.findings.map(describeWeakening)
     const digest = testWeakeningDigest(weak.findings)
-    const acknowledged = weak.findings.length ? record?.acknowledgements.find(row => row.digest === digest) : undefined
+    const acknowledged = weak.findings.length ? record?.acknowledgements.find(row => row.digest === digest && rule.counts(row)) : undefined
+    const gate = rule.decider
     const how = !record ? 'a work order lets it be acknowledged; there is none for this grade'
         : gate === 'person' ? `a person records it with ${ACKNOWLEDGE} --interactive` : gate === 'ci' ? `acknowledge it with ${ACKNOWLEDGE}, which the work verify job confirms in CI`
             : `acknowledge it with ${ACKNOWLEDGE}`
@@ -48,7 +63,7 @@ function protection(weak: Weakening, record: WorkRecord | undefined, gate: Decid
 }
 
 type StandingInput = Readonly<{ docs?: WorkApplicationComposition['docs']; record?: WorkRecord; outOfScope: readonly string[]; weak: Weakening
-    amendments: readonly AmendmentReview[]; acknowledge: Decider }>
+    amendments: readonly AmendmentReview[]; acknowledge: AcknowledgeRule }>
 // A criterion cockpit adds to every grade. Where a model grades, it judges `text` (the evaluator in
 // independent grading, the agent's verdict in self grading, a verdict the agent relays in subagent
 // grading). Under checks no model reads the change:
@@ -123,7 +138,7 @@ export async function testRun(captured: Extract<WorkApplicationRequest, { operat
         if (!observed.has(key)) observed.set(key, composition.testWeakening(base))
         return observed.get(key)!
     }
-    const guards = await Promise.all(open.map(async row => ({ id: row.id, ...protection(await weakeningSince(row.accepted.base), row, composition.policy.gates.acknowledge) })))
+    const guards = await Promise.all(open.map(async row => ({ id: row.id, ...protection(await weakeningSince(row.accepted.base), row, acknowledgeRule(composition.policy)) })))
     const binding = composition.policy.grading === 'checks'
     const testProtection = guards.length ? { comparedWith: guards.map(row => `${row.id}'s base`), orders: guards.map(row => ({ id: row.id, ...row.value })),
         ...!binding && guards.some(row => row.value.findings.length) ? { note: !isGradeMode(composition.policy.grading)
@@ -175,9 +190,9 @@ export async function gradeOrder(request: Extract<WorkRequest, { operation: 'wor
     const decisionFiles = [composition.docs?.decisions, composition.docs?.decisionsIndex].filter((path): path is string => path !== undefined)
     const inScope = scopeMatcher([...order.scope, ...decisionFiles])
     const outOfScope = changes.map(change => change.path).filter(path => !inScope(path))
-    const guarded = protection(weak, record, policy.gates.acknowledge)
+    const guarded = protection(weak, record, acknowledgeRule(policy))
     const amendments = judged ? amendmentsToReview(record) : []
-    const standingInput: StandingInput = { docs: composition.docs, record, outOfScope, weak, amendments, acknowledge: policy.gates.acknowledge }
+    const standingInput: StandingInput = { docs: composition.docs, record, outOfScope, weak, amendments, acknowledge: acknowledgeRule(policy) }
     const standing = judged ? standingCriteria(standingInput) : []
     if (reported) {
         // The reported verdict covers the standing criteria too, so its note must at least name what they list.
@@ -236,7 +251,7 @@ export async function gradeCriteriaFile(request: Extract<WorkRequest, { operatio
     const inScope = scopeMatcher(file.scope)
     const outOfScope = file.scope.length ? changes.map(change => change.path).filter(path => !inScope(path)) : []
     const weak = review.weakening
-    const criteria = [...file.criteria, ...standingCriteria({ outOfScope, weak, amendments: [], acknowledge: policy.gates.acknowledge })]
+    const criteria = [...file.criteria, ...standingCriteria({ outOfScope, weak, amendments: [], acknowledge: acknowledgeRule(policy) })]
     const subject: GradingSubject = { ...file.objective ? { objective: file.objective } : {}, criteria, nonGoals: [], scope: file.scope, checks, changes, outOfScope }
     const graded = await composition.evaluate(subject)
     if ('refusal' in graded) return refusal(operation, `${graded.refusal.code}: ${graded.refusal.message}; ${graded.refusal.fix}`)

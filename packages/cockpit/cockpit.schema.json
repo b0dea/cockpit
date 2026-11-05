@@ -818,7 +818,7 @@
               ]
             },
             "acknowledge": {
-              "description": "Who acknowledges that an order weakened tests, which checks grading otherwise fails; under independent, subagent and self grading the acknowledgement is context for the verdict, and under off it is only recorded. Default agent.",
+              "description": "Who acknowledges that an order weakened tests, which checks grading otherwise fails; under checks a person or CI acknowledges even where this says agent, because the acknowledgement alone passes the check there; under independent, subagent and self grading the acknowledgement is context for the verdict, and under off it is only recorded. Default agent.",
               "type": "string",
               "enum": [
                 "agent",

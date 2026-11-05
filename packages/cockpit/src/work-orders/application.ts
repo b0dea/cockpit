@@ -18,7 +18,7 @@ import { captureWorkApplicationRequest, complete, displayState, now, openQuestio
     type WorkApplicationOutcome, type WorkApplicationRequest, type WorkRequest } from './application-context.js'
 import { checkFacts, pendingCi, signoff, verify } from './application-closure.js'
 import { decideOrder, DECISIONS_UNDECLARED, relatedDecisions, unresolvedDecisions } from './application-decisions.js'
-import { gradeCriteriaFile, gradeOrder, testRun } from './application-grading.js'
+import { acknowledgeRule, gradeCriteriaFile, gradeOrder, testRun } from './application-grading.js'
 
 export { captureWorkApplicationRequest, type WorkApplicationOutcome, type WorkApplicationRequest } from './application-context.js'
 
@@ -177,9 +177,10 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         const weak = await composition.testWeakening(record.accepted.base)
         if (!weak.findings.length) return refusal(operation, `${order.id} weakens no tests since its base, so there is nothing to acknowledge`)
         const digest = testWeakeningDigest(weak.findings)
-        if (record.acknowledgements.some(row => row.digest === digest)) return refusal(operation, `this weakening of ${order.id} is already acknowledged${isGradeMode(policy.grading) ? '; run work grade' : ''}`)
+        const rule = acknowledgeRule(policy)
+        if (record.acknowledgements.some(row => row.digest === digest && rule.counts(row))) return refusal(operation, `this weakening of ${order.id} is already acknowledged${isGradeMode(policy.grading) ? '; run work grade' : ''}`)
         const rows = weak.findings.map(describeWeakening)
-        return gated('acknowledge', policy.gates.acknowledge, [`Acknowledge that ${order.id} weakens tests since its base (test files from ${weak.patterns.source}):`,
+        return gated('acknowledge', rule.decider, [`Acknowledge that ${order.id} weakens tests since its base (test files from ${weak.patterns.source}):`,
             ...rows.map(row => `  ${row}`), 'Reason given:', `  ${request.note}`], 'acknowledge', async by => store.update(order.id, async existing => {
             if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while this prompt was open; rerun work acknowledge`)
             if (testWeakeningDigest((await composition.testWeakening(existing.accepted.base)).findings) !== digest) {

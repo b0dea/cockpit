@@ -121,7 +121,7 @@ not the thinking: reuse the planning skills the harness already has.
    (`WORK_GRADE_UNSATISFIED`) lists each criterion's verdict and note under `result.criteria` and
    failed checks under `result.checks`: go back to step 3 for each, reverting a change outside scope
    or a test change the grade calls unneeded. `WORK_TEST_WEAKENED` means a test change was not accepted: restore the test, or under
-   `checks` grading acknowledge a legitimate change with `work acknowledge --note <why>`. When
+   `checks` grading report a legitimate change for a person (or CI) to acknowledge with `work acknowledge --note <why>`. When
    `amendments-hold-bar` is unmet, the next amendment is a person's: report it. When the person names a grader ("use Codex to
    grade", "use Claude for everything"), pass `--evaluator <tool>` (`codexcli`, `claudecode` or
    `opencode`) on every grade for the rest of the session; only that tool runs, with no fallback.
