@@ -395,6 +395,31 @@ describe('env schema --replace-from', () => {
         expect(space.varlockRan()).toBe(false)
     })
 
+    // The fixture below shares one outside file with a hard link, which would refuse a linked
+    // directory on its own; here the outside file is a single regular file under the tracked name.
+    it('refuses a component reached through a linked directory', async () => {
+        const space = estate('api')
+        const api = space.sibling('api')
+        write(join(space.root, 'draft.txt'), 'NEW_KEY=\n')
+        const outside = join(space.root, 'outside')
+        for (const directory of ['linked', 'parent/child']) write(join(api, directory, 'server.ts'), 'export {}\n')
+        git(api, 'init', '--quiet')
+        git(api, 'add', '--', 'linked', 'parent')
+        write(join(outside, 'server.ts'), 'export {}\n')
+        write(join(outside, 'child/server.ts'), 'export {}\n')
+        rmSync(join(api, 'linked'), { recursive: true })
+        symlinkSync(outside, join(api, 'linked'))
+        rmSync(join(api, 'parent'), { recursive: true })
+        symlinkSync(outside, join(api, 'parent'))
+        for (const reference of [`api:linked/${SCHEMA}`, `api:parent/child/${SCHEMA}`]) {
+            const ran = await replacing(space, 'draft.txt', reference)
+            expect(ran.status, reference).toBe(2)
+            expect(ran.stdout + ran.stderr, reference).toContain('is a symbolic link')
+        }
+        expect(existsSync(join(outside, SCHEMA))).toBe(false)
+        expect(existsSync(join(outside, 'child', SCHEMA))).toBe(false)
+    })
+
     it('refuses linked, sensitive or protected component authority without reading its bytes', async () => {
         const space = estate('api', 'declared')
         const api = space.sibling('api')
