@@ -1,5 +1,5 @@
 ---
-'@b00dea/cockpit': minor
+'@b00dea/cockpit': patch
 ---
 
 Add `[mcp.allowed_tools]`, exact allowlists per MCP server. Codex receives `enabled_tools`; Claude Code receives an authenticated guard scoped to the restricted server namespaces, which denies unlisted tools and leaves listed tools to Claude Code's own permission prompts. Harnesses with no restriction mechanism omit a restricted server and report `MCP_TRANSPORT_UNAVAILABLE`.

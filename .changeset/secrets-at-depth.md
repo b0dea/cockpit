@@ -1,5 +1,5 @@
 ---
-'@b00dea/cockpit': minor
+'@b00dea/cockpit': patch
 ---
 
 Protect `.secrets` directories at any depth, and make the tracked-secret check agree with the guard: `.env.schema` is no longer reported, while `.env.dist` and tracked files below a `.secrets` directory are, and a declared environment template stays exempt.

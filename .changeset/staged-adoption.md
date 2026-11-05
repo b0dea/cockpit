@@ -1,5 +1,5 @@
 ---
-'@b00dea/cockpit': minor
+'@b00dea/cockpit': patch
 ---
 
 Let `init` accept an explicit empty Compose list for staged adoption of a runnable product, keeping install policies, testing, guards and answer provenance while skipping runtime questions. Supplied answers that become irrelevant are reported.
