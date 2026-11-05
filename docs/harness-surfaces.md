@@ -354,7 +354,8 @@ changes to the sibling and passes the same inherited variables, without the head
 `doctor` checks each approved server without starting it or using the network: a local server's
 command and a remote server's helper must resolve (`MCP_COMMAND_UNRESOLVED`), and every environment
 name it reads must be set where doctor runs (`MCP_ENVIRONMENT_UNSET`). It names variables, never
-values.
+values. A relative entry in the `PATH` doctor runs with stops it looking up a bare command, so
+`MCP_COMMAND_UNRESOLVED` then names that entry and says whether the absolute entries hold the command.
 
 Browser transport is published only for harnesses that can use it. A harness with no applicable
 MCP server receives no MCP-only output; its instructions, skills and permissions still publish.

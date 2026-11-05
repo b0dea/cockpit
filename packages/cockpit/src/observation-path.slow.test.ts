@@ -119,6 +119,11 @@ synthetic = "${approval}"
             message: expect.stringContaining('This CLI process') }))
         expect(report.diagnostics).toContainEqual(expect.objectContaining({ code: 'EVALUATOR_UNAVAILABLE' }))
         expect(report.diagnostics).toContainEqual(expect.objectContaining({ code: 'MCP_COMMAND_UNRESOLVED', target: 'synthetic' }))
+        const mcp = report.diagnostics.find((row: { code: string; target: string }) => row.code === 'MCP_COMMAND_UNRESOLVED' && row.target === 'synthetic')
+        expect(mcp.message).toContain('an empty entry, which is the working directory')
+        expect(mcp.message).toContain('excludes from observation')
+        expect(mcp.message).toMatch(/git is at \/\S+\/git among the absolute entries/)
+        expect(mcp.message).not.toContain('no tool can start')
         for (const code of ['EVIDENCE_UNAVAILABLE', 'COMPOSE_TOPOLOGY_UNAVAILABLE', 'LIFECYCLE_EVIDENCE_INVALID']) {
             expect(report.diagnostics.map((row: { code: string }) => row.code)).not.toContain(code)
         }

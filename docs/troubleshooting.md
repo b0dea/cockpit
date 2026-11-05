@@ -276,7 +276,6 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
 | `MCP_APPROVAL_UNKNOWN` | [see above](#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [see above](#mcp-and-restrictions) |
-| `MCP_COMMAND_UNRESOLVED` | install the command or correct it in the sibling's MCP declaration, then run npx --no cockpit sync --config <your cockpit.toml>; a changed declaration needs a person to approve its new sha256 under [mcp.approved] |
 | `MCP_DECLARATION_INVALID` | [see above](#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [see above](#mcp-and-restrictions) |
 | `MCP_NOT_APPROVED` | [see above](#mcp-and-restrictions) |
