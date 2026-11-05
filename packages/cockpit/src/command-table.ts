@@ -3,7 +3,7 @@ import type { ParseArgsConfig } from 'node:util'
 import { isAbsolute, normalize, resolve } from 'node:path'
 import { WORK_ORDER_ID } from './work-orders/contract.js'
 import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from './environment/contract.js'
-import { innerCommand, WRAPPING_COMMANDS, type GuardInvocationProfile } from './guards/evaluator.js'
+import { innerCommand, isSensitiveGuardName, WRAPPING_COMMANDS, type GuardInvocationProfile } from './guards/evaluator.js'
 import { GUARD_HANDLER_ARGV } from './guards/harness-adapter.js'
 import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
 
@@ -138,6 +138,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     none: 'Resolve the decision as not lasting; --reason says why',
     'reset-answer': 'Preview clearing one recorded init answer field',
     remote: 'Repository remote URL recorded for the sibling',
+    'replace-from': 'With env schema: replace that schema with this draft file, or create it, instead of printing it',
     role: 'Declared browser role',
     'fail-on-findings': 'Exit 2 when a route has console errors, uncaught errors or failed requests, for a criterion that wants a clean route',
     route: 'Declared browser route to visit, by name or path; every declared route when omitted',
@@ -165,7 +166,7 @@ export function describePublicOption(name: string): string {
 }
 
 type OrdinaryValueRole = 'confined-path' | 'resolved-config' | 'declared-service' | 'declared-gate' | 'gate-mode' | 'gate-selector'
-    | 'identifier' | 'route' | 'label' | 'schema-reference' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target' | 'local-image' | 'evaluator-tool' | 'compose-profile'
+    | 'identifier' | 'route' | 'label' | 'schema-reference' | 'schema-draft' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target' | 'local-image' | 'evaluator-tool' | 'compose-profile'
 interface OrdinaryOption {
     readonly kind: 'flag' | 'value'
     readonly role: 'boolean' | OrdinaryValueRole
@@ -537,9 +538,12 @@ const sources = [
         flags: configured },
     // Verbatim on purpose: the guard treats this one name as documentation and Git already reaches a
     // committed copy. The role admits nothing but that exact name; the command proves the directory.
-    { name: 'env schema', handler: 'env-schema', stage: 'diagnose', summary: 'Print one .env.schema a sibling or the cockpit root holds, verbatim and with nothing resolved', visibility: 'public',
+    // Replacing it is unprompted because an uncommitted schema is never run. What must not happen is a
+    // secret laundered through a draft and printed back, so a draft is a read the guard proves, and it
+    // is admitted only as the whole call.
+    { name: 'env schema', handler: 'env-schema', stage: 'diagnose', summary: 'Print one .env.schema a sibling or the cockpit root holds, verbatim and with nothing resolved, or replace it from a draft', visibility: 'public',
         ordinary: ordinary('env-schema'),
-        flags: { ...configured, path: str(value('schema-reference', true)) } },
+        flags: { ...configured, path: str(value('schema-reference', true)), 'replace-from': str(value('schema-draft')) } },
     // A gate runs only the stages a person declared in the reviewed cockpit.toml, which is the trust
     // `up` already has; a selector reaches a stage only through the arguments that stage declares.
     { name: 'test-run', handler: 'test-run', stage: 'test-and-grade', summary: 'Run a declared product test gate and report which tests it selected', visibility: 'public',
@@ -747,7 +751,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
         }
         const text = equal < 0 ? words[++index] : arg.slice(equal + 1)
         if (!text || text.startsWith('-')) return undefined
-        if (option.role === 'confined-path') reads.push(resolve(source.canonicalRoot, text))
+        if (option.role === 'confined-path' || option.role === 'schema-draft') reads.push(resolve(source.canonicalRoot, text))
         const valid = option.role === 'confined-path' ? confined(text)
             : option.role === 'resolved-config' ? confined(text) && resolve(source.canonicalRoot, text) === source.configPath
             : option.role === 'declared-service' ? source.services.includes(text)
@@ -758,6 +762,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
             : option.role === 'route' ? ROUTE_SELECTOR.test(text)
             : option.role === 'label' ? true
             : option.role === 'schema-reference' ? SCHEMA_REFERENCE.test(text)
+            : option.role === 'schema-draft' ? !text.split('/').some(isSensitiveGuardName) && confined(text)
             : option.role === 'field' ? isRecordedAnswerField(text)
             : option.role === 'tail' ? /^[1-9]\d{0,4}$/.test(text) && Number(text) <= 10_000
             : option.role === 'since' ? text.length <= 64 && (/^\d+(?:\.\d+)?[smhd]$/.test(text)
@@ -782,5 +787,5 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
         || grammar.requires !== undefined && !options.has('dry-run') && !source.grants.includes(grammar.requires)
         || typeof inspectPath !== 'function' || [...paths].some(path => !inspectPath(path))) return undefined
     return { executable: source.executable, cwd: source.canonicalRoot, argv: [...args],
-        ...(reads.length ? { reads } : {}) }
+        ...(reads.length ? { reads } : {}), ...options.has('replace-from') ? { alone: true as const } : {} }
 }

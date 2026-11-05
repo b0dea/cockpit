@@ -11,7 +11,7 @@ import { basename, dirname, join, posix, relative } from 'node:path'
 import { ENVIRONMENT_CODES, snapshotExecutionStep, type ExecutionStep, RefusalError } from '../environment/contract.js'
 import type { ResolvedExecutable } from '../environment/executable.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import { foldGuardSpelling, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity } from './evaluator.js'
+import { foldGuardSpelling, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity, isSensitiveGuardName } from './evaluator.js'
 
 function missing(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
 
@@ -133,7 +133,7 @@ export function guardSearchPathRelativeEntry(searchPath: string): string | null 
 /** Directory entries a recursive search may walk before the guard stops proving what it reads. */
 const GUARD_SEARCH_ENTRY_LIMIT = 20_000
 
-const sensitiveName = (name: string) => { const folded = foldGuardSpelling(name); return folded.startsWith('.env') || folded === '.secrets' }
+const sensitiveName = isSensitiveGuardName
 
 /**
  * Every path at or below `path` whose case-folded name starts with `.env` or is `.secrets`, of any

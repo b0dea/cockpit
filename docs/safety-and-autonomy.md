@@ -259,6 +259,7 @@ cockpit commands in
 | `npx --no -- cockpit --help`, `npx --no cockpit up --help`, and the version | allowed | They print and exit before any command runs. |
 | `npx --no cockpit up --config cockpit.toml`, and likewise `sleep`, `down`, `restart --service <service>` and `rebuild --service <service>` | allowed | They act only on the stack cockpit declared and owns; `down` keeps data volumes, and deletes only from the local Docker daemon it fixes at the start of the run. |
 | `up --profile <profile>` | allowed for a profile in `environment.profiles` that mounts no sibling with `gate = "operator"`, otherwise a prompt | Another profile starts services no person declared for agents, and an operator-gated sibling touches live data or local hardware. |
+| `npx --no cockpit env schema --config cockpit.toml --path <schema reference> --replace-from <draft>` | allowed only as the whole command, for a draft the guard can prove safe to read; otherwise a prompt | A schema that is not committed is never run, and a draft that could hold a secret is refused, so a replacement cannot launder one back out through `env schema`. |
 | `npx --no cockpit exec --config cockpit.toml --service <service> -- <command>` | allowed when a `[guards] allow` rule or a declared build or test command admits `<command>`, otherwise a prompt | The command runs in a container whose files the guard cannot see, so it is never proven read-only, and the name-based denials still apply to it. |
 | `npx --no cockpit pull --config cockpit.toml` | allowed | It only fetches and fast-forwards, and leaves a modified or diverged checkout as it was. |
 | `npx --no cockpit use <slug> <checkout> --config cockpit.toml`, and `use <slug> --clear` | allowed for a checkout inside a directory the agent may already write, otherwise a prompt | The choice is recorded for this checkout of the cockpit only, so it never widens what the agent can reach. |
@@ -386,13 +387,28 @@ for variable names and `cockpit env schema` for one schema's text, neither of wh
 | --- | --- |
 | Claude Code 2.1.318, generated `Read(//**/.env.*)` denials, no hook, 2026-11-05 | Read, Edit and Write of `.env.schema` were refused as covered by a Read deny rule; `cat` and `sed -i` were refused. `git show HEAD:.env.schema`, `printf ... >> .env.schema`, `cp draft .env.schema` and `mv draft .env.schema` worked. |
 
-No cockpit command writes a schema. Read it with `env schema`, write a draft under a name outside the
-protected ones, then `cp` the draft over `.env.schema`. With the generated guard in place, in the
-cockpit root and in a sibling, `cp`, `mv` and `printf ... >>` onto that name are not proven read-only,
-so the guard asks: under Claude Code a person approves that one step, and a tool with no prompt tier
-refuses it. Codex can edit the file directly. These native results are dated and limited to that
-version; a person's terminal has no such limit. An edited schema is
-[not validated until it is committed](environment.md#a-schema-runs-only-once-committed).
+An agent reads a schema with `env schema`, writes a draft with its normal tools, then runs
+`npx --no cockpit env schema --config cockpit.toml --path <schema reference> --replace-from <draft>`.
+The result is [not validated until it is committed](environment.md#a-schema-runs-only-once-committed),
+and committing is the guarded checkpoint, so an edit here is not itself a security boundary.
+
+The command refuses a draft whose path has a segment that is `.secrets` or starts with `.env`, under any
+case folding; a declared environment instance or any other location the guard protects; a symbolic or
+hard link; anything but a regular file; and a file over the bound. Otherwise `--replace-from .env`
+followed by `env schema` would print a secret. It refuses a target that is a link too, and replaces the
+bytes atomically, or creates a missing schema in a discovered directory.
+
+| Writing `.env.schema`, cockpit root and sibling | Guard evaluator, 2026-11-05 |
+| --- | --- |
+| `apply_patch`, adding or updating | allow |
+| `Edit`, `Write` | allow; Claude Code's native rules refuse them, as measured above |
+| `env schema --replace-from` with a safe draft, alone | allow |
+| that command compounded with `&&`, `;` or a pipe, or with a redirect | ask |
+| `cp`, `mv` or `printf ... >>` onto that name | ask, which a tool with no prompt tier refuses |
+
+The evaluator's answers do not show that a harness routes its tool through the guard, and no native
+Codex or OpenCode run was measured here. The native results are dated and limited to that version. A
+person's terminal has no such limit.
 
 ## Who decides
 

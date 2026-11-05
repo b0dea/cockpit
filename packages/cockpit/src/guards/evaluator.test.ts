@@ -861,6 +861,35 @@ describe('built-in read-only profile', () => {
         }
     })
 
+    // Docs state this per tool. A native rule may still refuse what the guard allows: Claude Code's does.
+    it('allows every file tool to write a schema, in the cockpit root and a sibling', () => {
+        const payload = (tool_name: string, tool_input: object, cwd: string) => ({ hook_event_name: 'PreToolUse', tool_name, cwd, tool_input })
+        for (const cwd of [root, other]) {
+            const schema = `${cwd}/.env.schema`
+            for (const [name, input] of [
+                ['apply_patch add', payload('apply_patch', { command: `*** Begin Patch\n*** Add File: ${schema}\n+KEY=\n*** End Patch` }, cwd)],
+                ['apply_patch update', payload('apply_patch', { command: `*** Begin Patch\n*** Update File: ${schema}\n@@\n-A=\n+B=\n*** End Patch` }, cwd)],
+                ['Edit', payload('Edit', { file_path: schema, old_string: 'A=', new_string: 'B=' }, cwd)],
+                ['Write', payload('Write', { file_path: schema, content: 'KEY=\n' }, cwd)],
+            ] as const) expect(evaluateGuard(parseGuardInput(input), policy(), withGit).decision, `${cwd}: ${name}`).toBe('allow')
+        }
+    })
+
+    it('admits a schema replacement without a prompt only as the whole call', () => {
+        const words = ['--no', 'cockpit', 'env', 'schema', '--config', 'cockpit.toml', '--path', 'api:.env.schema', '--replace-from', 'draft.txt']
+        const configured = { ...policy(), cockpitLaunchers: [candidate('npx', ['--no', 'cockpit'])],
+            cockpitInvocations: [{ executable: 'npx', cwd: root, argv: words, reads: [`${root}/draft.txt`], alone: true as const }] }
+        const decideIt = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command)), configured, withGit)
+        const command = `npx ${words.join(' ')}`
+        expect(decideIt(command).decision).toBe('allow')
+        for (const compound of [`${command} && git status`, `git status && ${command}`, `${command}; git status`, `${command} | cat`, `${command} > out.txt`]) {
+            expect(decideIt(compound), compound).toEqual({ decision: 'ask', reason: expect.stringContaining('only as the whole command') })
+        }
+        // Without the marker the same chain is judged part by part, which is what the marker exists to stop.
+        const unmarked = { ...configured, cockpitInvocations: [{ executable: 'npx', cwd: root, argv: words, reads: [`${root}/draft.txt`] }] }
+        expect(evaluateGuard(parseGuardInput(shellPayload(`${command} && git status`)), unmarked, withGit).decision).toBe('allow')
+    })
+
     it('denies direct writes to Git metadata, whose configuration chooses what read-only Git runs', () => {
         for (const command of ['printf x > .git/config', 'printf x > .GIT/Config', 'printf x > ../other/.git/hooks/fsmonitor']) {
             expect(decide(command).reason, command).toBe('Refusing direct mutation of Git metadata: its configuration chooses programs that read-only Git commands run.')

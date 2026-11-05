@@ -510,7 +510,7 @@ Reads `cockpit.toml` from `--config`.
 
 ## cockpit env schema
 
-Print one .env.schema a sibling or the cockpit root holds, verbatim and with nothing resolved.
+Print one .env.schema a sibling or the cockpit root holds, verbatim and with nothing resolved, or replace it from a draft.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -519,6 +519,7 @@ Reads `cockpit.toml` from `--config`.
 | `--config` | string | unset |
 | `--json` | boolean | `false` |
 | `--path` | string | unset |
+| `--replace-from` | string | unset |
 
 | Exit | Meaning |
 | --- | --- |

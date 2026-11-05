@@ -42,7 +42,7 @@ This generated index is for users choosing the command that owns their next oper
 
 - `cockpit doctor`: Report environment problems without changing anything.
 - `cockpit env keys`: List the variable names env schemas and templates declare, with no value and nothing resolved.
-- `cockpit env schema`: Print one .env.schema a sibling or the cockpit root holds, verbatim and with nothing resolved.
+- `cockpit env schema`: Print one .env.schema a sibling or the cockpit root holds, verbatim and with nothing resolved, or replace it from a draft.
 
 ## Test and grade
 

@@ -161,7 +161,7 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
     check: GeneratedEnvironmentCommandInput
     'docs-check': Readonly<{ configPath: string }>
     'env-keys': Readonly<{ configPath: string }>
-    'env-schema': Readonly<{ configPath: string; reference: string }>
+    'env-schema': Readonly<{ configPath: string; reference: string; replaceFrom?: string }>
     confirm: ConfirmCommandInput
     init: InitApplicationInput & Readonly<{ unattended?: UnattendedInit }>
     doctor: DoctorCommandInput
@@ -750,7 +750,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         stacks: (input) => runStacksInventory({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
         'docs-check': (input) => runDocsCheck({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
         'env-keys': (input) => runEnvKeys({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
-        'env-schema': (input) => runEnvSchema({ configPath: resolve(input.configPath), reference: input.reference, env }, { execute: executeProbe }),
+        'env-schema': (input) => runEnvSchema({ configPath: resolve(input.configPath), reference: input.reference, ...input.replaceFrom === undefined ? {} : { replaceFrom: input.replaceFrom }, env }, { execute: executeProbe }),
         confirm: (input) => {
             const configPath = resolve(input.configPath)
             return runConfirm({ configPath, answer: input.answer }, {
@@ -1255,10 +1255,10 @@ async function decodeRequest(
     }
 
     if (handler === 'env-schema') {
-        const values = parsed.values as { config?: string; path?: string }
+        const values = parsed.values as { config?: string; path?: string; 'replace-from'?: string }
         if (!values.config) return missingConfig()
         if (!values.path) return usageOutcome('CLI_USAGE_INVALID', 'provide --path <slug>:<relative directory>/.env.schema, or --path .env.schema for the cockpit root', '--path')
-        return namedOnly(handler, parsed.positionals) ?? { handler, input: { configPath: values.config, reference: values.path } }
+        return namedOnly(handler, parsed.positionals) ?? { handler, input: { configPath: values.config, reference: values.path, ...values['replace-from'] === undefined ? {} : { replaceFrom: values['replace-from'] } } }
     }
 
     if (handler === 'logs') {

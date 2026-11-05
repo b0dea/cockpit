@@ -220,6 +220,16 @@ describe('closed ordinary invocation metadata', () => {
             '/workspace/product/.env.schema', 'api:/etc/.env.schema']) expect(ordinary(words(path)), path).toBeUndefined()
     })
 
+    it('admits env schema --replace-from only with a draft the guard can prove, and marks it as the whole call', () => {
+        const words = (draft: string) => ['env', 'schema', '--config', authority.configPath, '--path', 'api:.env.schema', '--replace-from', draft]
+        expect(ordinary(words('drafts/schema.txt'))).toEqual({ executable: authority.executable, cwd: authority.canonicalRoot, argv: words('drafts/schema.txt'),
+            reads: ['/workspace/product/drafts/schema.txt'], alone: true })
+        for (const draft of ['.env', '.ENV', '.env.local', '.env.example', '.env.schema', 'drafts/.env', '.env-drafts/schema.txt', '.secrets/schema.txt', 'env/.SECRETS/schema.txt',
+            '../schema.txt', 'drafts/../.env', '/elsewhere/schema.txt']) expect(ordinary(words(draft)), draft).toBeUndefined()
+        expect(ordinary(['env', 'schema', '--config', authority.configPath, '--replace-from', 'drafts/schema.txt'])).toBeUndefined()
+        expect(ordinary(['env', 'keys', '--config', authority.configPath, '--replace-from', 'drafts/schema.txt'])).toBeUndefined()
+    })
+
     it('requires the exact resolved config for every available config-bearing row', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
         expect(rows.map(row => row.name)).toEqual(['setup', 'use', 'pull', 'tool', 'confirm', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'ps', 'restart', 'rebuild', 'exec',

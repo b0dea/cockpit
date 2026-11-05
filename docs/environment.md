@@ -814,9 +814,11 @@ with `ENV_SCHEMA_READ_REFUSED`, naming the fix, any other file name (matched exa
 symbolic or hard link, a non-regular file, a directory the probe does not discover and an oversized
 file.
 
-To change a schema, see
-[Editing a schema under Claude Code](safety-and-autonomy.md#editing-a-schema-under-claude-code). The
-edit is [not validated until it is committed](#a-schema-runs-only-once-committed).
+To change one, write a draft with your normal tools and add `--replace-from <draft>` to that command,
+with the draft relative to the cockpit root.
+[What it refuses](safety-and-autonomy.md#editing-a-schema-under-claude-code) is what stops a secret
+being laundered through a draft. The result is
+[not validated until it is committed](#a-schema-runs-only-once-committed).
 
 ## Check and sync
 

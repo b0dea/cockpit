@@ -1,9 +1,12 @@
-// Owns: `cockpit env keys` and `cockpit env schema`, the agent's route to what a schema declares. A
-// broad native secret denial also refuses the documentation names, and no rule-only exception is safe,
-// so the names and the schema text come through a guarded command instead. Must not: run Varlock or
-// any resolver, open a name outside the four below, follow a symbolic link, or let a value, a default,
-// a resolver expression, a comment's text or an unparsed line reach `env keys` output.
-import { lstat } from 'node:fs/promises'
+// Owns: `cockpit env keys` and `cockpit env schema`, the agent's route to what a schema declares and
+// to changing it. A broad native secret denial also refuses the documentation names, and no rule-only
+// exception is safe, so the names, the text and a replacement come through a guarded command instead.
+// Must not: run Varlock or any resolver, read a name outside the four below except a draft that passes
+// `draftRefusal`, follow a link, or let a value, a default, a resolver expression, a comment's text
+// or an unparsed line reach `env keys` output.
+import { randomBytes } from 'node:crypto'
+import { constants } from 'node:fs'
+import { lstat, open, realpath, rename, unlink } from 'node:fs/promises'
 import { dirname, join, posix, resolve } from 'node:path'
 
 import { readBoundedFile } from '../bounded-read.js'
@@ -12,6 +15,8 @@ import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import { refusalOutcome } from '../refusal.js'
 import { REPOSITORY_FILE, splitRepositoryPath } from '../repository-path.js'
+import { guardProtectedLocations, isSensitiveGuardName, foldGuardSpelling } from '../guards/evaluator.js'
+import { deriveRegistry } from '../registry-derivation.js'
 import { ENVIRONMENT_CODES, errorCause, isMissing, type Diagnostic, type ExecutionStep } from './contract.js'
 import { discoverSchemaRoots, entryName, reasonName, type SchemaRoot } from './env-schema-observation.js'
 import { observationSearchPath, resolveGitExecutable } from './executable.js'
@@ -292,6 +297,8 @@ async function linkedComponent(schema: SchemaRoot): Promise<string | undefined> 
 
 type Discovered = Readonly<{
     cockpitRoot: string
+    configPath: string
+    instances: readonly string[]
     lookedIn: readonly string[]
     roots: Awaited<ReturnType<typeof discoverSchemaRoots>>
 }>
@@ -313,7 +320,12 @@ async function discover(input: EnvCommandInput, command: 'env keys' | 'env schem
     if (served.kind !== 'complete') return { status: 2, diagnostics: [served.diagnostic], result: null }
     const siblings = config.sibling.map((sibling) => ({ slug: sibling.slug, root: servedPath(served.siblings, sibling.slug) }))
     const roots = await discoverSchemaRoots({ cockpit: { root: cockpitRoot, name: config.cockpit.name }, siblings, git: git.value, timeoutMs: GIT_TIMEOUT_MS }, execute)
-    return { cockpitRoot, roots, lookedIn: [...new Set([cockpitRoot, ...siblings.map(({ root }) => root), ...roots.map(({ schema }) => schema.root)])].slice(0, SOURCE_OUTPUT_LIMIT) }
+    // The guard's own derivation of declared instances, below the same served checkouts.
+    const derived = deriveRegistry(config)
+    const instances = derived.kind === 'complete'
+        ? derived.result.secretPaths.map(({ slug, path }) => resolve(servedPath(served.siblings, slug), path)) : undefined
+    if (instances === undefined) return refusalOutcome(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, `${command} could not derive the declared instances from ${source.path}`, 'config', 'fix the configuration, then rerun the command')
+    return { cockpitRoot, configPath: source.path, instances, roots, lookedIn: [...new Set([cockpitRoot, ...siblings.map(({ root }) => root), ...roots.map(({ schema }) => schema.root)])].slice(0, SOURCE_OUTPUT_LIMIT) }
 }
 
 function schemaReference(schema: SchemaRoot): string {
@@ -404,13 +416,13 @@ function refused(reference: string, why: string, fix: string): EnvCommandOutcome
  * `cockpit env schema`: one schema's text, verbatim. A schema is documentation that must hold no
  * value: the guard treats the name that way and a committed one is already readable through Git.
  */
-export async function runEnvSchema(input: EnvCommandInput & Readonly<{ reference: string }>, dependencies: Readonly<{ execute: Execute }>): Promise<EnvCommandOutcome> {
+export async function runEnvSchema(input: EnvCommandInput & Readonly<{ reference: string; replaceFrom?: string }>, dependencies: Readonly<{ execute: Execute }>): Promise<EnvCommandOutcome> {
     const { reference } = input
     const list = `run ${cockpitCommand('env keys')} and pass the reference a schema source prints: <slug>:<relative directory>/${SCHEMA_FILE} in a sibling, or ${SCHEMA_FILE} in the cockpit root`
     const { slug, path } = splitRepositoryPath(reference)
     // Decided from the words alone, before anything is touched: a case-insensitive filesystem would
     // otherwise open the real schema, or a secret file, under a name that only resembles it.
-    if (!REPOSITORY_FILE.test(reference) || posix.basename(path) !== SCHEMA_FILE) {
+    if (!REPOSITORY_FILE.test(reference) || posix.basename(path) !== SCHEMA_FILE || path.split('/').slice(0, -1).some(isSensitiveGuardName)) {
         return refused(reference, `only a file named exactly ${SCHEMA_FILE}, at a path with no . or .. segments, can be read`, list)
     }
     const found = await discover(input, 'env schema', dependencies.execute)
@@ -427,6 +439,7 @@ export async function runEnvSchema(input: EnvCommandInput & Readonly<{ reference
     const linked = await linkedComponent(entry.schema)
     if (linked !== undefined) return refused(reference, `${linked} is a symbolic link`, 'replace the link with a directory')
     const file = join(entry.schema.root, SCHEMA_FILE)
+    if (input.replaceFrom !== undefined) return await replaceSchema({ reference, file, draft: input.replaceFrom, found })
     const read = await readDocumentationFile(file)
     switch (read.kind) {
         case 'text': return { status: 0, diagnostics: [], result: { reference, path: file, text: read.text } }
@@ -437,4 +450,80 @@ export async function runEnvSchema(input: EnvCommandInput & Readonly<{ reference
         case 'too-large': return refused(reference, `${file} is larger than ${FILE_LIMIT_BYTES} bytes`, 'shrink the schema: it declares variables and holds no values')
         case 'unreadable': return refused(reference, `${file}: ${read.reason}`, 'fix what the message names, then rerun the command')
     }
+}
+
+function protectedLocation(path: string, found: Discovered): boolean {
+    const folded = foldGuardSpelling(path)
+    return guardProtectedLocations({ canonicalRoot: found.cockpitRoot, configPath: found.configPath, instances: found.instances }).some((location) => {
+        const protectedPath = foldGuardSpelling(location.path)
+        return folded === protectedPath || location.type === 'directory' && folded.startsWith(`${protectedPath}/`)
+    })
+}
+
+// A replaced schema can be printed back with `env schema`, so a draft that could hold a secret would
+// launder it. The name decides first, then the guard's own locations, under the path as spelled and
+// as resolved, then what the file is: a link or second name may be a protected file under a safe name.
+async function draftRefusal(path: string, found: Discovered): Promise<string | undefined> {
+    const sensitive = (candidate: string) => candidate.split('/').some(isSensitiveGuardName)
+    const forbidden = (candidate: string) => sensitive(candidate)
+        ? 'its path has a segment that is .secrets or starts with .env'
+        : protectedLocation(candidate, found) ? 'the guard protects it: a declared environment instance, a guard control, the secrets directory or the configuration' : undefined
+    const spelled = forbidden(path)
+    if (spelled !== undefined) return spelled
+    let status
+    try { status = await lstat(path) } catch (error) { return `it could not be inspected (${errorCause(error)})` }
+    if (status.isSymbolicLink()) return 'it is a symbolic link'
+    if (!status.isFile()) return 'it is not a regular file'
+    if (status.nlink > 1) return 'it has another hard link, so its bytes may be another file\'s'
+    let resolved
+    try { resolved = await realpath(path) } catch (error) { return `it could not be resolved (${errorCause(error)})` }
+    return forbidden(resolved)
+}
+
+/** Replaces or creates one schema atomically from a draft, so a reader sees the old bytes or the new. */
+async function replaceSchema(input: Readonly<{ reference: string; file: string; draft: string; found: Discovered }>): Promise<EnvCommandOutcome> {
+    const { reference, file, found } = input
+    const draft = resolve(found.cockpitRoot, input.draft)
+    const refuse = (why: string, fix: string) => refusalOutcome(ENVIRONMENT_CODES.ENV_SCHEMA_REPLACE_REFUSED, `${reference} was not changed: ${why}`, reference, fix)
+    const fixDraft = 'write the draft with your normal tools to a regular file of its own, away from environment files and secrets, then rerun the command'
+    const refusal = await draftRefusal(draft, found)
+    if (refusal !== undefined) return refuse(`the draft ${draft} was not read: ${refusal}`, fixDraft)
+    if (protectedLocation(file, found)) return refuse(`${file} is a location the guard protects`, 'change the declaration that protects it, or leave the file to a person')
+    let before
+    try { before = await lstat(file) } catch (error) { if (!isMissing(error)) return refuse(`${file} could not be inspected (${errorCause(error)})`, 'fix what the message names, then rerun the command') }
+    if (before?.isSymbolicLink()) return refuse(`${file} is a symbolic link`, 'replace the link with a regular file')
+    if (before && !before.isFile()) return refuse(`${file} is not a regular file`, 'replace it with a regular file')
+    if (before && before.nlink > 1) return refuse(`${file} has another hard link, so a replacement would leave the other name behind`, 'replace it with a regular file of its own')
+    let bytes
+    try {
+        const read = readBoundedFile(draft, FILE_LIMIT_BYTES)
+        if (read.kind === 'too-large') return refuse(`the draft ${draft} is larger than ${FILE_LIMIT_BYTES} bytes`, fixDraft)
+        bytes = read.bytes
+        new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    } catch (error) {
+        return refuse(`the draft ${draft} could not be read: ${error instanceof TypeError ? 'it is not valid UTF-8' : errorCause(error)}`, fixDraft)
+    }
+    // Not named like a schema: nothing should mistake a half-written file for one, and the guard and
+    // every ignore rule treat a `.env*` name as a secret.
+    const temporary = join(dirname(file), `.cockpit-schema-replace-${randomBytes(8).toString('hex')}`)
+    let created = false
+    try {
+        const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, before ? before.mode & 0o777 : 0o644)
+        created = true
+        try { await handle.writeFile(bytes); await handle.sync() } finally { await handle.close() }
+        const current = await lstat(file).catch((error: unknown) => { if (isMissing(error)) return undefined; throw error })
+        if (current?.ino !== before?.ino || current?.mtimeMs !== before?.mtimeMs || current?.size !== before?.size) {
+            return refuse(`${file} changed while the replacement was prepared`, 'rerun the command')
+        }
+        await rename(temporary, file)
+        created = false
+        const directory = await open(dirname(file), constants.O_RDONLY | constants.O_NOFOLLOW)
+        try { await directory.sync() } finally { await directory.close() }
+    } catch (error) {
+        return refuse(`the replacement could not be written (${errorCause(error)})`, 'fix what the message names, then rerun the command')
+    } finally {
+        if (created) await unlink(temporary)
+    }
+    return { status: 0, diagnostics: [], result: { reference, path: file, action: before ? 'replaced' : 'created', bytes: bytes.length,
+        note: `not validated until committed: preflight and doctor run only a committed schema` } }
 }

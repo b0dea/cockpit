@@ -432,14 +432,14 @@ export async function runGuardEvaluationApplication(
             for (const { executable, cwd, argv, prefix, session } of launched) {
                 const args = argv.slice(prefix)
                 // A session inside a session would run a command the evaluator never sees.
-                const admitted: Pick<GuardInvocationProfile, 'reads'> | undefined = session && ordinarySessionCommand(args, cwd, configured) ? {}
+                const admitted: Pick<GuardInvocationProfile, 'reads' | 'alone'> | undefined = session && ordinarySessionCommand(args, cwd, configured) ? {}
                     : resolveOrdinaryInvocation({ executable: launcher, cwd, argv: args }, authority, path => {
                         const fact = inspect({ path, cwd, operation: 'write' })
                         return !!fact && typeof fact === 'object' && 'status' in fact && fact.status === 'resolved'
                             && 'symlink' in fact && fact.symlink === false
                     })
                 // The evaluator matches the invocation as the agent spelled it, and checks what it reads.
-                if (admitted) cockpitInvocations.push({ executable, cwd, argv, ...(admitted.reads ? { reads: admitted.reads } : {}) })
+                if (admitted) cockpitInvocations.push({ executable, cwd, argv, ...(admitted.reads ? { reads: admitted.reads } : {}), ...(admitted.alone ? { alone: true as const } : {}) })
             }
         }
         if (cockpitInvocations.length + prepared.result.policy.projectCommands.length > GUARD_INPUT_LIMITS.invocations) return unavailable('Guard candidates exceed the invocation bound.')

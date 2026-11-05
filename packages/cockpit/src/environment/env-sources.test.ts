@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -11,7 +11,8 @@ const roots: string[] = []
 
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 
-const sibling = (slug: string) => ['[[sibling]]', `slug = "${slug}"`, `dir = "${slug}"`, 'mount = "none"', 'acquire = "none"', `var = "${slug.toUpperCase()}_DIR"`, `purpose = "Synthetic ${slug}"`, '']
+const sibling = (slug: string) => ['[[sibling]]', `slug = "${slug}"`, `dir = "${slug}"`, 'mount = "none"', 'acquire = "none"', `var = "${slug.toUpperCase()}_DIR"`, `purpose = "Synthetic ${slug}"`,
+    ...slug === 'declared' ? ['environment_files = [{ template = "runtime.template", instance = "config/runtime.instance" }]'] : [], '']
 
 function estate(...slugs: string[]) {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-env-sources-')))
@@ -303,5 +304,103 @@ describe('env schema', () => {
         expect(unlisted.status).toBe(2)
         expect(unlisted.stderr).toContain('could not be listed')
         expect(`${unlisted.stdout}${unlisted.stderr}`).not.toContain(SENTINEL)
+    })
+})
+
+describe('env schema --replace-from', () => {
+    const replacing = (space: Space, draft: string, reference = `api:${SCHEMA}`, ...flags: string[]) =>
+        cli(space.env, 'env', 'schema', '--config', space.configPath, '--path', reference, '--replace-from', draft, ...flags)
+    const OLD = 'OLD_KEY=\n'
+
+    it('replaces or creates a discovered schema from a draft, leaving nothing else behind, and runs nothing', async () => {
+        const space = estate('api')
+        const api = space.sibling('api')
+        write(join(api, SCHEMA), OLD)
+        write(join(api, 'services/web', SCHEMA), OLD)
+        git(api, 'init', '--quiet')
+        git(api, 'add', '--', join('services/web', SCHEMA))
+        write(join(space.root, 'drafts/schema.txt'), 'NEW_KEY=exec("synthetic")\n')
+
+        const replaced = await replacing(space, 'drafts/schema.txt', `api:${SCHEMA}`, '--json')
+        expect(replaced.status).toBe(0)
+        expect(JSON.parse(replaced.stdout).result).toMatchObject({ action: 'replaced', path: join(api, SCHEMA), note: expect.stringContaining('not validated until committed') })
+        expect(readFileSync(join(api, SCHEMA), 'utf8')).toBe('NEW_KEY=exec("synthetic")\n')
+        expect(replaced.stdout).not.toContain('NEW_KEY')
+
+        expect((await replacing(space, join(space.root, 'drafts/schema.txt'), `api:services/web/${SCHEMA}`)).status).toBe(0)
+        expect(readFileSync(join(api, 'services/web', SCHEMA), 'utf8')).toBe('NEW_KEY=exec("synthetic")\n')
+
+        // The cockpit root holds none yet, and a discovered root may gain its first.
+        const created = await replacing(space, 'drafts/schema.txt', SCHEMA, '--json')
+        expect(JSON.parse(created.stdout).result).toMatchObject({ action: 'created', path: join(space.root, SCHEMA) })
+        expect(readFileSync(join(space.root, SCHEMA), 'utf8')).toBe('NEW_KEY=exec("synthetic")\n')
+        expect(readdirSync(api).filter((name) => name.startsWith('.cockpit'))).toEqual([])
+        // The draft survives: nothing but the schema changed.
+        expect(existsSync(join(space.root, 'drafts/schema.txt'))).toBe(true)
+        expect(space.varlockRan()).toBe(false)
+    })
+
+    it('refuses to launder a secret through a draft, leaving the target unchanged and the secret unshown', async () => {
+        const space = estate('api', 'declared')
+        const api = space.sibling('api')
+        write(join(api, SCHEMA), OLD)
+        const secretText = `TOKEN=${SENTINEL}\n`
+        for (const draft of ['.env', '.ENV', '.env.local', '.env.example', '.Env.Draft', '.env-drafts/schema.txt', '.secrets/schema.txt', '.\u017Fecrets/schema.txt',
+            'env/.secrets/synthetic/api/schema.txt']) write(join(space.root, draft), secretText)
+        const instance = join(space.sibling('declared'), 'config/runtime.instance')
+        write(instance, secretText)
+        const secret = join(space.root, 'secret.txt')
+        write(secret, secretText)
+        symlinkSync(secret, join(space.root, 'linked.txt'))
+        symlinkSync(join(space.root, '.secrets'), join(space.root, 'linked-directory'))
+        write(join(space.root, 'original.txt'), secretText)
+        linkSync(join(space.root, 'original.txt'), join(space.root, 'second-name.txt'))
+        mkdirSync(join(space.root, 'directory.txt'))
+        write(join(space.root, 'huge.txt'), `${secretText}${'#'.repeat(1_048_576)}\n`)
+        writeFileSync(join(space.root, 'binary.txt'), Buffer.concat([Buffer.from(secretText), Buffer.from([0xff])]))
+
+        for (const [draft, why] of [
+            ['.env', 'starts with .env'], ['.ENV', 'starts with .env'], ['.env.local', 'starts with .env'], ['.env.example', 'starts with .env'], ['.Env.Draft', 'starts with .env'],
+            ['.env-drafts/schema.txt', 'starts with .env'], ['.secrets/schema.txt', 'is .secrets'], ['.\u017Fecrets/schema.txt', 'is .secrets'], ['env/.secrets/synthetic/api/schema.txt', 'is .secrets'],
+            [instance, 'the guard protects it'], ['cockpit.toml', 'the guard protects it'],
+            ['linked.txt', 'symbolic link'], ['linked-directory/schema.txt', 'is .secrets'], ['second-name.txt', 'another hard link'], ['directory.txt', 'not a regular file'],
+            ['huge.txt', 'larger than'], ['binary.txt', 'not valid UTF-8'], ['absent.txt', 'could not be inspected'],
+        ] as const) {
+            for (const ran of [await replacing(space, draft), await replacing(space, draft, `api:${SCHEMA}`, '--json')]) {
+                const output = `${ran.stdout}${ran.stderr}`
+                expect(ran.status, draft).toBe(2)
+                expect(output, draft).toContain('ENV_SCHEMA_REPLACE_REFUSED')
+                expect(output, draft).toContain(why)
+                expect(output, draft).not.toContain(SENTINEL)
+                expect(readFileSync(join(api, SCHEMA), 'utf8'), draft).toBe(OLD)
+            }
+        }
+        expect(space.varlockRan()).toBe(false)
+    })
+
+    it('refuses a target that is a link, a second name, undiscovered or not exactly named, changing nothing', async () => {
+        const space = estate('linked', 'hardlinked', 'api')
+        const draftText = `NEW=${SENTINEL}\n`
+        write(join(space.root, 'draft.txt'), draftText)
+        const elsewhere = join(space.root, 'elsewhere.txt')
+        write(elsewhere, OLD)
+        symlinkSync(elsewhere, join(space.sibling('linked'), SCHEMA))
+        const shared = join(space.root, 'shared.txt')
+        write(shared, OLD)
+        linkSync(shared, join(space.sibling('hardlinked'), SCHEMA))
+        write(join(space.sibling('api'), '.env.local'), OLD)
+        for (const [reference, code, why] of [
+            [`linked:${SCHEMA}`, 'ENV_SCHEMA_REPLACE_REFUSED', 'symbolic link'], [`hardlinked:${SCHEMA}`, 'ENV_SCHEMA_REPLACE_REFUSED', 'another hard link'],
+            ['api:.env.local', 'ENV_SCHEMA_READ_REFUSED', 'named exactly'], [`api:untracked/${SCHEMA}`, 'ENV_SCHEMA_READ_REFUSED', 'not in a directory cockpit discovers'],
+        ] as const) {
+            const ran = await replacing(space, 'draft.txt', reference)
+            expect(ran.status, reference).toBe(2)
+            expect(`${ran.stdout}${ran.stderr}`, reference).toContain(code)
+            expect(`${ran.stdout}${ran.stderr}`, reference).toContain(why)
+            expect(`${ran.stdout}${ran.stderr}`, reference).not.toContain(SENTINEL)
+        }
+        expect(readFileSync(elsewhere, 'utf8')).toBe(OLD)
+        expect(readFileSync(shared, 'utf8')).toBe(OLD)
+        expect(readFileSync(join(space.sibling('api'), '.env.local'), 'utf8')).toBe(OLD)
     })
 })
