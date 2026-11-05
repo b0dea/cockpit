@@ -15,7 +15,7 @@ import type { GuardFileContent, ParsedInvocation } from './invocation-parser.js'
 import { classifyReadOnlyInvocation, cockpitLauncherPrefix } from './read-only.js'
 
 const denial = (reason: string): GuardDecision => ({ decision: 'deny', reason })
-const PINNED = '[work], [work.gates] and [autonomy] (and [mcp] while [autonomy] mcp_approve is not agent)'
+const PINNED = '[work], [work.gates], [autonomy] and MCP tool restrictions (also MCP approvals while mcp_approve is not agent)'
 
 /** Applies one `*** Update File` section of a patch to `text`, or undefined when a hunk does not match exactly once. */
 function applyPatchSection(text: string, lines: readonly string[]): string | undefined {

@@ -46,7 +46,8 @@ describe('guard policy pin', () => {
         expect(edit(approved, approved + '\nfuture = true', config, prior)).toBe('deny')
     })
 
-    it('permits exact MCP tool restriction and narrowing edits while holding every expansion for a person', () => {
+    it.each(['person', 'agent'])('holds MCP tool expansion for a person when server approval belongs to %s', authority => {
+        const text = current.replace('mcp_approve = "person"', `mcp_approve = "${authority}"`)
         const declaration = 'approved = {}'
         const restrict = (tools: string) => `${declaration}\nallowed_tools = { docs = ${tools} }`
         for (const [from, to] of [
@@ -54,8 +55,8 @@ describe('guard policy pin', () => {
             [restrict('["read_record", "search_records"]'), restrict('["read_record"]')],
             [restrict('["read_record"]'), restrict('[]')],
         ]) {
-            const prior = current.replace(declaration, from!)
-            const next = current.replace(declaration, to!)
+            const prior = text.replace(declaration, from!)
+            const next = text.replace(declaration, to!)
             for (const payload of [
                 { tool_name: 'Edit', tool_input: { file_path: config, old_string: from, new_string: to } },
                 { tool_name: 'Write', tool_input: { file_path: config, content: next } },
@@ -71,7 +72,7 @@ describe('guard policy pin', () => {
             expect(guardConfigChange(sha256Hex(next), Buffer.from(next), { sha256: sha256Hex(prior), config: original }))
                 .toEqual({ kind: 'widening', fields: ['mcp.allowed_tools.docs'] })
         }
-        expect(edit(declaration, restrict('true'))).toBe('deny')
+        expect(edit(declaration, restrict('true'), config, text)).toBe('deny')
     })
 
     it('denies an edit, write or patch that changes [work], [work.gates], [autonomy] or a person-approved [mcp], and admits one elsewhere', () => {

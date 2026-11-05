@@ -159,7 +159,8 @@ export async function writeRecordedPolicy(root: string, policy: EffectivePolicy)
 
 /**
  * The cockpit.toml tables the guard keeps an agent from editing, as parsed values to compare, or
- * undefined when the text is not TOML. [mcp] is pinned only while a person approves MCP servers.
+ * undefined when the text is not TOML. Agent server approval exempts only mcp.approved;
+ * tool restrictions and future MCP authority fields remain pinned.
  */
 export function pinnedPolicyTables(text: string): Readonly<Record<string, unknown>> | undefined {
     let parsed: Record<string, unknown>
@@ -170,5 +171,8 @@ export function pinnedPolicyTables(text: string): Readonly<Record<string, unknow
     }
     const autonomy = parsed.autonomy as Record<string, unknown> | undefined
     const mcpByAgent = (autonomy?.mcp_approve ?? AUTONOMY_DEFAULTS.mcp_approve) === 'agent'
-    return { work: parsed.work, autonomy: parsed.autonomy, ...(mcpByAgent ? {} : { mcp: parsed.mcp }) }
+    const mcp = parsed.mcp
+    const pinnedMcp = mcpByAgent && mcp !== null && typeof mcp === 'object' && !Array.isArray(mcp)
+        ? Object.fromEntries(Object.entries(mcp).filter(([key]) => key !== 'approved')) : mcp
+    return { work: parsed.work, autonomy: parsed.autonomy, mcp: pinnedMcp }
 }

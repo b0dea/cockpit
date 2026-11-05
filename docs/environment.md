@@ -688,7 +688,11 @@ values.
 
 During adoption, inspect environment filenames and declared commands without reading plaintext
 values. Existing dotenv files or templates trigger a Varlock adoption decision even without a
-schema; record adoption or the reason for deferring it. The shipped setup procedure explains how
+schema; record adoption or the reason for deferring it. `init` and `doctor` recommend adoption with
+`ENV_SCHEMA_UNDECLARED` when an immediate cockpit or sibling root contains `.env`, `.env.*` or
+`env.template` without `.env.schema`. Discovery reads file names and types only; it does not open
+values, search nested directories, run providers or make Varlock a prerequisite. Existing schemas
+are validated separately. The shipped setup procedure explains how
 to adopt Varlock through the product's
 pinned dependency and an existing declared command or script. Use agent-mode validation for status
 and `run --inject vars --redact-stdout` for a trusted product process, and keep resolved
