@@ -20,7 +20,7 @@ budget: uncapped
   other user-guide pages cited here sit beside it.
 - When the guard asks before a command, the person decides in Claude Code; Codex and OpenCode deny
   instead, so hand the person the exact command to run in a terminal. A refusal that holds every
-  tool call (a guard message saying so, `GUARD_AUTHORITY_UNAVAILABLE` or `GUARD_CONFIG_UNSYNCED`)
+  guarded tool call (a guard message saying so, `GUARD_AUTHORITY_UNAVAILABLE` or `GUARD_CONFIG_UNSYNCED`)
   follows any edit to `cockpit.toml` or reinstall of cockpit or Node. `GUARD_CONFIG_UNSYNCED` means
   the edit does not widen what agents may do, so run
   `./node_modules/.bin/cockpit sync --config cockpit.toml` yourself where `[autonomy] sync =
@@ -299,7 +299,7 @@ and waits for a person.
 
 1. Preview with `./node_modules/.bin/cockpit tool add <tool> --config cockpit.toml --dry-run` (or
    `tool remove`) and show the person the list it prints. Done when they agree to that list.
-2. Run it without `--dry-run`. Tell the person first that every tool call is held after it. Done
+2. Run it without `--dry-run`. Tell the person first that every guarded call is held after it. Done
    when the command exits 0.
 3. Sync: after `tool add`, run `./node_modules/.bin/cockpit sync --config cockpit.toml` yourself
    where `[autonomy] sync = "agent"`; after `tool remove`, the person runs it in a terminal. An added
