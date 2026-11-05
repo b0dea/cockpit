@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { walkMarkdownProse } from './docs/markdown.js'
@@ -150,5 +151,11 @@ describe('effective documentation ownership', () => {
             .map(line => line.trim()).filter(line => line !== '' && !line.startsWith('#'))
         // GitHub applies the last matching rule, so the catch-all must come first to leave later rules effective.
         expect(rules[0]).toMatch(/^\*\s+@[A-Za-z0-9][A-Za-z0-9-]*$/)
+    })
+
+    it('labels an upgrade step Upgrade:, the only line cockpit upgrade prints', () => {
+        const notes = [...readdirSync(join(ROOT, '.changeset')).filter(name => name.endsWith('.md') && name !== 'README.md').map(name => join('.changeset', name)),
+            'packages/cockpit/CHANGELOG.md']
+        expect(notes.filter(path => /\b(?:Migration|Migrating|Upgrade note)\b\**:/i.test(readFileSync(join(ROOT, path), 'utf8')))).toEqual([])
     })
 })
