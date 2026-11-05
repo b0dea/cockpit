@@ -515,7 +515,7 @@ async function withReadiness(
 ): Promise<InitApplicationOutcome> {
     const result = outcome.result
     if (!adapters.inspectReadiness || result === null) return outcome
-    const configured = result.stage === 'draft-observed' || result.stage === 'environment-verified'
+    const configured = result.stage === 'draft-observed' || result.stage === 'surfaces-verified' || result.stage === 'environment-verified'
     const estateRoot = estateInput(input).root
     const inspected = await adapters.inspectReadiness({
         root: result.root,
@@ -637,7 +637,7 @@ async function initStagesFrom(
     let prepared: PreparedBootstrapOutcome | undefined
     let resumed: ResumedBootstrapOutcome | undefined
     if (current?.value.stage === 'surface-published' || current?.value.stage === 'draft-observed'
-        || current?.value.stage === 'environment-verified') {
+        || current?.value.stage === 'surfaces-verified' || current?.value.stage === 'environment-verified') {
         resumed = await adapters.resumeBootstrap({ root: input.root, target: input.target, tools: input.tools, address,
             expectedRevision: current.revision, expectedCommandSha256: current.value.commandSha256 })
         if (resumed.kind === 'refusal') return ownerRefusal(resumed, current.value.stage, recordedProjection(current))
@@ -966,7 +966,7 @@ async function initStagesFrom(
             }
         }
     }
-    if (current.value.stage === 'environment-verified' && resumed.kind !== 'complete') {
+    if ((current.value.stage === 'surfaces-verified' || current.value.stage === 'environment-verified') && resumed.kind !== 'complete') {
         return refused('INIT_CANONICAL_OWNERSHIP_MISSING', 'verified bootstrap state has no matching canonical ownership', address.path)
     }
     if (resumed.kind === 'pending' && draftPublication === undefined) {
@@ -997,16 +997,18 @@ async function initStagesFrom(
     const checked = await adapters.check({ configPath: destination })
     if (checked.status !== 0) return verificationStop(checked)
     const preflight = await adapters.preflight({ configPath: destination })
-    // A surfaces-only cockpit has no runtime to preflight. Its refusal is the verified state, and is
-    // reported as information so the operator still reads that no runtime is declared.
+    // A surfaces-only cockpit has no runtime to preflight. Its refusal is reported as information so
+    // the operator still reads that no runtime is declared, and it gets its own stage: nothing
+    // verified the environment, and doctor is what reports that cockpit's env schemas.
     const runtimeAbsent = preflight.status !== 0 && preflight.diagnostics.length > 0
         && preflight.diagnostics.every(row => row.code === 'ENVIRONMENT_NOT_DECLARED')
     if (preflight.status !== 0 && !runtimeAbsent) return verificationStop(preflight)
-    const verified = await persist(namespace, address, boundInput, projection, adapters, 'environment-verified', current)
+    const finalStage = runtimeAbsent ? 'surfaces-verified' : 'environment-verified'
+    const verified = await persist(namespace, address, boundInput, projection, adapters, finalStage, current)
     if (verified.kind !== 'complete') return stateFailure(verified)
     return { kind: 'complete', status: 0, artifact: null, destination: null,
         diagnostics: runtimeAbsent ? preflight.diagnostics.map(row => ({ ...row, severity: 'info' as const })) : preflight.diagnostics,
-        result: result('environment-verified', projection, undefined, unconfirmedOf(currentDocument)) }
+        result: result(finalStage, projection, undefined, unconfirmedOf(currentDocument)) }
 }
 
 // A reset rewrites the interview, which only exists until cockpit.toml is written from it.
@@ -1017,6 +1019,7 @@ function resetUnavailableFix(input: InitApplicationInput, current: BootstrapStat
             return `cockpit.toml is already drafted from the recorded answers: rerun ${resume(`--accept-preview ${current.value.previewSha256}`)} to write it, then change the value in cockpit.toml itself and rerun the same command`
         case 'draft-observed':
             return `cockpit.toml is already written from the recorded answers: change the value in cockpit.toml itself, then rerun ${resume(`--accept-preview ${current.value.previewSha256}`)} to finish verifying it`
+        case 'surfaces-verified':
         case 'environment-verified':
             return `init has finished: change the value in cockpit.toml itself, then run ${cockpitCommand('sync', { config: join(input.root, 'cockpit.toml') })}`
         default:

@@ -335,6 +335,20 @@ describe('resolved guard evaluation', () => {
         expect(decide('git add -A')).toEqual(covering)
         expect(evaluateGuard(parseGuardInput(shellPayload('git add -f env')), noInstances, inspect)).toEqual(covering)
         expect(decide('git add config/active.instance')).toEqual({ decision: 'deny', reason: 'Refusing mutation or staging of a declared environment instance.' })
+        // A secrets directory anywhere below a covering operand is denied like the root one, in any repository the walk reaches.
+        const walking = (found: (below: string) => string[] | null) => (request: Parameters<typeof inspect>[0]) => ({ ...inspect(request),
+            ...(searches(request.operation) ? { sensitive: found(posix.resolve(request.cwd, request.path)) } : {}) })
+        const nestedSecrets = walking((below) => [`${below}/web/.SECRETS`])
+        for (const command of ['git add services', 'git add -f services', 'git add -A', 'git add -u', `git -C ${other} add .`]) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), noInstances, nestedSecrets), command).toEqual(covering)
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('git add services')), noInstances, walking((below) => [`${below}/web/.env.schema`])).decision).toBe('ask')
+        // A tree past the walk's bound is unproven, and a walk that fails is missing evidence.
+        expect(evaluateGuard(parseGuardInput(shellPayload('git add services')), noInstances, walking(() => null))).toEqual({ decision: 'ask', reason: expect.stringContaining('covers more than the guard walks') })
+        expect(evaluateGuard(parseGuardInput(shellPayload('git add services')), noInstances, (request) => {
+            if (searches(request.operation)) throw new Error('synthetic walk failure')
+            return inspect(request)
+        })).toEqual({ decision: 'unavailable', reason: expect.stringContaining('could not walk services') })
         // Staging writes the index, not the file, so naming a guard control is the person's call to approve, like any staging.
         expect(decide('git add .claude/settings.json .codex/hooks.json cockpit.toml')).toEqual({ decision: 'ask', reason: expect.stringContaining('`git add .claude/settings.json .codex/hooks.json cockpit.toml` requires human approval') })
     })
@@ -814,7 +828,7 @@ describe('built-in read-only profile', () => {
     it('denies reads and writes of an environment file unless its name or a declared template marks it as documentation', () => {
         const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
         const refusal = { decision: 'deny', reason: 'Refusing to read or write an environment file: `.env` and `.env.*` hold secrets unless named .env.example, .env.sample, .env.template or .env.schema, or declared as a template. '
-            + 'Fix: run the trusted process as `VARLOCK_TELEMETRY_DISABLED=true varlock run --redact-stdout -- <cmd>`; consult schema names only where native permissions allow them.' }
+            + 'Fix: an agent runs the trusted process through a declared project command or script that wraps Varlock; a person in a terminal runs that same command, or `VARLOCK_TELEMETRY_DISABLED=true varlock run -- <cmd>`, without `--redact-stdout`, which Varlock refuses on a terminal. Consult schema names only where native permissions allow them.' }
         const judge = (input: object, configured = policy()) => evaluateGuard(parseGuardInput(input), configured, withGit)
         // An undeclared `.env` at any depth is where a product keeps its values, so no tool reads or writes it.
         for (const file of ['.env', 'apps/web/.env.local', '.ENV.Production', '.env.example.local']) {

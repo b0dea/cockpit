@@ -256,6 +256,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
 | `DOCUMENT_RUNTIME_NOT_DECLARED` | to adopt a runtime, declare environment.compose_files, environment.machine and the environment postures, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your Compose file (for a small app with none, npx --no cockpit init <cockpit root> --scaffold-compose <app dir> --port <port> writes a starting one), then run npx --no cockpit sync --config <your cockpit.toml> |
+| `ENV_SCHEMA_OVERRIDDEN` | unset those variables in the shell, then rerun this command to check the schema's own sources |
 | `ENV_SCHEMA_UNDECLARED` | consider adopting Varlock: install it if needed, then ask a person to run VARLOCK_TELEMETRY_DISABLED=true varlock init in this directory and review .env.schema without copying secret values into it |
 | `EVALUATOR_FELL_BACK_TO_RUNNING_TOOL` | install and sign in to the passed-over tool so another tool grades the work, or name the grader you accept with --evaluator <tool> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [see above](#merge-ownership-and-generation) |

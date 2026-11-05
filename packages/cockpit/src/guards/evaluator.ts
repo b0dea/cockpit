@@ -1,5 +1,5 @@
 import { posix } from 'node:path'
-import { errorCause, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
+import { DOTENV_DOCUMENTATION, errorCause, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 import { GUARD_INPUT_LIMITS, isParsedGuardInput, shownGuardWord, type ParsedInvocation } from './invocation-parser.js'
 import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from './host.js'
 import { GuardCommandArgv, McpAllowedTools } from '../schema.js'
@@ -140,8 +140,6 @@ const GUARD_CONTROL_FILES = [
 const GUARD_CONTROL_DIRECTORIES = ['.opencode/plugin', '.opencode/plugins', '.cockpit/bundles/claudecode-plugin', '.cockpit/mcp', GUARD_LOCAL_PATHS.directory,
     '.cockpit/work-orders'] as const
 const SECRETS_ROOT = 'env/.secrets'
-// Environment files conventionally named for the variables they document, never their values.
-const DOTENV_DOCUMENTATION: ReadonlySet<string> = new Set(['.env.example', '.env.sample', '.env.template', '.env.schema'])
 /**
  * Bounds on the locations the policy and the path inspector carry, one per quantity, each set above
  * what an honest checkout holds so that only an unwalkable tree or a broken install reaches it.
@@ -716,7 +714,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     const secretDenial = deny('Refusing mutation or staging below a secrets directory.')
     const instanceDenial = deny('Refusing mutation or staging of a declared environment instance.')
     // `git add -A`, `git add .` and a directory operand stage everything below them.
-    const coveringStageDenial = deny(`Refusing to stage a path that contains ${SECRETS_ROOT} or a declared environment instance: \`git add -A\`, \`git add .\` and a directory operand stage everything below them. Stage the changed files by name instead.`)
+    const coveringStageDenial = deny(`Refusing to stage a path that contains a secrets directory or a declared environment instance: \`git add -A\`, \`git add .\` and a directory operand stage everything below them. Stage the changed files by name instead.`)
     const controlDenial = deny('Refusing mutation of the guard, its hook registration or its ownership manifest.')
     const gitMetadataDenial = deny('Refusing direct mutation of Git metadata: its configuration chooses programs that read-only Git commands run.')
     const readDenial = deny('Refusing to read a declared environment instance or secrets directory into the agent context.')
@@ -727,7 +725,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     // no tool reads or writes one by default: the guard only asked for `cat .env` and allowed an edit.
     const dotenvSecret = (folded: string) => { const name = posix.basename(folded); return (name === '.env' || name.startsWith('.env.')) && !documentation(folded) }
     const dotenvDenial = deny('Refusing to read or write an environment file: `.env` and `.env.*` hold secrets unless named .env.example, .env.sample, .env.template or .env.schema, or declared as a template. '
-        + 'Fix: run the trusted process as `VARLOCK_TELEMETRY_DISABLED=true varlock run --redact-stdout -- <cmd>`; consult schema names only where native permissions allow them.')
+        + 'Fix: an agent runs the trusted process through a declared project command or script that wraps Varlock; a person in a terminal runs that same command, or `VARLOCK_TELEMETRY_DISABLED=true varlock run -- <cmd>`, without `--redact-stdout`, which Varlock refuses on a terminal. Consult schema names only where native permissions allow them.')
     const manifestPath = absolute(GUARD_CONTROL_FILES[1])
     const structural = [resolved.configPath, manifestPath]
     const structuralDenial = deny(`Refusing to delete, rename, truncate, relink or make unreadable ${posix.basename(resolved.configPath)} or ${GUARD_CONTROL_FILES[1]}: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit ${posix.basename(resolved.configPath)} in place instead.`)
@@ -830,6 +828,20 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (request.operation === 'write' && (controlFiles.some(is) || controlDirectories.some(below)
             || controlCoverage && (controlFiles.some(covers) || controlDirectories.some(covers)))) hold(controlDenial)
         return evidence
+    }
+    // `.`, `-A` and a directory operand stage everything below them, so a secrets directory anywhere
+    // in the tree is as much at stake as the root one: `git add services` only asked, and an approved
+    // prompt would have staged its contents wherever an ignore rule did not cover them.
+    const inspectStage = (invocation: ParsedInvocation, path: string, cwd: string) => {
+        if (!inspectPath({ path, cwd, operation: 'stage' })) return
+        const walked = resolvedEvidence({ path, cwd, operation: 'search' })
+        if (!walked) {
+            hold(unavailable(`Guard could not walk ${path} to prove staging it holds no secrets directory${inspectionFailure === undefined ? '' : ` (${inspectionFailure})`}.`))
+            return
+        }
+        const found = walked.sensitive as readonly string[] | null
+        if (found === null) holdAsk(invocation, ask(`Staging ${path} covers more than the guard walks to prove it holds no secrets directory. Stage the changed files by name.`))
+        else if (found.some((item) => fold(item).split('/').includes('.secrets'))) hold(coveringStageDenial)
     }
     // Removing a control, anything below a control directory, or a directory containing one can
     // disable the guard before its next invocation. Missing evidence never softens a spelling denial.
@@ -1097,13 +1109,13 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
                 if (options && arg.startsWith('-')) {
                     if (['-A', '--all', '-u', '--update'].includes(arg)) {
                         // These forms can stage an instance even without a literal operand.
-                        inspectPath({ path: '.', cwd: git.cwd, operation: 'stage' })
+                        inspectStage(invocation, '.', git.cwd)
                     } else if (!['-f', '--force', '-v', '--verbose', '-n', '--dry-run'].includes(arg)) hold(unavailable('Unsupported Git staging option. Stage with `git add <paths>`, `-A` or `-u`; a person runs any other staging form.'))
                 } else {
                     operands++
                     pathCount++
                     if (arg.startsWith(':') || /[*?\[]/.test(arg)) hold(unavailable('Unproven Git staging pathspec grammar.'))
-                    else inspectPath({ path: arg, cwd: git.cwd, operation: 'stage' })
+                    else inspectStage(invocation, arg, git.cwd)
                 }
             }
             if (!operands) holdAsk(invocation, ask('Staging without explicit paths requires human approval.'))

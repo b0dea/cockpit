@@ -26,7 +26,7 @@ interface ProjectReadinessInput {
     /** Present once cockpit.toml exists; its siblings are the repositories asked. */
     readonly configPath?: string
     /** Repositories observed before cockpit.toml exists. */
-    readonly repositories?: readonly Readonly<{ slug: string; root: string }>[]
+    readonly repositories?: readonly Readonly<{ slug: string; root: string; templates?: readonly string[] }>[]
     /** Doctor already names a cockpit root outside Git through its checkout observation. */
     readonly checkRoot: boolean
     readonly env: Readonly<Record<string, string | undefined>>
@@ -71,7 +71,8 @@ export async function inspectProjectReadiness(
     let repositories = input.repositories ?? []
     if (loaded?.kind === 'complete') {
         const siblingRoot = resolve(dirname(loaded.result.source.path), loaded.result.config.cockpit.siblings_root)
-        repositories = loaded.result.config.sibling.map((sibling) => ({ slug: sibling.slug, root: resolve(siblingRoot, sibling.dir) }))
+        repositories = loaded.result.config.sibling.map((sibling) => ({ slug: sibling.slug, root: resolve(siblingRoot, sibling.dir),
+            templates: (sibling.environment_files ?? []).map(({ template }) => template) }))
     }
     // Only an existing directory has files to ask about; an absent one is reported as missing elsewhere.
     const present = []
@@ -131,7 +132,7 @@ export async function inspectProjectReadiness(
         return findings
     }
     // A greenfield root init writes into in place stays outside Git until someone runs git init, and
-    // setup refuses it only later; init reached environment-verified without saying so.
+    // setup refuses it only later; init reached its final stage without saying so.
     if (input.checkRoot && await isDirectory(input.root)) {
         const step = snapshotExecutionStep({
             id: 'git:readiness-working-tree', argv: [git.value.canonicalPath, '-C', input.root, 'rev-parse', '--show-toplevel'],

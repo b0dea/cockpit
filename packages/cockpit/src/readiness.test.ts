@@ -20,6 +20,15 @@ describe('readiness catalogue', () => {
         }
     })
 
+    it('rates an absent optional tool below a schema that fails, on either kind of cockpit', () => {
+        const report = readinessReport('surfaces-only', [
+            { severity: 'error', code: 'ENV_SCHEMA_UNHEALTHY', message: 'schema failed' },
+            { severity: 'warning', code: 'ENV_SCHEMA_TOOL_MISSING', message: 'no varlock' },
+        ], [])
+        expect(report.gaps.map(({ id, level }) => [id, level])).toEqual([['env-schema', 'required'], ['env-schema-tool', 'recommended']])
+        expect(readinessReport('surfaces-only', [], []).noFinding).toEqual(expect.arrayContaining(['env-schema', 'env-schema-tool']))
+    })
+
     it('groups reported diagnostics under the prerequisite they name and keeps their own fix', () => {
         const report = readinessReport('surfaces-only', [
             { severity: 'error', code: 'GIT_STATE_UNHEALTHY', message: 'no commits yet', target: 'cockpit.toml', fix: 'commit it' },

@@ -47,15 +47,19 @@ cannot bypass any boundary below.
 The guard denies mutation or staging of a declared environment instance, and mutation below a
 secrets directory. That covers command and patch removals as well as writes, removing a directory
 that contains an instance or the secrets directory, and staging a containing directory that could
-include an instance.
+include an instance or a secrets directory.
 
 Every `.env` and `.env.*` file at any depth is treated as holding secrets, declared or not: reading,
 writing, removing, staging or linking one is a hard denial through every guarded tool. The
 conventional documentation names `.env.example`, `.env.sample`, `.env.template` and `.env.schema`
 are exempt from the guard, and so is every declared environment `template`; native permissions may
 still refuse these documentation files (see [Reading secrets and instances](#reading-secrets-and-instances)). Run a trusted
-process with `VARLOCK_TELEMETRY_DISABLED=true varlock run --redact-stdout -- <cmd>` instead of
-reading values. Redaction is an output safeguard, not confinement of the child process. Another name
+process instead of reading values: an agent uses a declared project command or script that wraps
+Varlock, because the guard asks about a bare `varlock run` and Codex and OpenCode refuse what it asks
+about. A person in a terminal runs that same command, or
+`VARLOCK_TELEMETRY_DISABLED=true varlock run -- <cmd>`, without `--redact-stdout`: Varlock refuses to
+force redaction on an interactive terminal, so the flag belongs inside a declared command whose output
+is piped. Redaction is an output safeguard, not confinement of the child process. Another name
 that starts with `.env`, such as `.envrc`, is not denied, but reading it prompts.
 
 Executable use of a declared hosted database or vendor host is denied at hostname boundaries.
@@ -172,8 +176,9 @@ staging by explicit path (a person approves or runs it), staging without explici
 profiles, and any removal without a grant. An explicit removal outside configured roots stays at
 `ask` even when a declared allow matches, because cockpit cannot verify a target outside the roots
 it manages; review the exact path and approve it, or move the work under a configured root. `git add -A`, `git add .` or a
-directory operand that covers a secrets directory or an environment instance is a hard denial:
-stage the changed files by name. Unsupported staging options or unproven pathspec grammar produce
+directory operand that covers a secrets directory at any depth or an environment instance is a hard
+denial: stage the changed files by name. The guard walks the operand to find nested secrets
+directories; a tree past the walk's bound stays at `ask`, and a walk that fails is `unavailable`. Unsupported staging options or unproven pathspec grammar produce
 `unavailable`. Any other refused command gets an `ask` that names the command and gives three ways
 forward: a person approves it, a person runs it in a terminal, or a person admits it under
 `[guards] allow`; for tests it points to `cockpit test-run`.

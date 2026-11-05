@@ -131,7 +131,8 @@ started it, even where it lives outside this root.
      Git state in another directory, use `git -C <dir> status` or `cd ./<dir> && <command>`; a bare
      `cd <dir>` is refused.
    Done when the result reports `environment-verified`, or, for a cockpit that declares no runtime,
-   reports it with `ENVIRONMENT_NOT_DECLARED` as information and no bring-up.
+   reports `surfaces-verified` with `ENVIRONMENT_NOT_DECLARED` as information and no bring-up. That
+   stage verifies the surfaces only: step 7's `doctor` is what reports its env schemas.
 7. **Clear the readiness gaps.** Every `init` stop, and
    `./node_modules/.bin/cockpit doctor --config cockpit.toml --json`, carries `result.readiness`:
    `gaps` lists each prerequisite a check reported missing, with its `level` (a `required` one is
@@ -249,8 +250,8 @@ Read variable names from a safe schema or template, never resolve values into th
 
 Keep the tracked product `.env.schema` beside the component that owns it. Store only encrypted
 Varlock resolver expressions or external-provider references under
-`env/.secrets/<cockpit-project>/<component>`; the generated `env/.secrets/.gitignore` must be current,
-the directory mode 0700, and resolver files mode 0600 before use. Ignoring, encryption and redaction
+`env/.secrets/<cockpit-project>/<component>`; the generated ignore block in the cockpit's `.gitignore`
+must be current, the directory mode 0700, and resolver files mode 0600 before use. Ignoring, encryption and redaction
 do not prevent same-user code from reading a resolved value. The agent receives schema and redacted
 status, never a plaintext source.
 
@@ -261,8 +262,9 @@ order, so the later central path takes precedence. For status the locked executa
 <absolute-cockpit-root>/env/.secrets/<cockpit-project>/<component> --agent --format json-full
 --summary-stderr`. For a trusted product process it is invoked as `varlock run --path
 <absolute-component-schema-root> --path <absolute-cockpit-root>/env/.secrets/<cockpit-project>/<component>
---inject vars --redact-stdout -- <exact command>`. The angle brackets describe product-resolved inputs,
-not literal commands. Resolve the executable and version
+--inject vars --redact-stdout -- <exact command>`, inside the declared command whose output is piped:
+Varlock refuses that flag on an interactive terminal, so a person in a terminal runs the same `run`
+without it. The angle brackets describe product-resolved inputs, not literal commands. Resolve the executable and version
 from the product manifest and lock; runtime commands never fetch with `npx`. If the product has not
 adopted Varlock, adding and locking it needs product-change authorization; reuse explicit authorization
 already given for this adoption rather than asking again. `varlock init`,
@@ -272,11 +274,15 @@ provider scope instead of running them automatically.
 Set `VARLOCK_TELEMETRY_DISABLED=true` in each declared Varlock command's environment, including
 status and trusted product processes. Cockpit sets it for its own schema probes. This disables
 Varlock telemetry without changing the person's global configuration; output redaction is a
-separate setting and remains required.
+separate setting and remains required in every command an agent runs.
 
-Preflight and doctor already check the schema of every sibling that has a `.env.schema`; a failing row
-names the keys. A person can run `VARLOCK_TELEMETRY_DISABLED=true varlock load` in that sibling to
-diagnose it. Agents use cockpit preflight for key-only status; raw Varlock output is not safe to read.
+Preflight and doctor already check every `.env.schema` a sibling tracks, a sibling's root schema and
+the cockpit root's own, with the central path when it exists; a failing or unavailable row names the
+keys. An unavailable row can mean a secret provider is signed out or unreachable: a person signs in
+and reruns. To diagnose, a person runs `VARLOCK_TELEMETRY_DISABLED=true varlock load --path
+<schema-directory> --path <central-directory>`. Agents use cockpit preflight for key-only status, or
+`cockpit doctor` on a cockpit that declares no runtime, where preflight refuses; raw Varlock output is
+not safe to read.
 
 Treat Varlock output as secret-tainted even in agent mode. Report variable names, validation state,
 exit status and provenance only. Never copy raw resolved values, stdout or stderr into work-order

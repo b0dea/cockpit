@@ -681,8 +681,10 @@ resolver code and dependency lock as you would product code.
 
 Put encrypted resolver expressions or external-provider references in
 `env/.secrets/<cockpit-project>/<component>`, which the generated guards keep agents from changing
-or staging. Ignore `env/.secrets/` in the cockpit's `.gitignore` before any secret material exists,
-create the directories with mode 0700 and no symbolic links, and create resolver files with mode
+or staging. Let `sync` write the generated ignore block in the cockpit's `.gitignore` before any secret material
+exists, because that block covers the contents of every `.secrets` directory at any depth, and leave
+it as generated: ignoring the `env/.secrets/` directory itself would defeat its exception for
+`env/.secrets/.gitignore`. Create the directories with mode 0700 and no symbolic links, and create resolver files with mode
 0600 through your own approved provisioning process. cockpit does not create those files or their
 values.
 
@@ -695,22 +697,51 @@ values, search nested directories, run providers or make Varlock a prerequisite.
 are validated separately. The shipped setup procedure explains how
 to adopt Varlock through the product's
 pinned dependency and an existing declared command or script. Use agent-mode validation for status
-and `run --inject vars --redact-stdout` for a trusted product process, and keep resolved
-credentials out of the agent's environment. Give both paths as absolute paths with repeated
+and `run --inject vars --redact-stdout` inside that declared command for a trusted product process,
+and keep resolved credentials out of the agent's environment. Varlock refuses `--redact-stdout` on an
+interactive terminal, so a person in a terminal runs the same `run` without the flag. Give both paths as absolute paths with repeated
 `--path`: the component schema root first, then its central resolver directory in the cockpit; the
 later path wins. Installation, initialization, provider login, encryption and migration need
 explicit permission from whoever owns the product and the provider. Current commands and
 limitations are in the [Varlock CLI reference](https://varlock.dev/reference/cli/load-and-run/) and
 [AI tools guide](https://varlock.dev/guides/ai-tools/).
 
-`cockpit preflight` and `cockpit doctor` check every sibling that contains a `.env.schema` and skip
-the rest. Each runs `varlock load --agent --format json-full --path <sibling>` from your `PATH`
-with `VARLOCK_TELEMETRY_DISABLED=true`, the command's timeout and a 256 KiB output cap, and keeps only key names and a validity
-category; values and Varlock's messages are discarded. `ENV_SCHEMA_UNHEALTHY` fails the row and
-names the sibling and its keys, or reports the row as unavailable when Varlock times out, exits
-without a readable report, or a provider cannot resolve a value; a person can run
-`VARLOCK_TELEMETRY_DISABLED=true varlock load` in that sibling to see why. `ENV_SCHEMA_TOOL_MISSING` is a warning, not a failure, when Varlock is not installed
+`cockpit preflight` and `cockpit doctor` check every `.env.schema` a sibling tracks, asking Git with
+`git ls-files`, plus a sibling's root schema whether tracked or not and the cockpit root's own. A
+sibling that is not a Git repository is checked at its root only; Git failing for another reason, or
+more than 64 tracked schemas, makes that sibling unavailable. On a cockpit that declares no runtime
+`preflight` refuses, so `doctor` is what reports schema status there. Each schema runs
+`varlock load --agent --format json-full --path <schema directory>` with
+`VARLOCK_TELEMETRY_DISABLED=true`, the command's timeout, a 256 KiB output cap and every `_VARLOCK_*`
+variable removed, adding `--path <cockpit root>/env/.secrets/<cockpit name>/<slug>[/<relative dir>]`
+when that directory exists; the cockpit root's own schema uses `env/.secrets/<cockpit name>` itself.
+That directory is checked with file metadata only and nothing inside it is read, and a symbolic link
+on the way to it, or a failure other than its absence, makes the schema unavailable.
+
+Only key names and a category are kept; values and Varlock's messages are discarded.
+
+| Varlock reports | Row | Named as |
+| --- | --- | --- |
+| The required-empty message for a key | fails | `missing required <keys>` |
+| Any other key error, such as a failed resolver or a value that does not coerce | unavailable, unless another key is missing | `could not validate or resolve <keys>` |
+| An error at the root of the report, such as a bad plugin | fails | `schema could not be loaded` |
+| A timeout, or an exit without a readable report | unavailable | the cause |
+
+Each is `ENV_SCHEMA_UNHEALTHY`, and schemas are labelled `<slug> (<relative dir>)`. A provider's error
+messages cannot be enumerated, so a key that could not be resolved is not called invalid: the provider
+may be signed out or unreachable. Sign in to it and rerun. To diagnose, a person runs
+`VARLOCK_TELEMETRY_DISABLED=true varlock load --path <schema directory> --path <central directory>`,
+leaving out the second path where that directory does not exist. `ENV_SCHEMA_OVERRIDDEN` warns without
+failing the row when Varlock reports a key as satisfied by the shell that ran the command rather than
+by the schema's own sources; unset it and rerun to check those sources.
+
+The probe uses `varlock` from your `PATH`, not the product's locked copy, so a product with only a
+local install sees `ENV_SCHEMA_TOOL_MISSING`, a warning rather than a failure
 (<https://varlock.dev>).
+
+Secret-manager resolvers, such as vault or 1Password, may need their own sign-in and environment. The
+probe passes your environment through, never prompts because its stdin is closed, and reports a
+timeout as unavailable. This was measured only with a failing synthetic resolver, not a real provider.
 
 Set `VARLOCK_TELEMETRY_DISABLED=true` in product-owned Varlock wrappers too. Cockpit's probes
 always disable Varlock telemetry; they do not modify global Varlock settings. See

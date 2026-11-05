@@ -227,7 +227,7 @@ describe('one-row generated surface integration', () => {
         expect(generatedGuard).not.toContain(credentialCanary)
         // Every `.env.*` file is denied by default; the declared instance is denied under its own reason.
         const dotenv = 'Refusing to read or write an environment file: `.env` and `.env.*` hold secrets unless named .env.example, .env.sample, .env.template or .env.schema, or declared as a template. '
-            + 'Fix: run the trusted process as `VARLOCK_TELEMETRY_DISABLED=true varlock run --redact-stdout -- <cmd>`; consult schema names only where native permissions allow them.'
+            + 'Fix: an agent runs the trusted process through a declared project command or script that wraps Varlock; a person in a terminal runs that same command, or `VARLOCK_TELEMETRY_DISABLED=true varlock run -- <cmd>`, without `--redact-stdout`, which Varlock refuses on a terminal. Consult schema names only where native permissions allow them.'
         for (const [fixture, path, reason] of [
             [baseline, '.env.local', dotenv],
             [added, '.env.local', 'Refusing mutation or staging of a declared environment instance.'],
@@ -247,6 +247,16 @@ describe('one-row generated surface integration', () => {
             else expect(guarded.stdout).toBe('')
             expect(guarded.stdout + guarded.stderr).not.toContain(credentialCanary)
         }
+        // The installed guard walks a staged directory for itself, so a nested secrets directory it finds is denied.
+        await mkdir(join(added.root, 'worker/deep/.secrets'), { recursive: true })
+        const staged = spawnSync('/bin/bash', [join(added.root, '.cockpit/guards/bash-guard.sh'), '--harness', 'claudecode'], {
+            cwd: added.root,
+            input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: added.root, tool_input: { command: 'git add worker' } }),
+            encoding: 'utf8', timeout: 30_000, maxBuffer: 65_536,
+        })
+        expect(JSON.parse(staged.stdout).hookSpecificOutput).toMatchObject({ permissionDecision: 'deny',
+            permissionDecisionReason: expect.stringContaining('Stage the changed files by name instead.') })
+        await rm(join(added.root, 'worker/deep'), { recursive: true })
 
         // A sibling's own guide edit leaves the committed copy stale; check names that guide until sync.
         const guide = join(added.root, 'worker/AGENTS.md')
