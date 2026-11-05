@@ -653,7 +653,7 @@ export function complete(
             ...prepared.unapprovedMcpServers.map(server => ({
                 severity: 'warning' as const, code: 'MCP_NOT_APPROVED' as const satisfies McpDiagnostic['code'], target: server.name,
                 message: `MCP server ${server.name}, declared in ${server.sources.join(', ')}, has no approval in [mcp.approved] for its current declaration (command, arguments, working directory and environment names for a local server; URL, header references and headers helper for a remote one) (sha256 ${server.sha256}), so every harness keeps it disabled`,
-                fix: 'a person reviews its declaration, sets its name to the sha256 in this message under [mcp.approved] in cockpit.toml and runs npx --no cockpit sync --config <your cockpit.toml>; while [autonomy] mcp_approve is person, the default, the guard refuses an agent\'s edit of [mcp]. To keep it off, nothing is needed',
+                fix: 'a person reviews its declaration, sets its name to the sha256 in this message under [mcp.approved] in cockpit.toml and runs npx --no cockpit sync --config <your cockpit.toml>; while [autonomy] mcp_approve is person, the default, the guard refuses an agent enabling or changing approvals or widening tool access. Agents may remove unchanged approvals and add or narrow exact tool allowlists under [mcp.allowed_tools]. To keep it off, nothing is needed',
             })),
             ...prepared.mcpTransportGaps.map(gap => ({
                 severity: 'warning' as const, code: 'MCP_TRANSPORT_UNAVAILABLE' as const satisfies McpDiagnostic['code'], target: gap.name,

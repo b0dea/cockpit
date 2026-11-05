@@ -127,7 +127,9 @@ reference or `headersHelper` named by the message.
 server disabled because `[mcp.approved]` has no entry for it, or its declaration changed since it
 was approved; a person, only after reviewing its command, arguments, working directory, environment
 names and sources, sets its name to the sha256 in the message under `[mcp.approved]` and runs `sync`.
-While `[autonomy] mcp_approve` is `person`, the default, the guard refuses an agent's edit of `[mcp]`. `MCP_APPROVAL_UNKNOWN` means the allowlist names no
+While `[autonomy] mcp_approve` is `person`, the default, the guard refuses an agent enabling or changing
+approvals or widening tool access. Agents may remove unchanged approvals and add or narrow exact tool
+allowlists under `[mcp.allowed_tools]`, because these changes grant no new access. `MCP_APPROVAL_UNKNOWN` means the allowlist names no
 declaration. `MCP_EXECUTABLE_UNAVAILABLE` comes from the generated wrapper when its declared
 executable is absent or not executable; restore that executable rather than changing the wrapper.
 `MCP_TRANSPORT_UNAVAILABLE` names a remote server left out of the tools that cannot carry its
