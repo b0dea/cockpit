@@ -11,7 +11,7 @@ import { installedPackageMetadata } from './package-metadata.js'
 import { cockpitCommand } from './fix-catalogue.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from './guards/local-identity.js'
 import { guardLauncherEvidence } from './guards/protected-locations.js'
-import { NODE_EXEC, nodeLockfile } from './init/derive.js'
+import { EXACT_DEV_INSTALL, NODE_EXEC, nodeLockfile } from './init/derive.js'
 
 const PACKAGE = installedPackageMetadata.name
 const VERSION = installedPackageMetadata.version
@@ -443,8 +443,11 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
                 return refuse('COCKPIT_VERSION_MISMATCH',
                     `package.json pins ${PACKAGE} to ${pinned}, but ${lockfile} and node_modules do not resolve that archive to the running ${VERSION}; run ${manager} install, then ${cockpitCommand('check')}`, packagePath)
             }
-        } else if (pinned !== VERSION) return refuse('COCKPIT_VERSION_MISMATCH',
-            `package.json pins ${PACKAGE} ${String(pinned ?? '(missing)')}, but ${VERSION} is running; run npm install --save-dev --save-exact ${PACKAGE}@${VERSION}`, packagePath)
+        } else if (pinned !== VERSION) {
+            const install = EXACT_DEV_INSTALL[(await rootPackageManager(root)).lockfile] ?? EXACT_DEV_INSTALL['package-lock.json']!
+            return refuse('COCKPIT_VERSION_MISMATCH',
+                `package.json pins ${PACKAGE} ${String(pinned ?? '(missing)')}, but ${VERSION} is running; run ${install.manager} ${install.verb} ${install.flags.join(' ')} ${PACKAGE}@${VERSION}`, packagePath)
+        }
         const scripts = object(parsed) && object(parsed.scripts) ? parsed.scripts : undefined
         if (!scripts || Object.entries(SCRIPTS).some(([name, command]) => scripts[name] !== command)) {
             return refuse('TEAM_METADATA_UNAVAILABLE', `package.json does not contain the exact cockpit:* scripts that sync writes; run ${cockpitCommand('sync', { config: configPath })}`, packagePath)

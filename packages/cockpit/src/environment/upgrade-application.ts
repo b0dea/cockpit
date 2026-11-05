@@ -12,6 +12,7 @@ import { dirname, join, resolve } from 'node:path'
 import type { ExecuteProbeOutcome, ForegroundProcessInput, ForegroundProcessOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { formatShellCommand } from '../fix-catalogue.js'
+import { EXACT_DEV_INSTALL } from '../init/derive.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { installedPackageMetadata } from '../package-metadata.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, type ExecutionStep } from './contract.js'
@@ -37,12 +38,6 @@ export interface UpgradeOutcome {
 
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/
 const LOCKFILES = ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'npm-shrinkwrap.json', 'bun.lock', 'bun.lockb'] as const
-// Flags checked against each manager's own --help: a dev dependency saved at the exact version.
-const INSTALL: Readonly<Record<string, { manager: string; verb: string; flags: readonly string[] }>> = {
-    'package-lock.json': { manager: 'npm', verb: 'install', flags: ['--save-dev', '--save-exact'] },
-    'pnpm-lock.yaml': { manager: 'pnpm', verb: 'add', flags: ['--save-dev', '--save-exact'] },
-    'yarn.lock': { manager: 'yarn', verb: 'add', flags: ['--dev', '--exact'] },
-}
 const LOOKUP_TIMEOUT_MS = 60_000
 const INSTALL_TIMEOUT_MS = 600_000
 
@@ -111,7 +106,7 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
     const npmPage = (version: string) => `https://www.npmjs.com/package/${name}/v/${version}`
 
     const found = await lockfilesAt(root)
-    const lockfile = found.length === 1 ? INSTALL[found[0]!] : undefined
+    const lockfile = found.length === 1 ? EXACT_DEV_INSTALL[found[0]!] : undefined
     if (!lockfile) return refused({ severity: 'error' as const, code: 'UPGRADE_PACKAGE_MANAGER_UNKNOWN' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_PACKAGE_MANAGER_UNKNOWN,
         message: found.length === 0 ? `no lockfile in ${root}, so the package manager is unknown`
             : `${found.join(', ')} in ${root} ${found.length > 1 ? 'name more than one package manager' : 'is not a lockfile upgrade supports'}`,

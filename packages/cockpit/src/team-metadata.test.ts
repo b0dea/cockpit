@@ -270,6 +270,9 @@ purpose = "Synthetic local repository"
         await writeFile(join(root, 'package.json'), JSON.stringify({ devDependencies: { [installedPackageMetadata.name]: '9.9.9' } }))
         expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'refusal', code: 'COCKPIT_VERSION_MISMATCH',
             message: expect.stringContaining(`npm install --save-dev --save-exact ${installedPackageMetadata.name}@${installedPackageMetadata.version}`) })
+        await writeFile(join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n')
+        expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'refusal', code: 'COCKPIT_VERSION_MISMATCH',
+            message: expect.stringContaining(`pnpm add --save-dev --save-exact ${installedPackageMetadata.name}@${installedPackageMetadata.version}`) })
     })
 
     // The parser quotes the text where it stopped, and a refusal may reach a reader who cannot open
