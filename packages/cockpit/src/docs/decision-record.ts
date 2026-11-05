@@ -43,7 +43,7 @@ export interface ParsedRecord {
 // without treating its digits as a second reference. Code spans keep their text.
 function referenceText(prose: string): string {
     return prose.replace(/\[([^\]]*)\]\(([^)\s]*)[^)]*\)/g, (_match, label: string, target: string) =>
-        ` ${/\b(?:adr|decision|record)\b/i.test(label) ? 'ADR ' : ''}[[${target}]] `).replace(/`/g, ' ')
+        ` ${/\b(?:adr|decision|record)\b/i.test(label) || /^\s*#?\d{1,5}\s*$/.test(label) ? 'ADR ' : ''}[[${target}]] `).replace(/`/g, ' ')
 }
 
 function referencesIn(line: number, text: string, record: string): SupersedesReference[] {
@@ -59,14 +59,14 @@ function referencesIn(line: number, text: string, record: string): SupersedesRef
         // "Supersedes 0012" names the whole record; "supersedes the cache clause of 0012" only a part.
         // A number that runs on into a name (`2026-09-cache.md`, `0012-x.md`) is a file name, read below.
         const bare = /^\s*:?\s*(\d{1,5})\b(?![-.]\w)/.exec(clause)
-        const numberedPart = /^\s*:?\s*decision\s+\d+\s+of\b/i.test(clause)
-        const leading = !numberedPart && (/^\s*:?\s*(?:\[\[|(?:adr|decision|record)s?\b|#|[\w./-]+\.md\b)/i.test(clause) || bare !== null)
+        const leading = /^\s*:?\s*(?:\[\[|(?:adr|decision|record)s?\b|#|[\w./-]+\.md\b)/i.test(clause) || bare !== null
         // "Supersedes 0012 (ADR-0012)" names one record twice; it is one reference.
-        const add = (reference: Omit<SupersedesReference, 'line' | 'text' | 'full'>, text: string, end: number) => {
+        const add = (reference: Omit<SupersedesReference, 'line' | 'text' | 'full'>, text: string, start: number, end: number) => {
             const partial = /^\s*(?:['’]s\b|only\s+for\b)/i.test(clause.slice(end))
+                || /\bdecision\s+\d+\s+of\s*(?:(?:adr|decision|record)s?[-\s]?#?|#)?\s*$/i.test(clause.slice(0, start))
             if (!found.some(row => row.number === reference.number && row.file === reference.file)) found.push({ line, text, full: outgoing && leading && !partial, ...reference })
         }
-        if (bare) add({ number: Number(bare[1]) }, bare[1]!, bare[0].length)
+        if (bare) add({ number: Number(bare[1]) }, bare[1]!, 0, bare[0].length)
         for (const match of clause.matchAll(REFERENCE)) {
             const end = match.index + match[0].length
             // "decision 2 of ADR 0012" numbers a part, not another record.
@@ -77,8 +77,8 @@ function referencesIn(line: number, text: string, record: string): SupersedesRef
                 // Other documentation can be revised in the same sentence; it is not a record link.
                 const before = clause.slice(0, match.index)
                 const explicit = /^\s*:?\s*$/.test(before) || /\bADR\s*$/i.test(before) || /\bdecision\s+\d+\s+of\s*$/i.test(before)
-                if (file?.endsWith('.md') && (explicit || posix.dirname(file) === posix.dirname(record))) add({ file }, target, end)
-            } else add({ number: Number(match[2]) }, match[0].trim(), end)
+                if (file?.endsWith('.md') && (explicit || posix.dirname(file) === posix.dirname(record))) add({ file }, target, match.index, end)
+            } else add({ number: Number(match[2]) }, match[0].trim(), end - match[2]!.length, end)
         }
     })
     return found
