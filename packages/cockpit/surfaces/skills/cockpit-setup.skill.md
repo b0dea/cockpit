@@ -32,8 +32,8 @@ Before running any command, read [procedures/setup.md](procedures/setup.md) besi
 - Drift named by `check` or the session-start report: **On drift**, before anything else.
 - A repository or an agent tool joins or leaves: **Add or remove a repository**, **Add or remove an agent tool**.
 - A repository's AGENTS.md and CLAUDE.md must reach every tool: **Make a repository's instructions reach every tool**.
-- A repository that has never run locally: **Create a local setup**; secrets and `.env.schema`: **Secret handling**.
+- A repository that has never run locally: **Create a local setup**; dotenv files, environment templates or `.env.schema`: **Secret handling**, including when Varlock is not yet adopted.
 - A new cockpit release: **After upgrading cockpit**. A gap or refusal to repair: **Diagnose**. Checkouts to update, a worktree to serve, a stale or orphaned stack: **Keep checkouts and stacks current**.
 - An interrupted or unfinished `init`: **Bootstrap**, rerun with the same root and target. A directory with no cockpit yet is the adopt-cockpit skill's job.
 - Test users, roles and signed-in browser state: `references/test-data-and-personas.md`, a product change that needs the person's permission first.
-Show the person every proposed change and get their explicit yes before writing to `cockpit.toml` or a product repository, or accepting a digest.
+Use the person's existing authorization for reviewed changes within its scope; ask for missing scope or exact digest acceptance. Policy widening and guard refusals still need the person's action.

@@ -23,11 +23,12 @@ installed directory.
 ## Safety contract
 
 A clean-looking configuration with invented values in it is the failure cockpit exists to prevent.
-Follow these rules throughout:
+Follow these rules throughout. Reuse explicit authorization already given for the stated scope;
+ask when scope is missing or an exact preview still needs acceptance:
 
 1. Ask the human before creating a Git remote or hosted repository, running a destructive command
    (`reset`, approving removals), running `sync --adopt`, accepting an `init` digest, or adopting a
-   test framework or dependency in a product repository. A Dockerfile, Compose file or `.env.schema`
+   test framework or dependency outside already authorized product-change scope. A Dockerfile, Compose file or `.env.schema`
    the product needs goes on a new branch in that sibling's checkout, started with no uncommitted
    changes; show its diff against the starting branch in your report. Nothing is pushed.
 2. Show the exact preview first: the `sync --dry-run` listing, the `init` preview and its
@@ -40,8 +41,8 @@ Follow these rules throughout:
 5. Ask the human for the database and live vendor API hosts of every non-local environment
    (production, staging, shared) for the `guards` answer; env templates give variable names only.
 6. "Use sensible defaults" covers `init` answers only, never another change inside a product
-   repository: an **AGENTS.md** pointer or a `package.json` change there needs the human's explicit
-   yes to that change. Mark every answer you chose as `"agent-default"` in the answers file's
+   repository: an **AGENTS.md** pointer or a `package.json` change needs explicit product-change
+   authorization covering its reviewed scope, which can already have been given. Mark every answer you chose as `"agent-default"` in the answers file's
    `[provenance]` table, and end your report with every default you chose, its field and value.
 
 ## Install cockpit if it is missing
@@ -85,7 +86,7 @@ Look at the directory before asking. Several cases can apply; bootstrap first.
 | A service with no local setup | Follow **Create a local setup** below. | *Other situations* |
 | Committed `.claude/settings.json`, `.codex/config.toml` or `.codex/hooks.json` | `sync` refuses with `SURFACE_STATE_CONFLICT`. With the human's yes, run `./node_modules/.bin/cockpit sync --config cockpit.toml --adopt <path> --json`. | *Adopt existing agent settings* |
 | A repository joins or leaves an existing cockpit | Run `./node_modules/.bin/cockpit sibling add <slug> --config cockpit.toml` or `./node_modules/.bin/cockpit sibling remove <slug> --config cockpit.toml`, then `sync --dry-run`, `sync` and `check`. | *Add or remove a repository* |
-| A sibling has a `.env.schema` | Follow **Secret handling** below. | *Other situations* |
+| A repository has dotenv files, environment templates or a `.env.schema` | Follow **Secret handling** below. | *Other situations* |
 
 ## After bootstrap
 
@@ -174,6 +175,12 @@ started it, even where it lives outside this root.
    - **The non-local hosts** for `guards`: the database and live vendor API hosts of every
      production, staging or shared environment. Env templates give variable names only; each host
      comes from the person.
+   - **Environment access.** Inspect filenames and declared scripts without opening plaintext
+     dotenv or credential files. If a repository has dotenv files or templates, follow **Secret
+     handling** even when `.env.schema` is absent. Reuse an existing Varlock setup; otherwise
+     recommend adopting it and record the decision, scope and any deferred migration in the work
+     log. Existing explicit authorization to adopt Varlock covers its reviewed dependency, schema
+     and command changes; ask only for missing scope or provider access.
    Done when every outstanding field has the person's answer, a value they confirmed, or a default
    you chose and will mark.
 4. **Write the answers file**, TOML keyed by field. Being told to "use sensible defaults" or
@@ -248,9 +255,10 @@ started it, even where it lives outside this root.
    only when `git -C <sibling> status --short` prints nothing, write the files there, and put their
    diff against the starting branch in your report. Nothing is pushed, so the person reviews it
    before it reaches anyone else. Creating a hosted repository or a remote waits for their yes. Every
-   other product change (an **AGENTS.md** pointer, a `package.json`, a new test framework) needs the
-   person's explicit yes to that exact change, because it changes the product for everyone who works
-   on it; "use sensible defaults" never extends to it.
+   other product change (an **AGENTS.md** pointer, a `package.json`, a new test framework) needs
+   explicit product-change authorization covering its reviewed scope. Reuse that authorization
+   when already given; ask for uncovered changes. Choosing interview defaults alone does not
+   authorize product changes.
    - For a dedicated cockpit, offer an instruction pointer for each product repository. If the
      product has no **AGENTS.md**, show the exact proposed file as a draft; if it has one, show the
      marked block that would be appended without changing the team's text. After approval, set
@@ -319,6 +327,11 @@ guesses. So derive each value from what the repository shows, record it as infer
 
 ### Secret handling
 
+During adoption, inspect environment filenames and manifest commands before choosing a secret-access
+path. A missing `.env.schema` is a decision to resolve, not a reason to skip this section. Recommend
+Varlock when plaintext dotenv files or templates exist; record adoption or the reason it is deferred.
+Read variable names from a safe schema or template, never resolve values into the agent's context.
+
 Keep the tracked product `.env.schema` beside the component that owns it. Store only encrypted
 Varlock resolver expressions or external-provider references under
 `env/.secrets/<cockpit-project>/<component>`; the generated `env/.secrets/.gitignore` must be current,
@@ -336,9 +349,15 @@ order, so the later central path takes precedence. For status the locked executa
 --inject vars --redact-stdout -- <exact command>`. The angle brackets describe product-resolved inputs,
 not literal commands. Resolve the executable and version
 from the product manifest and lock; runtime commands never fetch with `npx`. If the product has not
-adopted Varlock, you need explicit permission to change the product before adding and locking it. `varlock init`,
+adopted Varlock, adding and locking it needs product-change authorization; reuse explicit authorization
+already given for this adoption rather than asking again. `varlock init`,
 provider login, encryption and secret migration stay with a person; preview their file and
 provider scope instead of running them automatically.
+
+Set `VARLOCK_TELEMETRY_DISABLED=true` in each declared Varlock command's environment, including
+status and trusted product processes. Cockpit sets it for its own schema probes. This disables
+Varlock telemetry without changing the person's global configuration; output redaction is a
+separate setting and remains required.
 
 Preflight and doctor already check the schema of every sibling that has a `.env.schema`; a failing row
 names the keys, and `varlock load` in that sibling shows why.

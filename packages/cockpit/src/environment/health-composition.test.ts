@@ -858,7 +858,7 @@ describe('env schema health', () => {
 
     it('reports a valid env schema for a sibling that contains .env.schema', async () => {
         const candidate = await fixture({ machineOnly: true })
-        await withVarlock(candidate, printing(report(), 0))
+        await withVarlock(candidate, `test "$VARLOCK_TELEMETRY_DISABLED" = true || exit 42\n${printing(report(), 0)}`)
 
         const { execute, doctor, preflight, row } = await health(candidate)
 

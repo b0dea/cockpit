@@ -21,11 +21,12 @@ installed directory.
 ## Safety contract
 
 A clean-looking configuration with invented values in it is the failure cockpit exists to prevent.
-Follow these rules throughout:
+Follow these rules throughout. Reuse explicit authorization already given for the stated scope;
+ask when scope is missing or an exact preview still needs acceptance:
 
 1. Ask the human before creating a Git remote or hosted repository, running a destructive command
    (`reset`, approving removals), running `sync --adopt`, accepting an `init` digest, or adopting a
-   test framework or dependency in a product repository. A Dockerfile, Compose file or `.env.schema`
+   test framework or dependency outside already authorized product-change scope. A Dockerfile, Compose file or `.env.schema`
    the product needs goes on a new branch in that sibling's checkout, started with no uncommitted
    changes; show its diff against the starting branch in your report. Nothing is pushed.
 2. Show the exact preview first: the `sync --dry-run` listing, the `init` preview and its
@@ -38,8 +39,8 @@ Follow these rules throughout:
 5. Ask the human for the database and live vendor API hosts of every non-local environment
    (production, staging, shared) for the `guards` answer; env templates give variable names only.
 6. "Use sensible defaults" covers `init` answers only, never another change inside a product
-   repository: an **AGENTS.md** pointer or a `package.json` change there needs the human's explicit
-   yes to that change. Mark every answer you chose as `"agent-default"` in the answers file's
+   repository: an **AGENTS.md** pointer or a `package.json` change needs explicit product-change
+   authorization covering its reviewed scope, which can already have been given. Mark every answer you chose as `"agent-default"` in the answers file's
    `[provenance]` table, and end your report with every default you chose, its field and value.
 
 ## Install cockpit if it is missing
@@ -83,7 +84,7 @@ Look at the directory before asking. Several cases can apply; bootstrap first.
 | A service with no local setup | Follow **Create a local setup** below. | *Other situations* |
 | Committed `.claude/settings.json`, `.codex/config.toml` or `.codex/hooks.json` | `sync` refuses with `SURFACE_STATE_CONFLICT`. With the human's yes, run `./node_modules/.bin/cockpit sync --config cockpit.toml --adopt <path> --json`. | *Adopt existing agent settings* |
 | A repository joins or leaves an existing cockpit | Run `./node_modules/.bin/cockpit sibling add <slug> --config cockpit.toml` or `./node_modules/.bin/cockpit sibling remove <slug> --config cockpit.toml`, then `sync --dry-run`, `sync` and `check`. | *Add or remove a repository* |
-| A sibling has a `.env.schema` | Follow **Secret handling** below. | *Other situations* |
+| A repository has dotenv files, environment templates or a `.env.schema` | Follow **Secret handling** below. | *Other situations* |
 
 ## After bootstrap
 

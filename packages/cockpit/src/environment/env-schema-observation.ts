@@ -133,7 +133,7 @@ function createStep(input: {
         argv: [executable.canonicalPath, 'load', '--agent', '--format', 'json-full', '--path', sibling.root],
         argv0: executable.invocationPath,
         cwd: sibling.root,
-        env: input.env,
+        env: { ...input.env, VARLOCK_TELEMETRY_DISABLED: 'true' },
         timeoutMs: input.timeoutMs,
         stdoutLimitBytes: STDOUT_LIMIT_BYTES,
         stderrLimitBytes: STDERR_LIMIT_BYTES,

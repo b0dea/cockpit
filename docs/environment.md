@@ -686,7 +686,10 @@ create the directories with mode 0700 and no symbolic links, and create resolver
 0600 through your own approved provisioning process. cockpit does not create those files or their
 values.
 
-The shipped setup procedure explains how to adopt Varlock, optionally, through the product's
+During adoption, inspect environment filenames and declared commands without reading plaintext
+values. Existing dotenv files or templates trigger a Varlock adoption decision even without a
+schema; record adoption or the reason for deferring it. The shipped setup procedure explains how
+to adopt Varlock through the product's
 pinned dependency and an existing declared command or script. Use agent-mode validation for status
 and `run --inject vars --redact-stdout` for a trusted product process, and keep resolved
 credentials out of the agent's environment. Give both paths as absolute paths with repeated
@@ -698,12 +701,16 @@ limitations are in the [Varlock CLI reference](https://varlock.dev/reference/cli
 
 `cockpit preflight` and `cockpit doctor` check every sibling that contains a `.env.schema` and skip
 the rest. Each runs `varlock load --agent --format json-full --path <sibling>` from your `PATH`
-with the command's timeout and a 256 KiB output cap, and keeps only key names and a validity
+with `VARLOCK_TELEMETRY_DISABLED=true`, the command's timeout and a 256 KiB output cap, and keeps only key names and a validity
 category; values and Varlock's messages are discarded. `ENV_SCHEMA_UNHEALTHY` fails the row and
 names the sibling and its keys, or reports the row as unavailable when Varlock times out, exits
 without a readable report, or a provider cannot resolve a value; run `varlock load` in that sibling
 to see why. `ENV_SCHEMA_TOOL_MISSING` is a warning, not a failure, when Varlock is not installed
 (<https://varlock.dev>).
+
+Set `VARLOCK_TELEMETRY_DISABLED=true` in product-owned Varlock wrappers too. Cockpit's probes
+always disable Varlock telemetry; they do not modify global Varlock settings. See
+[Varlock's privacy documentation](https://varlock.dev/privacy/) for the opt-out contract.
 
 Report only variable names, validation state, exit status and where each value came from. Raw
 resolver output, resolved values and browser state do not belong in work-order results. Generated
