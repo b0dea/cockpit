@@ -16,7 +16,6 @@ import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { createHealthCommandAdapters } from './health-composition.js'
 import { observeGeneratedApplicationSurfaces } from './generated-application/surface-observation.js'
 import { syncGeneratedEnvironment } from './generated-application/sync.js'
-import { observeEnvSchemas } from './env-schema-observation.js'
 import { createHealthCompositionFixture } from '../../test-support/health-composition-fixture.js'
 
 const run = promisify(execFile)
@@ -829,11 +828,11 @@ describe('env schema health', () => {
     const printing = (json: string, exitCode: number) =>
         `cat <<'JSON'\n${json}\nJSON\nprintf '%s\\n' '${SECRET}' >&2\nexit ${exitCode}`
 
-    async function health(candidate: Awaited<ReturnType<typeof fixture>>, options: { readonly path?: string; readonly timeoutMs?: number } = {}) {
+    async function health(candidate: Awaited<ReturnType<typeof fixture>>, options: { readonly path?: string; readonly timeoutMs?: number; readonly env?: Record<string, string> } = {}) {
         const execute = vi.fn(executeProbe)
         const adapters = createHealthCommandAdapters({
             configPath: candidate.configPath,
-            env: { PATH: options.path ?? `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            env: { PATH: options.path ?? `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home, ...options.env },
             timeoutMs: options.timeoutMs ?? 5_000,
         }, execute)
         const doctor = await runDoctor({ configPath: candidate.configPath }, adapters)
@@ -918,13 +917,60 @@ describe('env schema health', () => {
 
         const { preflight, row } = await health(candidate)
 
-        expect(row(preflight)).toMatchObject({ verdict: 'fail', remedy: expect.stringContaining('have a person run `VARLOCK_TELEMETRY_DISABLED=true varlock load`') })
+        expect(row(preflight)).toMatchObject({ verdict: 'fail', remedy: expect.stringContaining('have a person run `VARLOCK_TELEMETRY_DISABLED=true varlock load --path <schema directory> --path') })
         expect(preflight.diagnostics).toContainEqual(expect.objectContaining({
             severity: 'error',
             code: 'ENV_SCHEMA_UNHEALTHY',
-            message: expect.stringMatching(/api .*missing required DATABASE_URL.*invalid PORT/),
-            fix: expect.stringContaining('have a person run `VARLOCK_TELEMETRY_DISABLED=true varlock load`'),
+            message: expect.stringMatching(/api .*missing required DATABASE_URL.*could not validate or resolve PORT/),
+            fix: expect.stringContaining('have a person run `VARLOCK_TELEMETRY_DISABLED=true varlock load --path <schema directory> --path'),
         }))
+    })
+
+    it('blocks preflight on a provider it cannot resolve through, as unavailable and naming keys only', async () => {
+        const candidate = await fixture({ machineOnly: true })
+        await withVarlock(candidate, printing(report({ API_KEY: `exec(): command failed (exit code 3): ${SECRET}` }), 1))
+
+        const { doctor, preflight, row } = await health(candidate)
+
+        expect(row(preflight)).toMatchObject({ verdict: 'unavailable', remedy: expect.stringContaining('sign in to it, then rerun') })
+        expect(preflight).toMatchObject({ kind: 'blocked', status: 2 })
+        expect(row(doctor)).toMatchObject({ verdict: 'unavailable' })
+        expect(preflight.diagnostics).toContainEqual(expect.objectContaining({
+            severity: 'error', code: 'ENV_SCHEMA_UNHEALTHY', message: expect.stringMatching(/api .*could not validate or resolve API_KEY/),
+        }))
+        expect(JSON.stringify([doctor, preflight])).not.toContain(SECRET)
+    })
+
+    it('warns about keys the caller\'s shell satisfied, without failing the row or naming a value', async () => {
+        const candidate = await fixture({ machineOnly: true })
+        const overridden = JSON.stringify({ config: { API_KEY: { value: SECRET } }, overrideKeys: ['API_KEY'] })
+        await withVarlock(candidate, `env | grep -q '^_VARLOCK_' && exit 42\n${printing(overridden, 0)}`)
+
+        const { doctor, preflight, row } = await health(candidate, { env: { _VARLOCK_FILTER: 'REGION', API_KEY: SECRET } })
+
+        for (const result of [doctor, preflight]) {
+            expect(row(result)).toMatchObject({ verdict: 'pass' })
+            expect(result.diagnostics).toContainEqual(expect.objectContaining({
+                severity: 'warning', code: 'ENV_SCHEMA_OVERRIDDEN', target: 'api', message: expect.stringContaining('API_KEY came from the shell'),
+                fix: expect.stringContaining('unset those variables'),
+            }))
+        }
+        expect(JSON.stringify([doctor, preflight])).not.toContain(SECRET)
+    })
+
+    it('reports a required env schema gap from doctor on a cockpit that declares no runtime', async () => {
+        const candidate = await fixture({ unseeded: true })
+        await writeFile(candidate.configPath, (await readFile(candidate.configPath, 'utf8')).split('[environment]')[0]!)
+        await mkdir(join(candidate.checkout, 'siblings', 'api'), { recursive: true })
+        await withVarlock(candidate, printing(report({ API_KEY: 'Value is required but is currently empty' }), 1))
+        await expect(syncGeneratedEnvironment({ configPath: candidate.configPath })).resolves.toMatchObject({ kind: 'complete', status: 0 })
+
+        const { doctor, preflight, row } = await health(candidate)
+
+        expect(preflight.diagnostics).toEqual([expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED' })])
+        expect(row(doctor)).toMatchObject({ verdict: 'fail', remedy: expect.stringContaining('cockpit doctor on a cockpit that declares no runtime') })
+        expect(doctor.diagnostics).toContainEqual(expect.objectContaining({ code: 'ENV_SCHEMA_UNHEALTHY', message: expect.stringContaining('missing required API_KEY') }))
+        expect((doctor.result as { readiness?: { gaps: readonly { id: string; level: string }[] } }).readiness?.gaps).toContainEqual(expect.objectContaining({ id: 'env-schema', level: 'required' }))
     })
 
     it('names a varlock timeout instead of hanging', async () => {

@@ -276,9 +276,13 @@ status and trusted product processes. Cockpit sets it for its own schema probes.
 Varlock telemetry without changing the person's global configuration; output redaction is a
 separate setting and remains required in every command an agent runs.
 
-Preflight and doctor already check the schema of every sibling that has a `.env.schema`; a failing row
-names the keys. A person can run `VARLOCK_TELEMETRY_DISABLED=true varlock load` in that sibling to
-diagnose it. Agents use cockpit preflight for key-only status; raw Varlock output is not safe to read.
+Preflight and doctor already check every `.env.schema` a sibling tracks, a sibling's root schema and
+the cockpit root's own, with the central path when it exists; a failing or unavailable row names the
+keys. An unavailable row can mean a secret provider is signed out or unreachable: a person signs in
+and reruns. To diagnose, a person runs `VARLOCK_TELEMETRY_DISABLED=true varlock load --path
+<schema-directory> --path <central-directory>`. Agents use cockpit preflight for key-only status, or
+`cockpit doctor` on a cockpit that declares no runtime, where preflight refuses; raw Varlock output is
+not safe to read.
 
 Treat Varlock output as secret-tainted even in agent mode. Report variable names, validation state,
 exit status and provenance only. Never copy raw resolved values, stdout or stderr into work-order

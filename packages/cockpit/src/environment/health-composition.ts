@@ -378,9 +378,11 @@ function producers(input: {
         },
         envSchema: async () => await observeEnvSchemas({
             stackId: input.stack,
+            cockpit: { root: dirname(input.config.result.source.path), name: input.config.result.config.cockpit.name },
             siblings: input.config.result.config.sibling.map((sibling) => ({
-                slug: sibling.slug, dir: sibling.dir, root: resolve(siblingRoot, sibling.dir),
+                slug: sibling.slug, root: resolve(siblingRoot, sibling.dir),
             })),
+            git: input.git,
             env: input.env,
             timeoutMs: input.timeoutMs,
         }, { execute: input.execute }),

@@ -706,14 +706,42 @@ explicit permission from whoever owns the product and the provider. Current comm
 limitations are in the [Varlock CLI reference](https://varlock.dev/reference/cli/load-and-run/) and
 [AI tools guide](https://varlock.dev/guides/ai-tools/).
 
-`cockpit preflight` and `cockpit doctor` check every sibling that contains a `.env.schema` and skip
-the rest. Each runs `varlock load --agent --format json-full --path <sibling>` from your `PATH`
-with `VARLOCK_TELEMETRY_DISABLED=true`, the command's timeout and a 256 KiB output cap, and keeps only key names and a validity
-category; values and Varlock's messages are discarded. `ENV_SCHEMA_UNHEALTHY` fails the row and
-names the sibling and its keys, or reports the row as unavailable when Varlock times out, exits
-without a readable report, or a provider cannot resolve a value; a person can run
-`VARLOCK_TELEMETRY_DISABLED=true varlock load` in that sibling to see why. `ENV_SCHEMA_TOOL_MISSING` is a warning, not a failure, when Varlock is not installed
+`cockpit preflight` and `cockpit doctor` check every `.env.schema` a sibling tracks, asking Git with
+`git ls-files`, plus a sibling's root schema whether tracked or not and the cockpit root's own. A
+sibling that is not a Git repository is checked at its root only; Git failing for another reason, or
+more than 64 tracked schemas, makes that sibling unavailable. On a cockpit that declares no runtime
+`preflight` refuses, so `doctor` is what reports schema status there. Each schema runs
+`varlock load --agent --format json-full --path <schema directory>` with
+`VARLOCK_TELEMETRY_DISABLED=true`, the command's timeout, a 256 KiB output cap and every `_VARLOCK_*`
+variable removed, adding `--path <cockpit root>/env/.secrets/<cockpit name>/<slug>[/<relative dir>]`
+when that directory exists; the cockpit root's own schema uses `env/.secrets/<cockpit name>` itself.
+That directory is checked with file metadata only and nothing inside it is read, and a symbolic link
+on the way to it, or a failure other than its absence, makes the schema unavailable.
+
+Only key names and a category are kept; values and Varlock's messages are discarded.
+
+| Varlock reports | Row | Named as |
+| --- | --- | --- |
+| The required-empty message for a key | fails | `missing required <keys>` |
+| Any other key error, such as a failed resolver or a value that does not coerce | unavailable, unless another key is missing | `could not validate or resolve <keys>` |
+| An error at the root of the report, such as a bad plugin | fails | `schema could not be loaded` |
+| A timeout, or an exit without a readable report | unavailable | the cause |
+
+Each is `ENV_SCHEMA_UNHEALTHY`, and schemas are labelled `<slug> (<relative dir>)`. A provider's error
+messages cannot be enumerated, so a key that could not be resolved is not called invalid: the provider
+may be signed out or unreachable. Sign in to it and rerun. To diagnose, a person runs
+`VARLOCK_TELEMETRY_DISABLED=true varlock load --path <schema directory> --path <central directory>`,
+leaving out the second path where that directory does not exist. `ENV_SCHEMA_OVERRIDDEN` warns without
+failing the row when Varlock reports a key as satisfied by the shell that ran the command rather than
+by the schema's own sources; unset it and rerun to check those sources.
+
+The probe uses `varlock` from your `PATH`, not the product's locked copy, so a product with only a
+local install sees `ENV_SCHEMA_TOOL_MISSING`, a warning rather than a failure
 (<https://varlock.dev>).
+
+Secret-manager resolvers, such as vault or 1Password, may need their own sign-in and environment. The
+probe passes your environment through, never prompts because its stdin is closed, and reports a
+timeout as unavailable. This was measured only with a failing synthetic resolver, not a real provider.
 
 Set `VARLOCK_TELEMETRY_DISABLED=true` in product-owned Varlock wrappers too. Cockpit's probes
 always disable Varlock telemetry; they do not modify global Varlock settings. See
