@@ -11,7 +11,7 @@ import { executeProbe } from '../environment-exec/execute.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolveDockerExecutable } from './executable.js'
 import { evaluateGuard, GUARD_ROOT_PROTECTIONS, guardIdentity } from '../guards/evaluator.js'
 import { parseGuardInput } from '../guards/invocation-parser.js'
-import { encodeGuardLocalIdentity, parseGuardLocalIdentity } from '../guards/local-identity.js'
+import { encodeGuardLocalIdentity, GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from '../guards/local-identity.js'
 import { shellPayload } from '../guards/fixtures/invocation-corpus.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import type { ExecutionStep } from './contract.js'
@@ -549,6 +549,28 @@ describe('guard policy construction', () => {
         const unobserved = { ...adapters, observeCheckout: (async () => ({ state: 'unavailable', reason: 'synthetic' })) as unknown as typeof adapters.observeCheckout }
         expect(await decision(write(`${recorded}\n`), unobserved)).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('cannot build its policy') })
         expect(await decision(write(recorded), unobserved)).toMatchObject({ decision: 'allow' })
+
+        // A configuration that does not load has the same way out, however it fails to.
+        const declared = '[ports.bases]'
+        const undeclared = '[ports.not_bases]'
+        const invalid = recorded.replace(declared, undeclared)
+        for (const broken of [invalid, `${recorded}\n[[[ not toml\n`, `${recorded}\n${'#'.repeat(1_100_000)}\n`]) {
+            writeFileSync(configPath, broken)
+            const unloaded = await decision(write(`${recorded}\n`))
+            expect(unloaded).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('does not load') })
+            expect(unloaded.reason).toContain('.cockpit/local/guard-config')
+            expect(await decision({ ...request, payload: shellPayload('ls', root) })).toMatchObject({ decision: 'unavailable' })
+            expect(await decision(write(recorded))).toMatchObject({ decision: 'allow' })
+        }
+        writeFileSync(configPath, invalid)
+        expect(await decision(call('Edit', { file_path: configPath, old_string: undeclared, new_string: declared }))).toMatchObject({ decision: 'allow' })
+        expect(await decision(call('Edit', { file_path: configPath, old_string: undeclared, new_string: `${declared}\n` }))).toMatchObject({ decision: 'unavailable' })
+        // Admitting it still rests on the publication sync wrote for this machine.
+        const localIdentity = join(root, GUARD_LOCAL_PATHS.identity)
+        const localBytes = readFileSync(localIdentity)
+        writeFileSync(localIdentity, encodeGuardLocalIdentity({ ...parseGuardLocalIdentity(localBytes.toString('utf8'))!, moduleSha256: 'f'.repeat(64) }))
+        expect(await decision(write(recorded))).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('machine-local record') })
+        writeFileSync(localIdentity, localBytes)
 
         // Restoring out of a widening edit is a person's, as every other call there is.
         const widened = parse(recorded) as { guards: { allow: unknown[] } }
