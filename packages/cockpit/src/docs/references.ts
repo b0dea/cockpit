@@ -1,5 +1,5 @@
 // Stale references in living documents: a path or `make` target a document cites that the
-// repository once had and has since removed. Keying on history is the whole precision story: a
+// repository once had and has since removed. Keying on history keeps proposals quiet: a
 // backlog full of proposals ("add `make park`") names things that never existed, and those are
 // left alone, while `make publish` after its target was deleted is exactly the rot to report. No
 // allowlist is needed, and a link that never resolved is a link checker's business.
@@ -119,8 +119,10 @@ export function staleReferences(input: Readonly<{
         const reported = new Set<string>()
         const start = findings.length
         const where = (line: number) => `${input.repository}${document.path}:${line}`
-        const cite = (line: number, path: string | undefined) => {
-            if (path === undefined || exists(path) || !input.history.removed.has(path) && !removedDirectories.has(path) || input.present(path)) return
+        const cite = (line: number, path: string | undefined, directoryReference: boolean) => {
+            // Bare identifiers can name tables or APIs. Only explicit paths imply a directory;
+            // a bare file name still has its own deletion record in Git.
+            if (path === undefined || exists(path) || !input.history.removed.has(path) && !(directoryReference && removedDirectories.has(path)) || input.present(path)) return
             const key = `${line}\0${path}`
             if (reported.has(key)) return
             reported.add(key)
@@ -144,11 +146,11 @@ export function staleReferences(input: Readonly<{
         for (const row of document.walked.lines) {
             for (const span of row.prose.matchAll(/(`+)([^`]+)\1/g)) {
                 const value = span[2]!.trim()
-                if (PATH_SPAN.test(value)) cite(row.line, citedPath(document.path, value, false))
+                if (PATH_SPAN.test(value)) cite(row.line, citedPath(document.path, value, false), value.includes('/'))
                 else citeTargets(row.line, value)
             }
         }
-        for (const link of document.walked.links) cite(link.line, citedPath(document.path, link.target, true))
+        for (const link of document.walked.links) cite(link.line, citedPath(document.path, link.target, true), true)
         for (const row of document.walked.fencedLines) {
             if (SHELL_FENCES.has(row.info.split(/\s+/, 1)[0]!.toLowerCase())) citeTargets(row.line, row.text.replace(/^\s*[$%>#]\s+/, ''))
         }

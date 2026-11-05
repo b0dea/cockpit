@@ -49,6 +49,10 @@ not exist now:
   where it went.
 - `DOCS_TARGET_REMOVED`: a Makefile once defined the target and none does now.
 
+For a directory, use an explicit path such as `output/` or `docs/output`, or a link target.
+A bare inline identifier such as `output` could name a table or API, so it is checked only
+if Git records deleting that exact file; deleted files beneath `output/` do not suffice.
+
 Keying on history keeps proposals quiet: "add `make park`" names a target that never existed, so
 it is not reported, and no allowlist is needed. A link that never resolved is a link checker's
 job, not this one. npm and pnpm scripts are not checked.
