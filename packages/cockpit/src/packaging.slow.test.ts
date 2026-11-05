@@ -688,7 +688,7 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
     })
 })
 
-it('keeps a verified local-archive pin through installed init, check and npm ci', () => {
+it('keeps a verified local-archive pin through installed init, check and npm ci', { timeout: 360_000 }, () => {
     const requestedRoot = join(packScratch, 'source-install-init')
     mkdirSync(join(requestedRoot, 'library'), { recursive: true })
     const root = realpathSync(requestedRoot)
@@ -717,8 +717,10 @@ it('keeps a verified local-archive pin through installed init, check and npm ci'
     const installedLock = readFileSync(join(root, 'package-lock.json'), 'utf8')
     const launcher = join(root, 'node_modules/@b00dea/cockpit/bin/cockpit.mjs')
     const run = (...args: string[]) => {
+        // A hosted macOS runner took past 30 s on one call of this installed init, while the same call
+        // normally finishes well inside it; the limit catches a hang, not a slow machine.
         const result = spawnSync(process.execPath, [launcher, 'init', root, '--target', 'opencode', ...args, '--json'], {
-            cwd: root, env, encoding: 'utf8', timeout: 30_000,
+            cwd: root, env, encoding: 'utf8', timeout: 90_000,
         })
         expect(result.error, JSON.stringify({ signal: result.signal, stdout: result.stdout, stderr: result.stderr })).toBeUndefined()
         return result
