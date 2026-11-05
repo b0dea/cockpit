@@ -367,7 +367,7 @@ describe('restriction expansion', () => {
         const anchor = lines.find(line => line.trim() && lines.filter(other => other === line).length === 1)!
         expect(call('edit', { filePath: config, oldString: anchor, newString: `${anchor}\n` })).toMatchObject({ status: 0, stderr: '' })
         expect(call('edit', { filePath: config, oldString: anchor, newString: `[autonomy]\nreset = "agent"\n\n${anchor}` }))
-            .toMatchObject({ status: 1, stderr: expect.stringContaining('Refusing to change [work], [work.gates] and [autonomy]') })
+            .toMatchObject({ status: 1, stderr: expect.stringContaining('Refusing to change gate authority or widen MCP access in [work], [work.gates], [autonomy]') })
     }, 60_000)
 
     it('runs the generated Codex hook from a cockpit directory inside a larger Git repository', async () => {

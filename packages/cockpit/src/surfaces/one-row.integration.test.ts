@@ -227,7 +227,7 @@ describe('one-row generated surface integration', () => {
         expect(generatedGuard).not.toContain(credentialCanary)
         // Every `.env.*` file is denied by default; the declared instance is denied under its own reason.
         const dotenv = 'Refusing to read or write an environment file: `.env` and `.env.*` hold secrets unless named .env.example, .env.sample, .env.template or .env.schema, or declared as a template. '
-            + 'Fix: run what needs its values as `varlock run -- <cmd>`, which never prints them, or read the variable names from the .env.schema.'
+            + 'Fix: run the trusted process as `VARLOCK_TELEMETRY_DISABLED=true varlock run --redact-stdout -- <cmd>`; consult schema names only where native permissions allow them.'
         for (const [fixture, path, reason] of [
             [baseline, '.env.local', dotenv],
             [added, '.env.local', 'Refusing mutation or staging of a declared environment instance.'],

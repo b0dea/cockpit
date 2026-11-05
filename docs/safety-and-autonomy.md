@@ -347,9 +347,13 @@ of every sibling, whether or not the
 sibling is mounted or granted to Claude. A sibling instance's rule is anchored on the path below the
 sibling's parent, so the committed file is identical on every clone; it can match more than the
 instance (any file with the same sibling-relative suffix), never less. An instance in the cockpit
-root itself is anchored at the project root. Claude checks symbolic links against both the requested
-and resolved paths. A hard link under a name outside the rules is not covered by these path rules;
-the guard's filesystem identity checks cover shell commands only.
+root itself is anchored at the project root. In the native probe below, Claude refused a symbolic
+link whose target was protected. A hard link under a name outside the rules is not covered by these
+path rules; the guard's filesystem identity checks cover shell commands only.
+
+| Native read measurement | Observed result |
+| --- | --- |
+| Claude Code 2.1.318, macOS, 2026-11-05 | Ordinary Read succeeded; Read through an unmatched-name symlink to a synthetic `.env.private` was refused. Explicit `Bash(cat *)` permission let `cat ordinary.txt` run, while `cat .env.schema` was refused. |
 
 Claude's filesystem-root deny rules cannot exempt the documentation names:
 native file tools and recognized shell reads such as `cat` also refuse `.env.example`, `.env.sample`,
