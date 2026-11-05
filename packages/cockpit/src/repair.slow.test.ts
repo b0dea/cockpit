@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { loadAutonomyPolicy, observeConfigSource } from './config/load.js'
 import { writeRecordedPolicy } from './autonomy.js'
 import { executeProbe } from './environment-exec/execute.js'
@@ -22,23 +22,35 @@ const overridePath = 'compose.cockpit.yml'
 const surfacePath = 'AGENTS.md'
 
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
+afterAll(async () => { if (syncedTemplate) await rm((await syncedTemplate).root, { recursive: true, force: true }) })
 
-async function consumer() {
-    const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-repair-')))
-    roots.push(root)
+const image = `node@sha256:${'8'.repeat(64)}`
+let syncedTemplate: Promise<{ readonly root: string; readonly paths: readonly string[] }> | undefined
+
+async function syncTemplate() {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-repair-template-')))
     const configPath = join(root, 'cockpit.toml')
     await mkdir(join(root, 'app'))
     await writeFile(configPath, `${(await readFile(resolve('fixtures/registries/generated-environment.toml'), 'utf8')).replace(
         'name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."',
     )}\n[environment]\ncompose_files = ["compose.yml"]\n`)
-    const image = `node@sha256:${'8'.repeat(64)}`
     await writeFile(join(root, 'compose.yml'), `services:\n  first:\n    image: ${image}\n    volumes: ["./app:/app"]\n`)
     const synced = await syncGeneratedEnvironment({ configPath }, { now: () => firstInstant })
     expect(synced).toMatchObject({ kind: 'complete' })
     if (synced.kind !== 'complete') throw new Error('Synthetic repair fixture failed')
+    return { root, paths: synced.result.paths }
+}
+
+// One sync, then a private copy for each test: every test corrupts what it was given, and copying
+// costs far less than the dozens of child processes a sync runs.
+async function consumer() {
+    const template = await (syncedTemplate ??= syncTemplate())
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-repair-')))
+    roots.push(root)
+    await cp(template.root, root, { recursive: true })
     // What Compose reports for compose.yml, for a check run against stubComposeTopology.
     const services = { first: { image, volumes: [{ type: 'bind', source: join(root, 'app'), target: '/app' }] } }
-    return { root, configPath, paths: [...synced.result.paths, ledgerPath], services }
+    return { root, configPath: join(root, 'cockpit.toml'), paths: [...template.paths, ledgerPath], services }
 }
 
 // A service added to compose.yml changes the ownership override the next sync writes.
