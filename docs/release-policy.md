@@ -13,7 +13,8 @@ Environment commands also need Git and, for the stack, Docker with Compose; see 
 
 CI tests that range:
 
-- on every merge to main, the full suite on macOS and Linux at the lowest supported version, and a
+- on every pull request, the full suite on Linux at the lowest supported version;
+- before every release, the full suite on macOS and Linux at the lowest supported version, and a
   compatibility subset (launcher, package metadata and runtime probe tests) on Linux at each other
   supported line;
 - weekly, the full suite on Linux at the newest supported line.

@@ -38,6 +38,12 @@ When you are ready to release:
 3. Merge it once `ci-ok` passes. If main moves before you merge, the workflow rebuilds the pull
    request; close and reopen it again.
 
+This run is the release gate: it is the only routine run with the full suite on macOS and the
+compatibility subset on the other supported Node lines, beside the full Linux suite and the
+supply-chain checks. A push to main does not rerun them, and it could not stop a publish if it did,
+because the release workflow runs beside it. A pull request that changes the package's `version`
+field gets the same cells, since the release workflow publishes any version that is not on npm yet.
+
 `ci-ok` includes the `version pull request scope` check, which fails when the pull request
 changes anything besides version fields in `package.json` and `package-lock.json`, `CHANGELOG.md`
 files and consumed `.changeset/*.md` files. It exists so a commit pushed onto the version branch
@@ -173,7 +179,8 @@ The automation above needs these settings, done once by the maintainer:
   `docs-ownership.test.ts` fails while this list misses a file with such wording, and fails on any
   that remains once the package is public.
 - **GitHub:** allow auto-merge, allow GitHub Actions to create pull requests, require the `ci-ok`
-  check on main, and create the `no-changeset` label. Once the repository is public, enable secret
+  check on main, and create the `no-changeset` and `test-macos` labels. Once the repository is
+  public, enable secret
   scanning with push protection and CodeQL default setup; the dependency-review job in CI starts
   running on its own.
 - **Reporting channels:** enable private vulnerability reporting, then change the

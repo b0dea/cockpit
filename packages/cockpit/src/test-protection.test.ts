@@ -386,6 +386,37 @@ describe('CI runs the base revision of its change guards', () => {
     })
 })
 
+// The release workflow publishes beside CI, so only a pull request's required check can stop it.
+// macOS and the other Node lines run only when this step selects them.
+describe('CI selects every platform for what can publish', () => {
+    const workflow = readFileSync(fileURLToPath(new URL('../../../.github/workflows/ci.yml', import.meta.url)), 'utf8')
+    const from = workflow.indexOf('HEAD_REF: ${{ github.head_ref }}')
+    const step = /\n {8}run: \|\n(?<body>(?: {10}.*\n)+)/.exec(workflow.slice(from))?.groups?.body ?? ''
+    const manifest = (version: string) => `{\n  "name": "synthetic",\n  "version": "${version}"\n}\n`
+
+    it.each([
+        ['the Version Packages branch', { HEAD_REF: 'changeset-release/main' }, { 'CHANGELOG.md': 'release\n' }, 'code=true', 'platforms=true'],
+        ['a version change on any branch', {}, { 'packages/cockpit/package.json': manifest('2.0.0') }, 'code=true', 'platforms=true'],
+        ['the macOS label', { MACOS_LABEL: 'true' }, { 'src.ts': 'changed\n' }, 'code=true', 'platforms=true'],
+        ['an ordinary change', {}, { 'src.ts': 'changed\n' }, 'code=true', 'platforms=false'],
+        ['another manifest change', {}, { 'packages/cockpit/package.json': manifest('1.0.0').replace('synthetic', 'renamed') }, 'code=true', 'platforms=false'],
+        ['a documentation change', {}, { 'README.md': 'changed\n' }, 'code=false', 'platforms=false'],
+        ['a push to main', { EVENT_NAME: 'push' }, { 'src.ts': 'changed\n' }, 'code=false', 'platforms=false'],
+    ])('classifies %s', (_name, env, changed, code, platforms) => {
+        const repo = repository()
+        const files = { 'packages/cockpit/package.json': manifest('1.0.0'), 'README.md': 'base\n', 'src.ts': 'base\n' }
+        const base = repo.commit(files)
+        const head = repo.commit({ ...files, ...changed }, base)
+        writeFileSync(join(repo.root, '.git/HEAD'), `${head}\n`)
+        const output = join(repo.root, 'github-output')
+        const ran = spawnSync('bash', ['-c', step], { cwd: repo.root, encoding: 'utf8',
+            env: { ...process.env, EVENT_NAME: 'pull_request', HEAD_REF: 'ordinary', MACOS_LABEL: 'false', GITHUB_OUTPUT: output, ...env } })
+        expect(ran.stderr).toBe('')
+        expect(ran.status).toBe(0)
+        expect(readFileSync(output, 'utf8').split('\n')).toEqual(expect.arrayContaining([code, platforms]))
+    })
+})
+
 // The same detector judges a consumer's checkout at grade time, over the files its patterns call tests.
 describe('test weakening in a consumer checkout', () => {
     const edit = (path: string, removed: string[], added: string[]) =>

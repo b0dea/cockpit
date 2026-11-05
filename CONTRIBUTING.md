@@ -42,17 +42,18 @@ npm test -- packages/cockpit/src/tree-hygiene.test.ts
   todo test fails the run unless **scripts/skip-allowlist-reporter.mjs** lists it.
 - `npm run test:changed -- <base-commit>` runs, in both tiers, the tests that import what changed
   since that commit (Vitest's `--changed`), plus the tests that read a changed file by name
-  rather than import it. It matches what CI runs on the changed-only cell.
+  rather than import it. Most source changes reach nearly every test, so read its file count.
 - `*.slow.test.ts` is the slow tier. [Test tiers](docs/contributing/testing.md#test-tiers) says
   what belongs there.
 
 ## Verification
 
-Before marking a pull request ready, run the full gates and paste their real output into the pull
-request:
+Before marking a pull request ready, run the tests for what you changed and the other gates, and
+paste their real output into the pull request. CI confirms the full suite, so run `npm test` locally
+only when a shared seam changed:
 
 ```sh
-npm test
+npm test -- <test files>
 npm run typecheck
 npm run lint:docs
 npm run lint:markdown
@@ -72,6 +73,11 @@ the other maintainer pages are in the [contributor documentation index](docs/con
 
 CI (`.github/workflows/ci.yml`) runs the build, tests, typecheck, documentation lint, the
 anonymisation scan, the changeset check and the test-protection check; `ci-ok` is the aggregate.
+A pull request runs the full suite on Linux. macOS and the other supported Node lines run on the
+[Version Packages pull request](docs/contributing/releasing.md#merging-the-version-packages-pull-request),
+where they can stop the release. Add the `test-macos` label to run them on a change that is likely
+to behave differently on macOS, such as shell, path or process handling. A push to main reruns only
+the scan, the documentation checks and test protection.
 The test-protection and version-pull-request-scope jobs run the base revision's copy of their
 script, so a change cannot loosen the guard that judges it.
 

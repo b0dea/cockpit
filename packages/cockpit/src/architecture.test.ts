@@ -239,40 +239,33 @@ describe('clean-checkout controls', () => {
         expect(manifest.scripts?.['lint:docs']).toBe('tsx scripts/docs-lint.ts')
     })
 
-    it('runs one full Linux cell and adjacent macOS tests per pull request, full platforms on main, the Node upper edge weekly, and the Node 20 negative control', () => {
+    it('runs the Linux suite per pull request, every platform before a release, the Node upper edge weekly, and the Node 20 negative control', () => {
         const workflow = read('.github/workflows/ci.yml')
         const supportedJob = /\n  test:\n(?<body>[\s\S]*?)(?=\n  test-protection:)/.exec(workflow)?.groups?.body ?? ''
         const hygieneJob = /\n  hygiene:\n(?<body>[\s\S]*?)(?=\n  test:)/.exec(workflow)?.groups?.body ?? ''
         const floorJob = /\n  runtime-floor-negative:\n(?<body>[\s\S]*)/.exec(workflow)?.groups?.body ?? ''
 
-        // The matrix is one fromJSON expression with a pull-request, a weekly and a main list, so
+        // The matrix is one fromJSON expression with a release, a weekly and a pull-request list, so
         // each list is read as data rather than matched line by line.
-        const [pullRequestCells, weeklyCells, mainCells] = [...supportedJob.matchAll(/'(\[\{[^']*\}\])'/g)]
+        const [releaseCells, weeklyCells, pullRequestCells] = [...supportedJob.matchAll(/'(\[\{[^']*\}\])'/g)]
             .map((match) => (JSON.parse(match[1]) as { os: string; node: string; gate: string; shard?: string }[])
                 .map(({ os, node, gate, shard }) => ({ os, node, gate, ...(shard === undefined ? {} : { shard }) })))
         // The Linux full suite runs as four parallel shards; together they must cover it exactly once.
         const linuxFull = ['1/4', '2/4', '3/4', '4/4'].map((shard) => ({ os: 'ubuntu-latest', node: '22.22.0', gate: 'full', shard }))
-        expect(supportedJob).toContain("github.event_name == 'pull_request' && '[")
+        expect(supportedJob).toContain("needs.changes.outputs.platforms == 'true' && '[")
         expect(supportedJob).toContain("github.event_name == 'schedule' && '[")
         expect(workflow).toMatch(/\n  schedule:\n    - cron: '[^']+'\n/)
-        // macOS minutes cost ten times Linux minutes, so a pull request runs only the tests
-        // adjacent to its change there.
-        expect(pullRequestCells).toEqual([
-            ...linuxFull,
-            { os: 'macos-latest', node: '22.22.0', gate: 'changed' },
-        ])
+        expect(pullRequestCells).toEqual(linuxFull)
         expect(weeklyCells).toEqual([
             { os: 'ubuntu-latest', node: '26', gate: 'full' },
         ])
-        expect(mainCells).toEqual([
+        // macOS and the other Node lines must reach the pull request that publishes.
+        expect(releaseCells).toEqual([
             ...linuxFull,
             { os: 'macos-latest', node: '22.22.0', gate: 'full' },
             { os: 'ubuntu-latest', node: '24', gate: 'compatibility' },
             { os: 'ubuntu-latest', node: '26', gate: 'compatibility' },
         ])
-        expect(supportedJob).toContain("if: matrix.gate == 'changed'")
-        expect(supportedJob).toContain('run: npm run test:changed -- HEAD^1\n')
-        expect(supportedJob).toContain('fetch-depth: 2')
         expect(workflow).toContain('runtime-floor-negative:')
         expect(supportedJob).toContain('npm run build')
         expect(supportedJob).toContain("if: matrix.gate == 'full'")

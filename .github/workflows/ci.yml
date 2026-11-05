@@ -11,8 +11,8 @@ on:
     types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main]
-  # The supported Node range's upper edge gets its full suite once a week instead of on every
-  # change: a Node-version regression is rare and a week is an acceptable time to find it.
+  # The supported Node range's upper edge also gets its full suite once a week, so a Node-version
+  # regression surfaces even when no release is being prepared.
   schedule:
     - cron: '17 4 * * 1'
 
@@ -43,6 +43,7 @@ jobs:
       lockfile: ${{ steps.classify.outputs.lockfile }}
       release: ${{ steps.classify.outputs.release }}
       changeset: ${{ steps.classify.outputs.changeset }}
+      platforms: ${{ steps.classify.outputs.platforms }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -52,12 +53,19 @@ jobs:
       - id: classify
         env:
           EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          MACOS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'test-macos') }}
         run: |
           set -euo pipefail
+          # A push to main cannot stop a publish: the release workflow runs beside this one, and
+          # the pull request already tested this tree. The suite that guards a release runs on the
+          # Version Packages pull request, whose required ci-ok a merge has to pass.
+          if [[ "$EVENT_NAME" == push ]]; then
+            printf '%s\n' code=false lockfile=false release=false changeset=false platforms=false >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [[ "$EVENT_NAME" != pull_request ]]; then
-            # main and the weekly run always test: a push can carry several commits, and the
-            # post-merge record must not depend on a filter.
-            printf '%s\n' code=true lockfile=true release=false changeset=false >> "$GITHUB_OUTPUT"
+            printf '%s\n' code=true lockfile=true release=false changeset=false platforms=false >> "$GITHUB_OUTPUT"
             exit 0
           fi
           changed="$(git diff --name-only --no-renames HEAD^1 HEAD)"
@@ -75,7 +83,17 @@ jobs:
           if printf '%s\n' "$changed" | grep -E '^packages/cockpit/(src|surfaces)/' | grep -Ev '\.test\.ts$|/test-support/' | grep -q .; then release=true; fi
           changeset=false
           if [[ -n "$added_changesets" ]]; then changeset=true; fi
-          printf '%s\n' "code=$code" "lockfile=$lockfile" "release=$release" "changeset=$changeset" >> "$GITHUB_OUTPUT"
+          # The release workflow publishes any package version that is not on npm yet, so whatever
+          # moves that version gets every platform, not only the Version Packages pull request.
+          # The label asks for the same cells on a change likely to behave differently on macOS.
+          manifest_diff="$(git diff --unified=0 --no-renames HEAD^1 HEAD -- packages/cockpit/package.json)"
+          platforms=false
+          if [[ "$HEAD_REF" == changeset-release/main || "$MACOS_LABEL" == true ]] \
+            || grep -Eq '^[-+][[:space:]]*"version"' <<< "$manifest_diff"; then
+            platforms=true
+            code=true
+          fi
+          printf '%s\n' "code=$code" "lockfile=$lockfile" "release=$release" "changeset=$changeset" "platforms=$platforms" >> "$GITHUB_OUTPUT"
 
   # Its own job rather than a step inside the matrix, so a red build names which rule broke.
   # "tests failed" and "the tree leaked" are different emergencies and must not look alike in
@@ -87,7 +105,7 @@ jobs:
   # shapes and private absolute paths are universal and are enforced here on every push. The
   # site-specific names live in an ignored file that exists only in the maintainer's checkout,
   # so THIS JOB CANNOT CATCH A SITE-NAME LEAK. That class is enforced where commits originate,
-  # by running the suite locally, and the scan prints which classes it covered.
+  # by the commit hook, and the scan prints which classes it covered.
   hygiene:
     name: anonymisation scan and documentation
     runs-on: ubuntu-latest
@@ -172,24 +190,24 @@ jobs:
       # what this matrix exists to find.
       fail-fast: false
       matrix:
-        # Three lists, chosen by event, because macOS runners have a lower concurrency limit than
-        # Linux runners (and cost ten times as much in a private repository), and the full suite
-        # is long: about 15 minutes at four workers on a developer machine, longer on a hosted
-        # runner with fewer cores. The step timeouts below leave room for that.
-        # - pull request: the full suite on Linux at the supported floor, plus macOS running
-        #   only the tests adjacent to the change (`changed`).
+        # Three lists, because a macOS minute costs ten times a Linux minute in a private repository
+        # and the full suite is long: about 15 minutes at four workers on a developer machine,
+        # longer on a hosted runner with fewer cores. The step timeouts below leave room for that.
+        # - pull request: the full suite on Linux at the supported floor. The Linux suite is split
+        #   into four shards: on one runner it took about 32 minutes, and the shards together take
+        #   about 20. One shard holds the platform-independent extras.
+        # - every platform, before a release: the same Linux shards, the full suite on macOS at the
+        #   floor, and the launcher-level compatibility subset on the other supported Node lines.
+        #   The classify job selects it for the Version Packages pull request, so a platform or
+        #   Node regression stops the release it would have shipped in.
         # - weekly: the full suite at the upper edge of the supported Node range.
-        # The Linux full suite is split into four shards that run in parallel: on one runner
-        # it took about 32 minutes, and one shard holds the platform-independent extras.
-        # - push to main: the full suite on Linux and on macOS at the floor, and the
-        #   launcher-level compatibility subset on the other supported Node lines, so a
-        #   platform or Node regression a pull request missed is caught within one merge.
-        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"1/4","extras":true},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"2/4"},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"3/4"},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"4/4"},{"os":"macos-latest","node":"22.22.0","gate":"changed"}]' || github.event_name == 'schedule' && '[{"os":"ubuntu-latest","node":"26","gate":"full"}]' || '[{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"1/4","extras":true},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"2/4"},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"3/4"},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"4/4"},{"os":"macos-latest","node":"22.22.0","gate":"full"},{"os":"ubuntu-latest","node":"24","gate":"compatibility"},{"os":"ubuntu-latest","node":"26","gate":"compatibility"}]') }}
+        # macOS does not run a test subset on ordinary pull requests: selecting the tests that
+        # import a change chose 150 to 163 of 164 files in every recorded run, so it cost the same
+        # as the full suite.
+        include: ${{ fromJSON(needs.changes.outputs.platforms == 'true' && '[{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"1/4","extras":true},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"2/4"},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"3/4"},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"4/4"},{"os":"macos-latest","node":"22.22.0","gate":"full"},{"os":"ubuntu-latest","node":"24","gate":"compatibility"},{"os":"ubuntu-latest","node":"26","gate":"compatibility"}]' || github.event_name == 'schedule' && '[{"os":"ubuntu-latest","node":"26","gate":"full"}]' || '[{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"1/4","extras":true},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"2/4"},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"3/4"},{"os":"ubuntu-latest","node":"22.22.0","gate":"full","shard":"4/4"}]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The merge commit and its base parent, so the `changed` gate can diff against it.
-          fetch-depth: 2
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -210,11 +228,6 @@ jobs:
         env:
           SHARD: ${{ matrix.shard }}
         run: npm test -- ${SHARD:+--shard=$SHARD}
-      # Both tiers, for the tests that own what the pull request changed. A selection error fails
-      # the cell; it never narrows what runs.
-      - if: matrix.gate == 'changed'
-        timeout-minutes: 65
-        run: npm run test:changed -- HEAD^1
       - if: matrix.gate == 'compatibility'
         timeout-minutes: 15
         run: npm test -- packages/cockpit/src/launcher.test.ts packages/cockpit/src/package-metadata.test.ts packages/cockpit/src/environment/runtime-probe.slow.test.ts

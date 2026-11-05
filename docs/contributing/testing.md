@@ -9,7 +9,7 @@ failure.
 A test file named `*.slow.test.ts` is in the slow tier; every other file is in the fast tier.
 They are the `slow` and `fast` projects in `vitest.config.ts`. `npm test` runs both and
 `npm run test:fast` runs the fast project. `npm run test:changed -- <base-commit>` runs the
-owners of a change in both tiers and is what CI runs on its changed-only cell.
+owners of a change in both tiers.
 
 A file belongs in the slow tier when its cost is set by something other than the code under test:
 

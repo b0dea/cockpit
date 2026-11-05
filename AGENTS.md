@@ -81,8 +81,8 @@ npm run references                     # regenerate generated docs (see Keep doc
 ```
 
 Run adjacent owner tests, review non-adjacent dependents, and typecheck before reporting a
-behaviour change. Run the full suite, which includes the slow tier, before pushing, before a PR is
-marked ready, or when a shared seam changes.
+behaviour change. Locally, run targeted tests and let CI confirm the full suite, which includes the
+slow tier; run it locally only when a shared seam changes.
 
 ## Conventions
 

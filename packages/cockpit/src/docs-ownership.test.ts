@@ -59,7 +59,7 @@ describe('effective documentation ownership', () => {
         const contributing = readFileSync(new URL('../../../CONTRIBUTING.md', import.meta.url), 'utf8')
 
         expect(contributing).toContain('## Verification')
-        expect(contributing).toContain('```sh\nnpm test\nnpm run typecheck\nnpm run lint:docs\nnpm run lint:markdown\nnpm run lint:links\nnpm run lint:supply-chain\n```')
+        expect(contributing).toContain('```sh\nnpm test -- <test files>\nnpm run typecheck\nnpm run lint:docs\nnpm run lint:markdown\nnpm run lint:links\nnpm run lint:supply-chain\n```')
         expect(contributing).toContain('npm run lint:docs')
         expect(contributing).toContain('## What will not be accepted')
         expect(contributing).toContain('## Governance')
