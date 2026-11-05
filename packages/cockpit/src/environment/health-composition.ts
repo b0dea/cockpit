@@ -23,7 +23,7 @@ import {
 } from './contract.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
 import { observationSearchPath, resolveDockerExecutable, resolveGitExecutable } from './executable.js'
-import { inspectMachineStacksForDoctor, type OwnCheckout } from './stack-inventory.js'
+import { inspectMachineStacksForDoctor, mainCheckoutOf, type OwnCheckout } from './stack-inventory.js'
 import { createGitObservationStep, observeGit, observeRunningCheckout } from './git-observation.js'
 import { inspectProjectReadiness } from './readiness-composition.js'
 import { stackId } from './identity.js'
@@ -58,6 +58,7 @@ import {
 import { observeConfiguration, readState, selectStateRoot, type StateNamespace } from './state.js'
 import { observeTemplateHealth } from './templates.js'
 import { inspectServedSiblings } from './application/siblings.js'
+import { loadServedSiblings, servedPath } from './sibling-checkouts.js'
 import { observeServedCheckouts } from './sibling-observation.js'
 
 interface HealthCommandCompositionInput {
@@ -376,16 +377,22 @@ function producers(input: {
                 observeRuntimeMountMaterialization({ topology: session.readiness.topology,
                     services: [...services.values()], observedAt: observedAt() })]
         },
-        envSchema: async () => await observeEnvSchemas({
-            stackId: input.stack,
-            cockpit: { root: dirname(input.config.result.source.path), name: input.config.result.config.cockpit.name },
-            siblings: input.config.result.config.sibling.map((sibling) => ({
-                slug: sibling.slug, root: resolve(siblingRoot, sibling.dir),
-            })),
-            git: input.git,
-            env: input.env,
-            timeoutMs: input.timeoutMs,
-        }, { execute: input.execute }),
+        envSchema: async () => {
+            const cockpitRoot = dirname(input.config.result.source.path)
+            const config = input.config.result.config
+            // The schema that counts is in the checkout `cockpit use` serves: the stack runs from it.
+            const served = await loadServedSiblings(cockpitRoot, config)
+            if (served.kind === 'refusal') throw new RefusalError(served.diagnostic.message)
+            const mainCheckout = await mainCheckoutOf(cockpitRoot)
+            return await observeEnvSchemas({
+                stackId: input.stack,
+                cockpit: { root: cockpitRoot, name: config.cockpit.name, ...mainCheckout === undefined ? {} : { mainCheckout } },
+                siblings: config.sibling.map((sibling) => ({ slug: sibling.slug, root: servedPath(served.siblings, sibling.slug) })),
+                git: input.git,
+                env: input.env,
+                timeoutMs: input.timeoutMs,
+            }, { execute: input.execute })
+        },
         state: async () => observeConfiguration({
             path: input.config.result.source.path, stackId: input.stack, observedAt: observedAt(),
         }),

@@ -716,7 +716,9 @@ more than 64 tracked schemas, makes that sibling unavailable. On a cockpit that 
 variable removed, adding `--path <cockpit root>/env/.secrets/<cockpit name>/<slug>[/<relative dir>]`
 when that directory exists; the cockpit root's own schema uses `env/.secrets/<cockpit name>` itself.
 That directory is checked with file metadata only and nothing inside it is read, and a symbolic link
-on the way to it, or a failure other than its absence, makes the schema unavailable.
+on the way to it, or a failure other than its absence, makes the schema unavailable. A sibling is
+read from the checkout `cockpit use` serves. The store is gitignored, so a linked worktree of the
+cockpit that has none uses its main checkout's.
 
 Only key names and a category are kept; values and Varlock's messages are discarded.
 

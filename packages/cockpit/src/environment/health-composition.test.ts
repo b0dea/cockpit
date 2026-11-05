@@ -872,6 +872,22 @@ describe('env schema health', () => {
         }
     })
 
+    it('validates the checkout cockpit use serves, not the declared directory', async () => {
+        const candidate = await fixture({ machineOnly: true })
+        await withVarlock(candidate, printing(report(), 0))
+        const worktree = join(candidate.root, 'api-worktree')
+        await mkdir(worktree, { recursive: true })
+        await writeFile(join(worktree, '.env.schema'), 'API_KEY=\n')
+        const local = join(dirname(candidate.configPath), '.cockpit', 'local')
+        await mkdir(local, { recursive: true })
+        await writeFile(join(local, 'sibling-checkouts'), `${JSON.stringify({ format: 'cockpit-sibling-checkouts/v1', checkouts: { api: worktree } })}\n`)
+
+        const { execute } = await health(candidate)
+
+        expect(varlockCalls(execute).map(({ argv }) => argv[argv.indexOf('--path') + 1])).toContain(worktree)
+        expect(varlockCalls(execute).map(({ argv }) => argv[argv.indexOf('--path') + 1])).not.toContain(join(candidate.checkout, 'siblings', 'api'))
+    })
+
     it('does not run varlock for a sibling without .env.schema', async () => {
         const candidate = await fixture({ machineOnly: true })
         await withVarlock(candidate, printing(report(), 0))

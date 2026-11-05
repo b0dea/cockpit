@@ -211,11 +211,15 @@ function describeFailure(outcome: Extract<ExecuteProbeOutcome, { kind: 'refusal'
 }
 
 type Execute = (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
-type ProbeInput = { readonly cockpitRoot: string; readonly env: Readonly<Record<string, string>>; readonly timeoutMs: number; readonly stackId: StackId }
+type ProbeInput = { readonly cockpitRoot: string; readonly mainCheckout?: string; readonly env: Readonly<Record<string, string>>; readonly timeoutMs: number; readonly stackId: StackId }
 
 async function checkSchema(schema: SchemaRoot, executable: ResolvedExecutable | undefined, input: ProbeInput, execute: Execute): Promise<SchemaStatus> {
     if (!executable) return { state: 'tool-missing' }
-    const central = await centralDirectory(input.cockpitRoot, schema.central)
+    const own = await centralDirectory(input.cockpitRoot, schema.central)
+    // The store is gitignored, so a linked worktree starts without one and every provider-backed key
+    // would read as missing; its resolvers are the main checkout's unless it keeps its own.
+    const central = own.cause === undefined && own.path === undefined && input.mainCheckout !== undefined
+        ? await centralDirectory(input.mainCheckout, schema.central) : own
     if (central.cause !== undefined) return { state: 'unavailable', cause: central.cause }
     const step = createStep({ executable, schema, central: central.path, env: input.env, timeoutMs: input.timeoutMs, stackId: input.stackId })
     if (!step) return { state: 'unavailable', cause: 'varlock invocation could not be planned' }
@@ -307,7 +311,8 @@ async function discoverSchemaDirectories(
 export async function observeEnvSchemas(
     input: {
         readonly stackId: StackId
-        readonly cockpit: { readonly root: string; readonly name: string }
+        /** `mainCheckout`: where a linked worktree's main checkout is, which alone holds the gitignored store. */
+        readonly cockpit: { readonly root: string; readonly name: string; readonly mainCheckout?: string }
         readonly siblings: readonly EnvSchemaSibling[]
         readonly git: ResolvedExecutable
         readonly env: Readonly<Record<string, string | undefined>>
@@ -341,6 +346,7 @@ export async function observeEnvSchemas(
     const executable = resolved?.state === 'available' ? resolved.value : undefined
     const shared: ProbeInput = {
         cockpitRoot: input.cockpit.root,
+        ...input.cockpit.mainCheckout === undefined ? {} : { mainCheckout: input.cockpit.mainCheckout },
         // `_VARLOCK_*` steers Varlock itself: an inherited filter hides every other key's error, so a
         // schema with a missing key would read as valid. Provider variables stay.
         env: Object.fromEntries(Object.entries(input.env)

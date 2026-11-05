@@ -49,12 +49,12 @@ async function trackedSchemas(repository: string, ...relative: string[]) {
     git(repository, 'add', '--', ...relative.map((directory) => join(directory, SCHEMA)))
 }
 
-async function observe(space: Awaited<ReturnType<typeof workspace>>, env: Record<string, string> = {}) {
+async function observe(space: Awaited<ReturnType<typeof workspace>>, env: Record<string, string> = {}, mainCheckout?: string) {
     const resolved = await resolveGitExecutable(process.env)
     if (resolved.state !== 'available') throw new Error('git is unavailable')
     const execute = vi.fn(executeProbe)
     const [observation] = await observeEnvSchemas({
-        stackId, cockpit: { root: space.cockpit, name: 'synthetic' }, siblings: [{ slug: 'api', root: space.api }], git: resolved.value,
+        stackId, cockpit: { root: space.cockpit, name: 'synthetic', ...mainCheckout === undefined ? {} : { mainCheckout } }, siblings: [{ slug: 'api', root: space.api }], git: resolved.value,
         env: { PATH: `${space.bin}:/usr/bin:/bin`, ...env }, timeoutMs: 5_000,
     }, { execute })
     const steps = execute.mock.calls.map(([step]) => step)
@@ -99,6 +99,21 @@ describe('env schema discovery and load paths', () => {
         await observeEnvSchemas({ stackId, cockpit: { root: space.cockpit, name: 'synthetic' }, siblings: [{ slug: 'root', root: space.cockpit }], git: resolved.value,
             env: { PATH: `${space.bin}:/usr/bin:/bin` }, timeoutMs: 5_000 }, { execute })
         expect(execute.mock.calls.filter(([step]) => step.id.startsWith('env-schema:')).map(([step]) => step.id)).toEqual(['env-schema:root'])
+    })
+
+    it('finds the ignored central directory in the main checkout when this checkout is a linked worktree', async () => {
+        const space = await workspace()
+        await writeFile(join(space.api, SCHEMA), 'API_KEY=\n')
+        const main = join(space.root, 'main')
+        const held = join(main, 'env', '.secrets', 'synthetic', 'api')
+        await mkdir(held, { recursive: true })
+        const paths = async () => (await observe(space, {}, main)).varlock.map(({ argv }) => argv.filter((_, index) => argv[index - 1] === '--path'))
+
+        expect(await paths()).toEqual([[space.api, held]])
+
+        // A store in this checkout is the more specific one, so it wins.
+        await mkdir(space.central, { recursive: true })
+        expect(await paths()).toEqual([[space.api, space.central]])
     })
 
     it('refuses a central path it must not follow, naming that path, without reading inside it or running Varlock', async () => {
