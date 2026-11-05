@@ -9,7 +9,8 @@
 //
 // Runs from a copy taken from the base revision, like the other change guards, so it must stay
 // self-contained.
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 
 const CELLS = {
     linux: ['1/4', '2/4', '3/4', '4/4'].map(shard => `ubuntu-latest, node 22.22.0, full ${shard}`),
@@ -35,9 +36,15 @@ const repository = process.env.GITHUB_REPOSITORY
 if (!/^[0-9a-f]{40}$/.test(commit ?? '') || !/^[0-9a-f]{40}$/.test(tree ?? '') || !repository) {
     throw new Error('usage: tested-tree.mjs <commit> <tree>, with GITHUB_REPOSITORY set')
 }
-const api = path => JSON.parse(execFileSync('gh', ['api', path], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'inherit'] }))
-const heads = api(`repos/${repository}/commits/${commit}/pulls`).map(pull => pull.head.sha)
-const runs = [...new Set([commit, ...heads])].flatMap(sha => api(`repos/${repository}/actions/workflows/ci.yml/runs?head_sha=${sha}&status=success&per_page=100`).workflow_runs)
-const withJobs = runs.map(run => ({ ...run, jobs: api(`repos/${repository}/actions/runs/${run.id}/jobs?per_page=100`).jobs }))
+// Any failed lookup rejects, so the script exits non-zero and prints nothing.
+const api = async path => {
+    const { stdout, stderr } = await promisify(execFile)('gh', ['api', path], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+    process.stderr.write(stderr)
+    return JSON.parse(stdout)
+}
+const heads = (await api(`repos/${repository}/commits/${commit}/pulls`)).map(pull => pull.head.sha)
+const runs = (await Promise.all([...new Set([commit, ...heads])].map(async sha =>
+    (await api(`repos/${repository}/actions/workflows/ci.yml/runs?head_sha=${sha}&status=success&per_page=100`)).workflow_runs))).flat()
+const withJobs = await Promise.all(runs.map(async run => ({ ...run, jobs: (await api(`repos/${repository}/actions/runs/${run.id}/jobs?per_page=100`)).jobs })))
 const missing = missingGroups(withJobs, tree, repository)
 console.log(missing.length === 0 ? 'none' : missing.join('\n'))

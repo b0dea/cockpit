@@ -35,6 +35,9 @@ const BASE_FILES: Record<string, string> = {
 }
 const VERSION_BUMP = { 'packages/cockpit/package.json': manifest('1.1.0'), 'CHANGELOG.md': 'release\n', '.changeset/pending.md': null }
 
+type Cell = { os: string; node: string; gate: string; shard?: string }
+// How the test job's name spells its matrix row, and so what tested-tree.mjs reads back.
+const cellName = ({ os, node, gate, shard }: Cell) => `${os}, node ${node}, ${gate}${shard ? ` ${shard}` : ''}`
 type Run = Readonly<{ sha: string; jobs: readonly { name: string; conclusion?: string }[]; conclusion?: string; path?: string; repository?: string }>
 const cellJobs = (cells: readonly string[], tree: string) => cells.map(cell => ({ name: `test (${cell}) tree ${tree}` }))
 
@@ -92,8 +95,7 @@ function classify(options: Scenario) {
         EVENT_NAME: 'pull_request', HEAD_REF: 'ordinary', MACOS_LABEL: 'false', ...env, GITHUB_OUTPUT: output, RUNNER_TEMP: scratch('temp') } })
     expect(ran.status, ran.stderr).toBe(0)
     const values = Object.fromEntries(readFileSync(output, 'utf8').trim().split('\n').map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]))
-    const cells = (JSON.parse(values.cells!) as { os: string; node: string; gate: string; shard?: string }[])
-        .map(({ os, node, gate, shard }) => `${os}, node ${node}, ${gate}${shard ? ` ${shard}` : ''}`)
+    const cells = (JSON.parse(values.cells!) as Cell[]).map(cellName)
     return { code: values.code, smoke: values.smoke, tree: values.tree, cells, trees }
 }
 const everyCellPassedOnBase = ({ base, baseSha }: { base: string; baseSha: string }) => [{ sha: baseSha, jobs: cellJobs([...LINUX, ...PLATFORMS], base) }]
@@ -197,6 +199,25 @@ describe('a push to main', () => {
     it('runs no cell for a documentation change or a merged version bump', () => {
         expect(classify({ changed: { 'README.md': 'changed\n' }, env: push, runs: null })).toMatchObject({ code: 'false', cells: [] })
         expect(classify({ changed: VERSION_BUMP, env: push, runs: null })).toMatchObject({ code: 'false', cells: [] })
+    })
+})
+
+// A cell renamed on one side only would never count as passed, or would let a run skip a cell it never ran.
+describe('the tested-tree lookup', () => {
+    const declared = (variable: string) => (JSON.parse(`[${new RegExp(`\\n *${variable}='([^']*)'`).exec(step)?.[1] ?? ''}]`) as Cell[]).map(cellName)
+    const missing = (passed: readonly string[]) => {
+        const { root, trees, env } = scenario({ changed: { 'src.ts': 'changed\n' }, runs: ({ head, headSha }) => [{ sha: headSha, jobs: cellJobs(passed, head) }] })
+        return execFileSync('node', [join(REPOSITORY, '.github/scripts/tested-tree.mjs'), trees.headSha, trees.head], { cwd: root, env, encoding: 'utf8' }).trim()
+    }
+
+    it('counts exactly the cells the workflow runs, each in its group', () => {
+        const groups = { linux: declared('linux_cells'), platforms: declared('platform_cells') }
+        expect(groups.linux).toEqual(LINUX)
+        expect(groups.platforms).toEqual(PLATFORMS)
+        expect(missing([...groups.linux, ...groups.platforms])).toBe('none')
+        for (const [group, cells] of Object.entries(groups)) for (const cell of cells) {
+            expect(missing([...groups.linux, ...groups.platforms].filter(row => row !== cell)), cell).toBe(group)
+        }
     })
 })
 
