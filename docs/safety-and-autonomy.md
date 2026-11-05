@@ -447,8 +447,11 @@ MCP tools under Claude Code. A hold stops nothing else, so file reads and unrest
 
 Sync can refuse an edit the guard admitted, such as a tool restriction naming an undeclared server.
 So the `GUARD_CONFIG_UNSYNCED` hold also admits one edit, write or patch of `cockpit.toml` itself that
-leaves it byte-identical to the recorded copy, because restoring that copy cannot widen anything. An
-edit the guard cannot prove applies exactly once, or that also touches another file, stays held.
+leaves it byte-identical to the recorded copy, and so does the hold on a file that does not load,
+whether its TOML cannot be parsed or the schema rejects it. An agent can restore only what was
+recorded, so authority never exceeds the recorded policy, and this may also discard a person's
+unsynced narrowing edit. An edit the guard cannot prove applies exactly once, or that also touches
+another file, stays held, and restoring out of a widening edit stays a person's.
 
 An edit does not widen only when every difference is one of these:
 

@@ -17,7 +17,7 @@ import {
 import { GUARD_EXECUTABLE_SEARCH_PATH, type ExecutableResolution, type ResolvedExecutable } from '../executable.js'
 import { CockpitConfig } from '../../schema.js'
 import { pinnedPolicyDenial, restoresRecordedConfiguration } from '../../guards/policy-pin.js'
-import { guardConfigChange, guardConfigHeldReason } from '../../guards/policy-change.js'
+import { GUARD_RESTORE_LIMIT, guardConfigChange, guardConfigHeldReason } from '../../guards/policy-change.js'
 import {
     evaluateGuard,
     foldGuardSpelling,
@@ -135,10 +135,10 @@ function guardHeld(identity: GuardHandlerIdentity, what: string, why: string, fi
 // still refuse such an edit, so undoing it exactly stays open or the agent could never recover.
 function unsyncedHold(identity: GuardHandlerIdentity, detail: string): GuardEvaluationApplicationResult {
     const sync = cockpitCommand('sync', { config: identity.configPath })
-    const reason = `${identity.configPath} changed since the guards were generated without widening what agents may do${detail}; ${GUARD_HELD_CALLS} are held, except ${UNSYNCED_ADMITTED_PROSE}, until it is synced, while ${GUARD_UNHELD_CALLS} continue. Fix: run \`${sync}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files. If sync refuses the edit, undo it: one edit or write of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig} is admitted.`
+    const reason = `${identity.configPath} changed since the guards were generated without widening what agents may do${detail}; ${GUARD_HELD_CALLS} are held, except ${UNSYNCED_ADMITTED_PROSE}, until it is synced, while ${GUARD_UNHELD_CALLS} continue. Fix: run \`${sync}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files. If sync refuses the edit, undo it: one edit or write of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig} is admitted; ${GUARD_RESTORE_LIMIT}.`
     return { decision: { decision: 'unavailable', reason }, diagnostics: [{ severity: 'error', target: 'guard', message: reason,
         code: 'GUARD_CONFIG_UNSYNCED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_UNSYNCED,
-        fix: `run ${sync}; an agent may run it where [autonomy] sync = "agent". If sync refuses the edit, undo it: the guard admits one edit of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}` }] }
+        fix: `run ${sync}; an agent may run it where [autonomy] sync = "agent". If sync refuses the edit, undo it: the guard admits one edit of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}; ${GUARD_RESTORE_LIMIT}` }] }
 }
 
 // A guard message reaches the agent and the harness's log: text it forwards from a failure stays one
@@ -281,7 +281,7 @@ export async function runGuardEvaluationApplication(
         if (loaded.kind !== 'complete' || loaded.result.source.path !== identity.configPath) {
             const held = guardHeld(identity, `${identity.configPath} changed since the guards were generated and does not load${loaded.kind === 'complete' ? '' : ` (${forwardedReason(loaded.diagnostics[0]?.message ?? 'no reason given')})`}`,
                 'guard policy comes from it and an edit takes effect only once a human approves it', { kind: 'sync' })
-            const hold = unavailable(`${held} Sync refuses a file that does not load, so correct it first, or undo it: one edit or write of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig} is admitted.`)
+            const hold = unavailable(`${held} Sync refuses a file that does not load, so correct it first, or undo it: one edit or write of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig} is admitted; ${GUARD_RESTORE_LIMIT}.`)
             // Restoring the recorded bytes needs no policy, so a file with none to offer is no reason to
             // refuse it; without this an agent's valid-TOML edit the schema rejects stranded it.
             const parsed = parseGuardInput(data.payload)
