@@ -23,7 +23,7 @@ import {
 } from './contract.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
 import { observationSearchPath, resolveDockerExecutable, resolveGitExecutable } from './executable.js'
-import { inspectMachineStacksForDoctor, mainCheckoutOf, type OwnCheckout } from './stack-inventory.js'
+import { inspectMachineStacksForDoctor, type OwnCheckout } from './stack-inventory.js'
 import { createGitObservationStep, observeGit, observeRunningCheckout } from './git-observation.js'
 import { inspectProjectReadiness } from './readiness-composition.js'
 import { stackId } from './identity.js'
@@ -383,10 +383,9 @@ function producers(input: {
             // The schema that counts is in the checkout `cockpit use` serves: the stack runs from it.
             const served = await loadServedSiblings(cockpitRoot, config)
             if (served.kind === 'refusal') throw new RefusalError(served.diagnostic.message)
-            const mainCheckout = await mainCheckoutOf(cockpitRoot)
             return await observeEnvSchemas({
                 stackId: input.stack,
-                cockpit: { root: cockpitRoot, name: config.cockpit.name, ...mainCheckout === undefined ? {} : { mainCheckout } },
+                cockpit: { root: cockpitRoot, name: config.cockpit.name },
                 siblings: config.sibling.map((sibling) => ({ slug: sibling.slug, root: servedPath(served.siblings, sibling.slug) })),
                 git: input.git,
                 env: input.env,

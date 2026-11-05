@@ -1,9 +1,11 @@
-import { dirname, posix } from 'node:path'
+import { realpath } from 'node:fs/promises'
+import { basename, dirname, join, posix, relative } from 'node:path'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { formatShellCommand } from '../fix-catalogue.js'
 import {
     DOTENV_DOCUMENTATION,
+    hasErrorCode,
     RefusalError,
     ENVIRONMENT_CODES,
     OBSERVATION_REASON_BYTE_LIMIT,
@@ -21,6 +23,7 @@ import { repositoryIdentity, type RepositoryIdentity } from './repository-identi
 import { stackId as deriveStackId } from './identity.js'
 import { isRuntimeTopologyEvidence, type RuntimeTopologyEvidence } from './runtime.js'
 import { consumeSetupCheckoutProjection, type SetupCheckoutProjection } from './setup-observation.js'
+import { GIT_CHILD_CONFIG } from './sibling-checkouts.js'
 
 const OWNER = 'git-observation'
 
@@ -605,6 +608,45 @@ function secretShaped(path: string, templates: ReadonlySet<string>): boolean {
     return SECRET_FILE.test(name) && !DOTENV_DOCUMENTATION.has(name) && !templates.has(path)
 }
 const TRACKED_SECRET_LIMIT = 65_536
+
+/**
+ * The directory at the same place below the main checkout as `directory` is below its own working
+ * tree, from what Git says: a directory nested in a linked worktree has no `.git` entry to read, and
+ * Git is the authority on the entry one does have. The main checkout is the parent of a common
+ * directory named `.git`; any other layout, or Git failing, names none.
+ */
+export async function mainCheckoutDirectory(input: {
+    readonly executable: ResolvedExecutable
+    readonly directory: string
+    readonly timeoutMs: number
+}, execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): Promise<string | undefined> {
+    const executable = resolvedGitExecutable(input.executable)
+    if (!executable) return undefined
+    const step = snapshotExecutionStep({
+        id: 'git:main-checkout',
+        argv: [executable.canonicalPath, '-C', input.directory, ...GIT_CHILD_CONFIG, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'],
+        argv0: executable.invocationPath, cwd: input.directory, env: {}, timeoutMs: input.timeoutMs,
+        stdoutLimitBytes: COMPARISON_OUTPUT_LIMIT, stderrLimitBytes: COMPARISON_OUTPUT_LIMIT,
+        paths: [input.directory], ports: [], labels: { source: input.directory },
+        expected: [{ kind: 'path', target: input.directory, state: 'repository' }],
+        consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912,
+            argvIndexes: [0], executable: true, executionMode: executable.executionMode }],
+        filesystemChecks: [], compensation: [],
+    })
+    if (!step) return undefined
+    const outcome = authenticatedExecutionOutcome(await execute(step), step)
+    if (outcome?.kind !== 'complete') return undefined
+    const lines = outcome.stdout.toString('utf8').trimEnd().split('\n')
+    if (lines.length !== 2) return undefined
+    let toplevel: string, common: string, directory: string
+    try { [toplevel, common, directory] = await Promise.all([realpath(lines[0]!), realpath(lines[1]!), realpath(input.directory)]) }
+    catch (error) {
+        if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'ELOOP')) return undefined
+        throw error
+    }
+    const offset = relative(toplevel, directory)
+    return basename(common) === '.git' && !offset.startsWith('..') ? join(dirname(common), offset) : undefined
+}
 
 export type TrackedEnvSchemas =
     | Readonly<{ kind: 'listed'; paths: readonly string[] }>

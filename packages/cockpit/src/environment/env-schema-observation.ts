@@ -27,7 +27,7 @@ import {
     type StackId,
 } from './contract.js'
 import { resolveExecutable, type ResolvedExecutable } from './executable.js'
-import { listTrackedEnvSchemas, type TrackedEnvSchemas } from './git-observation.js'
+import { listTrackedEnvSchemas, mainCheckoutDirectory, type TrackedEnvSchemas } from './git-observation.js'
 
 const OWNER = 'env-schema-observation'
 
@@ -311,8 +311,7 @@ async function discoverSchemaDirectories(
 export async function observeEnvSchemas(
     input: {
         readonly stackId: StackId
-        /** `mainCheckout`: where a linked worktree's main checkout is, which alone holds the gitignored store. */
-        readonly cockpit: { readonly root: string; readonly name: string; readonly mainCheckout?: string }
+        readonly cockpit: { readonly root: string; readonly name: string }
         readonly siblings: readonly EnvSchemaSibling[]
         readonly git: ResolvedExecutable
         readonly env: Readonly<Record<string, string | undefined>>
@@ -342,11 +341,13 @@ export async function observeEnvSchemas(
         if (!holdsSchema) return undefined
         return unreadable === undefined ? entry : { schema: entry.schema, status: { state: 'unavailable' as const, cause: unreadable } }
     }))).filter((entry) => entry !== undefined)
-    const resolved = adopted.some(({ status }) => status === undefined) ? await resolveExecutable('varlock', input.env) : undefined
+    const probing = adopted.some(({ status }) => status === undefined)
+    const resolved = probing ? await resolveExecutable('varlock', input.env) : undefined
     const executable = resolved?.state === 'available' ? resolved.value : undefined
+    const mainCheckout = probing ? await mainCheckoutDirectory({ executable: input.git, directory: input.cockpit.root, timeoutMs: input.timeoutMs }, options.execute) : undefined
     const shared: ProbeInput = {
         cockpitRoot: input.cockpit.root,
-        ...input.cockpit.mainCheckout === undefined ? {} : { mainCheckout: input.cockpit.mainCheckout },
+        ...mainCheckout === undefined ? {} : { mainCheckout },
         // `_VARLOCK_*` steers Varlock itself: an inherited filter hides every other key's error, so a
         // schema with a missing key would read as valid. Provider variables stay.
         env: Object.fromEntries(Object.entries(input.env)

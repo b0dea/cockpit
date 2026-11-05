@@ -728,7 +728,8 @@ when that directory exists; the cockpit root's own schema uses `env/.secrets/<co
 That directory is checked with file metadata only and nothing inside it is read, and a symbolic link
 on the way to it, or a failure other than its absence, makes the schema unavailable. A sibling is
 read from the checkout `cockpit use` serves. The store is gitignored, so a linked worktree of the
-cockpit that has none uses its main checkout's.
+cockpit that has none uses its main checkout's, at the same place below the working tree. Git names
+the main checkout; a repository laid out any other way, or Git failing, leaves the schema with no store.
 
 Only key names and a category are kept; values and Varlock's messages are discarded.
 
