@@ -424,6 +424,12 @@ export const Guards = z
     })
     .strict()
 
+export const McpAllowedTools = z.record(
+    z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/).max(128),
+    z.array(z.string().regex(/^[a-zA-Z0-9_.-]+$/).max(128)).max(256)
+        .refine(names => new Set(names).size === names.length, 'list each exact tool name once'),
+).refine(servers => Object.keys(servers).length <= 256, 'at most 256 MCP servers can have tool restrictions')
+
 // THE approval list: each approved server name maps to the digest of the declaration a human
 // reviewed, which `sync` reports for every server it keeps disabled. Approving a name alone let an
 // agent rewrite the command of an approved server in a sibling's declaration file and the next
@@ -431,6 +437,7 @@ export const Guards = z
 // harness, so the three cannot disagree about what may start.
 const Mcp = z
     .object({
+        allowed_tools: McpAllowedTools.default({}).describe('Exact tool names permitted per declared MCP server. An empty list denies every tool; an absent server has no tool restriction. Review the tool implementation: names and read-only annotations do not establish read-only behavior. Unsupported harnesses receive no restricted server.'),
         approved: z.record(z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/).max(128), z.string().regex(/^[a-f0-9]{64}$/, 'an approval is the sha256 sync reports for the server'))
             .refine((approved) => Object.keys(approved).length <= 256, 'at most 256 MCP servers can be approved').default({}).describe('Approved MCP servers, each mapped to the sha256 of the declaration a person reviewed; others stay disabled.'),
     })
@@ -905,7 +912,7 @@ export const CockpitConfig = z
         sibling: z.array(Sibling).min(1).describe('Product repositories the cockpit works across.'),
         ports: Ports.describe('Port leasing for running stacks side by side.'),
         guards: Guards.prefault({}).describe('Rules that restrict what agents may run.'),
-        mcp: Mcp.prefault({}).describe('Approval of MCP servers.'),
+        mcp: Mcp.prefault({}).describe('Approval of MCP servers and exact per-server tool restrictions.'),
         work: Work.prefault({}).describe('How work orders are accepted, graded and closed.'),
         autonomy: Autonomy.prefault({}).describe('Which decisions an agent may take without a person.'),
         browser: Browser.optional().describe('Browser automation for the stack.'),

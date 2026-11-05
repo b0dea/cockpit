@@ -27,6 +27,41 @@ afterEach(cleanup)
 
 describe('generated environment command', () => {
 describe('public surface publication transaction', () => {
+        it('publishes exact MCP tools and enforces them through the authenticated generated guard', async () => {
+            const fixture = await surfaceConsumer('restricted-mcp', { mcp: { command: '/usr/bin/true' } })
+            expect(spawnSync('git', ['init', '--quiet', fixture.root]).status).toBe(0)
+            const config = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
+            config.mcp.allowed_tools = { 'approved-server': ['read_record'] }
+            await writeFile(fixture.configPath, stringifyToml(config))
+            await writeFile(join(fixture.siblingDirectory, 'package-lock.json'), '{}')
+            await writeFile(join(fixture.siblingDirectory, '.mcp.json'), JSON.stringify({
+                mcpServers: { 'approved-server': { command: '/usr/bin/true' } },
+            }))
+            const result = await syncGeneratedEnvironment({ configPath: fixture.configPath })
+            expect(result, JSON.stringify(result.diagnostics)).toMatchObject({ kind: 'complete' })
+            const codex = parseToml(await readFile(join(fixture.root, '.codex/config.toml'), 'utf8'))
+            expect(codex).toMatchObject({ mcp_servers: { 'approved-server': { enabled_tools: ['read_record'] } } })
+            const settings = JSON.parse(await readFile(join(fixture.root, '.claude/settings.json'), 'utf8'))
+            expect(settings.permissions.allow).toContain('mcp__approved-server__read_record')
+            expect(settings.hooks.PreToolUse[0].matcher).toContain('mcp__.*')
+            for (const [tool, expected] of [['read_record', 'allow'], ['write_record', 'deny'], ['execute_tool', 'deny']] as const) {
+                const run = spawnSync('/bin/bash', [join(fixture.root, '.cockpit/guards/bash-guard.sh'), '--harness', 'claudecode'], {
+                    cwd: fixture.root, encoding: 'utf8', input: JSON.stringify({ hook_event_name: 'PreToolUse',
+                        tool_name: `mcp__approved-server__${tool}`, cwd: fixture.root, tool_input: { operation: 'read_record' } }),
+                })
+                expect(run.status, run.stderr).toBe(0)
+                expect(run.stdout ? JSON.parse(run.stdout).hookSpecificOutput.permissionDecision : 'allow').toBe(expected)
+            }
+            config.mcp.allowed_tools['approved-server']!.push('write_record')
+            await writeFile(fixture.configPath, stringifyToml(config))
+            const stale = spawnSync('/bin/bash', [join(fixture.root, '.cockpit/guards/bash-guard.sh'), '--harness', 'claudecode'], {
+                cwd: fixture.root, encoding: 'utf8', input: JSON.stringify({ hook_event_name: 'PreToolUse',
+                    tool_name: 'mcp__approved-server__write_record', cwd: fixture.root, tool_input: {} }),
+            })
+            expect(stale.status).toBe(2)
+            expect(stale.stderr).toContain('widens what agents may do')
+        })
+
         it('serializes one MCP collection exactly and guards a selected sibling root', async () => {
             const estate = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-selected-sibling-estate-')))
             roots.push(estate)
@@ -247,6 +282,7 @@ describe('public surface publication transaction', () => {
             { name: 'a linked worktree without preapproval', layout: 'worktree', preapproved: false, serialized: true, openCode: false, endpoint: false },
             { name: 'a standalone directory', layout: 'standalone', preapproved: true, serialized: false, openCode: true, endpoint: false },
             { name: 'a standalone directory with a loopback endpoint', layout: 'standalone', preapproved: true, serialized: false, openCode: true, endpoint: true },
+            { name: 'a restricted browser server', layout: 'standalone', preapproved: true, serialized: false, openCode: true, endpoint: true, restricted: true },
         ])('publishes source-bound browser and testing surfaces through the canonical transaction ($name)', async variant => {
             let mainCheckout: string | undefined
             let currentCheckoutPath: string | undefined
@@ -310,6 +346,7 @@ mcp_sources = [{ path = "browser.mcp.json", provenance = { source = "synthetic d
 
 [mcp.approved]
 playwright = "${mcpApprovalDigest({ command: 'docker', args: ['run', '--rm', '-i', mcpImage, '--endpoint', 'ws://localhost:3001/'], cwd: fixture.root, envNames: [] }, fixture.root)}"
+${variant.restricted ? '\n[mcp.allowed_tools]\nplaywright = ["browser_snapshot"]\n' : ''}
 
 [browser]
 engine = "chromium"
@@ -419,10 +456,11 @@ native_hooks = { install = "inspect" }
                     mcp_servers: Record<string, unknown>
                 }
                 expect(Object.keys(codex.mcp_servers).sort()).toEqual(variant.endpoint ? ['playwright', 'unrelated'] : ['unrelated'])
-                expect(/"playwright"\s*:/.test(await readFile(join(fixture.root, 'opencode.jsonc'), 'utf8'))).toBe(variant.endpoint)
+                if (variant.restricted) expect(codex.mcp_servers.playwright).toMatchObject({ enabled_tools: ['browser_snapshot'] })
+                expect(/"playwright"\s*:/.test(await readFile(join(fixture.root, 'opencode.jsonc'), 'utf8'))).toBe(variant.endpoint && !variant.restricted)
                 for (const prefix of ['.claude', '.agents', '.opencode']) {
                     const skill = expect(lstat(join(fixture.root, prefix, 'skills/cockpit-browser/SKILL.md')))
-                    if (variant.endpoint) await skill.resolves.toBeDefined()
+                    if (variant.endpoint && !(variant.restricted && prefix === '.opencode')) await skill.resolves.toBeDefined()
                     else await skill.rejects.toMatchObject({ code: 'ENOENT' })
                 }
                 expect(await readFile(join(fixture.root, 'CLAUDE.md'), 'utf8')).toContain('@AGENTS.md')

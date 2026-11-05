@@ -15,6 +15,25 @@ const declaration = {
 }
 const targets = ['claudecode', 'codexcli', 'opencode'] as const
 const approval = { synthetic: mcpApprovalDigest(declaration, '/synthetic/cockpit') }
+
+it('keeps a closed tool allowlist on supported harnesses and withholds the server elsewhere', () => {
+    const outcome = collectMcpDeclarations({ cockpitDirectory: '/synthetic/cockpit', declarations: [declaration],
+        approved: approval, allowedTools: { synthetic: ['read_record'] }, targets: ['claudecode', 'codexcli', 'opencode'] })
+    expect(outcome.kind).toBe('complete')
+    if (outcome.kind !== 'complete') throw new Error(outcome.diagnostic.message)
+    expect(outcome.result.harnesses.map(row => [row.target, row.servers.map(server => server.name)])).toEqual([
+        ['claudecode', ['synthetic']], ['codexcli', ['synthetic']], ['opencode', []],
+    ])
+    expect(outcome.result.servers[0]).toMatchObject({ allowedTools: ['read_record'] })
+    expect(outcome.result.harnesses[1]!.servers[0]).toMatchObject({ allowedTools: ['read_record'] })
+    expect(outcome.diagnostics).toEqual([expect.objectContaining({ code: 'MCP_TRANSPORT_UNAVAILABLE', targets: ['opencode'] })])
+    expect(collectMcpDeclarations({ cockpitDirectory: '/synthetic/cockpit', declarations: [declaration], approved: approval,
+        allowedTools: { missing: ['read_record'] }, targets }).kind).toBe('refusal')
+    expect(collectMcpDeclarations({ cockpitDirectory: '/synthetic/cockpit',
+        declarations: [declaration, { ...declaration, name: 'synthetic__nested' }], approved: approval,
+        allowedTools: { synthetic: ['read_record'] }, targets })).toMatchObject({ kind: 'refusal',
+        diagnostic: { message: expect.stringContaining('ambiguous native tool namespace') } })
+})
 const remote: McpHttpDeclaration & { helper: NonNullable<McpHttpDeclaration['helper']> } = {
     name: 'remote', transport: 'http', url: 'https://mcp.example.test/mcp', headers: { Authorization: 'Bearer ${REMOTE_TOKEN}', 'X-Workspace': '${REMOTE_WORKSPACE}' },
     helper: { command: 'bin/headers', args: ['remote'], cwd: '/synthetic/service' }, source,

@@ -39,6 +39,7 @@ The values cockpit uses for a key the configuration leaves out.
     "deny": []
   },
   "mcp": {
+    "allowed_tools": {},
     "approved": {}
   },
   "work": {
@@ -85,7 +86,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `sibling` | Product repositories the cockpit works across. | array of table: [`[[sibling]]`](#sibling) |  | required; at least 1 item |
 | `ports` | Port leasing for running stacks side by side. | table: [`[ports]`](#ports) |  | required |
 | `guards` | Rules that restrict what agents may run. | table: [`[guards]`](#guards) | `{}` |  |
-| `mcp` | Approval of MCP servers. | table: [`[mcp]`](#mcp) | `{}` |  |
+| `mcp` | Approval of MCP servers and exact per-server tool restrictions. | table: [`[mcp]`](#mcp) | `{}` |  |
 | `work` | How work orders are accepted, graded and closed. | table: [`[work]`](#work) | `{}` |  |
 | `autonomy` | Which decisions an agent may take without a person. | table: [`[autonomy]`](#autonomy) | `{}` |  |
 | `browser` | Browser automation for the stack. | table: [`[browser]`](#browser) |  |  |
@@ -193,6 +194,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
+| `allowed_tools` | Exact tool names permitted per declared MCP server. An empty list denies every tool; an absent server has no tool restriction. Review the tool implementation: names and read-only annotations do not establish read-only behavior. Unsupported harnesses receive no restricted server. | table of array of string | `{}` | at most 256 entrys; each key: pattern `^(?=[\s\S]{0,128}$)(?:^[a-zA-Z0-9][a-zA-Z0-9_-]*$)`; each value: at most 256 items, unique items, each item: pattern `^[a-zA-Z0-9_.-]+$`, at most 128 characters |
 | `approved` | Approved MCP servers, each mapped to the sha256 of the declaration a person reviewed; others stay disabled. | table of string | `{}` | each key: pattern `^(?=[\s\S]{0,128}$)(?:^[a-zA-Z0-9][a-zA-Z0-9_-]*$)`; each value: pattern `^[a-f0-9]{64}$` |
 
 ### `[work]`

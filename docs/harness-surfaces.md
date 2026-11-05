@@ -264,6 +264,36 @@ optional. No other ambient variables are added. The approval digest includes opt
 whether a variable is required, so changing this access needs a new declaration review. Doctor
 reports missing required variables; an absent optional override is not a startup gap.
 
+### Restrict a server's tools
+
+Server approval permits a connection; it does not make the server read-only. Declare a positive
+list of reviewed tool names in `cockpit.toml`, then run `sync`:
+
+```toml
+[mcp.allowed_tools]
+reports = ["read_record", "search_records"]
+```
+
+Each name is exact. Every other tool from that server, including a newly added tool, is denied.
+An empty list denies all tools; an absent server has no tool restriction. The server must be
+declared, and overlapping native server namespaces are refused. Widening this list changes the
+guard policy and requires the same approval as other increases in agent authority.
+
+Codex receives `enabled_tools` in its generated server configuration. Claude Code receives exact
+permission rules for the listed tools and an authenticated `PreToolUse` guard that denies the
+others. Start Claude Code from the cockpit checkout and trust the workspace so its project hooks
+load. These restrictions have their own dated row in the
+[capability matrix](capability-matrix.md); Codex's native tool filter does not depend on hook trust.
+Other harnesses omit restricted servers and report `MCP_TRANSPORT_UNAVAILABLE`: use Claude Code or
+Codex for them. Restricted servers cannot currently be included in the Claude plugin bundle,
+whose tool namespace has not been measured; remove that bundle from `[surfaces].bundles` to use
+the checkout's guarded server.
+
+Review what each allowed tool actually does. A name, a token scope or `readOnlyHint` is not an
+enforcement boundary. A generic dispatcher such as `execute_tool` can expose writes through its
+arguments; listing it permits all of those operations. Leave such a tool out unless every operation
+it can dispatch is acceptable. Cockpit does not filter tool arguments or proxy server requests.
+
 ### Remote servers
 
 A remote (streamable HTTP) server is declared in the same file, in Claude Code's spelling:

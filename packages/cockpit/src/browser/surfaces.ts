@@ -31,6 +31,7 @@ export interface BrowserSurfaceInput {
     readonly harnesses: readonly { readonly target: GuardSurfaceTarget; readonly version: string }[]
     readonly mcp: McpStdioDeclaration
     readonly approved: boolean
+    readonly allowedTools?: readonly string[]
     readonly testPackage: BrowserTestPackage | null
     readonly skillTemplate: string
 }
@@ -132,6 +133,7 @@ const Input = z.object({
     harnesses: z.array(z.object({ target: z.enum(GUARD_SURFACE_TARGETS), version: Version }).strict()).min(1).max(GUARD_SURFACE_TARGETS.length)
         .refine(rows => new Set(rows.map(row => row.target)).size === rows.length),
     mcp: z.unknown(), approved: z.boolean(), testPackage: Package.nullable(), skillTemplate: z.string().max(16_384),
+    allowedTools: z.array(z.string()).max(256).optional(),
 }).strict()
 const Manifest = z.object({ name: z.literal('@playwright/test'), version: Version, bin: z.object({ playwright: GeneratedHostPath }) })
 const MAX_SCREENSHOT_BYTES = 8_388_608
@@ -466,10 +468,10 @@ export async function withBrowserProjectOperationAdmission<T>(client: BrowserPro
         : 'Serialized browser authentication could not authenticate the canonical coordination state') + detail }
 }
 
-function nativeMcp(target: GuardSurfaceTarget, command: string, args: readonly string[]): RenderedSurfaceFile {
+function nativeMcp(target: GuardSurfaceTarget, command: string, args: readonly string[], allowedTools?: readonly string[]): RenderedSurfaceFile {
     if (target === 'claudecode') return file(target, '.mcp.json', JSON.stringify({ mcpServers: { playwright: { command, args } } }, null, 2) + '\n')
     if (target === 'opencode') return file(target, 'opencode.jsonc', JSON.stringify({ mcp: { playwright: { type: 'local', command: [command, ...args], enabled: true } } }, null, 2) + '\n')
-    return file(target, '.codex/config.toml', `[mcp_servers.playwright]\ncommand = ${JSON.stringify(command)}\nargs = ${JSON.stringify(args)}\nenabled = true\ndefault_tools_approval_mode = "approve"\n`)
+    return file(target, '.codex/config.toml', `[mcp_servers.playwright]\ncommand = ${JSON.stringify(command)}\nargs = ${JSON.stringify(args)}\nenabled = true\ndefault_tools_approval_mode = "approve"\n${allowedTools === undefined ? '' : `enabled_tools = ${JSON.stringify(allowedTools)}\n`}`)
 }
 
 function renderSkill(template: string, target: GuardSurfaceTarget, rows: readonly BrowserTransportRow[], runtime: BrowserRuntimeProjection): RenderedSurfaceFile {
@@ -507,8 +509,9 @@ export function renderBrowserSurfaces(input: BrowserSurfaceInput) {
     const cli = pinnedCli(data.testPackage, runtime, data.cockpitDirectory)
     // `approved` says the caller matched the declared server against [mcp.approved]; this one may carry a bound endpoint.
     const approval = { playwright: mcpApprovalDigest(data.mcp as McpStdioDeclaration, data.cockpitDirectory) }
+    const allowedTools = data.allowedTools === undefined ? {} : { playwright: data.allowedTools }
     const collected = collectMcpDeclarations({ cockpitDirectory: data.cockpitDirectory, declarations: [data.mcp],
-        approved: data.approved ? approval : {}, targets: data.harnesses.map(row => row.target) })
+        approved: data.approved ? approval : {}, allowedTools, targets: data.harnesses.map(row => row.target) })
     if (collected.kind !== 'complete') throw new RefusalError(`browser MCP declaration refused: ${collected.diagnostic.code}`)
     const server = collected.result.servers[0]!
     if (server.name !== 'playwright') throw new RefusalError('browser MCP declaration must be the playwright server')
@@ -534,6 +537,9 @@ export function renderBrowserSurfaces(input: BrowserSurfaceInput) {
             else if (transport === 'cli' && !measured.cli) { available = false; reason = 'Browser CLI is unavailable under the measured workspace sandbox.' }
             else if (transport === 'cli' && cli === null) { available = false; reason = 'Pinned test package CLI identity is unavailable.' }
             else if (transport === 'mcp' && !server.enabled) { available = false; reason = 'Browser MCP server is absent from shared approval.' }
+            else if (transport === 'mcp' && !collected.result.harnesses.find(row => row.target === harness.target)?.servers.length) {
+                available = false; reason = 'This harness has no MCP tool restriction mechanism; use Claude Code or Codex for the restricted server.'
+            }
             else if (transport === 'mcp' && harness.target === 'codexcli' && runtime.preapproval !== 'eligible') {
                 available = false; reason = 'Measured MCP transport requires approval that this data posture does not authorize.'
             }
@@ -547,13 +553,14 @@ export function renderBrowserSurfaces(input: BrowserSurfaceInput) {
         if (ownRows.some(row => row.transport === 'mcp' && row.declaration === 'instructed')) {
             const native = collected.result.harnesses.find(row => row.target === harness.target)!.servers[0]!
             if (!('command' in native)) throw new RefusalError('the playwright MCP server must be a local command, not a remote URL')
-            files.push(nativeMcp(harness.target, native.command, native.args))
+            files.push(nativeMcp(harness.target, native.command, native.args, native.allowedTools))
         }
         files.push(renderSkill(data.skillTemplate, harness.target, ownRows, runtime))
     }
     const targets = rows.filter(row => row.transport === 'mcp' && row.declaration === 'instructed').map(row => row.target)
     const mcp = collectMcpDeclarations({ cockpitDirectory: data.cockpitDirectory, declarations: targets.length ? [data.mcp] : [],
-        approved: targets.length ? approval : {}, targets: targets.length ? targets : data.harnesses.map(row => row.target) })
+        approved: targets.length ? approval : {}, allowedTools: targets.length ? allowedTools : {},
+        targets: targets.length ? targets : data.harnesses.map(row => row.target) })
     if (mcp.kind !== 'complete') throw new RefusalError(`browser MCP collection refused: ${mcp.diagnostic.code}`)
     const projectPackage = data.testPackage !== null && 'artifactRoot' in data.testPackage && 'module' in data.testPackage
         ? data.testPackage as z.infer<typeof ProjectPackage> : null

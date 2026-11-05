@@ -678,10 +678,29 @@
       "additionalProperties": false
     },
     "mcp": {
-      "description": "Approval of MCP servers.",
+      "description": "Approval of MCP servers and exact per-server tool restrictions.",
       "default": {},
       "type": "object",
       "properties": {
+        "allowed_tools": {
+          "default": {},
+          "description": "Exact tool names permitted per declared MCP server. An empty list denies every tool; an absent server has no tool restriction. Review the tool implementation: names and read-only annotations do not establish read-only behavior. Unsupported harnesses receive no restricted server.",
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^(?=[\\s\\S]{0,128}$)(?:^[a-zA-Z0-9][a-zA-Z0-9_-]*$)": {
+              "maxItems": 256,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9_.-]+$"
+              },
+              "uniqueItems": true
+            }
+          },
+          "maxProperties": 256
+        },
         "approved": {
           "default": {},
           "description": "Approved MCP servers, each mapped to the sha256 of the declaration a person reviewed; others stay disabled.",

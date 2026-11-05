@@ -29,7 +29,7 @@ export type GuardFileContent =
     | Readonly<{ kind: 'patch'; text: string }>
 export type GuardParseResult = {
     readonly status: 'parsed'
-    readonly tool: 'Bash' | 'Edit' | 'Write' | 'NotebookEdit' | 'apply_patch'
+    readonly tool: 'Bash' | 'Edit' | 'Write' | 'NotebookEdit' | 'apply_patch' | `mcp__${string}`
     readonly cwd: string
     readonly invocations: readonly ParsedInvocation[]
     readonly paths: readonly string[]
@@ -56,6 +56,9 @@ function record(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
 }
 function text(value: JsonSnapshot | undefined): value is string {
     return typeof value === 'string' && !/[\uD800-\uDFFF]/u.test(value) && !value.includes('\0')
+}
+function mcpTool(value: JsonSnapshot | undefined): value is `mcp__${string}` {
+    return typeof value === 'string' && value.length <= 263 && /^mcp__[a-zA-Z0-9][a-zA-Z0-9_-]*__[a-zA-Z0-9_.-]+$/.test(value)
 }
 function path(value: string): string {
     if (!value || /[\x00-\x1f\x7f]/.test(value) || Buffer.byteLength(value) > GUARD_INPUT_LIMITS.pathBytes) refuse('Invalid or oversized guard path.')
@@ -515,7 +518,7 @@ export function parseGuardInput(input: unknown): GuardParseResult {
             if (tool === 'Edit' && typeof fields.old_string === 'string' && typeof fields.new_string === 'string') {
                 content = { kind: 'replace', path: paths[0]!, old: fields.old_string, new: fields.new_string, all: fields.replace_all === true }
             }
-        } else refuse('Unsupported guard tool.')
+        } else if (!mcpTool(tool)) refuse('Unsupported guard tool.')
         if (paths.length + invocations.reduce((sum, item) => sum + item.redirects.length, 0) > GUARD_INPUT_LIMITS.paths) refuse('Guard path limit exceeded.')
         for (const item of invocations) {
             Object.freeze(item.argv)

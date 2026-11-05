@@ -275,7 +275,9 @@ export function nativeSources(
             // Codex spells Claude Code's headersHelper http_headers_helper; Rulesync passes an unknown
             // key through to config.toml unchanged.
             const respelled = row.target === 'codexcli'
-                ? row.servers.filter(server => 'url' in server && server.headersHelper !== null).map(server => [server.name, native(server, 'http_headers_helper')] as const)
+                ? row.servers.filter(server => server.allowedTools !== undefined || 'url' in server && server.headersHelper !== null)
+                    .map(server => [server.name, { ...native(server, 'http_headers_helper'),
+                        ...(server.allowedTools === undefined ? {} : { enabled_tools: server.allowedTools }) }] as const)
                 : []
             return removed.length + respelled.length > 0 ? [[harnessFact(row.target).rulesyncTarget, {
                 mcpServers: Object.fromEntries([...removed, ...respelled]),
@@ -295,6 +297,8 @@ export function nativeSources(
             permission: {
                 read: Object.fromEntries(claudeReadDenials(siblings, instances).map(rule => [rule, 'deny'])),
                 bash: claudeCommandAllowances(),
+                ...Object.fromEntries(claudeServers.filter(server => server.enabled).flatMap(server =>
+                    (server.allowedTools ?? []).map(tool => [`mcp__${server.name}__${tool}`, { '*': 'allow' }]))),
             },
             permissions: { additionalDirectories: paths('claudecode') },
             enabledMcpjsonServers,

@@ -719,6 +719,9 @@ describe('the published cockpit schema', () => {
             [{ ...validConfig, mcp: { approved: { [`n${'a'.repeat(128)}`]: digest } } }, false],
             [{ ...validConfig, mcp: { approved: { '-notes': digest } } }, false],
             [{ ...validConfig, mcp: { approved: { 'notes server': digest } } }, false],
+            [{ ...validConfig, mcp: { allowed_tools: { reports: [], notes: ['read_record'] } } }, true],
+            [{ ...validConfig, mcp: { allowed_tools: { reports: ['read_*'] } } }, false],
+            [{ ...validConfig, mcp: { allowed_tools: { reports: ['read_record', 'read_record'] } } }, false],
         ] as Array<[Record<string, unknown>, boolean]>) {
             expect(CockpitConfig.safeParse(config).success, JSON.stringify(config.mcp ?? config.ports)).toBe(accepted)
             for (const validate of validators) expect(validate(config), JSON.stringify(config.mcp ?? config.ports)).toBe(accepted)

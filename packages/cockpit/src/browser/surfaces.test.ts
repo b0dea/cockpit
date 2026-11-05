@@ -233,6 +233,13 @@ describe('browser transport surfaces', () => {
         expect(open).toEqual({ mcp: { playwright: { type: 'local', command: ['/bin/sh', wrapper], enabled: true } } })
         expect(result.rows.every(row => row.productState === 'instructed')).toBe(true)
         expect(result.graderBrowserAccess).toBe('retained')
+        const restricted = renderBrowserSurfaces({ ...input, allowedTools: ['browser_snapshot'] })
+        expect(parseToml(restricted.files.find(file => file.path === '.codex/config.toml')!.bytes))
+            .toMatchObject({ mcp_servers: { playwright: { enabled_tools: ['browser_snapshot'] } } })
+        expect(restricted.files.some(file => file.path === 'opencode.jsonc')).toBe(false)
+        expect(restricted.mcp.result.servers[0]).toMatchObject({ allowedTools: ['browser_snapshot'] })
+        expect(restricted.rows.find(row => row.target === 'opencode' && row.transport === 'mcp'))
+            .toMatchObject({ declaration: 'unavailable', reason: expect.stringContaining('tool restriction') })
         // A declaration read from any other sibling starts elsewhere; the refusal names where it must come from.
         expect(() => renderBrowserSurfaces({ ...input, mcp: { ...input.mcp, cwd: join(input.cockpitDirectory, 'web') } }))
             .toThrow('the playwright MCP declaration must come from a sibling whose dir is the cockpit directory itself (dir = ".")')

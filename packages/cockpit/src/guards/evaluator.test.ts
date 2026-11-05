@@ -54,6 +54,22 @@ function decide(command: string, configured = policy(), cwd = root) {
 }
 
 describe('resolved guard evaluation', () => {
+    it('allows only exact declared MCP tools, including when a dispatcher claims to read', () => {
+        const configured = { ...policy(), mcpAllowedTools: { reports: ['read_record'], closed: [] } }
+        const invoke = (tool: string, toolInput: Record<string, unknown> = {}) => evaluateGuard(parseGuardInput({
+            hook_event_name: 'PreToolUse', tool_name: tool, cwd: root, tool_input: toolInput,
+        }), configured, inspect)
+        expect(invoke('mcp__reports__read_record').decision).toBe('allow')
+        expect(invoke('mcp__reports__write_record').decision).toBe('deny')
+        expect(invoke('mcp__reports__execute_tool', { tool: 'read_record', readOnlyHint: true }).decision).toBe('deny')
+        expect(invoke('mcp__reports__new_tool').decision).toBe('deny')
+        expect(invoke('mcp__closed__read_record').decision).toBe('deny')
+        expect(invoke('mcp__unrestricted__write_record').decision).toBe('allow')
+        expect(invoke('mcp__reports__nested__read_record').decision).toBe('deny')
+        expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'mcp__reports__read_record',
+            cwd: root, tool_input: {} }), policy(), inspect).decision).toBe('unavailable')
+    })
+
     it('applies declared deny and allow rules in precedence order to normalized invocations', () => {
         const configured = policy()
         configured.declaredAllows.push(

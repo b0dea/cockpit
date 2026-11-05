@@ -290,7 +290,7 @@ export async function runGuardEvaluationApplication(
         const prepared = await prepareGuardEvaluationPolicy({ configuration: loaded.result, checkout }, checkoutsPending.then(unwrap))
         if (prepared.kind !== 'complete') return unsynced
             ? unsyncedHold(identity, `, but the guard cannot build its policy from it (${prepared.diagnostics[0]?.message ?? 'no reason given'})`)
-            : unavailable('Guard policy authority could not be authenticated.')
+            : unavailable(`Guard policy authority could not be authenticated: ${prepared.diagnostics[0]?.message ?? 'no reason given'}`)
         // The inspector answers synchronously, so what only Git can say is asked first: which protected
         // paths a default ripgrep search reads, and which a repository's index holds for a Git command
         // that prints committed content. A request not asked here gets the walk, or no answer.
@@ -447,6 +447,7 @@ export async function runGuardEvaluationApplication(
         const pinned = pinnedPolicyDenial(parsed, configRead.bytes.toString('utf8'), isConfig)
         if (pinned) return { decision: pinned, diagnostics: [{ severity: 'error', code: 'GUARD_REFUSED', message: pinned.reason, target: 'guard' }] }
         const decision = evaluateGuard(parsed, { ...prepared.result.policy, cockpitInvocations,
+            mcpAllowedTools: config.mcp.allowed_tools,
             cockpitLaunchers: launched.map(({ executable, cwd, argv, prefix }) => ({ executable, cwd, argv: argv.slice(0, prefix) })),
             searchDirectories: guardSearchDirectories(searchPath, prepared.result.policy.allowedRoots),
             searchPathRelativeEntry: guardSearchPathRelativeEntry(searchPath),

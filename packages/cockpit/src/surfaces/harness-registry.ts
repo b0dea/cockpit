@@ -62,6 +62,12 @@ const servedGrant = (fact: { state: 'enforced' | 'unavailable'; evidence: 'not_a
     Object.freeze({ measuredOn: '2026-11-04', ...fact })
 const noServedGrant = servedGrant({ state: 'unavailable', evidence: 'not_applicable', measuredVersion: null,
     provenance: 'the tool was not installed where this was measured, so cockpit use writes nothing for it' })
+const mcpToolRestriction = (fact: { mechanism: 'hook' | 'enabled-tools' | 'unavailable'; state: 'enforced' | 'unavailable';
+    evidence: 'not_applicable' | 'human_needed'; measuredVersion: string | null; provenance: string }) => Object.freeze({
+    measuredOn: '2026-11-05', ...fact,
+})
+const noMcpToolRestriction = mcpToolRestriction({ mechanism: 'unavailable', state: 'unavailable', evidence: 'not_applicable', measuredVersion: null,
+    provenance: 'no MCP tool restriction transport is implemented; restricted servers are omitted' })
 const completeRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const)
 const nonPermissionRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks'] as const)
 
@@ -71,6 +77,8 @@ export const HARNESS_REGISTRY = Object.freeze([
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'CLAUDE.md', skills: '.claude/skills', mcp: '.mcp.json', permissions: Object.freeze(['.claude/settings.json']) }),
         guard: Object.freeze({ capability: 'instructed' as const, firing: claudeFiring }), native: reviewedNative, sessionStart: claudeSessionStart,
+        mcpToolRestriction: mcpToolRestriction({ mechanism: 'hook', state: 'enforced', evidence: 'human_needed', measuredVersion: '2.1.318',
+            provenance: 'claude -p with generated settings and a loopback synthetic model called the listed read tool; the authenticated hook denied write, dispatcher and new tools despite broad native permission and readOnlyHint annotations. The unrestricted control called all four; a broken hook file was named and refused. Project hooks still require workspace trust' }),
         remoteMcp: remoteMcpMeasured({ evidence: 'human_needed', measuredVersion: '2.1.318', helper: true,
             provenance: 'from a project .mcp.json, Claude Code sent the Authorization header a ${NAME} reference named while a $NAME control went out literally; it ran a headersHelper given with --mcp-config, but refused to run one from the project file until a person trusts the workspace, and a misspelled headerHelper sent nothing' }),
         servedCheckoutGrant: servedGrant({ state: 'enforced', evidence: 'human_needed', measuredVersion: '2.1.318',
@@ -81,6 +89,8 @@ export const HARNESS_REGISTRY = Object.freeze([
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.agents/skills', mcp: '.codex/config.toml', permissions: Object.freeze(['.codex/config.toml']) }),
         guard: Object.freeze({ capability: 'instructed' as const, firing: codexFiring }), native: reviewedNative, sessionStart: codexSessionStart,
+        mcpToolRestriction: mcpToolRestriction({ mechanism: 'enabled-tools', state: 'enforced', evidence: 'not_applicable', measuredVersion: '0.166.0',
+            provenance: 'codex exec with generated project enabled_tools and a loopback synthetic model called the listed read tool and rejected forced write, dispatcher and new tool calls as unsupported. The unrestricted control called all four; a string-valued enabled_tools twin was named and rejected before startup. No hook trust was granted' }),
         remoteMcp: remoteMcpMeasured({ evidence: 'not_applicable', measuredVersion: '0.166.0', helper: true,
             provenance: 'from a project .codex/config.toml in a directory Codex had not been told to trust, codex exec sent the bearer_token_env_var and env_http_headers values and the http_headers_helper output, named a misspelled http_header_helper as ignored, and sent a ${NAME} written in http_headers literally' }),
         servedCheckoutGrant: servedGrant({ state: 'unavailable', evidence: 'not_applicable', measuredVersion: '0.166.0',
@@ -91,6 +101,7 @@ export const HARNESS_REGISTRY = Object.freeze([
         rulesyncFeatures: nonPermissionRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.opencode/skills', mcp: 'opencode.jsonc', permissions: Object.freeze(['opencode.jsonc']) }),
         guard: Object.freeze({ capability: 'instructed' as const, firing: openCodeFiring }), native: reviewedNative,
+        mcpToolRestriction: noMcpToolRestriction,
         // OpenCode 1.19.5 delivered session.created to a project plugin beside a misspelled hook that
         // never ran, but its model call failed, so no plugin hook was shown to put text in the agent's context.
         sessionStart: noSessionStart('OpenCode 1.19.5 delivers session.created to a plugin, but no run has shown a plugin putting text in the agent\'s context, so cockpit generates no session-start check'),
@@ -105,6 +116,7 @@ export const HARNESS_REGISTRY = Object.freeze([
         // Rules overlays only: cockpit's own instructions reach Cursor through the root AGENTS.md.
         outputs: Object.freeze({ instruction: '.cursor/rules', skills: '.cursor/skills', mcp: '.cursor/mcp.json', permissions: Object.freeze(['.cursor/cli.json']) }),
         guard: noGuardAdapter, native: generatedNative, sessionStart: noSessionStart('cockpit generates no hook for this tool'),
+        mcpToolRestriction: noMcpToolRestriction,
         remoteMcp: noRemoteMcp, servedCheckoutGrant: noServedGrant,
     }),
     Object.freeze({
@@ -112,6 +124,7 @@ export const HARNESS_REGISTRY = Object.freeze([
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.grok/skills', mcp: '.grok/config.toml', permissions: Object.freeze(['.grok/config.toml']) }),
         guard: noGuardAdapter, native: generatedNative, sessionStart: noSessionStart('cockpit generates no hook for this tool'),
+        mcpToolRestriction: noMcpToolRestriction,
         remoteMcp: noRemoteMcp, servedCheckoutGrant: noServedGrant,
     }),
 ] as const)

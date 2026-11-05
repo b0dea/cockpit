@@ -276,6 +276,12 @@ function mergeBrowserMcp(path: string, base: string, browser: string): string | 
         if (!object(browserMembers) || Object.keys(browserMembers).some(name => name !== 'playwright')) return undefined
         const members = mergeNamedObject(first[key], browserMembers, 'playwright')
         if (!members || !Object.hasOwn(members, 'playwright')) return undefined
+        // Browser launch substitution must not discard the shared Codex tool restriction.
+        const original = object(first[key]) ? first[key].playwright : undefined
+        const replacement = snapshotGeneratedJson(members.playwright)
+        if (path === '.codex/config.toml' && object(original) && Object.hasOwn(original, 'enabled_tools') && object(replacement)) {
+            members.playwright = { ...replacement, enabled_tools: original.enabled_tools }
+        }
         const additions = { ...second } as Record<string, unknown>
         delete additions[key]
         const merged = mergeNamedObject(first, additions)
@@ -422,8 +428,9 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         mcpHarnesses.add(harness.target)
         if (harness.servers.length > 0) mcpTargets.add(harness.target)
     }
-    // A remote server may fit none of the listed tools, and says so; a local one fits every tool.
-    if (captured.mcp.result.servers.some(server => object(server) && server.transport !== 'http') && mcpTargets.size === 0) {
+    // Remote and tool-restricted servers may fit none of the selected harnesses; collection reports why.
+    if (captured.mcp.result.servers.some(server => object(server) && server.transport !== 'http'
+        && !Array.isArray(server.allowedTools)) && mcpTargets.size === 0) {
         return refuse('SURFACE_INPUT_INVALID', 'MCP model has no matching native transport')
     }
     const mcpModelDigest = surfaceModelSha256(captured.mcp.result)

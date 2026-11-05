@@ -128,7 +128,7 @@ function replaceRegion(document: string, bytes: string): string {
 
 // --- Capability matrix ------------------------------------------------------------------------
 
-const CAPABILITY_COLUMNS = [['guard-firing', 'Guard firing'], ['instruction-loading', 'Instruction loading'], ['skill-parity', 'Skills'], ['session-start', 'Session-start check'], ['remote-mcp', 'Remote MCP servers'], ['served-checkout-grant', 'Worktree grants']] as const
+const CAPABILITY_COLUMNS = [['guard-firing', 'Guard firing'], ['instruction-loading', 'Instruction loading'], ['skill-parity', 'Skills'], ['session-start', 'Session-start check'], ['remote-mcp', 'Remote MCP servers'], ['mcp-tool-restrictions', 'MCP tool restrictions'], ['served-checkout-grant', 'Worktree grants']] as const
 interface CapabilityCell {
     readonly target: SurfaceTarget
     readonly capability: typeof CAPABILITY_COLUMNS[number][0]
@@ -209,6 +209,12 @@ async function capabilityCells(sources: ReferenceSources) {
         cells.push({ target, capability: 'served-checkout-grant', state: grant.state, evidence: grant.evidence, provenance: grant.provenance,
             measuredOn: grant.measuredVersion === null ? NEVER_PROBED : grant.measuredOn, measuredVersion: grant.measuredVersion, location: null })
     }
+    for (const target of SURFACE_TARGETS) {
+        const restriction = harnessFact(target).mcpToolRestriction
+        cells.push({ target, capability: 'mcp-tool-restrictions', state: restriction.state, evidence: restriction.evidence,
+            provenance: restriction.provenance, measuredOn: restriction.measuredVersion === null ? NEVER_PROBED : restriction.measuredOn,
+            measuredVersion: restriction.measuredVersion, location: null })
+    }
     // The rendered skill digests stay out of the table but in the manifest, so editing a skill
     // still changes the page.
     const manifest = digest(JSON.stringify({ cells, renderedSkills: skills.files.map(file => [file.target, file.path, file.sha256]),
@@ -231,7 +237,7 @@ function renderCapabilityMatrix(cells: readonly CapabilityCell[], manifestSha256
         + SURFACE_TARGETS.map(target => `| ${cell(name(target))} (${code(target)}) | ${rendered(target)} | ${CAPABILITY_COLUMNS.map(([capability]) => cell(state(at(target, capability)))).join(' | ')} |\n`).join('')
     const entries = CAPABILITY_COLUMNS.flatMap(([capability, label]) => SURFACE_TARGETS.map(target => ({ label, row: at(target, capability) })))
     const measured = entries.filter(({ row }) => row.measuredOn !== NEVER_PROBED).map(({ label, row }) =>
-        `- ${cell(name(row.target))}, ${label[0]!.toLowerCase()}${label.slice(1)} (${row.measuredOn}, version ${cell(row.measuredVersion ?? 'not recorded')}): ${cell(row.provenance)}.\n`)
+        `- ${cell(name(row.target))}, ${label.replace(/^[A-Z](?=[a-z])/, first => first.toLowerCase())} (${row.measuredOn}, version ${cell(row.measuredVersion ?? 'not recorded')}): ${cell(row.provenance)}.\n`)
     // Cells nobody has run are grouped by their shared reason, so several harnesses with one gap read as one line.
     const pending = new Map<string, { label: string; provenance: string; targets: string[] }>()
     for (const { label, row } of entries.filter(({ row }) => row.measuredOn === NEVER_PROBED)) {
@@ -252,7 +258,7 @@ function renderCapabilityMatrix(cells: readonly CapabilityCell[], manifestSha256
         + `<!-- Source manifest: ${manifestSha256} -->\n\n`
         + 'This generated page is for users checking what cockpit actually enforces in each agent tool. ' + MATRIX_STATES
         + `Written says whether \`sync\` writes the tool's files for a cockpit.toml that lists no tools: the tools whose guard firing is measured are the default \`[surfaces] tools\`, and any other tool is written only once listed (\`npx --no cockpit tool add <tool> --config <your cockpit.toml>\`).\n\n`
-        + `Guard firing is the generated hook refusing a protected operation. Instruction loading is the tool reading the guidance cockpit writes for it, including the guides of sibling repositories. Skills are the tool loading the skills cockpit renders: ${listed(skills.map(code))}. The session-start check is the tool running \`cockpit check\` as a session starts and showing its drift report to the agent. Remote MCP servers are the tool connecting to an approved streamable HTTP server with the credential cockpit spells for it: an environment reference or a headers helper. Worktree grants are the tool letting the agent write a checkout \`cockpit use\` serves from outside the declared one, through a machine-local file cockpit writes.\n\n`
+        + `Guard firing is the generated hook refusing a protected operation. Instruction loading is the tool reading the guidance cockpit writes for it, including the guides of sibling repositories. Skills are the tool loading the skills cockpit renders: ${listed(skills.map(code))}. The session-start check is the tool running \`cockpit check\` as a session starts and showing its drift report to the agent. Remote MCP servers are the tool connecting to an approved streamable HTTP server with the credential cockpit spells for it: an environment reference or a headers helper. MCP tool restrictions deny calls outside a server's exact \`[mcp.allowed_tools]\` list; they do not inspect allowed tools' arguments or implementation. Worktree grants are the tool letting the agent write a checkout \`cockpit use\` serves from outside the declared one, through a machine-local file cockpit writes.\n\n`
         + grid
         + '\n## Measurements\n\nEach line gives the date and tool version of the run and what it showed.\n\n' + measured.join('')
         + '\n## Without a measurement\n\n' + unmeasured.join('')
@@ -308,7 +314,7 @@ const inlineCode = (value: string) => {
 const tableCode = (value: string) => inlineCode(value.replaceAll('|', '\\|'))
 const json = (value: unknown) => tableCode(JSON.stringify(value))
 const SCALAR_KEYWORDS = new Set(['type', 'enum', 'default', 'description', 'format', 'pattern', 'minLength', 'maxLength', 'minimum', 'maximum',
-    'exclusiveMinimum', 'minItems', 'maxItems', 'uniqueItems', 'items', 'additionalProperties', 'patternProperties', 'allOf', 'anyOf', 'oneOf', 'not'])
+    'exclusiveMinimum', 'minItems', 'maxItems', 'maxProperties', 'uniqueItems', 'items', 'additionalProperties', 'patternProperties', 'allOf', 'anyOf', 'oneOf', 'not'])
 const TABLE_KEYWORDS = new Set(['type', 'properties', 'required', 'additionalProperties', 'default', 'description', 'allOf', 'anyOf', 'oneOf', 'not'])
 const ROOT_KEYWORDS = new Set([...TABLE_KEYWORDS, '$schema', 'x-cockpit-runtime-checks', 'x-cockpit-editor-limitations'])
 // Long patterns that recur are listed once and cited by name; a short one reads better inline.
@@ -450,6 +456,7 @@ function renderConfigurationTables(schema: SchemaNode): string {
         if (node.exclusiveMinimum === true) facts.push(`greater than ${node.minimum}`, ...bounds(undefined, node.maximum, ''))
         else facts.push(...bounds(node.minimum, node.maximum, ''))
         facts.push(...bounds(node.minItems, node.maxItems, 'item'))
+        facts.push(...bounds(undefined, node.maxProperties, 'entry'))
         if (node.uniqueItems === true) facts.push('unique items')
         if (isNode(node.items)) {
             const item = value(node.items, path, true, nested, `${where}[]`)
