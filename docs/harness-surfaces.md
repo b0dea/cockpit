@@ -249,6 +249,21 @@ environment and pass `PATH`, the same non-secret variables product test stages r
 `USER`, `LOGNAME`, `TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`) and the declared environment
 names.
 
+For a local server whose helper has its own defaults, declare optional caller overrides by name:
+
+```json
+{ "mcpServers": {
+  "local-reader": { "command": "bin/local-reader", "optionalEnv": ["LOCAL_PORT", "LOCAL_CONFIG_FILE"] }
+} }
+```
+
+`optionalEnv` forwards a named variable only when it is set, preserving an explicitly empty value.
+An absent variable stays absent, so the helper can use its default. Required variables remain in
+`env`, with same-name references such as `"TOKEN": "${TOKEN}"`; a name cannot be both required and
+optional. No other ambient variables are added. The approval digest includes optional names and
+whether a variable is required, so changing this access needs a new declaration review. Doctor
+reports missing required variables; an absent optional override is not a startup gap.
+
 ### Remote servers
 
 A remote (streamable HTTP) server is declared in the same file, in Claude Code's spelling:

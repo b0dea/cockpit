@@ -118,7 +118,7 @@ describe('observation application runners', () => {
         mkdirSync(join(directory, 'bin'))
         writeFileSync(join(directory, 'bin/headers'), '#!/bin/sh\nexit 0\n', { mode: 0o700 })
         const servers = [
-            { name: 'local', command: 'bin/absent', args: [], cwd: directory, envNames: ['LOCAL_TOKEN'], enabled: true, sources: [source] },
+            { name: 'local', command: 'bin/absent', args: [], cwd: directory, envNames: ['LOCAL_TOKEN'], optionalEnvNames: ['OPTIONAL_LOCAL_PORT'], enabled: true, sources: [source] },
             { name: 'remote', transport: 'http', url: 'https://mcp.example.test/mcp', headers: { Authorization: 'Bearer ${REMOTE_TOKEN}' },
                 helper: { command: 'bin/headers', args: [], cwd: directory }, envNames: ['REMOTE_TOKEN'], enabled: true, sources: [source] },
             { name: 'off', command: 'bin/absent', args: [], cwd: directory, envNames: ['OFF_TOKEN'], enabled: false, sources: [source] },

@@ -12,7 +12,7 @@ async function commandReason(command: string, cwd: string, env: Readonly<Record<
 /**
  * What each approved MCP server needs before a tool can start it, read without starting anything or
  * touching the network: a local server's command and a remote server's headers helper resolve from
- * where the wrapper runs them, and every environment name the server reads is set. A disabled server
+ * where the wrapper runs them, and every required environment name the server reads is set. A disabled server
  * starts in no tool, so it is not checked. Diagnostics name variables, never their values.
  */
 export async function observeMcpStartup(

@@ -50,7 +50,8 @@ it('deduplicates identical declarations and derives approval exactly once', () =
 it('approves a server only at the declaration whose digest was recorded, the same in every clone', () => {
     // A sibling's declaration file is agent-writable; approving the name alone let a rewritten command start.
     expect(mcpApprovalDigest({ ...declaration, cwd: '/another/clone/service' }, '/another/clone/cockpit')).toBe(approval.synthetic)
-    for (const difference of [{ command: 'sh' }, { args: ['-c', 'other'] }, { cwd: '/synthetic/other' }, { envNames: ['OTHER_TOKEN'] }]) {
+    for (const difference of [{ command: 'sh' }, { args: ['-c', 'other'] }, { cwd: '/synthetic/other' }, { envNames: ['OTHER_TOKEN'] },
+        { optionalEnvNames: ['SYNTHETIC_OPTION'] }, { envNames: [], optionalEnvNames: ['SYNTHETIC_TOKEN'] }]) {
         const changed = { ...declaration, ...difference }
         const outcome = collectMcpDeclarations({ cockpitDirectory: '/synthetic/cockpit', declarations: [changed], approved: approval, targets })
         if (outcome.kind !== 'complete') throw new Error(JSON.stringify(outcome))
@@ -131,6 +132,44 @@ it('launches a wrapper from any clone of the cockpit into its sibling with PATH 
     } finally { rmSync(workspace, { recursive: true, force: true }) }
 })
 
+it('forwards optional names only when present and binds that choice into approval', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mcp-optional-env-'))
+    try {
+        const bytes = JSON.stringify({ mcpServers: { synthetic: {
+            command: './server', env: { SYNTHETIC_TOKEN: '${SYNTHETIC_TOKEN}' }, optionalEnv: ['SYNTHETIC_OPTION'],
+        } } })
+        const parsed = parseMcpDeclarationFile({ bytes, source: { ...source, sha256: createHash('sha256').update(bytes).digest('hex') }, workingDirectory: root })
+        expect(parsed.kind).toBe('complete')
+        if (parsed.kind !== 'complete') throw new Error(JSON.stringify(parsed))
+        const declared = parsed.declarations[0]!
+        const digest = mcpApprovalDigest(declared, root)
+        const outcome = collectMcpDeclarations({ cockpitDirectory: root, declarations: parsed.declarations,
+            approved: { synthetic: digest }, targets })
+        if (outcome.kind !== 'complete') throw new Error(JSON.stringify(outcome))
+        expect(outcome.diagnostics).toEqual([])
+        const wrapper = outcome.result.wrappers[0]!
+        mkdirSync(join(root, dirname(wrapper.path)), { recursive: true })
+        writeFileSync(join(root, wrapper.path), wrapper.bytes, { mode: 0o600 })
+        writeFileSync(join(root, 'server'), '#!/bin/sh\nprintf "%s\\n" "${SYNTHETIC_OPTION-default}" "${UNDECLARED-excluded}" "$SYNTHETIC_TOKEN"\n', { mode: 0o700 })
+        for (const [optional, expected] of [[{}, 'default'], [{ SYNTHETIC_OPTION: '' }, ''], [{ SYNTHETIC_OPTION: 'custom value; literal' }, 'custom value; literal']] as const) {
+            const child = spawnSync('/bin/sh', [wrapper.path], { cwd: root, encoding: 'utf8',
+                env: { PATH: '/usr/bin:/bin', SYNTHETIC_TOKEN: 'synthetic-value', UNDECLARED: 'must-not-leak', ...optional } })
+            expect(child, expected).toMatchObject({ status: 0, stdout: `${expected}\nexcluded\nsynthetic-value\n`, stderr: '' })
+        }
+        const missing = spawnSync('/bin/sh', [wrapper.path], { cwd: root, encoding: 'utf8', env: { PATH: '/usr/bin:/bin' } })
+        expect(missing.status).not.toBe(0)
+        expect(missing.stdout).toBe('')
+        expect(missing.stderr).toContain('required environment name SYNTHETIC_TOKEN is unset')
+        // Adding optional inheritance changes what the child can read and must invalidate its prior approval.
+        const without = { ...declaration, command: './server', args: [], cwd: root }
+        expect(digest).not.toBe(mcpApprovalDigest(without, root))
+        const prior = collectMcpDeclarations({ cockpitDirectory: root, declarations: parsed.declarations,
+            approved: { synthetic: mcpApprovalDigest(without, root) }, targets })
+        expect(prior).toMatchObject({ kind: 'complete', result: { servers: [{ enabled: false }] },
+            diagnostics: [expect.objectContaining({ code: 'MCP_NOT_APPROVED' })] })
+    } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
 it.each([
     { command: 'other' }, { args: ['other.mjs'] }, { cwd: '/synthetic/other' }, { envNames: ['OTHER_TOKEN'] },
 ])('refuses divergent same-name commands and names both sources', difference => {
@@ -165,6 +204,9 @@ it('refuses literal credentials, foreign aliases and unsafe commands without dis
     for (const server of [
         { command: 'node', env: { SYNTHETIC_TOKEN: canary } },
         { command: 'node', env: { SYNTHETIC_TOKEN: '${OTHER_TOKEN}' } },
+        { command: 'node', env: { SYNTHETIC_TOKEN: '${SYNTHETIC_TOKEN}' }, optionalEnv: ['SYNTHETIC_TOKEN'] },
+        { command: 'node', optionalEnv: ['SYNTHETIC_OPTION', 'SYNTHETIC_OPTION'] },
+        { command: 'node', optionalEnv: ['${SYNTHETIC_OPTION}'] },
         { command: 'node', args: ['--token', canary] },
         { command: 'node$(touch forbidden)', args: [] },
         { type: 'http', url: remote.url, headers: { Authorization: `Bearer ${canary}` } },
