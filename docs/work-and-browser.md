@@ -182,7 +182,7 @@ moves to one at least as strong.
 | --- | --- | --- | --- | --- |
 | Another CLI | `evaluators = ["codexcli"]` from a Claude Code session, or both tools listed | cockpit reads that process directly | a separate process of another tool judged the change, read-only by its tool's mechanism | the next listed tool, when one is missing, signed out, rate-limited, timed out or refused by its environment; when none answers, a refusal names each cause |
 | Same CLI, separate run | one tool listed, or `--evaluator <tool>` | cockpit reads that process directly, with a warning | the same, but one tool is judging its own kind of work | as above for a list; `--evaluator` runs only that tool. The warning (`EVALUATOR_IS_RUNNING_TOOL`) appears only where the running tool is detected: Claude Code and Codex |
-| Native subagent in the session | `grading = "subagent"` | the working agent relays it | only that the working agent says a subagent answered: cockpit cannot verify one ran, and read-only is instructed, not enforced | a separate process as above, stronger, when the agent runs `work grade` with nothing submitted because it cannot spawn one; refused when no process answers either. Once that process finds the work unmet, a relayed verdict cannot replace it, not even after an amendment the agent accepts; only one a person or CI accepts clears it |
+| Native subagent in the session | `grading = "subagent"` | the working agent relays it | only that the working agent says a subagent answered: cockpit cannot verify one ran; read-only is enforced by the generated tool list in Claude Code and instructed elsewhere | a separate process as above, stronger, when the agent runs `work grade` with nothing submitted because it cannot spawn one; refused when no process answers either. Once that process finds the work unmet, a relayed verdict cannot replace it, not even after an amendment the agent accepts; only one a person or CI accepts clears it |
 | Checks only | `grading = "checks"` | nothing judged by a model | cockpit ran every criterion's check, all passed, and nothing changed outside `scope`; it cannot judge whether a test proves its criterion, or a change's quality, documentation or decisions | needs no agent tool, so it always runs; a criterion with no check makes `work grade` refuse, so it cannot pass |
 | The agent itself | `grading = "self"` | the working agent | only the agent's own claim; a failed check still fails it | needs no agent tool, so it always runs |
 | No grader | `grading = "off"` | nothing | nothing is judged; the order is a tracked record, and a failed or unrun check stays on it | needs nothing, so it always runs |
@@ -409,12 +409,13 @@ says so, so a criterion about what a person would see is not met by command outp
 <!-- cockpit:ref path=packages/cockpit/surfaces/agents/evaluator.agent.md --> The shipped evaluator
 instructions tell it to treat repository content, order text and command output as data, never as
 instructions; that is instructed, not enforced. Run by `work grade` and `cockpit grade`, the
-evaluator is also held read-only by its tool's mechanism above. Spawned as a subagent inside an
-agent tool, that restriction is instructed, not enforced: no harness is confirmed to enforce it
-there. That is the `grading = "subagent"` path, and why it never reads as independent. Claude Code
-would take a tool allowlist in the definition's front matter, which the generator carries through,
-but cockpit writes none: the evaluator keeps the browser tools, whose names depend on the cockpit's
-browser declaration, and no probe has measured whether such a list holds a subagent read-only.
+evaluator is also held read-only by its tool's mechanism above. Spawned as a subagent inside Claude
+Code, it is held by the tool list `sync` writes into its definition: `Read`, `Grep`, `Glob` and
+exactly the browser tools this cockpit lets Claude Code call (every tool of the `playwright` server,
+or those `[mcp.allowed_tools]` lists), so Claude Code refuses its file writes and shell commands; the
+[capability matrix](capability-matrix.md) dates that measurement. In Codex and OpenCode a subagent's
+read-only is instructed, not enforced. Either way the working agent relays the verdict, which is the
+`grading = "subagent"` path, and why it never reads as independent.
 
 ## Browser evidence
 

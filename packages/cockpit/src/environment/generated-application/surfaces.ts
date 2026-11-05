@@ -335,7 +335,9 @@ export async function prepareSurfaces(
         return refuse('SURFACE_INPUT_INVALID', nativeHooks.reason, '.githooks/pre-push')
     }
     const coreAssets = new Map(assets.map(row => [row.path, row] as const))
-    const coreDeclarations = coreSurfaceDeclarations(coreAssets, tools)
+    // The browser server as Claude Code gets it, so the evaluator's tool list admits exactly its tools.
+    const claudeBrowser = browser ? mcp.result.harnesses.find(row => row.target === 'claudecode')?.servers.find(server => server.name === 'playwright') : undefined
+    const coreDeclarations = coreSurfaceDeclarations(coreAssets, tools, claudeBrowser)
     if (!coreDeclarations) return refuse('SURFACE_INPUT_INVALID', 'the shipped core surface declarations could not be read', 'skills/collection.json')
     const shippedSkills = coreDeclarations.filter(declaration => declaration.feature === 'skills').map(declaration => declaration.name)
     const merge = mergeSurfaceDeclarations(coreDeclarations, config.surfaces.overlays)

@@ -52,9 +52,9 @@ describe('shipped harness registry', () => {
         expect(subagentGradingProblem([harness('team-tool', 'instructed')])).toBeUndefined()
         expect(subagentGradingProblem([harness('team-tool', 'unavailable'), harness('other-tool', 'instructed')]))
             .toMatchObject({ code: 'EVALUATOR_UNAVAILABLE', message: expect.stringMatching(/generates none for team-tool$/) })
-        // A definition the tool was shown to offer is measured; one only written is not called more than that.
+        // A definition the tool was shown to offer is measured, and enforced only where a spawned evaluator was refused writes; one only written is not called more than that.
         expect(HARNESS_REGISTRY.map(row => [row.target, row.subagentGrader.state, row.subagentGrader.measuredVersion])).toEqual([
-            ['claudecode', 'instructed', '2.1.318'], ['codexcli', 'instructed', '0.166.0'], ['opencode', 'generated', null], ['cursor', 'generated', null], ['grokcli', 'generated', null]])
+            ['claudecode', 'enforced', '2.1.318'], ['codexcli', 'instructed', '0.166.0'], ['opencode', 'generated', null], ['cursor', 'generated', null], ['grokcli', 'generated', null]])
     })
 
     it('accepts a measurement date only as a real calendar day that is not in the future', () => {

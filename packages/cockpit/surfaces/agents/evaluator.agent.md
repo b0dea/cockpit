@@ -63,8 +63,9 @@ nothing stronger. That limits what you say about your own restraint; it is never
 a verdict. When cockpit itself starts you to grade, whichever of Codex, Claude Code or OpenCode it
 is, the request's `restriction` field names the read-only mechanism your tool was started with; that
 mechanism, not this file, is what holds repository files read-only then. When the agent that did the
-work spawns you as a subagent, nothing holds them read-only but this file; do not edit anyway, and
-answer from the order, the checks and the diff, not from its account of what it did.
+work spawns you as a subagent, Claude Code offers you only the tools your definition lists, and
+elsewhere nothing holds repository files read-only but this file; do not edit anyway, and answer from
+the order, the checks and the diff, not from its account of what it did.
 
 ## Rules
 

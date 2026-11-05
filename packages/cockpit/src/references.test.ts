@@ -330,7 +330,7 @@ describe('reference pages', () => {
         // check is generated only where a dated run saw the hook fire and reach the agent. The evaluator
         // subagent is instructed only where a dated run saw the tool offer the generated definition.
         expect(matrix).toContain('| Tool | Written | Guard firing | Instruction loading | Skills | Session-start check | Evaluator subagent | Remote MCP servers | MCP tool restrictions | Worktree grants |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
-            + '| Claude Code (`claudecode`) | by default | enforced | instructed | instructed | instructed | instructed | instructed (needs a person) | enforced (needs a person) | enforced (needs a person) |\n'
+            + '| Claude Code (`claudecode`) | by default | enforced | instructed | instructed | instructed | enforced | instructed (needs a person) | enforced (needs a person) | enforced (needs a person) |\n'
             + '| Codex (`codexcli`) | by default | enforced (needs a person) | instructed | instructed | instructed (needs a person) | instructed | instructed | enforced | unavailable |\n'
             + '| OpenCode (`opencode`) | by default | enforced | instructed | instructed | unavailable | generated | instructed | unavailable | enforced |\n'
             + '| Cursor (`cursor`) | when listed | unavailable | generated | generated | unavailable | generated | unavailable | unavailable | unavailable |\n'
