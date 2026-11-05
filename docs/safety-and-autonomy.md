@@ -347,12 +347,16 @@ of every sibling, whether or not the
 sibling is mounted or granted to Claude. A sibling instance's rule is anchored on the path below the
 sibling's parent, so the committed file is identical on every clone; it can match more than the
 instance (any file with the same sibling-relative suffix), never less. An instance in the cockpit
-root itself is anchored at the project root. These rules match path spellings only: Claude's native
-tools cannot see filesystem identity, so a hard link or a symbolic link to an instance or secrets
-file, under a name outside the rules, stays readable to them. The guard's identity checks cover
-shell commands only. Claude applies a deny rule before any allow, so the `.env.*` rule cannot exempt
-the documentation names: Claude's own tools refuse `.env.example`, `.env.schema` and declared
-templates too, which `cat` in a shell still reads.
+root itself is anchored at the project root. Claude checks symbolic links against both the requested
+and resolved paths. A hard link under a name outside the rules is not covered by these path rules;
+the guard's filesystem identity checks cover shell commands only.
+
+Claude's filesystem-root deny rules cannot exempt the documentation names:
+native file tools and recognized shell reads such as `cat` also refuse `.env.example`, `.env.sample`,
+`.env.schema`, `.env.template` and declared templates with a `.env.*` name. A guard approval does not
+override that native denial. Claude's ordered negation exceptions apply only to relative rules;
+using those here would leave sibling secrets outside the protection. See
+[Claude's permission rules](https://code.claude.com/docs/en/permissions#read-and-edit).
 
 ## Who decides
 

@@ -159,9 +159,10 @@ export function emptyGeneration(): Extract<SurfaceGenerationOutcome, { kind: 'co
  * `/` rules refused root files, while the control stayed readable. Over-matching a deny is safe;
  * glob metacharacters in a path become `?` so a literal bracket cannot narrow the rule.
  *
- * Every `.env` and `.env.*` file is denied too, as the guard denies it. Claude applies a deny before
- * any allow, so these rules cannot carve out the documentation names the guard exempts: Claude's own
- * tools refuse `.env.example` and declared templates as well, which a shell `cat` still reads.
+ * Every `.env` and `.env.*` file is denied too. Claude's filesystem-root deny rules cannot carve out
+ * the documentation names the guard exempts. Native file tools and recognized shell reads refuse
+ * those names; a guard approval cannot override the native denial. Keep the broad protection until
+ * a supported exception can preserve instance denials across sibling directories.
  */
 function claudeReadDenials(
     siblings: readonly { slug: string; path: string }[],
