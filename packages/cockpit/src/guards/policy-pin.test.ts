@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { parseCockpitConfigBytes } from '../config/load.js'
+import { sha256Hex } from '../sha256.js'
+import { guardConfigChange } from './policy-change.js'
 import { pinnedPolicyDenial } from './policy-pin.js'
 import { parseGuardInput } from './invocation-parser.js'
 
@@ -6,11 +9,14 @@ const root = '/synthetic/cockpit'
 const config = `${root}/cockpit.toml`
 const current = [
     '[cockpit]', 'name = "synthetic"', '',
+    '[ports]', 'bases = {}', '',
     '[work]', 'grading = "independent"', '',
     '[work.gates]', 'accept = "person"', '',
     '[autonomy]', 'mcp_approve = "person"', '',
     '[mcp]', 'approved = {}', '',
     '[guards]', 'protected_branches = ["main"]', '',
+    '[[sibling]]', 'slug = "app"', 'dir = "app"', 'mount = "none"', 'acquire = "none"',
+    'var = "APP_DIR"', 'purpose = "the application"', '',
 ].join('\n')
 const decide = (payload: Record<string, unknown>, isConfig: (path: string) => boolean = path => path === config, text = current) => {
     const parsed = parseGuardInput({ hook_event_name: 'PreToolUse', cwd: root, ...payload })
@@ -21,6 +27,25 @@ const edit = (old: string, replacement: string, file = config, text = current) =
     decide({ tool_name: 'Edit', tool_input: { file_path: file, old_string: old, new_string: replacement } }, undefined, text)
 
 describe('guard policy pin', () => {
+    it('allows revoking an MCP approval through edit, write and patch, then admits sync without allowing reapproval', () => {
+        const approved = 'approved = { docs = "' + 'a'.repeat(64) + '" }'
+        const prior = current.replace('approved = {}', approved)
+        const payloads = [
+            { tool_name: 'Edit', tool_input: { file_path: config, old_string: approved, new_string: 'approved = {}' } },
+            { tool_name: 'Write', tool_input: { file_path: config, content: current } },
+            { tool_name: 'apply_patch', tool_input: { command:
+                `*** Begin Patch\n*** Update File: ${config}\n@@\n-${approved}\n+approved = {}\n*** End Patch` } },
+        ]
+        for (const payload of payloads) expect(decide(payload, undefined, prior)).toBeUndefined()
+        const revoked = parseCockpitConfigBytes(Buffer.from(current))
+        if (!revoked) throw new Error('synthetic configuration must parse')
+        expect(guardConfigChange(sha256Hex(prior), Buffer.from(prior), { sha256: sha256Hex(current), config: revoked }))
+            .toEqual({ kind: 'non-widening' })
+        expect(edit('approved = {}', approved)).toBe('deny')
+        expect(edit(approved, approved.replace('a'.repeat(64), 'b'.repeat(64)), config, prior)).toBe('deny')
+        expect(edit(approved, approved + '\nfuture = true', config, prior)).toBe('deny')
+    })
+
     it('denies an edit, write or patch that changes [work], [work.gates], [autonomy] or a person-approved [mcp], and admits one elsewhere', () => {
         expect(edit('grading = "independent"', 'grading = "self"')).toBe('deny')
         expect(edit('accept = "person"', 'accept = "agent"')).toBe('deny')

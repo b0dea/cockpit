@@ -5,8 +5,8 @@
 // schema later is a person's decision until someone writes down why it is not. A rule exists only
 // for a field that cannot widen the guard's trust inputs (the commands agents run unprompted, the
 // roots they write, the secrets they are kept from, who passes a gate) in the direction it admits.
-// [guards], [work], [autonomy], [mcp], [testing], [browser] and every command field have none, so
-// any change to them is a person's.
+// Work gates, autonomy, testing, browser and command fields remain person-held. Guard and MCP
+// changes are admitted only in the restrictive directions named below.
 // The rules read the configuration rather than compare the guard policy each side would build: most
 // of what they judge (Compose files and profiles, resettable volumes, the tools guarded, a sibling's
 // operator gate) never reaches that policy, and building it observes the checkouts on disk.
@@ -52,6 +52,20 @@ function walk(before: unknown, after: unknown, rules: Rules, at: string, key = '
     return isDeepStrictEqual(before, after) ? [] : [at]
 }
 
+// Removing an unchanged approval disables a server; a changed digest or new name admits a new process.
+const approvalRemovals: Rule = (before: unknown, after: unknown, at: string) => {
+    const from = before ?? {}
+    const to = after ?? {}
+    if (!plainObject(from) || !plainObject(to)) return [at]
+    return Object.keys(to).filter(name => !Object.hasOwn(from, name) || !isDeepStrictEqual(from[name], to[name]))
+        .map(name => `${at}.${name}`)
+}
+
+/** Shared by the edit pin and the unsynced-policy hold so revocation never needs a second approval. */
+export function mcpPolicyWideningFields(before: unknown, after: unknown, at = 'mcp'): readonly string[] {
+    return walk(before ?? {}, after ?? {}, { approved: approvalRemovals }, at)
+}
+
 // The fields of an existing sibling that say what it is for. Everything else about a sibling decides
 // what the agent may write or read: its directory is a writable root, its environment files are the
 // instances the guard protects, its guides are copied into every agent's instructions, and its derived
@@ -90,6 +104,12 @@ const CHANGE_RULES: Rules = {
     // removal of one an observation recorded as confirmed for exactly the new configuration.
     unconfirmed: onlyAdds,
     'cockpit.guide_cap': safe,
+    'guards.allow': onlyRemoves,
+    'guards.deny': onlyAdds,
+    'guards.hosted_db_hosts': onlyAdds,
+    'guards.vendor_endpoint_hosts': onlyAdds,
+    'guards.protected_branches': onlyAdds,
+    mcp: mcpPolicyWideningFields,
     sibling: siblings,
     ports: safe,
     'environment.compose_files': onlyRemoves,

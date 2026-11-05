@@ -492,6 +492,13 @@ describe('guard policy construction', () => {
             `${canonicalConfig} changed since the guards were generated without widening what agents may do; every tool call except cockpit sync and check is held until it is synced. Fix: run \`npx --no cockpit sync --config ${canonicalConfig}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files.` },
         diagnostics: [{ code: 'GUARD_CONFIG_UNSYNCED' }] })
         expect(await runGuardEvaluationApplication(sync, adapters)).toMatchObject({ decision: { decision: 'allow' } })
+        const restricted = parse(readFileSync(configPath, 'utf8')) as { guards: { deny: unknown[] } }
+        restricted.guards.deny.push({ contains: ['--force'], reason: 'Forced writes require review.' })
+        writeFileSync(configPath, stringify(restricted))
+        expect(await runGuardEvaluationApplication(sync, adapters)).toMatchObject({ decision: { decision: 'allow' } })
+        expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({
+            decision: { decision: 'unavailable' }, diagnostics: [{ code: 'GUARD_CONFIG_UNSYNCED' }],
+        })
         // An edit that widens it holds every call, that sync included, until a human regenerates, and the reason names what widened.
         const widened = parse(readFileSync(configPath, 'utf8')) as { guards: { allow: unknown[] } }
         widened.guards.allow.push({ argv: ['make', 'release'], reason: 'Releases are routine.' })

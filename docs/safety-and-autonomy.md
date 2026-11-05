@@ -354,11 +354,12 @@ templates too, which `cat` in a shell still reads.
 | `mcp_approve` | `person`: sync enables only the MCP servers whose digest a person recorded in `[mcp.approved]`, and `MCP_NOT_APPROVED` names the rest; `agent`: sync enables every declared server as declared now, which lets an agent start processes outside the guard, because a sibling's MCP source is a file the agent can write and each harness starts an enabled server outside every guard boundary | `person` |
 
 <!-- cockpit:ref path=packages/cockpit/src/guards/policy-pin.ts --> The guard pins the policy: an agent's edit, write or patch that would change `[work]`,
-`[work.gates]` or `[autonomy]`, or `[mcp]` while `mcp_approve` is `person`, is a hard denial. It
+`[work.gates]` or `[autonomy]`, or widens `[mcp]` while `mcp_approve` is `person`, is a hard denial.
+Removing unchanged MCP approvals is permitted: disabling a server grants no new access. The guard
 applies the edit to the current text and compares the tables, so an edit elsewhere in the file stays
 permitted; an edit it cannot apply exactly, and a shell command that names the file and is not a
 proven read, a Git record or the `--config` operand of a cockpit command, are denied because the guard
-cannot show the tables unchanged. A cockpit session's command after `--` is judged as a command of its
+cannot prove the change preserves gate authority and grants no new MCP access. A cockpit session's command after `--` is judged as a command of its
 own, and a path or `node <script>` spelling of cockpit is admitted only where the guard proves it
 starts the installed cockpit. The pin holds only for the
 tool calls the guard inspects.
@@ -399,11 +400,13 @@ An edit does not widen only when every difference is one of these:
   `docs.living`;
 - added agent tools, `unconfirmed` answers and sibling operator gates;
 - removed Compose files, Compose profiles and resettable volumes, and an install policy that admits no
-  command it did not.
+  command it did not;
+- removed guard allow rules and unchanged MCP approvals; added guard deny rules, protected branches,
+  hosted database hosts and vendor endpoint hosts.
 
-Every other difference widens. That includes any change, in either direction, to `[guards]`,
-`[work]`, `[autonomy]`, `[mcp]`, `[testing]` (whose stages `test-run` runs unprompted) and `[browser]`;
-a new sibling, wherever its directory is; a sibling's changed `dir`, `guides` (sync copies each guide
+Every other difference widens. That includes any change, in either direction, to
+`[work]`, `[autonomy]`, `[testing]` (whose stages `test-run` runs unprompted) and `[browser]`;
+new or changed MCP approvals, new guard allows or removed guard restrictions; a new sibling, wherever its directory is; a sibling's changed `dir`, `guides` (sync copies each guide
 into the root `AGENTS.md`), environment files or derived MCP sources; and every command field, such
 as `environment.seed`. A field the classification has no rule for widens too, so a field added to
 the schema is a person's decision until a rule says otherwise. A missing or mismatched
