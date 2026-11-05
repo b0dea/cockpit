@@ -231,7 +231,7 @@ export function collectMcpDeclarations(input: unknown): McpCollectionOutcome {
     for (const name of Object.keys(allowedTools)) {
         if (!collected.has(name)) return refuse('MCP_DECLARATION_INVALID', `Tool restrictions name undeclared MCP server ${name}; declare it before restricting its tools`)
         // Native names join server and tool with __; overlapping server prefixes cannot identify a call uniquely.
-        if ([...collected.keys()].some(other => other !== name && (other.startsWith(`${name}__`) || name.startsWith(`${other}__`)))) {
+        if ([...collected.keys()].some(other => other !== name && (`${other}__`.startsWith(`${name}__`) || `${name}__`.startsWith(`${other}__`)))) {
             return refuse('MCP_DECLARATION_INVALID', `Restricted MCP server ${name} has an ambiguous native tool namespace; rename the overlapping server`)
         }
     }

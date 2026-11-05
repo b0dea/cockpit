@@ -33,6 +33,13 @@ it('keeps a closed tool allowlist on supported harnesses and withholds the serve
         declarations: [declaration, { ...declaration, name: 'synthetic__nested' }], approved: approval,
         allowedTools: { synthetic: ['read_record'] }, targets })).toMatchObject({ kind: 'refusal',
         diagnostic: { message: expect.stringContaining('ambiguous native tool namespace') } })
+    // mcp__foo___read matches foo's mcp__foo__ prefix, so a trailing underscore overlaps from either side.
+    for (const restricted of ['foo', 'foo_']) {
+        expect(collectMcpDeclarations({ cockpitDirectory: '/synthetic/cockpit',
+            declarations: [{ ...declaration, name: 'foo' }, { ...declaration, name: 'foo_' }], approved: {},
+            allowedTools: { [restricted]: ['read_record'] }, targets })).toMatchObject({ kind: 'refusal',
+            diagnostic: { message: expect.stringContaining('ambiguous native tool namespace') } })
+    }
 })
 const remote: McpHttpDeclaration & { helper: NonNullable<McpHttpDeclaration['helper']> } = {
     name: 'remote', transport: 'http', url: 'https://mcp.example.test/mcp', headers: { Authorization: 'Bearer ${REMOTE_TOKEN}', 'X-Workspace': '${REMOTE_WORKSPACE}' },
