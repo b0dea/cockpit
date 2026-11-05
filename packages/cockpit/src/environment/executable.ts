@@ -162,13 +162,12 @@ export function observationSearchPath(env: Readonly<Record<string, string | unde
     if (bounded.state === 'unavailable') return bounded
     const absolute: string[] = []
     for (const directory of bounded.directories) {
+        if (!isAbsolute(directory)) continue
         // Never normalize: a link followed by .. can name a different directory after lexical cleanup.
-        const relative = directory.startsWith('./') ? directory.slice(2) : directory
-        if (isAbsolute(directory) ? normalize(directory) !== directory
-            : relative.split('/').some(part => part === '' || part === '.' || part === '..')) {
-            return miss('Observation search path contains an empty, parent-traversing or noncanonical directory')
+        if (normalize(directory) !== directory) {
+            return miss('Observation search path contains a noncanonical absolute directory')
         }
-        if (isAbsolute(directory)) absolute.push(directory)
+        absolute.push(directory)
     }
     return absolute.length > 0 ? { state: 'available', path: absolute.join(delimiter) }
         : miss('Observation search path has no absolute directories; relative entries are excluded')

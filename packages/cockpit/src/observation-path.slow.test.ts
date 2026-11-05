@@ -28,9 +28,9 @@ async function docsFixture() {
     roots.push(root)
     const caller = join(root, 'caller')
     const project = join(root, 'project')
-    for (const cwd of [caller, project]) {
-        mkdirSync(join(cwd, 'node_modules/.bin'), { recursive: true })
-        writeFileSync(join(cwd, 'node_modules/.bin/git'), `#!/bin/sh\nprintf poison > '${join(root, 'poison')}'\nexit 99\n`, { mode: 0o755 })
+    for (const bin of [caller, project, join(caller, 'node_modules/.bin'), join(project, 'node_modules/.bin'), join(root, 'relative')]) {
+        mkdirSync(bin, { recursive: true })
+        writeFileSync(join(bin, 'git'), `#!/bin/sh\nprintf poison > '${join(root, 'poison')}'\nexit 99\n`, { mode: 0o755 })
     }
     execFileSync('/usr/bin/git', ['init', '-q', project])
     const configPath = join(project, 'cockpit.toml')
@@ -43,21 +43,28 @@ async function docsFixture() {
 }
 
 describe('public observation command search paths', { timeout: 180_000 }, () => {
-    it.each(['sync', 'check'])('observes surfaces-only checkout identity during %s without relative Git', async command => {
+    it.each(['sync', 'check', 'doctor'])('observes surfaces-only checkout identity during %s without relative Git', async command => {
         const candidate = await docsFixture()
-        if (command === 'check') {
+        if (command !== 'sync') {
             const published = cli(candidate.caller, ['sync', '--config', candidate.configPath, '--json'], '/usr/bin:/bin')
             expect(published.status, published.stdout + published.stderr).toBe(0)
         }
-        const result = cli(candidate.caller, [command, '--config', candidate.configPath, '--json'], './node_modules/.bin:/usr/bin:/bin')
+        const result = cli(candidate.caller, [command, '--config', candidate.configPath, '--json'], ':../relative:./node_modules/.bin:.:/usr/bin:/bin:')
         expect(result.status, result.stdout + result.stderr).toBe(0)
-        expect(JSON.parse(result.stdout).diagnostics.filter((row: { severity: string }) => row.severity === 'error')).toEqual([])
+        const report = JSON.parse(result.stdout)
+        expect(report.diagnostics.filter((row: { severity: string }) => row.severity === 'error').map((row: { code: string }) => row.code)).toEqual(
+            command === 'doctor' ? ['ENVIRONMENT_NOT_DECLARED', 'GIT_STATE_UNHEALTHY'] : [],
+        )
+        if (command === 'doctor') {
+            expect(report.result).toMatchObject({ freshness: { local: { kind: 'complete', status: 0 } }, surfaceOverrides: { kind: 'complete' } })
+            expect(report.diagnostics).toContainEqual(expect.objectContaining({ code: 'GUARD_SEARCH_PATH_RELATIVE' }))
+        }
         expect(existsSync(join(candidate.root, 'poison'))).toBe(false)
     })
 
     it('checks another repository without executing relative package-manager bin entries', async () => {
         const candidate = await docsFixture()
-        const result = cli(candidate.caller, ['docs', 'check', '--config', candidate.configPath, '--json'], './node_modules/.bin:/usr/bin:/bin')
+        const result = cli(candidate.caller, ['docs', 'check', '--config', candidate.configPath, '--json'], ':../relative:./node_modules/.bin:.:/usr/bin:/bin:')
         expect(result.status, result.stdout + result.stderr).toBe(0)
         expect(JSON.parse(result.stdout)).toMatchObject({ diagnostics: [], result: { repositories: [{ livingDocuments: 1 }], findings: 0 } })
         expect(existsSync(join(candidate.root, 'poison'))).toBe(false)
@@ -65,7 +72,7 @@ describe('public observation command search paths', { timeout: 180_000 }, () => 
 
     it('keeps malformed paths in the command JSON refusal and keeps help independent of PATH', async () => {
         const candidate = await docsFixture()
-        for (const PATH of ['', './node_modules/.bin', '/usr/bin::/bin', '/usr/bin/../bin:/bin', './node_modules/../.bin:/usr/bin']) {
+        for (const PATH of ['', './node_modules/.bin', ':../relative:.:', '/usr/bin/../bin:/bin']) {
             const result = cli(candidate.caller, ['docs', 'check', '--config', candidate.configPath, '--json'], PATH)
             expect(result.status, PATH).toBe(2)
             expect(JSON.parse(result.stdout).diagnostics, PATH).toContainEqual(expect.objectContaining({ code: 'EVIDENCE_UNAVAILABLE' }))
@@ -94,12 +101,14 @@ synthetic = "${approval}"
         const published = await syncGeneratedEnvironment({ configPath: candidate.configPath })
         expect(published, JSON.stringify(published.diagnostics)).toMatchObject({ kind: 'complete' })
         const poison = join(candidate.root, 'poison')
-        mkdirSync(join(candidate.checkout, 'node_modules/.bin'), { recursive: true })
-        for (const name of ['git', 'docker', 'codex', 'claude', 'opencode']) {
-            await writeFile(join(candidate.checkout, 'node_modules/.bin', name), `#!/bin/sh\nprintf poison > '${poison}'\nexit 99\n`, { mode: 0o755 })
+        for (const bin of [candidate.checkout, join(candidate.checkout, 'node_modules/.bin'), join(candidate.checkout, '../relative')]) {
+            mkdirSync(bin, { recursive: true })
+            for (const name of ['git', 'docker', 'codex', 'claude', 'opencode']) {
+                await writeFile(join(bin, name), `#!/bin/sh\nprintf poison > '${poison}'\nexit 99\n`, { mode: 0o755 })
+            }
         }
         mkdirSync(join(candidate.checkout, 'workorders'))
-        const result = cli(candidate.checkout, ['doctor', '--config', candidate.configPath, '--json'], `./node_modules/.bin:${candidate.root}:/usr/bin:/bin`, candidate.home)
+        const result = cli(candidate.checkout, ['doctor', '--config', candidate.configPath, '--json'], `:../relative:./node_modules/.bin:.:${candidate.root}:/usr/bin:/bin:`, candidate.home)
         expect(result.status, result.stdout + result.stderr).toBe(0)
         const report = JSON.parse(result.stdout)
         expect(report.result).toMatchObject({ freshness: { local: { kind: 'complete', status: 0 } }, surfaceOverrides: { kind: 'complete' } })

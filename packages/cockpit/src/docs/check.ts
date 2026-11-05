@@ -94,7 +94,7 @@ export async function runDocsCheck(input: DocsCheckInput, dependencies: Readonly
     if ('unavailable' in runner) {
         return refusalOutcome(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
             `docs check reads repository history with Git, which is unavailable: ${runner.unavailable}`, 'git',
-            'put Git in an absolute PATH directory, remove empty or parent-traversing entries, then rerun npx --no cockpit docs check --config <your cockpit.toml>')
+            'put Git in an absolute PATH directory and remove noncanonical absolute entries, then rerun npx --no cockpit docs check --config <your cockpit.toml>')
     }
     const cockpitRoot = posix.dirname(source.path)
     // A sibling `cockpit use` serves from another checkout is checked there, where the stack runs it.

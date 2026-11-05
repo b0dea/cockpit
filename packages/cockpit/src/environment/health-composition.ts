@@ -491,7 +491,7 @@ function composeHealthCommandAdapters(
         if (searchRefusal) return refuse?.([{
             severity: 'error', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
             message: `doctor's observation tools cannot be selected: ${searchRefusal}`, target: 'PATH',
-            fix: 'put Git and Docker in absolute PATH directories, remove empty or parent-traversing entries, then rerun doctor',
+            fix: 'put the required observation tools in absolute PATH directories and remove noncanonical absolute entries, then rerun doctor',
         }])
         if (!input) return undefined
         loadedConfig = loaded

@@ -118,9 +118,10 @@ That warning describes the CLI process, not a measurement of a running harness's
 `pnpm exec` can add a relative bin directory just for the command it starts. Check the shell or
 launcher that starts the harness before changing its configuration. For their own Git and Docker
 observations, `doctor` and `docs check` use only the absolute directories already on `PATH`, in
-their original order. Relative directories are excluded so changing into a sibling cannot select
-a different tool. Empty entries, parent traversal and noncanonical absolute entries still refuse
-the observation; put the required tool in an absolute directory and rerun the command. This does
+their original order. Every relative entry is excluded, including empty entries, `.` and paths
+starting with `..`, so changing into a sibling cannot select a different tool. Noncanonical
+absolute entries still refuse the observation; no entry is normalized. Put the required tool in
+an absolute directory and rerun the command. This does
 not change the environment used to start sessions, discover evaluators or check MCP commands, or
 the guard's approval rules. A completed observation does not establish that a harness runs its
 generated hooks or that an external integration works.

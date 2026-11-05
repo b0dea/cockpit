@@ -25,7 +25,7 @@ describe('observation executable discovery', () => {
         mkdirSync(target)
         symlinkSync(target, link)
         writeFileSync(join(target, 'git'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
-        const PATH = `./node_modules/.bin:${link}:/usr/bin`
+        const PATH = `:../relative:./node_modules/.bin:.:${link}:/usr/bin:`
         const env = Object.freeze({ PATH })
         const observed = observationSearchPath(env)
         expect(observed).toEqual({ state: 'available', path: `${link}:/usr/bin` })
@@ -40,7 +40,7 @@ describe('observation executable discovery', () => {
     })
 
     it('refuses unbounded or ambiguous paths before observation discovery', () => {
-        for (const PATH of [undefined, '', '.', '/usr/bin::/bin', '../bin:/usr/bin', './bin/../tools:/usr/bin',
+        for (const PATH of [undefined, '', '.', ':../bin:./bin/../tools:', '/usr/bin/../bin:/bin',
             '/usr//bin:/bin', '/usr/bin\0:/bin', './node_modules/.bin', Array(257).fill('/bin').join(':'), '/'.padEnd(65_537, 'a')]) {
             expect(observationSearchPath({ PATH }), JSON.stringify(PATH?.slice(0, 100))).toMatchObject({ state: 'unavailable' })
         }
