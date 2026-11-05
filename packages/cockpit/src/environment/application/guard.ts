@@ -144,7 +144,7 @@ function unsyncedHold(identity: GuardHandlerIdentity, detail: string): GuardEval
 // A guard message reaches the agent and the harness's log: text it forwards from a failure stays one
 // bounded line with credential-shaped values removed.
 function forwardedReason(reason: string): string {
-    return redactSensitiveMessage(reason.replace(/[\x00-\x1f\x7f-\x9f]+/g, ' ').slice(0, 512)) ?? 'the reason was withheld because it could not be redacted'
+    return redactSensitiveMessage(reason.replace(/[\x00-\x1f\x7f-\x9f]+/g, ' ').replace(/(\w+:\/\/)[^/@\s]+@/g, '$1[redacted]@').slice(0, 512)) ?? 'the reason was withheld because it could not be redacted'
 }
 
 const restored: GuardEvaluationApplicationResult = { decision: { decision: 'allow', reason: 'The edit restores the configuration the guards were generated from.' }, diagnostics: [] }
@@ -327,7 +327,9 @@ export async function runGuardEvaluationApplication(
             if (restoring) return restored
             return unsynced
                 ? unsyncedHold(identity, `, but the guard cannot build its policy from it (${prepared.diagnostics[0]?.message ?? 'no reason given'})`)
-                : unavailable(`Guard policy authority could not be authenticated: ${prepared.diagnostics[0]?.message ?? 'no reason given'}`)
+                : unavailable(checkout.state === 'available'
+                    ? `Guard policy authority could not be authenticated: ${prepared.diagnostics[0]?.message ?? 'no reason given'}`
+                    : prepared.diagnostics[0]?.message ?? 'Guard checkout observation failed without a reason.')
         }
         // The inspector answers synchronously, so what only Git can say is asked first: which protected
         // paths a default ripgrep search reads, and which a repository's index holds for a Git command
@@ -587,7 +589,10 @@ export async function prepareGuardEvaluationPolicy(
     if (recorded.kind === 'refusal') return guardPolicyRefusal(recorded.diagnostic.message)
     const served = servedSiblings(dirname(loaded.source.path), guardConfig, recorded.checkouts)
     const observed = snapshotJson(data.checkout) as SetupCheckoutObservation | undefined
-    if (observed?.state !== 'available') return guardPolicyRefusal('guard policy checkout observation is unavailable')
+    if (observed?.state !== 'available') {
+        const root = dirname(loaded.source.path)
+        return guardPolicyRefusal(`Generated files stay valid, but the guard needs a Git repository it can read and holds ${GUARD_HELD_CALLS} until it has one, while ${GUARD_UNHELD_CALLS} continue: ${forwardedReason(observed?.reason ?? 'no reason given')}. Fix: in a terminal, outside the agent, run \`${formatShellCommand(['git', '-C', root, 'init'])}\` if ${root} has no repository, remove a stale .git entry or repair it with git worktree repair, and remove any include.path or includeIf entry from the repository's Git configuration; held calls then continue without a sync.`)
+    }
     try {
         const identities = new Map<string, Stats>()
         let checkoutRoots: readonly SiblingRoot[] | undefined

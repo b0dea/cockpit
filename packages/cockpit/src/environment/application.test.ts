@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, renameSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, type Stats } from 'node:fs'
+import { chmodSync, existsSync, renameSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, type Stats } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -577,6 +577,37 @@ describe('guard policy construction', () => {
         widened.guards.allow.push({ argv: ['make', 'release'], reason: 'Releases are routine.' })
         writeFileSync(configPath, stringify(widened))
         expect(await decision(write(recorded))).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('widens what agents may do') })
+    }, 120_000)
+
+    it.each([
+        ['no repository', 'Git could not authenticate', (root: string) => { renameSync(join(root, '.git'), join(root, '.git-aside')) }],
+        ['a rejected .git entry', 'Git could not authenticate', (root: string) => { renameSync(join(root, '.git'), join(root, '.git-aside')); mkdirSync(join(root, '.git')) }],
+        ['a repository-local include', 'Git configuration origins are unsupported', (root: string) => { execFileSync('git', ['-C', root, 'config', 'include.path', 'included-config']) }],
+    ] as const)('holds guarded calls with %s, saying generated files stay valid and why', async (_name, stated, arrange) => {
+        const { root, request, adapters } = await installedGuardRequest()
+        const config = readFileSync(join(root, '.git/config'))
+        arrange(root)
+        try {
+            const held = await runGuardEvaluationApplication({ ...request, payload: shellPayload('ls', root) }, adapters)
+            expect(held).toMatchObject({ decision: { decision: 'unavailable' }, diagnostics: [{ code: 'GUARD_AUTHORITY_UNAVAILABLE' }] })
+            expect(held.decision.reason).toContain('Generated files stay valid, but the guard needs a Git repository it can read and holds')
+            expect(held.decision.reason).toContain(stated)
+            expect(held.decision.reason).toContain(`git -C ${root} init`)
+        } finally {
+            if (existsSync(join(root, '.git-aside'))) {
+                rmSync(join(root, '.git'), { recursive: true, force: true })
+                renameSync(join(root, '.git-aside'), join(root, '.git'))
+            }
+            writeFileSync(join(root, '.git/config'), config)
+        }
+    }, 120_000)
+
+    it('removes credentials and control characters from a checkout failure it forwards', async () => {
+        const { root, request, adapters } = await installedGuardRequest()
+        const failed = async () => ({ state: 'failed', reason: 'Git failed: https://someone:hunter2@git.example.test/repo.git\ntoken=hunter3' }) as unknown as ReturnType<typeof adapters.observeCheckout>
+        const { decision } = await runGuardEvaluationApplication({ ...request, payload: shellPayload('ls', root) }, { ...adapters, observeCheckout: failed })
+        expect(decision.reason).toContain('Git failed: https://[redacted]@git.example.test/repo.git')
+        expect(decision.reason).not.toMatch(/hunter[23]/)
     }, 120_000)
 
     it('carries distinct declared vendor and database authority with authenticated roots and exact instance paths', async () => {

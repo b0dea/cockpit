@@ -45,10 +45,15 @@ declared. This also works from linked Git worktrees and configurations below the
 A passing surface check verifies generated files, not running services, hook enforcement or MCP
 startup. Hook enforcement and successful MCP startup require separate harness checks.
 With no runtime declared, `sync` and `check` only ask Git which checkout holds the configuration, and
-Git activity in that checkout does not disturb them. A `.git` entry Git rejects, or Git being absent
-from `PATH`, makes the directory standalone with a `GENERATED_CHECKOUT_STANDALONE` warning stating
-why, because publishing files depends on neither. A declared runtime or browser still needs setup's
-stricter view of the checkout, because stack identity and repository writes depend on it.
+Git activity in that checkout does not disturb them. No repository, a `.git` entry Git rejects, or Git
+being absent from `PATH`, makes the directory standalone with a `GENERATED_CHECKOUT_STANDALONE`
+warning stating why. The generated files stay valid, but the guard needs a Git repository it can read
+and holds [guarded calls](safety-and-autonomy.md#edits-the-guard-has-not-applied) until it has one;
+its refusal states the reason, and held calls continue without a `sync` once the repository is
+readable. The guard reads a repository more strictly than `sync` and `check` do, so a
+repository-local `include.path` in Git's configuration raises nothing from them, and the first sign
+is the guard's refusal or the same reason from `doctor`. A declared runtime or browser still needs
+setup's stricter view of the checkout, because stack identity and repository writes depend on it.
 [`examples/docs-only`](../examples/docs-only/README.md) and
 [`examples/compose-first`](../examples/compose-first/README.md) show the two modes. Vendor stubs,
 TLS, seeding and restoring data are plain Compose; [Compose patterns](compose-patterns.md) shows

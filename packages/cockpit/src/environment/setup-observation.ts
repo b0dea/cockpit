@@ -1430,8 +1430,9 @@ export async function observeGeneratedCheckoutIdentity(input: {
 /**
  * The checkout a surfaces-only publication belongs to. With no stack and no repository writes to
  * bound, it asks Git only which working tree this is, so doctor's stack identity matches wherever
- * doctor can observe the checkout at all. A `.git` entry Git rejects, or Git being absent, makes the
- * directory standalone, with the reason stated: publishing files there depends on neither.
+ * doctor can observe the checkout at all. No `.git` entry, one Git rejects, or Git being absent makes
+ * the directory standalone, with the reason stated: publishing files there depends on none of them,
+ * though the guard those files install holds its calls until it can read a repository.
  * What Git is asked here runs no repository-configured command: the Git runner neutralises fsmonitor
  * and hooks, and rev-parse reads neither the index nor a remote.
  */
@@ -1455,7 +1456,7 @@ export async function observeSurfacesCheckoutIdentity(input: {
     const answer = anchors.gitEntry && await askGitForCheckout(anchors.gitEntry.path, root, source.path, value.env)
     if (answer && 'state' in answer) return answer
     const checkout = answer && 'topLevel' in answer ? answer : undefined
-    const standaloneReason = answer && 'reason' in answer ? answer.reason : undefined
+    const standaloneReason = !anchors.gitEntry ? 'no Git repository holds it' : answer && 'reason' in answer ? answer.reason : undefined
     if (checkout) for (const path of new Set([checkout.topLevel, checkout.gitDirectory, checkout.commonDirectory, checkout.mainCheckoutPath])) {
         const directory = await stableDirectoryNode(path)
         if (!directory) return setupCheckoutFailure(`Git named ${path} for this checkout, but it is not a canonical directory`)
