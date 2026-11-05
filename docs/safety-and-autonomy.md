@@ -53,7 +53,8 @@ Every `.env` and `.env.*` file at any depth is treated as holding secrets, decla
 writing, removing, staging or linking one is a hard denial through every guarded tool. The
 conventional documentation names `.env.example`, `.env.sample`, `.env.template` and `.env.schema`
 are exempt from the guard, and so is every declared environment `template`; native permissions may
-still refuse these documentation files (see [Reading secrets and instances](#reading-secrets-and-instances)). Run a trusted
+still refuse these documentation files (see [Reading secrets and instances](#reading-secrets-and-instances)),
+and `cockpit env keys` and `cockpit env schema` are the supported route to them. Run a trusted
 process instead of reading values: an agent uses a declared project command or script that wraps
 Varlock, because the guard asks about a bare `varlock run` and Codex and OpenCode refuse what it asks
 about. A person in a terminal runs that same command, or
@@ -254,7 +255,7 @@ cockpit commands in
 
 | Command | Decision | Why |
 | --- | --- | --- |
-| `npx --no cockpit check --config cockpit.toml`, and likewise `doctor`, `preflight`, `ps`, `logs --service <service>`, `stacks`, `stacks prune`, `docs check` and `sync --dry-run` | allowed | They read and report; nothing they do changes a file the guard relies on. |
+| `npx --no cockpit check --config cockpit.toml`, and likewise `doctor`, `preflight`, `ps`, `logs --service <service>`, `stacks`, `stacks prune`, `docs check`, `env keys`, `env schema --path <schema reference>` and `sync --dry-run` | allowed | They read and report; nothing they do changes a file the guard relies on. A `--path` that names anything but `.env.schema`, or that climbs, is a prompt. |
 | `npx --no -- cockpit --help`, `npx --no cockpit up --help`, and the version | allowed | They print and exit before any command runs. |
 | `npx --no cockpit up --config cockpit.toml`, and likewise `sleep`, `down`, `restart --service <service>` and `rebuild --service <service>` | allowed | They act only on the stack cockpit declared and owns; `down` keeps data volumes, and deletes only from the local Docker daemon it fixes at the start of the run. |
 | `up --profile <profile>` | allowed for a profile in `environment.profiles` that mounts no sibling with `gate = "operator"`, otherwise a prompt | Another profile starts services no person declared for agents, and an operator-gated sibling touches live data or local hardware. |
@@ -376,6 +377,22 @@ native file tools and recognized shell reads such as `cat` also refuse `.env.exa
 override that native denial. Claude's ordered negation exceptions apply only to relative rules;
 using those here would leave sibling secrets outside the protection. See
 [Claude's permission rules](https://code.claude.com/docs/en/permissions#read-and-edit).
+The denials stay. The supported route is [`cockpit env keys`](environment.md#read-variable-names-and-schemas)
+for variable names and `cockpit env schema` for one schema's text, neither of which resolves anything.
+
+### Editing a schema under Claude Code
+
+| Native edit measurement | Observed result |
+| --- | --- |
+| Claude Code 2.1.318, generated `Read(//**/.env.*)` denials, no hook, 2026-11-05 | Read, Edit and Write of `.env.schema` were refused as covered by a Read deny rule; `cat` and `sed -i` were refused. `git show HEAD:.env.schema`, `printf ... >> .env.schema`, `cp draft .env.schema` and `mv draft .env.schema` worked. |
+
+No cockpit command writes a schema. Read it with `env schema`, write a draft under a name outside the
+protected ones, then `cp` the draft over `.env.schema`. With the generated guard in place, in the
+cockpit root and in a sibling, `cp`, `mv` and `printf ... >>` onto that name are not proven read-only,
+so the guard asks: under Claude Code a person approves that one step, and a tool with no prompt tier
+refuses it. Codex can edit the file directly. These native results are dated and limited to that
+version; a person's terminal has no such limit. An edited schema is
+[not validated until it is committed](environment.md#a-schema-runs-only-once-committed).
 
 ## Who decides
 

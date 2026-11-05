@@ -828,7 +828,7 @@ describe('built-in read-only profile', () => {
     it('denies reads and writes of an environment file unless its name or a declared template marks it as documentation', () => {
         const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
         const refusal = { decision: 'deny', reason: 'Refusing to read or write an environment file: `.env` and `.env.*` hold secrets unless named .env.example, .env.sample, .env.template or .env.schema, or declared as a template. '
-            + 'Fix: an agent runs the trusted process through a declared project command or script that wraps Varlock; a person in a terminal runs that same command, or `VARLOCK_TELEMETRY_DISABLED=true varlock run -- <cmd>`, without `--redact-stdout`, which Varlock refuses on a terminal. Consult schema names only where native permissions allow them.' }
+            + 'Fix: an agent runs the trusted process through a declared project command or script that wraps Varlock; a person in a terminal runs that same command, or `VARLOCK_TELEMETRY_DISABLED=true varlock run -- <cmd>`, without `--redact-stdout`, which Varlock refuses on a terminal. List variable names with `npx --no cockpit env keys --config <your cockpit.toml>`.' }
         const judge = (input: object, configured = policy()) => evaluateGuard(parseGuardInput(input), configured, withGit)
         // An undeclared `.env` at any depth is where a product keeps its values, so no tool reads or writes it.
         for (const file of ['.env', 'apps/web/.env.local', '.ENV.Production', '.env.example.local']) {
@@ -849,6 +849,16 @@ describe('built-in read-only profile', () => {
         const templated = { ...policy(), templates: [`${root}/config/defaults.env.dist`, `${root}/.env.ci`] }
         expect(judge(shellPayload('cat .env.ci'), templated).decision).toBe('allow')
         expect(judge(shellPayload('cat .env.ci'))).toEqual(refusal)
+    })
+
+    // Claude Code's native rules refuse Edit and Write of this name, so replacing it from a draft is the
+    // edit route the docs give an agent; the guard's answer here is what makes that route true.
+    it('answers the route that replaces a schema from a draft, in the cockpit root and a sibling', () => {
+        for (const [cwd, command] of [[root, 'cp draft.txt .env.schema'], [root, 'mv draft.txt .env.schema'], [root, "printf 'KEY=\\n' >> .env.schema"],
+            [other, 'cp draft.txt .env.schema'], [other, 'mv draft.txt .env.schema'], [other, "printf 'KEY=\\n' >> .env.schema"]] as const) {
+            const answer = evaluateGuard(parseGuardInput(shellPayload(command, cwd)), policy(), withGit)
+            expect(answer, `${cwd}: ${command}`).toEqual({ decision: 'ask', reason: expect.stringContaining('requires human approval') })
+        }
     })
 
     it('denies direct writes to Git metadata, whose configuration chooses what read-only Git runs', () => {

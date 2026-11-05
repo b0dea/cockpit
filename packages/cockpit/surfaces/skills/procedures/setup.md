@@ -246,7 +246,14 @@ guesses. So derive each value from what the repository shows, record it as infer
 During adoption, inspect environment filenames and manifest commands before choosing a secret-access
 path. A missing `.env.schema` is a decision to resolve, not a reason to skip this section. Recommend
 Varlock when plaintext dotenv files or templates exist; record adoption or the reason it is deferred.
-Read variable names from a safe schema or template, never resolve values into the agent's context.
+Read variable names with `npx --no cockpit env keys --config cockpit.toml`, never resolve values into
+the agent's context. When you need a schema's text, not only its names, run
+`npx --no cockpit env schema --config cockpit.toml --path <reference env keys prints>`; a schema must
+hold no secret values. Native rules may refuse direct reads of these files, so do not work around a
+refusal. To edit a schema under Claude Code, write a draft outside the protected names and `cp` it over
+`.env.schema`; Edit and Write are refused natively (measured on Claude Code 2.1.318 on 2026-11-05), the
+guard asks a person to approve the `cp`, and Codex can edit directly. A person's terminal has no such
+limit. An edited schema is not validated until it is committed: `ENV_SCHEMA_UNCOMMITTED` says so.
 
 Keep the tracked product `.env.schema` beside the component that owns it. Store only encrypted
 Varlock resolver expressions or external-provider references under
@@ -276,12 +283,12 @@ status and trusted product processes. Cockpit sets it for its own schema probes.
 Varlock telemetry without changing the person's global configuration; output redaction is a
 separate setting and remains required in every command an agent runs.
 
-Preflight and doctor already check every `.env.schema` a sibling tracks, a sibling's root schema and
-the cockpit root's own, with the central path when it exists; a failing or unavailable row names the
+Preflight and doctor already check every committed `.env.schema` a sibling tracks, a sibling's root
+schema and the cockpit root's own, with the central path when it exists; a failing or unavailable row names the
 keys. An unavailable row can mean a secret provider is signed out or unreachable: a person signs in
 and reruns. To diagnose, a person runs `VARLOCK_TELEMETRY_DISABLED=true varlock load --path
 <schema-directory> --path <central-directory>`. Agents use cockpit preflight for key-only status, or
-`cockpit doctor` on a cockpit that declares no runtime, where preflight refuses; raw Varlock output is
+`npx --no cockpit doctor --config cockpit.toml` on a cockpit that declares no runtime, where preflight refuses; raw Varlock output is
 not safe to read.
 
 Treat Varlock output as secret-tainted even in agent mode. Report variable names, validation state,

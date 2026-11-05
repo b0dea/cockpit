@@ -491,6 +491,41 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
+## cockpit env keys
+
+List the variable names env schemas and templates declare, with no value and nothing resolved.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--json` | boolean | `false` |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
+## cockpit env schema
+
+Print one .env.schema a sibling or the cockpit root holds, verbatim and with nothing resolved.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--json` | boolean | `false` |
+| `--path` | string | unset |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
 ## cockpit test-run
 
 Run a declared product test gate and report which tests it selected.

@@ -3,8 +3,10 @@
 // resolved value, read inside a central resolver directory, decide the health verdict
 // (observations.ts), or spawn a process itself (environment-exec/execute.ts runs the step).
 // Varlock is optional, so a directory without `.env.schema` is not observed at all and an absent
-// binary is advisory. Handed off to: health-composition.ts (producer) and application/health.ts (rows,
-// diagnostics).
+// binary is advisory. Loading a schema runs its resolvers, including `exec()`, so only a schema Git
+// shows as committed and unchanged is loaded: a schema is exempt from the secret-file denial, and an
+// agent could otherwise edit one and have `doctor` run it. Handed off to: health-composition.ts
+// (producer) and application/health.ts (rows, diagnostics).
 //
 // `varlock load --agent` still prints partial values, and its error messages can quote a value, so
 // the report is reduced to key names, the sensitive flag and a validity category the moment it is
@@ -26,8 +28,9 @@ import {
     type JsonSnapshot,
     type StackId,
 } from './contract.js'
+import { formatShellCommand } from '../fix-catalogue.js'
 import { resolveExecutable, type ResolvedExecutable } from './executable.js'
-import { listTrackedEnvSchemas, type TrackedEnvSchemas } from './git-observation.js'
+import { inspectSchemaCommit, listTrackedEnvSchemas, type SchemaCommitState, type TrackedEnvSchemas } from './git-observation.js'
 
 const OWNER = 'env-schema-observation'
 
@@ -79,6 +82,7 @@ interface KeyFailure { readonly key: string; readonly problem: KeyProblem }
 type SchemaStatus =
     | { readonly state: 'valid'; readonly keys: number; readonly overrides: readonly string[] }
     | { readonly state: 'tool-missing' }
+    | { readonly state: 'not-run'; readonly load: string }
     | { readonly state: 'invalid'; readonly failures: readonly KeyFailure[]; readonly schemaError: boolean }
     | { readonly state: 'unavailable'; readonly cause: string }
 
@@ -87,7 +91,7 @@ type Report =
     | { readonly kind: 'malformed' }
 
 /** One directory a schema is loaded from, named for the operator. */
-interface SchemaRoot {
+export interface SchemaRoot {
     readonly owner: string
     /** Relative to the owner's root; empty for the root itself. */
     readonly relative: string
@@ -96,11 +100,11 @@ interface SchemaRoot {
     readonly central: readonly string[]
 }
 
-function entryName(schema: Pick<SchemaRoot, 'owner' | 'relative'>): string {
+export function entryName(schema: Pick<SchemaRoot, 'owner' | 'relative'>): string {
     return schema.relative === '' ? schema.owner : `${schema.owner} (${schema.relative})`
 }
 
-function reasonName(schema: Pick<SchemaRoot, 'owner' | 'relative'>): string {
+export function reasonName(schema: Pick<SchemaRoot, 'owner' | 'relative'>): string {
     return `${schema.owner} (${schema.relative === '' ? '.' : schema.relative})`
 }
 
@@ -211,7 +215,23 @@ function describeFailure(outcome: Extract<ExecuteProbeOutcome, { kind: 'refusal'
 }
 
 type Execute = (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
-type ProbeInput = { readonly cockpitRoot: string; readonly mainCheckout?: string; readonly env: Readonly<Record<string, string>>; readonly timeoutMs: number; readonly stackId: StackId }
+type ProbeInput = { readonly cockpitRoot: string; readonly mainCheckout?: string; readonly env: Readonly<Record<string, string>>; readonly git: ResolvedExecutable; readonly timeoutMs: number; readonly stackId: StackId }
+
+// What a person runs after reading the schema, with the same paths and precedence as the probe.
+function manualLoad(schema: SchemaRoot, central: string | undefined): string {
+    return `VARLOCK_TELEMETRY_DISABLED=true ${formatShellCommand(['varlock', 'load', '--path', schema.root, ...central === undefined ? [] : ['--path', central]])}`
+}
+
+async function schemaCommit(schema: SchemaRoot, input: ProbeInput, execute: Execute): Promise<SchemaCommitState> {
+    const path = join(schema.root, ENV_SCHEMA_FILE)
+    try {
+        // Git compares a link's own text, so the file Varlock would load behind it has passed no commit.
+        if ((await lstat(path)).isSymbolicLink()) return { kind: 'uncommitted' }
+        return await inspectSchemaCommit({ executable: input.git, label: entryName(schema), directory: schema.root, file: ENV_SCHEMA_FILE, timeoutMs: input.timeoutMs }, execute)
+    } catch (error) {
+        return { kind: 'unavailable', reason: `whether ${ENV_SCHEMA_FILE} is committed could not be established: ${errorCause(error)}` }
+    }
+}
 
 async function checkSchema(schema: SchemaRoot, executable: ResolvedExecutable | undefined, input: ProbeInput, execute: Execute): Promise<SchemaStatus> {
     if (!executable) return { state: 'tool-missing' }
@@ -221,6 +241,9 @@ async function checkSchema(schema: SchemaRoot, executable: ResolvedExecutable | 
     const central = own.cause === undefined && own.path === undefined && input.mainCheckout !== undefined
         ? await centralDirectory(input.mainCheckout, schema.central) : own
     if (central.cause !== undefined) return { state: 'unavailable', cause: central.cause }
+    const commit = await schemaCommit(schema, input, execute)
+    if (commit.kind === 'unavailable') return { state: 'unavailable', cause: commit.reason }
+    if (commit.kind !== 'committed') return { state: 'not-run', load: manualLoad(schema, central.path) }
     const step = createStep({ executable, schema, central: central.path, env: input.env, timeoutMs: input.timeoutMs, stackId: input.stackId })
     if (!step) return { state: 'unavailable', cause: 'varlock invocation could not be planned' }
     let raw: ExecuteProbeOutcome
@@ -303,6 +326,43 @@ async function discoverSchemaDirectories(
     return { relative: [...relative].sort() }
 }
 
+function schemaStore(cockpitName: string): readonly string[] {
+    return ['env', '.secrets', cockpitName]
+}
+
+/**
+ * Every directory the cockpit can hold a schema in, in the checkout `cockpit use` serves: each one a
+ * sibling tracks, each sibling's root and the cockpit root. An entry with a status could not be
+ * discovered and names why. Nothing here opens a schema.
+ */
+export async function discoverSchemaRoots(
+    input: {
+        readonly cockpit: { readonly root: string; readonly name: string }
+        readonly siblings: readonly EnvSchemaSibling[]
+        readonly git: ResolvedExecutable
+        readonly timeoutMs: number
+    },
+    execute: Execute,
+): Promise<readonly Readonly<{ schema: SchemaRoot; status?: Extract<SchemaStatus, { state: 'unavailable' }> }>[]> {
+    const store = schemaStore(input.cockpit.name)
+    const candidates = (await Promise.all(input.siblings.map(async (sibling) => {
+        const { relative, cause } = await discoverSchemaDirectories(sibling, input.git, input.timeoutMs, execute)
+        return { sibling, relative, cause }
+    })))
+    const discovered: Array<{ readonly schema: SchemaRoot; readonly status?: Extract<SchemaStatus, { state: 'unavailable' }> }> = candidates.flatMap(({ sibling, relative, cause }) => [
+        ...(cause === undefined ? [] : [{ schema: { owner: sibling.slug, relative: '', root: sibling.root, central: [] }, status: { state: 'unavailable' as const, cause } }]),
+        ...relative.map((directory) => ({ schema: {
+            owner: sibling.slug, relative: directory, root: directory === '' ? sibling.root : join(sibling.root, directory),
+            central: [...store, sibling.slug, ...directory === '' ? [] : directory.split('/')],
+        } })),
+    ])
+    // The cockpit's own schema belongs to no sibling, so its resolvers sit directly in the project's store.
+    if (!input.siblings.some(({ root }) => resolve(root) === resolve(input.cockpit.root))) {
+        discovered.push({ schema: { owner: 'cockpit root', relative: '', root: input.cockpit.root, central: store } })
+    }
+    return discovered
+}
+
 /**
  * Observes every schema the cockpit holds, and returns one aggregate observation per stack with the
  * per-schema status in its measured value. `env` is the caller's environment: a secret provider may
@@ -320,23 +380,9 @@ export async function observeEnvSchemas(
     },
     options: { readonly execute: Execute },
 ): Promise<readonly EnvironmentObservation[]> {
-    const store = ['env', '.secrets', input.cockpit.name]
-    const candidates = (await Promise.all(input.siblings.map(async (sibling) => {
-        const { relative, cause } = await discoverSchemaDirectories(sibling, input.git, input.timeoutMs, options.execute)
-        return { sibling, relative, cause }
-    })))
-    const discovered: Array<{ readonly schema: SchemaRoot; readonly status?: SchemaStatus }> = candidates.flatMap(({ sibling, relative, cause }) => [
-        ...(cause === undefined ? [] : [{ schema: { owner: sibling.slug, relative: '', root: sibling.root, central: [] }, status: { state: 'unavailable' as const, cause } }]),
-        ...relative.map((directory) => ({ schema: {
-            owner: sibling.slug, relative: directory, root: directory === '' ? sibling.root : join(sibling.root, directory),
-            central: [...store, sibling.slug, ...directory === '' ? [] : directory.split('/')],
-        } })),
-    ])
-    // The cockpit's own schema belongs to no sibling, so its resolvers sit directly in the project's store.
-    if (!input.siblings.some(({ root }) => resolve(root) === resolve(input.cockpit.root))) {
-        discovered.push({ schema: { owner: 'cockpit root', relative: '', root: input.cockpit.root, central: store } })
-    }
-    const adopted = (await Promise.all(discovered.map(async (entry) => {
+    const store = schemaStore(input.cockpit.name)
+    const discovered = await discoverSchemaRoots(input, options.execute)
+    const adopted: Array<{ readonly schema: SchemaRoot; readonly status?: SchemaStatus }> = (await Promise.all(discovered.map(async (entry) => {
         if (entry.status) return entry
         const { adopted: holdsSchema, unreadable } = await hasEnvSchema(entry.schema.root)
         if (!holdsSchema) return undefined
@@ -351,6 +397,7 @@ export async function observeEnvSchemas(
         // schema with a missing key would read as valid. Provider variables stay.
         env: Object.fromEntries(Object.entries(input.env)
             .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && !entry[0].startsWith('_VARLOCK_'))),
+        git: input.git,
         timeoutMs: input.timeoutMs,
         stackId: input.stackId,
     }
@@ -389,11 +436,13 @@ export async function observeEnvSchemas(
             remedy,
         })]
     }
-    // An absent varlock binary is advisory because varlock is optional; applicationDiagnostics
-    // turns it into a warning instead of a failing row, and overridden keys likewise.
-    const entries: { sibling: string; state: string; keys?: number; overrides?: string[] }[] = statuses
+    // An absent varlock binary is advisory because varlock is optional, and a schema left unrun has not
+    // failed; applicationDiagnostics turns each into a warning instead of a failing row, and overridden
+    // keys likewise.
+    const entries: { sibling: string; state: string; keys?: number; overrides?: string[]; load?: string }[] = statuses
         .map(([schema, status]) => status.state === 'valid'
             ? { sibling: entryName(schema), state: 'valid', keys: status.keys, ...status.overrides.length > 0 ? { overrides: [...status.overrides] } : {} }
+            : status.state === 'not-run' ? { sibling: entryName(schema), state: 'not-run', load: status.load }
             : { sibling: entryName(schema), state: 'tool-missing' })
         .sort((a, b) => a.sibling < b.sibling ? -1 : 1)
     const measured: JsonSnapshot = entries
@@ -414,6 +463,17 @@ export function envSchemaToolMissing(check: {
     if (check.owner !== OWNER || check.verdict !== 'pass' || !Array.isArray(check.measured)) return []
     return check.measured.flatMap((entry) => isRecord(entry) && entry.state === 'tool-missing' && typeof entry.sibling === 'string'
         ? [entry.sibling] : [])
+}
+
+/** Schemas left unrun because Git does not show them committed, from a passing row, with the load a person runs instead. */
+export function envSchemaNotRun(check: {
+    readonly owner: string
+    readonly verdict: string
+    readonly measured?: JsonSnapshot
+}): readonly Readonly<{ schema: string; load: string }>[] {
+    if (check.owner !== OWNER || check.verdict !== 'pass' || !Array.isArray(check.measured)) return []
+    return check.measured.flatMap((entry) => isRecord(entry) && entry.state === 'not-run' && typeof entry.sibling === 'string' && typeof entry.load === 'string'
+        ? [{ schema: entry.sibling, load: entry.load }] : [])
 }
 
 /**

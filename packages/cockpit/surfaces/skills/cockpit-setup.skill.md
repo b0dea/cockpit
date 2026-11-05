@@ -8,7 +8,7 @@ cockpit:
     claudecode: [Bash]
     codexcli: [shell]
     opencode: [bash]
-  commands: [init, setup, sync, check, doctor, up, preflight, upgrade, sibling, tool, pull, use, stacks, rebuild, down]
+  commands: [init, setup, sync, check, doctor, up, preflight, upgrade, sibling, tool, pull, use, stacks, rebuild, down, env keys, env schema]
   changes: [cockpit configuration and generated harness surfaces after preview]
   non-goals: [parsing registries, deciding environment policy, claiming an unproved installation]
   procedure: procedures/setup.md

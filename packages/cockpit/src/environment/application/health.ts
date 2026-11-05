@@ -24,7 +24,7 @@ import {
     type PreflightContext,
     type PreflightEvaluation,
 } from '../observations.js'
-import { ENV_SCHEMA_OVERRIDE_NAME_LIMIT, envSchemaOverrides, envSchemaToolMissing, VARLOCK_INSTALL_URL } from '../env-schema-observation.js'
+import { ENV_SCHEMA_OVERRIDE_NAME_LIMIT, envSchemaNotRun, envSchemaOverrides, envSchemaToolMissing, VARLOCK_INSTALL_URL } from '../env-schema-observation.js'
 import { SURFACE_OBSERVATION_CODES } from '../generated-application/surface-observation.js'
 import {
     createComparisonRemoteRefStep,
@@ -510,6 +510,13 @@ export function healthDiagnostics(health: HealthEvaluation): readonly Environmen
         target: sibling,
         fix: `install Varlock (${VARLOCK_INSTALL_URL}) and put it on PATH`,
     })))
+    const uncommitted = health.preflight.checks.flatMap((check) => envSchemaNotRun(check).map(({ schema, load }): EnvironmentDiagnostic => ({
+        severity: 'warning',
+        code: ENVIRONMENT_CODES.ENV_SCHEMA_UNCOMMITTED,
+        message: `${schema} has an .env.schema that is not committed in a Git repository, so it was not run: loading a schema runs its resolvers`,
+        target: schema,
+        fix: `commit it to have it validated, or have a person review it and run ${load}`,
+    })))
     const overridden = health.preflight.checks.flatMap((check) => envSchemaOverrides(check).map(({ schema, keys }): EnvironmentDiagnostic => ({
         severity: 'warning',
         code: ENVIRONMENT_CODES.ENV_SCHEMA_OVERRIDDEN,
@@ -518,7 +525,7 @@ export function healthDiagnostics(health: HealthEvaluation): readonly Environmen
         fix: 'unset those variables in the shell, then rerun this command to check the schema\'s own sources',
     })))
     return [...health.stopped === null ? [] : [health.stopped], ...health.notices,
-        ...health.producerRefusals, ...checks, ...advisories, ...overridden, ...producerFailures, ...comparisons]
+        ...health.producerRefusals, ...checks, ...advisories, ...uncommitted, ...overridden, ...producerFailures, ...comparisons]
 }
 
 function unavailablePreflight(message: string, forwarded?: readonly EnvironmentDiagnostic[]): PreflightCommandResult {

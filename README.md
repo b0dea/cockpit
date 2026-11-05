@@ -197,7 +197,7 @@ test command run from its checkout) widen that. Input it cannot parse is refused
 pass. Everything defaults to `agent` except `reset` and `mcp_approve`. The guard denies an agent's edit
 of those tables, and `check` reports any weakening nobody has confirmed.
 
-**Secrets stay out.** Varlock `.env.schema` files are validated without reading values. See
+**Secrets stay out.** Varlock `.env.schema` files are validated without reading values, once committed, and `cockpit env keys` gives an agent the variable names. See
 [Safety and autonomy](docs/safety-and-autonomy.md).
 
 ## Drift checks

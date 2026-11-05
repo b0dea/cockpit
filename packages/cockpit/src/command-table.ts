@@ -19,6 +19,8 @@ export type HandlerIdentifier = WorkHandlerIdentifier
     | 'check'
     | 'confirm'
     | 'docs-check'
+    | 'env-keys'
+    | 'env-schema'
     | 'doctor'
     | 'down'
     | 'exec'
@@ -64,6 +66,7 @@ export const commandGroups: readonly Readonly<{ name: string; summary: string }>
     { name: 'work', summary: 'Accept, check, grade and close work orders' },
     { name: 'browser', summary: 'Drive, inspect and capture the declared application in a browser' },
     { name: 'docs', summary: 'Check living documents and decision records against the repositories' },
+    { name: 'env', summary: 'Read what environment schemas declare with nothing resolved: variable names, or one schema\'s text' },
 ])
 
 /**
@@ -120,6 +123,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     mode: 'Declared gate execution mode',
     mount: 'How the stack uses the sibling: always, none or profile:<name>',
     note: 'What was checked, or what was and was not done',
+    path: 'The schema to print: <slug>:<relative directory>/.env.schema in a sibling, or .env.schema in the cockpit root, as env keys prints it',
     partial: 'Close the order as partly done; --note says what is left',
     port: 'With --scaffold-compose: the port the app listens on inside its container',
     profile: 'Compose profile to activate beside environment.profiles; repeat it for several',
@@ -161,7 +165,7 @@ export function describePublicOption(name: string): string {
 }
 
 type OrdinaryValueRole = 'confined-path' | 'resolved-config' | 'declared-service' | 'declared-gate' | 'gate-mode' | 'gate-selector'
-    | 'identifier' | 'route' | 'label' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target' | 'local-image' | 'evaluator-tool' | 'compose-profile'
+    | 'identifier' | 'route' | 'label' | 'schema-reference' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target' | 'local-image' | 'evaluator-tool' | 'compose-profile'
 interface OrdinaryOption {
     readonly kind: 'flag' | 'value'
     readonly role: 'boolean' | OrdinaryValueRole
@@ -222,6 +226,9 @@ function ordinary(command: HandlerIdentifier, extra: Partial<Extract<OrdinaryCom
         forbidden: { presence: [] }, ...extra }
 }
 function unavailable(reason: string): OrdinaryCommandMetadata { return { availability: 'unavailable', reason } }
+
+// `<slug>:` and plain directories, ending in exactly this name: no `.` or `..` segment can climb out.
+const SCHEMA_REFERENCE = /^(?:[a-z0-9][a-z0-9-]{0,63}:)?(?:(?!\.\.?\/)[A-Za-z0-9._@+-]+\/)*\.env\.schema$/
 
 const browserAdmission = Object.freeze({ requires: 'browser-preapproval' as const })
 // --interactive asks for a person at a terminal, so an agent invocation never carries it.
@@ -523,6 +530,16 @@ const sources = [
         ordinary: ordinary('doctor'),
         flags: configured,
     },
+    // Reads four documentation file names statically and runs read-only Git, so an agent gets the names
+    // a native read rule refuses without resolving anything.
+    { name: 'env keys', handler: 'env-keys', stage: 'diagnose', summary: 'List the variable names env schemas and templates declare, with no value and nothing resolved', visibility: 'public',
+        ordinary: ordinary('env-keys'),
+        flags: configured },
+    // Verbatim on purpose: the guard treats this one name as documentation and Git already reaches a
+    // committed copy. The role admits nothing but that exact name; the command proves the directory.
+    { name: 'env schema', handler: 'env-schema', stage: 'diagnose', summary: 'Print one .env.schema a sibling or the cockpit root holds, verbatim and with nothing resolved', visibility: 'public',
+        ordinary: ordinary('env-schema'),
+        flags: { ...configured, path: str(value('schema-reference', true)) } },
     // A gate runs only the stages a person declared in the reviewed cockpit.toml, which is the trust
     // `up` already has; a selector reaches a stage only through the arguments that stage declares.
     { name: 'test-run', handler: 'test-run', stage: 'test-and-grade', summary: 'Run a declared product test gate and report which tests it selected', visibility: 'public',
@@ -740,6 +757,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
             : option.role === 'identifier' ? WORK_ORDER_ID.test(text)
             : option.role === 'route' ? ROUTE_SELECTOR.test(text)
             : option.role === 'label' ? true
+            : option.role === 'schema-reference' ? SCHEMA_REFERENCE.test(text)
             : option.role === 'field' ? isRecordedAnswerField(text)
             : option.role === 'tail' ? /^[1-9]\d{0,4}$/.test(text) && Number(text) <= 10_000
             : option.role === 'since' ? text.length <= 64 && (/^\d+(?:\.\d+)?[smhd]$/.test(text)
