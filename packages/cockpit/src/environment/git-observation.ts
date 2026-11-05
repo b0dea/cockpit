@@ -680,6 +680,51 @@ export async function listTrackedEnvSchemas(input: {
     return refused.kind === 'not-a-repository' ? refused : { kind: 'unavailable', reason: refused.reason }
 }
 
+export type SchemaCommitState =
+    | Readonly<{ kind: 'committed' }>
+    | Readonly<{ kind: 'uncommitted' }>
+    | Readonly<{ kind: 'not-a-repository' }>
+    | Readonly<{ kind: 'unavailable'; reason: string }>
+
+/** Whether one file in `directory` is tracked and identical to HEAD, by Git's own account. */
+export async function inspectSchemaCommit(input: {
+    readonly executable: ResolvedExecutable
+    readonly label: string
+    readonly directory: string
+    readonly file: string
+    readonly timeoutMs: number
+}, execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): Promise<SchemaCommitState> {
+    const executable = resolvedGitExecutable(input.executable)
+    if (!executable) return { kind: 'unavailable', reason: 'no resolved Git executable' }
+    const ask = async (args: readonly string[]): Promise<Buffer | Exclude<SchemaCommitState, { kind: 'committed' | 'uncommitted' }>> => {
+        const step = snapshotExecutionStep({
+            id: `git:schema-commit:${args[0]}:${input.label}`,
+            argv: [executable.canonicalPath, '-C', input.directory, ...GIT_CHILD_CONFIG, ...args],
+            argv0: executable.invocationPath, cwd: input.directory, env: {}, timeoutMs: input.timeoutMs,
+            stdoutLimitBytes: COMPARISON_OUTPUT_LIMIT, stderrLimitBytes: COMPARISON_OUTPUT_LIMIT,
+            paths: [input.directory], ports: [], labels: { sibling: input.label },
+            expected: [{ kind: 'path', target: input.directory, state: 'repository' }],
+            consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912,
+                argvIndexes: [0], executable: true, executionMode: executable.executionMode }],
+            filesystemChecks: [], compensation: [],
+        })
+        if (!step) return { kind: 'unavailable', reason: 'the Git status could not be planned' }
+        const outcome = authenticatedExecutionOutcome(await execute(step), step)
+        if (outcome?.kind === 'complete') return outcome.stdout
+        if (outcome?.code !== ENVIRONMENT_CODES.EXECUTION_STEP_FAILED) return { kind: 'unavailable', reason: `Git did not answer (${outcome?.code ?? 'unauthenticated Git outcome'})` }
+        const refused = gitRepositoryRefusal(outcome.stderr)
+        return refused.kind === 'not-a-repository' ? refused : { kind: 'unavailable', reason: refused.reason }
+    }
+    const status = await ask(['status', '--porcelain=v1', '-z', '--', input.file])
+    if (!Buffer.isBuffer(status)) return status
+    if (status.length > 0) return { kind: 'uncommitted' }
+    // An empty status also describes a gitignored file, and an edit hidden behind the assume-unchanged
+    // or skip-worktree flag, so only a plain tracked entry proves the content is the committed one.
+    const entry = await ask(['ls-files', '-v', '-z', '--', input.file])
+    if (!Buffer.isBuffer(entry)) return entry
+    return entry.toString('utf8').startsWith('H ') ? { kind: 'committed' } : { kind: 'uncommitted' }
+}
+
 /**
  * Secret-shaped files a repository commits. The guard keeps agents from reading them, which
  * protects the session but not the history: every clone already holds the values, and nothing

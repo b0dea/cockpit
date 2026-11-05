@@ -835,8 +835,14 @@ describe('env schema health', () => {
     const SECRET = 'sentinel-resolved-value-7c1e94'
     const schemaOwner = 'env-schema-observation'
 
+    async function commitSchema(repository: string, file: string) {
+        await writeFile(join(repository, file), 'API_KEY=\n')
+        await run('git', ['-C', repository, 'add', '--force', '--', file])
+        await run('git', ['-C', repository, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '--quiet', '-m', 'schema'])
+    }
+
     async function withVarlock(candidate: Awaited<ReturnType<typeof fixture>>, body: string | undefined) {
-        await writeFile(join(candidate.checkout, 'siblings', 'api', '.env.schema'), 'API_KEY=\n')
+        await commitSchema(candidate.checkout, join('siblings', 'api', '.env.schema'))
         if (body === undefined) return
         const path = join(candidate.root, 'varlock')
         await writeFile(path, `#!/bin/sh\n${body}\n`, { mode: 0o700 })
@@ -901,7 +907,8 @@ describe('env schema health', () => {
         await withVarlock(candidate, printing(report(), 0))
         const worktree = join(candidate.root, 'api-worktree')
         await mkdir(worktree, { recursive: true })
-        await writeFile(join(worktree, '.env.schema'), 'API_KEY=\n')
+        await run('git', ['init', '--quiet', worktree])
+        await commitSchema(worktree, '.env.schema')
         const local = join(dirname(candidate.configPath), '.cockpit', 'local')
         await mkdir(local, { recursive: true })
         await writeFile(join(local, 'sibling-checkouts'), `${JSON.stringify({ format: 'cockpit-sibling-checkouts/v1', checkouts: { api: worktree } })}\n`)
@@ -949,6 +956,26 @@ describe('env schema health', () => {
                 severity: 'warning', code: 'ENV_SCHEMA_TOOL_MISSING', target: 'api', fix: expect.stringContaining('https://varlock.dev'),
             }))
         }
+    })
+
+    it('warns, without failing the row or running Varlock, about a schema that is not committed', async () => {
+        const candidate = await fixture({ machineOnly: true })
+        const marker = join(candidate.root, 'varlock-ran')
+        await withVarlock(candidate, `touch '${marker}'\n${printing(report(), 0)}`)
+        const api = join(candidate.checkout, 'siblings', 'api')
+        await writeFile(join(api, '.env.schema'), 'API_KEY=exec("synthetic")\n')
+
+        const { doctor, preflight, row } = await health(candidate)
+
+        for (const result of [doctor, preflight]) {
+            expect(row(result)).toMatchObject({ verdict: 'pass', measured: [{ sibling: 'api', state: 'not-run' }] })
+            expect(result.diagnostics).toContainEqual({
+                severity: 'warning', code: 'ENV_SCHEMA_UNCOMMITTED', target: 'api',
+                message: expect.stringContaining('api has an .env.schema that is not committed'),
+                fix: `commit it to have it validated, or have a person review it and run VARLOCK_TELEMETRY_DISABLED=true varlock load --path ${api}`,
+            })
+        }
+        await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
     })
 
     it('fails preflight naming the invalid keys and the fix', async () => {

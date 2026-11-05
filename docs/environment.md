@@ -716,10 +716,11 @@ explicit permission from whoever owns the product and the provider. Current comm
 limitations are in the [Varlock CLI reference](https://varlock.dev/reference/cli/load-and-run/) and
 [AI tools guide](https://varlock.dev/guides/ai-tools/).
 
-`cockpit preflight` and `cockpit doctor` check every `.env.schema` a sibling tracks, asking Git with
-`git ls-files`, plus a sibling's root schema whether tracked or not and the cockpit root's own. A
-sibling that is not a Git repository is checked at its root only; Git failing for another reason, or
-more than 64 tracked schemas, makes that sibling unavailable. On a cockpit that declares no runtime
+`cockpit preflight` and `cockpit doctor` look at every `.env.schema` a sibling tracks, asking Git with
+`git ls-files`, plus a sibling's root schema whether tracked or not and the cockpit root's own, and
+load each one that is [committed](#a-schema-runs-only-once-committed). In a sibling that is not a Git
+repository only the root is looked at; Git failing for another reason, or more than 64 tracked
+schemas, makes that sibling unavailable. On a cockpit that declares no runtime
 `preflight` refuses, so `doctor` is what reports schema status there. Each schema runs
 `varlock load --agent --format json-full --path <schema directory>` with
 `VARLOCK_TELEMETRY_DISABLED=true`, the command's timeout, a 256 KiB output cap and every `_VARLOCK_*`
@@ -748,6 +749,26 @@ leaving out the second path where that directory does not exist. `ENV_SCHEMA_OVE
 failing the row when Varlock reports a key as satisfied by the shell that ran the command rather than
 by the schema's own sources; unset it and rerun to check those sources.
 
+### A schema runs only once committed
+
+Loading a schema runs its resolvers, including `exec()`, with the caller's environment, and a schema
+is exempt from the secret-file denial, so an edited one could otherwise run commands through an
+unprompted `doctor`. Before loading, the probe asks Git in the schema's directory, with
+`git status --porcelain=v1 -z` and `git ls-files -v`, whether the file is tracked and identical to
+HEAD, because a commit is a guarded, visible step and an edit is not. Only then does Varlock run.
+
+A schema that is edited, staged, untracked, ignored, hidden behind Git's assume-unchanged or
+skip-worktree flag, a symbolic link or outside a repository is not run. Its row keeps passing, and
+`ENV_SCHEMA_UNCOMMITTED` warns, naming the schema and the fix: commit it to have it validated, or
+have a person review it and run the `VARLOCK_TELEMETRY_DISABLED=true varlock load` the warning prints
+with both paths. Git failing for any other reason makes the schema unavailable, again without running
+Varlock. An edited schema is therefore not validated until it is committed.
+
+This does not cover an agent's commit that a person approves, local plugin or `@import` files beside a
+schema, or declared test commands, which also run edited code. Cockpit is not a sandbox.
+
+### Varlock on PATH
+
 The probe uses `varlock` from your `PATH`, not the product's locked copy, so a product with only a
 local install sees `ENV_SCHEMA_TOOL_MISSING`, a warning rather than a failure
 (<https://varlock.dev>).
@@ -775,6 +796,43 @@ of the central store; whether a harness can natively block reads of these files 
 tested. Git ignore rules, filesystem permissions, encryption and output redaction do not protect
 secrets from malicious code running as the same user, and trusted product child processes receive
 plaintext variables. A stronger boundary needs a separately tested sandbox and provider policy.
+
+### Read variable names and schemas
+
+Native rules can refuse an agent these documentation files
+([measured](safety-and-autonomy.md#reading-secrets-and-instances)), so two commands read them. Both
+find the same directories as the probe, in the checkout `cockpit use` serves, run no Varlock and no
+resolver, never follow a symbolic or hard link, and an agent runs them without a prompt.
+
+`npx --no cockpit env keys --config cockpit.toml` is the narrower choice when only names are needed;
+add `--json` for a machine-readable answer. For each `.env.schema`, or a directory's
+`.env.example`, `.env.sample` and `.env.template` where it has none, it prints the path, whether it is a
+`schema` or `template` source and each key's `name`. A key shows `required`, `sensitive` and a bare
+`type` only when a decorator on the lines directly above it declares them, or `@defaultRequired` or
+`@defaultSensitive` above the `# ---` divider does; a missing field means the file states no static
+answer, not false. A value, default, resolver expression, comment's text or unparsed line is never
+shown: `unparsed` counts those lines, which include any key name that is not a plain identifier. A
+symbolic or hard link is reported by name and warns with `ENV_KEYS_SOURCE_SKIPPED`. No source at all exits 0
+and names what was looked for; a file or sibling that could not be read exits 2 naming why, beside what
+could be read. Output is bounded, and `truncated` says what was left out. Varlock also honours a
+decorator after a value, measured on 2026-11-05 with Varlock 1.23.0; `env keys` does not read those, so
+it states no default for such a key.
+
+`npx --no cockpit env schema --config cockpit.toml --path api:services/web/.env.schema` prints one
+schema's text verbatim, which includes every resolver expression and comment
+(in human output, a control character is shown escaped; `--json` carries the exact text). A schema must
+hold no secret values: the guard treats this name as documentation and Git already reaches a committed
+copy. `--path` is the `reference` that `env keys` prints for a schema source:
+`<slug>:<relative directory>/.env.schema` in a sibling, or `.env.schema` in the cockpit root. It refuses
+with `ENV_SCHEMA_READ_REFUSED`, naming the fix, any other file name (matched exactly, including case), a
+symbolic or hard link, a non-regular file, a directory the probe does not discover and an oversized
+file.
+
+To change one, write a draft with your normal tools and add `--replace-from <draft>` to that command,
+with the draft relative to the cockpit root.
+[What it refuses](safety-and-autonomy.md#editing-a-schema-under-claude-code) is what stops a secret
+being laundered through a draft. The result is
+[not validated until it is committed](#a-schema-runs-only-once-committed).
 
 ## Check and sync
 

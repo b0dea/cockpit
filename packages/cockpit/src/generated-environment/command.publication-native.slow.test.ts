@@ -256,7 +256,7 @@ describe('public surface publication transaction', () => {
             // the data volumes, so it is the agent's.
             expect(settings.permissions.allow).toEqual(expect.arrayContaining([
                 'Bash(npx --no cockpit test-run *)', 'Bash(./node_modules/.bin/cockpit check *)', 'Bash(npx --no cockpit sync *)',
-                'Bash(npx --no cockpit work accept *)', 'Bash(npx --no cockpit reset * --apply)', 'Bash(npx --no cockpit stacks *)', 'Bash(npx --no cockpit down *)',
+                'Bash(npx --no cockpit work accept *)', 'Bash(npx --no cockpit reset * --apply)', 'Bash(npx --no cockpit stacks *)', 'Bash(npx --no cockpit env keys *)', 'Bash(npx --no cockpit env schema *)', 'Bash(npx --no cockpit down *)',
             ]))
             expect(settings.permissions.allow!.filter(rule => /cockpit (init|sibling|session)\b/.test(rule))).toEqual([])
             expect(Object.keys(codex.mcp_servers).sort()).toEqual(['approved-server', 'remote-headers', 'remote-helper', 'unapproved-server'])

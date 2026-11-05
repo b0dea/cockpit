@@ -47,6 +47,7 @@ async function trackedSchemas(repository: string, ...relative: string[]) {
         await writeFile(join(repository, directory, SCHEMA), 'API_KEY=\n')
     }
     git(repository, 'add', '--', ...relative.map((directory) => join(directory, SCHEMA)))
+    git(repository, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '--quiet', '-m', 'fixture')
 }
 
 async function observe(space: Awaited<ReturnType<typeof workspace>>, env: Record<string, string> = {}, cockpitRoot = space.cockpit) {
@@ -62,12 +63,11 @@ async function observe(space: Awaited<ReturnType<typeof workspace>>, env: Record
 }
 
 describe('env schema discovery and load paths', () => {
-    it('validates tracked nested schemas, an untracked root and the cockpit root, each with its own central directory', async () => {
+    it('validates tracked nested schemas, a root schema and the cockpit root, each with its own central directory', async () => {
         const space = await workspace()
-        await trackedSchemas(space.api, 'services/web', 'services/gone', 'services/plain')
+        await trackedSchemas(space.api, '', 'services/web', 'services/gone', 'services/plain')
         await rm(join(space.api, 'services/gone', SCHEMA))
-        await writeFile(join(space.api, SCHEMA), 'API_KEY=\n')
-        await writeFile(join(space.cockpit, SCHEMA), 'API_KEY=\n')
+        await trackedSchemas(space.cockpit, '')
         await mkdir(space.central, { recursive: true })
         await mkdir(join(space.central, 'services/web'), { recursive: true })
 
@@ -92,7 +92,7 @@ describe('env schema discovery and load paths', () => {
 
     it('probes a cockpit root that is also a sibling once, under the sibling', async () => {
         const space = await workspace()
-        await writeFile(join(space.cockpit, SCHEMA), 'API_KEY=\n')
+        await trackedSchemas(space.cockpit, '')
         const resolved = await resolveGitExecutable(process.env)
         if (resolved.state !== 'available') throw new Error('git is unavailable')
         const execute = vi.fn(executeProbe)
@@ -109,7 +109,7 @@ describe('env schema discovery and load paths', () => {
             git(main, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '--quiet', '--allow-empty', '-m', 'fixture')
             const linked = join(space.root, 'linked')
             git(main, 'worktree', 'add', '--quiet', '--detach', linked)
-            await writeFile(join(space.api, SCHEMA), 'API_KEY=\n')
+            await trackedSchemas(space.api, '')
             await mkdir(store(main), { recursive: true })
             await mkdir(store(join(main, 'nested')), { recursive: true })
             await mkdir(join(linked, 'nested'))
@@ -182,7 +182,8 @@ describe('env schema discovery and load paths', () => {
         await mkdir(join(space.api, 'services/web'), { recursive: true })
         await writeFile(join(space.api, 'services/web', SCHEMA), 'API_KEY=\n')
         await writeFile(join(space.api, SCHEMA), 'API_KEY=\n')
-        expect((await observe(space)).observation.observed).toMatchObject({ state: 'available', value: [{ sibling: 'api', state: 'valid' }] })
+        // Without a repository the root alone is discovered, and nothing has been committed to run it.
+        expect((await observe(space)).observation.observed).toMatchObject({ state: 'available', value: [{ sibling: 'api', state: 'not-run' }] })
 
         await trackedSchemas(space.api, 'services/web')
         await writeFile(join(space.api, '.git', 'index'), 'not an index')
@@ -207,10 +208,75 @@ describe('env schema discovery and load paths', () => {
     })
 })
 
+describe('env schema commit gate', () => {
+    // A stand-in that leaves evidence of running: loading a schema is what executes its resolvers.
+    const marking = async () => {
+        const space = await workspace()
+        const marker = join(space.root, 'ran')
+        await writeFile(join(space.bin, 'varlock'), `#!/bin/sh\ntouch '${marker}'\n${report()}\n`, { mode: 0o700 })
+        const ran = async () => { try { await rm(marker); return true } catch { return false } }
+        return { space, ran }
+    }
+    const notRun = (space: { api: string }) => [{ sibling: 'api', state: 'not-run', load: `VARLOCK_TELEMETRY_DISABLED=true varlock load --path ${space.api}` }]
+
+    it('runs Varlock only for a schema Git shows as committed and unchanged', async () => {
+        const { space, ran } = await marking()
+        const schema = join(space.api, SCHEMA)
+        const expectNotRun = async (why: string) => {
+            expect((await observe(space)).observation.observed, why).toMatchObject({ state: 'available', value: notRun(space) })
+            expect(await ran(), why).toBe(false)
+        }
+        await writeFile(schema, 'API_KEY=\n')
+        await expectNotRun('no repository')
+        git(space.api, 'init', '--quiet')
+        await expectNotRun('untracked')
+        await writeFile(join(space.api, '.gitignore'), '.env.*\n')
+        await expectNotRun('ignored, which status alone reports as nothing')
+        await rm(join(space.api, '.gitignore'))
+        git(space.api, 'add', '--', SCHEMA)
+        await expectNotRun('staged, not committed')
+        git(space.api, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '--quiet', '-m', 'fixture')
+
+        expect((await observe(space)).observation.observed).toMatchObject({ state: 'available', value: [{ sibling: 'api', state: 'valid' }] })
+        expect(await ran()).toBe(true)
+
+        await writeFile(schema, 'API_KEY=exec("synthetic")\n')
+        await expectNotRun('edited')
+        for (const flag of ['--assume-unchanged', '--skip-worktree']) {
+            git(space.api, 'update-index', flag, '--', SCHEMA)
+            await expectNotRun(`edited behind ${flag}`)
+            git(space.api, 'update-index', flag.replace('--', '--no-'), '--', SCHEMA)
+        }
+        git(space.api, 'checkout', '--', SCHEMA)
+        const elsewhere = join(space.root, 'elsewhere.schema')
+        await writeFile(elsewhere, 'API_KEY=exec("synthetic")\n')
+        await rm(schema)
+        await symlink(elsewhere, schema)
+        git(space.api, 'add', '--', SCHEMA)
+        git(space.api, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '--quiet', '-m', 'link')
+        await expectNotRun('a committed link, whose target passed no commit')
+    })
+
+    it('names both paths a person loads, and is unavailable without running Varlock when Git fails', async () => {
+        const { space, ran } = await marking()
+        await writeFile(join(space.api, SCHEMA), 'API_KEY=\n')
+        await mkdir(space.central, { recursive: true })
+        expect((await observe(space)).observation.observed).toMatchObject({ state: 'available', value: [{ sibling: 'api', state: 'not-run',
+            load: `VARLOCK_TELEMETRY_DISABLED=true varlock load --path ${space.api} --path ${space.central}` }] })
+
+        // The cockpit root is found without Git, so this failure is the commit question's own.
+        await trackedSchemas(space.cockpit, '')
+        await writeFile(join(space.cockpit, '.git', 'index'), 'not an index')
+        const failed = await observe(space)
+        expect(failed.observation.observed).toMatchObject({ state: 'unavailable', reason: expect.stringMatching(/cockpit root \(\.\): Git failed/) })
+        expect(await ran()).toBe(false)
+    })
+})
+
 describe('env schema report categories', () => {
     async function classified(errors: Record<string, unknown>, extra?: Record<string, unknown>) {
         const space = await workspace(report(errors, extra))
-        await writeFile(join(space.api, SCHEMA), 'API_KEY=\n')
+        await trackedSchemas(space.api, '')
         const { observation } = await observe(space)
         expect(JSON.stringify(observation)).not.toContain(SECRET)
         return observation
@@ -242,8 +308,7 @@ describe('env schema report categories', () => {
 
     it('carries an unavailable schema into a failing row beside the invalid one', async () => {
         const space = await workspace(`case "$*" in *services/web*) ${report({ configItems: { REGION: 'exec(): command failed' } })} ;; *) ${report({ configItems: { API_KEY: REQUIRED_EMPTY } })} ;; esac`)
-        await trackedSchemas(space.api, 'services/web')
-        await writeFile(join(space.api, SCHEMA), 'API_KEY=\n')
+        await trackedSchemas(space.api, 'services/web', '')
         expect((await observe(space)).observation.observed).toMatchObject({ state: 'failed',
             reason: 'env schema is invalid in api (.): missing required API_KEY; could not be checked: api (services/web): could not validate or resolve REGION' })
     })
@@ -252,14 +317,14 @@ describe('env schema report categories', () => {
 describe('env schema caller environment', () => {
     it('strips every Varlock control variable and keeps what a provider may need', async () => {
         const space = await workspace(`env | grep -q '^_VARLOCK_' && exit 42\ntest "$PROVIDER_TOKEN_FILE" = synthetic || exit 43\n${report()}`)
-        await writeFile(join(space.api, SCHEMA), 'API_KEY=\n')
+        await trackedSchemas(space.api, '')
         const { observation } = await observe(space, { _VARLOCK_FILTER: 'REGION', _VARLOCK_USE_FROZEN_ENV: '1', PROVIDER_TOKEN_FILE: 'synthetic' })
         expect(observation.observed).toMatchObject({ state: 'available', value: [{ sibling: 'api', state: 'valid' }] })
     })
 
     it('surfaces overridden keys from a passing row, names only', async () => {
         const space = await workspace(report(undefined, { overrideKeys: ['REGION', 'API_KEY'] }))
-        await writeFile(join(space.api, SCHEMA), 'API_KEY=\n')
+        await trackedSchemas(space.api, '')
         const { observation } = await observe(space)
         expect(observation.observed).toMatchObject({ state: 'available', value: [{ sibling: 'api', state: 'valid', keys: 2, overrides: ['API_KEY', 'REGION'] }] })
         const measured = observation.observed.state === 'available' ? observation.observed.value : null
@@ -269,7 +334,7 @@ describe('env schema caller environment', () => {
 
     it('refuses an override list it cannot read rather than discarding it', async () => {
         const space = await workspace(report(undefined, { overrideKeys: [`${SECRET}=value`] }))
-        await writeFile(join(space.api, SCHEMA), 'API_KEY=\n')
+        await trackedSchemas(space.api, '')
         const { observation } = await observe(space)
         expect(observation.observed).toMatchObject({ state: 'unavailable', reason: expect.stringContaining('unrecognised shape') })
         expect(JSON.stringify(observation)).not.toContain(SECRET)

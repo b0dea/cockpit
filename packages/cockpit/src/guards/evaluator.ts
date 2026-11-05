@@ -34,6 +34,8 @@ export interface GuardInvocationProfile {
     readonly argv: readonly string[]
     /** Files the admitted command reads and may echo back, checked like a read-only command's reads. */
     readonly reads?: readonly string[]
+    /** Admitted only as the whole call: its reads are proved now, and a chain could change them first. */
+    readonly alone?: true
 }
 export interface GuardProjectCommand {
     readonly executable: string
@@ -173,6 +175,16 @@ export function foldGuardSpelling(path: string): string {
     return path.normalize('NFC').toUpperCase().toLowerCase().normalize('NFC')
 }
 const fold = foldGuardSpelling
+/** A name the guard treats as an environment file or secrets directory, under any spelling. */
+export function isSensitiveGuardName(name: string): boolean {
+    const folded = fold(name)
+    return folded.startsWith('.env') || folded === '.secrets'
+}
+/** Every location the guard protects by path: its controls, the secrets root, the configuration and each declared instance. */
+export function guardProtectedLocations(input: Readonly<{ canonicalRoot: string; configPath: string; instances: readonly string[] }>): readonly Readonly<{ path: string; type: 'file' | 'directory' }>[] {
+    return [...GUARD_ROOT_PROTECTIONS.map(({ path, type }) => ({ path: posix.join(input.canonicalRoot, path), type })),
+        { path: input.configPath, type: 'file' as const }, ...input.instances.map((path) => ({ path, type: 'file' as const }))]
+}
 const unavailable = (reason: string): GuardDecision => ({ decision: 'unavailable', reason })
 const ask = (reason: string): GuardDecision => ({ decision: 'ask', reason })
 const UNPROVEN_LAUNCHER = 'This cockpit command requires human approval: the guard could not prove it starts the installed cockpit. '
@@ -248,7 +260,8 @@ function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
             || !keys(item, item.fix === undefined ? ['match', 'argv', 'reason'] : ['match', 'argv', 'reason', 'fix'])
             || !['prefix', 'contains'].includes(String(item.match)) || !ruleArgv(item.argv) || !scalar(item.reason)
             || item.fix !== undefined && !scalar(item.fix))
-        || p.cockpitInvocations.some((item) => !record(item) || !keys(item, item.reads === undefined ? ['executable', 'cwd', 'argv'] : ['executable', 'cwd', 'argv', 'reads'])
+        || p.cockpitInvocations.some((item) => !record(item) || !keys(item, ['executable', 'cwd', 'argv', ...item.reads === undefined ? [] : ['reads'], ...item.alone === undefined ? [] : ['alone']])
+            || item.alone !== undefined && item.alone !== true
             || !scalar(item.executable) || item.executable.includes('*') || !confined(item.cwd) || !argv(item.argv)
             || item.reads !== undefined && (!strings(item.reads) || item.reads.length > GUARD_INPUT_LIMITS.paths))
         || p.cockpitLaunchers.length > GUARD_INPUT_LIMITS.invocations || p.cockpitLaunchers.some((item) => !record(item) || !keys(item, ['executable', 'cwd', 'argv'])
@@ -725,7 +738,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     // no tool reads or writes one by default: the guard only asked for `cat .env` and allowed an edit.
     const dotenvSecret = (folded: string) => { const name = posix.basename(folded); return (name === '.env' || name.startsWith('.env.')) && !documentation(folded) }
     const dotenvDenial = deny('Refusing to read or write an environment file: `.env` and `.env.*` hold secrets unless named .env.example, .env.sample, .env.template or .env.schema, or declared as a template. '
-        + 'Fix: an agent runs the trusted process through a declared project command or script that wraps Varlock; a person in a terminal runs that same command, or `VARLOCK_TELEMETRY_DISABLED=true varlock run -- <cmd>`, without `--redact-stdout`, which Varlock refuses on a terminal. Consult schema names only where native permissions allow them.')
+        + 'Fix: an agent runs the trusted process through a declared project command or script that wraps Varlock; a person in a terminal runs that same command, or `VARLOCK_TELEMETRY_DISABLED=true varlock run -- <cmd>`, without `--redact-stdout`, which Varlock refuses on a terminal. List variable names with `npx --no cockpit env keys --config <your cockpit.toml>`.')
     const manifestPath = absolute(GUARD_CONTROL_FILES[1])
     const structural = [resolved.configPath, manifestPath]
     const structuralDenial = deny(`Refusing to delete, rename, truncate, relink or make unreadable ${posix.basename(resolved.configPath)} or ${GUARD_CONTROL_FILES[1]}: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit ${posix.basename(resolved.configPath)} in place instead.`)
@@ -1087,6 +1100,9 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
                 || profile.argv.length !== invocation.argv.length || profile.argv.some((word, i) => word !== invocation.argv[i])) continue
             if (!inspectReadOnly({ cwd: profile.cwd, reads: profile.reads, trees: [], listings: [] })) {
                 holdAsk(invocation, ask('This cockpit command reads a file the guard cannot prove safe to read: a symlink, an undeclared .env file or one outside the configured roots.'))
+            }
+            if (profile.alone && (input.invocations.length !== 1 || invocation.redirects.length > 0)) {
+                holdAsk(invocation, ask('env schema --replace-from runs without a prompt only as the whole command: another command in this call could change the draft after the guard proved it safe. Run it on its own.'))
             }
         }
         if (!git) continue

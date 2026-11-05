@@ -132,7 +132,7 @@ describe('closed ordinary invocation metadata', () => {
     // The words each available config-bearing row needs besides --config.
     const requiredWords: Readonly<Record<string, readonly string[]>> = {
         selftest: ['--probe-specifications', 'probes.json'], logs: ['--service', 'app'], runtime: ['measure', '--image', 'node:22-alpine'],
-        restart: ['--service', 'app'], rebuild: ['--service', 'app'], exec: ['--service', 'app'],
+        restart: ['--service', 'app'], rebuild: ['--service', 'app'], exec: ['--service', 'app'], 'env schema': ['--path', 'api:services/web/.env.schema'],
         'test-run': ['--gate', 'quick'], reset: ['--apply'], grade: ['--criteria', 'criteria.md'], use: ['app'], tool: ['add', 'codexcli'], confirm: ['ports.bases'],
         ...Object.fromEntries(['accept', 'check', 'acknowledge', 'grade', 'signoff', 'recover'].map(sub => [`work ${sub}`, ['--work-order', 'WO-1']])),
         'work note': ['--work-order', 'WO-1', '--text', 'why'], 'work decide': ['--work-order', 'WO-1', '--decision', '1', '--record'], 'work answer': ['--work-order', 'WO-1', '--question', '1', '--text', 'because'],
@@ -213,10 +213,27 @@ describe('closed ordinary invocation metadata', () => {
         }
     })
 
+    it('admits env schema only for the exact file name, at a path that cannot climb', () => {
+        const words = (path: string) => ['env', 'schema', '--config', authority.configPath, '--path', path]
+        for (const path of ['.env.schema', 'api:.env.schema', 'api:services/web/.env.schema']) expect(ordinary(words(path)), path).toBeDefined()
+        for (const path of ['.env', '.env.local', '.env.schema.private', '.ENV.SCHEMA', 'api:.env', '../.env.schema', 'api:../.env.schema', 'services/../.env.schema',
+            '/workspace/product/.env.schema', 'api:/etc/.env.schema']) expect(ordinary(words(path)), path).toBeUndefined()
+    })
+
+    it('admits env schema --replace-from only with a draft the guard can prove, and marks it as the whole call', () => {
+        const words = (draft: string) => ['env', 'schema', '--config', authority.configPath, '--path', 'api:.env.schema', '--replace-from', draft]
+        expect(ordinary(words('drafts/schema.txt'))).toEqual({ executable: authority.executable, cwd: authority.canonicalRoot, argv: words('drafts/schema.txt'),
+            reads: ['/workspace/product/drafts/schema.txt'], alone: true })
+        for (const draft of ['.env', '.ENV', '.env.local', '.env.example', '.env.schema', 'drafts/.env', '.env-drafts/schema.txt', '.secrets/schema.txt', 'env/.SECRETS/schema.txt',
+            '../schema.txt', 'drafts/../.env', '/elsewhere/schema.txt']) expect(ordinary(words(draft)), draft).toBeUndefined()
+        expect(ordinary(['env', 'schema', '--config', authority.configPath, '--replace-from', 'drafts/schema.txt'])).toBeUndefined()
+        expect(ordinary(['env', 'keys', '--config', authority.configPath, '--replace-from', 'drafts/schema.txt'])).toBeUndefined()
+    })
+
     it('requires the exact resolved config for every available config-bearing row', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
         expect(rows.map(row => row.name)).toEqual(['setup', 'use', 'pull', 'tool', 'confirm', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'ps', 'restart', 'rebuild', 'exec',
-            'sleep', 'down', 'reset', 'stacks', 'doctor',
+            'sleep', 'down', 'reset', 'stacks', 'doctor', 'env keys', 'env schema',
             'test-run', 'work status', 'work accept', 'work check', 'work note', 'work decide', 'work answer', 'work acknowledge', 'work grade', 'work signoff', 'work recover', 'work verify', 'grade',
             'browser drive', 'browser screenshot', 'docs check'])
         for (const row of rows) {
@@ -291,7 +308,7 @@ describe('closed ordinary invocation metadata', () => {
             for (const [name, option] of Object.entries(row.ordinary.options)) {
                 const value = option.kind === 'flag' ? [] : [name === 'target' ? 'codexcli' : name === 'config' ? authority.configPath : name === 'service' ? 'app' : name === 'tail' ? '1' : name === 'since' ? '1m'
                     : name === 'gate' ? 'quick' : name === 'mode' ? 'full' : name === 'select' ? 'test:refresh' : name === 'accept-reset' ? 'a'.repeat(64) : name === 'question' || name === 'decision' ? '1' : name === 'evaluator' ? 'codexcli'
-                        : name === 'profile' ? 'jobs' : 'path']
+                        : name === 'profile' ? 'jobs' : name === 'path' ? '.env.schema' : 'path']
                 const baseline = required.filter((arg, i) => arg !== `--${name}` && required[i - 1] !== `--${name}`)
                 const tail = trailingWords(row.name)
                 expect(ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value, ...tail]), `${row.name} single ${name}`).toBeDefined()
@@ -536,14 +553,15 @@ describe('CLI help', () => {
             '  reset             Preview a reset, then approve it interactively or apply it as [autonomy] reset allows (on the active local Docker context)\n' +
             '  stacks            List every stack on this machine, or preview and remove those whose checkout is gone (stacks prune)\n\n' +
             'Diagnose:\n' +
-            '  doctor            Report environment problems without changing anything\n\n' +
+            '  doctor            Report environment problems without changing anything\n' +
+            '  env               Read what environment schemas declare with nothing resolved: variable names, or one schema\'s text\n\n' +
             'Test and grade:\n' +
             '  test-run          Run a declared product test gate and report which tests it selected\n' +
             '  work              Accept, check, grade and close work orders\n' +
             '  grade             Independently grade uncommitted work against a criteria file, with no work order\n' +
             '  browser           Drive, inspect and capture the declared application in a browser\n' +
             '  docs              Check living documents and decision records against the repositories\n\n' +
-            "Run 'cockpit <command> --help' for its options, and 'cockpit work --help', 'cockpit browser --help' or 'cockpit docs --help' for its subcommands.\n",
+            "Run 'cockpit <command> --help' for its options, and 'cockpit work --help', 'cockpit browser --help', 'cockpit docs --help' or 'cockpit env --help' for its subcommands.\n",
         )
         expect(humanStderr(result.stderr)).toBe('')
     })

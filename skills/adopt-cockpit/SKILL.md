@@ -39,7 +39,7 @@ ask when scope is missing or an exact preview still needs acceptance:
    marking it `"derived"`. Show every other proposal with the file it came from; it becomes an
    answer only on the human's word.
 5. Ask the human for the database and live vendor API hosts of every non-local environment
-   (production, staging, shared) for the `guards` answer; env templates give variable names only.
+   (production, staging, shared) for the `guards` answer; env templates give variable names only, and once a cockpit exists `npx --no cockpit env keys --config cockpit.toml` lists them.
 6. "Use sensible defaults" covers `init` answers only, never another change inside a product
    repository: an **AGENTS.md** pointer or a `package.json` change needs explicit product-change
    authorization covering its reviewed scope, which can already have been given. Mark every answer you chose as `"agent-default"` in the answers file's
@@ -331,7 +331,16 @@ guesses. So derive each value from what the repository shows, record it as infer
 During adoption, inspect environment filenames and manifest commands before choosing a secret-access
 path. A missing `.env.schema` is a decision to resolve, not a reason to skip this section. Recommend
 Varlock when plaintext dotenv files or templates exist; record adoption or the reason it is deferred.
-Read variable names from a safe schema or template, never resolve values into the agent's context.
+Read variable names with `npx --no cockpit env keys --config cockpit.toml`, never resolve values into
+the agent's context. When you need a schema's text, not only its names, run
+`npx --no cockpit env schema --config cockpit.toml --path <reference env keys prints>`; a schema must
+hold no secret values. Native rules may refuse direct reads of these files, so do not work around a
+refusal. To change a schema, write a draft with your normal tools, as a plain file away from
+environment files and secrets, then run
+`npx --no cockpit env schema --config cockpit.toml --path <reference env keys prints> --replace-from <draft>`
+on its own. Claude Code's native rules refuse Edit and Write of this name (measured on 2.1.318 on
+2026-11-05). The result is not validated until it is committed, and `ENV_SCHEMA_UNCOMMITTED` says so;
+committing is the guarded checkpoint. A person's terminal has no such limit.
 
 Keep the tracked product `.env.schema` beside the component that owns it. Store only encrypted
 Varlock resolver expressions or external-provider references under
@@ -366,8 +375,8 @@ status and trusted product processes. Cockpit sets it for its own schema probes.
 Varlock telemetry without changing the person's global configuration; output redaction is a
 separate setting and remains required in every command an agent runs.
 
-Preflight and doctor already check every `.env.schema` a sibling tracks, a sibling's root schema and
-the cockpit root's own, with the central path when it exists; a failing or unavailable row names the
+Preflight and doctor already check every committed `.env.schema` a sibling tracks, a sibling's root
+schema and the cockpit root's own, with the central path when it exists; a failing or unavailable row names the
 keys. An unavailable row can mean a secret provider is signed out or unreachable: a person signs in
 and reruns. To diagnose, a person runs `VARLOCK_TELEMETRY_DISABLED=true varlock load --path
 <schema-directory> --path <central-directory>`. Agents use cockpit preflight for key-only status, or

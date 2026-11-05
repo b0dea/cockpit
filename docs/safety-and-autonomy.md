@@ -53,7 +53,8 @@ Every `.env` and `.env.*` file at any depth is treated as holding secrets, decla
 writing, removing, staging or linking one is a hard denial through every guarded tool. The
 conventional documentation names `.env.example`, `.env.sample`, `.env.template` and `.env.schema`
 are exempt from the guard, and so is every declared environment `template`; native permissions may
-still refuse these documentation files (see [Reading secrets and instances](#reading-secrets-and-instances)). Run a trusted
+still refuse these documentation files (see [Reading secrets and instances](#reading-secrets-and-instances)),
+and `cockpit env keys` and `cockpit env schema` are the supported route to them. Run a trusted
 process instead of reading values: an agent uses a declared project command or script that wraps
 Varlock, because the guard asks about a bare `varlock run` and Codex and OpenCode refuse what it asks
 about. A person in a terminal runs that same command, or
@@ -262,10 +263,11 @@ cockpit commands in
 
 | Command | Decision | Why |
 | --- | --- | --- |
-| `npx --no cockpit check --config cockpit.toml`, and likewise `doctor`, `preflight`, `ps`, `logs --service <service>`, `stacks`, `stacks prune`, `docs check` and `sync --dry-run` | allowed | They read and report; nothing they do changes a file the guard relies on. |
+| `npx --no cockpit check --config cockpit.toml`, and likewise `doctor`, `preflight`, `ps`, `logs --service <service>`, `stacks`, `stacks prune`, `docs check`, `env keys`, `env schema --path <schema reference>` and `sync --dry-run` | allowed | They read and report; nothing they do changes a file the guard relies on. A `--path` that names anything but `.env.schema`, or that climbs, is a prompt. |
 | `npx --no -- cockpit --help`, `npx --no cockpit up --help`, and the version | allowed | They print and exit before any command runs. |
 | `npx --no cockpit up --config cockpit.toml`, and likewise `sleep`, `down`, `restart --service <service>` and `rebuild --service <service>` | allowed | They act only on the stack cockpit declared and owns; `down` keeps data volumes, and deletes only from the local Docker daemon it fixes at the start of the run. |
 | `up --profile <profile>` | allowed for a profile in `environment.profiles` that mounts no sibling with `gate = "operator"`, otherwise a prompt | Another profile starts services no person declared for agents, and an operator-gated sibling touches live data or local hardware. |
+| `npx --no cockpit env schema --config cockpit.toml --path <schema reference> --replace-from <draft>` | allowed only as the whole command, for a draft the guard can prove safe to read; otherwise a prompt | A schema that is not committed is never run, and a draft that could hold a secret is refused, so a replacement cannot launder one back out through `env schema`. |
 | `npx --no cockpit exec --config cockpit.toml --service <service> -- <command>` | allowed when a `[guards] allow` rule or a declared build or test command admits `<command>`, otherwise a prompt | The command runs in a container whose files the guard cannot see, so it is never proven read-only, and the name-based denials still apply to it. |
 | `npx --no cockpit pull --config cockpit.toml` | allowed | It only fetches and fast-forwards, and leaves a modified or diverged checkout as it was. |
 | `npx --no cockpit use <slug> <checkout> --config cockpit.toml`, and `use <slug> --clear` | allowed for a checkout inside a directory the agent may already write, otherwise a prompt | The choice is recorded for this checkout of the cockpit only, so it never widens what the agent can reach. |
@@ -384,6 +386,37 @@ native file tools and recognized shell reads such as `cat` also refuse `.env.exa
 override that native denial. Claude's ordered negation exceptions apply only to relative rules;
 using those here would leave sibling secrets outside the protection. See
 [Claude's permission rules](https://code.claude.com/docs/en/permissions#read-and-edit).
+The denials stay. The supported route is [`cockpit env keys`](environment.md#read-variable-names-and-schemas)
+for variable names and `cockpit env schema` for one schema's text, neither of which resolves anything.
+
+### Editing a schema under Claude Code
+
+| Native edit measurement | Observed result |
+| --- | --- |
+| Claude Code 2.1.318, generated `Read(//**/.env.*)` denials, no hook, 2026-11-05 | Read, Edit and Write of `.env.schema` were refused as covered by a Read deny rule; `cat` and `sed -i` were refused. `git show HEAD:.env.schema`, `printf ... >> .env.schema`, `cp draft .env.schema` and `mv draft .env.schema` worked. |
+
+An agent reads a schema with `env schema`, writes a draft with its normal tools, then runs
+`npx --no cockpit env schema --config cockpit.toml --path <schema reference> --replace-from <draft>`.
+The result is [not validated until it is committed](environment.md#a-schema-runs-only-once-committed),
+and committing is the guarded checkpoint, so an edit here is not itself a security boundary.
+
+The command refuses a draft whose path has a segment that is `.secrets` or starts with `.env`, under any
+case folding; a declared environment instance or any other location the guard protects; a symbolic or
+hard link; anything but a regular file; and a file over the bound. Otherwise `--replace-from .env`
+followed by `env schema` would print a secret. It refuses a target that is a link too, and replaces the
+bytes atomically, or creates a missing schema in a discovered directory.
+
+| Writing `.env.schema`, cockpit root and sibling | Guard evaluator, 2026-11-05 |
+| --- | --- |
+| `apply_patch`, adding or updating | allow |
+| `Edit`, `Write` | allow; Claude Code's native rules refuse them, as measured above |
+| `env schema --replace-from` with a safe draft, alone | allow |
+| that command compounded with `&&`, `;` or a pipe, or with a redirect | ask |
+| `cp`, `mv` or `printf ... >>` onto that name | ask, which a tool with no prompt tier refuses |
+
+The evaluator's answers do not show that a harness routes its tool through the guard, and no native
+Codex or OpenCode run was measured here. The native results are dated and limited to that version. A
+person's terminal has no such limit.
 
 ## Who decides
 
