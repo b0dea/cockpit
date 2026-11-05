@@ -814,7 +814,7 @@ describe('built-in read-only profile', () => {
     it('denies reads and writes of an environment file unless its name or a declared template marks it as documentation', () => {
         const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
         const refusal = { decision: 'deny', reason: 'Refusing to read or write an environment file: `.env` and `.env.*` hold secrets unless named .env.example, .env.sample, .env.template or .env.schema, or declared as a template. '
-            + 'Fix: run the trusted process as `VARLOCK_TELEMETRY_DISABLED=true varlock run --redact-stdout -- <cmd>`; consult schema names only where native permissions allow them.' }
+            + 'Fix: an agent runs the trusted process through a declared project command or script that wraps Varlock; a person in a terminal runs that same command, or `VARLOCK_TELEMETRY_DISABLED=true varlock run -- <cmd>`, without `--redact-stdout`, which Varlock refuses on a terminal. Consult schema names only where native permissions allow them.' }
         const judge = (input: object, configured = policy()) => evaluateGuard(parseGuardInput(input), configured, withGit)
         // An undeclared `.env` at any depth is where a product keeps its values, so no tool reads or writes it.
         for (const file of ['.env', 'apps/web/.env.local', '.ENV.Production', '.env.example.local']) {

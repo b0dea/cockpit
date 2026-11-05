@@ -346,8 +346,9 @@ order, so the later central path takes precedence. For status the locked executa
 <absolute-cockpit-root>/env/.secrets/<cockpit-project>/<component> --agent --format json-full
 --summary-stderr`. For a trusted product process it is invoked as `varlock run --path
 <absolute-component-schema-root> --path <absolute-cockpit-root>/env/.secrets/<cockpit-project>/<component>
---inject vars --redact-stdout -- <exact command>`. The angle brackets describe product-resolved inputs,
-not literal commands. Resolve the executable and version
+--inject vars --redact-stdout -- <exact command>`, inside the declared command whose output is piped:
+Varlock refuses that flag on an interactive terminal, so a person in a terminal runs the same `run`
+without it. The angle brackets describe product-resolved inputs, not literal commands. Resolve the executable and version
 from the product manifest and lock; runtime commands never fetch with `npx`. If the product has not
 adopted Varlock, adding and locking it needs product-change authorization; reuse explicit authorization
 already given for this adoption rather than asking again. `varlock init`,
@@ -357,7 +358,7 @@ provider scope instead of running them automatically.
 Set `VARLOCK_TELEMETRY_DISABLED=true` in each declared Varlock command's environment, including
 status and trusted product processes. Cockpit sets it for its own schema probes. This disables
 Varlock telemetry without changing the person's global configuration; output redaction is a
-separate setting and remains required.
+separate setting and remains required in every command an agent runs.
 
 Preflight and doctor already check the schema of every sibling that has a `.env.schema`; a failing row
 names the keys. A person can run `VARLOCK_TELEMETRY_DISABLED=true varlock load` in that sibling to

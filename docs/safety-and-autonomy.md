@@ -54,8 +54,12 @@ writing, removing, staging or linking one is a hard denial through every guarded
 conventional documentation names `.env.example`, `.env.sample`, `.env.template` and `.env.schema`
 are exempt from the guard, and so is every declared environment `template`; native permissions may
 still refuse these documentation files (see [Reading secrets and instances](#reading-secrets-and-instances)). Run a trusted
-process with `VARLOCK_TELEMETRY_DISABLED=true varlock run --redact-stdout -- <cmd>` instead of
-reading values. Redaction is an output safeguard, not confinement of the child process. Another name
+process instead of reading values: an agent uses a declared project command or script that wraps
+Varlock, because the guard asks about a bare `varlock run` and Codex and OpenCode refuse what it asks
+about. A person in a terminal runs that same command, or
+`VARLOCK_TELEMETRY_DISABLED=true varlock run -- <cmd>`, without `--redact-stdout`: Varlock refuses to
+force redaction on an interactive terminal, so the flag belongs inside a declared command whose output
+is piped. Redaction is an output safeguard, not confinement of the child process. Another name
 that starts with `.env`, such as `.envrc`, is not denied, but reading it prompts.
 
 Executable use of a declared hosted database or vendor host is denied at hostname boundaries.

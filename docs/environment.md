@@ -695,8 +695,9 @@ values, search nested directories, run providers or make Varlock a prerequisite.
 are validated separately. The shipped setup procedure explains how
 to adopt Varlock through the product's
 pinned dependency and an existing declared command or script. Use agent-mode validation for status
-and `run --inject vars --redact-stdout` for a trusted product process, and keep resolved
-credentials out of the agent's environment. Give both paths as absolute paths with repeated
+and `run --inject vars --redact-stdout` inside that declared command for a trusted product process,
+and keep resolved credentials out of the agent's environment. Varlock refuses `--redact-stdout` on an
+interactive terminal, so a person in a terminal runs the same `run` without the flag. Give both paths as absolute paths with repeated
 `--path`: the component schema root first, then its central resolver directory in the cockpit; the
 later path wins. Installation, initialization, provider login, encryption and migration need
 explicit permission from whoever owns the product and the provider. Current commands and
