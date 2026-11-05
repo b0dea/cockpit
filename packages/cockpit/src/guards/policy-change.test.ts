@@ -205,11 +205,12 @@ describe('guardConfigChange', () => {
                 'nodeFingerprint', 'module', 'moduleSha256'].map(key => [key, 'synthetic']))
             writeFileSync(join(root, GUARD_LOCAL_PATHS.identity), encodeGuardLocalIdentity({ ...identity, configSha256: sha256Hex(generated) } as never))
             writeFileSync(join(root, GUARD_LOCAL_PATHS.generatedConfig), generated)
-            const codes = async () => (await inspectGuardConfigChange(root, join(root, 'cockpit.toml'), { sha256: 'f'.repeat(64), config: edited() }))
-                .map(row => row.code)
-            expect(await codes()).toEqual(['GUARD_CONFIG_WIDENED'])
+            const reports = async () => inspectGuardConfigChange(root, join(root, 'cockpit.toml'), { sha256: 'f'.repeat(64), config: edited() })
+            // Each names what it holds: a hook cannot stop what its matcher leaves out.
+            const namesHeld = { message: expect.stringMatching(/holds shell commands, file edits and writes, and restricted MCP tools under Claude Code.*while file reads and unrestricted MCP tools continue$/) }
+            expect(await reports()).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED', ...namesHeld })])
             writeFileSync(join(root, ANSWER_CONFIRMATION_PATH), record('ports.bases'))
-            expect(await codes()).toEqual(['GUARD_CONFIG_UNSYNCED'])
+            expect(await reports()).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_UNSYNCED', ...namesHeld, fix: expect.stringContaining(GUARD_LOCAL_PATHS.generatedConfig) })])
         } finally { rmSync(root, { recursive: true, force: true }) }
     })
 })

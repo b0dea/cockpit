@@ -669,7 +669,7 @@ remote daemon or on a context switched mid-command
 ```
 
 `upgrade [<version>]` moves the exact pin to a newer version and re-runs `sync`; `--dry-run` prints
-the commands and runs nothing. Until `sync` finishes, the guard holds every agent tool call, because
+the commands and runs nothing. Until `sync` finishes, the guard holds every guarded agent tool call, because
 it trusts only the cockpit, Node and `cockpit.toml` it was generated for. Review and commit the
 regenerated files. [Upgrade cockpit](harness-surfaces.md#upgrade-cockpit) has the details.
 

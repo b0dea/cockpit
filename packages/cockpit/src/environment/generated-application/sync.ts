@@ -1,6 +1,7 @@
 import { prepareTeamMetadata, applyTeamMetadata, type TeamMetadataChange } from '../../team-metadata.js'
 import { basename } from 'node:path'
 import { GUARD_LOCAL_PATHS, writeCockpitLocalFiles, writeGuardLocalIdentity } from '../../guards/local-identity.js'
+import { GUARD_HELD_CALLS } from '../../surfaces/harness-registry.js'
 import { portablePublicationPaths, authorizePublicationPlan, runPublicationPlan } from '../../generated-environment/transaction.js'
 import { refusalOutcome as refuse } from '../../refusal.js'
 import { readBoundedInput } from '../../config/load.js'
@@ -124,11 +125,11 @@ export async function applyGeneratedEnvironmentRepair(
         // again and must still be that text.
         const configRead = await readBoundedInput(prepared.configPath)
         if (configRead.kind !== 'complete' || sha256(configRead.bytes) !== prepared.guardHandler.configSha256) return refuse('GENERATED_SOURCE_CHANGED',
-            'the configuration changed after generated files were published, so the guard identity was not recorded; the guard refuses every agent tool call until it is',
+            `the configuration changed after generated files were published, so the guard identity was not recorded; the guard refuses ${GUARD_HELD_CALLS} until it is`,
             prepared.configSource.path, 'run `npx --no cockpit sync --config <your cockpit.toml>` again')
         const local = await writeGuardLocalIdentity(prepared.root, prepared.guardHandler, configRead.bytes.toString('utf8'))
         if (local.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
-            `the committed guard files were published, but ${local.message}; the guard refuses every agent tool call until it exists`,
+            `the committed guard files were published, but ${local.message}; the guard refuses ${GUARD_HELD_CALLS} until it exists`,
             GUARD_LOCAL_PATHS.identity, 'fix the path, then run `npx --no cockpit sync --config <your cockpit.toml>` again in a terminal')
     }
     if (prepared.openCodeGrantRoots.length > 0 && settings.dryRun !== true) {

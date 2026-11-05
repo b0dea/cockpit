@@ -1,4 +1,4 @@
-// Owns whether an edit of cockpit.toml widens what agents may do. The guard holds every agent call
+// Owns whether an edit of cockpit.toml widens what agents may do. The guard holds every guarded call
 // once the configuration differs from the one it was generated from; this classification decides
 // whether that hold needs a person (the edit widens) or only a sync an agent may run (it does not).
 // It fails closed: a field with no rule here widens whenever it changes, so a field added to the
@@ -22,6 +22,7 @@ import { hasErrorCode } from '../environment/contract.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import { McpAllowedTools, type CockpitConfig } from '../schema.js'
 import { sha256Hex } from '../sha256.js'
+import { GUARD_HELD_CALLS, GUARD_UNHELD_CALLS } from '../surfaces/harness-registry.js'
 import { ANSWER_CONFIRMATION_PATH, confirmedAnswers } from './answer-confirmation.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from './local-identity.js'
 
@@ -211,10 +212,10 @@ export async function inspectGuardConfigChange(root: string, configPath: string,
     if (change.kind === 'unchanged') return []
     if (change.kind === 'non-widening') return [{ severity: 'warning' as const, target: 'guard',
         code: 'GUARD_CONFIG_UNSYNCED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_UNSYNCED,
-        message: `cockpit.toml changed since the guards were generated without widening what agents may do; the guard holds every agent tool call except ${UNSYNCED_ADMITTED_PROSE} until it is synced`,
+        message: `cockpit.toml changed since the guards were generated without widening what agents may do; the guard holds ${GUARD_HELD_CALLS}, except ${UNSYNCED_ADMITTED_PROSE}, until it is synced, while ${GUARD_UNHELD_CALLS} continue`,
         fix: `run ${cockpitCommand('sync', { config: configPath })}; an agent may run it where [autonomy] sync = "agent". If sync refuses the edit, undo it: the guard admits one edit of ${configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}` }]
     return [{ severity: 'error' as const, target: 'guard',
         code: 'GUARD_CONFIG_WIDENED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_WIDENED,
-        message: `cockpit.toml changed since the guards were generated and ${guardConfigHeldReason(change)}; the guard holds every agent tool call until a person syncs`,
+        message: `cockpit.toml changed since the guards were generated and ${guardConfigHeldReason(change)}; the guard holds ${GUARD_HELD_CALLS} until a person syncs, while ${GUARD_UNHELD_CALLS} continue`,
         fix: `a person reads the change and runs ${cockpitCommand('sync', { config: configPath })} in a terminal outside the agent, or the change is reverted` }]
 }

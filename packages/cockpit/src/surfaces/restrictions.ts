@@ -2,7 +2,7 @@ import { sha256Hex } from '../sha256.js'
 import { isAbsolute, posix } from 'node:path'
 
 import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
-import { GUARD_SURFACE_TARGETS, type GuardSurfaceTarget } from './harness-registry.js'
+import { GUARD_HELD_CALLS, GUARD_SURFACE_TARGETS, GUARD_UNHELD_CALLS, type GuardSurfaceTarget } from './harness-registry.js'
 import { GUARD_HANDLER_ARGV } from '../guards/harness-adapter.js'
 import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from '../guards/host.js'
 import { exactKeys } from '../exact-keys.js'
@@ -389,7 +389,7 @@ function hooksBytes(target: keyof typeof HOOK_ROOT, matcher: string, guardPath: 
     const root = HOOK_ROOT[target]
     // Both hook runners block only on exit 2; any other failure (a handler that cannot load, a killed
     // process, a missing shell) would let the tool call run, so it is folded into a blocking exit.
-    const guard = `R="${root.expression}"; H="$R/${guardPath}"; test -n "$R" && test -f "$H" && test -r "$H" || { printf 'cockpit restriction guard missing: %s (the hook finds the cockpit checkout through ${root.source}), so every tool call is held. Fix: start the agent from the cockpit checkout; if the file is gone, run git restore ${guardPath} there (it is committed), or have a human run npx --no cockpit sync --config <your cockpit.toml> in a terminal.\\n' "$H" >&2; exit 2; }; ${askIsDeny ? 'COCKPIT_ASK_IS_DENY=1 ' : ''}/bin/bash "$H" --harness ${target}; s=$?; case $s in 0|2) exit $s;; esac; printf 'cockpit guard failed (exit %s)\\n' "$s" >&2; exit 2`
+    const guard = `R="${root.expression}"; H="$R/${guardPath}"; test -n "$R" && test -f "$H" && test -r "$H" || { printf 'cockpit restriction guard missing: %s (the hook finds the cockpit checkout through ${root.source}), so ${GUARD_HELD_CALLS} are held while ${GUARD_UNHELD_CALLS} continue. Fix: start the agent from the cockpit checkout; if the file is gone, run git restore ${guardPath} there (it is committed), or have a human run npx --no cockpit sync --config <your cockpit.toml> in a terminal.\\n' "$H" >&2; exit 2; }; ${askIsDeny ? 'COCKPIT_ASK_IS_DENY=1 ' : ''}/bin/bash "$H" --harness ${target}; s=$?; case $s in 0|2) exit $s;; esac; printf 'cockpit guard failed (exit %s)\\n' "$s" >&2; exit 2`
     // Claude Code 2.1.317 and Codex 0.166.0 (a trusted hook) each ran a SessionStart command and put its
     // stdout in the agent's context, measured 2026-11-03 beside a misspelled event that never ran. A
     // drift report there tells the agent what to re-sync before it works; the hook never blocks.

@@ -417,10 +417,13 @@ approve it, such as the [`work verify` job](work-and-browser.md#who-passes-each-
 <!-- cockpit:ref path=packages/cockpit/src/guards/policy-change.ts --> Once `cockpit.toml` differs
 from the configuration the guards were generated from, the guard loads both, the earlier from the
 copy sync keeps in `.cockpit/local/guard-config`, and compares them with defaults applied. An edit that does
-not widen what agents may do holds every tool call except `cockpit sync` and `cockpit check`, which
+not widen what agents may do holds every guarded call except `cockpit sync` and `cockpit check`, which
 the agent may run under the rules above, and the hold says so (`GUARD_CONFIG_UNSYNCED`). Any other
-edit holds every call, that sync included, until a person runs `sync` in a terminal, and the hold
-names each field that widens.
+edit holds every guarded call, that sync included, until a person runs `sync` in a terminal, and the
+hold names each field that widens.
+
+A guarded call is one a generated hook fires on: shell commands, file edits and writes, and restricted
+MCP tools under Claude Code. A hold stops nothing else, so file reads and unrestricted MCP tools continue.
 
 Sync can refuse an edit the guard admitted, such as a tool restriction naming an undeclared server.
 So the `GUARD_CONFIG_UNSYNCED` hold also admits one edit, write or patch of `cockpit.toml` itself that

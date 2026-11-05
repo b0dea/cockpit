@@ -50,7 +50,7 @@ import {
 } from '../../guards/protected-locations.js'
 import { classifyReadOnlyInvocation, cockpitLauncherPrefix } from '../../guards/read-only.js'
 import { fileFingerprint, recordVerifiedDigest } from '../../environment-exec/verified-digest.js'
-import { isGuardSurfaceTarget, type GuardSurfaceTarget } from '../../surfaces/harness-registry.js'
+import { GUARD_HELD_CALLS, GUARD_UNHELD_CALLS, isGuardSurfaceTarget, type GuardSurfaceTarget } from '../../surfaces/harness-registry.js'
 import { cockpitCommand, formatShellCommand, type FixContext } from '../../fix-catalogue.js'
 import { observeComposeTopology } from '../compose-topology.js'
 import { declaredRuntime } from '../declaration.js'
@@ -117,7 +117,7 @@ interface GuardEvaluationApplicationResult {
     readonly fixContext?: FixContext
 }
 
-// Every refusal below holds all of the agent's calls, `git restore` included, so each says what
+// Every refusal below holds all of the agent's guarded calls, `git restore` included, so each says what
 // failed, why that blocks everything, and the human action that clears it. Regeneration is a human
 // step on purpose: guard policy comes from cockpit.toml, and an agent able to apply its own edit
 // could loosen its guard.
@@ -126,7 +126,7 @@ function guardHeld(identity: GuardHandlerIdentity, what: string, why: string, fi
     const sync = `\`${cockpitCommand('sync', { config: identity.configPath })}\` in a terminal, outside the agent`
     const action = fix.kind === 'sync' ? `a human must run ${sync}, then commit any regenerated files`
         : `a human must restore it with \`${formatShellCommand(['git', '-C', identity.root, 'restore', '--', fix.path])}\` (it is committed), or run ${sync}`
-    return `${what}; ${why}, so every tool call is held, including a sync run through this agent. Fix: ${action}.`
+    return `${what}; ${why}, so ${GUARD_HELD_CALLS} are held, including a sync run through this agent, while ${GUARD_UNHELD_CALLS} continue. Fix: ${action}.`
 }
 
 // An edit that does not widen what agents may do needs only a sync, which the agent may run itself;
@@ -134,7 +134,7 @@ function guardHeld(identity: GuardHandlerIdentity, what: string, why: string, fi
 // still refuse such an edit, so undoing it exactly stays open or the agent could never recover.
 function unsyncedHold(identity: GuardHandlerIdentity, detail: string): GuardEvaluationApplicationResult {
     const sync = cockpitCommand('sync', { config: identity.configPath })
-    const reason = `${identity.configPath} changed since the guards were generated without widening what agents may do${detail}; every tool call except ${UNSYNCED_ADMITTED_PROSE} is held until it is synced. Fix: run \`${sync}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files. If sync refuses the edit, undo it: one edit or write of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig} is admitted.`
+    const reason = `${identity.configPath} changed since the guards were generated without widening what agents may do${detail}; ${GUARD_HELD_CALLS} are held, except ${UNSYNCED_ADMITTED_PROSE}, until it is synced, while ${GUARD_UNHELD_CALLS} continue. Fix: run \`${sync}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files. If sync refuses the edit, undo it: one edit or write of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig} is admitted.`
     return { decision: { decision: 'unavailable', reason }, diagnostics: [{ severity: 'error', target: 'guard', message: reason,
         code: 'GUARD_CONFIG_UNSYNCED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_UNSYNCED,
         fix: `run ${sync}; an agent may run it where [autonomy] sync = "agent". If sync refuses the edit, undo it: the guard admits one edit of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}` }] }

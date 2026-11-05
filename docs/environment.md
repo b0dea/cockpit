@@ -538,8 +538,8 @@ receive, gives the stack a new identity, and `up` refuses with `LIFECYCLE_PROGRE
 running stack in place. To apply such a change, for example a `[ports.bases]` edit:
 
 1. Edit `cockpit.toml`. This can happen while the stack runs.
-2. Run `cockpit sync --config cockpit.toml`. Until then, the agent guard holds every tool call
-   except that sync, because the configuration no longer matches what it was generated for, and
+2. Run `cockpit sync --config cockpit.toml`. Until then, the agent guard holds every
+   [guarded tool call](safety-and-autonomy.md#edits-the-guard-has-not-applied) except that sync, because the configuration no longer matches what it was generated for, and
    `sleep` and `down` refuse because they read the Compose files `sync` publishes. An agent may run
    it where `[autonomy] sync = "agent"` and the edit does not
    [widen what agents may do](safety-and-autonomy.md#edits-the-guard-has-not-applied), as a

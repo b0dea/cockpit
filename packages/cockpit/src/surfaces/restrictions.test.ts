@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, symlink, writeFile, realpath } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile, realpath } from 'node:fs/promises'
 import { lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { stringify } from 'smol-toml'
+import { GUARD_HELD_CALLS, GUARD_UNHELD_CALLS } from './harness-registry.js'
 import { encodeOwnershipManifest } from './ownership.js'
 import { publicationCockpitId } from '../environment/identity.js'
 import { spawn, spawnSync } from 'node:child_process'
@@ -432,7 +433,13 @@ describe('restriction expansion', () => {
                 const run = spawnSync('/bin/sh', ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: directory } })
                 expect({ status: run.status, stderr: run.stderr }, `${name} exit ${exit}`).toEqual({ status, stderr })
             }
+            // A missing guard blocks with what it holds, printed intact through the hook's shell quoting.
+            await rm(join(directory, result.sharedGuard.path))
+            const missing = spawnSync('/bin/sh', ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: directory } })
+            expect(missing.status).toBe(2)
+            expect(missing.stderr).toContain(`so ${GUARD_HELD_CALLS} are held while ${GUARD_UNHELD_CALLS} continue.`)
         }
+        expect(result.sharedGuard.bytes).toContain(`so ${GUARD_HELD_CALLS} are refused.`)
     })
 
     it('renders every neutral policy field through versioned transport-only adapters', async () => {

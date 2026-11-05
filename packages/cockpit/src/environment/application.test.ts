@@ -347,7 +347,7 @@ describe('guard policy construction', () => {
         })
         expect(result).toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining(
             change === 'changed' ? 'publication changed during evaluation'
-                : change === 'missing' ? `.cockpit/guards/bash-guard.sh is missing; it authenticates the guard and the hook that launches it, so every tool call is held, including a sync run through this agent. Fix: a human must restore it with \`git -C ${root} restore -- .cockpit/guards/bash-guard.sh\``
+                : change === 'missing' ? `.cockpit/guards/bash-guard.sh is missing; it authenticates the guard and the hook that launches it, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are held, including a sync run through this agent, while file reads and unrestricted MCP tools continue. Fix: a human must restore it with \`git -C ${root} restore -- .cockpit/guards/bash-guard.sh\``
                     : 'could not be read or revalidated',
         ) } })
         expect(observeCheckout).toHaveBeenCalledTimes(change === 'changed' ? 1 : 0)
@@ -367,7 +367,7 @@ describe('guard policy construction', () => {
         try {
             const { decision } = await runGuardEvaluationApplication(request, adapters)
             expect(decision.decision).toBe('unavailable')
-            expect(decision.reason).toContain(`${file === 'cockpit.toml' ? configPath : file} is missing; ${why}, so every tool call is held`)
+            expect(decision.reason).toContain(`${file === 'cockpit.toml' ? configPath : file} is missing; ${why}, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are held`)
             expect(decision.reason).toContain(restorable
                 ? `Fix: a human must restore it with \`git -C ${root} restore -- ${file}\` (it is committed), or run \`npx --no cockpit sync --config ${configPath}\``
                 : `Fix: a human must run \`npx --no cockpit sync --config ${configPath}\` in a terminal, outside the agent`)
@@ -489,7 +489,7 @@ describe('guard policy construction', () => {
         const canonicalConfig = realpathSync(configPath)
         const sync = { ...request, searchPath: '/usr/bin:/bin', payload: shellPayload(`${resolve(dirname(identity.module), '../bin/cockpit.mjs')} sync --config ${canonicalConfig}`, root) }
         expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({ decision: { decision: 'unavailable', reason:
-            `${canonicalConfig} changed since the guards were generated without widening what agents may do; every tool call except cockpit sync and check is held until it is synced. Fix: run \`npx --no cockpit sync --config ${canonicalConfig}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files. If sync refuses the edit, undo it: one edit or write of ${canonicalConfig} that leaves it byte-identical to .cockpit/local/guard-config is admitted.` },
+            `${canonicalConfig} changed since the guards were generated without widening what agents may do; shell commands, file edits and writes, and restricted MCP tools under Claude Code are held, except cockpit sync and check, until it is synced, while file reads and unrestricted MCP tools continue. Fix: run \`npx --no cockpit sync --config ${canonicalConfig}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files. If sync refuses the edit, undo it: one edit or write of ${canonicalConfig} that leaves it byte-identical to .cockpit/local/guard-config is admitted.` },
         diagnostics: [{ code: 'GUARD_CONFIG_UNSYNCED' }] })
         expect(await runGuardEvaluationApplication(sync, adapters)).toMatchObject({ decision: { decision: 'allow' } })
         const restricted = parse(readFileSync(configPath, 'utf8')) as { guards: { deny: unknown[] } }
@@ -504,7 +504,7 @@ describe('guard policy construction', () => {
         widened.guards.allow.push({ argv: ['make', 'release'], reason: 'Releases are routine.' })
         writeFileSync(configPath, stringify(widened))
         for (const call of [request, sync]) expect(await runGuardEvaluationApplication(call, adapters)).toMatchObject({ decision: { decision: 'unavailable', reason:
-            `${canonicalConfig} changed since the guards were generated and it widens what agents may do (guards.allow); guard policy comes from it and an edit that may widen it takes effect only once a human approves it, so every tool call is held, including a sync run through this agent. Fix: a human must run \`npx --no cockpit sync --config ${canonicalConfig}\` in a terminal, outside the agent, then commit any regenerated files.` } })
+            `${canonicalConfig} changed since the guards were generated and it widens what agents may do (guards.allow); guard policy comes from it and an edit that may widen it takes effect only once a human approves it, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are held, including a sync run through this agent, while file reads and unrestricted MCP tools continue. Fix: a human must run \`npx --no cockpit sync --config ${canonicalConfig}\` in a terminal, outside the agent, then commit any regenerated files.` } })
     }, 120_000)
 
     it('admits only the exact restoration of the recorded configuration out of a hold sync cannot clear', async () => {

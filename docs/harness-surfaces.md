@@ -551,7 +551,7 @@ does not do), or the npm page when the package has no changelog.
 
 An agent may run `upgrade` exactly where it may run a writing `sync`: under `[autonomy] sync =
 "agent"`, the default. Under `person` or `ci` the guard asks, as it does for `sync`, and the sync child
-refuses outside CI under `ci`. `upgrade --dry-run` writes nothing, so it is never gated. Until `sync` finishes, the guard holds every agent tool call,
+refuses outside CI under `ci`. `upgrade --dry-run` writes nothing, so it is never gated. Until `sync` finishes, the guard holds every guarded agent tool call,
 because it trusts only the cockpit it was generated for. A built-in that one of your overlays replaces and that the new release
 changed is reported as `OVERRIDDEN_CORE_CHANGED`: review the new built-in against your override
 before updating its recorded hash. Then review `git diff` and commit `package.json`, the lockfile and

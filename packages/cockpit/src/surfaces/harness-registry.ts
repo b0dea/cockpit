@@ -129,6 +129,12 @@ export const HARNESS_REGISTRY = Object.freeze([
     }),
 ] as const)
 
+// What a hold stops and what it does not, as every hold message says it. A generated hook fires only on
+// the tools its matcher names, so a hold cannot stop a file read or an unrestricted MCP tool. The first
+// phrase is printed from a single-quoted shell string, so it stays free of quotes and percent signs.
+export const GUARD_HELD_CALLS = 'shell commands, file edits and writes, and restricted MCP tools under Claude Code'
+export const GUARD_UNHELD_CALLS = 'file reads and unrestricted MCP tools'
+
 export type HarnessRegistryRow = typeof HARNESS_REGISTRY[number]
 export type SurfaceTarget = HarnessRegistryRow['target']
 export type GuardSurfaceTarget = Extract<HarnessRegistryRow, { readonly guard: { readonly capability: 'instructed' } }>['target']

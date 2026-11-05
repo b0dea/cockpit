@@ -46,7 +46,8 @@ describe('public surface publication transaction', () => {
             expect(settings.permissions.allow.filter((rule: string) => rule.startsWith('mcp__'))).toEqual([])
             const matcher = new RegExp(settings.hooks.PreToolUse[0].matcher)
             for (const tool of ['Bash', 'Edit', 'Write', 'NotebookEdit', 'mcp__approved-server__read_record', 'mcp__approved-server__new_tool']) expect(matcher.test(tool)).toBe(true)
-            for (const tool of ['mcp__unrestricted__read_record', 'mcp__unrestricted__Write', 'mcp__plugin_reports__read_record', 'mcp__approved-server-extra__read_record']) expect(matcher.test(tool)).toBe(false)
+            // Hold messages name these as continuing, so the matcher must leave them out.
+            for (const tool of ['Read', 'mcp__unrestricted__read_record', 'mcp__unrestricted__Write', 'mcp__plugin_reports__read_record', 'mcp__approved-server-extra__read_record']) expect(matcher.test(tool)).toBe(false)
             for (const [tool, expected] of [['read_record', 'allow'], ['write_record', 'deny'], ['execute_tool', 'deny']] as const) {
                 const run = spawnSync('/bin/bash', [join(fixture.root, '.cockpit/guards/bash-guard.sh'), '--harness', 'claudecode'], {
                     cwd: fixture.root, encoding: 'utf8', input: JSON.stringify({ hook_event_name: 'PreToolUse',
