@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { realpathSync } from 'node:fs'
-import { chmod, link, lstat, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, link, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -15,6 +15,7 @@ import {
     observeSetupPath,
     observeSetupCheckout,
     observeGeneratedCheckoutIdentity,
+    observeSurfacesCheckoutIdentity,
     revalidateGeneratedCheckoutIdentity,
     withSetupCheckoutProjection,
     type SetupCheckoutProjection,
@@ -726,11 +727,134 @@ exec '${input.gitExecutable.canonicalPath}' "$@"
                 source: input.source, cockpitName: input.cockpitName, evaluatedAt: Date.parse(input.observedAt),
             }, consumeSetupCheckoutProjection)).resolves.toBeUndefined()
             await writeFile(join(current, 'published-instructions.md'), 'Synthetic generated instructions.\n')
+            // Any command that locks the index, git status among them, moves the Git directory's timestamps.
+            await writeFile(join(repository.main, '.git/index.lock'), '')
+            await rm(join(repository.main, '.git/index.lock'))
             expect(await revalidateGeneratedCheckoutIdentity(generated)).toBe(true)
             const gitConfig = join(repository.main, '.git/config')
             await writeFile(gitConfig, `${await readFile(gitConfig, 'utf8')}\n# changed administrative authority\n`)
             expect(await revalidateGeneratedCheckoutIdentity(generated)).toBe(false)
         }
+    })
+
+    it.each(['config', 'worktree'])('retries a %s read that Git activity interrupted, and names that cause when it does not stop', async (word) => {
+        const repository = await committedRepository()
+        const input = await checkoutAuthority(join(repository.main, 'cockpit.toml'))
+        const bin = join(repository.root, 'bin')
+        const interrupted = join(repository.root, 'interrupted')
+        await mkdir(bin)
+        const shim = (persistent: boolean) => writeFile(join(bin, 'git'), `#!/bin/sh
+for word in "$@"; do
+    if [ "$word" = ${word} ] && { ${persistent} || [ ! -e '${interrupted}' ]; }; then
+        : > '${interrupted}'
+        /bin/mkdir '${repository.main}/.git/activity' && /bin/rmdir '${repository.main}/.git/activity'
+    fi
+done
+exec '${input.gitExecutable.canonicalPath}' "$@"
+`, { mode: 0o700 })
+        const observe = () => observeGeneratedCheckoutIdentity({ source: input.source, cockpitName: input.cockpitName, env: { PATH: bin } })
+        await shim(false)
+        await expect(observe()).resolves.toMatchObject({ state: 'available', kind: 'checkout' })
+        await shim(true)
+        await expect(observe()).resolves.toMatchObject({ state: 'failed', reason: expect.stringContaining('another Git command was running') })
+        // A replaced executable fails the same way every time, so nothing here may blame Git activity.
+        const resolved = await resolveGitExecutable({ PATH: bin })
+        if (resolved.state !== 'available') throw new Error(resolved.reason)
+        await writeFile(join(bin, 'git'), '#!/bin/sh\nexit 0\n', { mode: 0o700 })
+        const replaced = await observeSetupCheckout({ ...input, env: { PATH: bin }, gitExecutable: resolved.value })
+        expect(replaced.state).toBe('failed')
+        expect(replaced).not.toMatchObject({ reason: expect.stringContaining('another Git command') })
+    })
+
+    it('names the checkout setup names, wherever setup can read one, and holds it through Git activity', async () => {
+        const repository = await committedRepository()
+        const separate = await committedRepository({ separateGitDirectory: true })
+        const linked = join(repository.root, 'linked')
+        await run('git', ['-C', repository.main, 'worktree', 'add', '--quiet', '--detach', linked])
+        const nested = join(repository.main, 'nested')
+        await mkdir(nested)
+        await writeFile(join(nested, 'cockpit.toml'), '[cockpit]\nname = "sample"\n')
+        for (const config of [repository.main, await realpath(linked), nested, separate.main].map(directory => join(directory, 'cockpit.toml'))) {
+            const input = await checkoutAuthority(config)
+            const observed = { source: input.source, cockpitName: input.cockpitName, env: input.env }
+            const strict = await observeGeneratedCheckoutIdentity(observed)
+            const narrow = await observeSurfacesCheckoutIdentity(observed)
+            expect(strict.state, config).toBe('available')
+            expect(narrow).toEqual(strict)
+            if (narrow.state !== 'available') throw new Error(narrow.reason)
+            const lock = join(narrow.mainCheckoutPath === separate.main ? separate.gitDirectory! : join(narrow.mainCheckoutPath, '.git'), 'index.lock')
+            await writeFile(lock, '')
+            await rm(lock)
+            expect(await revalidateGeneratedCheckoutIdentity(narrow)).toBe(true)
+        }
+        const linkedInput = await checkoutAuthority(join(await realpath(linked), 'cockpit.toml'))
+        const held = await observeSurfacesCheckoutIdentity({ source: linkedInput.source, cockpitName: linkedInput.cockpitName, env: linkedInput.env })
+        if (held.state !== 'available') throw new Error(held.reason)
+        const pointer = join(await realpath(linked), '.git')
+        await writeFile(pointer, await readFile(pointer))
+        expect(await revalidateGeneratedCheckoutIdentity(held)).toBe(false)
+    })
+
+    it.each([
+        ['an empty .git directory', 'not a git repository', async (root: string) => { await mkdir(join(root, '.git')) }],
+        ['a stale .git file', 'not a git repository', async (root: string) => { await writeFile(join(root, '.git'), 'gitdir: /synthetic/missing\n') }],
+    ] as const)('takes a directory with %s as standalone and says why', async (_name, stated, arrange) => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-standalone-')))
+        scratch.push(root)
+        await writeFile(join(root, 'cockpit.toml'), '[cockpit]\nname = "sample"\n')
+        await arrange(root)
+        const input = await checkoutAuthority(join(root, 'cockpit.toml'))
+        const generated = await observeSurfacesCheckoutIdentity({ source: input.source, cockpitName: input.cockpitName, env: input.env })
+        expect(generated).toMatchObject({ state: 'available', kind: 'standalone', currentCheckoutPath: root, mainCheckoutPath: root,
+            standaloneReason: expect.stringContaining(join(root, '.git')) })
+        if (generated.state !== 'available') throw new Error(generated.reason)
+        expect(generated.standaloneReason!.toLowerCase()).toContain(stated)
+        expect(generated.standaloneReason).not.toMatch(/git init|setup/)
+        expect(await revalidateGeneratedCheckoutIdentity(generated)).toBe(true)
+        await rm(join(root, '.git'), { recursive: true })
+        expect(await revalidateGeneratedCheckoutIdentity(generated)).toBe(false)
+    })
+
+    it('takes a linked checkout whose main moved, or a checkout without Git on PATH, as standalone and says why', async () => {
+        const repository = await committedRepository()
+        const linked = join(repository.root, 'linked')
+        await run('git', ['-C', repository.main, 'worktree', 'add', '--quiet', '--detach', linked])
+        const canonicalLinked = await realpath(linked)
+        const input = await checkoutAuthority(join(canonicalLinked, 'cockpit.toml'))
+        const empty = join(repository.root, 'empty-bin')
+        await mkdir(empty)
+        for (const PATH of [empty, './node_modules/.bin', '']) {
+            await expect(observeSurfacesCheckoutIdentity({ source: input.source, cockpitName: input.cockpitName, env: { PATH } })).resolves.toMatchObject({
+                state: 'available', kind: 'standalone', currentCheckoutPath: canonicalLinked,
+                standaloneReason: expect.stringContaining('Git cannot be looked up'),
+            })
+        }
+        await rename(repository.main, join(repository.root, 'moved-main'))
+        await expect(observeSurfacesCheckoutIdentity({ source: input.source, cockpitName: input.cockpitName, env: input.env })).resolves.toMatchObject({
+            state: 'available', kind: 'standalone', currentCheckoutPath: canonicalLinked,
+            standaloneReason: expect.stringContaining('does not accept'),
+        })
+    })
+
+    it('reads a repository-local include without running what any configuration names, and still refuses a noncanonical PATH entry', async () => {
+        const repository = await committedRepository()
+        const marker = join(repository.root, 'configured-command-ran')
+        const command = join(repository.root, 'configured-command')
+        await writeFile(command, `#!/bin/sh\n: > '${marker}'\n`, { mode: 0o700 })
+        const included = join(repository.root, 'included-config')
+        await writeFile(included, `[core]\n\tfsmonitor = ${command}\n\tsshCommand = ${command}\n[alias]\n\trev-parse = !${command}\n`)
+        await run('git', ['-C', repository.main, 'config', 'include.path', included])
+        await run('git', ['-C', repository.main, 'config', 'core.hooksPath', repository.root])
+        await writeFile(join(repository.root, 'post-index-change'), `#!/bin/sh\n: > '${marker}'\n`, { mode: 0o700 })
+        const input = await checkoutAuthority(join(repository.main, 'cockpit.toml'))
+        await expect(observeGeneratedCheckoutIdentity({ source: input.source, cockpitName: input.cockpitName, env: input.env }))
+            .resolves.toMatchObject({ state: 'failed', reason: 'Git configuration origins are unsupported' })
+        await expect(observeSurfacesCheckoutIdentity({ source: input.source, cockpitName: input.cockpitName, env: input.env })).resolves.toMatchObject({
+            state: 'available', kind: 'checkout', currentCheckoutPath: repository.main, mainCheckoutPath: repository.main,
+        })
+        await expect(lstat(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+        await expect(observeSurfacesCheckoutIdentity({ source: input.source, cockpitName: input.cockpitName, env: { PATH: '/usr/bin/../bin:/bin' } }))
+            .resolves.toMatchObject({ state: 'failed', reason: expect.stringContaining('noncanonical') })
     })
 
     it('supports a separate Git directory for its main checkout and refuses its linked topology', async () => {

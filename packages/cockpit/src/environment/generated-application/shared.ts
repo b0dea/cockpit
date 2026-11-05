@@ -638,6 +638,11 @@ export function complete(
     return {
         kind: 'complete', artifact: null, destination: null,
         diagnostics: [
+            ...prepared.checkoutIdentity.standaloneReason ? [{
+                severity: 'warning' as const, code: 'GENERATED_CHECKOUT_STANDALONE' as const, target: prepared.configPath,
+                message: `this directory was treated as standalone, not as a Git checkout, because ${prepared.checkoutIdentity.standaloneReason}; generated surfaces do not depend on it`,
+                fix: 'nothing is needed if this directory is not meant to be a checkout, though a stale .git entry is better removed; otherwise install Git on an absolute PATH entry or repair the entry with git worktree repair, then run npx --no cockpit sync --config <your cockpit.toml>',
+            }] : [],
             // A trust warning is a review prompt for settings being written; repeating it for an
             // unchanged file on every sync and check trained people to ignore it.
             ...prepared.warnings.filter(warning => changes.some(change => change.operation === 'write' && change.path === warning.path))
