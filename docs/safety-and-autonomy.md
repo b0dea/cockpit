@@ -121,9 +121,10 @@ observations, `doctor` and `docs check` use only the absolute directories alread
 their original order. Every relative entry is excluded, including empty entries, `.` and paths
 starting with `..`, so changing into a sibling cannot select a different tool. Noncanonical
 absolute entries still refuse the observation; no entry is normalized. Put the required tool in
-an absolute directory and rerun the command. This does
-not change the environment used to start sessions, discover evaluators or check MCP commands, or
-the guard's approval rules. A completed observation does not establish that a harness runs its
+an absolute directory and rerun the command. Surfaces-only `sync` and `check` also need Git
+checkout observations and can refuse when this search path is unavailable. This does not change
+the environment used to start sessions, discover evaluators or check MCP commands, or the guard's
+approval rules. A completed observation does not establish that a harness runs its
 generated hooks or that an external integration works.
 
 Generated checkout identity and native-hook revision observations use the same absolute-only

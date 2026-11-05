@@ -255,7 +255,7 @@ export async function observeEnvSchemas(
     }
     const invalid = statuses.flatMap(([sibling, status]) => status.state === 'invalid' ? [[sibling, status] as const] : [])
     const unavailable = statuses.flatMap(([sibling, status]) => status.state === 'unavailable' ? [[sibling, status] as const] : [])
-    const remedy = 'run `VARLOCK_TELEMETRY_DISABLED=true varlock load` in each named sibling directory and fix the reported keys'
+    const remedy = 'have a person run `VARLOCK_TELEMETRY_DISABLED=true varlock load` in each named sibling directory and fix the reported keys; agents use cockpit preflight for key-only status'
     if (invalid.length > 0) {
         return [issueObservation({
             ...common,

@@ -275,7 +275,8 @@ Varlock telemetry without changing the person's global configuration; output red
 separate setting and remains required.
 
 Preflight and doctor already check the schema of every sibling that has a `.env.schema`; a failing row
-names the keys, and `varlock load` in that sibling shows why.
+names the keys. A person can run `VARLOCK_TELEMETRY_DISABLED=true varlock load` in that sibling to
+diagnose it. Agents use cockpit preflight for key-only status; raw Varlock output is not safe to read.
 
 Treat Varlock output as secret-tainted even in agent mode. Report variable names, validation state,
 exit status and provenance only. Never copy raw resolved values, stdout or stderr into work-order

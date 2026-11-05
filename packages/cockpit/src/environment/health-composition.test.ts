@@ -918,12 +918,12 @@ describe('env schema health', () => {
 
         const { preflight, row } = await health(candidate)
 
-        expect(row(preflight)).toMatchObject({ verdict: 'fail', remedy: expect.stringContaining('varlock load') })
+        expect(row(preflight)).toMatchObject({ verdict: 'fail', remedy: expect.stringContaining('have a person run `VARLOCK_TELEMETRY_DISABLED=true varlock load`') })
         expect(preflight.diagnostics).toContainEqual(expect.objectContaining({
             severity: 'error',
             code: 'ENV_SCHEMA_UNHEALTHY',
             message: expect.stringMatching(/api .*missing required DATABASE_URL.*invalid PORT/),
-            fix: expect.stringContaining('varlock load'),
+            fix: expect.stringContaining('have a person run `VARLOCK_TELEMETRY_DISABLED=true varlock load`'),
         }))
     })
 
