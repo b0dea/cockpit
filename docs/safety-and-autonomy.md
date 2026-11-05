@@ -47,7 +47,7 @@ cannot bypass any boundary below.
 The guard denies mutation or staging of a declared environment instance, and mutation below a
 secrets directory. That covers command and patch removals as well as writes, removing a directory
 that contains an instance or the secrets directory, and staging a containing directory that could
-include an instance.
+include an instance or a secrets directory.
 
 Every `.env` and `.env.*` file at any depth is treated as holding secrets, declared or not: reading,
 writing, removing, staging or linking one is a hard denial through every guarded tool. The
@@ -176,8 +176,9 @@ staging by explicit path (a person approves or runs it), staging without explici
 profiles, and any removal without a grant. An explicit removal outside configured roots stays at
 `ask` even when a declared allow matches, because cockpit cannot verify a target outside the roots
 it manages; review the exact path and approve it, or move the work under a configured root. `git add -A`, `git add .` or a
-directory operand that covers a secrets directory or an environment instance is a hard denial:
-stage the changed files by name. Unsupported staging options or unproven pathspec grammar produce
+directory operand that covers a secrets directory at any depth or an environment instance is a hard
+denial: stage the changed files by name. The guard walks the operand to find nested secrets
+directories; a tree past the walk's bound stays at `ask`, and a walk that fails is `unavailable`. Unsupported staging options or unproven pathspec grammar produce
 `unavailable`. Any other refused command gets an `ask` that names the command and gives three ways
 forward: a person approves it, a person runs it in a terminal, or a person admits it under
 `[guards] allow`; for tests it points to `cockpit test-run`.

@@ -335,6 +335,20 @@ describe('resolved guard evaluation', () => {
         expect(decide('git add -A')).toEqual(covering)
         expect(evaluateGuard(parseGuardInput(shellPayload('git add -f env')), noInstances, inspect)).toEqual(covering)
         expect(decide('git add config/active.instance')).toEqual({ decision: 'deny', reason: 'Refusing mutation or staging of a declared environment instance.' })
+        // A secrets directory anywhere below a covering operand is denied like the root one, in any repository the walk reaches.
+        const walking = (found: (below: string) => string[] | null) => (request: Parameters<typeof inspect>[0]) => ({ ...inspect(request),
+            ...(searches(request.operation) ? { sensitive: found(posix.resolve(request.cwd, request.path)) } : {}) })
+        const nestedSecrets = walking((below) => [`${below}/web/.SECRETS`])
+        for (const command of ['git add services', 'git add -f services', 'git add -A', 'git add -u', `git -C ${other} add .`]) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), noInstances, nestedSecrets), command).toEqual(covering)
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('git add services')), noInstances, walking((below) => [`${below}/web/.env.schema`])).decision).toBe('ask')
+        // A tree past the walk's bound is unproven, and a walk that fails is missing evidence.
+        expect(evaluateGuard(parseGuardInput(shellPayload('git add services')), noInstances, walking(() => null))).toEqual({ decision: 'ask', reason: expect.stringContaining('covers more than the guard walks') })
+        expect(evaluateGuard(parseGuardInput(shellPayload('git add services')), noInstances, (request) => {
+            if (searches(request.operation)) throw new Error('synthetic walk failure')
+            return inspect(request)
+        })).toEqual({ decision: 'unavailable', reason: expect.stringContaining('could not walk services') })
         // Staging writes the index, not the file, so naming a guard control is the person's call to approve, like any staging.
         expect(decide('git add .claude/settings.json .codex/hooks.json cockpit.toml')).toEqual({ decision: 'ask', reason: expect.stringContaining('`git add .claude/settings.json .codex/hooks.json cockpit.toml` requires human approval') })
     })

@@ -247,6 +247,16 @@ describe('one-row generated surface integration', () => {
             else expect(guarded.stdout).toBe('')
             expect(guarded.stdout + guarded.stderr).not.toContain(credentialCanary)
         }
+        // The installed guard walks a staged directory for itself, so a nested secrets directory it finds is denied.
+        await mkdir(join(added.root, 'worker/deep/.secrets'), { recursive: true })
+        const staged = spawnSync('/bin/bash', [join(added.root, '.cockpit/guards/bash-guard.sh'), '--harness', 'claudecode'], {
+            cwd: added.root,
+            input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: added.root, tool_input: { command: 'git add worker' } }),
+            encoding: 'utf8', timeout: 30_000, maxBuffer: 65_536,
+        })
+        expect(JSON.parse(staged.stdout).hookSpecificOutput).toMatchObject({ permissionDecision: 'deny',
+            permissionDecisionReason: expect.stringContaining('Stage the changed files by name instead.') })
+        await rm(join(added.root, 'worker/deep'), { recursive: true })
 
         // A sibling's own guide edit leaves the committed copy stale; check names that guide until sync.
         const guide = join(added.root, 'worker/AGENTS.md')

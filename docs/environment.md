@@ -681,8 +681,10 @@ resolver code and dependency lock as you would product code.
 
 Put encrypted resolver expressions or external-provider references in
 `env/.secrets/<cockpit-project>/<component>`, which the generated guards keep agents from changing
-or staging. Ignore `env/.secrets/` in the cockpit's `.gitignore` before any secret material exists,
-create the directories with mode 0700 and no symbolic links, and create resolver files with mode
+or staging. Let `sync` write the generated ignore block in the cockpit's `.gitignore` before any secret material
+exists, because that block covers the contents of every `.secrets` directory at any depth, and leave
+it as generated: ignoring the `env/.secrets/` directory itself would defeat its exception for
+`env/.secrets/.gitignore`. Create the directories with mode 0700 and no symbolic links, and create resolver files with mode
 0600 through your own approved provisioning process. cockpit does not create those files or their
 values.
 

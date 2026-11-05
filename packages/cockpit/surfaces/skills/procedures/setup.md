@@ -249,8 +249,8 @@ Read variable names from a safe schema or template, never resolve values into th
 
 Keep the tracked product `.env.schema` beside the component that owns it. Store only encrypted
 Varlock resolver expressions or external-provider references under
-`env/.secrets/<cockpit-project>/<component>`; the generated `env/.secrets/.gitignore` must be current,
-the directory mode 0700, and resolver files mode 0600 before use. Ignoring, encryption and redaction
+`env/.secrets/<cockpit-project>/<component>`; the generated ignore block in the cockpit's `.gitignore`
+must be current, the directory mode 0700, and resolver files mode 0600 before use. Ignoring, encryption and redaction
 do not prevent same-user code from reading a resolved value. The agent receives schema and redacted
 status, never a plaintext source.
 

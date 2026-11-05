@@ -46,7 +46,7 @@ describe('team metadata', () => {
         expect(manifest).toEqual({ private: true, scripts: { test: 'vitest', 'cockpit:setup': 'cockpit setup --config cockpit.toml',
             'cockpit:sync': 'cockpit sync --config cockpit.toml', 'cockpit:check': 'cockpit check --config cockpit.toml' },
         devDependencies: { [installedPackageMetadata.name]: installedPackageMetadata.version } })
-        expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('operator-owned\n# cockpit:ignore:start sha256=1df8e5da6b53377d\n/node_modules/\n/.cockpit/local/\n/.claude/settings.local.json\n/env/.secrets/*\n!/env/.secrets/.gitignore\n/repositories/\n# cockpit:ignore:end\n')
+        expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('operator-owned\n# cockpit:ignore:start sha256=63feef9a9f96d7cc\n/node_modules/\n/.cockpit/local/\n/.claude/settings.local.json\n**/.secrets/*\n!/env/.secrets/.gitignore\n/repositories/\n# cockpit:ignore:end\n')
         expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toEqual({ kind: 'complete', changed: false, changes: [] })
     })
 
@@ -63,6 +63,17 @@ describe('team metadata', () => {
         await writeFile(join(root, 'generated/app.env'), 'KEY=value\n')
         expect(spawnSync('git', ['-C', root, 'check-ignore', '--quiet', 'generated/app.env']).status).toBe(0)
         expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'complete' })
+    })
+
+    it('ignores secrets directory contents at any depth but keeps the root ignore file trackable', async () => {
+        const root = await fixture('repositories')
+        expect(spawnSync('git', ['-C', root, 'init', '--quiet']).status).toBe(0)
+        expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'complete', changed: true })
+        const ignored = (path: string) => spawnSync('git', ['-C', root, 'check-ignore', '--no-index', '--quiet', '--', path]).status
+        expect(ignored('env/.secrets/project/api/resolver')).toBe(0)
+        expect(ignored('services/web/.secrets/resolver')).toBe(0)
+        expect(ignored('env/.secrets/.gitignore')).toBe(1)
+        expect(ignored('services/web/secrets/config.json')).toBe(1)
     })
 
     it('ignores literal sibling directory names without matching nearby directories', async () => {

@@ -714,7 +714,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     const secretDenial = deny('Refusing mutation or staging below a secrets directory.')
     const instanceDenial = deny('Refusing mutation or staging of a declared environment instance.')
     // `git add -A`, `git add .` and a directory operand stage everything below them.
-    const coveringStageDenial = deny(`Refusing to stage a path that contains ${SECRETS_ROOT} or a declared environment instance: \`git add -A\`, \`git add .\` and a directory operand stage everything below them. Stage the changed files by name instead.`)
+    const coveringStageDenial = deny(`Refusing to stage a path that contains a secrets directory or a declared environment instance: \`git add -A\`, \`git add .\` and a directory operand stage everything below them. Stage the changed files by name instead.`)
     const controlDenial = deny('Refusing mutation of the guard, its hook registration or its ownership manifest.')
     const gitMetadataDenial = deny('Refusing direct mutation of Git metadata: its configuration chooses programs that read-only Git commands run.')
     const readDenial = deny('Refusing to read a declared environment instance or secrets directory into the agent context.')
@@ -828,6 +828,20 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (request.operation === 'write' && (controlFiles.some(is) || controlDirectories.some(below)
             || controlCoverage && (controlFiles.some(covers) || controlDirectories.some(covers)))) hold(controlDenial)
         return evidence
+    }
+    // `.`, `-A` and a directory operand stage everything below them, so a secrets directory anywhere
+    // in the tree is as much at stake as the root one: `git add services` only asked, and an approved
+    // prompt would have staged its contents wherever an ignore rule did not cover them.
+    const inspectStage = (invocation: ParsedInvocation, path: string, cwd: string) => {
+        if (!inspectPath({ path, cwd, operation: 'stage' })) return
+        const walked = resolvedEvidence({ path, cwd, operation: 'search' })
+        if (!walked) {
+            hold(unavailable(`Guard could not walk ${path} to prove staging it holds no secrets directory${inspectionFailure === undefined ? '' : ` (${inspectionFailure})`}.`))
+            return
+        }
+        const found = walked.sensitive as readonly string[] | null
+        if (found === null) holdAsk(invocation, ask(`Staging ${path} covers more than the guard walks to prove it holds no secrets directory. Stage the changed files by name.`))
+        else if (found.some((item) => fold(item).split('/').includes('.secrets'))) hold(coveringStageDenial)
     }
     // Removing a control, anything below a control directory, or a directory containing one can
     // disable the guard before its next invocation. Missing evidence never softens a spelling denial.
@@ -1095,13 +1109,13 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
                 if (options && arg.startsWith('-')) {
                     if (['-A', '--all', '-u', '--update'].includes(arg)) {
                         // These forms can stage an instance even without a literal operand.
-                        inspectPath({ path: '.', cwd: git.cwd, operation: 'stage' })
+                        inspectStage(invocation, '.', git.cwd)
                     } else if (!['-f', '--force', '-v', '--verbose', '-n', '--dry-run'].includes(arg)) hold(unavailable('Unsupported Git staging option. Stage with `git add <paths>`, `-A` or `-u`; a person runs any other staging form.'))
                 } else {
                     operands++
                     pathCount++
                     if (arg.startsWith(':') || /[*?\[]/.test(arg)) hold(unavailable('Unproven Git staging pathspec grammar.'))
-                    else inspectPath({ path: arg, cwd: git.cwd, operation: 'stage' })
+                    else inspectStage(invocation, arg, git.cwd)
                 }
             }
             if (!operands) holdAsk(invocation, ask('Staging without explicit paths requires human approval.'))
