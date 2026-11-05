@@ -22,6 +22,7 @@ import {
     decodeGitObservation,
     inspectTrackedSecretFiles,
     listTrackedEnvSchemas,
+    listTrackedSchemaComponentFiles,
     observeGit,
     observeRunningCheckout,
 } from './git-observation.js'
@@ -314,8 +315,33 @@ describe('a repository that configures an fsmonitor', () => {
             expect(await ran(), 'status').toBe(false)
             expect(await listTrackedEnvSchemas({ executable, slug: 'api', root, timeoutMs: 10_000 }, executeProbe)).toMatchObject({ kind: 'listed' })
             expect(await ran(), 'the tracked schema listing').toBe(false)
+            expect(await listTrackedSchemaComponentFiles({ executable, root, directory: 'component', timeoutMs: 10_000 }, executeProbe)).toEqual({ kind: 'listed', paths: [] })
+            expect(await ran(), 'the component listing').toBe(false)
             expect(await inspectTrackedSecretFiles({ executable, timeoutMs: 10_000, repositories: [{ slug: 'api', root }] }, executeProbe)).toEqual([])
             expect(await ran(), 'the tracked secret listing').toBe(false)
+        } finally {
+            await rm(root, { recursive: true, force: true })
+        }
+    })
+})
+
+describe('schema component authority', () => {
+    it('requires authenticated Git evidence and surfaces a failed listing', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-component-git-')))
+        try {
+            execFileSync('git', ['init', '--quiet', root])
+            await mkdir(join(root, 'component'))
+            await writeFile(join(root, 'component/server.ts'), 'export {}\n')
+            execFileSync('git', ['-C', root, 'add', '--', 'component/server.ts'])
+            const resolved = await resolveGitExecutable({ PATH: process.env.PATH ?? '' })
+            if (resolved.state !== 'available') throw new Error('Git unavailable in component fixture')
+            const input = { executable: resolved.value, root, directory: 'component', timeoutMs: 10_000 }
+            expect(await listTrackedSchemaComponentFiles(input, executeProbe)).toEqual({ kind: 'listed', paths: ['component/server.ts'] })
+            expect(await listTrackedSchemaComponentFiles(input, async (step) => ({ ...await executeProbe(step) })))
+                .toEqual({ kind: 'unavailable', reason: 'Git did not answer (unauthenticated Git outcome)' })
+            await writeFile(join(root, '.git/index'), 'not an index')
+            expect(await listTrackedSchemaComponentFiles(input, executeProbe))
+                .toMatchObject({ kind: 'unavailable', reason: expect.stringContaining('Git failed:') })
         } finally {
             await rm(root, { recursive: true, force: true })
         }

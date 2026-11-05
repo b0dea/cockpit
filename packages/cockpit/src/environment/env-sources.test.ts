@@ -340,6 +340,96 @@ describe('env schema --replace-from', () => {
         expect(space.varlockRan()).toBe(false)
     })
 
+    it('creates the first nested schema only at an established tracked component boundary', async () => {
+        const space = estate('api')
+        const api = space.sibling('api')
+        const component = join(api, 'local/worker')
+        write(join(component, 'server.ts'), 'export {}\n')
+        write(join(component, '.env.local'), `TOKEN=${SENTINEL}\n`)
+        git(api, 'init', '--quiet')
+        git(api, 'add', '--', 'local/worker/server.ts')
+        write(join(space.root, 'draft.txt'), 'WORKER_KEY=exec("synthetic")\n')
+
+        const created = await replacing(space, 'draft.txt', `api:local/worker/${SCHEMA}`, '--json')
+        expect(created.status, `${created.stdout}${created.stderr}`).toBe(0)
+        expect(JSON.parse(created.stdout).result).toMatchObject({ action: 'created', path: join(component, SCHEMA), note: expect.stringContaining('not validated until committed') })
+        expect(readFileSync(join(component, SCHEMA), 'utf8')).toBe('WORKER_KEY=exec("synthetic")\n')
+        expect(`${created.stdout}${created.stderr}`).not.toContain(SENTINEL)
+        expect(readdirSync(component).filter((name) => name.startsWith('.cockpit'))).toEqual([])
+        expect(space.varlockRan()).toBe(false)
+
+        const beforeAdd = await cli(space.env, 'env', 'schema', '--config', space.configPath, '--path', `api:local/worker/${SCHEMA}`)
+        expect(beforeAdd.status).toBe(2)
+        git(api, 'add', '--', 'local/worker/.env.schema')
+        const afterAdd = await cli(space.env, 'env', 'schema', '--config', space.configPath, '--path', `api:local/worker/${SCHEMA}`)
+        expect(afterAdd.status).toBe(0)
+        expect(afterAdd.stdout).toContain('WORKER_KEY=exec("synthetic")')
+        expect(space.varlockRan()).toBe(false)
+
+        // Untracked files and tracked descendants do not establish the requested boundary.
+        write(join(api, 'untracked/server.ts'), 'export {}\n')
+        for (const reference of [`api:untracked/${SCHEMA}`, `api:local/${SCHEMA}`, `nosuch:local/worker/${SCHEMA}`]) {
+            const refused = await replacing(space, 'draft.txt', reference)
+            expect(refused.status, reference).toBe(2)
+            expect(`${refused.stdout}${refused.stderr}`).not.toContain(SENTINEL)
+        }
+        expect(existsSync(join(api, 'untracked', SCHEMA))).toBe(false)
+        expect(existsSync(join(api, 'local', SCHEMA))).toBe(false)
+    })
+
+    it('creates a nested schema only in the checkout currently served', async () => {
+        const space = estate('api')
+        const api = space.sibling('api')
+        write(join(api, 'component/server.ts'), 'export {}\n')
+        git(api, 'init', '--quiet')
+        git(api, 'add', '--', 'component/server.ts')
+        git(api, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'fixture')
+        const worktree = join(space.root, 'api-worktree')
+        git(api, 'worktree', 'add', '--detach', worktree)
+        write(join(space.root, '.cockpit/local/sibling-checkouts'), `${JSON.stringify({ format: 'cockpit-sibling-checkouts/v1', checkouts: { api: worktree } })}\n`)
+        write(join(space.root, 'draft.txt'), 'SERVED_KEY=\n')
+        const created = await replacing(space, 'draft.txt', `api:component/${SCHEMA}`)
+        expect(created.status).toBe(0)
+        expect(readFileSync(join(worktree, 'component', SCHEMA), 'utf8')).toBe('SERVED_KEY=\n')
+        expect(existsSync(join(api, 'component', SCHEMA))).toBe(false)
+        expect(space.varlockRan()).toBe(false)
+    })
+
+    it('refuses linked, sensitive or protected component authority without reading its bytes', async () => {
+        const space = estate('api', 'declared')
+        const api = space.sibling('api')
+        write(join(space.root, 'draft.txt'), 'NEW_KEY=\n')
+        const outside = join(space.root, 'outside')
+        write(join(outside, 'server.ts'), SENTINEL)
+        for (const directory of ['linked-directory', 'linked-file', 'hardlinked-file', 'secret-only', 'deleted']) {
+            write(join(api, directory, directory === 'secret-only' ? '.env.local' : 'server.ts'), SENTINEL)
+        }
+        git(api, 'init', '--quiet')
+        git(api, 'add', '--', 'linked-directory', 'linked-file', 'hardlinked-file', 'secret-only', 'deleted')
+        rmSync(join(api, 'linked-directory'), { recursive: true })
+        symlinkSync(outside, join(api, 'linked-directory'))
+        rmSync(join(api, 'linked-file/server.ts'))
+        symlinkSync(join(outside, 'server.ts'), join(api, 'linked-file/server.ts'))
+        rmSync(join(api, 'hardlinked-file/server.ts'))
+        linkSync(join(outside, 'server.ts'), join(api, 'hardlinked-file/server.ts'))
+        rmSync(join(api, 'deleted'), { recursive: true })
+        const declared = space.sibling('declared')
+        write(join(declared, 'config/runtime.instance'), SENTINEL)
+        git(declared, 'init', '--quiet')
+        git(declared, 'add', '--', 'config/runtime.instance')
+        for (const reference of [
+            ...['linked-directory', 'linked-file', 'hardlinked-file', 'secret-only', 'deleted', '.secrets', 'component/../outside', './outside'].map((directory) => `api:${directory}/${SCHEMA}`),
+            `declared:config/${SCHEMA}`,
+        ]) {
+            const ran = await replacing(space, 'draft.txt', reference)
+            expect(ran.status, reference).toBe(2)
+            expect(`${ran.stdout}${ran.stderr}`).not.toContain(SENTINEL)
+        }
+        expect(existsSync(join(outside, SCHEMA))).toBe(false)
+        expect(existsSync(join(declared, 'config', SCHEMA))).toBe(false)
+        expect(space.varlockRan()).toBe(false)
+    })
+
     it('refuses to launder a secret through a draft, leaving the target unchanged and the secret unshown', async () => {
         const space = estate('api', 'declared')
         const api = space.sibling('api')

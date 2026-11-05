@@ -680,6 +680,40 @@ export async function listTrackedEnvSchemas(input: {
     return refused.kind === 'not-a-repository' ? refused : { kind: 'unavailable', reason: refused.reason }
 }
 
+/** Regular stage-zero files directly at a component boundary; no file contents are opened. */
+export async function listTrackedSchemaComponentFiles(input: {
+    readonly executable: ResolvedExecutable
+    readonly root: string
+    readonly directory: string
+    readonly timeoutMs: number
+}, execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): Promise<TrackedEnvSchemas> {
+    const executable = resolvedGitExecutable(input.executable)
+    if (!executable) return { kind: 'unavailable', reason: 'no resolved Git executable' }
+    const step = snapshotExecutionStep({
+        id: 'git:tracked-schema-component',
+        argv: [executable.canonicalPath, '-C', input.root, ...GIT_CHILD_CONFIG, 'ls-files', '--stage', '-z', '--', `:(glob)${input.directory}/*`],
+        argv0: executable.invocationPath, cwd: input.root, env: {}, timeoutMs: input.timeoutMs,
+        stdoutLimitBytes: TRACKED_SECRET_LIMIT, stderrLimitBytes: COMPARISON_OUTPUT_LIMIT,
+        paths: [input.root], ports: [], labels: { source: input.directory },
+        expected: [{ kind: 'path', target: input.root, state: 'repository' }],
+        consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912,
+            argvIndexes: [0], executable: true, executionMode: executable.executionMode }],
+        filesystemChecks: [], compensation: [],
+    })
+    if (!step) return { kind: 'unavailable', reason: 'the component listing could not be planned' }
+    const outcome = authenticatedExecutionOutcome(await execute(step), step)
+    if (outcome?.kind === 'complete') {
+        const paths = outcome.stdout.toString('utf8').split('\0').flatMap((entry) => {
+            const match = /^100(?:644|755) [a-f0-9]+ 0\t(.+)$/.exec(entry)
+            return match ? [match[1]!] : []
+        })
+        return { kind: 'listed', paths }
+    }
+    if (outcome?.code !== ENVIRONMENT_CODES.EXECUTION_STEP_FAILED) return { kind: 'unavailable', reason: `Git did not answer (${outcome?.code ?? 'unauthenticated Git outcome'})` }
+    const refused = gitRepositoryRefusal(outcome.stderr)
+    return refused.kind === 'not-a-repository' ? refused : { kind: 'unavailable', reason: refused.reason }
+}
+
 export type SchemaCommitState =
     | Readonly<{ kind: 'committed' }>
     | Readonly<{ kind: 'uncommitted' }>

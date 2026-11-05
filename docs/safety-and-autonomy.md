@@ -404,7 +404,9 @@ The command refuses a draft whose path has a segment that is `.secrets` or start
 case folding; a declared environment instance or any other location the guard protects; a symbolic or
 hard link; anything but a regular file; and a file over the bound. Otherwise `--replace-from .env`
 followed by `env schema` would print a secret. It refuses a target that is a link too, and replaces the
-bytes atomically, or creates a missing schema in a discovered directory.
+bytes atomically, or creates a missing schema in a discovered directory. A sibling component can also
+[adopt its first schema](environment.md#read-variable-names-and-schemas) when a regular tracked
+product file establishes that exact directory; the same link and protected-location checks apply.
 
 | Writing `.env.schema`, cockpit root and sibling | Guard evaluator, 2026-11-05 |
 | --- | --- |

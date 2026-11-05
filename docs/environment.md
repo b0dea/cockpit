@@ -829,7 +829,12 @@ symbolic or hard link, a non-regular file, a directory the probe does not discov
 file.
 
 To change one, write a draft with your normal tools and add `--replace-from <draft>` to that command,
-with the draft relative to the cockpit root.
+with the draft relative to the cockpit root. To create a component's first schema, use the same
+command with its exact sibling path, for example `--path api:services/web/.env.schema`. The existing
+directory must have a regular Git-tracked product file directly inside it; descendants, links,
+environment files and guard-protected files do not establish a component boundary. The command does
+not stage the new schema: `env keys` and schema reads discover it after `git add`, and resolver
+execution still waits for a commit.
 [What it refuses](safety-and-autonomy.md#editing-a-schema-under-claude-code) is what stops a secret
 being laundered through a draft. The result is
 [not validated until it is committed](#a-schema-runs-only-once-committed).
