@@ -19,12 +19,20 @@
   <a href="docs/faq.md">FAQ</a>
 </p>
 
-cockpit is an open-source CLI that gives coding agents the environment a real product needs: every
-repository in reach, the product running on the checkouts they edit, the same instructions, skills
-and guard in [Claude Code](https://code.claude.com/docs),
-[Codex](https://developers.openai.com/codex) and [OpenCode](https://opencode.ai), and work checked
-against criteria you set. All of it comes from one <!-- cockpit:ref consumer=cockpit.toml -->
-`cockpit.toml` you review like code.
+cockpit is an open-source CLI for people who run [Claude Code](https://code.claude.com/docs),
+[Codex](https://developers.openai.com/codex) or [OpenCode](https://opencode.ai) on a real product. You
+write one <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml` and review it like code; cockpit
+turns it into the environment every agent works in:
+
+- **The same rules in every tool.** Instructions, skills, permissions and one guard hook that refuses
+  pushes to protected branches, secret-file reads and commands aimed at production, written into each
+  tool's own files, with a CI check that fails the moment any of them drifts.
+- **The real product, running.** Every repository in reach, and your own Compose stack on the
+  checkouts the agent is editing, on its own ports so parallel agents do not collide.
+- **Work graded by something other than the agent that did it.** Optional work orders hold a change to
+  criteria you set, and a fresh read-only agent run grades it by default.
+
+It holds none of your product code, and it is not a sandbox.
 
 ## Why
 
@@ -32,14 +40,11 @@ Agents are good at a change inside one repository. A real product is several rep
 stack and, more and more, several agent tools. That is where they come apart:
 
 - The agent edits the frontend but cannot run the backend it calls, or read that repository's guide.
-- Your `CLAUDE.md` never reaches Codex or OpenCode, and copied permissions drift until they
-  disagree.
+- Your `CLAUDE.md` never reaches Codex or OpenCode, and copied permissions drift until they disagree.
 - Two agents in parallel fight over the same ports and the same database.
 - "Tests pass" is the agent's word, and the diff touched files nobody asked it to.
 
-cockpit fixes the environment, not the agent. It renders one configuration into each tool's own
-files, runs your stack, and fails CI when a generated file drifts. It holds none of your product
-code.
+cockpit fixes the environment, not the agent.
 
 ## Try it
 
@@ -57,22 +62,37 @@ npx --no cockpit sync --config cockpit.toml    # rerun after every edit of cockp
 npx --no cockpit check --config cockpit.toml   # fail on drift; run it in CI too
 ```
 
-`init` proposes values from files it can read and marks where each came from; you confirm every one.
-Commit what it wrote. An agent started in the repository now gets the same instructions and skills
-in each tool you listed, with the guard live (in Codex once a person trusts its hook):
+`init` proposes values from files it can read (a `package.json` script, a Dockerfile `EXPOSE`, the
+variable names in `.env.example`) and marks where each came from; you confirm every one. Commit what it
+wrote. An agent started in the repository now gets the same instructions and skills in each tool you
+listed, with the guard live (in Codex once a person trusts its hook). The same push is refused in all
+three tools, each through its own transport:
 
 ```console
 $ echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push origin main"}}' \
     | bash .cockpit/guards/bash-guard.sh --harness claudecode
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Refusing push to a declared protected branch."}}
+
+$ ... --harness codexcli        # the same JSON
+$ ... --harness opencode        # on stderr, exit status 2
+> cockpit guard: Refusing push to a declared protected branch.
 ```
 
-`--harness codexcli` and `--harness opencode` refuse the same push through their own transports.
+And when someone widens a tool's permissions by hand, `check` catches it and names the fix:
+
+```console
+$ npx --no cockpit check --config cockpit.toml
+ERROR SURFACE_STATE_CONFLICT [.claude/settings.json]
+What failed: this generated file was edited by hand since cockpit last wrote it, and sync does not overwrite hand edits
+Why it matters: sync would overwrite content that cockpit did not write
+Fix: keep the edit by moving it into cockpit.toml or a surface overlay, ...
+```
 
 **Or let your agent do it.** Say: *set up cockpit for this project using the guide in
 `docs/getting-started.md`*
 ([hosted copy](https://github.com/b0dea/cockpit/blob/main/docs/getting-started.md)), or install the
-skill first: `npx skills add b0dea/cockpit --skill adopt-cockpit`.
+skill first: `npx skills add b0dea/cockpit --skill adopt-cockpit`. The guide tells the agent what to
+ask you and what never to invent.
 
 **Then run the product.** Once `cockpit.toml` declares your
 [Docker Compose](https://docs.docker.com/compose/) files, one command brings the stack up on its own
@@ -86,7 +106,9 @@ The [tutorial](docs/tutorial.md) runs all of this on a throwaway example.
 
 ## Start where you are
 
-Each is independent, and only the stack needs Docker.
+Each step is independent. The instructions, skills and guard need only Git and Node.js; the stack
+switches on when you declare Compose files (Docker), and agent-run grading when an agent tool is on
+`PATH` and signed in.
 
 | You want | Start here |
 |---|---|
@@ -95,28 +117,31 @@ Each is independent, and only the stack needs Docker.
 | Changes held to criteria you set | [Work orders](docs/work-and-browser.md#write-a-work-order) |
 | Your agent to do the setup | [Set up with an agent](docs/getting-started.md#set-up-with-an-agent) |
 | To join a team that already uses it | [Joining a team's cockpit](docs/joining-a-team.md) |
-| To move an existing scripted setup over | [Adopt an existing setup](docs/getting-started.md#adopt-an-existing-setup) |
+| To move an existing scripted setup over, in layers | [Adopt an existing setup](docs/getting-started.md#adopt-an-existing-setup) |
 
 ## What you get
 
 | Capability | What it means |
 |---|---|
-| **[Every repository in reach](docs/harness-surfaces.md#sibling-projection-and-standing-cost)** | Declare each once; `setup` clones or finds it, its guides are copied into the root `AGENTS.md`, and every tool is granted its directory. A changed guide is drift until a person runs `sync`, so an agent cannot quietly change what later agents load. |
-| **[The product running, per checkout](docs/environment.md)** | `session` runs your own Compose files on the live checkouts and leases each checkout, worktrees included, a port family, so parallel agents do not collide. |
+| **[Every repository in reach](docs/harness-surfaces.md#sibling-projection-and-standing-cost)** | Declare each once; `setup` clones or finds it, its guides are copied into the root `AGENTS.md` (the one route that loaded in all three tools in dated runs), and every tool is granted its directory. A changed guide is drift until a person runs `sync`, so an agent cannot quietly change what later agents load. |
+| **[The product running, per checkout](docs/environment.md)** | `session` runs your own Compose files on the live checkouts and leases each checkout, worktrees included, a port family. `up`, `logs`, `down` and the rest drive the stack; it stops only when no checkout still holds it, and `reset` wipes only the volumes you declared resettable. |
+| **[Parallel work in worktrees](docs/environment.md#serve-a-sibling-from-a-worktree)** | `use` serves a repository from a worktree, so each agent runs the whole product on its own branch. `check` refuses a fixed `container_name` that would make two stacks collide, and `stacks prune` removes what a deleted worktree's stack left behind. |
 | **[One guard in every tool](docs/safety-and-autonomy.md)** | The same script refuses pushes to protected branches, reads and writes of secret files, and commands aimed at production hosts you declare. |
-| **[Test gates that cannot fake a pass](docs/work-and-browser.md#choose-the-proving-test-tier)** | `test-run` runs your own gate and reports PASS only for a complete, stable run whose checks all passed. A change that deletes, skips or loosens tests is flagged. |
-| **[Judged, not just gated](docs/work-and-browser.md#how-an-order-earns-done)** | Optional work orders hold a change to an objective, a scope and criteria. A fresh read-only agent run grades it by default, or the checks alone, or the agent's own report, and the record says which. |
-| **[Proof in a real browser](docs/work-and-browser.md#browser-evidence)** | `browser drive` and `browser screenshot` visit every declared route through your own [Playwright](https://playwright.dev) project and record what they saw. |
-| **[Agents that unblock themselves](docs/safety-and-autonomy.md#who-decides)** | An agent runs what only reads, fast-forwards or repairs cockpit's own state without asking. Widening access, and by default deleting data, stays a person's. |
-| **[MCP servers you approve](docs/harness-surfaces.md#mcp-servers-and-restrictions)** | A server reaches an agent only after a person approves its exact SHA-256; a changed declaration needs approval again. |
+| **[Secrets kept out of the agent's context](docs/environment.md#secret-sources-and-environment-schemas)** | The guard refuses `.env` reads; `cockpit env keys` gives an agent the variable names instead, and [Varlock](https://varlock.dev) `.env.schema` files are validated without reading a value. |
+| **[Test gates that cannot fake a pass](docs/work-and-browser.md#choose-the-proving-test-tier)** | `test-run` runs your own gate (Vitest, Jest, pytest, Bazel and others) and reports PASS only for a complete, stable run whose checks all passed. A change that deletes, skips or loosens tests is flagged. |
+| **[Judged, not just gated](docs/work-and-browser.md#how-an-order-earns-done)** | Optional work orders hold a change to an objective, a scope and criteria. You choose who grades: a fresh read-only agent run (the default), the checks alone, or the agent's own report. The record always says which. |
+| **[Proof in a real browser](docs/work-and-browser.md#browser-evidence)** | `browser drive` and `browser screenshot` visit every declared route through your own [Playwright](https://playwright.dev) project, signed in as a declared role if you ask, and record each screenshot's digest and each route's console errors. |
+| **[Skills for driving it](docs/harness-surfaces.md#skills-and-selftest-evidence)** | Each listed tool gets cockpit's skills for fixing a bug with proof, running a work order, explaining a refusal and, once a browser is declared, checking the app in it. They call cockpit's own commands, so the stack, tests and grading work the same way in every tool. |
+| **[Agents that unblock themselves](docs/safety-and-autonomy.md#who-decides)** | An agent runs what only reads, fast-forwards or repairs cockpit's own state without asking. Widening access, lowering the grading bar and, by default, deleting data stay a person's. |
+| **[MCP servers you approve](docs/harness-surfaces.md#mcp-servers-and-restrictions)** | A server reaches an agent only after a person approves its exact SHA-256; a changed declaration needs approval again. `[mcp.allowed_tools]` limits it to exact tools in Claude Code and Codex; a tool that cannot enforce that does not get the server. |
 | **[Decisions and docs kept true](docs/docs-check.md)** | A work order cannot sign off while a recorded decision is unresolved, and `docs check` reports documents citing removed paths. |
-| **[Checked, not assumed](docs/capability-matrix.md)** | `check` fails in CI when a generated file stops matching `cockpit.toml`, and the capability matrix records what each tool actually enforced, from dated runs of the real tool. |
+| **[Checked, not assumed](docs/capability-matrix.md)** | `check` fails in CI ([a ready-made action](docs/harness-surfaces.md#publish-and-verify) included) and reports drift to the agent as a Claude Code or Codex session starts. The capability matrix records what each tool actually enforced, from dated runs of the real tool. |
 
 ## A cockpit.toml
 
-Trimmed to the meaningful lines, for one repository whose guard refuses pushes to `main` and
-anything that reaches a production database. A product of several repositories lists several
-`[[sibling]]` tables.
+Trimmed to the meaningful lines, for one repository whose guard refuses pushes to `main` and anything
+that reaches a production database. A product of several repositories lists several `[[sibling]]`
+tables.
 
 ```toml
 [cockpit]
@@ -138,8 +163,47 @@ hosted_db_hosts = [ "db.prod.example.com" ]
 protected_branches = [ "main", "master" ]
 
 [surfaces]
-tools = [ "claudecode", "codexcli" ]
+tools = [ "claudecode", "codexcli", "opencode" ]
 ```
+
+`sync` renders it into each tool's own files, and `check` fails when any stops matching:
+
+```text
+AGENTS.md  CLAUDE.md                     root instructions, one per tool family
+.claude/settings.json                    Claude Code hook, permissions and deny rules
+.codex/config.toml  .codex/hooks.json    Codex sandbox and guard hook
+.opencode/plugin/  opencode.jsonc        OpenCode guard plugin and permissions
+.claude/skills/  .agents/skills/  ...    cockpit's skills, per tool
+.cockpit/guards/bash-guard.sh            the one guard all three tools call
+```
+
+A two-repository cockpit with its own stack is [examples/compose-first](examples/compose-first/README.md).
+
+## Work orders
+
+Optional, for a change that must meet criteria someone else set. A work order is
+`workorders/<id>.md`; its front-matter is the contract, and the body is yours:
+
+```markdown
+---
+id: WO-1
+objective: The handbook documents how sign-in redirects work.
+scope:
+  - docs/
+criteria:
+  - id: AC1
+    text: docs/redirects.md exists and names the only origin a redirect may target.
+    check: [grep, -q, "same origin", docs/redirects.md]
+---
+```
+
+`work accept` records the contract, `work check` runs the checks, `work grade` grades it and
+`work signoff` closes it. By default the grader is a fresh, read-only run of an agent tool that starts
+outside the repository and never sees the session that did the work; run from inside Claude Code or
+Codex, another listed tool grades first. It also judges what a fixed rule cannot: whether a change outside `scope` was
+needed and whether a test change was justified. Switching to a weaker mode is refused until a person
+confirms it. [How an order earns done](docs/work-and-browser.md#how-an-order-earns-done) has the
+modes.
 
 ## The guard
 
@@ -154,8 +218,20 @@ tools = [ "claudecode", "codexcli" ]
 - **Cannot prove a command read-only?** Claude Code asks a person; Codex and OpenCode have no prompt
   tier, so there it is refused. `[guards] allow` rules widen that. Input it cannot parse is refused.
 
-[Varlock](https://varlock.dev) `.env.schema` files are validated without reading values, once
-committed. [Safety and autonomy](docs/safety-and-autonomy.md) has the full rules.
+[Safety and autonomy](docs/safety-and-autonomy.md) has the full rules.
+
+## How it compares
+
+- **[rulesync](https://github.com/dyoshikawa/rulesync), [Ruler](https://github.com/intellectronica/ruler):**
+  one set of rules for many tools. cockpit bundles rulesync for that, and adds the guard,
+  permissions, a drift check over all of it and a dated record of what each tool enforces.
+- **Docker Compose, Dev Containers:** they run the services. cockpit runs your own Compose files
+  against the checkouts agents edit, with port leases, and does not replace them.
+- **OpenSpec, spec-kit:** they own the specification. cockpit owns the environment and the grading; they
+  combine.
+
+The [full comparison](docs/faq.md#how-does-cockpit-compare) covers worktree managers and hand-written
+settings, and the FAQ says [when not to use cockpit](docs/faq.md#when-should-i-not-use-cockpit).
 
 ## Status and limits
 
@@ -169,9 +245,6 @@ committed. [Safety and autonomy](docs/safety-and-autonomy.md) has the full rules
 - **Measured, per tool.** The [capability matrix](docs/capability-matrix.md) says what each tool
   enforces, measured on which date and version. Cursor and Grok Build get files but no guard.
 - Enabling an MCP server and `reset` (it wipes data) need a person by default.
-
-The FAQ says [when not to use cockpit](docs/faq.md#when-should-i-not-use-cockpit) and
-[how it compares](docs/faq.md#how-does-cockpit-compare) with similar tools.
 
 ## Built with
 
