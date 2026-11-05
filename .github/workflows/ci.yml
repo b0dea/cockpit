@@ -230,6 +230,8 @@ jobs:
       # Every test that reads the tracked Markdown, and the packaged guide, since docs/ ships in
       # the tarball. On a code change the full matrix runs them again; this keeps them on the
       # docs-only path the matrix is skipped for.
+      # fix-catalogue runs printed commands through the built CLI and its installed guard handler.
+      - run: npm run build
       - name: documentation contracts
         run: npm test -- packages/cockpit/src/docs-ownership.test.ts packages/cockpit/src/docs-decisions.test.ts packages/cockpit/src/docs-lint.test.ts packages/cockpit/src/references.test.ts packages/cockpit/src/example-cockpit.test.ts packages/cockpit/src/fix-catalogue.test.ts
       # One case of the packaging file: it packs through the real prepack and reads the installed
