@@ -459,19 +459,11 @@ async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, s
         ...evaluatorUnavailable(`this cockpit has work orders, but no evaluator work.evaluators lists is on PATH to run work grade and cockpit grade: ${missing.map(row => row.message).join('; ')}`) }, ...closed]
 }
 
+/** Doctor's and preflight's observations only read, so their subprocesses exclude relative bins without changing harness or evaluator discovery. */
 export function createHealthCommandAdapters(
     rawInput: HealthCommandCompositionInput,
     execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
 ): HealthCommandAdapterComposition {
-    const input = captureInput(rawInput)
-    return composeHealthCommandAdapters(input, input, execute)
-}
-
-/** Doctor's observation subprocesses exclude relative bins without changing harness or evaluator discovery. */
-export function createDoctorCommandAdapters(
-    rawInput: HealthCommandCompositionInput,
-    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
-): DoctorCommandAdapters {
     const inherited = captureInput(rawInput)
     const search = inherited ? observationSearchPath(inherited.env) : undefined
     const input = inherited && search?.state === 'available'
@@ -499,8 +491,8 @@ function composeHealthCommandAdapters(
         if (loaded.kind !== 'complete') return undefined
         if (searchRefusal) return refuse?.([{
             severity: 'error', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
-            message: `doctor's observation tools cannot be selected: ${searchRefusal}`, target: 'PATH',
-            fix: 'put the required observation tools in absolute PATH directories and remove noncanonical absolute entries, then rerun doctor',
+            message: `${purpose}'s observation tools cannot be selected: ${searchRefusal}`, target: 'PATH',
+            fix: `put the required observation tools in absolute PATH directories and remove noncanonical absolute entries, then rerun ${purpose}`,
         }])
         if (!input) return undefined
         loadedConfig = loaded
@@ -511,7 +503,11 @@ function composeHealthCommandAdapters(
             ? runtimeNotDeclared(loaded.result.source.path) : undefined
         if (notDeclared && purpose !== 'doctor') return refuse?.([notDeclared])
         const git = await resolveGitExecutable(input.env)
-        if (git.state !== 'available') return undefined
+        if (git.state !== 'available') return refuse?.([{
+            severity: 'error', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
+            message: `${purpose} cannot find Git to observe the checkout: ${git.reason}`, target: 'PATH',
+            fix: `put Git in an absolute PATH directory, then rerun ${purpose}`,
+        }])
         const checkout = await checkoutProjection(input, loaded, git.value)
         if (checkout && 'failed' in checkout) return refuse?.([...notDeclared ? [notDeclared] : [], checkout.failed])
         if (!checkout || process.platform !== 'darwin' && process.platform !== 'linux') return undefined

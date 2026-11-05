@@ -119,9 +119,38 @@ synthetic = "${approval}"
             message: expect.stringContaining('This CLI process') }))
         expect(report.diagnostics).toContainEqual(expect.objectContaining({ code: 'EVALUATOR_UNAVAILABLE' }))
         expect(report.diagnostics).toContainEqual(expect.objectContaining({ code: 'MCP_COMMAND_UNRESOLVED', target: 'synthetic' }))
+        const mcp = report.diagnostics.find((row: { code: string; target: string }) => row.code === 'MCP_COMMAND_UNRESOLVED' && row.target === 'synthetic')
+        expect(mcp.message).toContain('an empty entry, which is the working directory')
+        expect(mcp.message).toContain('excludes from observation')
+        expect(mcp.message).toMatch(/git is at \/\S+\/git among the absolute entries/)
+        expect(mcp.message).not.toContain('no tool can start')
         for (const code of ['EVIDENCE_UNAVAILABLE', 'COMPOSE_TOPOLOGY_UNAVAILABLE', 'LIFECYCLE_EVIDENCE_INVALID']) {
             expect(report.diagnostics.map((row: { code: string }) => row.code)).not.toContain(code)
         }
+        expect(existsSync(poison)).toBe(false)
+    })
+
+    it.each(['check', 'preflight'])('runs %s with a Compose runtime under the same PATH as an absolute one', async command => {
+        const candidate = await createHealthCompositionFixture(roots)({ configuredRuntime: true, unseeded: true })
+        await rm(join(candidate.checkout, COMPOSE_OWNERSHIP_FILE))
+        const absolutePath = `${candidate.root}:/usr/bin:/bin`
+        const published = cli(candidate.checkout, ['sync', '--config', candidate.configPath, '--json'], absolutePath, candidate.home)
+        expect(published.status, published.stdout + published.stderr).toBe(0)
+        const poison = join(candidate.root, 'poison')
+        for (const bin of [candidate.checkout, join(candidate.checkout, 'node_modules/.bin'), join(candidate.checkout, '../relative')]) {
+            mkdirSync(bin, { recursive: true })
+            for (const name of ['git', 'docker']) await writeFile(join(bin, name), `#!/bin/sh\nprintf poison > '${poison}'\nexit 99\n`, { mode: 0o755 })
+        }
+        const codes = (PATH: string) => {
+            const result = cli(candidate.checkout, [command, '--config', candidate.configPath, '--json'], PATH, candidate.home)
+            const report = JSON.parse(result.stdout)
+            return { status: result.status, codes: report.diagnostics.map((row: { code: string }) => row.code).filter((code: string) => code !== 'GUARD_SEARCH_PATH_RELATIVE').sort() }
+        }
+        const relative = codes(`:../relative:./node_modules/.bin:.:${absolutePath}:`)
+        expect(relative).toEqual(codes(absolutePath))
+        // Check passes outright; preflight stops at the stack that never came up, not at the search path.
+        expect(relative.status).toBe(command === 'check' ? 0 : 2)
+        expect(relative.codes).toEqual(command === 'check' ? expect.not.arrayContaining(['COMPOSE_TOPOLOGY_UNAVAILABLE']) : expect.arrayContaining(['STATE_UNSEEDED']))
         expect(existsSync(poison)).toBe(false)
     })
 })

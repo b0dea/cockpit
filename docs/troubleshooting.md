@@ -239,7 +239,6 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `AUTONOMY_PERSON_REQUIRED` | a person runs the same command with --interactive in a terminal outside CI, or a person changes the field in cockpit.toml and accepts the change at sync |
 | `BROWSER_ROUTE_FINDINGS` | this run asked for a clean route (--fail-on-findings). Read result.receipt.surfaces[].diagnostics, including excerpt.messages where present: fix the product for each console error, uncaught page error and failed request that matters, then rerun npx --no cockpit browser drive --config <your cockpit.toml> --route <name> --fail-on-findings; third-party traffic never counts |
 | `CLAIM_CO_TENANT` | [see above](#common-refusal-guidance) |
-| `COCKPIT_LAUNCHER_UNPROVEN` | run cockpit as ./node_modules/.bin/cockpit <command> --config <your cockpit.toml> from the cockpit root, or remove what stops npx from proving it: a .npmrc in the cockpit root, a bin or directories.bin in its package.json, or a node_modules/.bin/cockpit that npm install did not link to the installed package |
 | `COCKPIT_REVISION_UNSTAMPED` | install a released @b00dea/cockpit when the resolved data must name the exact cockpit source commit |
 | `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
 | `COMPOSE_FILE_UNREADABLE` | make environment.compose_files name a readable Compose file inside the cockpit root, then run npx --no cockpit check --config <your cockpit.toml> |
@@ -263,6 +262,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `GENERATED_ARTIFACT_DRIFT` | [see above](#generated_artifact_drift) |
 | `GENERATED_ARTIFACT_MISSING` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_BROWSER_ENDPOINT_UNPUBLISHED` | publish the endpoint port from exactly one service in environment.compose_files as "127.0.0.1:${VAR}:<container port>" with VAR under [ports.bases] set to the endpoint port, or remove browser.endpoint to drive a local browser, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `GENERATED_CHECKOUT_STANDALONE` | nothing is needed if this directory is not meant to be a checkout, though a stale .git entry is better removed; otherwise install Git on an absolute PATH entry or repair the entry with git worktree repair, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [see above](#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [see above](#merge-ownership-and-generation) |
@@ -277,7 +277,6 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
 | `MCP_APPROVAL_UNKNOWN` | [see above](#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [see above](#mcp-and-restrictions) |
-| `MCP_COMMAND_UNRESOLVED` | install the command or correct it in the sibling's MCP declaration, then run npx --no cockpit sync --config <your cockpit.toml>; a changed declaration needs a person to approve its new sha256 under [mcp.approved] |
 | `MCP_DECLARATION_INVALID` | [see above](#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [see above](#mcp-and-restrictions) |
 | `MCP_NOT_APPROVED` | [see above](#mcp-and-restrictions) |

@@ -155,9 +155,10 @@ function searchDirectories(pathValue: unknown): Readonly<{ state: 'available'; d
 
 /** Read-only observations exclude relative bins: a package manager's cwd must not select Git or Docker in a sibling. */
 export function observationSearchPath(env: Readonly<Record<string, string | undefined>>): Readonly<{ state: 'available'; path: string }>
-    | Readonly<{ state: 'unavailable'; reason: string }> {
+    | Readonly<{ state: 'unavailable'; reason: string; noAbsoluteDirectory?: true }> {
     const selected = searchPath(env)
     if (selected.kind === 'unreadable') return miss('Executable search path is not readable')
+    if (selected.path === undefined || selected.path === '') return { ...miss('Executable search path is missing or invalid'), noAbsoluteDirectory: true }
     const bounded = searchDirectories(selected.path)
     if (bounded.state === 'unavailable') return bounded
     const absolute: string[] = []
@@ -170,7 +171,7 @@ export function observationSearchPath(env: Readonly<Record<string, string | unde
         absolute.push(directory)
     }
     return absolute.length > 0 ? { state: 'available', path: absolute.join(delimiter) }
-        : miss('Observation search path has no absolute directories; relative entries are excluded')
+        : { ...miss('Observation search path has no absolute directories; relative entries are excluded'), noAbsoluteDirectory: true }
 }
 
 // Validates the search path once and tries each directory in order; `probe` decides what a hit is.

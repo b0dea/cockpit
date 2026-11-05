@@ -8,7 +8,7 @@ import { SIBLING_GUIDE_MARKER } from '../../surfaces/projection.js'
 import type { SurfaceObservedEntry } from '../../surfaces/sync.js'
 import { nodeAuthority, readAnchoredFile, readAnchoredBatches, type PublicationPlan } from '../../generated-environment/transaction.js'
 import { errorCause, RefusalError } from '../contract.js'
-import { resolveDockerExecutable } from '../executable.js'
+import { observationSearchPath, resolveDockerExecutable } from '../executable.js'
 import { assessComposeTopology, composeProjectDirectory, observeComposeTopology } from '../compose-topology.js'
 import { declaredRuntime } from '../declaration.js'
 import { refusalOutcome as refuse } from '../../refusal.js'
@@ -198,16 +198,20 @@ async function composeTopologyDiagnostics(
     configPath: string,
     sourceSha256: string,
     adapters: GeneratedEnvironmentCommandAdapters,
-    environment: Readonly<Record<string, string | undefined>>,
+    inherited: Readonly<Record<string, string | undefined>>,
 ): Promise<readonly Diagnostic[]> {
     const loaded = await loadCockpitConfig(configPath)
     if (loaded.kind !== 'complete' || loaded.result.source.sha256 !== sourceSha256) return [{ severity: 'error' as const,
         code: 'GENERATED_SOURCE_CHANGED', message: 'the configuration changed while check was reading the Compose topology', target: configPath }]
     const config = loaded.result.config
     if (declaredRuntime(config.environment) !== 'compose') return []
+    // Reading the topology changes nothing, so it searches like every other observation, whichever
+    // caller reached it: a package manager's relative bin must not select or refuse Docker here.
+    const search = observationSearchPath(inherited)
+    const environment = search.state === 'available' ? { ...inherited, PATH: search.path } : inherited
     const env = { PATH: environment.PATH, DOCKER_HOST: environment.DOCKER_HOST, DOCKER_CONTEXT: environment.DOCKER_CONTEXT,
         DOCKER_TLS_VERIFY: environment.DOCKER_TLS_VERIFY, DOCKER_CERT_PATH: environment.DOCKER_CERT_PATH }
-    const [docker, node] = await Promise.all([resolveDockerExecutable(environment), nodeAuthority()])
+    const [docker, node] = await Promise.all([search.state === 'available' ? resolveDockerExecutable(environment) : search, nodeAuthority()])
     const observed = docker.state !== 'available' ? { kind: 'unavailable' as const, reason: docker.reason }
         : !node ? { kind: 'unavailable' as const, reason: 'the current Node executable could not be authenticated' }
             : await observeComposeTopology({ root: dirname(loaded.result.source.path), references: config.environment.compose_files,

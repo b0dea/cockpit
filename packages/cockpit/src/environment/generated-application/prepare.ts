@@ -13,7 +13,7 @@ import { composePublishedPorts, variableName } from '../compose-topology.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from '../compose-ownership.js'
 import { earlierNameRefusalMessage, findStackUnderEarlierName } from '../lifecycle-stage.js'
 import { selectStateRoot } from '../state.js'
-import { observeGeneratedCheckoutIdentity } from '../setup-observation.js'
+import { observeGeneratedCheckoutIdentity, observeSurfacesCheckoutIdentity } from '../setup-observation.js'
 import { exactKeys } from '../../exact-keys.js'
 import { refusalOutcome as refuse } from '../../refusal.js'
 import {
@@ -194,11 +194,14 @@ export async function prepare(input: unknown, adapters: GeneratedEnvironmentComm
     const siblingRoots = authenticatedSiblings.roots
     // Surface observations and health must name the same checkout, including a linked worktree
     // or a configuration below its root. The observer also authenticates standalone directories.
-    const checkoutIdentity = await observeGeneratedCheckoutIdentity({ source: loaded.result.source, cockpitName: config.cockpit.name,
+    // Only a declared runtime's stack and ports need setup's stricter view of the checkout.
+    const observeCheckout = workEnvironment.browser || config.environment.compose_files.length > 0
+        ? observeGeneratedCheckoutIdentity : observeSurfacesCheckoutIdentity
+    const checkoutIdentity = await observeCheckout({ source: loaded.result.source, cockpitName: config.cockpit.name,
         env: adapters.observationEnv ?? process.env })
     if (checkoutIdentity.state === 'failed') return refuse('GENERATED_INPUT_INVALID',
         `generated checkout identity is unavailable: ${checkoutIdentity.reason}`, loaded.result.source.path,
-        'restore the configuration checkout and Git installation, then run npx --no cockpit sync --config <your cockpit.toml>')
+        'correct what the reason names (restore the checkout or Git installation, or make each absolute PATH entry canonical), then run npx --no cockpit sync --config <your cockpit.toml>')
     const currentCockpit = checkoutIdentity.cockpitId
     const publishedCockpit = publicationCockpitId({ name: config.cockpit.name })
     const currentCheckout = checkoutIdentity.checkoutId

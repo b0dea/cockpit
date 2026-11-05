@@ -44,6 +44,11 @@ declared. This also works from linked Git worktrees and configurations below the
 `doctor` binds generated-surface checks to that checkout's identity without requiring a runtime.
 A passing surface check verifies generated files, not running services, hook enforcement or MCP
 startup. Hook enforcement and successful MCP startup require separate harness checks.
+With no runtime declared, `sync` and `check` only ask Git which checkout holds the configuration, and
+Git activity in that checkout does not disturb them. A `.git` entry Git rejects, or Git being absent
+from `PATH`, makes the directory standalone with a `GENERATED_CHECKOUT_STANDALONE` warning stating
+why, because publishing files depends on neither. A declared runtime or browser still needs setup's
+stricter view of the checkout, because stack identity and repository writes depend on it.
 [`examples/docs-only`](../examples/docs-only/README.md) and
 [`examples/compose-first`](../examples/compose-first/README.md) show the two modes. Vendor stubs,
 TLS, seeding and restoring data are plain Compose; [Compose patterns](compose-patterns.md) shows
