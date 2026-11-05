@@ -325,6 +325,23 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         expect(claudeOnly.diagnostics.map(({ code }) => code)).not.toContain('CODEX_HOOK_UNTRUSTED')
     })
 
+    it('gives preflight the observation path doctor has, and says why when it cannot select Git', async () => {
+        const candidate = await fixture({ configuredRuntime: true, unseeded: true })
+        const preflight = async (PATH: string) => runPreflight({ configPath: candidate.configPath }, createHealthCommandAdapters({
+            configPath: candidate.configPath, env: { PATH, HOME: candidate.home }, timeoutMs: 5_000,
+        }, executeProbe))
+        const absolutePath = `${candidate.root}:/usr/bin:/bin`
+        const codes = async (PATH: string) => (await preflight(PATH)).diagnostics.map(({ code }) => code)
+        expect(await codes(`./node_modules/.bin:${absolutePath}`)).toEqual(await codes(absolutePath))
+        const noGit = join(candidate.root, 'no-git')
+        await mkdir(noGit)
+        const unavailable = (await preflight(noGit)).diagnostics
+        expect(unavailable).toContainEqual(expect.objectContaining({ code: 'EVIDENCE_UNAVAILABLE', target: 'PATH',
+            message: expect.stringContaining('preflight cannot find Git to observe the checkout: Executable was not found in the supplied search path: git') }))
+        expect((await preflight('/usr/bin/../bin:/bin')).diagnostics).toContainEqual(expect.objectContaining({ code: 'EVIDENCE_UNAVAILABLE', target: 'PATH',
+            message: expect.stringContaining('preflight\'s observation tools cannot be selected') }))
+    })
+
     it('warns from doctor when PATH holds a relative entry, under which the guard asks before every command', async () => {
         const candidate = await fixture({ configuredRuntime: true, unseeded: true })
         const doctor = async (PATH: string) => runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({

@@ -52,7 +52,7 @@ import { runDocsCheck } from './docs/check.js'
 import { runServiceExec, runServicePs, runServiceRestart } from './environment/application/services.js'
 import { executeForegroundProcess, executePlan, executeProbe, foregroundTerminal } from './environment-exec/execute.js'
 import { createDestructiveCommandAdapters, selectDestructiveDaemon } from './environment/destructive-composition.js'
-import { createDoctorCommandAdapters, createHealthCommandAdapters } from './environment/health-composition.js'
+import { createHealthCommandAdapters } from './environment/health-composition.js'
 import { inspectInitReadiness, measureInitMachine } from './environment/readiness-composition.js'
 import { createLifecycleCommandAdapters } from './environment/lifecycle-composition.js'
 import { isProcessStart, observeProcessStart, processHost, type HolderProcess } from './environment/claims.js'
@@ -737,7 +737,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         doctor: (input) => {
             const configPath = resolve(input.configPath)
             return runDoctorApplication({ configPath }, {
-                ...createDoctorCommandAdapters({ configPath, env, timeoutMs: RUNTIME_STEP_TIMEOUT_MS }, executeProbe),
+                ...createHealthCommandAdapters({ configPath, env, timeoutMs: RUNTIME_STEP_TIMEOUT_MS }, executeProbe),
                 discoverReleaseFreshness: () => discoverReleaseFreshness({ verb: 'doctor', env,
                     ...(runtime.createReleaseMetadataTransport ? { createTransport: runtime.createReleaseMetadataTransport } : {}) }),
                 inspectMcpStartup: servers => observeMcpStartup(servers, env),
