@@ -41,8 +41,11 @@ When you are ready to release:
 This run is the release gate: it is the only routine run with the full suite on macOS and the
 compatibility subset on the other supported Node lines, beside the full Linux suite and the
 supply-chain checks. A push to main does not rerun them, and it could not stop a publish if it did,
-because the release workflow runs beside it. A pull request that changes the package's `version`
-field gets the same cells, since the release workflow publishes any version that is not on npm yet.
+because the release workflow runs beside it. The release workflow publishes any version that is not
+on npm yet, so a pull request that changes the package's `version` field, or that runs while the
+current version is unpublished, gets the same cells. Merge the Version Packages pull request soon
+after its run: `ci-ok` does not require an up-to-date branch, so a merge made before the workflow
+rebuilds the pull request publishes commits this run did not test.
 
 `ci-ok` includes the `version pull request scope` check, which fails when the pull request
 changes anything besides version fields in `package.json` and `package-lock.json`, `CHANGELOG.md`

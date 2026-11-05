@@ -393,6 +393,13 @@ describe('CI selects every platform for what can publish', () => {
     const from = workflow.indexOf('HEAD_REF: ${{ github.head_ref }}')
     const step = /\n {8}run: \|\n(?<body>(?: {10}.*\n)+)/.exec(workflow.slice(from))?.groups?.body ?? ''
     const manifest = (version: string) => `{\n  "name": "synthetic",\n  "version": "${version}"\n}\n`
+    // Stands in for the registry: `published` is the line `npm view` prints, and a failure prints none.
+    const registry = (published: string | undefined) => {
+        const bin = mkdtempSync(join(tmpdir(), 'test-protection-registry-'))
+        roots.push(bin)
+        writeFileSync(join(bin, 'npm'), published === undefined ? '#!/bin/sh\nexit 1\n' : `#!/bin/sh\necho ${published}\n`, { mode: 0o700 })
+        return bin
+    }
 
     it.each([
         ['the Version Packages branch', { HEAD_REF: 'changeset-release/main' }, { 'CHANGELOG.md': 'release\n' }, 'code=true', 'platforms=true'],
@@ -402,7 +409,14 @@ describe('CI selects every platform for what can publish', () => {
         ['another manifest change', {}, { 'packages/cockpit/package.json': manifest('1.0.0').replace('synthetic', 'renamed') }, 'code=true', 'platforms=false'],
         ['a documentation change', {}, { 'README.md': 'changed\n' }, 'code=false', 'platforms=false'],
         ['a push to main', { EVENT_NAME: 'push' }, { 'src.ts': 'changed\n' }, 'code=false', 'platforms=false'],
-    ])('classifies %s', (_name, env, changed, code, platforms) => {
+        ['a version change on one manifest line', {}, { 'packages/cockpit/package.json': '{ "name": "synthetic", "version": "2.0.0" }\n' }, 'code=true', 'platforms=true'],
+        // After a failed publish, the next merge is what the release workflow publishes.
+        ['a documentation change while the version is unpublished', { PUBLISHED: '' }, { 'README.md': 'changed\n' }, 'code=true', 'platforms=true'],
+        ['an ordinary change when the registry cannot answer', { PUBLISHED: undefined }, { 'src.ts': 'changed\n' }, 'code=true', 'platforms=true'],
+        // More names than a pipe holds: a reader that stops at its first match must not read as no match.
+        ['a change too long for one pipe write', {}, Object.fromEntries(Array.from({ length: 4_000 }, (_, index) => [`src/${String(index).padStart(60, '0')}.ts`, 'new\n'])), 'code=true', 'platforms=false'],
+    ] as const)('classifies %s', (_name, env, changed, code, platforms) => {
+        const { PUBLISHED: _published, ...settings } = env as Record<string, string | undefined>
         const repo = repository()
         const files = { 'packages/cockpit/package.json': manifest('1.0.0'), 'README.md': 'base\n', 'src.ts': 'base\n' }
         const base = repo.commit(files)
@@ -410,7 +424,8 @@ describe('CI selects every platform for what can publish', () => {
         writeFileSync(join(repo.root, '.git/HEAD'), `${head}\n`)
         const output = join(repo.root, 'github-output')
         const ran = spawnSync('bash', ['-c', step], { cwd: repo.root, encoding: 'utf8',
-            env: { ...process.env, EVENT_NAME: 'pull_request', HEAD_REF: 'ordinary', MACOS_LABEL: 'false', GITHUB_OUTPUT: output, ...env } })
+            env: { ...process.env, EVENT_NAME: 'pull_request', HEAD_REF: 'ordinary', MACOS_LABEL: 'false', GITHUB_OUTPUT: output, ...settings,
+                PATH: `${registry('PUBLISHED' in env ? env.PUBLISHED : '1.0.0')}:${process.env.PATH}` } })
         expect(ran.stderr).toBe('')
         expect(ran.status).toBe(0)
         expect(readFileSync(output, 'utf8').split('\n')).toEqual(expect.arrayContaining([code, platforms]))

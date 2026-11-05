@@ -20,9 +20,8 @@ on:
 # nothing; each job that checks out code asks for contents: read and no more.
 permissions: {}
 
-# A superseded pull request push has nothing left to prove. A push to main is never cancelled,
-# so the post-merge record is complete for every commit. The event name keeps the weekly run
-# out of the push queue, where a newer pending run would replace an older one.
+# The event name keeps the weekly run out of the push queue, where a newer pending run would
+# replace an older one.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   # A newer push supersedes the run in progress: its commit contains everything the older one
@@ -75,21 +74,29 @@ jobs:
           # READMEs and anything under packages/ are code, because the tarball ships them.
           docs_only='^(docs/.*|[^/]+\.md|\.changeset/.*\.md|\.github/ISSUE_TEMPLATE/.*|\.github/PULL_REQUEST_TEMPLATE\.md)$'
           code=false
-          if printf '%s\n' "$changed" | grep -Ev "$docs_only" | grep -q .; then code=true; fi
+          # `>/dev/null`, never `grep -q`: under pipefail, a reader that stops at its first match kills
+          # the writer on a long list, and the failed pipeline read as "no code changed" and skipped the tests.
+          if printf '%s\n' "$changed" | grep -Ev "$docs_only" >/dev/null; then code=true; fi
           lockfile=false
-          if printf '%s\n' "$changed" | grep -Eq '^(package\.json|package-lock\.json|packages/[^/]+/package\.json)$'; then lockfile=true; fi
+          if printf '%s\n' "$changed" | grep -E '^(package\.json|package-lock\.json|packages/[^/]+/package\.json)$' >/dev/null; then lockfile=true; fi
           # A user-visible change is shipped source or surfaces. Tests and test support are not.
           release=false
-          if printf '%s\n' "$changed" | grep -E '^packages/cockpit/(src|surfaces)/' | grep -Ev '\.test\.ts$|/test-support/' | grep -q .; then release=true; fi
+          if printf '%s\n' "$changed" | grep -E '^packages/cockpit/(src|surfaces)/' | grep -Ev '\.test\.ts$|/test-support/' >/dev/null; then release=true; fi
           changeset=false
           if [[ -n "$added_changesets" ]]; then changeset=true; fi
-          # The release workflow publishes any package version that is not on npm yet, so whatever
-          # moves that version gets every platform, not only the Version Packages pull request.
-          # The label asks for the same cells on a change likely to behave differently on macOS.
-          manifest_diff="$(git diff --unified=0 --no-renames HEAD^1 HEAD -- packages/cockpit/package.json)"
+          # The release workflow publishes any package version that is not on npm yet, whichever
+          # commit is at the head of main. So every platform runs on the Version Packages pull
+          # request, on anything else that moves the version, and on anything merging while the
+          # current version is unpublished, as it is after a failed publish. A registry error reads
+          # as unpublished. The label asks for the same cells on a change likely to behave
+          # differently on macOS.
+          version_at() { git show "$1:packages/cockpit/package.json" | node -p 'JSON.parse(require("node:fs").readFileSync(0)).version'; }
+          base_version="$(version_at HEAD^1)"
+          head_version="$(version_at HEAD)"
+          published="$(npm view "@b00dea/cockpit@$base_version" version 2>/dev/null || true)"
           platforms=false
-          if [[ "$HEAD_REF" == changeset-release/main || "$MACOS_LABEL" == true ]] \
-            || grep -Eq '^[-+][[:space:]]*"version"' <<< "$manifest_diff"; then
+          if [[ "$HEAD_REF" == changeset-release/main || "$MACOS_LABEL" == true \
+            || "$head_version" != "$base_version" || "$published" != "$base_version" ]]; then
             platforms=true
             code=true
           fi
@@ -342,7 +349,7 @@ jobs:
           set -euo pipefail
           if [[ "$CHANGESET_ADDED" == true ]]; then
             echo 'changeset found'
-          elif printf '%s' "$LABELS" | grep -Fq '"no-changeset"'; then
+          elif printf '%s' "$LABELS" | grep -F '"no-changeset"' >/dev/null; then
             echo 'no-changeset label present: skipping the changeset requirement'
           else
             echo "::error::This pull request changes packages/cockpit/src or packages/cockpit/surfaces without a changeset. Run 'npx changeset' and commit the new .changeset/*.md file, or ask a maintainer to add the 'no-changeset' label if no consumer-visible behavior changed."

@@ -15,9 +15,8 @@ vi.mock('node:fs/promises', async importOriginal => {
     } }
 })
 
-// Each case is a real cockpit in a throwaway Git repository: sync publishes the work authority the
-// commands require, and the checks run as real processes. Only the person is simulated, by the
-// terminal answer `confirmWorkOrder` returns.
+// Each case is a real cockpit in a throwaway Git repository, and the checks run as real processes.
+// Only the person is simulated, by the terminal answer `confirmWorkOrder` returns.
 const roots: string[] = []
 afterEach(() => { opening.around = undefined; for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 
