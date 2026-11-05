@@ -432,11 +432,13 @@ An edit does not widen only when every difference is one of these:
   command it did not;
 - removed guard allow rules and unchanged MCP approvals, added or narrowed MCP tool allowlists;
   added guard deny rules, protected branches,
-  hosted database hosts and vendor endpoint hosts.
+  hosted database hosts and vendor endpoint hosts;
+- any change to `[mcp.approved]` while `mcp_approve = "agent"` in both configurations, because that
+  setting already hands server approval to the agent.
 
 Every other difference widens. That includes any change, in either direction, to
 `[work]`, `[autonomy]`, `[testing]` (whose stages `test-run` runs unprompted) and `[browser]`;
-new or changed MCP approvals, removed or expanded MCP tool allowlists, new guard allows or removed guard restrictions; a new sibling, wherever its directory is; a sibling's changed `dir`, `guides` (sync copies each guide
+new or changed MCP approvals outside that delegation, removed or expanded MCP tool allowlists, new guard allows or removed guard restrictions; a new sibling, wherever its directory is; a sibling's changed `dir`, `guides` (sync copies each guide
 into the root `AGENTS.md`), environment files or derived MCP sources; and every command field, such
 as `environment.seed`. A field the classification has no rule for widens too, so a field added to
 the schema is a person's decision until a rule says otherwise. A missing or mismatched

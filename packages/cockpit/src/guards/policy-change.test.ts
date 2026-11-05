@@ -121,6 +121,25 @@ describe('policyChange', () => {
         expect(changed(edit)).toEqual({ kind: 'non-widening' })
     })
 
+    it('ignores MCP approvals only while both configurations delegate them to the agent', () => {
+        const declaring = (...edits: readonly ((config: Declared) => void)[]) => {
+            const config = structuredClone(declared)
+            for (const edit of edits) edit(config)
+            return CockpitConfig.parse(config)
+        }
+        const delegate = (config: Declared) => { config.autonomy = { mcp_approve: 'agent' } }
+        const approve = (config: Declared) => { config.mcp.approved = { docs: 'b'.repeat(64), search: 'c'.repeat(64) } }
+        const approvals = ['mcp.approved.docs', 'mcp.approved.search']
+        expect(policyChange(declaring(delegate), declaring(delegate, approve))).toEqual({ kind: 'non-widening' })
+        // Delegating or taking back approval is itself pinned, and neither side vouches for the other's approvals.
+        expect(policyChange(declaring(), declaring(delegate, approve))).toEqual({ kind: 'widening', fields: expect.arrayContaining(['autonomy.mcp_approve', ...approvals]) })
+        expect(policyChange(declaring(delegate), declaring(approve))).toEqual({ kind: 'widening', fields: expect.arrayContaining(['autonomy.mcp_approve', ...approvals]) })
+        expect(policyChange(declaring(), declaring(approve))).toEqual({ kind: 'widening', fields: approvals })
+        // Delegating which servers run does not delegate what their tools may do.
+        const restrict = (config: Declared) => { config.mcp.allowed_tools = { docs: ['read_record'] } }
+        expect(policyChange(declaring(delegate, restrict), declaring(delegate))).toEqual({ kind: 'widening', fields: ['mcp.allowed_tools.docs'] })
+    })
+
     it('treats a field it has no rule for as widening', () => {
         const after = { ...before, cockpit: { ...before.cockpit, future: { enabled: true } } } as unknown as CockpitConfig
         expect(policyChange(before, after)).toEqual({ kind: 'widening', fields: ['cockpit.future'] })

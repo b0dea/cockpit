@@ -6,13 +6,15 @@
 // for a field that cannot widen the guard's trust inputs (the commands agents run unprompted, the
 // roots they write, the secrets they are kept from, who passes a gate) in the direction it admits.
 // Work gates, autonomy, testing, browser and command fields remain person-held. Guard and MCP
-// changes are admitted only in the restrictive directions named below.
+// changes are admitted only in the restrictive directions named below, and MCP approvals in any
+// direction while both configurations delegate them to the agent.
 // The rules read the configuration rather than compare the guard policy each side would build: most
 // of what they judge (Compose files and profiles, resettable volumes, the tools guarded, a sibling's
 // operator gate) never reaches that policy, and building it observes the checkouts on disk.
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
+import { effectivePolicy } from '../autonomy.js'
 import { UNSYNCED_ADMITTED_PROSE } from '../command-table.js'
 import { parseCockpitConfigBytes, readBoundedInput } from '../config/load.js'
 import type { ENVIRONMENT_CODES, EnvironmentDiagnostic } from '../environment/contract.js'
@@ -74,6 +76,12 @@ const toolRestrictionNarrowing: Rule = (before: unknown, after: unknown, at: str
 export function mcpPolicyWideningFields(before: unknown, after: unknown, at = 'mcp'): readonly string[] {
     return walk(before ?? {}, after ?? {}, { approved: approvalRemovals, allowed_tools: toolRestrictionNarrowing }, at)
 }
+
+// The edit pin strips mcp.approved from both sides under the same condition, so an approval it lets
+// through is not then held for a person. Tool restrictions stay compared: delegating which servers run
+// does not delegate what their tools may do.
+const delegatedMcpPolicyWideningFields: Rule = (before: unknown, after: unknown, at: string) =>
+    walk(before ?? {}, after ?? {}, { approved: safe, allowed_tools: toolRestrictionNarrowing }, at)
 
 // The fields of an existing sibling that say what it is for. Everything else about a sibling decides
 // what the agent may write or read: its directory is a writable root, its environment files are the
@@ -153,7 +161,9 @@ export const POLICY_CHANGE_RULE_PATHS: readonly string[] = Object.freeze([...Obj
 export function policyChange(before: CockpitConfig, after: CockpitConfig, confirmed: ReadonlySet<string> = new Set()): PolicyChange {
     const unconfirmed: Rule = (from: readonly string[] = [], to: readonly string[] = [], at: string) =>
         gains(to, from.filter(answer => !confirmed.has(answer))) ? [at] : []
-    const fields = walk(before, after, { ...CHANGE_RULES, unconfirmed }, '')
+    // A changed mcp_approve is compared under autonomy like any other decider, so it stays held either way.
+    const delegated = [before, after].every(config => effectivePolicy(config).autonomy.mcp_approve === 'agent')
+    const fields = walk(before, after, { ...CHANGE_RULES, unconfirmed, ...delegated ? { mcp: delegatedMcpPolicyWideningFields } : {} }, '')
     return fields.length ? { kind: 'widening', fields: [...new Set(fields)] } : { kind: 'non-widening' }
 }
 
