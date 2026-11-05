@@ -166,6 +166,159 @@ describe('work-order lifecycle', () => {
         expect((await work(root, ['work', 'signoff', '--work-order', 'WO-2'])).result).toMatchObject({ closedAs: 'self-reported' })
     }, 120_000)
 
+    it('records a relayed subagent verdict as subagent-reported, saying cockpit cannot verify it, under the same rules as a self-reported one', async () => {
+        const root = await cockpit('[work]\ngrading = "subagent"')
+        writeFileSync(join(root, 'workorders/WO-2.md'), order('WO-2', '  - id: AC1\n    text: The change reads well.\n  - id: AC2\n    text: add(2, 3) returns 5.\n    check: [node, test/add.test.mjs]'))
+        expect((await work(root, ['work', 'accept', '--work-order', 'WO-2'])).status).toBe(0)
+        const grade = (...extra: string[]) => work(root, ['work', 'grade', '--work-order', 'WO-2', ...extra])
+        // A submission states all of it or none of it: a verdict that does not say where it came from is refused.
+        expect((await grade('--verdict', 'met', '--note', 'read the diff')).diagnostics[0]?.message).toMatch(/--from-subagent, --verdict met\|unmet and --note/)
+        expect((await grade('--from-subagent')).diagnostics[0]?.message).toMatch(/--from-subagent, --verdict met\|unmet and --note/)
+        const submit = (note: string) => grade('--from-subagent', '--verdict', 'met', '--note', note)
+        writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => a - b\n')
+        writeFileSync(join(root, 'README.md'), 'outside the scope\n')
+        expect((await submit('read the diff')).diagnostics[0]?.message).toMatch(/\[work\] grading = "subagent": --note must name each path changed outside scope .* it does not name README\.md/)
+        expect(await submit('read the diff; README.md documents add')).toMatchObject({ status: 2,
+            diagnostics: [{ code: 'WORK_GRADE_UNSATISFIED' }], result: { state: 'accepted', mode: 'subagent', checks: [{ criterion: 'AC2', passed: false }] } })
+        writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => a + b\n')
+        const passed = await submit('read the diff; README.md documents add')
+        expect(passed.result).toMatchObject({ state: 'graded', mode: 'subagent', criteria: [{ id: 'AC1' }, { id: 'AC2' }, { id: 'scope-changes-necessary', verdict: 'met' }],
+            answeredBy: expect.stringMatching(/relayed .* cannot verify that one did, and read-only is instructed there, not enforced/) })
+        expect(record(root, 'WO-2').grade).toMatchObject({ mode: 'subagent' })
+        expect(record(root, 'WO-2').grade.evaluator).toBeUndefined()
+        expect((await work(root, ['work', 'signoff', '--work-order', 'WO-2'])).result).toMatchObject({ closedAs: 'subagent-reported' })
+        expect((await work(root, ['work', 'status'])).result).toMatchObject({ grading: 'subagent', orders: [{ id: 'WO-2', closedAs: 'subagent-reported', grade: { mode: 'subagent' } }] })
+        expect((await work(root, ['work', 'verify'])).status).toBe(0)
+        // Other modes take no such statement.
+        const other = await cockpit('[work]\ngrading = "self"')
+        writeFileSync(join(other, 'workorders/WO-3.md'), order('WO-3'))
+        await work(other, ['work', 'accept', '--work-order', 'WO-3'])
+        expect((await work(other, ['work', 'grade', '--work-order', 'WO-3', '--from-subagent', '--verdict', 'met', '--note', 'n'])).diagnostics[0]?.message).toMatch(/--from-subagent applies only under/)
+        expect((await work(other, ['work', 'grade', '--work-order', 'WO-3', '--evaluator', 'claudecode', '--verdict', 'met', '--note', 'n'])).diagnostics[0]?.message).toMatch(/--evaluator .* cannot accompany a submitted --verdict/)
+    }, 120_000)
+
+    it('moves a subagent grade with nothing submitted up to a separate process, and refuses rather than falling to anything weaker, naming each cause and each choice', async () => {
+        const root = await cockpit('[work]\ngrading = "subagent"\nevaluators = ["claudecode"]')
+        const tools = syntheticEvaluator()
+        const env = { ...process.env, CLAUDECODE: undefined, CODEX_THREAD_ID: undefined, PATH: [tools, process.env.PATH].join(':') }
+        writeFileSync(join(tools, 'verdict'), 'met')
+        writeFileSync(join(root, 'workorders/WO-4.md'), order('WO-4'))
+        expect((await work(root, ['work', 'accept', '--work-order', 'WO-4'], env)).status).toBe(0)
+        writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => b + a\n')
+        const empty = { ...env, PATH: '/usr/bin:/bin' }
+        // Nothing can answer: the order stays open, and the refusal says why and what can be done.
+        const unavailable = await work(root, ['work', 'grade', '--work-order', 'WO-4'], empty)
+        expect(unavailable).toMatchObject({ status: 2, result: null })
+        expect(unavailable.diagnostics[0]?.message).toMatch(/^EVALUATOR_UNAVAILABLE: Claude Code \(claude\) is not on PATH.*sign in.*or list one you have in work\.evaluators; or have a person move \[work\] grading to checks, self or off/)
+        expect(record(root, 'WO-4')).toMatchObject({ state: 'accepted' })
+        expect(record(root, 'WO-4').grade).toBeUndefined()
+        // A tool that starts and fails, as one refused by a sandbox or signed out does, names its cause too.
+        const broken = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-work-broken-')))
+        roots.push(broken)
+        symlinkSync(process.execPath, join(broken, 'node'))
+        writeFileSync(join(broken, 'claude'), readFileSync(join(tools, 'claude'), 'utf8').replace("const request = JSON.parse", "process.stderr.write('sandbox refused a nested run\\n'); process.exit(1)\nconst request = JSON.parse"), { mode: 0o700 })
+        const failed = await work(root, ['work', 'grade', '--work-order', 'WO-4'], { ...env, PATH: [broken, process.env.PATH].join(':') })
+        expect(failed.diagnostics[0]?.message).toMatch(/^EVALUATOR_RUN_FAILED: .*sandbox refused a nested run.*sign in to it.*list another tool in work\.evaluators.*have a person move \[work\] grading to checks, self or off/)
+        expect(record(root, 'WO-4').grade).toBeUndefined()
+        // Once the evaluator found the work unmet, a relayed pass cannot replace that.
+        writeFileSync(join(tools, 'verdict'), 'unclear')
+        expect(await work(root, ['work', 'grade', '--work-order', 'WO-4'], env)).toMatchObject({ status: 2, result: { state: 'accepted', mode: 'independent' } })
+        expect((await work(root, ['work', 'grade', '--work-order', 'WO-4', '--from-subagent', '--verdict', 'met', '--note', 'read the diff'], env)).diagnostics[0]?.message)
+            .toMatch(/a separate evaluator already found WO-4's accepted contract unmet, and a relayed verdict cannot replace that/)
+        writeFileSync(join(tools, 'verdict'), 'met')
+        // The record says what answered: the process, never the subagent the mode names.
+        const graded = await work(root, ['work', 'grade', '--work-order', 'WO-4'], env)
+        expect(graded.result).toMatchObject({ state: 'graded', mode: 'independent', evaluator: { tool: 'claudecode' }, answeredBy: expect.stringContaining('a separate claudecode process') })
+        expect(record(root, 'WO-4').grade).toMatchObject({ mode: 'independent', evaluator: { tool: 'claudecode' } })
+        expect((await work(root, ['work', 'signoff', '--work-order', 'WO-4'], env)).result).toMatchObject({ closedAs: 'graded' })
+    }, 120_000)
+
+    it('warns when the only evaluator is the tool running the command, as a separate process cockpit read', async () => {
+        const root = await cockpit('[work]\nevaluators = ["claudecode"]')
+        const tools = syntheticEvaluator()
+        const env = { ...process.env, CLAUDECODE: undefined, CODEX_THREAD_ID: undefined, PATH: [tools, process.env.PATH].join(':') }
+        writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => b + a\n')
+        writeFileSync(join(root, 'criteria.md'), '---\nscope: [src/]\ncriteria:\n  - id: AC1\n    text: add(2, 3) returns 5.\n---\n')
+        const grade = (extra: NodeJS.ProcessEnv) => work(root, ['grade', '--criteria', 'criteria.md'], { ...env, ...extra })
+        const sameTool = await grade({ CLAUDECODE: '1' })
+        expect(sameTool.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'EVALUATOR_IS_RUNNING_TOOL', message: expect.stringContaining('as a separate process') }))
+        expect(sameTool.guidance).toContainEqual(expect.objectContaining({ code: 'EVALUATOR_IS_RUNNING_TOOL', text: expect.stringContaining('list a second tool in work.evaluators') }))
+        expect((await grade({})).diagnostics.map(row => row.code)).not.toContain('EVALUATOR_IS_RUNNING_TOOL')
+    }, 120_000)
+
+    it('tracks an order with the grader off: it closes as ungraded whatever its checks showed, says so, and keeps the facts', async () => {
+        const root = await cockpit('[work]\ngrading = "off"\nattempt_cap = 1')
+        const criteria = '  - id: AC1\n    text: The change reads well.\n  - id: AC2\n    text: add(2, 3) returns 5.\n    check: [node, test/add.test.mjs]'
+        writeFileSync(join(root, 'workorders/WO-8.md'), order('WO-8', criteria))
+        expect((await work(root, ['work', 'accept', '--work-order', 'WO-8'])).status).toBe(0)
+        expect((await work(root, ['work', 'note', '--work-order', 'WO-8', '--text', 'started'])).status).toBe(0)
+        expect((await work(root, ['work', 'grade', '--work-order', 'WO-8'])).diagnostics[0]?.message).toMatch(/grading = "off": nothing grades an order; close it with .*work signoff/)
+        // A criterion with no check and a check never run hold nothing up.
+        const closed = await work(root, ['work', 'signoff', '--work-order', 'WO-8'])
+        expect(closed).toMatchObject({ status: 0, result: { state: 'done', closedAs: 'ungraded', checksNotRun: ['AC2'], checksFailed: [] } })
+        expect(record(root, 'WO-8')).toMatchObject({ state: 'done', closure: { how: 'ungraded', by: 'agent' } })
+        expect(record(root, 'WO-8').grade).toBeUndefined()
+        expect((await work(root, ['work', 'status'])).result).toMatchObject({ grading: 'off', orders: [{ id: 'WO-8', state: 'done', closedAs: 'ungraded', checksNotRun: ['AC2'] }] })
+        expect((await work(root, ['work', 'verify'])).status).toBe(0)
+
+        // A check that failed does not block, attempt cap included, and stays on the record.
+        writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => a - b\n')
+        writeFileSync(join(root, 'workorders/WO-9.md'), order('WO-9'))
+        await work(root, ['work', 'accept', '--work-order', 'WO-9'])
+        expect(await work(root, ['work', 'check', '--work-order', 'WO-9'])).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_CHECK_FAILED' }] })
+        expect((await work(root, ['work', 'status', '--work-order', 'WO-9'])).result).toMatchObject({ orders: [{ id: 'WO-9', state: 'accepted', attempts: 0 }] })
+        const failed = await work(root, ['work', 'signoff', '--work-order', 'WO-9', '--note', 'shipped with the failure known'])
+        expect(failed.result).toMatchObject({ state: 'done', closedAs: 'ungraded', checksFailed: [expect.stringMatching(/^AC1: /)], checksNotRun: [] })
+        expect(record(root, 'WO-9')).toMatchObject({ closure: { how: 'ungraded', note: 'shipped with the failure known' }, checks: { results: [{ criterion: 'AC1', passed: false }] } })
+        expect((await work(root, ['work', 'status', '--work-order', 'WO-9'])).result).toMatchObject({ orders: [{ closedAs: 'ungraded', checksFailed: [expect.stringMatching(/^AC1: /)] }] })
+
+        for (const close of ['--partial', '--abandon']) {
+            const id = close === '--partial' ? 'WO-10' : 'WO-11'
+            writeFileSync(join(root, `workorders/${id}.md`), order(id))
+            await work(root, ['work', 'accept', '--work-order', id])
+            expect((await work(root, ['work', 'signoff', '--work-order', id, close, '--note', 'stopped'])).result).toMatchObject({ closedAs: close === '--partial' ? 'partial' : 'abandoned' })
+        }
+        expect((await work(root, ['work', 'verify'])).status).toBe(0)
+    }, 120_000)
+
+    it('keeps the signoff gate with the grader off, and an earlier real grade closes as what it was', async () => {
+        const person = await cockpit('[work]\ngrading = "off"\n\n[work.gates]\nsignoff = "person"')
+        writeFileSync(join(person, 'workorders/WO-12.md'), order('WO-12'))
+        await work(person, ['work', 'accept', '--work-order', 'WO-12'])
+        expect(await work(person, ['work', 'signoff', '--work-order', 'WO-12'], { ...process.env, CI: '' })).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_PERSON_REQUIRED' }], guidance: [{ code: 'WORK_PERSON_REQUIRED', text: expect.stringContaining('--interactive') }] })
+        expect(record(person, 'WO-12').closure).toBeUndefined()
+        let shown = ''
+        expect(await asPerson(person, ['work', 'signoff', '--work-order', 'WO-12'], (prompt, digest) => { shown = prompt; return `signoff ${digest}` })).toBe(0)
+        expect(shown).toContain('(ungraded)')
+        expect(shown).toContain('Check not run: AC1')
+        expect(record(person, 'WO-12').closure).toMatchObject({ how: 'ungraded', by: 'person' })
+
+        // A CI gate can pass with nothing graded: the verify job that confirms it does not ask for a grade.
+        const ci = await cockpit('[work]\ngrading = "off"\n\n[work.gates]\nsignoff = "ci"')
+        writeFileSync(join(ci, 'workorders/WO-13.md'), order('WO-13'))
+        await work(ci, ['work', 'accept', '--work-order', 'WO-13'], { ...process.env, CI: '' })
+        expect((await work(ci, ['work', 'signoff', '--work-order', 'WO-13'], { ...process.env, CI: '' })).result).toMatchObject({ closedAs: 'ungraded', by: 'ci' })
+        expect((await work(ci, ['work', 'status'], { ...process.env, CI: '' })).result).toMatchObject({ orders: [{ awaitingCi: ['signoff'] }] })
+        expect(await work(ci, ['work', 'verify'], { ...process.env, CI: 'true' })).toMatchObject({ status: 0, result: { confirmed: ['WO-13 signoff'], problems: [] } })
+
+        // An order the attempt cap blocked under a stricter mode is not left stuck by moving to off.
+        const capped = await cockpit('[work]\ngrading = "checks"\nattempt_cap = 1')
+        writeFileSync(join(capped, 'src/add.mjs'), 'export const add = (a, b) => a - b\n')
+        writeFileSync(join(capped, 'workorders/WO-15.md'), order('WO-15'))
+        await work(capped, ['work', 'accept', '--work-order', 'WO-15'])
+        await work(capped, ['work', 'check', '--work-order', 'WO-15'])
+        expect((await work(capped, ['work', 'status', '--work-order', 'WO-15'])).result).toMatchObject({ orders: [{ state: 'blocked' }] })
+        writeFileSync(join(capped, 'cockpit.toml'), readFileSync(join(capped, 'cockpit.toml'), 'utf8').replace('grading = "checks"', 'grading = "off"'))
+        expect((await work(capped, ['work', 'signoff', '--work-order', 'WO-15'])).result).toMatchObject({ closedAs: 'ungraded', checksFailed: [expect.stringMatching(/^AC1: /)] })
+
+        const graded = await cockpit('[work]\ngrading = "self"')
+        writeFileSync(join(graded, 'workorders/WO-14.md'), order('WO-14'))
+        await work(graded, ['work', 'accept', '--work-order', 'WO-14'])
+        await work(graded, ['work', 'grade', '--work-order', 'WO-14', '--verdict', 'met', '--note', 'read it'])
+        writeFileSync(join(graded, 'cockpit.toml'), readFileSync(join(graded, 'cockpit.toml'), 'utf8').replace('grading = "self"', 'grading = "off"'))
+        expect((await work(graded, ['work', 'signoff', '--work-order', 'WO-14'])).result).toMatchObject({ closedAs: 'self-reported' })
+    }, 120_000)
+
     it('holds an order with a recorded decision open until its record is written and filled in, and verifies the record still cites it', async () => {
         const root = await cockpit('[work]\ngrading = "self"\n\n[docs]\ndecisions = "docs/adr"\ndecisions_index = "docs/adr/README.md"')
         mkdirSync(join(root, 'docs/adr'), { recursive: true })

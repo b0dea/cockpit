@@ -33,6 +33,7 @@ export const ANSWER_CONFIRMATIONS: Readonly<Record<UnconfirmedAnswerName, Answer
     testing: { by: 'person', trustDecision: true, why: 'it decides which tests grade the agent\'s own work' },
     'environment.install_policies': { by: 'person', trustDecision: true, why: 'it sets the build and test commands the guard admits' },
     sibling: { by: 'person', trustDecision: true, why: 'it sets each repository\'s purpose and the roots agents may write' },
+    'work.grading': { by: 'person', trustDecision: true, why: 'it decides what judges the agent\'s own work, if anything' },
     'environment.posture': { by: 'person', trustDecision: true, why: 'it decides browser preapproval and what data agents are exposed to' },
     'cockpit.name': { by: 'person', trustDecision: false,
         why: 'a name is a choice, and no observation shows it is the one the owner wants; it scopes Compose projects, state and generated files' },

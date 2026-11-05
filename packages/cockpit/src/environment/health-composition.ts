@@ -1,12 +1,11 @@
-import { lstat, realpath } from 'node:fs/promises'
-import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { loadCockpitConfig } from '../config/load.js'
-import type { EvaluatorTool } from '../schema.js'
-import { evaluatorUnavailable, findEvaluators } from '../grading/evaluate.js'
+import { evaluatorSearchDirectories, evaluatorUnavailable, findEvaluators, subagentGradingRefusal } from '../grading/evaluate.js'
+import { subagentGradingUnsupported } from '../surfaces/harness-registry.js'
 import { createWorkStore } from '../work-orders/store.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import { type DoctorCommandAdapters } from './application/doctor.js'
+import { type DoctorCommandAdapters, type WorkGradingInspection } from './application/doctor.js'
 import { ObservationProducerRefusal, type HealthObservationProducers, type LoadedCockpitConfigResult, type PreflightCommandAdapters } from './application/health.js'
 import { decodeLifecycleRecord, revalidateService } from './application/lifecycle.js'
 import { type RuntimeReadiness } from './application/lifecycle-context.js'
@@ -431,31 +430,25 @@ async function checkoutProjection(
     }, consumeSetupCheckoutProjection)
 }
 
-// Work orders exist once workorders/ does, and from then on work grade and cockpit grade run the first
-// tool work.evaluators lists that can run, whichever agent tool did the work; doctor names the case
-// where none is on PATH before a grade fails on it, and says how each closed order closed.
-async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, string | undefined>>, evaluators: readonly EvaluatorTool[]): Promise<readonly EnvironmentDiagnostic[]> {
-    try { if (!(await lstat(join(root, 'workorders'))).isDirectory()) return [] }
-    catch (error) {
-        if (hasErrorCode(error, 'ENOENT')) return []
-        throw error
-    }
-    // The evaluator search looks only in canonical PATH directories, so doctor does too.
-    const directories: string[] = []
-    for (const directory of (env.PATH ?? '').split(delimiter)) {
-        if (!directory || !isAbsolute(directory) || resolve(directory) !== directory) continue
-        try { if (await realpath(directory) === directory) directories.push(directory) } catch (error) {
-            if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'EACCES')) continue
-            throw error
-        }
-    }
+// Whether the configured grading can run here, before a grade fails on it, and how each closed order closed.
+// Only PATH and the listed tools are observed: sign-in, network and a sandbox refusing a nested run show
+// only when a grade runs, and whether an agent can spawn a subagent shows only when it tries.
+async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, string | undefined>>, work: WorkGradingInspection): Promise<readonly EnvironmentDiagnostic[]> {
     const closed = (await createWorkStore(root).list()).flatMap(record => record.closure ? [{ severity: 'info' as const,
         code: ENVIRONMENT_CODES.WORK_ORDER_CLOSED, target: `workorders/${record.id}.md`,
         message: `${record.id} closed as ${record.closure.how}, signed off by ${record.closure.by}${record.closure.note ? `: ${record.closure.note}` : ''}` }] : [])
-    const { found, missing } = await findEvaluators(evaluators, directories)
-    if (found.length) return closed
-    return [{ severity: 'warning' as const, target: 'workorders',
-        ...evaluatorUnavailable(`this cockpit has work orders, but no evaluator work.evaluators lists is on PATH to run work grade and cockpit grade: ${missing.map(row => row.message).join('; ')}`) }, ...closed]
+    // Self, checks and off start no evaluator, so its absence is no finding there.
+    if (work.grading !== 'independent' && work.grading !== 'subagent') return closed
+    const { found, missing } = await findEvaluators(work.evaluators, await evaluatorSearchDirectories(env))
+    const missingCause = `no evaluator work.evaluators lists is on PATH: ${missing.map(row => row.message).join('; ')}`
+    if (work.grading === 'independent') return found.length ? closed : [{ severity: 'warning' as const, target: 'work.grading',
+        ...evaluatorUnavailable(`[work] grading = "independent" runs work grade and cockpit grade in a separate agent tool process, but ${missingCause}`) }, ...closed]
+    const unsupported = subagentGradingUnsupported(work.tools, work.harnesses)
+    if (unsupported.length) return [{ severity: 'warning' as const, target: 'work.grading', ...subagentGradingRefusal(unsupported) }, ...closed]
+    return [found.length ? { severity: 'info' as const, target: 'work.grading', code: ENVIRONMENT_CODES.SUBAGENT_AVAILABILITY_UNOBSERVED,
+        message: `[work] grading = "subagent": cockpit cannot observe ahead of time whether the working agent can spawn a subagent, so this was not checked; if it cannot, work grade with nothing submitted runs ${found.join(', ')} as a separate process, which is stronger` }
+        : { severity: 'warning' as const, target: 'work.grading',
+            ...evaluatorUnavailable(`[work] grading = "subagent" has no stronger path if the working agent cannot spawn a subagent, which cockpit cannot observe ahead of time, because ${missingCause}`) }, ...closed]
 }
 
 /** Doctor's and preflight's observations only read, so their subprocesses exclude relative bins without changing harness or evaluator discovery. */
@@ -668,7 +661,7 @@ export function createHealthCommandAdapters(
     // Codex skips a project hook nobody on this machine has trusted, so doctor says so.
     const inspectHookTrust = inherited ? () => inspectCodexHookTrust({ root: dirname(inherited.configPath), env: inherited.env })
         : undefined
-    const inspectEvaluator = inherited ? (evaluators: readonly EvaluatorTool[]) => inspectWorkEvaluator(dirname(inherited.configPath), inherited.env, evaluators) : undefined
+    const inspectEvaluator = inherited ? (work: WorkGradingInspection) => inspectWorkEvaluator(dirname(inherited.configPath), inherited.env, work) : undefined
     const inspectReadiness = inherited ? () => inspectProjectReadiness({ root: dirname(inherited.configPath), configPath: inherited.configPath,
         checkRoot: false, env: inherited.env, ...(input ? { observationEnv: input.env } : {}), timeoutMs: inherited.timeoutMs }, execute) : undefined
     // Read after load, which selects this cockpit's state namespace; before that there is no state root to read.

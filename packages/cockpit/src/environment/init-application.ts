@@ -7,7 +7,7 @@ import {
     isAnswerProvenance,
     plannedGreenfieldQuestions,
     type AnswerProvenance, type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult,
-    type DerivedAnswer, type UnconfirmedAnswer,
+    type DerivedAnswer, type GradingProposal, type UnconfirmedAnswer,
     type EstateObservationInput,
 } from '../init/draft.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from '../surfaces/contract.js'
@@ -160,6 +160,8 @@ export interface InitApplicationAdapters {
         }>>
     /** What the container runtime on this machine offers, read when the interview will ask for the machine floor. */
     readonly measureMachine?: (input: Readonly<{ root: string }>) => Promise<MachineMeasurement>
+    /** The grading mode to recommend for these tools, from which of them are on PATH here. */
+    readonly proposeGrading?: (tools: readonly SurfaceTarget[]) => Promise<GradingProposal>
     /** What check would report about the Compose files a drafted cockpit.toml declares; init never edits them, so it shows the edit. */
     readonly composeFindings?: (input: Readonly<{ root: string; draft: string }>) => Promise<readonly Diagnostic[]>
     /**
@@ -376,6 +378,10 @@ async function interviewPlan(
         const measured = await adapters.measureMachine({ root: input.root })
         if (measured.kind === 'unavailable') skipped.push({ source: 'container runtime', reason: `was not measured (${measured.reason}), so no machine floor is proposed from it` })
         else proposals.push(...machineProposals(measured, proposals).map(row => ({ ...row, field: 'environment.machine' })))
+    }
+    if (outstanding.some(row => row.field === 'work.grading')) {
+        const proposed = await adapters.proposeGrading?.(input.tools)
+        if (proposed) proposals.push({ field: 'work.grading', target: 'work.grading', value: proposed.value, provenance: { kind: 'inferred', source: proposed.source, reason: proposed.reason } })
     }
     return {
         answered: planned.slice(0, answered).map(row => row.field),

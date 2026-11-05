@@ -38,7 +38,9 @@ ask when scope is missing or an exact preview still needs acceptance:
    answer only on the human's word.
 5. Ask the human for the database and live vendor API hosts of every non-local environment
    (production, staging, shared) for the `guards` answer; env templates give variable names only, and once a cockpit exists `npx --no cockpit env keys --config cockpit.toml` lists them.
-6. "Use sensible defaults" covers `init` answers only, never another change inside a product
+6. Offer the human `work.grading` as a real choice with `init`'s proposal and reason: the grader is
+   optional, and `off` is reasonable when tracking matters but grading is not wanted.
+7. "Use sensible defaults" covers `init` answers only, never another change inside a product
    repository: an **AGENTS.md** pointer or a `package.json` change needs explicit product-change
    authorization covering its reviewed scope, which can already have been given. Mark every answer you chose as `"agent-default"` in the answers file's
    `[provenance]` table, and end your report with every default you chose, its field and value.

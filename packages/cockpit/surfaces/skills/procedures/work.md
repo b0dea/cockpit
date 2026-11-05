@@ -43,7 +43,8 @@ not the thinking: reuse the planning skills the harness already has.
    session, stop and use the cockpit-fix skill. Otherwise read
    `./node_modules/.bin/cockpit work status --config cockpit.toml --json`: `result.wip` says how many
    accepted orders are open against `work.wip_cap`, `result.gates` who passes each step, and
-   `result.grading` how an order earns done. If the order already exists, resume it at the step its
+   `result.grading` how an order earns done (under `off`, skip steps 5 and 6: nothing grades, and step 8
+   closes the order from any open state). If the order already exists, resume it at the step its
    state names: draft at step 2, accepted at step 3, checked at step 5, graded at step 8; **stale**
    (its file or a source changed since acceptance) goes back to step 2 to accept the change, and
    **blocked** waits on the answer or decision step 3 or step 7 describes. Done when you can say who
@@ -105,7 +106,14 @@ not the thinking: reuse the planning skills the harness already has.
    `checks`, the checks decide, and any change outside scope fails. Under `self`, pass
    `--verdict met` or `unmet` and a `--note` saying what you checked, naming each path in
    `result.outOfScope` and each flagged test file with why its change is needed; the checks still run
-   and a failed one fails the grade. Cockpit adds standing criteria for changes outside scope
+   and a failed one fails the grade. Under `subagent`, spawn the generated `evaluator` subagent
+   read-only with the order's objective, criteria, scope, the `work check` results and the diff since
+   acceptance, and none of your own account of the work. Then submit what it answered with
+   `--from-subagent --verdict met|unmet --note <what it checked>`: `met` only when every verdict it
+   returned is `met`, and the note names what `self`'s must. Report that cockpit cannot verify a
+   subagent answered. If you cannot spawn one, run `work grade` with none of those flags: cockpit runs
+   the separate evaluator, which is stronger, and the record says so. Never submit your own verdict
+   as a subagent's. Cockpit adds standing criteria for changes outside scope
    (`scope-changes-necessary`), flagged test changes (`test-changes-justified`) and your amendments
    (`amendments-hold-bar`), and with `[docs]` declared for recorded decisions
    (`decisions-recorded`) and updated documentation (`docs-updated`). Anything short of passing
@@ -123,7 +131,8 @@ not the thinking: reuse the planning skills the harness already has.
    that step to the agent, and otherwise hand the person the command. Done when the order is closed or
    amended, or the person has the cause and the command.
 8. **Close** with `./node_modules/.bin/cockpit work signoff --config cockpit.toml --work-order WO-001`
-   once graded; under `signoff = "person"` it answers `WORK_PERSON_REQUIRED` as step 2 describes.
+   once graded, or under `off` when the work is finished: it closes as `ungraded`, listing any check that
+   failed or never ran, so report those, and a `--note` says why if one failed. Under `signoff = "person"` it answers `WORK_PERSON_REQUIRED` as step 2 describes.
    It refuses while a recorded decision is unresolved or its record still holds placeholders.
    An order that cannot be finished closes with `--partial --note <what is left>` or
    `--abandon --note <why>`. A command refused because another holds the order's lock: when that

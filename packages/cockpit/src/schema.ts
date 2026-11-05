@@ -466,23 +466,23 @@ export function runningEvaluatorTool(env: Readonly<Record<string, string | undef
 export const DECIDERS = ['agent', 'person', 'ci'] as const
 export type Decider = typeof DECIDERS[number]
 const Decider = z.enum(DECIDERS)
-export const WORK_GRADING = ['independent', 'checks', 'self'] as const
+export const WORK_GRADING = ['independent', 'subagent', 'checks', 'self', 'off'] as const
 export type WorkGrading = typeof WORK_GRADING[number]
 
 const WorkGates = z
     .object({
         accept: Decider.optional().describe('Who accepts a draft work order: agent, person or ci. Default agent.'),
-        amend: Decider.optional().describe('Who accepts a changed contract. Default agent. Removing an accepted criterion or gate always needs a person or ci; an agent\'s rewrite of a criterion, scope, non-goal or objective is judged at the next grade, and needs a person under checks grading.'),
+        amend: Decider.optional().describe('Who accepts a changed contract. Default agent. Removing an accepted criterion or gate always needs a person or ci; an agent\'s rewrite of a criterion, scope, non-goal or objective is judged at the next grade, and needs a person under checks grading; under off nothing judges it.'),
         answer: Decider.optional().describe('Who answers an open question on an order. Default agent.'),
         signoff: Decider.optional().describe('Who closes a graded order. Default agent.'),
-        acknowledge: Decider.optional().describe('Who acknowledges that an order weakened tests, which checks grading otherwise fails; under independent and self grading the acknowledgement is context for the verdict. Default agent.'),
+        acknowledge: Decider.optional().describe('Who acknowledges that an order weakened tests, which checks grading otherwise fails; under independent, subagent and self grading the acknowledgement is context for the verdict, and under off it is only recorded. Default agent.'),
     })
     .strict()
 
 export const Work = z
     .object({
         grading: z.enum(WORK_GRADING).default('independent')
-            .describe("How an order earns done: independent (an evaluator grades it), checks (cockpit ran every criterion's check and all passed) or self (the agent reports met or unmet with a note)."),
+            .describe("How an order earns done: independent (a separate agent tool process grades it and cockpit reads that process directly), subagent (the working agent relays the verdict of a read-only subagent it spawned, which cockpit cannot verify), checks (cockpit ran every criterion's check and all passed), self (the agent reports met or unmet with a note) or off (the grader is optional: nothing judges and nothing blocks on grading, and the order closes as ungraded)."),
         // An ordered fallback list: the first that runs answers, and one that is missing, signed out or
         // rate-limited is recorded and passed over. It never falls back to the agent grading itself.
         evaluators: z.array(z.enum(['codexcli', 'claudecode', 'opencode'] as const satisfies readonly EvaluatorTool[])).min(1).max(3)
@@ -881,7 +881,7 @@ export function configurationDefaults() {
  */
 export const UNCONFIRMABLE_ANSWERS = ['cockpit.name', 'sibling', 'estate.runnable', 'ports.bases', 'environment.install_policies',
     'environment.test_data', 'environment.compose_files', 'environment.machine', 'environment.posture',
-    'testing', 'guards'] as const
+    'testing', 'guards', 'work.grading'] as const
 
 // `path` in the cockpit's own repository, or `<sibling slug>:path` in a sibling, spelt as a work
 // order's scope is. Living documents may be globs; the decision paths name one file or directory.

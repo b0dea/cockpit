@@ -55,12 +55,12 @@ type AnswerProvenance = NonNullable<InitApplicationInput['greenfieldAnswer']>['p
 
 type InitApplicationHandler = (input: InitApplicationInput) => Promise<InitApplicationOutcome>
 
-// Real interviews ask up to eleven questions; the bound only stops an application that never converges from looping forever.
+// Real interviews ask up to thirteen questions; the bound only stops an application that never converges from looping forever.
 const MAX_INTERVIEW_ANSWERS = 64
 
 const ANSWER_FIELDS = ['cockpit.root', 'cockpit.name', 'sibling', 'estate.runnable', 'ports.bases',
     'environment.install_policies', 'environment.test_data', 'environment.compose_files',
-    'environment.machine', 'environment.posture', 'testing', 'guards'] as const
+    'environment.machine', 'environment.posture', 'testing', 'guards', 'work.grading'] as const
 
 /**
  * The answers file's optional [provenance] table says who chose an answer: "human" (the default),

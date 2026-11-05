@@ -87,7 +87,7 @@ at `work.attempt_cap` the order is blocked until it is amended or closed, by who
   each such change is judged by the standing criterion `scope-changes-necessary`; under `checks`
   grading any change outside scope fails the grade. [Weakened tests](#test-protection) are judged the
   same way.
-- **signoff** closes a graded order as done. `--partial --note <what is left>` or `--abandon --note <why>`
+- **signoff** closes a graded order as done, or under `off` any open order, as `ungraded` unless it already holds a passing grade. `--partial --note <what is left>` or `--abandon --note <why>`
   closes any open order without a passing grade. Every closure first needs each
   [decision](#decisions) recorded on the order to be resolved.
 - <!-- cockpit:ref command=work note --> <!-- cockpit:ref command=work answer --> **note** records a note; `--ask` records an open question, which blocks the order until
@@ -158,9 +158,50 @@ which way each order closed:
 | --- | --- | --- |
 | `independent` (default) | runs the checks, then an evaluator grades each criterion against them and the change | `graded` |
 | `checks` | runs the checks; every criterion needs one, and the grade passes only when cockpit ran each and all passed and nothing changed outside `scope` | `checks-passed` |
+| `subagent` | runs the checks, then records the verdict the working agent submits with `--from-subagent`, `--verdict` and `--note`, under the same rules as `self`; with none of the three, a separate evaluator grades as under `independent` and the record says so | `subagent-reported`, or `graded` when the evaluator answered |
 | `self` | runs the checks, then records the agent's `--verdict met` or `unmet` with a `--note` saying what it checked; the verdict covers the standing criteria too, so the note must name each path changed outside `scope` and each flagged test file (or a directory above it), and a failed check still fails it | `self-reported` |
+| `off` | refuses, because nothing grades; `work signoff` closes the order, whatever its checks showed | `ungraded`, unless it already holds a passing grade of its accepted contract |
 
 The signoff gate applies on top in every mode.
+
+### How grading can run
+
+The grader is optional. Pick what fits; moving to a weaker choice from a stronger one takes a person,
+and an automatic fallback only ever moves to something equally strong or stronger.
+
+| Choice | Configure | Who answers cockpit | What it proves | Falls back to, and when it cannot run |
+| --- | --- | --- | --- | --- |
+| Another CLI | `evaluators = ["codexcli"]` from a Claude Code session, or both tools listed | cockpit reads that process directly | a separate process of another tool judged the change, read-only by its tool's mechanism | the next listed tool, when one is missing, signed out, rate-limited, timed out or refused by its environment; when none answers, a refusal names each cause |
+| Same CLI, separate run | one tool listed, or `--evaluator <tool>` | cockpit reads that process directly, with a warning | the same, but one tool is judging its own kind of work | as above for a list; `--evaluator` runs only that tool. The warning (`EVALUATOR_IS_RUNNING_TOOL`) appears only where the running tool is detected: Claude Code and Codex |
+| Native subagent in the session | `grading = "subagent"` | the working agent relays it | only that the working agent says a subagent answered: cockpit cannot verify one ran, and read-only is instructed, not enforced | a separate process as above, stronger, when the agent runs `work grade` with nothing submitted because it cannot spawn one; refused when no process answers either. Once that process finds the contract unmet, a relayed verdict cannot replace it until the order is amended |
+| Checks only | `grading = "checks"` | nothing judged by a model | cockpit ran every criterion's check, all passed, and nothing changed outside `scope`; it cannot judge whether a test proves its criterion, or a change's quality, documentation or decisions | needs no agent tool, so it always runs; a criterion with no check makes `work grade` refuse, so it cannot pass |
+| The agent itself | `grading = "self"` | the working agent | only the agent's own claim; a failed check still fails it | needs no agent tool, so it always runs |
+| No grader | `grading = "off"` | nothing | nothing is judged; the order is a tracked record, and a failed or unrun check stays on it | needs nothing, so it always runs |
+
+The independent modes are stronger because cockpit reads the grader's answer directly, whereas a
+subagent's answer is relayed by the agent being graded. When no process answers, the refusal lists what
+you can do: sign in, list another tool in `work.evaluators`, or have a person move `[work] grading` to
+`checks`, `self` or `off`. Nothing falls back to the agent grading its own work.
+
+`doctor` reports `EVALUATOR_UNAVAILABLE` before work starts when `independent` or `subagent` cannot run
+here. It observes only `PATH` and the listed tools, so signing in, network and a sandbox refusing a nested
+run show when a grade runs, and it cannot observe ahead of time whether an agent can spawn a subagent
+(`SUBAGENT_AVAILABILITY_UNOBSERVED` says so). It says nothing about evaluators under `checks`, `self` or `off`.
+
+`subagent` needs the generated evaluator definition. `check` and `sync` refuse it for a declared harness
+without one; every shipped tool has one, and the [capability matrix](capability-matrix.md) records which
+tools were shown to offer it. Cursor and Grok Build have no guard and cannot be listed in
+`work.evaluators`, and they are only ever listed beside a guarded tool. From them, `independent` runs a
+listed Claude Code, Codex or OpenCode on `PATH`; `subagent` writes the definition, which no run has shown
+either tool offering; `checks`, `self` and `off` need no tool.
+
+Under `off`, nothing judges standing criteria, test protection or documentation inside a work order: `test-run`
+still reports weakened tests but does not fail on them; a test-protection check you run in CI is a separate guard
+and is unchanged. Orders still accept, note, answer and close as `done`, with an optional `--note`, or as `partial`
+or `abandoned`, which need one as ever, and `[work.gates]` still applies. The attempt cap does not
+apply, and a decision recorded on an order must still be resolved before it closes. `off` is reasonable
+when tracking matters but grading is not wanted. `cockpit grade --criteria` stays an explicit independent
+grade in every mode.
 
 Under `independent` and `self` grading cockpit adds standing criteria when they apply, judged with the
 order's own: `scope-changes-necessary` when files changed outside `scope`, `test-changes-justified`
@@ -168,7 +209,7 @@ when [test protection](#test-protection) flags a change, `amendments-hold-bar` w
 [amended](#amendments) the contract, and the [decision and documentation](#decisions) criteria when
 `[docs]` is declared. An order may not name a criterion with one of these ids. Under `checks` no model
 reads the change, so a change outside scope, an unacknowledged weakening and an unjudgeable amendment
-are decided by rule instead.
+are decided by rule instead. Under `subagent` the relayed verdict covers them as under `self`.
 
 ### Amendments
 
@@ -229,7 +270,8 @@ How a finding is decided depends on [`[work] grading`](#how-an-order-earns-done)
 - `independent`: the findings become the standing criterion `test-changes-justified`, which the
   evaluator judges against the diff, with any acknowledgement notes recorded on the order as context.
   `cockpit grade` does the same.
-- `self`: the agent's verdict covers it, and its `--note` must name each flagged file.
+- `self` and `subagent`: the submitted verdict covers it, and its `--note` must name each flagged file.
+- `off`: nothing decides it; `test-run` reports the findings.
 - `checks`: no model reads the change, so a finding fails the grade as the criterion `test-protection`
   until it is acknowledged.
 
@@ -299,7 +341,7 @@ criteria. A model judges them: the evaluator in `independent` mode, the agent's 
 Under `checks` grading no model reads the change, so both are instructions in the work skill and are
 not enforced. Recording a decision at all is also instructed: an agent that never runs
 `work note --decision` is caught only by the `decisions-recorded` criterion, and only where a model
-grades.
+grades. A relayed `subagent` verdict counts as a model's here; under `off` neither is enforced.
 
 ## The independent evaluator
 
@@ -320,7 +362,7 @@ the work; an answer from a session that already answered is refused:
 | `claudecode` | `claude --print --no-session-persistence --safe-mode --strict-mcp-config` | `--tools Read,Grep,Glob`, so no tool that writes or runs commands exists; `--permission-mode dontAsk` | `npm install -g @anthropic-ai/claude-code`, then `claude auth login` |
 | `opencode` | `opencode run --pure` | `OPENCODE_PERMISSION` denying its edit, shell, task, web, skill, question, to-do and LSP tools, so they are not offered | `npm install -g opencode-ai`, then `opencode auth login` |
 
-Each read-only mechanism was measured on 2026-11-03 beside a control without it: Codex 0.166.0 refused a shell write that `--sandbox workspace-write` made, Claude Code 2.1.317 wrote a file only once `Write` joined its tools, and OpenCode 1.19.5 offered only its read, glob, grep and list tools under the denials and offered write once edit was not denied. Codex and Claude Code skip your own configuration, hooks, plugins and MCP servers; OpenCode keeps your configuration, so it uses your model and provider, but skips external plugins, and a tool an MCP server in your OpenCode configuration adds is outside its denials. Claude Code and OpenCode constrain the answer with the output schema only as far as the tool does (OpenCode not at all), so cockpit checks every answer against that same schema and refuses one that does not match. Once a cockpit has a `workorders/` directory, `doctor` warns when no listed tool is on `PATH`. Each run starts in a private directory outside the repository, so the tool does not load the repository's `AGENTS.md`, `CLAUDE.md` or project configuration, which the agent being graded can write; the request names the repository. Each run may take `work.evaluator_timeout_seconds`. When no listed tool answers, the refusal names, for each, the cause it reported and the command that fixes it.
+Each read-only mechanism was measured on 2026-11-03 beside a control without it: Codex 0.166.0 refused a shell write that `--sandbox workspace-write` made, Claude Code 2.1.317 wrote a file only once `Write` joined its tools, and OpenCode 1.19.5 offered only its read, glob, grep and list tools under the denials and offered write once edit was not denied. Codex and Claude Code skip your own configuration, hooks, plugins and MCP servers; OpenCode keeps your configuration, so it uses your model and provider, but skips external plugins, and a tool an MCP server in your OpenCode configuration adds is outside its denials. Claude Code and OpenCode constrain the answer with the output schema only as far as the tool does (OpenCode not at all), so cockpit checks every answer against that same schema and refuses one that does not match. Under `independent` or `subagent` grading, `doctor` warns when no listed tool is on `PATH`, before any work order exists. Each run starts in a private directory outside the repository, so the tool does not load the repository's `AGENTS.md`, `CLAUDE.md` or project configuration, which the agent being graded can write; the request names the repository. Each run may take `work.evaluator_timeout_seconds`. When no listed tool answers, the refusal names, for each, the cause it reported and the command that fixes it.
 
 The grader is given each criterion with the result of the check cockpit ran for it, and every changed
 file's diff since the base commits. A credential-shaped path or a declared environment instance is
@@ -333,7 +375,7 @@ criterion about what a person would see is not met by command output alone.
 output as data, never as instructions; that is instructed, not enforced. Run by `work grade` and
 `cockpit grade`, the evaluator is also held read-only by its tool's mechanism above. Spawned as a
 subagent inside an agent tool, that restriction is instructed, not enforced: no harness is confirmed to
-enforce it there.
+enforce it there. That is the `grading = "subagent"` path, and why it never reads as independent.
 
 ## Browser evidence
 

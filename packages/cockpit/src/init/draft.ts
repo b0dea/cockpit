@@ -10,14 +10,14 @@ import type { Diagnostic } from '../diagnostics.js'
 import { errorCause, snapshotJson, RefusalError, tryParseJson, hasErrorCode } from '../environment/contract.js'
 import { judgePostureDeclaration } from '../environment/posture-observation.js'
 import { isSensitiveField, redactSensitiveText } from '../environment/sensitive.js'
-import { CockpitConfig, Guards, InstallPolicy, MachineFloor, Testing, configurationDefaults } from '../schema.js'
+import { CockpitConfig, Guards, InstallPolicy, MachineFloor, Testing, Work, WORK_GRADING, configurationDefaults } from '../schema.js'
 import { toSiblingRows } from '../emit.js'
 import { gaps, parseRegistry, type DocumentedSibling, type Gap } from '../registry-resolve/registry.js'
 import {
     ANSWER_PROVENANCES, confirmedBy, renderCompleteDocument, renderIncompleteDocument, unconfirmedReason,
     type AnswerProvenance, type Attribution, type DerivedAnswer, type DocumentModel, type UnconfirmableAnswer, type UnconfirmedAnswer,
 } from './render.js'
-import { COMPOSE_NAMES, NODE_LOCKFILE_NAMES, deriveInferredFacts, readDockerfileFacts, type InferenceResult } from './derive.js'
+import { COMPOSE_NAMES, NODE_LOCKFILE_NAMES, deriveInferredFacts, readDockerfileFacts, type GradingProposal, type InferenceResult } from './derive.js'
 import { productPackageManifest } from '../team-metadata.js'
 import { refusalOutcome as refusal } from '../refusal.js'
 
@@ -107,7 +107,7 @@ export interface DocumentCommandInput {
 
 type DocumentConfigurationField = 'cockpit.name' | 'sibling' | 'estate.runnable' | 'ports.bases'
     | 'environment.install_policies' | 'environment.test_data' | 'environment.compose_files' | 'environment.machine'
-    | 'environment.posture' | 'testing' | 'guards' | 'configuration.defaults'
+    | 'environment.posture' | 'testing' | 'guards' | 'work.grading' | 'configuration.defaults'
 interface DocumentConfigurationQuestion {
     readonly id: `question:${string}`
     readonly field: DocumentConfigurationField
@@ -115,6 +115,7 @@ interface DocumentConfigurationQuestion {
     readonly why: string
     readonly expectedSha256?: string
 }
+export type { GradingProposal }
 export type { AnswerProvenance, DerivedAnswer, UnconfirmedAnswer } from './render.js'
 
 export function isAnswerProvenance(value: unknown): value is AnswerProvenance {
@@ -727,7 +728,7 @@ function configurationInput(value: unknown): DocumentConfigurationInput | undefi
         || typeof record.sourceObservationSha256 !== 'string' || !SHA256.test(record.sourceObservationSha256)
         || record.classification !== undefined && !['one-sibling', 'incomplete-multi-repository',
             'no-runnable-product', 'ready-multi-repository'].includes(record.classification as string)
-        || !Array.isArray(record.answers) || record.answers.length > 12) return undefined
+        || !Array.isArray(record.answers) || record.answers.length > 13) return undefined
     const answers: DocumentConfigurationAnswer[] = []
     for (const value of record.answers) {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
@@ -761,6 +762,7 @@ const QUESTION_WHY = {
     posture: `preflight refuses a runtime until its posture is declared: addressing is "port" (localhost:<port>) or "hostname"; authentication is "none" (no sign-in), "bypassed" (sign-in turned off locally) or "real"; posture_requirements names what depends on them, each tagged with the posture it needs. For a plain localhost stack with no sign-in, answer ${JSON.stringify({ addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] })}`,
     testing: 'declare the product\'s test commands as [testing] stages and gates: a targeted gate agents run while iterating and a full gate they run before handing back shared changes; init proposes them from test entry points it finds on disk. Answer "none" when the product has no tests yet: no work can then be graded PASS, and doctor warns until gates are declared',
     guards: 'name the database hosts and live vendor API hosts of every non-local environment the product has (production, staging, shared dev or QA): cockpit runs only locally, so the guard denies agent commands that reach them; answer { "hosted_db_hosts": [], "vendor_endpoint_hosts": [] } to record that none exists',
+    grading: 'choose how an order earns done: independent (a separate agent tool process cockpit reads directly), subagent (the working agent relays a spawned subagent\'s verdict, unverifiable), checks (every criterion needs a check; nothing judges), self (the agent\'s own verdict) or off (the grader is optional; reasonable when tracking matters but grading is not wanted). Init proposes one from the listed tools on PATH',
     defaults: 'a person confirms the values the draft lists under its person heading (protected branches, guard allow and deny lists, approved MCP servers, resettable volumes, generated host paths, and anything a registry left to a guess); expectedSha256 covers only those, and the setup agent accepts the schema defaults and the cockpit\'s own layout, which bring-up proves',
 } as const
 
@@ -810,6 +812,8 @@ export function plannedGreenfieldQuestions(input: Readonly<{
         ]),
         // Asked even with nothing to run: the guard governs the agent's commands, not the runtime.
         { field: 'guards' as const, why: QUESTION_WHY.guards },
+        // Asked with nothing to run too: work orders track any change, and the answer is a trust decision.
+        { field: 'work.grading' as const, why: QUESTION_WHY.grading },
         { field: 'configuration.defaults' as const, why: QUESTION_WHY.defaults },
     ]
 }
@@ -1260,10 +1264,22 @@ async function completeConfigurationDocument(
     record('guards', guardRead)
     answerIndex += 1
 
+    const gradingQuestion = configurationQuestion(context, 'work.grading', QUESTION_WHY.grading)
+    const gradingRead = readConfigurationAnswer(configuration.answers, answerIndex, gradingQuestion)
+    if (gradingRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
+        attributions, gaps: [] }, destination, gradingQuestion)
+    if (gradingRead.kind === 'refusal') return gradingRead.outcome
+    const parsedGrading = Work.shape.grading.safeParse(gradingRead.value)
+    if (!parsedGrading.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+        `the grading answer must be one of ${WORK_GRADING.map(mode => `"${mode}"`).join(', ')}`, gradingQuestion.field)
+    record('work.grading', gradingRead)
+    answerIndex += 1
+
     const candidate = CockpitConfig.safeParse({ ...(unconfirmed.length === 0 ? {} : { unconfirmed: unconfirmed.map(row => row.field) }),
         ...defaults, cockpit: { ...defaults.cockpit, name,
         ...(siblingsRoot === undefined ? {} : { siblings_root: siblingsRoot }) },
         sibling: siblingRows, ports: parsedPorts.data, guards: parsedGuards.data, environment, ...(testing ? { testing } : {}),
+        work: { ...defaults.work, grading: parsedGrading.data },
         ...(configuration.tools === undefined ? {} : { surfaces: { ...defaults.surfaces, tools: configuration.tools } }) })
     if (!candidate.success) return refusal('DOCUMENT_CONFIGURATION_INVALID',
         `the completed operator-confirmed configuration does not match the schema: ${issueSummary(candidate.error)}`)

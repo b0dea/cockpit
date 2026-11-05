@@ -32,6 +32,17 @@ describe('autonomy policy', () => {
         expect(policyWeakening(loose, strict)).toEqual([{ field: 'work.gates.accept', from: 'ci', to: 'person' }])
     })
 
+    it('ranks a relayed subagent verdict with the agent\'s own, and off below both, so reaching either from a stronger mode is a weakening', () => {
+        const at = (grading: string) => policy({}, { grading })
+        const weakening = (from: string, to: string) => policyWeakening(at(from), at(to)).map(row => row.field)
+        for (const [from, to] of [['independent', 'subagent'], ['checks', 'subagent'], ['independent', 'off'], ['checks', 'off'], ['self', 'off'], ['subagent', 'off']]) {
+            expect(weakening(from!, to!), `${from} to ${to}`).toEqual(['work.grading'])
+        }
+        for (const [from, to] of [['self', 'subagent'], ['subagent', 'self'], ['subagent', 'checks'], ['subagent', 'independent'], ['off', 'self'], ['off', 'independent']]) {
+            expect(weakening(from!, to!), `${from} to ${to}`).toEqual([])
+        }
+    })
+
     it('records the accepted policy and refuses a record it cannot read', async () => {
         const root = mkdtempSync(join(tmpdir(), 'cockpit-policy-'))
         try {

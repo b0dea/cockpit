@@ -81,7 +81,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
-| `unconfirmed` | Answers no person has stated yet; init writes them and doctor reports them. | array of string |  | 1–11 items; each item: one of `"cockpit.name"`, `"sibling"`, `"estate.runnable"`, `"ports.bases"`, `"environment.install_policies"`, `"environment.test_data"`, `"environment.compose_files"`, `"environment.machine"`, `"environment.posture"`, `"testing"`, `"guards"` |
+| `unconfirmed` | Answers no person has stated yet; init writes them and doctor reports them. | array of string |  | 1–12 items; each item: one of `"cockpit.name"`, `"sibling"`, `"estate.runnable"`, `"ports.bases"`, `"environment.install_policies"`, `"environment.test_data"`, `"environment.compose_files"`, `"environment.machine"`, `"environment.posture"`, `"testing"`, `"guards"`, `"work.grading"` |
 | `cockpit` | Identity and layout of this cockpit. | table: [`[cockpit]`](#cockpit) |  | required |
 | `sibling` | Product repositories the cockpit works across. | array of table: [`[[sibling]]`](#sibling) |  | required; at least 1 item |
 | `ports` | Port leasing for running stacks side by side. | table: [`[ports]`](#ports) |  | required |
@@ -201,7 +201,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
-| `grading` | How an order earns done: independent (an evaluator grades it), checks (cockpit ran every criterion's check and all passed) or self (the agent reports met or unmet with a note). | string | `"independent"` | one of `"independent"`, `"checks"`, `"self"` |
+| `grading` | How an order earns done: independent (a separate agent tool process grades it and cockpit reads that process directly), subagent (the working agent relays the verdict of a read-only subagent it spawned, which cockpit cannot verify), checks (cockpit ran every criterion's check and all passed), self (the agent reports met or unmet with a note) or off (the grader is optional: nothing judges and nothing blocks on grading, and the order closes as ungraded). | string | `"independent"` | one of `"independent"`, `"subagent"`, `"checks"`, `"self"`, `"off"` |
 | `evaluators` | Agent tools that run the independent grader for work grade and cockpit grade, tried in order: codexcli, claudecode, opencode. Defaults to the tools surfaces.tools lists that can evaluate, in that order, with the tool running the command moved last when it is detected (Claude Code or Codex), so another tool grades first. A list given here is used exactly as written. | array of string |  | 1–3 items; each item: one of `"codexcli"`, `"claudecode"`, `"opencode"` |
 | `attempt_cap` | Failed checks or grades before an order is blocked; may be lowered but not raised. | integer | `2` | 1–2 |
 | `wip_cap` | Accepted orders that may be unfinished at once; may be lowered but not raised. | integer | `3` | 1–3 |
@@ -214,10 +214,10 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
 | `accept` | Who accepts a draft work order: agent, person or ci. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
-| `amend` | Who accepts a changed contract. Default agent. Removing an accepted criterion or gate always needs a person or ci; an agent's rewrite of a criterion, scope, non-goal or objective is judged at the next grade, and needs a person under checks grading. | string |  | one of `"agent"`, `"person"`, `"ci"` |
+| `amend` | Who accepts a changed contract. Default agent. Removing an accepted criterion or gate always needs a person or ci; an agent's rewrite of a criterion, scope, non-goal or objective is judged at the next grade, and needs a person under checks grading; under off nothing judges it. | string |  | one of `"agent"`, `"person"`, `"ci"` |
 | `answer` | Who answers an open question on an order. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
 | `signoff` | Who closes a graded order. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
-| `acknowledge` | Who acknowledges that an order weakened tests, which checks grading otherwise fails; under independent and self grading the acknowledgement is context for the verdict. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
+| `acknowledge` | Who acknowledges that an order weakened tests, which checks grading otherwise fails; under independent, subagent and self grading the acknowledgement is context for the verdict, and under off it is only recorded. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
 
 ### `[autonomy]`
 
@@ -633,6 +633,6 @@ Agent tools load every skill's frontmatter into each session and its entry point
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 12 | `packages/cockpit/surfaces/skills/procedures/fix.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 9 | `packages/cockpit/surfaces/skills/procedures/work.md` |
 
-Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `60aec39cd122c6ff53e54e7f15be1eeae6dacd79d04bf110ac71f5a0473d5574`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `677eeab59ad55240e7281c7bba3d7425b9da1d5ddfdbcbd01617cf3df02772a3`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `f9008b15acddc0ee3c5f6c16e9fb7f053aac44500d102b7dba87f8a4bce81a88`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `77e47c984069d4ad145b76f4b17542ad6fd9511549ed6f4993263eb54aef3d01`).
+Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `26c824791547add56885a8f8a7c28cc4b0ff903c6b228e9a0129f4e8570c3411`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `677eeab59ad55240e7281c7bba3d7425b9da1d5ddfdbcbd01617cf3df02772a3`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `f9008b15acddc0ee3c5f6c16e9fb7f053aac44500d102b7dba87f8a4bce81a88`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `ca3d7ef49478a1223ec2e76dc69f0a8f237dcf92ffd40354356d01f4f9f8547b`).
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.

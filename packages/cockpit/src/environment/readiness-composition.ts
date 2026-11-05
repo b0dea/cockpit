@@ -18,7 +18,9 @@ import { declaresNothingToRun } from './declaration.js'
 import { inspectSiblingInstructions } from './sibling-instructions.js'
 import { DEFAULT_SURFACE_TOOLS } from '../surfaces/harness-registry.js'
 import type { ReadinessReport } from '../readiness.js'
-import { STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
+import { EVALUATOR_COMMANDS, STRUCTURED_INPUT_ENTRY_LIMIT, type EvaluatorTool } from '../schema.js'
+import { evaluatorSearchDirectories, findEvaluators } from '../grading/evaluate.js'
+import { recommendGrading, type GradingProposal } from '../init/derive.js'
 
 interface ProjectReadinessInput {
     /** The cockpit root, where cockpit.toml is or will be written. */
@@ -185,6 +187,11 @@ export async function inspectInitReadiness(
         ? declaresNothingToRun(loaded.result.config.environment) ? 'surfaces-only' : 'runtime'
         : classification === undefined ? 'undetermined' : classification === 'no-runnable-product' ? 'surfaces-only' : 'runtime'
     return { state, findings }
+}
+
+export async function proposeInitGrading(tools: readonly string[], env: Readonly<Record<string, string | undefined>>): Promise<GradingProposal> {
+    const listed = tools.filter((tool): tool is EvaluatorTool => Object.hasOwn(EVALUATOR_COMMANDS, tool))
+    return recommendGrading(listed, (await findEvaluators(listed, await evaluatorSearchDirectories(env))).found)
 }
 
 /**

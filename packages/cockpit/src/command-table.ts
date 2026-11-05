@@ -140,6 +140,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     remote: 'Repository remote URL recorded for the sibling',
     'replace-from': 'With env schema: replace that schema with this draft file, or create it, instead of printing it',
     role: 'Declared browser role',
+    'from-subagent': 'Under [work] grading = "subagent": states that --verdict and --note came from the evaluator subagent you spawned; cockpit cannot verify it',
     'fail-on-findings': 'Exit 2 when a route has console errors, uncaught errors or failed requests, for a criterion that wants a clean route',
     route: 'Declared browser route to visit, by name or path; every declared route when omitted',
     'scaffold-compose': 'Write a starting compose.yml for the app in this directory, relative to the root, once; it refuses when a Compose file exists',
@@ -151,7 +152,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     target: 'Agent tool to set up; comma-separate several (claudecode,opencode)',
     text: 'Text of the note or answer',
     var: 'Environment variable mapping for the sibling',
-    verdict: 'Under [work] grading = "self": met or unmet',
+    verdict: 'Under [work] grading = "self" or "subagent": met or unmet',
     with: 'With --scaffold-compose: backing services to add, from postgres and redis, separated by commas',
     'work-order': 'Work-order identifier',
     'write-probe-specifications': 'Write a probe-specification file for the current manifest to this new path, with the probe fields left for you',
@@ -197,7 +198,7 @@ const EVALUATOR_TOOLS: readonly string[] = ['codexcli', 'claudecode', 'opencode'
 // person an answer needs instead of the guard refusing it unexplained.
 const UNCONFIRMED_ANSWER_WORDS: readonly string[] = Object.freeze(['cockpit.name', 'sibling', 'estate.runnable', 'ports.bases',
     'environment.install_policies', 'environment.test_data', 'environment.compose_files', 'environment.machine', 'environment.posture',
-    'testing', 'guards'])
+    'testing', 'guards', 'work.grading'])
 // A declared route's name or its path; the command checks it against the declared routes.
 const ROUTE_SELECTOR = /^(?:[a-z0-9][a-z0-9_-]{0,63}|\/(?!\/)[^\s#\x00-\x1f\x7f]{0,511})$/
 const EXACT_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
@@ -575,10 +576,10 @@ const sources = [
         ordinary: ordinary('work-acknowledge', personFlag),
         flags: { ...configured, 'work-order': workOrderFlag, note: str(value('label', true)), interactive: bool() } },
     // Grading hands the order to an evaluator running apart from the agent that did the work, unless
-    // [work] grading names checks or self.
+    // [work] grading names checks or self, or the agent submits its subagent's verdict under subagent.
     { name: 'work grade', handler: 'work-grade', stage: 'test-and-grade', summary: 'Grade an accepted order the way [work] grading says', visibility: 'public',
         ordinary: ordinary('work-grade'),
-        flags: { ...configured, 'work-order': workOrderFlag, verdict: str(value('label')), note: str(value('label')), evaluator: str(value('evaluator-tool')) } },
+        flags: { ...configured, 'work-order': workOrderFlag, verdict: str(value('label')), note: str(value('label')), 'from-subagent': bool(flag), evaluator: str(value('evaluator-tool')) } },
     { name: 'work signoff', handler: 'work-signoff', stage: 'test-and-grade', summary: 'Close a graded order as done, or any open one as partial or abandoned', visibility: 'public',
         ordinary: ordinary('work-signoff', personFlag),
         flags: { ...configured, 'work-order': workOrderFlag, partial: bool(flag), abandon: bool(flag), note: str(value('label')), interactive: bool() } },

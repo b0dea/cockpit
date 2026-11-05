@@ -29,6 +29,18 @@ describe('generated environment command', () => {
         }
     })
 
+    it('refuses subagent grading from check and sync where no evaluator definition is generated, naming the harness and the fix', async () => {
+        const fixture = await consumer('subagent-grading')
+        const rows = ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'].map(feature => `{ feature = "${feature}", state = "unavailable", measured_on = "2026-09-26", reason = "The harness has no such mechanism" }`).join(', ')
+        const source = `${await readFile(fixture.configPath, 'utf8')}\n[work]\ngrading = "subagent"\n`
+        await writeFile(fixture.configPath, source.includes('[surfaces]') ? source.replace('[surfaces]', `[surfaces]\nharnesses = [{ name = "team-tool", capabilities = [${rows}] }]`)
+            : `${source}\n[surfaces]\nharnesses = [{ name = "team-tool", capabilities = [${rows}] }]\n`)
+        for (const run of [syncGeneratedEnvironment, checkGeneratedEnvironment]) {
+            expect(await run({ configPath: fixture.configPath })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'EVALUATOR_UNAVAILABLE', target: 'work.grading',
+                message: expect.stringContaining('cockpit generates none for team-tool'), fix: expect.stringContaining('[work] grading = "independent"') }] })
+        }
+    })
+
     it('names cockpit.guide_cap with the measured lines when the root or a linked sibling guide outgrows it', async () => {
         const fixture = await surfaceConsumer('guide-cap')
         const config = await readFile(fixture.configPath, 'utf8')

@@ -40,7 +40,9 @@ ask when scope is missing or an exact preview still needs acceptance:
    answer only on the human's word.
 5. Ask the human for the database and live vendor API hosts of every non-local environment
    (production, staging, shared) for the `guards` answer; env templates give variable names only, and once a cockpit exists `npx --no cockpit env keys --config cockpit.toml` lists them.
-6. "Use sensible defaults" covers `init` answers only, never another change inside a product
+6. Offer the human `work.grading` as a real choice with `init`'s proposal and reason: the grader is
+   optional, and `off` is reasonable when tracking matters but grading is not wanted.
+7. "Use sensible defaults" covers `init` answers only, never another change inside a product
    repository: an **AGENTS.md** pointer or a `package.json` change needs explicit product-change
    authorization covering its reviewed scope, which can already have been given. Mark every answer you chose as `"agent-default"` in the answers file's
    `[provenance]` table, and end your report with every default you chose, its field and value.
@@ -175,6 +177,14 @@ started it, even where it lives outside this root.
    - **The non-local hosts** for `guards`: the database and live vendor API hosts of every
      production, staging or shared environment. Env templates give variable names only; each host
      comes from the person.
+   - **How grading runs** for `work.grading`. Offer the person the choices in the *How grading can run*
+     section of `./node_modules/@b00dea/cockpit/docs/work-and-browser.md`, with init's proposal and
+     its reason: `independent` with two or more listed tools on `PATH`, so each grades the other's
+     work; `independent` as a separate run with one, with a warning where the running tool is detected;
+     `checks` with none. The grader is optional: `off` is reasonable when tracking matters but grading
+     is not wanted. A tool without subagents, or a sandbox that blocks a nested CLI, changes the
+     path and not the rule: list another tool, or let the person choose `checks`, `self` or `off`,
+     and never pick something weaker yourself without marking it.
    - **Environment access.** Inspect filenames and declared scripts without opening plaintext
      dotenv or credential files. If a repository has dotenv files or templates, follow **Secret
      handling** even when `.env.schema` is absent. Reuse an existing Varlock setup; otherwise
@@ -248,8 +258,8 @@ started it, even where it lives outside this root.
      "agent"`, or hand it to the person, before confirming the next one. A refusal
      (`CONFIRM_OBSERVATION_FAILED`) names what the observation saw: fix that, or the value, and
      confirm again. Never delete an `unconfirmed` entry by hand: `CONFIRM_PERSON_REQUIRED` marks the
-     answers only a person confirms (the trust decisions, `cockpit.name`, `estate.runnable`,
-     `environment.test_data`), so list them in your report with their values.
+     answers only a person confirms (the trust decisions, `work.grading` among them, `cockpit.name`,
+     `estate.runnable`, `environment.test_data`), so list them in your report with their values.
    Done when `doctor` reports no required gap and every other gap is cleared or reported.
 8. **Put product changes where the person reviews them.** A Dockerfile, Compose file or
    `.env.schema` the product needs goes on a new branch in that sibling's checkout: start the branch

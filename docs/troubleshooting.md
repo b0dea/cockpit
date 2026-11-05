@@ -261,6 +261,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `ENV_SCHEMA_UNCOMMITTED` | commit the schema to have it validated, or have a person review it and run the load this message names |
 | `ENV_SCHEMA_UNDECLARED` | consider adopting Varlock: install it if needed, then ask a person to run VARLOCK_TELEMETRY_DISABLED=true varlock init in this directory and review .env.schema without copying secret values into it |
 | `EVALUATOR_FELL_BACK_TO_RUNNING_TOOL` | install and sign in to the passed-over tool so another tool grades the work, or name the grader you accept with --evaluator <tool> |
+| `EVALUATOR_IS_RUNNING_TOOL` | list a second tool in work.evaluators so another tool grades the work, or accept this as the grade you chose |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [see above](#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [see above](#generated_artifact_drift) |
 | `GENERATED_ARTIFACT_MISSING` | run npx --no cockpit sync --config <your cockpit.toml> |

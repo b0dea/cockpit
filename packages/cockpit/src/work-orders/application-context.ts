@@ -26,7 +26,7 @@ const Request = z.discriminatedUnion('operation', [
         z.object({ kind: z.literal('none'), reason: note }).strict(),
     ]) }).strict(),
     z.object({ operation: z.literal('work-answer'), workOrderId: id, question: z.number().int().min(1), text: note }).strict(),
-    z.object({ operation: z.literal('work-grade'), workOrderId: id, verdict: z.enum(['met', 'unmet']).optional(), note: note.optional() }).strict(),
+    z.object({ operation: z.literal('work-grade'), workOrderId: id, verdict: z.enum(['met', 'unmet']).optional(), note: note.optional(), fromSubagent: z.literal(true).optional() }).strict(),
     z.object({ operation: z.literal('work-signoff'), workOrderId: id, close: z.enum(['done', 'partial', 'abandoned']), note: note.optional() }).strict(),
     z.object({ operation: z.literal('work-acknowledge'), workOrderId: id, note }).strict(),
     z.object({ operation: z.literal('work-recover'), workOrderId: id, apply: z.boolean() }).strict(),
@@ -89,6 +89,8 @@ export interface WorkContext {
     readonly observe: (orderId: string) => Promise<Observed>
     /** How many accepted orders are not closed. */
     readonly wip: () => Promise<number>
+    /** Failed checks and grades before an order reads as blocked. */
+    readonly attemptCap: number
     /** The records under [docs] decisions, read once per command. */
     readonly decisionRecords: () => Promise<ReadonlyMap<string, string>>
     readonly gated: (gate: WorkGate, decider: Decider, lines: readonly string[], verb: string,
@@ -113,6 +115,8 @@ export function workContext(composition: WorkApplicationComposition, operation: 
         const base = record?.accepted.base ?? await composition.heads()
         return { id: orderId, order: parsed.value, problems: [], ...(record ? { record } : {}), digest: workOrderDigest(parsed.value, sources, base) }
     }
+    // Off means nothing blocks on grading, and the cap counts failed checks and grades.
+    const attemptCap = policy.grading === 'off' ? Infinity : composition.caps.attempts
     const wip = async () => (await store.list()).filter(record => !TERMINAL.has(record.state)).length
     let records: Promise<ReadonlyMap<string, string>> | undefined
     const decisionRecords = () => records ??= composition.decisionRecords()
@@ -144,7 +148,7 @@ export function workContext(composition: WorkApplicationComposition, operation: 
     const current = async (orderId: string): Promise<Readonly<{ row: Observed; record: WorkRecord; order: WorkOrder }>> => {
         const row = await observe(orderId)
         if (!row.record) throw new RefusalError(`${orderId} is not accepted yet; run npx --no cockpit work accept --config <your cockpit.toml> --work-order ${orderId}`)
-        const state = displayState(row, composition.caps.attempts)
+        const state = displayState(row, attemptCap)
         if (TERMINAL.has(row.record.state)) throw new RefusalError(`${orderId} is closed (${row.record.state})`)
         if (state === 'stale') throw new RefusalError(`${orderId} changed since it was accepted${row.problems.length ? ` and does not parse: ${row.problems.join('; ')}` : ''}; `
             + `run npx --no cockpit work accept --config <your cockpit.toml> --work-order ${orderId} to accept the change`)
@@ -160,5 +164,5 @@ export function workContext(composition: WorkApplicationComposition, operation: 
         for (const gate of order.gates) results.push(await composition.runCheck(`gate:${gate}`, { gate }))
         return results
     }
-    return { composition, operation, policy, store, observe, wip, decisionRecords, gated, current, runChecks }
+    return { composition, operation, policy, store, observe, wip, attemptCap, decisionRecords, gated, current, runChecks }
 }

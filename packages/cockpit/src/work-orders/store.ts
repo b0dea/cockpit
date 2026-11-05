@@ -67,11 +67,14 @@ export const WorkRecord = z.object({
     // A grade found the agent's amendments lowered the bar. It outlives the grade a later check or grade
     // replaces, and only an amendment a person or CI accepts clears it, so the next amendment stays theirs.
     amendmentsFailedReview: z.object({ at, note: z.string().max(4_096) }).strict().optional(),
+    // A separate evaluator found this contract unmet. Under subagent grading a relayed verdict must not
+    // replace it, or an agent could ask the evaluator first and relay a pass after; an amendment moves on.
+    evaluatorFailed: z.object({ at, digest: z.string().length(64) }).strict().optional(),
     // A decision is resolved by a later `resolution` note naming it in `resolves`: with `record`, the decision
     // record it is written in; without, `text` says why it made no lasting decision. The latest resolution counts.
     notes: z.array(z.object({ at, by: z.enum(['agent', 'person', 'ci']), kind: z.enum(['note', 'question', 'answer', 'decision', 'resolution']), text: note,
         answers: z.number().int().min(1).optional(), resolves: z.number().int().min(1).optional(), record: z.string().max(1_100).optional() }).strict()).max(1_024),
-    closure: z.object({ at, by, how: z.enum(['graded', 'checks-passed', 'self-reported', 'partial', 'abandoned']), note: note.optional() }).strict().optional(),
+    closure: z.object({ at, by, how: z.enum(['graded', 'subagent-reported', 'checks-passed', 'self-reported', 'ungraded', 'partial', 'abandoned']), note: note.optional() }).strict().optional(),
     // Each lock `work recover --apply` removed: the holder it named and what was checked to call it gone.
     recoveries: z.array(z.object({ at, holder: z.string().max(1_024), checked: z.array(z.string().max(1_024)).max(16) }).strict()).max(256).optional(),
 }).strict()

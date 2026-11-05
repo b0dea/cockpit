@@ -6,6 +6,7 @@ import {
     SURFACE_EXECUTION_CONTROL_PATHS,
     SURFACE_PUBLICATION_ANCHORS,
     SURFACE_TARGETS,
+    subagentGradingUnsupported,
     isMeasurementDate,
     type GuardSurfaceTarget,
     type SurfaceTarget,
@@ -44,6 +45,16 @@ describe('shipped harness registry', () => {
         expect(HARNESS_REGISTRY.every(row => Object.isFrozen(row) && Object.isFrozen(row.outputs)
             && Object.isFrozen(row.outputs.permissions)
             && Object.isFrozen(row.guard) && Object.isFrozen(row.native))).toBe(true)
+    })
+
+    it('offers subagent grading only where the evaluator definition is generated, naming each tool and harness without one', () => {
+        const harness = (name: string, state: string) => ({ name, capabilities: [{ feature: 'subagents', state }] })
+        expect(subagentGradingUnsupported(SURFACE_TARGETS, [harness('team-tool', 'instructed')])).toEqual([])
+        expect(subagentGradingUnsupported(['claudecode'], [harness('team-tool', 'unavailable')])).toEqual(['team-tool'])
+        expect(subagentGradingUnsupported(['claudecode', 'codexcli'], [], [{ target: 'claudecode', rulesyncFeatures: ['rules', 'subagents'] }, { target: 'codexcli', rulesyncFeatures: ['rules'] }])).toEqual(['codexcli'])
+        // A definition the tool was shown to offer is measured; one only written is not called more than that.
+        expect(HARNESS_REGISTRY.map(row => [row.target, row.subagentGrader.state, row.subagentGrader.measuredVersion])).toEqual([
+            ['claudecode', 'instructed', '2.1.318'], ['codexcli', 'instructed', '0.166.0'], ['opencode', 'generated', null], ['cursor', 'generated', null], ['grokcli', 'generated', null]])
     })
 
     it('accepts a measurement date only as a real calendar day that is not in the future', () => {

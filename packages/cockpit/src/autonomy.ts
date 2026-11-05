@@ -58,7 +58,9 @@ export function decide(decider: Decider, env: Readonly<Record<string, string | u
 
 // Stronger is later: an agent decision is the weakest, CI behind reviewers the strongest.
 const DECIDER_RANK: Readonly<Record<Decider, number>> = Object.freeze({ agent: 0, person: 1, ci: 2 })
-const GRADING_RANK: Readonly<Record<WorkGrading, number>> = Object.freeze({ self: 0, checks: 1, independent: 2 })
+// A subagent's verdict reaches cockpit through the agent being graded, so it ranks with that agent's own.
+// Off ranks below both: under self a failed check still fails the grade.
+const GRADING_RANK: Readonly<Record<WorkGrading, number>> = Object.freeze({ off: 0, self: 1, subagent: 1, checks: 2, independent: 3 })
 
 
 export interface PolicyWeakening { readonly field: string; readonly from: string; readonly to: string }

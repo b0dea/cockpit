@@ -18,7 +18,7 @@ import { assessComposeTopology, bindHolder, composeBindPath, composeProjectDirec
 import { repositoryIdentity } from '../environment/repository-identity.js'
 import { redactSensitiveText } from '../environment/sensitive.js'
 import { formatShellCommand, initCommand } from '../fix-catalogue.js'
-import { deriveSiblingVariable, TestingName } from '../schema.js'
+import { deriveSiblingVariable, TestingName, type WorkGrading } from '../schema.js'
 
 interface InferredProvenance {
     readonly kind: 'derived' | 'inferred'
@@ -500,6 +500,23 @@ function testingProposal(slug: string, entry: TestEntry, directory: string): Rea
             { id: testingId('full', slug), tier: 'full', stages: [full.id], changes: `Shared or cross-system behavior in ${slug}` },
         ],
     }
+}
+
+export type GradingProposal = Readonly<{ value: WorkGrading; source: string; reason: string }>
+
+/**
+ * The recommended [work] grading, from the listed tools found on PATH. It only ever proposes what can
+ * run here: a recommendation a first grade would refuse is no default. Nothing recorded by an existing
+ * cockpit reads this, so an upgrade changes nothing.
+ */
+export function recommendGrading(listed: readonly string[], onPath: readonly string[]): GradingProposal {
+    const source = `the tools listed for init (${listed.join(', ')}) and PATH`
+    const [only, ...others] = onPath
+    if (only === undefined) return { value: 'checks', source,
+        reason: 'no listed tool that can grade is on PATH here, and checks needs no agent tool; each criterion then needs a check, and nothing judges the change' }
+    return { value: 'independent', source, reason: others.length
+        ? `${onPath.join(' and ')} are on PATH, so each grades the other's work in a separate process cockpit reads directly`
+        : `only ${only} is on PATH, so a separate ${only} process grades and cockpit reads it directly, and warns where it detects that the same tool did the work, because one tool is then judging its own kind of work` }
 }
 
 export async function deriveInferredFacts(input: InferenceInput): Promise<InferenceResult> {

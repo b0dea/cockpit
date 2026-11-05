@@ -703,7 +703,7 @@ it('keeps a verified local-archive pin through installed init, check and npm ci'
         '[cockpit]', 'name = "synthetic"', '',
         '[[sibling]]', 'slug = "library"', 'dir = "library"', 'mount = "always"', 'acquire = "none"',
         'var = "LIBRARY_DIR"', 'purpose = "Synthetic library"', '', '[ports]', 'bases = {}', '',
-        '[guards]', 'hosted_db_hosts = []', 'vendor_endpoint_hosts = []', '',
+        '[guards]', 'hosted_db_hosts = []', 'vendor_endpoint_hosts = []', '', '[work]', 'grading = "independent"', '',
     ].join('\n'))
     const sourceArchive = join(packScratch, 'artifact', packedArtifact().filename)
     const home = join(packScratch, 'source-install-home')
@@ -810,6 +810,7 @@ it.each(initEstates)('runs installed init on $target for a $classification estat
             })))
             if (question.field === 'ports.bases') return '{}'
             if (question.field === 'guards') return JSON.stringify({ hosted_db_hosts: [], vendor_endpoint_hosts: [] })
+            if (question.field === 'work.grading') return JSON.stringify('independent')
             if (question.field === 'environment.install_policies') return JSON.stringify([{
                 toolchain: 'node', lockfile: 'package-lock.json', test: ['node', '--version'],
             }])
@@ -829,7 +830,7 @@ it.each(initEstates)('runs installed init on $target for a $classification estat
     if (classification === 'no-runnable-product') {
         expect(status, stderr).toBe(2)
         expect(stderr).toContain('GREENFIELD_ANSWER_REQUIRED')
-        expect(questions.map(question => question.field)).toEqual(['cockpit.name', 'sibling', 'ports.bases', 'guards', 'configuration.defaults'])
+        expect(questions.map(question => question.field)).toEqual(['cockpit.name', 'sibling', 'ports.bases', 'guards', 'work.grading', 'configuration.defaults'])
         // The interactive answers are persisted, so a caller with no terminal finishes the same
         // init from the printed digests alone: it must not need a second interview.
         const pendingRun = spawnSync(process.execPath, [launcher, 'init', root, '--target', target, '--json'], { cwd: root, env, encoding: 'utf8' })
@@ -934,7 +935,7 @@ it('lists every outstanding headless init question with the values it proposes',
     const listed = JSON.parse(first.stdout).result
     expect(listed.interview.outstanding.map((row: { field: string }) => row.field)).toEqual([
         'cockpit.name', 'sibling', 'ports.bases', 'environment.install_policies', 'environment.test_data',
-        'environment.compose_files', 'environment.machine', 'environment.posture', 'testing', 'guards', 'configuration.defaults',
+        'environment.compose_files', 'environment.machine', 'environment.posture', 'testing', 'guards', 'work.grading', 'configuration.defaults',
     ])
     expect(listed.interview.outstanding.find((row: { field: string }) => row.field === 'ports.bases').proposals).toEqual([
         expect.objectContaining({ target: 'library.container_ports', value: [4100], provenance: expect.objectContaining({ kind: 'inferred', source: 'library/Dockerfile' }) }),
@@ -951,7 +952,7 @@ it('finishes init across three runs without a terminal and lets a teammate clone
         '[cockpit]', 'name = "synthetic"', '',
         '[[sibling]]', 'slug = "library"', 'dir = "library"', 'mount = "always"', 'acquire = "none"',
         'var = "LIBRARY_DIR"', 'purpose = "Synthetic library"', '', '[ports]', 'bases = {}', '',
-        '[guards]', 'hosted_db_hosts = []', 'vendor_endpoint_hosts = []', ''].join('\n'))
+        '[guards]', 'hosted_db_hosts = []', 'vendor_endpoint_hosts = []', '', '[work]', 'grading = "independent"', ''].join('\n'))
     // An agent has no terminal at any point: three runs, each given only what the previous one printed.
     const portableRequested = join(packScratch, 'init-portable')
     mkdirSync(portableRequested)
@@ -964,7 +965,7 @@ it('finishes init across three runs without a terminal and lets a teammate clone
     expect(portableFirst.status, portableFirst.stderr).toBe(0)
     const portableListed = JSON.parse(portableFirst.stdout).result
     expect(portableListed.interview.outstanding.map((row: { field: string }) => row.field)).toEqual([
-        'cockpit.name', 'sibling', 'ports.bases', 'guards', 'configuration.defaults',
+        'cockpit.name', 'sibling', 'ports.bases', 'guards', 'work.grading', 'configuration.defaults',
     ])
     const second = portableRun('--accept-preview', portableListed.previewSha256, '--answers', answersFile)
     expect(second.status, second.stderr).toBe(0)
@@ -1053,7 +1054,7 @@ it.each(['dedicated', 'in-repo'] as const)('finishes installed init for a produc
         '[cockpit]', `root = "${rootChoice}"`, 'name = "synthetic-store"', '',
         '[[sibling]]', 'slug = "store"', `dir = "${rootChoice === 'dedicated' ? 'store' : '.'}"`,
         'mount = "none"', 'acquire = "none"', 'var = "STORE_DIR"', 'purpose = "Synthetic store library"', '',
-        '[ports]', 'bases = {}', '', '[guards]', 'hosted_db_hosts = []', 'vendor_endpoint_hosts = []', '',
+        '[ports]', 'bases = {}', '', '[guards]', 'hosted_db_hosts = []', 'vendor_endpoint_hosts = []', '', '[work]', 'grading = "independent"', '',
     ].join('\n'))
     const env = { ...npmEnvironment(), HOME: home, XDG_STATE_HOME: join(home, 'state') }
     const run = (...extra: string[]) => spawnSync(process.execPath, [launcher, 'init', product, '--target', 'codexcli',

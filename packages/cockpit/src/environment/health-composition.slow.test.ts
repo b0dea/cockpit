@@ -362,15 +362,13 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
             message: expect.stringContaining('an empty entry is the working directory') }))
     })
 
-    it('warns from doctor when the cockpit has work orders but no evaluator work.evaluators lists is on PATH, and says how each order closed', async () => {
+    it('warns from doctor before any work starts when no evaluator work.evaluators lists is on PATH, and says how each order closed', async () => {
         const candidate = await fixture({ configuredRuntime: true, unseeded: true })
         const doctor = async () => runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({
             configPath: candidate.configPath, env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home }, timeoutMs: 5_000,
         }, executeProbe))
-        const warning = expect.objectContaining({ severity: 'warning', code: 'EVALUATOR_UNAVAILABLE', target: 'workorders' })
+        const warning = expect.objectContaining({ severity: 'warning', code: 'EVALUATOR_UNAVAILABLE', target: 'work.grading' })
 
-        expect((await doctor()).diagnostics).not.toContainEqual(warning)
-        await mkdir(join(candidate.checkout, 'workorders'))
         expect((await doctor()).diagnostics).toContainEqual(warning)
         await writeFile(join(candidate.root, 'codex'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
         expect((await doctor()).diagnostics).not.toContainEqual(warning)
@@ -401,6 +399,26 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
             amendments: [], acknowledgements: [], attempts: 0, notes: [], closure: { at, by: 'agent', how: 'checks-passed' } }))
         expect((await doctor()).diagnostics).toContainEqual(expect.objectContaining({ severity: 'info', code: 'WORK_ORDER_CLOSED',
             target: 'workorders/WO-1.md', message: 'WO-1 closed as checks-passed, signed off by agent' }))
+    })
+
+    it('reports whether the configured grading can run here, and says what it could not observe', async () => {
+        const doctorWith = async (work: string, onPath: boolean) => {
+            const candidate = await fixture({ configuredRuntime: true, unseeded: true })
+            await writeFile(candidate.configPath, `${await readFile(candidate.configPath, 'utf8')}\n${work}\n`)
+            if (onPath) await writeFile(join(candidate.root, 'claude'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+            const report = await runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({
+                configPath: candidate.configPath, env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home }, timeoutMs: 5_000 }, executeProbe))
+            return report.diagnostics.filter(row => row.target === 'work.grading')
+        }
+        for (const grading of ['checks', 'self', 'off']) expect(await doctorWith(`[work]\ngrading = "${grading}"`, false), grading).toEqual([])
+        const subagent = '[work]\ngrading = "subagent"\nevaluators = ["claudecode"]'
+        expect(await doctorWith(subagent, true)).toEqual([expect.objectContaining({ severity: 'info', code: 'SUBAGENT_AVAILABILITY_UNOBSERVED',
+            message: expect.stringContaining('cannot observe ahead of time whether the working agent can spawn a subagent, so this was not checked') })])
+        expect(await doctorWith(subagent, false)).toEqual([expect.objectContaining({ severity: 'warning', code: 'EVALUATOR_UNAVAILABLE',
+            message: expect.stringMatching(/no stronger path if the working agent cannot spawn a subagent, which cockpit cannot observe ahead of time, because .*Claude Code \(claude\) is not on PATH/) })])
+        const rows = ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'].map(feature => `{ feature = "${feature}", state = "unavailable", measured_on = "2026-09-26", reason = "The harness has no such mechanism" }`).join(', ')
+        expect(await doctorWith(`${subagent}\n\n[surfaces]\nharnesses = [{ name = "team-tool", capabilities = [${rows}] }]`, true)).toEqual([expect.objectContaining({
+            severity: 'warning', code: 'EVALUATOR_UNAVAILABLE', message: expect.stringContaining('cockpit generates none for team-tool'), fix: expect.stringContaining('[work] grading = "independent"') })])
     })
 
     it('preserves a lifecycle owner refusal before observing Docker', async () => {

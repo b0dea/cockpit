@@ -274,9 +274,13 @@ which way each one closed:
 |---|---|---|
 | `independent` (default) | A fresh, read-only run of an agent tool that starts outside the repository and never sees the session that did the work. Run from Claude Code or Codex, another listed tool grades first, with a warning if it falls back to the running tool; with one tool listed it is the same tool in a new run. `--evaluator <tool>` picks it for a run. | `graded` |
 | `checks` | cockpit's reruns of each criterion's check, and nothing else. | `checks-passed` |
+| `subagent` | A read-only subagent the working agent spawned, whose verdict that agent relays; cockpit cannot verify it. With nothing submitted, a separate evaluator as under `independent`. | `subagent-reported` (or `graded`) |
 | `self` | The agent that did the work, with a note saying what it checked. | `self-reported` |
+| `off` | Nothing: the grader is optional. The order is a tracked record that closes whatever its checks showed. | `ungraded` (unless already graded) |
 
-A failed check fails the grade in every mode. Where a model grades, a change outside `scope`, a
+[How grading can run](docs/work-and-browser.md#how-grading-can-run) covers each choice, what it proves and what it falls back to.
+
+A failed check fails the grade in every mode that grades. Where a model grades, a change outside `scope`, a
 flagged test change and the agent's own amendments to the contract become standing criteria it judges;
 under `checks` they are decided by rule. With `[docs]` declared, `work note --decision` and
 `work decide` record each lasting decision, and `work signoff` waits until every one is resolved.

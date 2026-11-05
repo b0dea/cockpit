@@ -5,7 +5,7 @@
     "unconfirmed": {
       "description": "Answers no person has stated yet; init writes them and doctor reports them.",
       "minItems": 1,
-      "maxItems": 11,
+      "maxItems": 12,
       "type": "array",
       "items": {
         "type": "string",
@@ -20,7 +20,8 @@
           "environment.machine",
           "environment.posture",
           "testing",
-          "guards"
+          "guards",
+          "work.grading"
         ]
       }
     },
@@ -723,12 +724,14 @@
       "properties": {
         "grading": {
           "default": "independent",
-          "description": "How an order earns done: independent (an evaluator grades it), checks (cockpit ran every criterion's check and all passed) or self (the agent reports met or unmet with a note).",
+          "description": "How an order earns done: independent (a separate agent tool process grades it and cockpit reads that process directly), subagent (the working agent relays the verdict of a read-only subagent it spawned, which cockpit cannot verify), checks (cockpit ran every criterion's check and all passed), self (the agent reports met or unmet with a note) or off (the grader is optional: nothing judges and nothing blocks on grading, and the order closes as ungraded).",
           "type": "string",
           "enum": [
             "independent",
+            "subagent",
             "checks",
-            "self"
+            "self",
+            "off"
           ]
         },
         "evaluators": {
@@ -788,7 +791,7 @@
               ]
             },
             "amend": {
-              "description": "Who accepts a changed contract. Default agent. Removing an accepted criterion or gate always needs a person or ci; an agent's rewrite of a criterion, scope, non-goal or objective is judged at the next grade, and needs a person under checks grading.",
+              "description": "Who accepts a changed contract. Default agent. Removing an accepted criterion or gate always needs a person or ci; an agent's rewrite of a criterion, scope, non-goal or objective is judged at the next grade, and needs a person under checks grading; under off nothing judges it.",
               "type": "string",
               "enum": [
                 "agent",
@@ -815,7 +818,7 @@
               ]
             },
             "acknowledge": {
-              "description": "Who acknowledges that an order weakened tests, which checks grading otherwise fails; under independent and self grading the acknowledgement is context for the verdict. Default agent.",
+              "description": "Who acknowledges that an order weakened tests, which checks grading otherwise fails; under independent, subagent and self grading the acknowledgement is context for the verdict, and under off it is only recorded. Default agent.",
               "type": "string",
               "enum": [
                 "agent",

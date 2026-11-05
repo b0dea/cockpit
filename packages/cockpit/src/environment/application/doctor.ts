@@ -1,6 +1,6 @@
 import { dirname, join, resolve } from 'node:path'
 import { ENVIRONMENT_CODES, errorCause, type EnvironmentDiagnostic, snapshotJson } from '../contract.js'
-import type { EvaluatorTool } from '../../schema.js'
+import type { CockpitConfig, EvaluatorTool } from '../../schema.js'
 import { effectivePolicy, policyWeakening, policyWeakeningDiagnostic, readRecordedPolicy } from '../../autonomy.js'
 import type { SkippedStateNamespace } from '../state.js'
 import { prepareGeneratedEnvironmentCurrentness } from '../generated-application/check.js'
@@ -61,8 +61,8 @@ export interface DoctorCommandAdapters extends ObservationCommandAdapters {
     readonly discoverReleaseFreshness?: () => Promise<ReleaseFreshness>
     /** Warnings when an agent tool on this machine would skip the generated guard hook. */
     readonly inspectHookTrust?: () => Promise<readonly EnvironmentDiagnostic[]>
-    /** A warning when work orders exist but their independent evaluator cannot run on this machine. */
-    readonly inspectEvaluator?: (evaluators: readonly EvaluatorTool[]) => Promise<readonly EnvironmentDiagnostic[]>
+    /** A finding when the configured grading cannot run on this machine, and how each order closed. */
+    readonly inspectEvaluator?: (work: WorkGradingInspection) => Promise<readonly EnvironmentDiagnostic[]>
     /** Warnings about what each approved MCP server needs before a tool can start it; never starts one. */
     readonly inspectMcpStartup?: (servers: readonly McpServer[]) => Promise<readonly EnvironmentDiagnostic[]>
     /** Warnings about prerequisites the stack checks do not cover: the local install, sibling remotes, committed secrets. */
@@ -74,6 +74,9 @@ export interface DoctorCommandAdapters extends ObservationCommandAdapters {
         | Readonly<{ kind: 'complete'; skipped: readonly SkippedStateNamespace[] }>
         | Readonly<{ kind: 'refusal'; diagnostics: readonly EnvironmentDiagnostic[] }>>
 }
+
+export type WorkGradingInspection = Readonly<{ grading: CockpitConfig['work']['grading']; evaluators: readonly EvaluatorTool[]
+    tools: CockpitConfig['surfaces']['tools']; harnesses: CockpitConfig['surfaces']['harnesses'] }>
 
 interface DoctorFreshness {
     // Only whether the generated files are current. The full check result, with every owned path's
@@ -159,7 +162,8 @@ async function doctorGuardHostDiagnostics(loading: Promise<LoadedDoctorConfig>):
 // a docs-only cockpit has no product to test and stays quiet.
 async function doctorEvaluatorDiagnostics(loading: Promise<LoadedDoctorConfig>, adapters: DoctorCommandAdapters): Promise<readonly EnvironmentDiagnostic[]> {
     const loaded = await loading
-    return loaded.kind === 'complete' && adapters.inspectEvaluator ? adapters.inspectEvaluator(evaluatorTools(loaded.result.config)) : []
+    return loaded.kind === 'complete' && adapters.inspectEvaluator ? adapters.inspectEvaluator({ grading: loaded.result.config.work.grading, evaluators: evaluatorTools(loaded.result.config),
+        tools: loaded.result.config.surfaces.tools, harnesses: loaded.result.config.surfaces.harnesses }) : []
 }
 
 async function doctorTestingGateDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {

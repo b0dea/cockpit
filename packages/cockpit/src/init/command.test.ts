@@ -232,12 +232,12 @@ describe('init operator command', () => {
         const posture = { addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] }
         const answers = { sibling: [{ slug: 'app' }], ports: { bases: {} },
             environment: { install_policies: [], test_data: { seeded_data: false, signed_in_users: false },
-                compose_files: ['compose.yml'], machine, posture }, guards }
+                compose_files: ['compose.yml'], machine, posture }, guards, work: { grading: 'off' } }
         const walk = (given: string[]) => {
             const sent: string[] = []
             const questions = [asking('sibling'), asking('ports.bases'), asking('environment.install_policies'),
                 asking('environment.test_data'), asking('environment.compose_files'), asking('environment.machine'),
-                asking('environment.posture'), asking('guards'),
+                asking('environment.posture'), asking('guards'), asking('work.grading'),
                 asking('configuration.defaults', defaultsDigest)]
             const application = async (input: { accepted: boolean; greenfieldAnswer?: { bytes: string } }) => {
                 if (!input.accepted) return pending()
@@ -256,7 +256,7 @@ describe('init operator command', () => {
             expect(outcome.kind).toBe('complete')
             expect(sent).toEqual([
                 '[{"slug":"app"}]', '{}', '[]', '{"seeded_data":false,"signed_in_users":false}',
-                '["compose.yml"]', JSON.stringify(machine), JSON.stringify(posture), JSON.stringify(guards),
+                '["compose.yml"]', JSON.stringify(machine), JSON.stringify(posture), JSON.stringify(guards), '"off"',
                 JSON.stringify({ confirmed: true, sha256: defaultsDigest }),
             ])
         })
@@ -298,7 +298,7 @@ describe('init operator command', () => {
                 environment: { machine: 'human' }, guards: 'agent-default' } })
             expect(marked.outcome.kind).toBe('complete')
             expect(marked.recorded).toEqual(['operator-confirmed', 'operator-confirmed', 'operator-confirmed', 'operator-confirmed',
-                'agent-default', 'operator-confirmed', 'operator-confirmed', 'agent-default', 'operator-confirmed'])
+                'agent-default', 'operator-confirmed', 'operator-confirmed', 'agent-default', 'operator-confirmed', 'operator-confirmed'])
             // cockpit proposes at most part of a machine floor, so an unmarked one is not attributed to the human.
             expect((await provenances(answers)).recorded[5]).toBe('unattributed')
 

@@ -6,7 +6,8 @@ import { renderBrowserSurfaces } from '../../browser/surfaces.js'
 import { resolveBrowserRuntime } from '../../browser/runtime.js'
 import { resolveObservationPostures } from '../posture-observation.js'
 import { SURFACE_FEATURES, SURFACE_TARGETS, type RenderedSurfaceFile, type SurfaceSourceFile, type SurfaceTarget } from '../../surfaces/contract.js'
-import { GUARD_SURFACE_TARGETS, harnessFact, isGuardSurfaceTarget, listedSurfaceTargets } from '../../surfaces/harness-registry.js'
+import { subagentGradingRefusal } from '../../grading/evaluate.js'
+import { GUARD_SURFACE_TARGETS, harnessFact, isGuardSurfaceTarget, listedSurfaceTargets, subagentGradingUnsupported } from '../../surfaces/harness-registry.js'
 import { mergeAdoptedSurface } from '../../surfaces/adoption.js'
 import { generateSurfaceEstate } from '../../surfaces/generator-adapter.js'
 import { mergeSurfaceDeclarations } from '../../surfaces/merge.js'
@@ -107,6 +108,12 @@ export async function prepareSurfaces(
     // Only the listed tools are rendered and drift-checked; an unlisted tool's files become stale.
     const tools = listedSurfaceTargets(config.surfaces.tools)
     const guardedTools = GUARD_SURFACE_TARGETS.filter(target => tools.includes(target))
+    // Accepted, this would tell an agent to spawn a definition that was never written.
+    const noDefinition = config.work.grading === 'subagent' ? subagentGradingUnsupported(tools, config.surfaces.harnesses) : []
+    if (noDefinition.length) {
+        const refused = subagentGradingRefusal(noDefinition)
+        return refuse(refused.code, refused.message, 'work.grading', refused.fix)
+    }
     // Generated files are one per checkout, so they follow the declared default profile set; a
     // profile one run adds with `up --profile` reaches the stack, not the agents' instructions.
     const selected = mounted(config, config.environment.profiles)

@@ -133,7 +133,7 @@ The agent follows these rules for the whole setup:
 7. **Confirm a default only by observing it.** The agent clears an `unconfirmed` entry only with
    `cockpit confirm`, which runs the observation that verifies that answer on this machine and
    records it. The trust decisions (`guards`, `testing`, `environment.install_policies`, `sibling`,
-   `environment.posture`) and the answers no observation settles (`cockpit.name`, `estate.runnable`,
+   `environment.posture`, `work.grading`) and the answers no observation settles (`cockpit.name`, `estate.runnable`,
    `environment.test_data`) stay a person's (below).
 
 These rules are instructions, not enforcement. The guard cockpit installs later blocks some commands;
@@ -319,6 +319,9 @@ bases = {}
 [guards]
 hosted_db_hosts = []
 vendor_endpoint_hosts = []
+
+[work]
+grading = "independent"
 ```
 
 | Field | Answer |
@@ -335,6 +338,7 @@ vendor_endpoint_hosts = []
 | `environment.posture` | asked when Compose files are declared; `addressing`, `authentication` and `posture_requirements` ([Declare environment postures](environment.md#declare-environment-postures)) |
 | `testing` | the product's `[testing]` stages and gates; `"none"` records that it has no tests yet, so no work can be graded PASS and `doctor` warns (`TESTING_GATE_UNDECLARED`) |
 | `guards` | `hosted_db_hosts` and `vendor_endpoint_hosts` of every non-local environment; `[]` for both records that none exists |
+| `work.grading` | always asked; how an order earns done ([the choices](work-and-browser.md#how-grading-can-run)). Init proposes one from the listed tools it finds on `PATH`, with the reason: two or more, `independent`, so each grades the other's work; one, `independent` as a separate run of it, with a warning where the running tool is detected; none, `checks`, which needs no agent tool. It is a person's decision: an agent's answer is marked `"agent-default"` and stays unconfirmed until a person confirms it; `off` is reasonable when tracking matters but grading is not wanted. An existing cockpit keeps the value it has |
 | `provenance` | optional; `"human"` (the default), `"agent-default"` or `"derived"` per field. An `"agent-default"` answer stays under `unconfirmed` until `cockpit confirm` observes it or a person confirms it ([Mark the answers you chose](#mark-the-answers-you-chose)) |
 
 A key that names no field is refused. Recorded answers are kept, so the same file can be passed on every
