@@ -8,7 +8,8 @@ import { parseDocument } from 'yaml'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, parseJsonText, RefusalError, type ConsumedFile, type ExecutionStep } from '../environment/contract.js'
 import { resolveExecutablePath } from '../environment/executable.js'
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
-import { EVALUATOR_COMMANDS, runningEvaluatorTool, type EvaluatorTool } from '../schema.js'
+import { EVALUATOR_COMMANDS, runningEvaluatorTool, type CustomHarness, type EvaluatorTool } from '../schema.js'
+import { HARNESS_REGISTRY, type SurfaceTarget } from '../surfaces/harness-registry.js'
 
 // One run of an agent tool apart from the agent that did the work: a fresh headless session started in a
 // private directory of its own, held read-only by the tool's own mechanism, whose answer is checked
@@ -247,11 +248,17 @@ export function evaluatorUnavailable(message: string) {
     }
 }
 
-/** A listed tool has no evaluator definition to spawn; one literal fix so the diagnostic inventory captures it. */
-export function subagentGradingRefusal(tools: readonly string[]) {
-    return {
+/**
+ * Why [work] grading = "subagent" would parse and do nothing here: a listed tool or declared harness has
+ * no generated evaluator definition for the agent to spawn. One literal fix so the diagnostic inventory captures it.
+ */
+export function subagentGradingProblem(tools: readonly SurfaceTarget[],
+    harnesses: readonly Readonly<{ name: string; capabilities: readonly Pick<CustomHarness['capabilities'][number], 'feature' | 'state'>[] }>[]) {
+    const unsupported = [...tools.filter(tool => !HARNESS_REGISTRY.find(row => row.target === tool)?.rulesyncFeatures.includes('subagents')),
+        ...harnesses.filter(harness => harness.capabilities.some(row => row.feature === 'subagents' && row.state === 'unavailable')).map(harness => harness.name)]
+    return unsupported.length === 0 ? undefined : {
         code: 'EVALUATOR_UNAVAILABLE' as const satisfies typeof ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE,
-        message: `[work] grading = "subagent" needs the generated evaluator definition, and cockpit generates none for ${tools.join(', ')}`,
+        message: `[work] grading = "subagent" needs the generated evaluator definition, and cockpit generates none for ${unsupported.join(', ')}`,
         fix: 'set [work] grading = "independent" with work.evaluators naming a tool you have, which is stronger, or have a person move it to checks, self or off; or remove that tool from the surfaces it is listed under',
     }
 }

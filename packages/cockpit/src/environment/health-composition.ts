@@ -1,7 +1,7 @@
 import { dirname, join, resolve } from 'node:path'
 import { loadCockpitConfig } from '../config/load.js'
-import { evaluatorSearchDirectories, evaluatorUnavailable, findEvaluators, subagentGradingRefusal } from '../grading/evaluate.js'
-import { subagentGradingUnsupported } from '../surfaces/harness-registry.js'
+import { evaluatorSearchDirectories, evaluatorUnavailable, findEvaluators, subagentGradingProblem } from '../grading/evaluate.js'
+import { GRADING } from '../schema.js'
 import { createWorkStore } from '../work-orders/store.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
@@ -438,13 +438,13 @@ async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, s
         code: ENVIRONMENT_CODES.WORK_ORDER_CLOSED, target: `workorders/${record.id}.md`,
         message: `${record.id} closed as ${record.closure.how}, signed off by ${record.closure.by}${record.closure.note ? `: ${record.closure.note}` : ''}` }] : [])
     // Self, checks and off start no evaluator, so its absence is no finding there.
-    if (work.grading !== 'independent' && work.grading !== 'subagent') return closed
+    if (!GRADING[work.grading].evaluator) return closed
     const { found, missing } = await findEvaluators(work.evaluators, await evaluatorSearchDirectories(env))
     const missingCause = `no evaluator work.evaluators lists is on PATH: ${missing.map(row => row.message).join('; ')}`
     if (work.grading === 'independent') return found.length ? closed : [{ severity: 'warning' as const, target: 'work.grading',
         ...evaluatorUnavailable(`[work] grading = "independent" runs work grade and cockpit grade in a separate agent tool process, but ${missingCause}`) }, ...closed]
-    const unsupported = subagentGradingUnsupported(work.tools, work.harnesses)
-    if (unsupported.length) return [{ severity: 'warning' as const, target: 'work.grading', ...subagentGradingRefusal(unsupported) }, ...closed]
+    const unsupported = subagentGradingProblem(work.tools, work.harnesses)
+    if (unsupported) return [{ severity: 'warning' as const, target: 'work.grading', ...unsupported }, ...closed]
     return [found.length ? { severity: 'info' as const, target: 'work.grading', code: ENVIRONMENT_CODES.SUBAGENT_AVAILABILITY_UNOBSERVED,
         message: `[work] grading = "subagent": cockpit cannot observe ahead of time whether the working agent can spawn a subagent, so this was not checked; if it cannot, work grade with nothing submitted runs ${found.join(', ')} as a separate process, which is stronger` }
         : { severity: 'warning' as const, target: 'work.grading',

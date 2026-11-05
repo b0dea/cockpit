@@ -266,7 +266,7 @@ describe('work-order lifecycle', () => {
         writeFileSync(join(root, 'workorders/WO-9.md'), order('WO-9'))
         await work(root, ['work', 'accept', '--work-order', 'WO-9'])
         expect(await work(root, ['work', 'check', '--work-order', 'WO-9'])).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_CHECK_FAILED' }] })
-        expect((await work(root, ['work', 'status', '--work-order', 'WO-9'])).result).toMatchObject({ orders: [{ id: 'WO-9', state: 'accepted', attempts: 0 }] })
+        expect((await work(root, ['work', 'status', '--work-order', 'WO-9'])).result).toMatchObject({ orders: [{ id: 'WO-9', state: 'accepted', attempts: 1 }] })
         const failed = await work(root, ['work', 'signoff', '--work-order', 'WO-9', '--note', 'shipped with the failure known'])
         expect(failed.result).toMatchObject({ state: 'done', closedAs: 'ungraded', checksFailed: [expect.stringMatching(/^AC1: /)], checksNotRun: [] })
         expect(record(root, 'WO-9')).toMatchObject({ closure: { how: 'ungraded', note: 'shipped with the failure known' }, checks: { results: [{ criterion: 'AC1', passed: false }] } })

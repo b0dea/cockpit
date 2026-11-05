@@ -466,8 +466,38 @@ export function runningEvaluatorTool(env: Readonly<Record<string, string | undef
 export const DECIDERS = ['agent', 'person', 'ci'] as const
 export type Decider = typeof DECIDERS[number]
 const Decider = z.enum(DECIDERS)
-export const WORK_GRADING = ['independent', 'subagent', 'checks', 'self', 'off'] as const
+/** The modes a grade is recorded under; off never grades. */
+export const GRADE_MODES = ['independent', 'subagent', 'checks', 'self'] as const
+export type GradeMode = typeof GRADE_MODES[number]
+export const WORK_GRADING = [...GRADE_MODES, 'off'] as const
 export type WorkGrading = typeof WORK_GRADING[number]
+/** Whether work grade grades at all; under off nothing does and nothing blocks on it. */
+export const isGradeMode = (grading: WorkGrading): grading is GradeMode => grading !== 'off'
+
+interface GradingProperties {
+    /** Moving to a lower rank weakens the policy. A subagent's verdict reaches cockpit through the agent
+     * being graded, so it ranks with that agent's own; off ranks below both, since under self a failed check still fails the grade. */
+    readonly rank: number
+    /** How an order closes on a passing grade recorded under this mode, or with none under off. */
+    readonly closure: 'graded' | 'subagent-reported' | 'checks-passed' | 'self-reported' | 'ungraded'
+    /** A model reads the change and judges each criterion, cockpit's standing criteria and amendments included. */
+    readonly judged: boolean
+    /** work grade may run a separate evaluator process from work.evaluators. */
+    readonly evaluator: boolean
+    /** What work grade takes on its command line: nothing, a verdict and note, or a relayed verdict and note or nothing. */
+    readonly submission: 'none' | 'verdict' | 'relayed-or-none'
+    /** What a grade says answered it under this mode, given the evaluator tool that ran, if any. */
+    readonly answeredBy?: (evaluatorTool: string | undefined) => string
+}
+export const GRADING: Readonly<Record<WorkGrading, GradingProperties>> = Object.freeze({
+    independent: { rank: 3, closure: 'graded', judged: true, evaluator: true, submission: 'none' },
+    subagent: { rank: 1, closure: 'subagent-reported', judged: true, evaluator: true, submission: 'relayed-or-none',
+        answeredBy: tool => tool ? `a separate ${tool} process, read directly, in place of the relayed verdict [work] grading = "subagent" names; this is the stronger of the two`
+            : 'the working agent relayed this verdict as its subagent\'s; cockpit did not see a subagent run and cannot verify that one did, and read-only is instructed there, not enforced' },
+    checks: { rank: 2, closure: 'checks-passed', judged: false, evaluator: false, submission: 'none' },
+    self: { rank: 1, closure: 'self-reported', judged: true, evaluator: false, submission: 'verdict' },
+    off: { rank: 0, closure: 'ungraded', judged: false, evaluator: false, submission: 'none' },
+})
 
 const WorkGates = z
     .object({

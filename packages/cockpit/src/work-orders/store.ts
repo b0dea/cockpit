@@ -14,7 +14,7 @@ import { z } from 'zod'
 import { isProcessGone, observeProcessStart, processHost } from '../environment/claims.js'
 import { hasErrorCode, RefusalError } from '../environment/contract.js'
 import { executeProbe } from '../environment-exec/execute.js'
-import { DECIDERS, WORK_GRADING } from '../schema.js'
+import { DECIDERS, GRADE_MODES } from '../schema.js'
 import { WORK_ORDER_ID, WorkOrderFrontMatter } from './contract.js'
 
 export const WORK_RECORD_DIRECTORY = '.cockpit/work-orders'
@@ -36,7 +36,7 @@ export type CheckResult = z.infer<typeof CheckResult>
 
 const Verdict = z.object({ id: z.string().max(64), verdict: z.enum(['met', 'unmet', 'unclear']), note: z.string().max(4_096) }).strict()
 const Grade = z.object({
-    at, digest: z.string().length(64), mode: z.enum(WORK_GRADING), passed: z.boolean(),
+    at, digest: z.string().length(64), mode: z.enum(GRADE_MODES), passed: z.boolean(),
     criteria: z.array(Verdict).max(64), outOfScope: z.array(z.string().max(1_100)).max(512),
     // Which evaluator answered and those passed over on the way; absent when no evaluator ran.
     evaluator: z.object({ tool: z.string().max(64), fallbacks: z.array(z.object({ tool: z.string().max(64), code: z.string().max(64), message: z.string().max(8_192) }).strict()).max(8) }).strict().optional(),

@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { decide, type WorkGate } from '../autonomy.js'
 import { RefusalError } from '../environment/contract.js'
 import { REPOSITORY_FILE } from '../repository-path.js'
-import type { Decider } from '../schema.js'
+import { isGradeMode, type Decider } from '../schema.js'
 import { WORK_ORDER_ID, workOrderDigest, type WorkOrder } from './contract.js'
 import type { CheckResult, WorkRecord, WorkStore } from './store.js'
 import type { WorkApplicationComposition } from './composition.js'
@@ -79,6 +79,9 @@ export function displayState(row: Observed, attemptCap: number): string {
 export function openQuestions(record: WorkRecord): readonly number[] {
     return record.notes.flatMap((row, index) => row.kind === 'question' && !record.notes.some(answer => answer.answers === index + 1) ? [index + 1] : [])
 }
+// The id each check an order declares is recorded under: its criterion's, or its gate's with a prefix.
+const gateCheckId = (gate: string) => `gate:${gate}`
+export const checkIds = (order: Pick<WorkOrder, 'criteria' | 'gates'>) => [...order.criteria.filter(row => row.check).map(row => row.id), ...order.gates.map(gateCheckId)]
 export type WorkRequest = Exclude<WorkApplicationRequest, { operation: 'test-run' | `browser-${string}` }>
 
 export interface WorkContext {
@@ -116,7 +119,7 @@ export function workContext(composition: WorkApplicationComposition, operation: 
         return { id: orderId, order: parsed.value, problems: [], ...(record ? { record } : {}), digest: workOrderDigest(parsed.value, sources, base) }
     }
     // Off means nothing blocks on grading, and the cap counts failed checks and grades.
-    const attemptCap = policy.grading === 'off' ? Infinity : composition.caps.attempts
+    const attemptCap = isGradeMode(policy.grading) ? composition.caps.attempts : Infinity
     const wip = async () => (await store.list()).filter(record => !TERMINAL.has(record.state)).length
     let records: Promise<ReadonlyMap<string, string>> | undefined
     const decisionRecords = () => records ??= composition.decisionRecords()
@@ -161,7 +164,7 @@ export function workContext(composition: WorkApplicationComposition, operation: 
         const results: CheckResult[] = []
         // Checks share the product's state, so they run in the order the contract lists them.
         for (const criterion of order.criteria) if (criterion.check) results.push(await composition.runCheck(criterion.id, criterion.check))
-        for (const gate of order.gates) results.push(await composition.runCheck(`gate:${gate}`, { gate }))
+        for (const gate of order.gates) results.push(await composition.runCheck(gateCheckId(gate), { gate }))
         return results
     }
     return { composition, operation, policy, store, observe, wip, attemptCap, decisionRecords, gated, current, runChecks }

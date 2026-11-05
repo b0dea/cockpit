@@ -17,7 +17,7 @@ import {
     ANSWER_PROVENANCES, confirmedBy, renderCompleteDocument, renderIncompleteDocument, unconfirmedReason,
     type AnswerProvenance, type Attribution, type DerivedAnswer, type DocumentModel, type UnconfirmableAnswer, type UnconfirmedAnswer,
 } from './render.js'
-import { COMPOSE_NAMES, NODE_LOCKFILE_NAMES, deriveInferredFacts, readDockerfileFacts, type GradingProposal, type InferenceResult } from './derive.js'
+import { COMPOSE_NAMES, NODE_LOCKFILE_NAMES, deriveInferredFacts, readDockerfileFacts, type InferenceResult } from './derive.js'
 import { productPackageManifest } from '../team-metadata.js'
 import { refusalOutcome as refusal } from '../refusal.js'
 
@@ -115,7 +115,7 @@ interface DocumentConfigurationQuestion {
     readonly why: string
     readonly expectedSha256?: string
 }
-export type { GradingProposal }
+export type { GradingProposal } from './derive.js'
 export type { AnswerProvenance, DerivedAnswer, UnconfirmedAnswer } from './render.js'
 
 export function isAnswerProvenance(value: unknown): value is AnswerProvenance {

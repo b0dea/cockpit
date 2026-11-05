@@ -10,7 +10,7 @@ import { parse as parseToml, TomlError } from 'smol-toml'
 
 import { type BoundedRead, readBoundedFile } from './bounded-read.js'
 import { type EnvironmentDiagnostic, type ENVIRONMENT_CODES, hasErrorCode, RefusalError } from './environment/contract.js'
-import type { CockpitConfig, Decider, WorkGrading } from './schema.js'
+import { GRADING, type CockpitConfig, type Decider, type WorkGrading } from './schema.js'
 
 export type WorkGate = 'accept' | 'amend' | 'answer' | 'signoff' | 'acknowledge'
 type AutonomyDecision = 'sync' | 'stale_delete' | 'reset' | 'mcp_approve'
@@ -58,17 +58,13 @@ export function decide(decider: Decider, env: Readonly<Record<string, string | u
 
 // Stronger is later: an agent decision is the weakest, CI behind reviewers the strongest.
 const DECIDER_RANK: Readonly<Record<Decider, number>> = Object.freeze({ agent: 0, person: 1, ci: 2 })
-// A subagent's verdict reaches cockpit through the agent being graded, so it ranks with that agent's own.
-// Off ranks below both: under self a failed check still fails the grade.
-const GRADING_RANK: Readonly<Record<WorkGrading, number>> = Object.freeze({ off: 0, self: 1, subagent: 1, checks: 2, independent: 3 })
-
 
 export interface PolicyWeakening { readonly field: string; readonly from: string; readonly to: string }
 
 /** Every field `current` sets weaker than `recorded`, named as cockpit.toml spells it. */
 export function policyWeakening(recorded: EffectivePolicy, current: EffectivePolicy): readonly PolicyWeakening[] {
     const rows: PolicyWeakening[] = []
-    if (GRADING_RANK[current.grading] < GRADING_RANK[recorded.grading]) rows.push({ field: 'work.grading', from: recorded.grading, to: current.grading })
+    if (GRADING[current.grading].rank < GRADING[recorded.grading].rank) rows.push({ field: 'work.grading', from: recorded.grading, to: current.grading })
     for (const [table, field] of [['gates', 'work.gates'], ['autonomy', 'autonomy']] as const) {
         for (const [key, was] of Object.entries(recorded[table]) as [string, Decider][]) {
             const now = (current[table] as Record<string, Decider>)[key]!
@@ -112,7 +108,7 @@ function recordedPolicy(value: unknown): EffectivePolicy | undefined {
     const row = value as Record<keyof EffectivePolicy, unknown>
     const gates = deciders(row.gates, GATE_DEFAULTS)
     const autonomy = deciders(row.autonomy, AUTONOMY_DEFAULTS)
-    return Object.hasOwn(GRADING_RANK, row.grading as string) && gates && autonomy ? { grading: row.grading as WorkGrading, gates, autonomy } : undefined
+    return Object.hasOwn(GRADING, row.grading as string) && gates && autonomy ? { grading: row.grading as WorkGrading, gates, autonomy } : undefined
 }
 
 // Restoring the committed copy helps only where the damage is uncommitted; where the committed copy is the

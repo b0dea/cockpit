@@ -8,7 +8,7 @@ import { executeBrowserCommand, type BrowserCommandReceipt, type BrowserCommandR
 import { evaluateUiGate } from '../browser/ui-gate.js'
 import { policyWeakening } from '../autonomy.js'
 import { errorCause, RefusalError } from '../environment/contract.js'
-import type { Decider } from '../schema.js'
+import { GRADING, isGradeMode, type Decider } from '../schema.js'
 import { describeWeakening, testWeakeningDigest } from '../testing/weakening.js'
 import { checksBindsField, contractAmendment, workOrderDigest } from './contract.js'
 import type { WorkRecord } from './store.js'
@@ -126,7 +126,7 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
                 accepted: { at: now(), by, digest, order, sources, base: existing.accepted.base },
                 amendments: [...existing.amendments, { at: now(), by, from: existing.accepted.digest, to: digest, weakened: [...weakened], review: [...review] }] }
             return { record: next, value: complete(operation, { id: order.id, state: 'accepted', by, digest, amended: true, weakened,
-                ...by === 'agent' && review.length && policy.grading !== 'checks' && policy.grading !== 'off' ? { judgedAtGrade: review.map(row => row.field) } : {}, ...await relatedDecisions(context, order) }) }
+                ...by === 'agent' && review.length && GRADING[policy.grading].judged ? { judgedAtGrade: review.map(row => row.field) } : {}, ...await relatedDecisions(context, order) }) }
         }))
     }
     if (request.operation === 'work-check') {
@@ -136,7 +136,7 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         const passed = results.every(row => row.passed)
         await store.update(order.id, async existing => {
             if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while its checks ran; rerun work check`)
-            return { record: { ...existing, state: passed ? 'checked' : 'accepted', attempts: existing.attempts + (passed || policy.grading === 'off' ? 0 : 1), grade: undefined,
+            return { record: { ...existing, state: passed ? 'checked' : 'accepted', attempts: existing.attempts + (passed ? 0 : 1), grade: undefined,
                 checks: { at: now(), digest: record.accepted.digest, results: [...results] } }, value: undefined }
         })
         const value = { id: order.id, state: passed ? 'checked' : 'accepted', results }
@@ -175,7 +175,7 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         const weak = await composition.testWeakening(record.accepted.base)
         if (!weak.findings.length) return refusal(operation, `${order.id} weakens no tests since its base, so there is nothing to acknowledge`)
         const digest = testWeakeningDigest(weak.findings)
-        if (record.acknowledgements.some(row => row.digest === digest)) return refusal(operation, `this weakening of ${order.id} is already acknowledged${policy.grading === 'off' ? '' : '; run work grade'}`)
+        if (record.acknowledgements.some(row => row.digest === digest)) return refusal(operation, `this weakening of ${order.id} is already acknowledged${isGradeMode(policy.grading) ? '; run work grade' : ''}`)
         const rows = weak.findings.map(describeWeakening)
         return gated('acknowledge', policy.gates.acknowledge, [`Acknowledge that ${order.id} weakens tests since its base (test files from ${weak.patterns.source}):`,
             ...rows.map(row => `  ${row}`), 'Reason given:', `  ${request.note}`], 'acknowledge', async by => store.update(order.id, async existing => {

@@ -6,11 +6,11 @@ import {
     SURFACE_EXECUTION_CONTROL_PATHS,
     SURFACE_PUBLICATION_ANCHORS,
     SURFACE_TARGETS,
-    subagentGradingUnsupported,
     isMeasurementDate,
     type GuardSurfaceTarget,
     type SurfaceTarget,
 } from './harness-registry.js'
+import { subagentGradingProblem } from '../grading/evaluate.js'
 
 describe('shipped harness registry', () => {
     it('owns immutable target, display, generator, output, and native evidence facts', () => {
@@ -48,10 +48,10 @@ describe('shipped harness registry', () => {
     })
 
     it('offers subagent grading only where the evaluator definition is generated, naming each tool and harness without one', () => {
-        const harness = (name: string, state: string) => ({ name, capabilities: [{ feature: 'subagents', state }] })
-        expect(subagentGradingUnsupported(SURFACE_TARGETS, [harness('team-tool', 'instructed')])).toEqual([])
-        expect(subagentGradingUnsupported(['claudecode'], [harness('team-tool', 'unavailable')])).toEqual(['team-tool'])
-        expect(subagentGradingUnsupported(['claudecode', 'codexcli'], [], [{ target: 'claudecode', rulesyncFeatures: ['rules', 'subagents'] }, { target: 'codexcli', rulesyncFeatures: ['rules'] }])).toEqual(['codexcli'])
+        const harness = (name: string, state: 'instructed' | 'unavailable') => ({ name, capabilities: [{ feature: 'subagents' as const, state }] })
+        expect(subagentGradingProblem(SURFACE_TARGETS, [harness('team-tool', 'instructed')])).toBeUndefined()
+        expect(subagentGradingProblem(['claudecode'], [harness('team-tool', 'unavailable'), harness('other-tool', 'instructed')]))
+            .toMatchObject({ code: 'EVALUATOR_UNAVAILABLE', message: expect.stringMatching(/generates none for team-tool$/) })
         // A definition the tool was shown to offer is measured; one only written is not called more than that.
         expect(HARNESS_REGISTRY.map(row => [row.target, row.subagentGrader.state, row.subagentGrader.measuredVersion])).toEqual([
             ['claudecode', 'instructed', '2.1.318'], ['codexcli', 'instructed', '0.166.0'], ['opencode', 'generated', null], ['cursor', 'generated', null], ['grokcli', 'generated', null]])

@@ -139,18 +139,6 @@ export const HARNESS_REGISTRY = Object.freeze([
     }),
 ] as const)
 
-type GradingHarness = Readonly<{ name: string; capabilities: readonly Readonly<{ feature: string; state: string }>[] }>
-
-/**
- * The listed tools and declared harnesses with no generated evaluator definition for the agent to
- * spawn, where [work] grading = "subagent" would parse and do nothing.
- */
-export function subagentGradingUnsupported(tools: readonly SurfaceTarget[], harnesses: readonly GradingHarness[],
-    registry: readonly Readonly<{ target: string; rulesyncFeatures: readonly string[] }>[] = HARNESS_REGISTRY): readonly string[] {
-    return [...tools.filter(tool => !registry.find(row => row.target === tool)?.rulesyncFeatures.includes('subagents')),
-        ...harnesses.filter(harness => harness.capabilities.some(row => row.feature === 'subagents' && row.state === 'unavailable')).map(harness => harness.name)]
-}
-
 // What a hold stops and what it does not, as every hold message says it. A generated hook fires only on
 // the tools its matcher names, so a hold cannot stop a file read or an unrestricted MCP tool. The first
 // phrase is printed from a single-quoted shell string, so it stays free of quotes and percent signs.

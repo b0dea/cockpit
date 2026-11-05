@@ -2,11 +2,11 @@
 // job, checks every closure and confirms the steps that awaited CI.
 import { runningInCi } from '../autonomy.js'
 import { RefusalError } from '../environment/contract.js'
+import { GRADING, isGradeMode } from '../schema.js'
 import type { WorkRecord } from './store.js'
-import { complete, now, refusal, TERMINAL, unsatisfied, type WorkApplicationOutcome, type WorkContext, type WorkRequest } from './application-context.js'
+import { checkIds, complete, now, refusal, TERMINAL, unsatisfied, type WorkApplicationOutcome, type WorkContext, type WorkRequest } from './application-context.js'
 import { decisions, recordProblem, unresolvedDecisions } from './application-decisions.js'
 
-const CLOSURE = Object.freeze({ independent: 'graded', subagent: 'subagent-reported', checks: 'checks-passed', self: 'self-reported', off: 'ungraded' } as const)
 export const pendingCi = (record: WorkRecord) => [
     ...record.acknowledgements.filter(row => row.by === 'ci').map(() => 'acknowledge'),
     ...record.accepted.by === 'ci' ? ['accept'] : [], ...record.amendments.filter(row => row.by === 'ci').map(() => 'amend'),
@@ -16,7 +16,7 @@ export const pendingCi = (record: WorkRecord) => [
 // Off means nothing blocks on grading, not that facts are hidden: what the checks last showed stays in view.
 export function checkFacts(record: WorkRecord) {
     const results = record.checks?.digest === record.accepted.digest ? record.checks.results : []
-    const declared = [...record.accepted.order.criteria.filter(row => row.check).map(row => row.id), ...record.accepted.order.gates.map(gate => `gate:${gate}`)]
+    const declared = checkIds(record.accepted.order)
     return { checksFailed: results.filter(row => !row.passed).map(row => `${row.criterion}: ${row.outcome}`),
         checksNotRun: declared.filter(id => !results.some(row => row.criterion === id)) }
 }
@@ -29,13 +29,13 @@ export async function signoff(request: Extract<WorkRequest, { operation: 'work-s
     let how: NonNullable<WorkRecord['closure']>['how']
     if (request.close === 'done') {
         const { order } = await current(request.workOrderId)
-        const graded = record.state === 'graded' && record.grade?.passed === true && record.grade.digest === record.accepted.digest
-        if (!graded && policy.grading !== 'off') {
+        const grade = record.state === 'graded' && record.grade?.passed === true && record.grade.digest === record.accepted.digest ? record.grade : undefined
+        if (!grade && isGradeMode(policy.grading)) {
             return refusal(operation, `${order.id} is ${record.state}, not graded; run npx --no cockpit work grade --config <your cockpit.toml> --work-order ${order.id}`)
         }
         const open = await Promise.all(order.depends_on.map(async dependency => (await store.read(dependency))?.state === 'done' ? undefined : dependency))
         if (open.some(Boolean)) return refusal(operation, `${order.id} depends on ${open.filter(Boolean).join(', ')}, which ${open.filter(Boolean).length === 1 ? 'is' : 'are'} not done`)
-        how = graded ? CLOSURE[record.grade!.mode] : 'ungraded'
+        how = GRADING[grade?.mode ?? policy.grading].closure
     } else {
         if (!request.note) return refusal(operation, `closing ${request.workOrderId} as ${request.close} needs --note saying what was and was not done`)
         how = request.close

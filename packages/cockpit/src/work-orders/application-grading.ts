@@ -4,7 +4,7 @@ import { posix } from 'node:path'
 
 import { RefusalError } from '../environment/contract.js'
 import type { GradingSubject, Verdict } from '../grading/grade.js'
-import type { Decider, WorkGrading } from '../schema.js'
+import { GRADING, isGradeMode, type Decider, type GradeMode, type WorkGrading } from '../schema.js'
 import { runGate } from '../testing/gates.js'
 import { describeWeakening, testWeakeningDigest, type RepositoryWeakening } from '../testing/weakening.js'
 import { scopeMatcher, type AmendmentReview, type WorkOrderCriterion } from './contract.js'
@@ -126,7 +126,7 @@ export async function testRun(captured: Extract<WorkApplicationRequest, { operat
     const guards = await Promise.all(open.map(async row => ({ id: row.id, ...protection(await weakeningSince(row.accepted.base), row, composition.policy.gates.acknowledge) })))
     const binding = composition.policy.grading === 'checks'
     const testProtection = guards.length ? { comparedWith: guards.map(row => `${row.id}'s base`), orders: guards.map(row => ({ id: row.id, ...row.value })),
-        ...!binding && guards.some(row => row.value.findings.length) ? { note: composition.policy.grading === 'off'
+        ...!binding && guards.some(row => row.value.findings.length) ? { note: !isGradeMode(composition.policy.grading)
             ? 'under [work] grading = "off" nothing judges these findings; they are reported only, and test protection in CI is a separate guard'
             : `under [work] grading = "${composition.policy.grading}" each order's grade judges these findings as ${TESTS_JUSTIFIED}` } : {} }
         : { comparedWith: [], note: 'no open work order records a base commit to compare tests with; accept an order before changing tests' }
@@ -141,29 +141,29 @@ const SUBAGENT_SUBMISSION = '[work] grading = "subagent": submit the evaluator s
     + 'or pass none of the three and cockpit runs a separate evaluator process instead'
 function submissionProblem(grading: WorkGrading, request: Extract<WorkRequest, { operation: 'work-grade' }>): string | undefined {
     const parts = [request.verdict, request.note, request.fromSubagent].filter(row => row !== undefined).length
-    if (grading === 'subagent') return parts === 0 || parts === 3 ? undefined : SUBAGENT_SUBMISSION
+    const { submission } = GRADING[grading]
+    if (submission === 'relayed-or-none') return parts === 0 || parts === 3 ? undefined : SUBAGENT_SUBMISSION
     if (request.fromSubagent) return `--from-subagent applies only under [work] grading = "subagent"; this cockpit grades with ${grading}`
-    if (grading === 'self') return request.verdict && request.note ? undefined : '[work] grading = "self": pass --verdict met|unmet and --note <what you checked>'
+    if (submission === 'verdict') return request.verdict && request.note ? undefined : `[work] grading = "${grading}": pass --verdict met|unmet and --note <what you checked>`
     return parts === 0 ? undefined : `--verdict and --note apply only under [work] grading = "self" or "subagent"; this cockpit grades with ${grading}`
 }
-const RELAYED = 'the working agent relayed this verdict as its subagent\'s; cockpit did not see a subagent run and cannot verify that one did, and read-only is instructed there, not enforced'
 
 export async function gradeOrder(request: Extract<WorkRequest, { operation: 'work-grade' }>, context: WorkContext): Promise<WorkApplicationOutcome> {
     const { composition, operation, policy, store, current, runChecks } = context
-    if (policy.grading === 'off') return refusal(operation, `[work] grading = "off": nothing grades an order; close it with npx --no cockpit work signoff --config <your cockpit.toml> --work-order ${request.workOrderId}`)
+    if (!isGradeMode(policy.grading)) return refusal(operation, `[work] grading = "off": nothing grades an order; close it with npx --no cockpit work signoff --config <your cockpit.toml> --work-order ${request.workOrderId}`)
     const { order, record } = await current(request.workOrderId)
     const problem = submissionProblem(policy.grading, request)
     if (problem) return refusal(operation, problem)
     if (request.fromSubagent && record.evaluatorFailed?.digest === record.accepted.digest) return refusal(operation,
         `a separate evaluator already found ${order.id}'s accepted contract unmet, and a relayed verdict cannot replace that; fix the work and run work grade with none of --from-subagent, --verdict and --note, or amend the order`)
     // What actually answers, which the record keeps: `subagent` with nothing submitted is the evaluator's grade.
-    const mode: Exclude<WorkGrading, 'off'> = policy.grading === 'subagent' && !request.fromSubagent ? 'independent' : policy.grading
-    const reported = mode === 'self' || mode === 'subagent'
+    const mode: GradeMode = policy.grading === 'subagent' && !request.fromSubagent ? 'independent' : policy.grading
+    const reported = GRADING[mode].submission !== 'none'
     let verdicts: readonly Verdict[]
     let evaluator: NonNullable<WorkRecord['grade']>['evaluator']
     const unchecked = order.criteria.filter(criterion => !criterion.check).map(criterion => criterion.id)
     if (mode === 'checks' && unchecked.length) return refusal(operation, `[work] grading = "checks" closes an order only when cockpit ran a check for every criterion; ${unchecked.join(', ')} declare none`)
-    const judged = mode !== 'checks'
+    const { judged } = GRADING[mode]
     const taken = judged ? order.criteria.filter(criterion => RESERVED.has(criterion.id)).map(criterion => criterion.id) : []
     if (taken.length) return refusal(operation, `${order.id} names a criterion ${taken.join(', ')}, which cockpit adds to grades itself; rename it in workorders/${order.id}.md`)
     // Checks bind in every mode, so an agent's own `met` never covers a failed check. Changes are read
@@ -211,7 +211,8 @@ export async function gradeOrder(request: Extract<WorkRequest, { operation: 'wor
             ...mode === 'independent' && !passed ? { evaluatorFailed: { at: grade.at, digest: record.accepted.digest } } : {},
             ...checks.length ? { checks: { at: now(), digest: record.accepted.digest, results: [...checks] } } : {} }, value: undefined }
     })
-    const value = { id: order.id, state: passed ? 'graded' : 'accepted', mode, ...mode === 'subagent' ? { answeredBy: RELAYED } : policy.grading === 'subagent' ? { answeredBy: `a separate ${evaluator!.tool} process, read directly, in place of the relayed verdict [work] grading = "subagent" names; this is the stronger of the two` } : {}, criteria: verdicts, checks, outOfScope, testProtection: guarded.value, ...evaluator ? { evaluator } : {} }
+    const answeredBy = GRADING[policy.grading].answeredBy?.(evaluator?.tool)
+    const value = { id: order.id, state: passed ? 'graded' : 'accepted', mode, ...answeredBy ? { answeredBy } : {}, criteria: verdicts, checks, outOfScope, testProtection: guarded.value, ...evaluator ? { evaluator } : {} }
     if (passed) return complete(operation, value)
     return unsatisfied(operation, value, [...split(verdicts).others.map(row => `${row.id} ${row.verdict}: ${row.note}${remedyOf(row.id, order.id)}`),
         ...checks.filter(row => !row.passed).map(row => `check ${row.criterion}: ${row.outcome}`),
