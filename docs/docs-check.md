@@ -46,8 +46,11 @@ not exist now:
   where it went.
 - `DOCS_TARGET_REMOVED`: a Makefile once defined the target and none does now.
 
-Keying on history keeps proposals quiet: "add `make park`" names a target that never existed. A link
-that never resolved is a link checker's job. npm and pnpm scripts are not checked.
+A directory counts only as an explicit path such as `output/` or `docs/output`, or a link target: a
+bare identifier such as `output` may name a table or API, so it is reported only when Git deleted a
+file of exactly that name. Keying on history keeps proposals quiet: "add `make park`" names a target
+that never existed. A link that never resolved is a link checker's job. npm and pnpm scripts are not
+checked.
 
 ## Decision records
 
@@ -66,7 +69,10 @@ and any file named as a template.
 The status is read from `status:` in YAML front matter, a `Status:` line (bold or not), or the
 first line under a `## Status` heading. A supersedes reference is a link, a file name, `ADR-12`,
 `#12`, or a number right after the keyword. "Supersedes 0012" replaces the whole record;
-"supersedes the retry clause of 0012" replaces part of it, so 0012 only has to exist.
+"supersedes the retry clause of 0012", "decision 2 of ADR 0012", "ADR 0012 only for retries" and
+"0012's retry clause" replace part of it, so 0012 only has to exist. A path to other documentation
+outside the records' directory is not a reference unless it directly follows the keyword or its link
+is labelled ADR, decision, record or a number.
 
 What this cannot see is a decision that was made and never written down; nothing here makes an
 agent record one.

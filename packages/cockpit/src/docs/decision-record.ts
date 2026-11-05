@@ -39,9 +39,11 @@ export interface ParsedRecord {
     readonly supersedes: readonly SupersedesReference[]
 }
 
-// A link becomes [[target]] so its target survives as one token; code spans keep their text.
+// A link becomes [[target]] so its target survives as one token; retain an explicit record label
+// without treating its digits as a second reference. Code spans keep their text.
 function referenceText(prose: string): string {
-    return prose.replace(/\[([^\]]*)\]\(([^)\s]*)[^)]*\)/g, (_match, _label: string, target: string) => ` [[${target}]] `).replace(/`/g, ' ')
+    return prose.replace(/\[([^\]]*)\]\(([^)\s]*)[^)]*\)/g, (_match, label: string, target: string) =>
+        ` ${/\b(?:adr|decision|record)\b/i.test(label) || /^\s*#?\d{1,5}\s*$/.test(label) ? 'ADR ' : ''}[[${target}]] `).replace(/`/g, ' ')
 }
 
 function referencesIn(line: number, text: string, record: string): SupersedesReference[] {
@@ -59,16 +61,24 @@ function referencesIn(line: number, text: string, record: string): SupersedesRef
         const bare = /^\s*:?\s*(\d{1,5})\b(?![-.]\w)/.exec(clause)
         const leading = /^\s*:?\s*(?:\[\[|(?:adr|decision|record)s?\b|#|[\w./-]+\.md\b)/i.test(clause) || bare !== null
         // "Supersedes 0012 (ADR-0012)" names one record twice; it is one reference.
-        const add = (reference: Omit<SupersedesReference, 'line' | 'text' | 'full'>, text: string) => {
-            if (!found.some(row => row.number === reference.number && row.file === reference.file)) found.push({ line, text, full: outgoing && leading, ...reference })
+        const add = (reference: Omit<SupersedesReference, 'line' | 'text' | 'full'>, text: string, start: number, end: number) => {
+            const partial = /^\s*(?:['’]s\b|only\s+for\b)/i.test(clause.slice(end))
+                || /\bdecision\s+\d+\s+of\s*(?:(?:adr|decision|record)s?[-\s]?#?|#)?\s*$/i.test(clause.slice(0, start))
+            if (!found.some(row => row.number === reference.number && row.file === reference.file)) found.push({ line, text, full: outgoing && leading && !partial, ...reference })
         }
-        if (bare) add({ number: Number(bare[1]) }, bare[1]!)
+        if (bare) add({ number: Number(bare[1]) }, bare[1]!, 0, bare[0].length)
         for (const match of clause.matchAll(REFERENCE)) {
+            const end = match.index + match[0].length
+            // "decision 2 of ADR 0012" numbers a part, not another record.
+            if (/^decision\b/i.test(match[0]) && /^\s+of\b/i.test(clause.slice(end))) continue
             const target = match[1] ?? match[3]
             if (target !== undefined) {
                 const file = resolveLinkTarget(posix.dirname(record), target)
-                if (file?.endsWith('.md')) add({ file }, target)
-            } else add({ number: Number(match[2]) }, match[0].trim())
+                // Other documentation can be revised in the same sentence; it is not a record link.
+                const before = clause.slice(0, match.index)
+                const explicit = /^\s*:?\s*$/.test(before) || /\bADR\s*$/i.test(before) || /\bdecision\s+\d+\s+of\s*$/i.test(before)
+                if (file?.endsWith('.md') && (explicit || posix.dirname(file) === posix.dirname(record))) add({ file }, target, match.index, end)
+            } else add({ number: Number(match[2]) }, match[0].trim(), end - match[2]!.length, end)
         }
     })
     return found

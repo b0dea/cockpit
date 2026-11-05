@@ -369,7 +369,8 @@ The command refuses a draft whose path has a segment that is `.secrets` or start
 any case folding; a declared instance or other location the guard protects; a symbolic or hard link;
 anything but a regular file; and a file over the bound. Otherwise `--replace-from .env` followed by
 `env schema` would print a secret. It refuses a target that is a link too, and replaces the bytes
-atomically, or creates a missing schema in a discovered directory.
+atomically, or creates a missing schema in a discovered directory or in a sibling component that
+[adopts its first schema](environment.md#read-variable-names-and-schemas).
 
 | Writing `.env.schema`, cockpit root and sibling | Guard evaluator, 2026-11-05 |
 | --- | --- |

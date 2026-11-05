@@ -723,7 +723,11 @@ case), a symbolic or hard link, a non-regular file, a directory the probe does n
 oversized file.
 
 To change one, write a draft with your normal tools and add `--replace-from <draft>`, with the draft
-relative to the cockpit root.
+relative to the cockpit root. The same command creates a sibling component's first schema, such as
+`--path api:services/web/.env.schema`, when Git tracks a regular product file directly in that
+existing directory of the served checkout; a descendant, a link, an environment file or a
+guard-protected file does not establish the component. It does not stage the new schema: `env keys`
+and `env schema` find it after `git add`, and it runs only once committed.
 [What it refuses](safety-and-autonomy.md#editing-a-schema-under-claude-code) is what stops a secret
 being laundered through a draft.
 

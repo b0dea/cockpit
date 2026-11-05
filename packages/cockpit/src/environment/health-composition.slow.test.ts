@@ -15,7 +15,7 @@ import { lifecycleHistoryAddress, transactState } from './state.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { createHealthCommandAdapters } from './health-composition.js'
 import { observeGeneratedApplicationSurfaces } from './generated-application/surface-observation.js'
-import { syncGeneratedEnvironment } from './generated-application/sync.js'
+import { syncGeneratedEnvironment, syncTeamGeneratedEnvironment } from './generated-application/sync.js'
 import { createHealthCompositionFixture } from '../../test-support/health-composition-fixture.js'
 
 const run = promisify(execFile)
@@ -322,6 +322,31 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         await writeFile(candidate.configPath, `${await readFile(candidate.configPath, 'utf8')}\n[surfaces]\ntools = ["claudecode"]\n`)
         const claudeOnly = await runDoctor({ configPath: candidate.configPath }, adapters)
         expect(claudeOnly.diagnostics.map(({ code }) => code)).not.toContain('CODEX_HOOK_UNTRUSTED')
+    })
+
+    it('reports the root-checkout discovery mismatch from both doctor readiness and check', async () => {
+        const candidate = await fixture({ unseeded: true })
+        const linked = join(candidate.root, 'linked')
+        await run('git', ['-C', candidate.checkout, 'worktree', 'add', '--quiet', '--detach', linked])
+        const configPath = join(linked, 'cockpit.toml')
+        await writeFile(configPath, (await readFile(configPath, 'utf8')).split('[environment]')[0]!)
+        await mkdir(join(linked, 'siblings/api'), { recursive: true })
+        await mkdir(join(candidate.home, '.codex'))
+        expect(await syncTeamGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete', status: 0 })
+        const env = { PATH: '/usr/bin:/bin', HOME: candidate.home, NO_UPDATE_NOTIFIER: '1' }
+        for (const command of ['doctor', 'check']) {
+            let stdout = ''
+            const status = await runCli([command, '--config', configPath, '--json'], {
+                stdout: { write: text => ((stdout += text), true) }, stderr: { write: () => true },
+            }, {}, { env })
+            expect(status, stdout).toBe(0)
+            const report = JSON.parse(stdout)
+            expect(report.diagnostics).toContainEqual(expect.objectContaining({ code: 'CODEX_HOOK_SOURCE_MISMATCH',
+                message: expect.stringContaining(join(candidate.checkout, '.codex/hooks.json')) }))
+            if (command === 'doctor') expect(report.result.readiness.gaps).toContainEqual(expect.objectContaining({
+                id: 'codex-hook-trusted', findings: expect.arrayContaining([expect.objectContaining({ code: 'CODEX_HOOK_SOURCE_MISMATCH' })]),
+            }))
+        }
     })
 
     it('gives preflight the observation path doctor has, and says why when it cannot select Git', async () => {

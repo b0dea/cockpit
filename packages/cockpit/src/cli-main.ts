@@ -694,7 +694,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             // Codex hook trust concerns a Codex user only; a leftover hooks.json of an unlisted Codex is stale, which check reports.
             const [outcome, hookTrust] = await Promise.all([checkGeneratedEnvironment(input),
                 loaded.result.config.surfaces.tools.includes('codexcli')
-                    ? inspectCodexHookTrust({ root: dirname(resolve(input.configPath)), env }) : Promise.resolve([])])
+                    ? inspectCodexHookTrust({ root: dirname(resolve(input.configPath)), env, timeoutMs: RUNTIME_STEP_TIMEOUT_MS }, executeProbe) : Promise.resolve([])])
             if (weakened.length || guardChange.some(row => row.severity === 'error')) return { kind: 'refusal', status: 2, result: null,
                 diagnostics: [...weakened.length ? [policyWeakeningDiagnostic(weakened)] : [], ...guardChange, ...outcome.diagnostics, ...hookTrust] }
             return { ...outcome, diagnostics: [...guardChange, ...outcome.diagnostics, ...hookTrust], result: outcome.report

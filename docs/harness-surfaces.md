@@ -93,19 +93,30 @@ stale-removal digest with `sync --interactive`.
 ### Trust the Codex hook
 
 Codex runs the guard from `.codex/hooks.json` only after a person on that machine has trusted it,
-and skips an untrusted hook without saying so: every tool call then runs unguarded. Trust is
-recorded per user in Codex's own configuration (`~/.codex/config.toml`, or `$CODEX_HOME`), keyed by
-the hook's path and a hash of its command, so it is needed once per machine and again whenever
-`sync` changes the hook. An agent cannot give it:
+and skips an untrusted hook without saying so: every tool call then runs unguarded. In a linked Git
+worktree, Codex
+[loads project hooks from the original checkout](https://github.com/openai/codex/pull/21969), at
+the same checkout-relative directory, so the worktree's own hooks file is neither run nor what
+needs trust. `cockpit doctor` and `cockpit check` compare the generated hooks with that source first
+and report `CODEX_HOOK_SOURCE_MISMATCH` when it is missing or differs: a person reviews and rolls out
+the generated hooks in the original checkout through its normal change process, or validates in an
+independent clone instead. Cockpit never writes that checkout. Matching definitions are not native
+evidence: the generated commands select the guard of the session's own checkout with `pwd -P`, so
+start Codex in the cockpit root and run the [paired selftest](#skills-and-selftest-evidence).
+
+Trust is recorded per user in Codex's own configuration (`~/.codex/config.toml`, or `$CODEX_HOME`),
+keyed by the hook source's path and a hash of its command, so it is needed once per machine and again
+whenever that source changes. An agent cannot give it:
 
 ```sh
-codex -C <cockpit root>
+codex -C <hook source directory>
 ```
 
-Start the interactive CLI (not `codex exec`) in the cockpit root, trust the folder if asked, and
-choose **Trust all and continue** when Codex shows **Hooks need review**; `/hooks` inside a session
-does the same per hook. `cockpit doctor` and `cockpit check` report `CODEX_HOOK_UNTRUSTED` until
-every generated hook is trusted, or when they cannot verify it, but only once Codex has run on the
+Start the interactive CLI (not `codex exec`) in the hook source directory `CODEX_HOOK_UNTRUSTED`
+names, trust the folder if asked, and choose **Trust all and continue** when Codex shows **Hooks
+need review**; `/hooks` inside a session does the same per hook. `cockpit doctor` and `cockpit
+check` read Codex's configuration without changing it and report `CODEX_HOOK_UNTRUSTED` until the
+source is trusted, or when discovery or trust cannot be verified, but only once Codex has run on the
 machine (a Codex home exists); before that, no Codex session can skip the hook.
 
 ### Session-start drift check

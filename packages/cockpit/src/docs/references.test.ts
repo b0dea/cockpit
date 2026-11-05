@@ -37,9 +37,12 @@ beforeAll(() => {
     write('api/docs/setup.md', '# Setup\n')
     write('api/Makefile', 'build:\n\techo build\n.PHONY: publish\npublish:\n\techo publish\n')
     write('api/config/local.json', '{}\n')
+    write('api/entries/item.txt', 'An archived entry.\n')
+    write('api/NOTICE', 'A retired notice.\n')
     git('api', 'add', '-A')
     git('api', 'commit', '-qm', 'one')
     git('api', 'rm', '-q', 'scripts/seed.sh')
+    git('api', 'rm', '-q', 'entries/item.txt', 'NOTICE')
     // Untracked and ignored, but still on disk: not removed.
     git('api', 'rm', '-q', '--cached', 'config/local.json')
     write('api/.gitignore', 'config/local.json\n')
@@ -59,6 +62,23 @@ beforeAll(() => {
 afterAll(() => rmSync(root, { recursive: true, force: true }))
 
 describe('docs check references', () => {
+    it('distinguishes bare identifiers from explicit removed directories while retaining bare file references', async () => {
+        write('api/docs/references.md', [
+            '# References', '',
+            'The `entries` table stores application records.',
+            'The old `entries/` directory and `NOTICE` file were removed.',
+            'See [entries](../entries).',
+            'The former `../entries/` directory is document-relative.',
+            'The `docs/` directory still exists.', '',
+        ].join('\n'))
+        expect(await check('\n[docs]\nliving = ["api:docs/references.md"]\n')).toEqual({ status: 2, findings: [
+            'DOCS_REFERENCE_REMOVED api:docs/references.md:4 cites entries, which the repository history removed',
+            'DOCS_REFERENCE_REMOVED api:docs/references.md:4 cites NOTICE, which the repository history removed',
+            'DOCS_REFERENCE_REMOVED api:docs/references.md:5 cites entries, which the repository history removed',
+            'DOCS_REFERENCE_REMOVED api:docs/references.md:6 cites entries, which the repository history removed',
+        ] })
+    })
+
     it('reports paths and make targets a living doc cites that the history removed, and nothing that never existed', async () => {
         expect(await check('\n[docs]\nliving = ["README.md", "api:*.md"]\n')).toEqual({ status: 2, findings: [
             'DOCS_REFERENCE_REMOVED api:GUIDE.md:3 cites scripts/seed.sh, which the repository history removed',

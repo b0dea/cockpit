@@ -19,7 +19,8 @@ import { guardProtectedLocations, isSensitiveGuardName, foldGuardSpelling } from
 import { deriveRegistry } from '../registry-derivation.js'
 import { ENVIRONMENT_CODES, errorCause, isMissing, type Diagnostic, type ExecutionStep } from './contract.js'
 import { discoverSchemaRoots, entryName, reasonName, type SchemaRoot } from './env-schema-observation.js'
-import { observationSearchPath, resolveGitExecutable } from './executable.js'
+import { listTrackedSchemaComponentFiles } from './git-observation.js'
+import { observationSearchPath, resolveGitExecutable, type ResolvedExecutable } from './executable.js'
 import { loadServedSiblings, servedPath } from './sibling-checkouts.js'
 
 type Execute = (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
@@ -299,6 +300,7 @@ type Discovered = Readonly<{
     cockpitRoot: string
     configPath: string
     instances: readonly string[]
+    git: ResolvedExecutable
     lookedIn: readonly string[]
     roots: Awaited<ReturnType<typeof discoverSchemaRoots>>
 }>
@@ -325,7 +327,7 @@ async function discover(input: EnvCommandInput, command: 'env keys' | 'env schem
     const instances = derived.kind === 'complete'
         ? derived.result.secretPaths.map(({ slug, path }) => resolve(servedPath(served.siblings, slug), path)) : undefined
     if (instances === undefined) return refusalOutcome(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, `${command} could not derive the declared instances from ${source.path}`, 'config', 'fix the configuration, then rerun the command')
-    return { cockpitRoot, configPath: source.path, instances, roots, lookedIn: [...new Set([cockpitRoot, ...siblings.map(({ root }) => root), ...roots.map(({ schema }) => schema.root)])].slice(0, SOURCE_OUTPUT_LIMIT) }
+    return { cockpitRoot, configPath: source.path, instances, git: git.value, roots, lookedIn: [...new Set([cockpitRoot, ...siblings.map(({ root }) => root), ...roots.map(({ schema }) => schema.root)])].slice(0, SOURCE_OUTPUT_LIMIT) }
 }
 
 function schemaReference(schema: SchemaRoot): string {
@@ -432,9 +434,31 @@ export async function runEnvSchema(input: EnvCommandInput & Readonly<{ reference
         ? resolve(schema.root) === resolve(found.cockpitRoot) : schema.owner === slug
     const unavailable = found.roots.find((entry) => owns(entry) && entry.status !== undefined)
     if (unavailable?.status !== undefined) return refused(reference, `its sibling's schemas could not be listed: ${unavailable.status.cause}`, `fix what the message names, then rerun ${cockpitCommand('env schema', { args: `--path ${reference}` })}`)
-    const entry = found.roots.find((candidate) => owns(candidate) && candidate.schema.relative === directory)
+    let entry = found.roots.find((candidate) => owns(candidate) && candidate.schema.relative === directory)
+    // A component cannot track its first schema before this command creates it.
+    if (entry === undefined && input.replaceFrom !== undefined && slug !== undefined) {
+        const root = found.roots.find((candidate) => owns(candidate) && candidate.schema.relative === '')
+        if (root !== undefined) {
+            const schema = { ...root.schema, relative: directory, root: join(root.schema.root, directory) }
+            const linked = await linkedComponent(schema)
+            if (linked !== undefined) return refused(reference, `${linked} is a symbolic link`, 'replace the link with a directory')
+            const files = await listTrackedSchemaComponentFiles({ executable: found.git, root: root.schema.root, directory, timeoutMs: GIT_TIMEOUT_MS }, dependencies.execute)
+            if (files.kind === 'unavailable') return refused(reference, `its component could not be inspected: ${files.reason}`, 'fix what Git reports, then rerun the command')
+            for (const path of files.kind === 'listed' ? files.paths : []) {
+                if (posix.dirname(path) !== directory || !REPOSITORY_FILE.test(path) || path.split('/').some(isSensitiveGuardName)) continue
+                const file = join(root.schema.root, path)
+                if (protectedLocation(file, found)) continue
+                try {
+                    const status = await lstat(file)
+                    if (status.isFile() && status.nlink === 1) { entry = { schema }; break }
+                } catch (error) {
+                    if (!isMissing(error)) return refused(reference, `its component file could not be inspected (${errorCause(error)})`, 'fix the component file permissions, then rerun the command')
+                }
+            }
+        }
+    }
     if (entry === undefined) {
-        return refused(reference, 'it is not in a directory cockpit discovers: a root, or a directory holding a schema Git tracks', list)
+        return refused(reference, 'it is not in a directory cockpit discovers: a root, or a directory holding a schema Git tracks; creating a nested schema also requires a regular tracked product file directly in that sibling directory', list)
     }
     const linked = await linkedComponent(entry.schema)
     if (linked !== undefined) return refused(reference, `${linked} is a symbolic link`, 'replace the link with a directory')

@@ -1,9 +1,11 @@
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { renderHumanDiagnostics } from '../diagnostics.js'
+import { executeProbe } from '../environment-exec/execute.js'
 import { inspectCodexHookTrust } from './codex-hook-trust.js'
 
 const scratch: string[] = []
@@ -33,23 +35,55 @@ async function estate(hooks: unknown = HOOKS) {
     const root = join(base, 'cockpit')
     const home = join(base, 'codex-home')
     await mkdir(join(root, '.codex'), { recursive: true })
+    execFileSync('git', ['init', '--quiet', '-b', 'main', root])
     await mkdir(home)
     if (hooks !== null) await writeFile(join(root, '.codex/hooks.json'), typeof hooks === 'string' ? hooks : JSON.stringify(hooks))
     const alias = join(base, 'alias')
     await symlink(root, alias)
     const trust = (source: string, hashes: Record<string, string>, extra = '') => writeFile(join(home, 'config.toml'),
         Object.entries(hashes).map(([suffix, hash]) => `[hooks.state."${source}/.codex/hooks.json:${suffix}"]\ntrusted_hash = "${hash}"\n${extra}`).join('\n'))
-    const inspect = (at = root) => inspectCodexHookTrust({ root: at, env: { CODEX_HOME: home } })
+    const inspect = (at = root) => inspectCodexHookTrust({ root: at, env: { CODEX_HOME: home, PATH: '/usr/bin:/bin' }, timeoutMs: 5_000 }, executeProbe)
     return { root, alias, home, trust, inspect }
 }
 
 describe('Codex hook trust', () => {
+    it.each(['root', 'nested'])('checks the discovered original-checkout hooks before considering %s worktree trust', async layout => {
+        const fixture = await estate()
+        execFileSync('git', ['-C', fixture.root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid',
+            'commit', '--quiet', '--allow-empty', '-m', 'Create synthetic repository'])
+        const checkout = join(fixture.root, '..', 'linked')
+        execFileSync('git', ['-C', fixture.root, 'worktree', 'add', '--quiet', '--detach', checkout])
+        const linked = layout === 'nested' ? join(checkout, 'nested') : checkout
+        const original = layout === 'nested' ? join(fixture.root, 'nested') : fixture.root
+        await mkdir(join(linked, '.codex'), { recursive: true })
+        if (layout === 'nested') await mkdir(join(original, '.codex'), { recursive: true })
+        await writeFile(join(linked, '.codex/hooks.json'), JSON.stringify(HOOKS))
+        await fixture.trust(linked, MEASURED)
+        const source = join(original, '.codex/hooks.json')
+        const mismatch = [expect.objectContaining({ code: 'CODEX_HOOK_SOURCE_MISMATCH',
+            message: expect.stringContaining(source), fix: expect.stringContaining('review') })]
+
+        await rm(source, { force: true })
+        expect(await fixture.inspect(linked)).toEqual(mismatch)
+        await writeFile(source, JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: 'legacy-guard' }] }] } }))
+        expect(await fixture.inspect(linked)).toEqual(mismatch)
+
+        await writeFile(source, JSON.stringify(HOOKS))
+        const untrusted = await fixture.inspect(linked)
+        expect(untrusted).toEqual([expect.objectContaining({ code: 'CODEX_HOOK_UNTRUSTED',
+            message: expect.stringContaining(`Codex has not trusted the guard hook in ${source}`),
+            fix: expect.stringContaining('codex -C <hook source directory>') })])
+        expect(untrusted[0]!.message).toContain(original)
+        await fixture.trust(original, MEASURED)
+        expect(await fixture.inspect(linked)).toEqual([])
+    })
+
     it('reports the hook untrusted until Codex has recorded trust for its current version', async () => {
         const fixture = await estate()
         const untrusted = await fixture.inspect()
         expect(untrusted).toEqual([expect.objectContaining({ severity: 'warning', code: 'CODEX_HOOK_UNTRUSTED', target: '.codex/hooks.json',
             message: expect.stringContaining('Codex has not trusted the guard hook'),
-            fix: expect.stringContaining('codex -C <cockpit root> in a terminal (not codex exec)') })])
+            fix: expect.stringContaining('codex -C <hook source directory> in a terminal (not codex exec)') })])
         // The remedy is a literal so the troubleshooting index can repeat it; the printed fix still
         // names this cockpit's configuration.
         expect(renderHumanDiagnostics(untrusted, undefined, { resolvedConfigPath: join(fixture.root, 'cockpit.toml'), generatedTargets: [] }))
@@ -86,7 +120,17 @@ describe('Codex hook trust', () => {
             message: expect.stringContaining(`reading ${join(oversized.home, 'config.toml')} failed: ${join(oversized.home, 'config.toml')} exceeds`) })])
         expect(await (await estate({ hooks: { PreToolUse: [{ hooks: [{ type: 'prompt' }] }] } })).inspect()).toEqual(unverified)
         const homeless = await estate()
-        expect(await inspectCodexHookTrust({ root: homeless.root, env: {} })).toEqual(unverified)
+        expect(await inspectCodexHookTrust({ root: homeless.root, env: {}, timeoutMs: 5_000 }, executeProbe)).toEqual(unverified)
+        const noGit = await estate()
+        expect(await inspectCodexHookTrust({ root: noGit.root, env: { CODEX_HOME: noGit.home, PATH: '/missing-git' }, timeoutMs: 5_000 }, executeProbe))
+            .toEqual([expect.objectContaining({ message: expect.stringContaining('the hook source cannot be established') })])
+        const nonRepository = await estate()
+        await rm(join(nonRepository.root, '.git'), { recursive: true })
+        expect(await nonRepository.inspect()).toEqual([expect.objectContaining({ message: expect.stringContaining('Git could not establish the original checkout hook source') })])
+        const unauthenticated = await estate()
+        expect(await inspectCodexHookTrust({ root: unauthenticated.root,
+            env: { CODEX_HOME: unauthenticated.home, PATH: '/usr/bin:/bin' }, timeoutMs: 5_000 }, async step => ({ ...await executeProbe(step) })))
+            .toEqual([expect.objectContaining({ message: expect.stringContaining('Git could not establish the original checkout hook source') })])
         // No published Codex hook means nothing to trust.
         expect(await (await estate(null)).inspect()).toEqual([])
         // Nor does a machine where Codex has never run as this user: no Codex home, no session to skip it.

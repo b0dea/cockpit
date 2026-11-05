@@ -288,7 +288,8 @@ describe('reference pages', () => {
         expect(page.endsWith(`${end}\n`)).toBe(true)
         // A person looks this warning up to learn how to trust the hook, so the row carries the remedy.
         const real = (await renderReferences(shipped)).find(file => file.path === 'docs/troubleshooting.md')!.bytes
-        expect(real).toMatch(/^\| `CODEX_HOOK_UNTRUSTED` \| .*codex -C <cockpit root>.*Trust all and continue.* \|$/m)
+        expect(real).toMatch(/^\| `CODEX_HOOK_UNTRUSTED` \| .*codex -C <hook source directory>.*Trust all and continue.* \|$/m)
+        expect(real).toMatch(/^\| `CODEX_HOOK_SOURCE_MISMATCH` \| .*review and roll out.*original checkout.* \|$/m)
         // A gap's fix is chosen per gap, so the table presents none as the code's fix.
         expect(real).not.toContain('`DOCUMENT_GAP`')
     })

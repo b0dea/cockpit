@@ -57,6 +57,52 @@ describe('decision record integrity', () => {
         ])
     })
 
+    it.each([
+        'Supersedes decision 2 of [ADR 0013](0013-policy.md)',
+        'Supersedes ADR 0013 only for retries. Other decisions stand.',
+        'This supersedes 0013\'s "a clause". The rest stands.',
+        'This supersedes the rule, stated in `docs/explanation/policy.md`',
+        'Status: Accepted; supersedes [0013](0013-policy.md)\'s "a clause" and lines of `docs/explanation/policy.md`',
+    ])('keeps accepted records current when only a clause is replaced: %s', reference => {
+        expect(inspect({
+            '0013-policy.md': 'Status: Accepted\n',
+            '0018-update.md': `Status: Accepted\n\n${reference}\n`,
+        })).toEqual([])
+    })
+
+    it('still resolves partial record references and checks whole-record replacements', () => {
+        expect(inspect({
+            '0013-policy.md': 'Status: Accepted\n',
+            '0018-update.md': 'Status: Accepted\n\nSupersedes [Policy](0013-policy.md).\nSupersedes decision 2 of [Missing](0019-missing.md).\nSupersedes ADR 0020 only for retries.\nSupersedes [Missing](elsewhere/0021-missing.md).\nSupersedes [Missing](0022-missing.md)\'s retry clause.\nSupersedes the retry clause of [ADR 0023](elsewhere/0023-missing.md).\n',
+        })).toEqual([
+            'DECISION_SUPERSEDED_STALE decision record docs/adr/0013-policy.md still has status "Accepted", but docs/adr/0018-update.md:3 supersedes it',
+            'DECISION_LINK_UNRESOLVED decision record docs/adr/0018-update.md:4 cites 0019-missing.md, which names no record in docs/adr',
+            'DECISION_LINK_UNRESOLVED decision record docs/adr/0018-update.md:5 cites ADR 0020, which names no record in docs/adr',
+            'DECISION_LINK_UNRESOLVED decision record docs/adr/0018-update.md:6 cites elsewhere/0021-missing.md, which names no record in docs/adr',
+            'DECISION_LINK_UNRESOLVED decision record docs/adr/0018-update.md:7 cites 0022-missing.md, which names no record in docs/adr',
+            'DECISION_LINK_UNRESOLVED decision record docs/adr/0018-update.md:8 cites elsewhere/0023-missing.md, which names no record in docs/adr',
+        ])
+    })
+
+    it('keeps numeric link labels as record references outside the records directory', () => {
+        expect(inspect({
+            '0018-update.md': 'Status: Accepted\nSupersedes the retry clause of [0013](elsewhere/0013-missing.md).\n',
+        })).toEqual([
+            'DECISION_LINK_UNRESOLVED decision record docs/adr/0018-update.md:2 cites elsewhere/0013-missing.md, which names no record in docs/adr',
+        ])
+    })
+
+    it.each(['ADR 0014', 'ADR-0014', 'record 0014', '#0014', '0014'])('distinguishes whole and numbered-part replacements in one conjunction: %s', reference => {
+        expect(inspect({
+            '0013-policy.md': 'Status: Accepted\n',
+            '0014-retries.md': 'Status: Accepted\n',
+            '0018-update.md': `Status: Accepted\nSupersedes ADR 0013 and decision 2 of ${reference} and decision 3 of ADR 0019.\n`,
+        })).toEqual([
+            'DECISION_SUPERSEDED_STALE decision record docs/adr/0013-policy.md still has status "Accepted", but docs/adr/0018-update.md:2 supersedes it',
+            'DECISION_LINK_UNRESOLVED decision record docs/adr/0018-update.md:2 cites ADR 0019, which names no record in docs/adr',
+        ])
+    })
+
     // `work decide --supersedes` marks the old record with this; a status only the check could read
     // left the record unmarkable, and the check then reported it stale.
     it('marks a record superseded wherever the check reads its status, in the form it was written', () => {
