@@ -114,18 +114,23 @@ one, no command is allowed without a prompt, whatever profile or declared rule m
 reason names the entry. Keep relative entries off the `PATH` an agent harness starts with; `doctor`
 reports one in the `PATH` it runs with as `GUARD_SEARCH_PATH_RELATIVE`.
 
-That warning describes the CLI process, not a measurement of a running harness's environment:
-`pnpm exec` can add a relative bin directory just for the command it starts. Check the shell or
-launcher that starts the harness before changing its configuration. For their own Git and Docker
-observations, `doctor` and `docs check` use only the absolute directories already on `PATH`, in
-their original order. Every relative entry is excluded, including empty entries, `.` and paths
-starting with `..`, so changing into a sibling cannot select a different tool. Noncanonical
-absolute entries still refuse the observation; no entry is normalized. Put the required tool in
-an absolute directory and rerun the command. Surfaces-only `sync` and `check` also need Git
-checkout observations and can refuse when this search path is unavailable. This does not change
-the environment used to start sessions, discover evaluators or check MCP commands, or the guard's
-approval rules. A completed observation does not establish that a harness runs its
-generated hooks or that an external integration works.
+That warning describes the CLI process, not a measurement of a running harness's environment: a
+wrapper that injects a relative bin directory, such as a package manager's, produces it for the
+command it starts. An injected relative entry is the shape these checks were measured against; the
+pnpm release tested put an absolute directory first under `pnpm exec`, and `doctor` gave no relative
+warning there, so do not read the warning as coming from pnpm. Check the shell or launcher that
+starts the harness before changing its configuration. For their own Git and Docker observations, `doctor`,
+`preflight`, `check` and `docs check` use only the absolute directories already on `PATH`, in their
+original order. Every relative entry is excluded, including empty entries, `.` and paths starting
+with `..`, so changing into a sibling cannot select a different tool. `up` and the other commands
+that start or change a stack keep their strict search and refuse, stating the reason. A noncanonical
+absolute entry, such as `/usr/bin/../bin`, still refuses the observation, and with it `sync` and
+`check` wherever they have Git to ask or Compose to read; no entry is normalized. Put the required
+tool in a canonical absolute directory and rerun the command. Git simply missing from `PATH` does
+not refuse a cockpit that declares no runtime: see [Environment modes](environment.md#environment-modes). This does
+not change the environment used to start sessions, discover evaluators or check MCP commands, or the
+guard's approval rules. A completed observation does not establish that a harness runs its generated
+hooks or that an external integration works.
 
 Generated checkout identity and native-hook revision observations use the same absolute-only
 Git search during `sync` and `check`. Publication authorization and the native hook's execution
