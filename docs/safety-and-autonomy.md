@@ -52,10 +52,11 @@ include an instance.
 Every `.env` and `.env.*` file at any depth is treated as holding secrets, declared or not: reading,
 writing, removing, staging or linking one is a hard denial through every guarded tool. The
 conventional documentation names `.env.example`, `.env.sample`, `.env.template` and `.env.schema`
-are exempt, and so is every declared environment `template`. The refusal says what to do instead:
-run what needs the values as `varlock run -- <cmd>`, which never prints them, or read the variable
-names from the `.env.schema`. Another name that starts with `.env`, such as `.envrc`, is not denied,
-but reading it prompts.
+are exempt from the guard, and so is every declared environment `template`; native permissions may
+still refuse these documentation files (see [Reading secrets and instances](#reading-secrets-and-instances)). Run a trusted
+process with `VARLOCK_TELEMETRY_DISABLED=true varlock run --redact-stdout -- <cmd>` instead of
+reading values. Redaction is an output safeguard, not confinement of the child process. Another name
+that starts with `.env`, such as `.envrc`, is not denied, but reading it prompts.
 
 Executable use of a declared hosted database or vendor host is denied at hostname boundaries.
 Matching examines executable, argument and environment-assignment-value roles; redirects,

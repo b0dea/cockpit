@@ -708,8 +708,8 @@ the rest. Each runs `varlock load --agent --format json-full --path <sibling>` f
 with `VARLOCK_TELEMETRY_DISABLED=true`, the command's timeout and a 256 KiB output cap, and keeps only key names and a validity
 category; values and Varlock's messages are discarded. `ENV_SCHEMA_UNHEALTHY` fails the row and
 names the sibling and its keys, or reports the row as unavailable when Varlock times out, exits
-without a readable report, or a provider cannot resolve a value; run `varlock load` in that sibling
-to see why. `ENV_SCHEMA_TOOL_MISSING` is a warning, not a failure, when Varlock is not installed
+without a readable report, or a provider cannot resolve a value; a person can run
+`VARLOCK_TELEMETRY_DISABLED=true varlock load` in that sibling to see why. `ENV_SCHEMA_TOOL_MISSING` is a warning, not a failure, when Varlock is not installed
 (<https://varlock.dev>).
 
 Set `VARLOCK_TELEMETRY_DISABLED=true` in product-owned Varlock wrappers too. Cockpit's probes
