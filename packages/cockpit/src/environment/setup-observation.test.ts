@@ -808,10 +808,9 @@ exec '${input.gitExecutable.canonicalPath}' "$@"
     })
 
     it.each([
-        ['an empty .git directory', /not a git repository/, async (root: string) => { await mkdir(join(root, '.git')) }],
-        // Git words this refusal differently across versions; either wording names the same rejected pointer.
-        ['a stale .git file', /not a git repository|does not point to a valid repository/, async (root: string) => { await writeFile(join(root, '.git'), 'gitdir: /synthetic/missing\n') }],
-    ] as const)('takes a directory with %s as standalone and says why', async (_name, stated, arrange) => {
+        ['an empty .git directory', async (root: string) => { await mkdir(join(root, '.git')) }],
+        ['a stale .git file', async (root: string) => { await writeFile(join(root, '.git'), 'gitdir: /synthetic/missing\n') }],
+    ] as const)('takes a directory with %s as standalone and says why', async (_name, arrange) => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-standalone-')))
         scratch.push(root)
         await writeFile(join(root, 'cockpit.toml'), '[cockpit]\nname = "sample"\n')
@@ -821,7 +820,8 @@ exec '${input.gitExecutable.canonicalPath}' "$@"
         expect(generated).toMatchObject({ state: 'available', kind: 'standalone', currentCheckoutPath: root, mainCheckoutPath: root,
             standaloneReason: expect.stringContaining(join(root, '.git')) })
         if (generated.state !== 'available') throw new Error(generated.reason)
-        expect(generated.standaloneReason!.toLowerCase()).toMatch(stated)
+        // Git's own words vary with its version and the filesystem, so only cockpit's sentence is pinned.
+        expect(generated.standaloneReason).toContain(`Git does not accept ${join(root, '.git')} as a checkout`)
         expect(generated.standaloneReason).not.toMatch(/git init|setup/)
         expect(await revalidateGeneratedCheckoutIdentity(generated)).toBe(true)
         await rm(join(root, '.git'), { recursive: true })
