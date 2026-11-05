@@ -450,6 +450,7 @@ export async function prepareSurfaces(
         module: modulePath, moduleSha256: moduleRead.sha256 }
     const restrictions = expandRestrictions({
         canonicalProjectRoot: prepared.root,
+        restrictedMcpServers: Object.keys(config.mcp.allowed_tools).sort(compareCodeUnits),
         allowedProjectRoots: [...new Set([prepared.root, ...selected.map(row => siblingRoots.get(row.slug)!)])].sort(compareCodeUnits),
         guardTemplate: asset(RESTRICTION_ASSETS[0]).bytes, guardPath: '.cockpit/guards/bash-guard.sh',
         instances: prepared.registry.secretPaths.filter(row => siblingRoots.has(row.slug)).map(row => ({

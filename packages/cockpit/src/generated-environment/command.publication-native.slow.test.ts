@@ -42,8 +42,10 @@ describe('public surface publication transaction', () => {
             const codex = parseToml(await readFile(join(fixture.root, '.codex/config.toml'), 'utf8'))
             expect(codex).toMatchObject({ mcp_servers: { 'approved-server': { enabled_tools: ['read_record'] } } })
             const settings = JSON.parse(await readFile(join(fixture.root, '.claude/settings.json'), 'utf8'))
-            expect(settings.permissions.allow).toContain('mcp__approved-server__read_record')
-            expect(settings.hooks.PreToolUse[0].matcher).toContain('mcp__.*')
+            expect(settings.permissions.allow.filter((rule: string) => rule.startsWith('mcp__'))).toEqual([])
+            const matcher = new RegExp(settings.hooks.PreToolUse[0].matcher)
+            for (const tool of ['Bash', 'Edit', 'Write', 'NotebookEdit', 'mcp__approved-server__read_record', 'mcp__approved-server__new_tool']) expect(matcher.test(tool)).toBe(true)
+            for (const tool of ['mcp__unrestricted__read_record', 'mcp__unrestricted__Write', 'mcp__plugin_reports__read_record', 'mcp__approved-server-extra__read_record']) expect(matcher.test(tool)).toBe(false)
             for (const [tool, expected] of [['read_record', 'allow'], ['write_record', 'deny'], ['execute_tool', 'deny']] as const) {
                 const run = spawnSync('/bin/bash', [join(fixture.root, '.cockpit/guards/bash-guard.sh'), '--harness', 'claudecode'], {
                     cwd: fixture.root, encoding: 'utf8', input: JSON.stringify({ hook_event_name: 'PreToolUse',
@@ -60,6 +62,37 @@ describe('public surface publication transaction', () => {
             })
             expect(stale.status).toBe(2)
             expect(stale.stderr).toContain('widens what agents may do')
+        })
+
+        it('checks only MCP metadata within a bounded native envelope and retains shell and edit limits', async () => {
+            const fixture = await surfaceConsumer('large-mcp', { mcp: { command: '/usr/bin/true' } })
+            expect(spawnSync('git', ['init', '--quiet', fixture.root]).status).toBe(0)
+            const config = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
+            config.mcp.allowed_tools = { 'approved-server': ['read_record'] }
+            await writeFile(fixture.configPath, stringifyToml(config))
+            await writeFile(join(fixture.siblingDirectory, 'package-lock.json'), '{}')
+            await writeFile(join(fixture.siblingDirectory, '.mcp.json'), JSON.stringify({ mcpServers: { 'approved-server': { command: '/usr/bin/true' } } }))
+            const synced = await syncGeneratedEnvironment({ configPath: fixture.configPath })
+            expect(synced, JSON.stringify(synced.diagnostics)).toMatchObject({ kind: 'complete' })
+            const invoke = (tool: string, tool_input: unknown) => spawnSync('/bin/bash', [join(fixture.root, '.cockpit/guards/bash-guard.sh'), '--harness', 'claudecode'], {
+                cwd: fixture.root, encoding: 'utf8', input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: tool, cwd: fixture.root, tool_input }),
+            })
+            const allowed = invoke('mcp__approved-server__read_record', { text: 'x'.repeat(131_072) })
+            expect(allowed.status, allowed.stderr).toBe(0)
+            expect(allowed.stdout).toBe('')
+            const denied = invoke('mcp__approved-server__write_record', { text: 'x'.repeat(131_072) })
+            expect(denied.status, denied.stderr).toBe(0)
+            expect(JSON.parse(denied.stdout).hookSpecificOutput.permissionDecision).toBe('deny')
+            const oversized = invoke('mcp__approved-server__read_record', { text: 'x'.repeat(1_048_576) })
+            expect(oversized.status).toBe(2)
+            expect(oversized.stderr).toContain('byte bound')
+            for (const run of [invoke('Bash', { command: 'printf x', description: 'x'.repeat(65_536) }),
+                invoke('Write', { file_path: join(fixture.root, 'notes.txt'), content: 'x'.repeat(65_536) })]) {
+                expect(run.status).toBe(2)
+                expect(run.stderr).toContain('byte bound')
+            }
+            const malformed = invoke('mcp__approved-server__read_record', [])
+            expect(malformed.status).toBe(2)
         })
 
         it('serializes one MCP collection exactly and guards a selected sibling root', async () => {

@@ -281,10 +281,12 @@ guard policy and requires the same approval as other increases in agent authorit
 restriction or removing tools from a list narrows access and can be synced by an agent when
 `[autonomy] sync = "agent"`. Removing a server's list makes it unrestricted and requires a person.
 
-Codex receives `enabled_tools` in its generated server configuration. Claude Code receives exact
-permission rules for the listed tools and an authenticated `PreToolUse` guard that denies the
-others. Start Claude Code from the cockpit checkout and trust the workspace so its project hooks
-load. These restrictions have their own dated row in the
+Codex receives `enabled_tools` in its generated server configuration. Claude Code receives an
+authenticated `PreToolUse` guard scoped to the restricted server namespaces. It denies unlisted
+tools and defers listed tools to Claude Code's existing permission rules; listing a tool grants no
+native permission. Unrestricted servers and plugin tools do not pass through this MCP guard.
+Start Claude Code from the cockpit checkout and trust the workspace so its project hooks load.
+These restrictions have their own dated row in the
 [capability matrix](capability-matrix.md); Codex's native tool filter does not depend on hook trust.
 Other harnesses omit restricted servers and report `MCP_TRANSPORT_UNAVAILABLE`: use Claude Code or
 Codex for them. Restricted servers cannot currently be included in the Claude plugin bundle,
@@ -295,6 +297,14 @@ Review what each allowed tool actually does. A name, a token scope or `readOnlyH
 enforcement boundary. A generic dispatcher such as `execute_tool` can expose writes through its
 arguments; listing it permits all of those operations. Leave such a tool out unless every operation
 it can dispatch is acceptable. Cockpit does not filter tool arguments or proxy server requests.
+Claude's guard reads only tool metadata from a bounded native JSON envelope (at most 1 MiB); larger envelopes are refused. Shell
+and file-edit inputs retain their separate, smaller bound.
+
+This policy covers MCP **tool calls**, not resources, resource templates or prompts. It restricts
+one declared server namespace, not every route to the service. With `[autonomy] mcp_approve = "agent"`,
+an agent can register a new server or alias without that list, so this is not a read-only
+sandbox against delegated approval. Use `mcp_approve = "person"` when new connections must require
+human review, and review every approved process and route independently.
 
 ### Remote servers
 

@@ -10,7 +10,7 @@
     "kind": "hooks-json",
     "path": ".claude/settings.json",
     "event": "PreToolUse",
-    "matcher": "Bash|Edit|Write|NotebookEdit|mcp__.*"
+    "matcher": "Bash|Edit|Write|NotebookEdit"
   },
   "payload": {
     "kind": "pre-tool-use",

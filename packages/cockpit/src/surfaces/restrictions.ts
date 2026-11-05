@@ -68,6 +68,7 @@ export type RestrictionAdapter = NativeRestrictionAdapter | UnavailableRestricti
 export interface RestrictionExpansionInput {
     readonly canonicalProjectRoot: string
     readonly allowedProjectRoots?: readonly string[]
+    readonly restrictedMcpServers?: readonly string[]
     readonly guardTemplate: string
     readonly guardPath: string
     readonly instances: readonly InstancePathTarget[]
@@ -211,11 +212,12 @@ function capturedInput(input: unknown): CapturedRestrictionExpansionInput | unde
     if (!object(value)) return undefined
     const inputKeys = ['canonicalProjectRoot', 'guardTemplate', 'guardPath', 'instances', 'policy', 'adapters', 'configFile']
     const hasAllowedRoots = Object.hasOwn(value, 'allowedProjectRoots')
-    if (!exactKeys(value, hasAllowedRoots ? [...inputKeys, 'allowedProjectRoots'] : inputKeys)
+    if (!exactKeys(value, inputKeys, ['allowedProjectRoots', 'restrictedMcpServers'])
         || typeof value.canonicalProjectRoot !== 'string' || !canonicalRoot(value.canonicalProjectRoot)
         || typeof value.guardTemplate !== 'string' || value.guardPath !== GUARD_PATH
         || !Array.isArray(value.instances) || value.instances.length > MAX_INSTANCES || !Array.isArray(value.adapters)
         || typeof value.configFile !== 'string' || !confinedRelativePath(value.configFile)) return undefined
+    if (value.restrictedMcpServers !== undefined && !boundedUniqueStrings(value.restrictedMcpServers, /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/, 256)) return undefined
     const allowedProjectRoots = hasAllowedRoots ? value.allowedProjectRoots : [value.canonicalProjectRoot]
     if (!Array.isArray(allowedProjectRoots) || allowedProjectRoots.length === 0 || allowedProjectRoots.length > MAX_INSTANCES
         || !allowedProjectRoots.every((root) => typeof root === 'string' && canonicalRoot(root))
@@ -272,7 +274,7 @@ function unavailableAdapter(value: JsonSnapshotObject): UnavailableRestrictionAd
 function nativeShapeMatches(adapter: NativeRestrictionAdapter): boolean {
     if (adapter.target === 'claudecode') return adapter.promptTier
         && adapter.registration.kind === 'hooks-json' && adapter.registration.path === '.claude/settings.json'
-        && adapter.registration.event === 'PreToolUse' && adapter.registration.matcher === 'Bash|Edit|Write|NotebookEdit|mcp__.*'
+        && adapter.registration.event === 'PreToolUse' && adapter.registration.matcher === 'Bash|Edit|Write|NotebookEdit'
         && adapter.payload.kind === 'pre-tool-use' && adapter.payload.bashTool === 'Bash'
         && JSON.stringify(adapter.payload.editTools) === JSON.stringify(['Edit', 'Write', 'NotebookEdit'])
         && adapter.readonly.kind === 'agent-frontmatter' && adapter.readonly.pathPattern === '.claude/agents/{agent}.md'
@@ -413,9 +415,12 @@ function registration(adapter: NativeRestrictionAdapter, input: RestrictionExpan
     // The measured shapes pair OpenCode with its plugin and the other targets with hooks.json.
     // Codex and OpenCode have no ask tier, so a prompt they cannot show refuses instead of proceeding;
     // Claude Code shows the prompt.
+    const matcher = adapter.target === 'claudecode'
+        ? `^(?:${[adapter.registration.matcher, ...(input.restrictedMcpServers ?? []).map(name => `mcp__${name}__.*`)].join('|')})$`
+        : adapter.registration.matcher
     const bytes = adapter.target === 'opencode'
         ? opencodeBytes(input.guardPath, input.configFile)
-        : hooksBytes(adapter.target, adapter.registration.matcher, input.guardPath, adapter.target === 'codexcli', input.configFile)
+        : hooksBytes(adapter.target, matcher, input.guardPath, adapter.target === 'codexcli', input.configFile)
     return file(adapter.registration.path, bytes)
 }
 

@@ -195,6 +195,9 @@ describe('restriction expansion', () => {
         })
 
         const expanded = complete(expandRestrictions(pureInput(shipped)))
+        const matcher = new RegExp(JSON.parse(target(expanded, 'claudecode').files[0]!.bytes).hooks.PreToolUse[0].matcher)
+        expect(matcher.test('Bash')).toBe(true)
+        expect(matcher.test('mcp__unrestricted__Write')).toBe(false)
         expect(expanded.targets.map(({ target, capability, evidenceStatus, measuredOn, measuredVersion, provenance }) =>
             ({ target, capability, evidenceStatus, measuredOn, measuredVersion, provenance })))
             .toEqual(inspected.kind === 'complete' ? inspected.targets : [])
@@ -253,6 +256,13 @@ describe('restriction expansion', () => {
         ]) expect(validateGuardRegistration(changed).kind).toBe('refusal')
         expect(complete(expandRestrictions(captured))).toEqual(legacy)
         expect(RESTRICTION_OUTPUT_LIMITS).toEqual({ scalarBytes: 65_536, aggregateBytes: 102_400, fileCount: 8 })
+    })
+
+    it('rejects restricted server names that could broaden the native hook matcher', async () => {
+        const value = pureInput(await shippedInputs())
+        for (const restrictedMcpServers of [['reports|.*'], ['reports\n'], ['reports', 'reports']]) {
+            expect(expandRestrictions({ ...value, restrictedMcpServers })).toMatchObject({ kind: 'refusal', code: 'RESTRICTION_INPUT_INVALID' })
+        }
     })
 
     it('refuses accessors without invoking them', async () => {

@@ -298,8 +298,6 @@ export function nativeSources(
             permission: {
                 read: Object.fromEntries(claudeReadDenials(siblings, instances).map(rule => [rule, 'deny'])),
                 bash: claudeCommandAllowances(),
-                ...Object.fromEntries(claudeServers.filter(server => server.enabled).flatMap(server =>
-                    (server.allowedTools ?? []).map(tool => [`mcp__${server.name}__${tool}`, { '*': 'allow' }]))),
             },
             permissions: { additionalDirectories: paths('claudecode') },
             enabledMcpjsonServers,
