@@ -515,7 +515,8 @@ export async function runGuardEvaluationApplication(
 function ordinaryGrants(config: CockpitConfig): readonly OrdinaryGrant[] {
     const policy = effectivePolicy(config)
     return [...config.browser && browserPreapprovalRequested(config.browser) ? ['browser-preapproval' as const] : [],
-        ...policy.autonomy.sync === 'agent' ? ['autonomy-sync' as const] : [], ...policy.autonomy.reset === 'agent' ? ['autonomy-reset' as const] : []]
+        ...policy.autonomy.sync === 'agent' ? ['autonomy-sync' as const] : [], ...policy.autonomy.reset === 'agent' ? ['autonomy-reset' as const] : [],
+        ...policy.autonomy.instruction_files === 'agent' ? ['autonomy-instruction-files' as const] : []]
 }
 
 // `up --profile` and `session --profile` start that profile's services for one run. Only the default

@@ -8,12 +8,12 @@ import { Autonomy, Environment, Work } from './schema.js'
 const policy = (autonomy: Record<string, string> = {}, work: Record<string, unknown> = {}) => effectivePolicy({ work: Work.parse(work), autonomy: Autonomy.parse(autonomy) })
 
 describe('autonomy policy', () => {
-    it('defaults every decision to an agent but reset and MCP approval, and a declared field overrides its default', () => {
+    it('defaults every decision to an agent but reset, MCP approval, answer confirmation and instruction files, and a declared field overrides its default', () => {
         expect(policy()).toEqual({ grading: 'independent', gates: { accept: 'agent', amend: 'agent', answer: 'agent', signoff: 'agent', acknowledge: 'agent' },
-            autonomy: { sync: 'agent', stale_delete: 'agent', reset: 'person', mcp_approve: 'person' } })
-        expect(policy({ reset: 'ci' }, { gates: { signoff: 'person', acknowledge: 'person' } })).toEqual({ grading: 'independent',
+            autonomy: { sync: 'agent', stale_delete: 'agent', reset: 'person', mcp_approve: 'person', confirm_answers: 'person', instruction_files: 'person' } })
+        expect(policy({ reset: 'ci', confirm_answers: 'agent' }, { gates: { signoff: 'person', acknowledge: 'person' } })).toEqual({ grading: 'independent',
             gates: { accept: 'agent', amend: 'agent', answer: 'agent', signoff: 'person', acknowledge: 'person' },
-            autonomy: { sync: 'agent', stale_delete: 'agent', reset: 'ci', mcp_approve: 'person' } })
+            autonomy: { sync: 'agent', stale_delete: 'agent', reset: 'ci', mcp_approve: 'person', confirm_answers: 'agent', instruction_files: 'person' } })
     })
 
     it('holds a trust answer no person confirmed at the stronger default, and releases it once it leaves unconfirmed', () => {

@@ -1,8 +1,10 @@
-// Owns who may confirm each init answer listed under `unconfirmed`, and the record of the
-// observations that confirmed one. A person keeps every answer that is a trust decision and every
-// answer no observation settles exactly; an agent may confirm the rest with `cockpit confirm`, which
-// runs the observation and records it here. The guard then lets the agent's own sync apply the
-// removed entry, but only while the record matches the configuration on disk.
+// Owns who may confirm each init answer listed under `unconfirmed`, and the record of what confirmed
+// one. A person keeps every answer that is a trust decision: an agent confirming one would hide that
+// no person reviewed what constrains it. An agent may confirm an answer an observation settles with
+// `cockpit confirm`, which runs the observation and records it here, and, where `[autonomy]
+// confirm_answers = "agent"`, the remaining answers too, recorded as its own decision rather than a
+// person's. The guard then lets the agent's own sync apply the removed entry, but only while the
+// record matches the configuration on disk.
 //
 // The record is machine-local, under `.cockpit/local`: the observation is evidence about this machine
 // and its running stack, which another clone has not seen, so there a removed entry still waits for a
@@ -43,9 +45,17 @@ export const ANSWER_CONFIRMATIONS: Readonly<Record<UnconfirmedAnswerName, Answer
         why: 'it states what local work needs (seeded data, signed-in users), and no observation shows a need is absent' },
 })
 
+/** An answer `[autonomy] confirm_answers = "agent"` lets the agent confirm: a person's, but no trust decision. */
+function delegableAnswer(answer: UnconfirmedAnswerName): boolean {
+    const confirmation = ANSWER_CONFIRMATIONS[answer]
+    return confirmation.by === 'person' && !confirmation.trustDecision
+}
+
 export const ANSWER_CONFIRMATION_PATH = `${GUARD_LOCAL_PATHS.directory}/answer-confirmations`
 const FORMAT = 'cockpit-answer-confirmations/v1'
 const RECORD_KEYS = ['observation', 'ranAt', 'result', 'evidenceSha256', 'configurationSha256'] as const
+const DELEGATED_KEYS = ['decidedBy', 'under', 'ranAt', 'configurationSha256'] as const
+export const DELEGATED_UNDER = 'autonomy.confirm_answers'
 const SHA256 = /^[a-f0-9]{64}$/
 const TIMESTAMP = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/
 
@@ -54,6 +64,12 @@ export type AnswerConfirmationRecord = Readonly<{
     ranAt: string
     result: 'passed'
     evidenceSha256: string
+    configurationSha256: string
+}> | Readonly<{
+    // Said in the record, so an agent's confirmation never reads as a person's or an observation's.
+    decidedBy: 'agent'
+    under: typeof DELEGATED_UNDER
+    ranAt: string
     configurationSha256: string
 }>
 type Records = Readonly<Partial<Record<UnconfirmedAnswerName, AnswerConfirmationRecord>>>
@@ -69,12 +85,15 @@ export function confirmationConfigurationSha256(config: CockpitConfig): string {
 
 function validRecord(answer: string, value: unknown): value is AnswerConfirmationRecord {
     const confirmation = ANSWER_CONFIRMATIONS[answer as UnconfirmedAnswerName]
-    if (!confirmation || confirmation.by !== 'observation' || value === null || typeof value !== 'object' || Array.isArray(value)) return false
+    if (!confirmation || value === null || typeof value !== 'object' || Array.isArray(value)) return false
     const row = value as Record<string, unknown>
-    return exactKeys(row, RECORD_KEYS) && row.observation === confirmation.observation && row.result === 'passed'
-        && typeof row.ranAt === 'string' && TIMESTAMP.test(row.ranAt) && Number.isFinite(Date.parse(row.ranAt))
-        && typeof row.evidenceSha256 === 'string' && SHA256.test(row.evidenceSha256)
+    const common = typeof row.ranAt === 'string' && TIMESTAMP.test(row.ranAt) && Number.isFinite(Date.parse(row.ranAt))
         && typeof row.configurationSha256 === 'string' && SHA256.test(row.configurationSha256)
+    if (confirmation.by === 'person') {
+        return !confirmation.trustDecision && common && exactKeys(row, DELEGATED_KEYS) && row.decidedBy === 'agent' && row.under === DELEGATED_UNDER
+    }
+    return common && exactKeys(row, RECORD_KEYS) && row.observation === confirmation.observation && row.result === 'passed'
+        && typeof row.evidenceSha256 === 'string' && SHA256.test(row.evidenceSha256)
 }
 
 /** Every well-formed record the bytes hold, or none when they are absent or not a current-format file. */
@@ -99,8 +118,10 @@ export function encodeAnswerConfirmations(records: Records): string {
 }
 
 /**
- * The answers whose recorded observation passed against exactly `config`. A missing, malformed or
- * stale record confirms nothing, and no record confirms an answer only a person may.
+ * The answers whose record was taken against exactly `config`: an observation that passed, or the
+ * agent's decision, which `cockpit confirm` takes only while `config` delegates it and which the digest
+ * therefore binds to that delegation. A missing, malformed or stale record confirms nothing, and no
+ * record confirms a trust decision.
  */
 export function confirmedAnswers(bytes: Uint8Array | undefined, config: CockpitConfig): ReadonlySet<string> {
     const digest = confirmationConfigurationSha256(config)
@@ -114,7 +135,9 @@ export function isUnconfirmedAnswerName(value: string): value is UnconfirmedAnsw
 
 /** The confirmation a person makes, for the answers only a person may confirm. */
 export function personConfirmationFix(answers: readonly string[], configPath?: string): string {
+    const delegable = answers.filter(answer => isUnconfirmedAnswerName(answer) && delegableAnswer(answer))
     return `a person confirms ${answers.join(', ')} with whoever owns the product, corrects cockpit.toml if a value is wrong, deletes ${answers.length === 1 ? 'its entry' : 'each entry'} from unconfirmed, then runs ${cockpitCommand('sync', configPath === undefined ? {} : { config: configPath })} in a terminal outside the agent`
+        + (delegable.length === 0 ? '' : `; ${delegable.join(', ')} ${delegable.length === 1 ? 'is no trust decision' : 'are no trust decisions'}, so a person may instead set [autonomy] confirm_answers = "agent" and let the agent run ${delegable.map(answer => cockpitCommand('confirm', { operand: answer })).join(' and ')}`)
 }
 
 /** How each listed answer is confirmed: the observation an agent runs, or the person who must. */

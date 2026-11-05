@@ -227,6 +227,8 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `stale_delete` | Who approves sync deleting files cockpit generated before and no longer generates. Default agent. An unchanged MCP-only file of a listed tool whose servers are no longer written goes without this approval, because removing it only narrows access. | string |  | one of `"agent"`, `"person"`, `"ci"` |
 | `reset` | Who may apply a reset, which deletes stack data. Default person. | string |  | one of `"agent"`, `"person"`, `"ci"` |
 | `mcp_approve` | Who approves a declared MCP server: person records each digest in [mcp.approved]; agent lets sync enable every declared server as declared, so an agent that writes a sibling MCP source starts that process outside the guard. Default person. | string |  | one of `"agent"`, `"person"` |
+| `confirm_answers` | Who confirms an unconfirmed init answer that is neither a trust decision nor settled by an observation (cockpit.name, estate.runnable, environment.test_data): person, or agent, which lets cockpit confirm record it as the agent's decision. Trust decisions stay a person's. Default person. | string |  | one of `"agent"`, `"person"` |
+| `instruction_files` | Who may run setup --write-instruction-files and --write-instruction-pointers, which write the sibling AGENTS.md, CLAUDE.md and guide links setup proposes: person, or agent, which the guard then admits. An agent can make the same edits with its own tools. Default person. | string |  | one of `"agent"`, `"person"` |
 
 ### `[browser]`
 
@@ -633,6 +635,6 @@ Agent tools load every skill's frontmatter into each session and its entry point
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 12 | `packages/cockpit/surfaces/skills/procedures/fix.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 9 | `packages/cockpit/surfaces/skills/procedures/work.md` |
 
-Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `a2d77d413f7641c9fe5ba5a480a5e77f8d06985d5c01ca1e3724780fef53ad7a`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `677eeab59ad55240e7281c7bba3d7425b9da1d5ddfdbcbd01617cf3df02772a3`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `f9008b15acddc0ee3c5f6c16e9fb7f053aac44500d102b7dba87f8a4bce81a88`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `6b4326757208d7d05e8200226eeebd7c1ee6fb8dc890ccf8bee18092817ceaea`).
+Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `ea324591115c418321f69c7c2859dbe77d546e85bb3230616ae2c717a24f0c06`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `677eeab59ad55240e7281c7bba3d7425b9da1d5ddfdbcbd01617cf3df02772a3`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `f9008b15acddc0ee3c5f6c16e9fb7f053aac44500d102b7dba87f8a4bce81a88`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `6b4326757208d7d05e8200226eeebd7c1ee6fb8dc890ccf8bee18092817ceaea`).
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.

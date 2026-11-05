@@ -258,6 +258,7 @@ the cockpit commands [below](#cockpit-commands-an-agent-can-run). The
 | `npx --no cockpit stacks prune --config cockpit.toml --apply` | allowed; the command itself refuses a prune that deletes volumes unless `[autonomy] reset = "agent"` | It removes only stacks whose checkout is gone, which bringing the stack up again recreates, and their data only where a reset could delete it. |
 | `npx --no cockpit browser drive --config cockpit.toml`, and likewise `screenshot`, with an optional `--role` | allowed where `browser.request_preapproval` is on, otherwise a prompt | They sign in and capture the declared application, so they run unprompted only on the isolated, non-production data the configuration declares. Preapproval is on by default exactly when `browser.data` is isolated, not restored and not reaching production, and off otherwise; an explicit `request_preapproval` wins, and `true` on a posture that does not qualify is refused. `drive` also accepts `--fail-on-findings`. |
 | `work accept`, `work answer`, `work acknowledge` and `work signoff` with `--interactive` | a prompt, which Codex and OpenCode turn into a denial | `--interactive` asks for a person at a terminal to type the digest of what it shows. |
+| `npx --no cockpit setup --config cockpit.toml --write-instruction-files`, and likewise `--write-instruction-pointers` | allowed where `[autonomy] instruction_files = "agent"`, otherwise a prompt | They write the sibling `AGENTS.md`, `CLAUDE.md` and guide links `setup` proposes, which the agent could write with its own tools. |
 | `sync --adopt`, `sync --interactive`, `reset --interactive`, `stacks prune --interactive`, `sibling add`, `sibling remove`, `tool remove` and every other command | a prompt, which Codex and OpenCode turn into a denial | They widen what agents may do through `cockpit.toml`, rewrite a team's own settings, ask for a person, or delete data. |
 
 A file such a command names, like `--criteria`, is checked as a read: a declared instance, a file
@@ -395,16 +396,68 @@ is enforced for them. The native results are dated and limited to those versions
 ## Who decides
 
 `[autonomy]` and `[work.gates]` in `cockpit.toml` say who takes each decision cockpit gates:
-`agent`, `person` or `ci`. Every field defaults to `agent` except `reset` and `mcp_approve`.
-`[work] grading` says how a work order earns done; the work-order fields are in
-[Who passes each gate](work-and-browser.md#who-passes-each-gate).
+`agent`, `person` or `ci`. `[work] grading` says how a work order earns done; the work-order fields
+are in [Who passes each gate](work-and-browser.md#who-passes-each-gate).
 
-| Field | Decides | Default |
-| --- | --- | --- |
-| `sync` | whether the guard lets an agent run a writing `sync`; under `ci` a writing sync runs only where `CI` is set | `agent` |
-| `stale_delete` | whether `sync` removes a file it generated before and no longer generates without a person typing the stale-removal digest; an unchanged MCP-only file of a listed tool whose servers are no longer written never waits, because removing it only narrows access | `agent` |
-| `reset` | whether `reset --apply`, and a `stacks prune --apply` that deletes volumes, delete stack data without a person; otherwise a person approves the preview with `--interactive` | `person` |
-| `mcp_approve` | `person`: sync enables only the MCP servers whose digest a person recorded in `[mcp.approved]`, and `MCP_NOT_APPROVED` names the rest; `agent`: sync enables every declared server as declared now, which lets an agent start processes outside the guard, because a sibling's MCP source is a file the agent can write and each harness starts an enabled server outside every guard boundary | `person` |
+Each gate is one of two kinds. A **guardrail** keeps the agent from escaping or weakening a
+constraint on itself: widening what it may run, read or write, loosening its own grading or tests,
+approving its own access, hiding evidence or undoing a guard. A guardrail stays a person's in every
+configuration. A **process gate** adds a person's step but no protection against the agent, so a team
+may hand it to the agent. Handing one over is itself a guardrail: the fields that delegate are pinned
+against agent edits and a loosened one is held until a person accepts it, so only a person who edits
+`cockpit.toml` and syncs can turn a gate over.
+
+The shipped defaults sit in the middle: an agent does routine work without asking, and deleting
+data, starting a new MCP server and widening access stay a person's. Each row also shows the
+stricter setting and the most agentic one that keeps every guardrail.
+
+| Gate | Kind, and why | Setting | Shipped | Person approves more | Most agentic |
+| --- | --- | --- | --- | --- | --- |
+| A writing `sync` | process: the guard admits an agent's sync only for an edit that does not widen; under `ci` it runs only where `CI` is set | `[autonomy] sync` | `agent` | `person` or `ci` | `agent` |
+| `sync` removing a file it generated before and no longer generates | process: the file is cockpit's own output; an unchanged MCP-only file of a listed tool whose servers are no longer written never waits, because removing it only narrows access | `[autonomy] stale_delete` | `agent` | `person` | `agent` |
+| `reset --apply`, and a `stacks prune --apply` that deletes volumes | process: it deletes local stack data, which bring-up recreates, and loosens no constraint; otherwise a person approves the preview with `--interactive` | `[autonomy] reset` | `person` | `person` or `ci` | `agent` |
+| Accepting, answering and signing off a work order | process: the grade still judges the work | `[work.gates] accept`, `answer`, `signoff` | `agent` | `person` or `ci` | `agent` |
+| Amending an accepted contract | process for a rewrite the next grade judges; removing an accepted criterion or gate, or a rewrite under `checks` grading, which nothing judges, is a guardrail and needs a person or CI whatever the field says | `[work.gates] amend` | `agent` | `person` or `ci` | `agent` |
+| Acknowledging a test weakening | process where a model grades, which reads the acknowledgement as context; under `checks` grading the acknowledgement is what passes the test-protection check, so there it is a guardrail | `[work.gates] acknowledge` | `agent` | `person` or `ci` | `agent`; `person` under `checks` |
+| Confirming an init answer that is no trust decision: `cockpit.name`, `estate.runnable`, `environment.test_data` | process: confirming changes no value, and the record names the agent and the field that let it decide | `[autonomy] confirm_answers` | `person` | `person` | `agent` |
+| `setup --write-instruction-files` and `--write-instruction-pointers` | process: they write sibling instruction files the agent may already edit with its own tools | `[autonomy] instruction_files` | `person` | `person` | `agent` |
+| `browser drive` and `screenshot` without a prompt | process on isolated data; on data that is not isolated, restored or reaches production, preapproval is refused | `[browser] request_preapproval` | on exactly where the data is isolated | `false` | as shipped |
+| Enabling a declared MCP server | guardrail: a harness starts an enabled server outside every guard boundary, and a sibling's MCP source is a file the agent can write. `agent` exists, and gives this guardrail up | `[autonomy] mcp_approve` | `person` | `person` | `person` |
+| Starting a profile that mounts an operator-gated sibling | guardrail: it touches live data or local hardware | `gate = "operator"` on the sibling | as declared | add the gate | keep the gate |
+| A command the guard cannot prove safe | guardrail: it widens what the agent may run; a person admits an exact command for good under `[[guards.allow]]` | `[[guards.allow]]` | a prompt | no rule | rules for the commands the team trusts |
+| An edit of `cockpit.toml` that widens what agents may do (`GUARD_CONFIG_WIDENED`) | guardrail: it widens what the agent may run, read or write; [Edits the guard has not applied](#edits-the-guard-has-not-applied) | none | a person syncs | | |
+| An agent's edit of `[work]`, `[work.gates]`, `[autonomy]` or MCP tool access | guardrail: it is how an agent would delegate to itself; the edit is a hard denial | none | refused | | |
+| Accepting a weaker policy than the last sync recorded, grading mode included (`POLICY_WEAKENING_UNCONFIRMED`) | guardrail: it loosens the agent's own gates or grading; this covers moving grading off a grader that cannot run (`EVALUATOR_UNAVAILABLE`) | none | a person, at `sync --interactive` | | |
+| Confirming a trust answer: `guards`, `testing`, `environment.install_policies`, `sibling`, `work.grading`, `environment.posture` | guardrail: an agent confirming one would hide that no person reviewed what constrains it | none | a person | | |
+| Reading secrets and declared instances, writing guard controls, pushing to protected branches | guardrail: hard denials no rule or setting relaxes | none | refused | | |
+| Trusting Codex's hooks, trusting a workspace in Claude Code, signing in to a secrets provider | outside cockpit: only the person's own tool grants them; `doctor` and `check` report missing Codex hook trust as `CODEX_HOOK_UNTRUSTED`, and cockpit cannot observe the other two | none | a person | | |
+| The required `work verify` job behind a protected environment's reviewers | guardrail: its point is a run the agent does not control | none | CI reviewers | | |
+
+### Fully agentic setup
+
+The most agentic configuration that keeps every guardrail. A person writes it into `cockpit.toml`,
+runs `sync --interactive` once and types the digest of the weakening it reports, because `reset`,
+`confirm_answers` and `instruction_files` move from `person` to `agent`:
+
+```toml
+[work]
+grading = "independent"
+
+[work.gates]
+accept = "agent"
+amend = "agent"
+answer = "agent"
+signoff = "agent"
+acknowledge = "agent"  # "person" if grading is "checks"
+
+[autonomy]
+sync = "agent"
+stale_delete = "agent"
+reset = "agent"
+confirm_answers = "agent"
+instruction_files = "agent"
+mcp_approve = "person"  # "agent" would let an agent start processes outside the guard
+```
 
 <!-- cockpit:ref path=packages/cockpit/src/guards/policy-pin.ts --> The guard pins the policy: an
 agent's edit, write or patch that would change `[work]`, `[work.gates]` or `[autonomy]`, or widens
@@ -424,11 +477,6 @@ and its digest; a person runs `sync --interactive`, reads it and types the diges
 `doctor` report the same weakening. Until then every work command refuses to run under the weaker
 policy, and so does `reset --apply` when `[autonomy] reset` is the weakened field. A stronger policy
 needs nobody.
-
-What no setting relaxes: reads of secrets and declared instances, pushes to protected branches,
-writes to guard controls, and the policy pin. What only a person can do: trust Codex's hooks, trust
-a workspace in Claude Code, and sign in to a secrets provider. `doctor` and `check` report missing
-Codex hook trust as `CODEX_HOOK_UNTRUSTED`; cockpit cannot observe the other two.
 
 A local `person` gate is best-effort: cockpit cannot tell a person from a program driving a
 terminal. `ci` relies on the `CI` variable, which an agent can set too, so locally it is best-effort

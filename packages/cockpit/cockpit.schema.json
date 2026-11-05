@@ -871,6 +871,22 @@
             "agent",
             "person"
           ]
+        },
+        "confirm_answers": {
+          "description": "Who confirms an unconfirmed init answer that is neither a trust decision nor settled by an observation (cockpit.name, estate.runnable, environment.test_data): person, or agent, which lets cockpit confirm record it as the agent's decision. Trust decisions stay a person's. Default person.",
+          "type": "string",
+          "enum": [
+            "agent",
+            "person"
+          ]
+        },
+        "instruction_files": {
+          "description": "Who may run setup --write-instruction-files and --write-instruction-pointers, which write the sibling AGENTS.md, CLAUDE.md and guide links setup proposes: person, or agent, which the guard then admits. An agent can make the same edits with its own tools. Default person.",
+          "type": "string",
+          "enum": [
+            "agent",
+            "person"
+          ]
         }
       },
       "additionalProperties": false

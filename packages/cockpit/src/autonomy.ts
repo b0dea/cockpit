@@ -13,7 +13,7 @@ import { type EnvironmentDiagnostic, type ENVIRONMENT_CODES, hasErrorCode, Refus
 import { GRADING, type CockpitConfig, type Decider, type WorkGrading } from './schema.js'
 
 export type WorkGate = 'accept' | 'amend' | 'answer' | 'signoff' | 'acknowledge'
-type AutonomyDecision = 'sync' | 'stale_delete' | 'reset' | 'mcp_approve'
+type AutonomyDecision = 'sync' | 'stale_delete' | 'reset' | 'mcp_approve' | 'confirm_answers' | 'instruction_files'
 export interface EffectivePolicy {
     readonly grading: WorkGrading
     readonly gates: Readonly<Record<WorkGate, Decider>>
@@ -25,8 +25,12 @@ export interface EffectivePolicy {
 // MCP source is an ordinary file an agent writes, and a harness starts an enabled server outside every
 // guard boundary, so an agent approving MCP servers could run any command it wrote there. Test
 // weakening is judged by the grading model where one grades, so acknowledging it is the agent's too.
+// Confirming a non-trust answer and writing sibling instruction files are process gates a team may
+// hand to the agent; they default to a person because a recorded policy that predates them reads them
+// as person, and any other default would hold every existing cockpit for a weakening nobody made.
 export const GATE_DEFAULTS: Readonly<Record<WorkGate, Decider>> = Object.freeze({ accept: 'agent', amend: 'agent', answer: 'agent', signoff: 'agent', acknowledge: 'agent' })
-export const AUTONOMY_DEFAULTS: Readonly<Record<AutonomyDecision, Decider>> = Object.freeze({ sync: 'agent', stale_delete: 'agent', reset: 'person', mcp_approve: 'person' })
+export const AUTONOMY_DEFAULTS: Readonly<Record<AutonomyDecision, Decider>> = Object.freeze({ sync: 'agent', stale_delete: 'agent', reset: 'person', mcp_approve: 'person',
+    confirm_answers: 'person', instruction_files: 'person' })
 
 /** A trust answer listed under `unconfirmed` that cockpit holds at a stronger value until a person confirms it. */
 export interface HeldAnswer { readonly field: 'work.grading' | 'environment.install_policies'; readonly declared: string; readonly inForce: string }
@@ -68,7 +72,8 @@ export function effectivePolicy(config: Readonly<{ unconfirmed?: Readonly<Cockpi
         grading: trustInForce(config).grading,
         gates: pick<WorkGate>(config.work.gates, GATE_DEFAULTS),
         autonomy: pick<AutonomyDecision>({ sync: config.autonomy.sync, stale_delete: config.autonomy.stale_delete,
-            reset: config.autonomy.reset, mcp_approve: config.autonomy.mcp_approve }, AUTONOMY_DEFAULTS),
+            reset: config.autonomy.reset, mcp_approve: config.autonomy.mcp_approve,
+            confirm_answers: config.autonomy.confirm_answers, instruction_files: config.autonomy.instruction_files }, AUTONOMY_DEFAULTS),
     }
 }
 

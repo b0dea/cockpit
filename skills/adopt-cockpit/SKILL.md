@@ -191,6 +191,11 @@ started it, even where it lives outside this root.
      is not wanted. A tool without subagents, or a sandbox that blocks a nested CLI, changes the
      path and not the rule: list another tool, or let the person choose `checks`, `self` or `off`,
      and never pick something weaker yourself without marking it.
+   - **How much the agent decides.** Offer the person the three columns of the table in *Who
+     decides* in `./node_modules/@b00dea/cockpit/docs/safety-and-autonomy.md`: the shipped defaults,
+     a stricter setting, or the *Fully agentic setup*, which hands every process gate to the agent and
+     keeps every guardrail. The `[autonomy]` and `[work.gates]` fields are theirs to write: never
+     write or loosen one yourself.
    - **Environment access.** Inspect filenames and declared scripts without opening plaintext
      dotenv or credential files. If a repository has dotenv files or templates, follow **Secret
      handling** even when `.env.schema` is absent. Reuse an existing Varlock setup; otherwise
@@ -272,6 +277,10 @@ started it, even where it lives outside this root.
      tell the person to confirm each: delete its entry, then run
      `./node_modules/.bin/cockpit sync --config cockpit.toml --interactive` in a terminal outside the
      agent. Until then grading runs as `independent` and the guard admits no install policy's commands.
+     Where `[autonomy] confirm_answers = "agent"`, confirm `cockpit.name`, `estate.runnable` and
+     `environment.test_data` yourself instead, as in
+     `./node_modules/.bin/cockpit confirm cockpit.name --config cockpit.toml --json`; the record says
+     you decided them.
    Done when `doctor` reports no required gap and every other gap is cleared or reported.
 8. **Put product changes where the person reviews them.** A Dockerfile, Compose file or
    `.env.schema` the product needs goes on a new branch in that sibling's checkout: start the branch

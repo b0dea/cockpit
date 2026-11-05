@@ -38,8 +38,9 @@ function renderDerived(rows: readonly DerivedAnswer[]): string {
 function renderDecisionDefaults(): string {
     const table = (name: string, defaults: Readonly<Record<string, string>>) =>
         [`# [${name}]`, ...Object.entries(defaults).map(([key, value]) => `# ${key} = "${value}"`)]
+    const person = Object.entries({ ...GATE_DEFAULTS, ...AUTONOMY_DEFAULTS }).filter(([, value]) => value === 'person').map(([key]) => key)
     return `\n${[
-        '# Who takes each decision. All default to "agent" except reset and mcp_approve; set one to "person" to take it yourself.',
+        `# Who takes each decision. All default to "agent" except ${person.slice(0, -1).join(', ')} and ${person.at(-1)}; set one to "person" to take it yourself.`,
         '# mcp_approve = "agent" lets an agent start processes outside the guard: sync then enables every server',
         '# a sibling MCP source declares, and an agent can write that file.',
         ...table('work.gates', GATE_DEFAULTS), ...table('autonomy', AUTONOMY_DEFAULTS),

@@ -190,6 +190,8 @@ type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; reason: s
     // Admitted only where cockpit.toml grants it: browser preapproval, on by default for and allowed
     // only on isolated data that cannot reach production, or an [autonomy] field set to agent.
     requires?: OrdinaryGrant
+    // These flags, which the command otherwise refuses an agent, are admitted where cockpit.toml grants it.
+    flagGrant?: Readonly<{ flags: readonly string[]; grant: OrdinaryGrant }>
 }>
 
 // Mirrors EvaluatorTool in schema.ts, which this data table may not import.
@@ -268,8 +270,8 @@ const sources = [
         summary: 'Clone or locate the declared sibling repositories and link them',
         handler: 'setup',
         visibility: 'public',
-        ordinary: ordinary('setup', { forbidden: Object.freeze({ presence: Object.freeze(['write-instruction-pointers', 'write-instruction-files']) }) }),
-        flags: { config: configFlag, 'write-instruction-pointers': bool(), 'write-instruction-files': bool(), json: jsonFlag },
+        ordinary: ordinary('setup', { flagGrant: Object.freeze({ flags: Object.freeze(['write-instruction-pointers', 'write-instruction-files']), grant: 'autonomy-instruction-files' as const }) }),
+        flags: { config: configFlag, 'write-instruction-pointers': bool(flag), 'write-instruction-files': bool(flag), json: jsonFlag },
     },
     {
         name: 'use',
@@ -325,8 +327,9 @@ const sources = [
         handler: 'confirm',
         visibility: 'public',
         // It removes an entry from unconfirmed only after an observation of this machine and the running
-        // stack passes, and records that observation where only cockpit writes; the guard then treats the
-        // removal as non-widening. It refuses the answers a person must confirm.
+        // stack passes, or as the agent's decision where [autonomy] confirm_answers delegates it, and
+        // records which where only cockpit writes; the guard then treats the removal as non-widening. It
+        // refuses the answers a person must confirm.
         ordinary: ordinary('confirm', { positional: Object.freeze({ min: 1, max: 1, roles: Object.freeze(['operation'] as const),
             operations: UNCONFIRMED_ANSWER_WORDS }) }),
         flags: configured,
@@ -645,8 +648,8 @@ interface OrdinaryInvocationAuthority {
     /** Compose profiles an agent may name with --profile; any other starts services no person declared for it. */
     readonly profiles: readonly string[]
 }
-export type OrdinaryGrant = 'browser-preapproval' | 'autonomy-sync' | 'autonomy-reset'
-const ORDINARY_GRANTS: readonly OrdinaryGrant[] = ['browser-preapproval', 'autonomy-sync', 'autonomy-reset']
+export type OrdinaryGrant = 'browser-preapproval' | 'autonomy-sync' | 'autonomy-reset' | 'autonomy-instruction-files'
+const ORDINARY_GRANTS: readonly OrdinaryGrant[] = ['browser-preapproval', 'autonomy-sync', 'autonomy-reset', 'autonomy-instruction-files']
 
 // An image reference or ID as Docker spells it; the command itself refuses one that is not local.
 const LOCAL_IMAGE = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,255}$/
@@ -786,6 +789,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
         || Object.entries(grammar.options).some(([name, option]) => option.required && !options.has(name))
         // A dry run writes nothing, so no grant gates it.
         || grammar.requires !== undefined && !options.has('dry-run') && !source.grants.includes(grammar.requires)
+        || grammar.flagGrant !== undefined && grammar.flagGrant.flags.some(name => options.has(name)) && !source.grants.includes(grammar.flagGrant.grant)
         || typeof inspectPath !== 'function' || [...paths].some(path => !inspectPath(path))) return undefined
     return { executable: source.executable, cwd: source.canonicalRoot, argv: [...args],
         ...(reads.length ? { reads } : {}), ...options.has('replace-from') ? { alone: true as const } : {} }

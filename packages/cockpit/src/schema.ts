@@ -536,6 +536,10 @@ export const Autonomy = z
         reset: Decider.optional().describe('Who may apply a reset, which deletes stack data. Default person.'),
         // CI adds nothing here: an approval is a digest in [mcp.approved], which only a person edits.
         mcp_approve: z.enum(['agent', 'person']).optional().describe('Who approves a declared MCP server: person records each digest in [mcp.approved]; agent lets sync enable every declared server as declared, so an agent that writes a sibling MCP source starts that process outside the guard. Default person.'),
+        // Process gates: a person adds a step here, not protection, since what each grants an agent
+        // reaches nothing it could not already do or claim. CI adds nothing to either.
+        confirm_answers: z.enum(['agent', 'person']).optional().describe('Who confirms an unconfirmed init answer that is neither a trust decision nor settled by an observation (cockpit.name, estate.runnable, environment.test_data): person, or agent, which lets cockpit confirm record it as the agent\'s decision. Trust decisions stay a person\'s. Default person.'),
+        instruction_files: z.enum(['agent', 'person']).optional().describe('Who may run setup --write-instruction-files and --write-instruction-pointers, which write the sibling AGENTS.md, CLAUDE.md and guide links setup proposes: person, or agent, which the guard then admits. An agent can make the same edits with its own tools. Default person.'),
     })
     .strict()
 
