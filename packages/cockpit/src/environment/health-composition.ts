@@ -488,6 +488,13 @@ function composeHealthCommandAdapters(
         // The configuration's own error comes first; an invalid PATH cannot make a missing file less specific.
         if (loaded.kind === 'refusal') return refuse?.(loaded.diagnostics)
         if (loaded.kind !== 'complete') return undefined
+        // Health is about a running stack or a machine floor; with neither declared it is not declared,
+        // never healthy, and preflight refuses, whatever PATH holds, because it observes nothing and
+        // a standalone init continues on that answer. Doctor still checks what such a cockpit does
+        // depend on: its Git working tree, its siblings and its surfaces.
+        const notDeclared = declaresNothingToRun(loaded.result.config.environment)
+            ? runtimeNotDeclared(loaded.result.source.path) : undefined
+        if (notDeclared && purpose !== 'doctor') return refuse?.([notDeclared])
         if (searchRefusal) return refuse?.([{
             severity: 'error', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
             message: `${purpose}'s observation tools cannot be selected: ${searchRefusal}`, target: 'PATH',
@@ -495,12 +502,6 @@ function composeHealthCommandAdapters(
         }])
         if (!input) return undefined
         loadedConfig = loaded
-        // Health is about a running stack or a machine floor; with neither declared it is not declared,
-        // never healthy, and preflight refuses. Doctor still checks what such a cockpit does depend on:
-        // its Git working tree, its siblings and its surfaces.
-        const notDeclared = declaresNothingToRun(loaded.result.config.environment)
-            ? runtimeNotDeclared(loaded.result.source.path) : undefined
-        if (notDeclared && purpose !== 'doctor') return refuse?.([notDeclared])
         const git = await resolveGitExecutable(input.env)
         if (git.state !== 'available') return refuse?.([{
             severity: 'error', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,

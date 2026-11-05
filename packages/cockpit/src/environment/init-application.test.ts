@@ -442,7 +442,7 @@ describe('init application', () => {
         ]))
     })
 
-    it('resumes staged adoption of a runnable product with exact answers and a real no-runtime preflight', async () => {
+    it.each(['/usr/bin:/bin', '/usr/bin/../bin:/bin'])('resumes staged adoption of a runnable product with exact answers and a real no-runtime preflight on PATH %s', async PATH => {
         const f = fixture()
         mkdirSync(join(f.root, 'app'))
         await writeFile(join(f.root, 'app', 'compose.yml'), 'services:\n  app:\n    image: synthetic.invalid/app:1\n')
@@ -453,7 +453,7 @@ describe('init application', () => {
             measureMachine: async () => { measurements += 1; return { kind: 'unavailable', reason: 'no container runtime' } },
             validateConfig: loadCockpitConfig,
             preflight: input => runPreflight(input, createHealthCommandAdapters({ configPath: f.destination,
-                env: { HOME: f.input.home, PATH: '/usr/bin:/bin' }, timeoutMs: 5_000 }, async () => {
+                env: { HOME: f.input.home, PATH }, timeoutMs: 5_000 }, async () => {
                 throw new Error('no runtime should be probed for an explicitly deferred runtime')
             })),
         }
