@@ -63,7 +63,7 @@ export async function inputSourcesCurrent(
 ): Promise<boolean> {
     try {
         if (deadline !== undefined && Date.now() >= deadline) return false
-        if (prepared.runtimeCheckout && !await revalidateGeneratedCheckoutIdentity(prepared.runtimeCheckout)) return false
+        if (!await revalidateGeneratedCheckoutIdentity(prepared.checkoutIdentity)) return false
         if (!await siblingRootsCurrent(prepared.siblingRoots)) return false
         if (prepared.guardHandler) {
             const handler = prepared.guardHandler

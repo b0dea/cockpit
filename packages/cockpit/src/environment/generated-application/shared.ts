@@ -136,7 +136,7 @@ export interface PreparedEnvironment {
     readonly root: string
     readonly cockpitId: CockpitId
     readonly stackId: ReturnType<typeof stackId>
-    readonly runtimeCheckout?: GeneratedCheckoutIdentity
+    readonly checkoutIdentity: GeneratedCheckoutIdentity
     readonly configPath: string
     readonly sourceSha256: string
     readonly runtimeSha256: string

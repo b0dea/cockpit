@@ -215,8 +215,7 @@ export async function prepareSurfaces(
     let browser: ReturnType<typeof renderBrowserSurfaces> | null = null
     let browserAuthority: ConsumedWorkApplicationAuthorities['browser']
     if (prepared.workEnvironment.browser) {
-        const checkout = prepared.runtimeCheckout
-        if (!checkout) return refuse('SURFACE_INPUT_INVALID', 'browser checkout identity is unavailable', prepared.configPath)
+        const checkout = prepared.checkoutIdentity
         const browserConfiguration = prepared.workEnvironment.browser
         const playwright = declarations.filter(row => row.name === 'playwright')
             .flatMap(row => 'command' in row ? [row] : [])

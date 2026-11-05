@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
+import { runCli } from '../cli.js'
 import { runDoctor } from './application/doctor.js'
 import { runPreflight } from './application/health.js'
 import { runUp } from './application/lifecycle.js'
@@ -63,6 +64,46 @@ sources = [
 // publication helpers, Git and runtime probes), so its wall time scales with machine load rather
 // than with the work under test. The budget is sized for four concurrent workers on a busy host.
 describe('production health adapter composition', { timeout: 180_000 }, () => {
+    it.each(['linked', 'nested'] as const)('reports surfaces-only readiness from a %s checkout without inventing runtime evidence', async (layout) => {
+        const candidate = await fixture({ unseeded: true })
+        await writeFile(candidate.configPath, (await readFile(candidate.configPath, 'utf8')).split('[environment]')[0]!)
+        await writeFile(join(candidate.checkout, '.gitignore'), '*\n!.gitignore\n!cockpit.toml\n')
+        await run('git', ['-C', candidate.checkout, 'add', 'cockpit.toml', '.gitignore'])
+        await run('git', ['-C', candidate.checkout, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid',
+            'commit', '--quiet', '-m', 'declare synthetic surfaces'])
+        const root = layout === 'linked' ? join(candidate.root, 'linked') : join(candidate.checkout, 'nested')
+        if (layout === 'linked') await run('git', ['-C', candidate.checkout, 'worktree', 'add', '--quiet', '--detach', root])
+        else await mkdir(root)
+        const configPath = join(root, 'cockpit.toml')
+        if (layout === 'nested') await writeFile(configPath, await readFile(candidate.configPath, 'utf8'))
+        await mkdir(join(root, 'siblings/api'), { recursive: true })
+        expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete', status: 0 })
+        const env = { PATH: '/usr/bin:/bin', HOME: candidate.home, NO_UPDATE_NOTIFIER: '1' }
+        const doctor = async () => {
+            let stdout = ''
+            expect(await runCli(['doctor', '--config', configPath, '--json'], {
+                stdout: { write: text => ((stdout += text), true) }, stderr: { write: () => true },
+            }, {}, { env })).toBe(0)
+            return JSON.parse(stdout)
+        }
+        const report = await doctor()
+        expect(report.diagnostics, JSON.stringify(report.diagnostics)).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: 'LIFECYCLE_EVIDENCE_INVALID' }),
+        ]))
+        expect(report.diagnostics).toContainEqual(expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED' }))
+        expect(report.result.checks).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: 'HARNESS_SURFACE_UNAVAILABLE', verdict: 'pass' }),
+            expect.objectContaining({ code: 'STATE_UNSEEDED', verdict: 'not-applicable' }),
+            expect.objectContaining({ code: 'RUNTIME_UNMEASURED', verdict: 'not-applicable' }),
+            expect.objectContaining({ code: 'RUNNING_CHECKOUT_MISMATCH', verdict: 'not-applicable' }),
+        ]))
+        expect(report.result.verdict).not.toBe('pass')
+        await writeFile(join(root, 'AGENTS.md'), 'Changed generated guidance.\n')
+        const changed = await doctor()
+        expect(changed.result.freshness.local.status).toBe(2)
+        expect(changed.result.checks).not.toContainEqual(expect.objectContaining({ code: 'HARNESS_SURFACE_UNAVAILABLE', verdict: 'pass' }))
+    })
+
     it('passes seeded machine-floor health through public routes and refuses changed published surfaces', async () => {
         const candidate = await fixture({ machineOnly: true })
         const address = candidate.namespace.paths.lifecycle(candidate.stack)

@@ -40,7 +40,11 @@ orders) and checks them for [drift](concepts.md#drift). A cockpit that declares 
 `[environment.machine]` still gets the machine-capacity checks in `preflight`, so it is not refused
 as surfaces only. `doctor` reports an undeclared runtime as not declared, not as healthy, and its
 `declarations` result says whether the runtime, the reset volumes and the seed command are
-declared. [`examples/docs-only`](../examples/docs-only/README.md) and
+declared. This also works from linked Git worktrees and configurations below the checkout root:
+`doctor` binds generated-surface checks to that checkout's identity without requiring a runtime.
+A passing surface check verifies generated files, not running services, hook enforcement or MCP
+startup. Hook enforcement and successful MCP startup require separate harness checks.
+[`examples/docs-only`](../examples/docs-only/README.md) and
 [`examples/compose-first`](../examples/compose-first/README.md) show the two modes. Vendor stubs,
 TLS, seeding and restoring data are plain Compose; [Compose patterns](compose-patterns.md) shows
 each.
