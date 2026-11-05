@@ -22,8 +22,8 @@ import {
     type ExecutionStep,
 } from './contract.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
-import { observationSearchPath, resolveDockerExecutable, resolveGitExecutable } from './executable.js'
-import { inspectMachineStacksForDoctor, mainCheckoutOf, type OwnCheckout } from './stack-inventory.js'
+import { observationEnvironment, resolveDockerExecutable, resolveGitExecutable } from './executable.js'
+import { inspectMachineStacksForDoctor, type OwnCheckout } from './stack-inventory.js'
 import { createGitObservationStep, observeGit, observeRunningCheckout } from './git-observation.js'
 import { inspectProjectReadiness } from './readiness-composition.js'
 import { stackId } from './identity.js'
@@ -383,10 +383,9 @@ function producers(input: {
             // The schema that counts is in the checkout `cockpit use` serves: the stack runs from it.
             const served = await loadServedSiblings(cockpitRoot, config)
             if (served.kind === 'refusal') throw new RefusalError(served.diagnostic.message)
-            const mainCheckout = await mainCheckoutOf(cockpitRoot)
             return await observeEnvSchemas({
                 stackId: input.stack,
-                cockpit: { root: cockpitRoot, name: config.cockpit.name, ...mainCheckout === undefined ? {} : { mainCheckout } },
+                cockpit: { root: cockpitRoot, name: config.cockpit.name },
                 siblings: config.sibling.map((sibling) => ({ slug: sibling.slug, root: servedPath(served.siblings, sibling.slug) })),
                 git: input.git,
                 env: input.env,
@@ -465,18 +464,9 @@ export function createHealthCommandAdapters(
     execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
 ): HealthCommandAdapterComposition {
     const inherited = captureInput(rawInput)
-    const search = inherited ? observationSearchPath(inherited.env) : undefined
-    const input = inherited && search?.state === 'available'
-        ? { ...inherited, env: { ...inherited.env, PATH: search.path } } : undefined
-    return composeHealthCommandAdapters(input, inherited, execute, search?.state === 'unavailable' ? search.reason : undefined)
-}
-
-function composeHealthCommandAdapters(
-    input: CapturedInput | undefined,
-    inherited: CapturedInput | undefined,
-    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
-    searchRefusal?: string,
-): HealthCommandAdapterComposition {
+    const search = inherited ? observationEnvironment(inherited.env) : undefined
+    const input = inherited && search?.state === 'available' ? { ...inherited, env: search.env } : undefined
+    const searchRefusal = search?.state === 'unavailable' ? search.reason : undefined
     let selectedNamespace: StateNamespace | undefined
     let loadedConfig: LoadedCockpitConfigResult | undefined
     let selectedOwn: (OwnCheckout & Readonly<{ configPath: string }>) | undefined
@@ -489,6 +479,13 @@ function composeHealthCommandAdapters(
         // The configuration's own error comes first; an invalid PATH cannot make a missing file less specific.
         if (loaded.kind === 'refusal') return refuse?.(loaded.diagnostics)
         if (loaded.kind !== 'complete') return undefined
+        // Health is about a running stack or a machine floor; with neither declared it is not declared,
+        // never healthy, and preflight refuses, whatever PATH holds, because it observes nothing and
+        // a standalone init continues on that answer. Doctor still checks what such a cockpit does
+        // depend on: its Git working tree, its siblings and its surfaces.
+        const notDeclared = declaresNothingToRun(loaded.result.config.environment)
+            ? runtimeNotDeclared(loaded.result.source.path) : undefined
+        if (notDeclared && purpose !== 'doctor') return refuse?.([notDeclared])
         if (searchRefusal) return refuse?.([{
             severity: 'error', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
             message: `${purpose}'s observation tools cannot be selected: ${searchRefusal}`, target: 'PATH',
@@ -496,12 +493,6 @@ function composeHealthCommandAdapters(
         }])
         if (!input) return undefined
         loadedConfig = loaded
-        // Health is about a running stack or a machine floor; with neither declared it is not declared,
-        // never healthy, and preflight refuses. Doctor still checks what such a cockpit does depend on:
-        // its Git working tree, its siblings and its surfaces.
-        const notDeclared = declaresNothingToRun(loaded.result.config.environment)
-            ? runtimeNotDeclared(loaded.result.source.path) : undefined
-        if (notDeclared && purpose !== 'doctor') return refuse?.([notDeclared])
         const git = await resolveGitExecutable(input.env)
         if (git.state !== 'available') return refuse?.([{
             severity: 'error', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,

@@ -10,6 +10,10 @@ import { exactKeys } from '../exact-keys.js'
 // observes with are found on this fixed search path rather than the inherited PATH.
 export const GUARD_EXECUTABLE_SEARCH_PATH = '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin'
 
+// Repository-local `core.fsmonitor` and hooks run code on nearly any Git command. Agents cannot write under
+// `.git`, so this is defence in depth against a checkout whose configuration arrived some other way.
+export const GIT_CHILD_CONFIG = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'] as const
+
 // Every executable runs from its own path. The executor re-checks the file's identity and digest
 // immediately before each spawn, and the process-wide digest memo makes that re-check cost a stat
 // unless the file's device, inode, size, mode or times moved. Copying a binary into a private
@@ -172,6 +176,13 @@ export function observationSearchPath(env: Readonly<Record<string, string | unde
     }
     return absolute.length > 0 ? { state: 'available', path: absolute.join(delimiter) }
         : { ...miss('Observation search path has no absolute directories; relative entries are excluded'), noAbsoluteDirectory: true }
+}
+
+/** `env` with its PATH narrowed to what an observation may search, or why it cannot be. */
+export function observationEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<{ state: 'available'; env: Readonly<Record<string, string | undefined>> }>
+    | Exclude<ReturnType<typeof observationSearchPath>, { state: 'available' }> {
+    const search = observationSearchPath(env)
+    return search.state === 'available' ? { state: search.state, env: { ...env, PATH: search.path } } : search
 }
 
 // Validates the search path once and tries each directory in order; `probe` decides what a hit is.

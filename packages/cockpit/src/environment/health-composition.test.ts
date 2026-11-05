@@ -339,6 +339,13 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
             message: expect.stringContaining('preflight cannot find Git to observe the checkout: Executable was not found in the supplied search path: git') }))
         expect((await preflight('/usr/bin/../bin:/bin')).diagnostics).toContainEqual(expect.objectContaining({ code: 'EVIDENCE_UNAVAILABLE', target: 'PATH',
             message: expect.stringContaining('preflight\'s observation tools cannot be selected') }))
+        // With nothing declared there is nothing to observe, so the answer does not depend on PATH; doctor still observes the checkout.
+        const surfacesOnly = await fixture({ unseeded: true })
+        const noncanonical = { configPath: surfacesOnly.configPath, env: { PATH: '/usr/bin/../bin:/bin', HOME: surfacesOnly.home }, timeoutMs: 5_000 }
+        expect((await runPreflight({ configPath: surfacesOnly.configPath }, createHealthCommandAdapters(noncanonical, executeProbe))).diagnostics)
+            .toEqual([expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED' })])
+        expect((await runDoctor({ configPath: surfacesOnly.configPath }, createHealthCommandAdapters(noncanonical, executeProbe))).diagnostics)
+            .toContainEqual(expect.objectContaining({ code: 'EVIDENCE_UNAVAILABLE', target: 'PATH' }))
     })
 
     it('warns from doctor when PATH holds a relative entry, under which the guard asks before every command', async () => {

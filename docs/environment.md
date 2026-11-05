@@ -45,10 +45,15 @@ declared. This also works from linked Git worktrees and configurations below the
 A passing surface check verifies generated files, not running services, hook enforcement or MCP
 startup. Hook enforcement and successful MCP startup require separate harness checks.
 With no runtime declared, `sync` and `check` only ask Git which checkout holds the configuration, and
-Git activity in that checkout does not disturb them. A `.git` entry Git rejects, or Git being absent
-from `PATH`, makes the directory standalone with a `GENERATED_CHECKOUT_STANDALONE` warning stating
-why, because publishing files depends on neither. A declared runtime or browser still needs setup's
-stricter view of the checkout, because stack identity and repository writes depend on it.
+Git activity in that checkout does not disturb them. No repository, a `.git` entry Git rejects, or Git
+being absent from `PATH`, makes the directory standalone with a `GENERATED_CHECKOUT_STANDALONE`
+warning stating why. The generated files stay valid, but the guard needs a Git repository it can read
+and holds [guarded calls](safety-and-autonomy.md#edits-the-guard-has-not-applied) until it has one;
+its refusal states the reason, and held calls continue without a `sync` once the repository is
+readable. The guard reads a repository more strictly than `sync` and `check` do, so a
+repository-local `include.path` in Git's configuration raises nothing from them, and the first sign
+is the guard's refusal or the same reason from `doctor`. A declared runtime or browser still needs
+setup's stricter view of the checkout, because stack identity and repository writes depend on it.
 [`examples/docs-only`](../examples/docs-only/README.md) and
 [`examples/compose-first`](../examples/compose-first/README.md) show the two modes. Vendor stubs,
 TLS, seeding and restoring data are plain Compose; [Compose patterns](compose-patterns.md) shows
@@ -723,7 +728,8 @@ when that directory exists; the cockpit root's own schema uses `env/.secrets/<co
 That directory is checked with file metadata only and nothing inside it is read, and a symbolic link
 on the way to it, or a failure other than its absence, makes the schema unavailable. A sibling is
 read from the checkout `cockpit use` serves. The store is gitignored, so a linked worktree of the
-cockpit that has none uses its main checkout's.
+cockpit that has none uses its main checkout's, at the same place below the working tree. Git names
+the main checkout; a repository laid out any other way, or Git failing, leaves the schema with no store.
 
 Only key names and a category are kept; values and Varlock's messages are discarded.
 
@@ -749,6 +755,14 @@ local install sees `ENV_SCHEMA_TOOL_MISSING`, a warning rather than a failure
 Secret-manager resolvers, such as vault or 1Password, may need their own sign-in and environment. The
 probe passes your environment through, never prompts because its stdin is closed, and reports a
 timeout as unavailable. This was measured only with a failing synthetic resolver, not a real provider.
+
+The probe has an execution limit. `varlock load` runs the schema's resolvers, including an `exec()`
+command, and the guard exempts a schema from secret-file denial as documentation, so an agent that
+can edit a schema can have commands run, with your environment, by a `doctor` or `preflight` it may
+run unprompted. Declared testing commands also run code an agent edited, and cockpit is not a
+sandbox. Review schema changes as you review code, and run `doctor` with a provider sign-in only on
+schemas you trust. This was reasoned from Varlock's documented resolver behaviour plus a failing
+`exec()` measured with a synthetic schema.
 
 Set `VARLOCK_TELEMETRY_DISABLED=true` in product-owned Varlock wrappers too. Cockpit's probes
 always disable Varlock telemetry; they do not modify global Varlock settings. See

@@ -190,6 +190,9 @@ export function guardConfigHeldReason(change: Exclude<GuardConfigChange, Readonl
         : `the configuration they were generated from is not recorded in ${GUARD_LOCAL_PATHS.generatedConfig}, so the edit cannot be shown not to widen what agents may do`
 }
 
+/** What restoring the recorded configuration costs, for every message that offers it. */
+export const GUARD_RESTORE_LIMIT = 'an agent can restore only what was recorded, so authority never exceeds the recorded policy, and this may also discard a person\'s unsynced narrowing edit'
+
 /** What `check` reports about an edit the guards were not regenerated for, or nothing. */
 export async function inspectGuardConfigChange(root: string, configPath: string,
     current: Readonly<{ sha256: string; config: CockpitConfig }>): Promise<readonly EnvironmentDiagnostic[]> {
@@ -213,7 +216,7 @@ export async function inspectGuardConfigChange(root: string, configPath: string,
     if (change.kind === 'non-widening') return [{ severity: 'warning' as const, target: 'guard',
         code: 'GUARD_CONFIG_UNSYNCED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_UNSYNCED,
         message: `cockpit.toml changed since the guards were generated without widening what agents may do; the guard holds ${GUARD_HELD_CALLS}, except ${UNSYNCED_ADMITTED_PROSE}, until it is synced, while ${GUARD_UNHELD_CALLS} continue`,
-        fix: `run ${cockpitCommand('sync', { config: configPath })}; an agent may run it where [autonomy] sync = "agent". If sync refuses the edit, undo it: the guard admits one edit of ${configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}` }]
+        fix: `run ${cockpitCommand('sync', { config: configPath })}; an agent may run it where [autonomy] sync = "agent". If sync refuses the edit, undo it: the guard admits one edit of ${configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}; ${GUARD_RESTORE_LIMIT}` }]
     return [{ severity: 'error' as const, target: 'guard',
         code: 'GUARD_CONFIG_WIDENED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_WIDENED,
         message: `cockpit.toml changed since the guards were generated and ${guardConfigHeldReason(change)}; the guard holds ${GUARD_HELD_CALLS} until a person syncs, while ${GUARD_UNHELD_CALLS} continue`,

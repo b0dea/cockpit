@@ -1,9 +1,11 @@
-import { dirname, posix } from 'node:path'
+import { realpath } from 'node:fs/promises'
+import { basename, dirname, join, posix, relative } from 'node:path'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { formatShellCommand } from '../fix-catalogue.js'
 import {
     DOTENV_DOCUMENTATION,
+    hasErrorCode,
     RefusalError,
     ENVIRONMENT_CODES,
     OBSERVATION_REASON_BYTE_LIMIT,
@@ -16,7 +18,7 @@ import {
     type ExecutionStep,
     type StackId,
 } from './contract.js'
-import { resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
+import { GIT_CHILD_CONFIG, resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
 import { repositoryIdentity, type RepositoryIdentity } from './repository-identity.js'
 import { stackId as deriveStackId } from './identity.js'
 import { isRuntimeTopologyEvidence, type RuntimeTopologyEvidence } from './runtime.js'
@@ -102,7 +104,7 @@ export function createGitObservationStep(input: {
         || !safeEnvironment) return undefined
     const step = snapshotExecutionStep({
         id: 'git-health',
-        argv: [executable.canonicalPath, '-C', input.checkoutRoot, 'status', '--porcelain=v2', '--branch', '--untracked-files=normal'],
+        argv: [executable.canonicalPath, '-C', input.checkoutRoot, ...GIT_CHILD_CONFIG, 'status', '--porcelain=v2', '--branch', '--untracked-files=normal'],
         argv0: executable.invocationPath,
         cwd: input.checkoutRoot,
         env: Object.fromEntries(safeEnvironment),
@@ -417,7 +419,7 @@ export function createComparisonRemoteRefStep(input: {
     const binding = { ...git, sibling: input.sibling, expected: expected.identity, branch, revision, upstream }
     const step = comparisonStep({
         id: `git:${input.sibling}:comparison-ref`, binding, env: input.env, timeoutMs: input.timeoutMs,
-        argv: [executable.canonicalPath, '-C', input.checkoutRoot, 'for-each-ref',
+        argv: [executable.canonicalPath, '-C', input.checkoutRoot, ...GIT_CHILD_CONFIG, 'for-each-ref',
             '--format=%(objectname)%00%(refname)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream)',
             '--count=1', '--', `refs/heads/${branch}`],
     })
@@ -454,7 +456,7 @@ export function observeComparisonRemoteRef(stage: ComparisonRemoteRefStage, outc
     const { remoteName, upstreamRef } = decoded
     const step = comparisonStep({
         id: `git:${binding.sibling}:comparison-url`, binding, env: stage.step.env, timeoutMs: stage.step.timeoutMs,
-        argv: [binding.executable.canonicalPath, '-C', binding.checkoutRoot, 'remote', 'get-url', '--', remoteName],
+        argv: [binding.executable.canonicalPath, '-C', binding.checkoutRoot, ...GIT_CHILD_CONFIG, 'remote', 'get-url', '--', remoteName],
     })
     if (!step) return comparisonUnavailable(`comparison remote probe is unavailable for sibling ${binding.sibling}`, remoteName)
     const next = { kind: 'probe' as const, step, remoteName }
@@ -487,7 +489,7 @@ export function observeComparisonRemoteUrl(stage: ComparisonRemoteUrlStage, outc
         && observed.identity.repository === binding.expected.repository ? 'match' : 'mismatch'
     const step = comparisonStep({
         id: `git:${binding.sibling}:comparison-revalidate`, binding, env: stage.step.env, timeoutMs: stage.step.timeoutMs,
-        argv: [binding.executable.canonicalPath, '-C', binding.checkoutRoot, 'for-each-ref',
+        argv: [binding.executable.canonicalPath, '-C', binding.checkoutRoot, ...GIT_CHILD_CONFIG, 'for-each-ref',
             '--format=%(objectname)%00%(refname)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream)',
             '--', `refs/heads/${binding.branch}`, binding.upstreamRef],
     })
@@ -606,6 +608,45 @@ function secretShaped(path: string, templates: ReadonlySet<string>): boolean {
 }
 const TRACKED_SECRET_LIMIT = 65_536
 
+/**
+ * The directory at the same place below the main checkout as `directory` is below its own working
+ * tree, from what Git says: a directory nested in a linked worktree has no `.git` entry to read, and
+ * Git is the authority on the entry one does have. The main checkout is the parent of a common
+ * directory named `.git`; any other layout, or Git failing, names none.
+ */
+export async function mainCheckoutDirectory(input: {
+    readonly executable: ResolvedExecutable
+    readonly directory: string
+    readonly timeoutMs: number
+}, execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): Promise<string | undefined> {
+    const executable = resolvedGitExecutable(input.executable)
+    if (!executable) return undefined
+    const step = snapshotExecutionStep({
+        id: 'git:main-checkout',
+        argv: [executable.canonicalPath, '-C', input.directory, ...GIT_CHILD_CONFIG, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'],
+        argv0: executable.invocationPath, cwd: input.directory, env: {}, timeoutMs: input.timeoutMs,
+        stdoutLimitBytes: COMPARISON_OUTPUT_LIMIT, stderrLimitBytes: COMPARISON_OUTPUT_LIMIT,
+        paths: [input.directory], ports: [], labels: { source: input.directory },
+        expected: [{ kind: 'path', target: input.directory, state: 'repository' }],
+        consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912,
+            argvIndexes: [0], executable: true, executionMode: executable.executionMode }],
+        filesystemChecks: [], compensation: [],
+    })
+    if (!step) return undefined
+    const outcome = authenticatedExecutionOutcome(await execute(step), step)
+    if (outcome?.kind !== 'complete') return undefined
+    const lines = outcome.stdout.toString('utf8').trimEnd().split('\n')
+    if (lines.length !== 2) return undefined
+    let toplevel: string, common: string, directory: string
+    try { [toplevel, common, directory] = await Promise.all([realpath(lines[0]!), realpath(lines[1]!), realpath(input.directory)]) }
+    catch (error) {
+        if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'ELOOP')) return undefined
+        throw error
+    }
+    const offset = relative(toplevel, directory)
+    return basename(common) === '.git' && !offset.startsWith('..') ? join(dirname(common), offset) : undefined
+}
+
 export type TrackedEnvSchemas =
     | Readonly<{ kind: 'listed'; paths: readonly string[] }>
     | Readonly<{ kind: 'not-a-repository' }>
@@ -622,7 +663,7 @@ export async function listTrackedEnvSchemas(input: {
     if (!executable) return { kind: 'unavailable', reason: 'no resolved Git executable' }
     const step = snapshotExecutionStep({
         id: `git:tracked-env-schemas:${input.slug}`,
-        argv: [executable.canonicalPath, '-C', input.root, '-c', 'core.fsmonitor=false', 'ls-files', '-z', '--', ':(glob)**/.env.schema'],
+        argv: [executable.canonicalPath, '-C', input.root, ...GIT_CHILD_CONFIG, 'ls-files', '-z', '--', ':(glob)**/.env.schema'],
         argv0: executable.invocationPath, cwd: input.root, env: {}, timeoutMs: input.timeoutMs,
         stdoutLimitBytes: TRACKED_SECRET_LIMIT, stderrLimitBytes: COMPARISON_OUTPUT_LIMIT,
         paths: [input.root], ports: [], labels: { sibling: input.slug },
@@ -656,7 +697,7 @@ export async function inspectTrackedSecretFiles(input: {
     const perRepository = await Promise.all(input.repositories.map(async (repository): Promise<readonly EnvironmentDiagnostic[]> => {
         const step = snapshotExecutionStep({
             id: `git:tracked-secrets:${repository.slug}`,
-            argv: [executable.canonicalPath, '-C', repository.root, 'ls-files', '-z', '--', '.env', '*/.env', '.env.*', '*/.env.*', '.secrets/*', '*/.secrets/*'],
+            argv: [executable.canonicalPath, '-C', repository.root, ...GIT_CHILD_CONFIG, 'ls-files', '-z', '--', '.env', '*/.env', '.env.*', '*/.env.*', '.secrets/*', '*/.secrets/*'],
             argv0: executable.invocationPath, cwd: repository.root, env: {}, timeoutMs: input.timeoutMs,
             stdoutLimitBytes: TRACKED_SECRET_LIMIT, stderrLimitBytes: COMPARISON_OUTPUT_LIMIT,
             paths: [repository.root], ports: [], labels: { sibling: repository.slug },

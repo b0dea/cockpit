@@ -7,7 +7,7 @@ import { readBoundedFile } from '../bounded-read.js'
 import { loadCockpitConfig } from '../config/load.js'
 import { ENVIRONMENT_CODES, errorCause, type Diagnostic, type ExecutionStep } from '../environment/contract.js'
 import { gitRepositoryRefusal } from '../environment/git-observation.js'
-import { observationSearchPath } from '../environment/executable.js'
+import { observationEnvironment } from '../environment/executable.js'
 import { redactSensitiveMessage } from '../environment/sensitive.js'
 import { createGitRunner, loadServedSiblings, missingServedCheckout, servedPath, type GitRunner } from '../environment/sibling-checkouts.js'
 import { refusalOutcome } from '../refusal.js'
@@ -88,9 +88,8 @@ export async function runDocsCheck(input: DocsCheckInput, dependencies: Readonly
             `${source.path} has no [docs] table, so there are no living documents or decision records to check`, 'docs',
             'add a [docs] table to cockpit.toml: living = ["README.md", "docs/**/*.md"] lists the documents that must stay true, and the optional decisions = "docs/adr" and decisions_index = "docs/adr/README.md" name the decision records and their index; then rerun npx --no cockpit docs check --config <your cockpit.toml>')
     }
-    const search = observationSearchPath(input.env)
-    const runner = search.state === 'available'
-        ? await createGitRunner({ ...input.env, PATH: search.path }, dependencies.execute) : { unavailable: search.reason }
+    const search = observationEnvironment(input.env)
+    const runner = search.state === 'available' ? await createGitRunner(search.env, dependencies.execute) : { unavailable: search.reason }
     if ('unavailable' in runner) {
         return refusalOutcome(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
             `docs check reads repository history with Git, which is unavailable: ${runner.unavailable}`, 'git',

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type CheckoutId, type StackId } from './contract.js'
@@ -21,6 +21,7 @@ import {
     observeComparisonRemoteUrl,
     decodeGitObservation,
     inspectTrackedSecretFiles,
+    listTrackedEnvSchemas,
     observeGit,
     observeRunningCheckout,
 } from './git-observation.js'
@@ -285,6 +286,40 @@ describe('Git adjacency evidence', () => {
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
+})
+
+describe('a repository that configures an fsmonitor', () => {
+    it('never runs it for a Git observation', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-fsmonitor-')))
+        try {
+            execFileSync('git', ['init', '--quiet', '-b', 'main', root])
+            await writeFile(join(root, 'tracked.txt'), 'stable\n')
+            execFileSync('git', ['-C', root, 'add', 'tracked.txt'])
+            execFileSync('git', ['-C', root, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'fixture'])
+            const marker = join(root, 'monitor-ran')
+            const monitor = join(root, 'monitor.sh')
+            await writeFile(monitor, `#!/bin/sh\ntouch ${marker}\n`, { mode: 0o755 })
+            execFileSync('git', ['-C', root, 'config', 'core.fsmonitor', monitor])
+            const resolved = await resolveGitExecutable({ PATH: process.env.PATH ?? '' })
+            if (resolved.state !== 'available') throw new Error('Git unavailable in fsmonitor fixture')
+            const executable = resolved.value
+            const ran = async () => { try { await access(marker); return true } catch { return false } }
+            // The control: without the override this repository does run it, so silence below means something.
+            execFileSync('git', ['-C', root, 'ls-files'], { stdio: 'pipe' })
+            expect(await ran()).toBe(true)
+            await rm(marker)
+
+            const step = createGitObservationStep({ executable, checkoutRoot: root, env: {}, timeoutMs: 10_000, stackId, source: root, checkoutId })!
+            expect(observeGit(step, await executeProbe(step), { stackId, checkoutId, source: root })).toMatchObject({ kind: 'complete' })
+            expect(await ran(), 'status').toBe(false)
+            expect(await listTrackedEnvSchemas({ executable, slug: 'api', root, timeoutMs: 10_000 }, executeProbe)).toMatchObject({ kind: 'listed' })
+            expect(await ran(), 'the tracked schema listing').toBe(false)
+            expect(await inspectTrackedSecretFiles({ executable, timeoutMs: 10_000, repositories: [{ slug: 'api', root }] }, executeProbe)).toEqual([])
+            expect(await ran(), 'the tracked secret listing').toBe(false)
+        } finally {
+            await rm(root, { recursive: true, force: true })
+        }
+    })
 })
 
 describe('comparison remote identity evidence', () => {

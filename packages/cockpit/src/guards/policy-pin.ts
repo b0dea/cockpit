@@ -111,8 +111,9 @@ function judgedInvocations(invocations: readonly ParsedInvocation[]): Array<Pars
 
 /**
  * Whether this edit leaves the configuration exactly the bytes `recordedSha256` names, the ones the
- * guards were generated from. Restoring them cannot widen anything, whatever the edit it undoes, so it
- * is the way out of an edit the guard admitted and sync then refused. Every target must be the
+ * guards were generated from. An agent can restore only what was recorded, so authority never exceeds
+ * the recorded policy, though this may also discard a person's unsynced narrowing edit. It is the way
+ * out of an edit the guard admitted and sync then refused. Every target must be the
  * canonical path itself: a `..` can leave through a link, and a hard link or another spelling is left
  * to the ordinary hold. An edit that does not apply exactly once proves nothing and is not admitted.
  */

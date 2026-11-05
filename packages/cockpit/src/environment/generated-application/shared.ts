@@ -43,6 +43,7 @@ import type { BootstrapStateAddress, BootstrapStateRecord, StateNamespace, State
 import type { GateRegistry } from '../../testing/gates.js'
 import type { GeneratedCheckoutIdentity } from '../setup-observation.js'
 import { refusalOutcome as refuse } from '../../refusal.js'
+import { GUARD_HELD_CALLS } from '../../surfaces/harness-registry.js'
 
 export const OWNER = 'generated-environment-application'
 
@@ -640,8 +641,8 @@ export function complete(
         diagnostics: [
             ...prepared.checkoutIdentity.standaloneReason ? [{
                 severity: 'warning' as const, code: 'GENERATED_CHECKOUT_STANDALONE' as const, target: prepared.configPath,
-                message: `this directory was treated as standalone, not as a Git checkout, because ${prepared.checkoutIdentity.standaloneReason}; generated surfaces do not depend on it`,
-                fix: 'nothing is needed if this directory is not meant to be a checkout, though a stale .git entry is better removed; otherwise install Git on an absolute PATH entry or repair the entry with git worktree repair, then run npx --no cockpit sync --config <your cockpit.toml>',
+                message: `this directory was treated as standalone, not as a Git checkout, because ${prepared.checkoutIdentity.standaloneReason}; generated files stay valid, but the guard needs a Git repository it can read and holds ${GUARD_HELD_CALLS} until it has one`,
+                fix: 'in a terminal, outside the agent, run git init if this directory has no repository, remove a stale .git entry or repair it with git worktree repair, and install Git on an absolute PATH entry if it is missing; held calls then continue without a sync',
             }] : [],
             // A trust warning is a review prompt for settings being written; repeating it for an
             // unchanged file on every sync and check trained people to ignore it.

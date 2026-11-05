@@ -53,6 +53,7 @@ describe('surfaces-only checkout binding', () => {
             execFileSync('git', ['init', '--quiet', root])
             execFileSync('git', ['-C', root, 'config', 'include.path', 'included-config'])
         }, false],
+        ['no repository', async () => undefined, true],
         ['an empty .git directory', (root: string) => mkdir(join(root, '.git')), true],
         ['a stale .git file', (root: string) => writeFile(join(root, '.git'), 'gitdir: /synthetic/missing\n'), true],
     ] as const)('publishes and checks with %s, where a runtime would refuse', async (name, arrange, warned) => {
@@ -63,7 +64,9 @@ describe('surfaces-only checkout binding', () => {
         for (const outcome of [synced, checked]) {
             expect(outcome, JSON.stringify(outcome.diagnostics)).toMatchObject({ kind: 'complete' })
             const codes = outcome.diagnostics.map(({ code }) => code)
-            if (warned) expect(codes).toContain('GENERATED_CHECKOUT_STANDALONE')
+            if (warned) expect(outcome.diagnostics).toContainEqual(expect.objectContaining({ code: 'GENERATED_CHECKOUT_STANDALONE',
+                message: expect.stringContaining('generated files stay valid, but the guard needs a Git repository it can read and holds'),
+                fix: expect.stringContaining('run git init if this directory has no repository') }))
             else expect(codes).not.toContain('GENERATED_CHECKOUT_STANDALONE')
         }
     })

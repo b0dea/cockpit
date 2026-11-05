@@ -62,6 +62,14 @@ force redaction on an interactive terminal, so the flag belongs inside a declare
 is piped. Redaction is an output safeguard, not confinement of the child process. Another name
 that starts with `.env`, such as `.envrc`, is not denied, but reading it prompts.
 
+A schema's exemption has a limit: it is documentation to the guard and code to Varlock. `cockpit
+doctor` and `cockpit preflight` run `varlock load`, which runs the schema's resolvers, including an
+`exec()` command. So an agent that can edit a schema can have commands run, with the caller's
+environment, by a command it may run unprompted. Declared testing commands also run code an agent
+edited, and cockpit is not a sandbox. Review schema changes as you review code, and run `doctor` with
+a provider sign-in only on schemas you trust. This was reasoned from Varlock's documented resolver
+behaviour plus a failing `exec()` measured with a synthetic schema.
+
 Executable use of a declared hosted database or vendor host is denied at hostname boundaries.
 Matching examines executable, argument and environment-assignment-value roles; redirects,
 heredocs, comments and definitions do not count as executable host use. Host names are compared
@@ -439,8 +447,11 @@ MCP tools under Claude Code. A hold stops nothing else, so file reads and unrest
 
 Sync can refuse an edit the guard admitted, such as a tool restriction naming an undeclared server.
 So the `GUARD_CONFIG_UNSYNCED` hold also admits one edit, write or patch of `cockpit.toml` itself that
-leaves it byte-identical to the recorded copy, because restoring that copy cannot widen anything. An
-edit the guard cannot prove applies exactly once, or that also touches another file, stays held.
+leaves it byte-identical to the recorded copy, and so does the hold on a file that does not load,
+whether its TOML cannot be parsed or the schema rejects it. An agent can restore only what was
+recorded, so authority never exceeds the recorded policy, and this may also discard a person's
+unsynced narrowing edit. An edit the guard cannot prove applies exactly once, or that also touches
+another file, stays held, and restoring out of a widening edit stays a person's.
 
 An edit does not widen only when every difference is one of these:
 

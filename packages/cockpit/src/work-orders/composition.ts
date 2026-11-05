@@ -24,7 +24,7 @@ import { stripDevelopmentMarkers } from '../surfaces/development-markers.js'
 import { decodeLifecycleRecord } from '../environment/application/lifecycle.js'
 import type { EnvironmentSnapshot, RuntimeEvidence } from '../environment/evidence.js'
 import { selectLocalDockerDaemon } from '../environment/docker-daemon.js'
-import { resolveDockerExecutable, resolveExecutablePath } from '../environment/executable.js'
+import { GIT_CHILD_CONFIG, resolveDockerExecutable, resolveExecutablePath } from '../environment/executable.js'
 import { discoverMachineStacks } from '../environment/reclaim.js'
 import {
     consumeWorkApplicationAuthorities,
@@ -509,7 +509,7 @@ function probeFailure(command: string, observed: VerificationObservation): strin
 
 async function observeRepositorySubject(repository: Readonly<{ identity: string; root: string }>, excluded: ReadonlySet<string>,
     directories: readonly string[], sensitivePaths: ReadonlySet<string> = new Set(), forbiddenTargets: ReadonlySet<string> = new Set()): Promise<RepositorySubject> {
-    const prefixResult = await executeBounded(repository.root, ['git', 'rev-parse', '--show-prefix'], directories)
+    const prefixResult = await executeBounded(repository.root, ['git', ...GIT_CHILD_CONFIG, 'rev-parse', '--show-prefix'], directories)
     if (prefixResult.kind !== 'executed' || prefixResult.exitCode !== 0 || prefixResult.stderr || prefixResult.truncated
         || !prefixResult.stdout.endsWith('\n')) {
         throw new RefusalError(`repository subject ${repository.identity} root is unavailable: ${probeFailure('git rev-parse --show-prefix', prefixResult)}`)
@@ -523,7 +523,7 @@ async function observeRepositorySubject(repository: Readonly<{ identity: string;
         if (!path.startsWith(prefix)) throw new RefusalError(`repository subject ${repository.identity} escaped its declared root: ${path}`)
         return path.slice(prefix.length)
     }
-    const status = await executeBounded(repository.root, ['git', 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', '--', '.'], directories)
+    const status = await executeBounded(repository.root, ['git', ...GIT_CHILD_CONFIG, 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', '--', '.'], directories)
     if (status.kind !== 'executed' || status.exitCode !== 0 || status.stderr || status.truncated) {
         throw new RefusalError(`repository subject ${repository.identity} is unavailable: ${probeFailure('git status', status)}`)
     }
@@ -579,8 +579,8 @@ async function observeRepositorySubject(repository: Readonly<{ identity: string;
         paths: change.paths.map(path => ({ path,
             sha256: repositoryPathDigest(repository.root, repository.identity, path, aggregate, sensitivePaths, forbiddenTargets) })),
     }))
-    const confirmed = await executeBounded(repository.root, ['git', 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', '--', '.'], directories)
-    const confirmedPrefix = await executeBounded(repository.root, ['git', 'rev-parse', '--show-prefix'], directories)
+    const confirmed = await executeBounded(repository.root, ['git', ...GIT_CHILD_CONFIG, 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', '--', '.'], directories)
+    const confirmedPrefix = await executeBounded(repository.root, ['git', ...GIT_CHILD_CONFIG, 'rev-parse', '--show-prefix'], directories)
     if (confirmed.kind !== 'executed' || confirmed.exitCode !== 0 || confirmed.stderr || confirmed.truncated
         || confirmedPrefix.kind !== 'executed' || confirmedPrefix.exitCode !== 0 || confirmedPrefix.stdout !== prefixResult.stdout
         || confirmedPrefix.stderr || confirmedPrefix.truncated) {
@@ -704,7 +704,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         }
     }
     const git = async (repository: typeof repositories[number], args: readonly string[]) => {
-        const observed = await executeBounded(repository.root, ['git', ...args], directories)
+        const observed = await executeBounded(repository.root, ['git', ...GIT_CHILD_CONFIG, ...args], directories)
         if (observed.kind !== 'executed' || observed.exitCode !== 0 || observed.truncated) throw new RefusalError(`${repository.identity}: ${probeFailure(`git ${args.join(' ')}`, observed)}`)
         return observed.stdout
     }
@@ -806,7 +806,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
                     admitRepositoryPath(repository.root, repository.identity, path, repository.sensitivePaths, browserAuthenticationTargets)
                     const observed = untracked
                         ? { kind: 'executed' as const, stdout: readBounded(repository.root, path, MAX_DIFF_BYTES).toString('utf8') }
-                        : await executeBounded(repository.root, ['git', 'diff', '--no-ext-diff', from, '--', path], directories, 30_000,
+                        : await executeBounded(repository.root, ['git', ...GIT_CHILD_CONFIG, 'diff', '--no-ext-diff', from, '--', path], directories, 30_000,
                             { kind: 'declared', env: {}, timeoutField: VERIFICATION_TIMEOUT_FIELD })
                     diff = observed.kind === 'executed' ? observed.stdout : `(diff unavailable: ${observed.reason})`
                 } catch (error) {

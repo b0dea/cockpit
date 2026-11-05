@@ -406,6 +406,18 @@ describe('environment ignore observation', () => {
             .resolves.toBe('authorized')
     })
 
+    it('runs no fsmonitor the repository configures while it asks Git about ignore rules and the index', async () => {
+        const root = await repository()
+        await writeFile(join(root, '.gitignore'), '.env*\n!.env.example\n')
+        const marker = join(root, 'monitor-ran')
+        const monitor = join(root, 'monitor.sh')
+        await writeFile(monitor, `#!/bin/sh\ntouch ${marker}\n`, { mode: 0o755 })
+        await run('git', ['-C', root, 'config', 'core.fsmonitor', monitor])
+
+        await expect(observeEnvironmentIgnore(await authority(root), () => 'authorized')).resolves.toBe('authorized')
+        await expect(lstat(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
     it('does not mistake an escaped leading bang for a negated ignore rule', async () => {
         const root = await repository()
         const literalBang = { template: '!public.env', instance: '.env' }
@@ -971,11 +983,12 @@ exec '${input.gitExecutable.canonicalPath}' "$@"
         const observation = await observeSetupCheckout(input)
         const calls = (await readFile(log, 'utf8')).split('CALL\n').filter(Boolean)
         // The main checkout is the current one, so its identity is probed once and confirmed once.
+        const probe = ['-c', 'core.excludesFile=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-C', repository.main]
         expect(calls).toEqual([
-            ['-c', 'core.excludesFile=/dev/null', '-C', repository.main, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir', ''].join('\n'),
-            ['-c', 'core.excludesFile=/dev/null', '-C', repository.main, 'config', '--show-origin', '--null', '--list', ''].join('\n'),
-            ['-c', 'core.excludesFile=/dev/null', '-C', repository.main, 'worktree', 'list', '--porcelain', '-z', ''].join('\n'),
-            ['-c', 'core.excludesFile=/dev/null', '-C', repository.main, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir', ''].join('\n'),
+            [...probe, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir', ''].join('\n'),
+            [...probe, 'config', '--show-origin', '--null', '--list', ''].join('\n'),
+            [...probe, 'worktree', 'list', '--porcelain', '-z', ''].join('\n'),
+            [...probe, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir', ''].join('\n'),
         ])
 
         let escaped: SetupCheckoutProjection | undefined
@@ -1008,7 +1021,7 @@ exec '${input.gitExecutable.canonicalPath}' "$@"
             const bin = join(repository.root, `inventory-bin-${index}`)
             await mkdir(bin)
             const realGit = await realpath((await run('which', ['git'])).stdout.trim())
-            await writeFile(join(bin, 'git'), `#!/bin/sh\nif [ "$5" = "worktree" ]; then printf '${inventory}'; exit 0; fi\nexec ${realGit} "$@"\n`, { mode: 0o700 })
+            await writeFile(join(bin, 'git'), `#!/bin/sh\nif [ "$9" = "worktree" ]; then printf '${inventory}'; exit 0; fi\nexec ${realGit} "$@"\n`, { mode: 0o700 })
             const input = await checkoutAuthority(join(repository.main, 'cockpit.toml'), new Date().toISOString(), { PATH: bin })
             await expect(observeSetupCheckout(input)).resolves.toMatchObject({ state: 'failed' })
         }
@@ -1090,7 +1103,7 @@ exec '${input.gitExecutable.canonicalPath}' "$@"
         const bin = join(repository.root, 'replacement-bin')
         const realGit = await realpath((await run('which', ['git'])).stdout.trim())
         await mkdir(bin)
-        await writeFile(join(bin, 'git'), `#!/bin/sh\nif [ "$5" = "worktree" ]; then /bin/mv '${join(repository.main, '.git')}' '${join(repository.main, '.git.original')}'; /bin/cp -R '${join(replacement.main, '.git')}' '${join(repository.main, '.git')}'; fi\nexec ${realGit} "$@"\n`, { mode: 0o700 })
+        await writeFile(join(bin, 'git'), `#!/bin/sh\nif [ "$9" = "worktree" ]; then /bin/mv '${join(repository.main, '.git')}' '${join(repository.main, '.git.original')}'; /bin/cp -R '${join(replacement.main, '.git')}' '${join(repository.main, '.git')}'; fi\nexec ${realGit} "$@"\n`, { mode: 0o700 })
         const input = await checkoutAuthority(join(repository.main, 'cockpit.toml'), new Date().toISOString(), { PATH: bin })
         await expect(observeSetupCheckout(input)).resolves.toMatchObject({ state: 'failed' })
     })
@@ -1102,7 +1115,7 @@ exec '${input.gitExecutable.canonicalPath}' "$@"
         const realGit = await realpath((await run('which', ['git'])).stdout.trim())
         const dotGit = join(repository.main, '.git')
         await mkdir(bin)
-        await writeFile(join(bin, 'git'), `#!/bin/sh\nif [ "$5" = "worktree" ]; then\n  /bin/mv '${dotGit}' '${dotGit}.original'\n  /bin/cp -R '${join(replacement.main, '.git')}' '${dotGit}'\n  ${realGit} "$@"\n  status=$?\n  /bin/rm -rf '${dotGit}'\n  /bin/mv '${dotGit}.original' '${dotGit}'\n  exit $status\nfi\nexec ${realGit} "$@"\n`, { mode: 0o700 })
+        await writeFile(join(bin, 'git'), `#!/bin/sh\nif [ "$9" = "worktree" ]; then\n  /bin/mv '${dotGit}' '${dotGit}.original'\n  /bin/cp -R '${join(replacement.main, '.git')}' '${dotGit}'\n  ${realGit} "$@"\n  status=$?\n  /bin/rm -rf '${dotGit}'\n  /bin/mv '${dotGit}.original' '${dotGit}'\n  exit $status\nfi\nexec ${realGit} "$@"\n`, { mode: 0o700 })
         const input = await checkoutAuthority(join(repository.main, 'cockpit.toml'), new Date().toISOString(), { PATH: bin })
         await expect(observeSetupCheckout(input)).resolves.toMatchObject({ state: 'failed' })
     })
@@ -1112,7 +1125,7 @@ exec '${input.gitExecutable.canonicalPath}' "$@"
         const bareBin = join(separate.root, 'bare-inventory-bin')
         const realGit = await realpath((await run('which', ['git'])).stdout.trim())
         await mkdir(bareBin)
-        await writeFile(join(bareBin, 'git'), `#!/bin/sh\nif [ "$5" = "worktree" ]; then printf 'worktree %s\\0bare\\0\\0' '${separate.gitDirectory!}'; exit 0; fi\nexec ${realGit} "$@"\n`, { mode: 0o700 })
+        await writeFile(join(bareBin, 'git'), `#!/bin/sh\nif [ "$9" = "worktree" ]; then printf 'worktree %s\\0bare\\0\\0' '${separate.gitDirectory!}'; exit 0; fi\nexec ${realGit} "$@"\n`, { mode: 0o700 })
         const bareInput = await checkoutAuthority(join(separate.main, 'cockpit.toml'), new Date().toISOString(), { PATH: bareBin })
         await expect(observeSetupCheckout(bareInput)).resolves.toMatchObject({ state: 'available' })
 
@@ -1120,7 +1133,7 @@ exec '${input.gitExecutable.canonicalPath}' "$@"
         const revision = (await run('git', ['-C', repository.main, 'rev-parse', 'HEAD'])).stdout.trim()
         const lockedBin = join(repository.root, 'locked-inventory-bin')
         await mkdir(lockedBin)
-        await writeFile(join(lockedBin, 'git'), `#!/bin/sh\nif [ "$5" = "worktree" ]; then printf 'worktree %s\\0HEAD %s\\0branch refs/heads/main\\0locked first line\\nsecond line\\0\\0' '${repository.main}' '${revision}'; exit 0; fi\nexec ${realGit} "$@"\n`, { mode: 0o700 })
+        await writeFile(join(lockedBin, 'git'), `#!/bin/sh\nif [ "$9" = "worktree" ]; then printf 'worktree %s\\0HEAD %s\\0branch refs/heads/main\\0locked first line\\nsecond line\\0\\0' '${repository.main}' '${revision}'; exit 0; fi\nexec ${realGit} "$@"\n`, { mode: 0o700 })
         const lockedInput = await checkoutAuthority(join(repository.main, 'cockpit.toml'), new Date().toISOString(), { PATH: lockedBin })
         await expect(observeSetupCheckout(lockedInput)).resolves.toMatchObject({ state: 'available' })
     })

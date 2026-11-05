@@ -17,7 +17,7 @@ import {
 import { GUARD_EXECUTABLE_SEARCH_PATH, type ExecutableResolution, type ResolvedExecutable } from '../executable.js'
 import { CockpitConfig } from '../../schema.js'
 import { pinnedPolicyDenial, restoresRecordedConfiguration } from '../../guards/policy-pin.js'
-import { guardConfigChange, guardConfigHeldReason } from '../../guards/policy-change.js'
+import { GUARD_RESTORE_LIMIT, guardConfigChange, guardConfigHeldReason } from '../../guards/policy-change.js'
 import {
     evaluateGuard,
     foldGuardSpelling,
@@ -52,6 +52,7 @@ import { classifyReadOnlyInvocation, cockpitLauncherPrefix } from '../../guards/
 import { fileFingerprint, recordVerifiedDigest } from '../../environment-exec/verified-digest.js'
 import { GUARD_HELD_CALLS, GUARD_UNHELD_CALLS, isGuardSurfaceTarget, type GuardSurfaceTarget } from '../../surfaces/harness-registry.js'
 import { cockpitCommand, formatShellCommand, type FixContext } from '../../fix-catalogue.js'
+import { redactSensitiveMessage } from '../sensitive.js'
 import { observeComposeTopology } from '../compose-topology.js'
 import { declaredRuntime } from '../declaration.js'
 import { observeInstallPolicyLockfiles, withInstallPolicyProjection } from '../install-policy-observation.js'
@@ -63,7 +64,7 @@ import {
     withSetupCheckoutProjection,
     type SetupCheckoutObservation,
 } from '../setup-observation.js'
-import { browserPreapprovalRequested, loadCockpitConfig, consumeLoadedConfigProjection, STRUCTURED_INPUT_BYTE_LIMIT, type LoadedConfigProjection } from '../../config/load.js'
+import { browserPreapprovalRequested, loadCockpitConfig, consumeLoadedConfigProjection, parseCockpitConfigBytes, STRUCTURED_INPUT_BYTE_LIMIT, type LoadedConfigProjection } from '../../config/load.js'
 import { deriveRegistry } from '../../registry-derivation.js'
 import { confinedPath, lifecycleRefusal, ownDataValues, sameSource } from './shared.js'
 import { readSiblingCheckouts, servedSiblings, type ServedSibling, type SiblingCheckoutRecordRead } from '../sibling-checkouts.js'
@@ -134,11 +135,19 @@ function guardHeld(identity: GuardHandlerIdentity, what: string, why: string, fi
 // still refuse such an edit, so undoing it exactly stays open or the agent could never recover.
 function unsyncedHold(identity: GuardHandlerIdentity, detail: string): GuardEvaluationApplicationResult {
     const sync = cockpitCommand('sync', { config: identity.configPath })
-    const reason = `${identity.configPath} changed since the guards were generated without widening what agents may do${detail}; ${GUARD_HELD_CALLS} are held, except ${UNSYNCED_ADMITTED_PROSE}, until it is synced, while ${GUARD_UNHELD_CALLS} continue. Fix: run \`${sync}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files. If sync refuses the edit, undo it: one edit or write of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig} is admitted.`
+    const reason = `${identity.configPath} changed since the guards were generated without widening what agents may do${detail}; ${GUARD_HELD_CALLS} are held, except ${UNSYNCED_ADMITTED_PROSE}, until it is synced, while ${GUARD_UNHELD_CALLS} continue. Fix: run \`${sync}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files. If sync refuses the edit, undo it: one edit or write of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig} is admitted; ${GUARD_RESTORE_LIMIT}.`
     return { decision: { decision: 'unavailable', reason }, diagnostics: [{ severity: 'error', target: 'guard', message: reason,
         code: 'GUARD_CONFIG_UNSYNCED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_UNSYNCED,
-        fix: `run ${sync}; an agent may run it where [autonomy] sync = "agent". If sync refuses the edit, undo it: the guard admits one edit of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}` }] }
+        fix: `run ${sync}; an agent may run it where [autonomy] sync = "agent". If sync refuses the edit, undo it: the guard admits one edit of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}; ${GUARD_RESTORE_LIMIT}` }] }
 }
+
+// A guard message reaches the agent and the harness's log: text it forwards from a failure stays one
+// bounded line with credential-shaped values removed.
+function forwardedReason(reason: string): string {
+    return redactSensitiveMessage(reason.replace(/[\x00-\x1f\x7f-\x9f]+/g, ' ').replace(/(\w+:\/\/)[^/@\s]+@/g, '$1[redacted]@').slice(0, 512)) ?? 'the reason was withheld because it could not be redacted'
+}
+
+const restored: GuardEvaluationApplicationResult = { decision: { decision: 'allow', reason: 'The edit restores the configuration the guards were generated from.' }, diagnostics: [] }
 
 const GUARD_RESTORABLE = new Set(['.cockpit/generated-environment-ownership.json', '.cockpit/guards/bash-guard.sh',
     '.claude/settings.json', '.codex/hooks.json', '.opencode/plugin/cockpit-guards.js'])
@@ -214,10 +223,10 @@ export async function runGuardEvaluationApplication(
         const publicationRequests = [manifestPath, '.cockpit/guards/bash-guard.sh', registration, GUARD_LOCAL_PATHS.identity, configName].map(path => ({
             path, action: 'read-file' as const, maxBytes: path === manifestPath || path === configName ? 1_048_576 : 65_536,
         }))
-        const readPublication = async () => {
-            const batch = await readAnchoredBatches(identity.root, publicationRequests, node, { execute: adapters.execute ?? executeProbe })
-            if (batch?.kind !== 'complete' || batch.results.length !== publicationRequests.length) throw new RefusalError('Guard publication read could not be authenticated.')
-            return new Map(publicationRequests.map((request, index) => {
+        const readPublication = async (requests = publicationRequests) => {
+            const batch = await readAnchoredBatches(identity.root, requests, node, { execute: adapters.execute ?? executeProbe })
+            if (batch?.kind !== 'complete' || batch.results.length !== requests.length) throw new RefusalError('Guard publication read could not be authenticated.')
+            return new Map(requests.map((request, index) => {
                 const result = batch.results[index]
                 if (result?.kind === 'missing') throw new GuardFileMissing(request.path)
                 if (result?.kind !== 'complete') throw new RefusalError('Guard authority file is missing, changed, oversized or crosses a symlink boundary.')
@@ -235,18 +244,62 @@ export async function runGuardEvaluationApplication(
         const checkoutsPending = settle(readSiblingCheckouts(identity.root))
         const module = unwrap(await modulePending)
         if (module.sha256 !== identity.moduleSha256) return changed('the installed cockpit version changed (its handler bytes differ)')
+        // What an admitted call rests on besides the configuration: the bytes sync published, for this
+        // machine and this cockpit.
+        const authenticatePublication = async (pending: typeof publicationPending, cockpitName: string) => {
+            let publication: Awaited<ReturnType<typeof readPublication>>
+            try { publication = unwrap(await pending) }
+            catch (error) {
+                if (!(error instanceof GuardFileMissing)) throw error
+                return { held: unavailable(GUARD_RESTORABLE.has(error.path)
+                    ? guardHeld(identity, `${error.path} is missing`, 'it authenticates the guard and the hook that launches it', { kind: 'restore', path: error.path })
+                    : guardHeld(identity, `${error.path} is missing`, 'it records the Node executable and cockpit handler on this machine, which committed files cannot carry', { kind: 'sync' })) }
+            }
+            const local = parseGuardLocalIdentity(publication.get(GUARD_LOCAL_PATHS.identity)!.bytes.toString('utf8'))
+            if (!local || !isDeepStrictEqual(local, identity)) return { held: unavailable('Installed guard identity does not match its machine-local record.') }
+            const manifestRead = publication.get(manifestPath)!
+            const ownership = parseOwnershipManifest(manifestRead.bytes.toString('utf8'), {
+                root: identity.root, configPath: identity.configPath,
+                cockpitId: publicationCockpitId({ name: cockpitName }),
+            })
+            if (ownership.kind !== 'complete' || ownership.manifest.source.sha256 !== identity.configSha256) return { held: unavailable('Installed guard publication is stale or unauthenticated.') }
+            const producer = ownership.manifest.producer
+            if (producer.package !== installedPackageMetadata.name
+                || producer.version !== installedPackageMetadata.version
+                || producer.sourceRevision !== installedPackageMetadata.cockpitSourceRevision) return { held: changed(`the installed cockpit version changed (the guards were generated by ${producer.package} ${producer.version}, ${installedPackageMetadata.name} ${installedPackageMetadata.version} is installed)`) }
+            const published = new Map<string, string>()
+            for (const path of ['.cockpit/guards/bash-guard.sh', registration]) {
+                const entry = ownership.manifest.entries.find(entry => entry.path === path)
+                const actual = publication.get(path)!
+                if (!entry || entry.kind !== 'file' || entry.sha256 !== actual.sha256) return { held: unavailable('Installed guard registration or launcher bytes drifted.') }
+                published.set(path, actual.sha256)
+            }
+            return { publication, manifestRead, published }
+        }
+        const anchored = (path: string) => readAnchoredFile(identity.root, path, STRUCTURED_INPUT_BYTE_LIMIT, node, { execute: adapters.execute ?? executeProbe })
         const loaded = unwrap(await configPending)
         if (loaded.kind !== 'complete' || loaded.result.source.path !== identity.configPath) {
-            return unavailable(guardHeld(identity, `${identity.configPath} changed since the guards were generated`,
-                'guard policy comes from it and an edit takes effect only once a human approves it', { kind: 'sync' }))
+            const held = guardHeld(identity, `${identity.configPath} changed since the guards were generated and does not load${loaded.kind === 'complete' ? '' : ` (${forwardedReason(loaded.diagnostics[0]?.message ?? 'no reason given')})`}`,
+                'guard policy comes from it and an edit takes effect only once a human approves it', { kind: 'sync' })
+            const hold = unavailable(`${held} Sync refuses a file that does not load, so correct it first, or undo it: one edit or write of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig} is admitted; ${GUARD_RESTORE_LIMIT}.`)
+            // Restoring the recorded bytes needs no policy, so a file with none to offer is no reason to
+            // refuse it; without this an agent's valid-TOML edit the schema rejects stranded it.
+            const parsed = parseGuardInput(data.payload)
+            if (parsed.status !== 'parsed' || parsed.cwd !== data.cwd) return hold
+            const current = await anchored(configName)
+            const recorded = await anchored(GUARD_LOCAL_PATHS.generatedConfig)
+            const recordedConfig = recorded.kind === 'complete' && recorded.sha256 === identity.configSha256 ? parseCockpitConfigBytes(recorded.bytes) : undefined
+            // A file too large to read gets the empty text, which an edit cannot match; a write needs none.
+            if (!recordedConfig || !restoresRecordedConfiguration(parsed, current.kind === 'complete' ? current.bytes.toString('utf8') : '', identity.configPath, identity.configSha256)) return hold
+            const authenticated = await authenticatePublication(settle(readPublication(publicationRequests.filter(request => request.path !== configName))), recordedConfig.cockpit.name)
+            return authenticated.held ?? restored
         }
         // Every check below runs against the configuration on disk; an edit since sync is admitted
         // only when it does not widen the one the guards were generated from, and then only for sync.
         const configSha256 = loaded.result.source.sha256
         const unsynced = configSha256 !== identity.configSha256
         if (unsynced) {
-            const local = (path: string) => readAnchoredFile(identity.root, path, STRUCTURED_INPUT_BYTE_LIMIT, node, { execute: adapters.execute ?? executeProbe })
-            const [recorded, confirmations] = await Promise.all([local(GUARD_LOCAL_PATHS.generatedConfig), local(ANSWER_CONFIRMATION_PATH)])
+            const [recorded, confirmations] = await Promise.all([anchored(GUARD_LOCAL_PATHS.generatedConfig), anchored(ANSWER_CONFIRMATION_PATH)])
             const change = guardConfigChange(identity.configSha256, recorded.kind === 'complete' ? recorded.bytes : undefined,
                 { sha256: configSha256, config: loaded.result.config }, confirmations.kind === 'complete' ? confirmations.bytes : undefined)
             if (change.kind === 'widening' || change.kind === 'unrecorded') return unavailable(guardHeld(identity,
@@ -254,33 +307,9 @@ export async function runGuardEvaluationApplication(
                 'guard policy comes from it and an edit that may widen it takes effect only once a human approves it', { kind: 'sync' }))
         }
         const config = loaded.result.config
-        let publication: Awaited<ReturnType<typeof readPublication>>
-        try { publication = unwrap(await publicationPending) }
-        catch (error) {
-            if (!(error instanceof GuardFileMissing)) throw error
-            return unavailable(GUARD_RESTORABLE.has(error.path)
-                ? guardHeld(identity, `${error.path} is missing`, 'it authenticates the guard and the hook that launches it', { kind: 'restore', path: error.path })
-                : guardHeld(identity, `${error.path} is missing`, 'it records the Node executable and cockpit handler on this machine, which committed files cannot carry', { kind: 'sync' }))
-        }
-        const local = parseGuardLocalIdentity(publication.get(GUARD_LOCAL_PATHS.identity)!.bytes.toString('utf8'))
-        if (!local || !isDeepStrictEqual(local, identity)) return unavailable('Installed guard identity does not match its machine-local record.')
-        const manifestRead = publication.get(manifestPath)!
-        const ownership = parseOwnershipManifest(manifestRead.bytes.toString('utf8'), {
-            root: identity.root, configPath: identity.configPath,
-            cockpitId: publicationCockpitId({ name: config.cockpit.name }),
-        })
-        if (ownership.kind !== 'complete' || ownership.manifest.source.sha256 !== identity.configSha256) return unavailable('Installed guard publication is stale or unauthenticated.')
-        const producer = ownership.manifest.producer
-        if (producer.package !== installedPackageMetadata.name
-            || producer.version !== installedPackageMetadata.version
-            || producer.sourceRevision !== installedPackageMetadata.cockpitSourceRevision) return changed(`the installed cockpit version changed (the guards were generated by ${producer.package} ${producer.version}, ${installedPackageMetadata.name} ${installedPackageMetadata.version} is installed)`)
-        const published = new Map<string, string>()
-        for (const path of ['.cockpit/guards/bash-guard.sh', registration]) {
-            const entry = ownership.manifest.entries.find(entry => entry.path === path)
-            const actual = publication.get(path)!
-            if (!entry || entry.kind !== 'file' || entry.sha256 !== actual.sha256) return unavailable('Installed guard registration or launcher bytes drifted.')
-            published.set(path, actual.sha256)
-        }
+        const authenticated = await authenticatePublication(publicationPending, config.cockpit.name)
+        if (authenticated.held) return authenticated.held
+        const { publication, manifestRead, published } = authenticated
         const git = await adapters.resolveGit()
         if (git.state !== 'available') return unavailable('Guard checkout observation requires an authenticated Git executable.')
         const checkout = await adapters.observeCheckout({ source: loaded.result.source, cockpitName: config.cockpit.name,
@@ -295,10 +324,12 @@ export async function runGuardEvaluationApplication(
         const restoring = unsynced && restoresRecordedConfiguration(parsed, configText, identity.configPath, identity.configSha256)
         const prepared = await prepareGuardEvaluationPolicy({ configuration: loaded.result, checkout }, checkoutsPending.then(unwrap))
         if (prepared.kind !== 'complete') {
-            if (restoring) return { decision: { decision: 'allow', reason: 'The edit restores the configuration the guards were generated from.' }, diagnostics: [] }
+            if (restoring) return restored
             return unsynced
                 ? unsyncedHold(identity, `, but the guard cannot build its policy from it (${prepared.diagnostics[0]?.message ?? 'no reason given'})`)
-                : unavailable(`Guard policy authority could not be authenticated: ${prepared.diagnostics[0]?.message ?? 'no reason given'}`)
+                : unavailable(checkout.state === 'available'
+                    ? `Guard policy authority could not be authenticated: ${prepared.diagnostics[0]?.message ?? 'no reason given'}`
+                    : prepared.diagnostics[0]?.message ?? 'Guard checkout observation failed without a reason.')
         }
         // The inspector answers synchronously, so what only Git can say is asked first: which protected
         // paths a default ripgrep search reads, and which a repository's index holds for a Git command
@@ -558,7 +589,10 @@ export async function prepareGuardEvaluationPolicy(
     if (recorded.kind === 'refusal') return guardPolicyRefusal(recorded.diagnostic.message)
     const served = servedSiblings(dirname(loaded.source.path), guardConfig, recorded.checkouts)
     const observed = snapshotJson(data.checkout) as SetupCheckoutObservation | undefined
-    if (observed?.state !== 'available') return guardPolicyRefusal('guard policy checkout observation is unavailable')
+    if (observed?.state !== 'available') {
+        const root = dirname(loaded.source.path)
+        return guardPolicyRefusal(`Generated files stay valid, but the guard needs a Git repository it can read and holds ${GUARD_HELD_CALLS} until it has one, while ${GUARD_UNHELD_CALLS} continue: ${forwardedReason(observed?.reason ?? 'no reason given')}. Fix: in a terminal, outside the agent, run \`${formatShellCommand(['git', '-C', root, 'init'])}\` if ${root} has no repository, remove a stale .git entry or repair it with git worktree repair, and remove any include.path or includeIf entry from the repository's Git configuration; held calls then continue without a sync.`)
+    }
     try {
         const identities = new Map<string, Stats>()
         let checkoutRoots: readonly SiblingRoot[] | undefined

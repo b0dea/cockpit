@@ -262,7 +262,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `GENERATED_ARTIFACT_DRIFT` | [see above](#generated_artifact_drift) |
 | `GENERATED_ARTIFACT_MISSING` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_BROWSER_ENDPOINT_UNPUBLISHED` | publish the endpoint port from exactly one service in environment.compose_files as "127.0.0.1:${VAR}:<container port>" with VAR under [ports.bases] set to the endpoint port, or remove browser.endpoint to drive a local browser, then run npx --no cockpit sync --config <your cockpit.toml> |
-| `GENERATED_CHECKOUT_STANDALONE` | nothing is needed if this directory is not meant to be a checkout, though a stale .git entry is better removed; otherwise install Git on an absolute PATH entry or repair the entry with git worktree repair, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `GENERATED_CHECKOUT_STANDALONE` | in a terminal, outside the agent, run git init if this directory has no repository, remove a stale .git entry or repair it with git worktree repair, and install Git on an absolute PATH entry if it is missing; held calls then continue without a sync |
 | `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [see above](#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [see above](#merge-ownership-and-generation) |

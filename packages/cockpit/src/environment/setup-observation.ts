@@ -27,7 +27,7 @@ import {
 } from './contract.js'
 import type { SetupObservation, SetupPathEvidence } from './setup.js'
 import { gitEnvironment } from './setup.js'
-import { observationSearchPath, resolveGitExecutable, resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
+import { GIT_CHILD_CONFIG, observationEnvironment, resolveGitExecutable, resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
 import { createGitRunner } from './sibling-checkouts.js'
 import { checkoutId as deriveCheckoutId } from './identity.js'
 import { cockpitId as deriveCockpitId } from './identity.js'
@@ -244,7 +244,7 @@ function ignoreProbeStep(
 ): ExecutionStep {
     return probeStep(
         id,
-        [input.gitExecutable.canonicalPath, '-c', 'core.excludesFile=/dev/null', '-C', input.siblingRoot, ...args],
+        [input.gitExecutable.canonicalPath, '-c', 'core.excludesFile=/dev/null', ...GIT_CHILD_CONFIG, '-C', input.siblingRoot, ...args],
         input.siblingRoot,
         input.env,
         input.gitExecutable,
@@ -415,6 +415,7 @@ async function ignoreRepositoryChecks(
             input.gitExecutable.canonicalPath,
             '-c',
             'core.excludesFile=/dev/null',
+            ...GIT_CHILD_CONFIG,
             '-C',
             input.siblingRoot,
             'rev-parse',
@@ -715,6 +716,9 @@ function validRefName(value: string): boolean {
         && !component.startsWith('.') && !component.endsWith('.lock'))
 }
 
+// What cockpit itself passes with -c. Anything else on the command line did not come from it.
+const COMMAND_LINE_CONFIG = new Map([['core.excludesfile', '/dev/null'], ['core.fsmonitor', 'false'], ['core.hookspath', '/dev/null']])
+
 async function validConfigurationInventory(
     bytes: Buffer,
     checkout: string,
@@ -741,7 +745,7 @@ async function validConfigurationInventory(
         const value = entry.slice(separator + 1)
         if (key === 'include.path' || key.startsWith('includeif.')) return false
         if (origin === 'command line:') {
-            if (key !== 'core.excludesfile' || value !== '/dev/null') return false
+            if (COMMAND_LINE_CONFIG.get(key) !== value) return false
             continue
         }
         if (!origin.startsWith('file:')) return false
@@ -838,7 +842,7 @@ function setupProbeStep(
 ): ExecutionStep {
     return probeStep(
         id,
-        [executable.canonicalPath, '-c', 'core.excludesFile=/dev/null', '-C', checkout, ...args],
+        [executable.canonicalPath, '-c', 'core.excludesFile=/dev/null', ...GIT_CHILD_CONFIG, '-C', checkout, ...args],
         checkout,
         env,
         executable,
@@ -1400,9 +1404,9 @@ export async function observeGeneratedCheckoutIdentity(input: {
     let checkout: SetupCheckoutBinding | undefined
     let consumed: ConsumedSetupCheckoutObservation | undefined
     if (hasCheckout) {
-        const search = observationSearchPath(searchEnvironment)
+        const search = observationEnvironment(searchEnvironment)
         if (search.state !== 'available') return setupCheckoutFailure(search.reason)
-        searchEnvironment = { ...searchEnvironment, PATH: search.path }
+        searchEnvironment = search.env
         const git = await resolveGitExecutable(searchEnvironment)
         if (git.state !== 'available') return setupCheckoutFailure(git.reason)
         const env = gitEnvironment(searchEnvironment)
@@ -1430,8 +1434,9 @@ export async function observeGeneratedCheckoutIdentity(input: {
 /**
  * The checkout a surfaces-only publication belongs to. With no stack and no repository writes to
  * bound, it asks Git only which working tree this is, so doctor's stack identity matches wherever
- * doctor can observe the checkout at all. A `.git` entry Git rejects, or Git being absent, makes the
- * directory standalone, with the reason stated: publishing files there depends on neither.
+ * doctor can observe the checkout at all. No `.git` entry, one Git rejects, or Git being absent makes
+ * the directory standalone, with the reason stated: publishing files there depends on none of them,
+ * though the guard those files install holds its calls until it can read a repository.
  * What Git is asked here runs no repository-configured command: the Git runner neutralises fsmonitor
  * and hooks, and rev-parse reads neither the index nor a remote.
  */
@@ -1455,7 +1460,7 @@ export async function observeSurfacesCheckoutIdentity(input: {
     const answer = anchors.gitEntry && await askGitForCheckout(anchors.gitEntry.path, root, source.path, value.env)
     if (answer && 'state' in answer) return answer
     const checkout = answer && 'topLevel' in answer ? answer : undefined
-    const standaloneReason = answer && 'reason' in answer ? answer.reason : undefined
+    const standaloneReason = !anchors.gitEntry ? 'no Git repository holds it' : answer && 'reason' in answer ? answer.reason : undefined
     if (checkout) for (const path of new Set([checkout.topLevel, checkout.gitDirectory, checkout.commonDirectory, checkout.mainCheckoutPath])) {
         const directory = await stableDirectoryNode(path)
         if (!directory) return setupCheckoutFailure(`Git named ${path} for this checkout, but it is not a canonical directory`)
@@ -1480,11 +1485,11 @@ async function askGitForCheckout(
     env: Readonly<Record<string, string | undefined>>,
 ): Promise<GeneratedCheckoutFailure | Readonly<{ reason: string }>
     | Readonly<{ topLevel: string; gitDirectory: string; commonDirectory: string; mainCheckoutPath: string }>> {
-    const search = observationSearchPath(env)
+    const search = observationEnvironment(env)
     if (search.state !== 'available') {
         return search.noAbsoluteDirectory ? { reason: `Git cannot be looked up to read ${gitEntry}: ${search.reason}` } : setupCheckoutFailure(search.reason)
     }
-    const runner = await createGitRunner({ ...env, PATH: search.path }, executeProbe)
+    const runner = await createGitRunner(search.env, executeProbe)
     if ('unavailable' in runner) return { reason: `Git cannot be looked up to read ${gitEntry}: ${runner.unavailable}` }
     const answer = await runner.run(root, 'surfaces:observe:checkout', CHECKOUT_REV_PARSE, { timeoutMs: 10_000 })
     if (answer.kind === 'failed') {
@@ -1742,7 +1747,7 @@ export async function observeSetupPath(
 
     const identityStep = probeStep(
         'setup:observe:identity',
-        [executable.canonicalPath, '-C', target, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'],
+        [executable.canonicalPath, ...GIT_CHILD_CONFIG, '-C', target, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'],
         siblingsRoot,
         env,
         executable,
@@ -1799,7 +1804,7 @@ export async function observeSetupPath(
 
     const confirmedIdentity = await authenticatedProbe(probeStep(
         'setup:observe:identity-confirm',
-        [executable.canonicalPath, '-C', target, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'],
+        [executable.canonicalPath, ...GIT_CHILD_CONFIG, '-C', target, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'],
         siblingsRoot,
         env,
         executable,
@@ -1813,7 +1818,7 @@ export async function observeSetupPath(
 
     const configurationInventory = await authenticatedProbe(probeStep(
         'setup:observe:config-origins',
-        [executable.canonicalPath, '-c', 'core.excludesFile=/dev/null', '-C', target, 'config', '--show-origin', '--null', '--list'],
+        [executable.canonicalPath, '-c', 'core.excludesFile=/dev/null', ...GIT_CHILD_CONFIG, '-C', target, 'config', '--show-origin', '--null', '--list'],
         siblingsRoot,
         env,
         executable,
@@ -1827,7 +1832,7 @@ export async function observeSetupPath(
 
     const remote = await authenticatedProbeOutcome(probeStep(
         'setup:observe:origin',
-        [executable.canonicalPath, '-C', target, 'config', '--get', 'remote.origin.url'],
+        [executable.canonicalPath, ...GIT_CHILD_CONFIG, '-C', target, 'config', '--get', 'remote.origin.url'],
         siblingsRoot,
         env,
         executable,

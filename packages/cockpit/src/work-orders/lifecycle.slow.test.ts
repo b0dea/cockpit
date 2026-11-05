@@ -109,6 +109,19 @@ describe('work-order lifecycle', () => {
         expect(existsSync(join(root, '.cockpit/work-orders'))).toBe(false)
     })
 
+    it('runs no fsmonitor the repository configures while it observes an order', async () => {
+        const root = await cockpit('[work]\ngrading = "checks"\n\n[work.gates]\naccept = "agent"')
+        const tools = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-work-monitor-')))
+        roots.push(tools)
+        writeFileSync(join(tools, 'monitor.sh'), `#!/bin/sh\ntouch ${join(tools, 'monitor-ran')}\n`, { mode: 0o755 })
+        git(root, 'config', 'core.fsmonitor', join(tools, 'monitor.sh'))
+        writeFileSync(join(root, 'workorders/WO-1.md'), order('WO-1'))
+        expect((await work(root, ['work', 'accept', '--work-order', 'WO-1'])).result).toMatchObject({ state: 'accepted' })
+        expect(await work(root, ['work', 'check', '--work-order', 'WO-1'])).toMatchObject({ status: 0 })
+        expect(await work(root, ['work', 'grade', '--work-order', 'WO-1'])).toMatchObject({ status: 0, result: { state: 'graded' } })
+        expect(existsSync(join(tools, 'monitor-ran'))).toBe(false)
+    })
+
     it('closes an order as checks-passed only after cockpit ran every check, failing changes outside scope and stale contracts', async () => {
         const root = await cockpit('[work]\ngrading = "checks"\n\n[work.gates]\naccept = "agent"\namend = "person"')
         writeFileSync(join(root, 'workorders/WO-1.md'), order('WO-1'))

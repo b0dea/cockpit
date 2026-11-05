@@ -139,7 +139,7 @@ async function canonical(path: string): Promise<string | undefined> {
 }
 
 /** The main checkout a checkout belongs to, read from its `.git` entry as Git lays it out. */
-export async function mainCheckoutOf(checkout: string): Promise<string | undefined> {
+async function mainCheckoutOf(checkout: string): Promise<string | undefined> {
     const dotGit = await statOf(join(checkout, '.git'))
     if (typeof dotGit === 'string') return undefined
     if (dotGit.isDirectory()) return canonical(checkout)

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import type { StackId } from './contract.js'
@@ -49,12 +49,12 @@ async function trackedSchemas(repository: string, ...relative: string[]) {
     git(repository, 'add', '--', ...relative.map((directory) => join(directory, SCHEMA)))
 }
 
-async function observe(space: Awaited<ReturnType<typeof workspace>>, env: Record<string, string> = {}, mainCheckout?: string) {
+async function observe(space: Awaited<ReturnType<typeof workspace>>, env: Record<string, string> = {}, cockpitRoot = space.cockpit) {
     const resolved = await resolveGitExecutable(process.env)
     if (resolved.state !== 'available') throw new Error('git is unavailable')
     const execute = vi.fn(executeProbe)
     const [observation] = await observeEnvSchemas({
-        stackId, cockpit: { root: space.cockpit, name: 'synthetic', ...mainCheckout === undefined ? {} : { mainCheckout } }, siblings: [{ slug: 'api', root: space.api }], git: resolved.value,
+        stackId, cockpit: { root: cockpitRoot, name: 'synthetic' }, siblings: [{ slug: 'api', root: space.api }], git: resolved.value,
         env: { PATH: `${space.bin}:/usr/bin:/bin`, ...env }, timeoutMs: 5_000,
     }, { execute })
     const steps = execute.mock.calls.map(([step]) => step)
@@ -101,19 +101,52 @@ describe('env schema discovery and load paths', () => {
         expect(execute.mock.calls.filter(([step]) => step.id.startsWith('env-schema:')).map(([step]) => step.id)).toEqual(['env-schema:root'])
     })
 
-    it('finds the ignored central directory in the main checkout when this checkout is a linked worktree', async () => {
-        const space = await workspace()
-        await writeFile(join(space.api, SCHEMA), 'API_KEY=\n')
-        const main = join(space.root, 'main')
-        const held = join(main, 'env', '.secrets', 'synthetic', 'api')
-        await mkdir(held, { recursive: true })
-        const paths = async () => (await observe(space, {}, main)).varlock.map(({ argv }) => argv.filter((_, index) => argv[index - 1] === '--path'))
+    describe('the ignored central directory a linked worktree borrows', () => {
+        const store = (root: string) => join(root, 'env', '.secrets', 'synthetic', 'api')
+        async function repository(space: Awaited<ReturnType<typeof workspace>>) {
+            const main = join(space.root, 'main')
+            execFileSync('git', ['init', '--quiet', main])
+            git(main, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '--quiet', '--allow-empty', '-m', 'fixture')
+            const linked = join(space.root, 'linked')
+            git(main, 'worktree', 'add', '--quiet', '--detach', linked)
+            await writeFile(join(space.api, SCHEMA), 'API_KEY=\n')
+            await mkdir(store(main), { recursive: true })
+            await mkdir(store(join(main, 'nested')), { recursive: true })
+            await mkdir(join(linked, 'nested'))
+            return { main, linked }
+        }
+        const paths = async (space: Awaited<ReturnType<typeof workspace>>, root: string) =>
+            (await observe(space, {}, root)).varlock.map(({ argv }) => argv.filter((_, index) => argv[index - 1] === '--path'))
 
-        expect(await paths()).toEqual([[space.api, held]])
+        it('reads it from the main checkout, at the same place below the working tree', async () => {
+            const space = await workspace()
+            const { main, linked } = await repository(space)
+            expect(await paths(space, main)).toEqual([[space.api, store(main)]])
+            expect(await paths(space, linked)).toEqual([[space.api, store(main)]])
+            expect(await paths(space, join(linked, 'nested'))).toEqual([[space.api, store(join(main, 'nested'))]])
+            // A store in this checkout is the more specific one, so it wins.
+            await mkdir(store(linked), { recursive: true })
+            expect(await paths(space, linked)).toEqual([[space.api, store(linked)]])
+        })
 
-        // A store in this checkout is the more specific one, so it wins.
-        await mkdir(space.central, { recursive: true })
-        expect(await paths()).toEqual([[space.api, space.central]])
+        it('borrows nothing where Git names no main checkout', async () => {
+            const space = await workspace()
+            await repository(space)
+            const plain = join(space.root, 'plain')
+            await mkdir(plain)
+            expect(await paths(space, plain)).toEqual([[space.api]])
+            // A common directory kept outside any working tree belongs to no checkout, though a store sits above it.
+            const separate = join(space.root, 'separate')
+            const elsewhere = join(space.root, 'elsewhere', 'store.git')
+            await mkdir(dirname(elsewhere))
+            execFileSync('git', ['init', '--quiet', `--separate-git-dir=${elsewhere}`, separate])
+            await mkdir(store(dirname(elsewhere)), { recursive: true })
+            expect(await paths(space, separate)).toEqual([[space.api]])
+            // A `.git` pointer that reaches the main checkout is not trusted over Git refusing it.
+            await writeFile(join(plain, '.git'), `gitdir: ${join(space.root, 'main', '.git', 'worktrees', 'linked')}\n`)
+            await rm(join(space.root, 'main', '.git', 'worktrees', 'linked', 'HEAD'))
+            expect(await paths(space, plain)).toEqual([[space.api]])
+        })
     })
 
     it('refuses a central path it must not follow, naming that path, without reading inside it or running Varlock', async () => {

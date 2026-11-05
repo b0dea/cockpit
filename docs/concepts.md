@@ -89,7 +89,8 @@ the configuration you select with `--config`.
 
 The cockpit's runtime identity comes from the main Git checkout and the checkout identity from the
 current one, so linked worktrees share one cockpit but stay distinct checkouts. A standalone
-directory can `sync` before Git exists; `setup` and lifecycle commands need a Git checkout.
+directory can `sync` before Git exists, and its generated files stay valid; `setup` and lifecycle
+commands need a Git checkout, and the guard holds an agent's guarded calls until it can read one.
 
 ## Where the cockpit lives
 
