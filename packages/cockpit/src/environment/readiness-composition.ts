@@ -11,7 +11,7 @@ import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { inspectTeamReadiness } from '../team-metadata.js'
 import { guardSearchPathRelativeEntry } from '../guards/protected-locations.js'
 import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, snapshotExecutionStep, type EnvironmentDiagnostic, type ExecutionStep, RefusalError, isMissing, errorCause } from './contract.js'
-import { resolveDiskCapacityExecutable, resolveDockerExecutable, resolveGitExecutable } from './executable.js'
+import { GIT_CHILD_CONFIG, resolveDiskCapacityExecutable, resolveDockerExecutable, resolveGitExecutable } from './executable.js'
 import { measureMachineFloor } from './runtime.js'
 import { gitRepositoryRefusal, inspectTrackedSecretFiles } from './git-observation.js'
 import { declaresNothingToRun } from './declaration.js'
@@ -135,7 +135,7 @@ export async function inspectProjectReadiness(
     // setup refuses it only later; init reached its final stage without saying so.
     if (input.checkRoot && await isDirectory(input.root)) {
         const step = snapshotExecutionStep({
-            id: 'git:readiness-working-tree', argv: [git.value.canonicalPath, '-C', input.root, 'rev-parse', '--show-toplevel'],
+            id: 'git:readiness-working-tree', argv: [git.value.canonicalPath, '-C', input.root, ...GIT_CHILD_CONFIG, 'rev-parse', '--show-toplevel'],
             argv0: git.value.invocationPath, cwd: input.root, env: {}, timeoutMs: input.timeoutMs,
             stdoutLimitBytes: 4_096, stderrLimitBytes: 4_096, paths: [input.root], ports: [], labels: { source: input.root },
             expected: [], consumedFiles: [{ path: git.value.canonicalPath, sha256: git.value.sha256, maxBytes: 536_870_912,

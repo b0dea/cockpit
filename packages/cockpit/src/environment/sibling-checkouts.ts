@@ -18,7 +18,7 @@ import { cockpitCommand, formatShellCommand } from '../fix-catalogue.js'
 import { GUARD_LOCAL_PATHS, writeCockpitLocalFiles } from '../guards/local-identity.js'
 import type { CockpitConfig, Sibling } from '../schema.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, RefusalError, tryParseJson, type EnvironmentDiagnostic, type ExecutionStep } from './contract.js'
-import { resolveGitExecutable, type ResolvedExecutable } from './executable.js'
+import { GIT_CHILD_CONFIG, resolveGitExecutable, type ResolvedExecutable } from './executable.js'
 import { repositoryIdentity, type RepositoryIdentity } from './repository-identity.js'
 import { redactSensitiveMessage } from './sensitive.js'
 import { gitEnvironment } from './setup.js'
@@ -169,10 +169,6 @@ export interface GitRunner {
     readonly executable: ResolvedExecutable
     run(cwd: string, id: string, args: readonly string[], options?: GitRunOptions): Promise<GitRun>
 }
-
-// Repository-local `core.fsmonitor` and hooks run code on nearly any Git command. Agents cannot write under
-// `.git`, so this is defence in depth against a checkout whose configuration arrived some other way.
-export const GIT_CHILD_CONFIG = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'] as const
 
 // Global and system configuration can carry aliases, credential helpers and fsmonitor commands that
 // run code; cockpit's Git children read only the repository's own configuration, as setup's clone does.

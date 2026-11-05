@@ -10,6 +10,10 @@ import { exactKeys } from '../exact-keys.js'
 // observes with are found on this fixed search path rather than the inherited PATH.
 export const GUARD_EXECUTABLE_SEARCH_PATH = '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin'
 
+// Repository-local `core.fsmonitor` and hooks run code on nearly any Git command. Agents cannot write under
+// `.git`, so this is defence in depth against a checkout whose configuration arrived some other way.
+export const GIT_CHILD_CONFIG = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'] as const
+
 // Every executable runs from its own path. The executor re-checks the file's identity and digest
 // immediately before each spawn, and the process-wide digest memo makes that re-check cost a stat
 // unless the file's device, inode, size, mode or times moved. Copying a binary into a private

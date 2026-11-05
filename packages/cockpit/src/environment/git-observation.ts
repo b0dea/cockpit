@@ -18,12 +18,11 @@ import {
     type ExecutionStep,
     type StackId,
 } from './contract.js'
-import { resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
+import { GIT_CHILD_CONFIG, resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
 import { repositoryIdentity, type RepositoryIdentity } from './repository-identity.js'
 import { stackId as deriveStackId } from './identity.js'
 import { isRuntimeTopologyEvidence, type RuntimeTopologyEvidence } from './runtime.js'
 import { consumeSetupCheckoutProjection, type SetupCheckoutProjection } from './setup-observation.js'
-import { GIT_CHILD_CONFIG } from './sibling-checkouts.js'
 
 const OWNER = 'git-observation'
 
@@ -105,7 +104,7 @@ export function createGitObservationStep(input: {
         || !safeEnvironment) return undefined
     const step = snapshotExecutionStep({
         id: 'git-health',
-        argv: [executable.canonicalPath, '-C', input.checkoutRoot, 'status', '--porcelain=v2', '--branch', '--untracked-files=normal'],
+        argv: [executable.canonicalPath, '-C', input.checkoutRoot, ...GIT_CHILD_CONFIG, 'status', '--porcelain=v2', '--branch', '--untracked-files=normal'],
         argv0: executable.invocationPath,
         cwd: input.checkoutRoot,
         env: Object.fromEntries(safeEnvironment),
@@ -420,7 +419,7 @@ export function createComparisonRemoteRefStep(input: {
     const binding = { ...git, sibling: input.sibling, expected: expected.identity, branch, revision, upstream }
     const step = comparisonStep({
         id: `git:${input.sibling}:comparison-ref`, binding, env: input.env, timeoutMs: input.timeoutMs,
-        argv: [executable.canonicalPath, '-C', input.checkoutRoot, 'for-each-ref',
+        argv: [executable.canonicalPath, '-C', input.checkoutRoot, ...GIT_CHILD_CONFIG, 'for-each-ref',
             '--format=%(objectname)%00%(refname)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream)',
             '--count=1', '--', `refs/heads/${branch}`],
     })
@@ -457,7 +456,7 @@ export function observeComparisonRemoteRef(stage: ComparisonRemoteRefStage, outc
     const { remoteName, upstreamRef } = decoded
     const step = comparisonStep({
         id: `git:${binding.sibling}:comparison-url`, binding, env: stage.step.env, timeoutMs: stage.step.timeoutMs,
-        argv: [binding.executable.canonicalPath, '-C', binding.checkoutRoot, 'remote', 'get-url', '--', remoteName],
+        argv: [binding.executable.canonicalPath, '-C', binding.checkoutRoot, ...GIT_CHILD_CONFIG, 'remote', 'get-url', '--', remoteName],
     })
     if (!step) return comparisonUnavailable(`comparison remote probe is unavailable for sibling ${binding.sibling}`, remoteName)
     const next = { kind: 'probe' as const, step, remoteName }
@@ -490,7 +489,7 @@ export function observeComparisonRemoteUrl(stage: ComparisonRemoteUrlStage, outc
         && observed.identity.repository === binding.expected.repository ? 'match' : 'mismatch'
     const step = comparisonStep({
         id: `git:${binding.sibling}:comparison-revalidate`, binding, env: stage.step.env, timeoutMs: stage.step.timeoutMs,
-        argv: [binding.executable.canonicalPath, '-C', binding.checkoutRoot, 'for-each-ref',
+        argv: [binding.executable.canonicalPath, '-C', binding.checkoutRoot, ...GIT_CHILD_CONFIG, 'for-each-ref',
             '--format=%(objectname)%00%(refname)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream)',
             '--', `refs/heads/${binding.branch}`, binding.upstreamRef],
     })
@@ -664,7 +663,7 @@ export async function listTrackedEnvSchemas(input: {
     if (!executable) return { kind: 'unavailable', reason: 'no resolved Git executable' }
     const step = snapshotExecutionStep({
         id: `git:tracked-env-schemas:${input.slug}`,
-        argv: [executable.canonicalPath, '-C', input.root, '-c', 'core.fsmonitor=false', 'ls-files', '-z', '--', ':(glob)**/.env.schema'],
+        argv: [executable.canonicalPath, '-C', input.root, ...GIT_CHILD_CONFIG, 'ls-files', '-z', '--', ':(glob)**/.env.schema'],
         argv0: executable.invocationPath, cwd: input.root, env: {}, timeoutMs: input.timeoutMs,
         stdoutLimitBytes: TRACKED_SECRET_LIMIT, stderrLimitBytes: COMPARISON_OUTPUT_LIMIT,
         paths: [input.root], ports: [], labels: { sibling: input.slug },
@@ -698,7 +697,7 @@ export async function inspectTrackedSecretFiles(input: {
     const perRepository = await Promise.all(input.repositories.map(async (repository): Promise<readonly EnvironmentDiagnostic[]> => {
         const step = snapshotExecutionStep({
             id: `git:tracked-secrets:${repository.slug}`,
-            argv: [executable.canonicalPath, '-C', repository.root, 'ls-files', '-z', '--', '.env', '*/.env', '.env.*', '*/.env.*', '.secrets/*', '*/.secrets/*'],
+            argv: [executable.canonicalPath, '-C', repository.root, ...GIT_CHILD_CONFIG, 'ls-files', '-z', '--', '.env', '*/.env', '.env.*', '*/.env.*', '.secrets/*', '*/.secrets/*'],
             argv0: executable.invocationPath, cwd: repository.root, env: {}, timeoutMs: input.timeoutMs,
             stdoutLimitBytes: TRACKED_SECRET_LIMIT, stderrLimitBytes: COMPARISON_OUTPUT_LIMIT,
             paths: [repository.root], ports: [], labels: { sibling: repository.slug },

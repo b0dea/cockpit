@@ -27,7 +27,7 @@ import {
 } from './contract.js'
 import type { SetupObservation, SetupPathEvidence } from './setup.js'
 import { gitEnvironment } from './setup.js'
-import { observationSearchPath, resolveGitExecutable, resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
+import { GIT_CHILD_CONFIG, observationSearchPath, resolveGitExecutable, resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
 import { createGitRunner } from './sibling-checkouts.js'
 import { checkoutId as deriveCheckoutId } from './identity.js'
 import { cockpitId as deriveCockpitId } from './identity.js'
@@ -244,7 +244,7 @@ function ignoreProbeStep(
 ): ExecutionStep {
     return probeStep(
         id,
-        [input.gitExecutable.canonicalPath, '-c', 'core.excludesFile=/dev/null', '-C', input.siblingRoot, ...args],
+        [input.gitExecutable.canonicalPath, '-c', 'core.excludesFile=/dev/null', ...GIT_CHILD_CONFIG, '-C', input.siblingRoot, ...args],
         input.siblingRoot,
         input.env,
         input.gitExecutable,
@@ -415,6 +415,7 @@ async function ignoreRepositoryChecks(
             input.gitExecutable.canonicalPath,
             '-c',
             'core.excludesFile=/dev/null',
+            ...GIT_CHILD_CONFIG,
             '-C',
             input.siblingRoot,
             'rev-parse',
@@ -715,6 +716,9 @@ function validRefName(value: string): boolean {
         && !component.startsWith('.') && !component.endsWith('.lock'))
 }
 
+// What cockpit itself passes with -c. Anything else on the command line did not come from it.
+const COMMAND_LINE_CONFIG = new Map([['core.excludesfile', '/dev/null'], ['core.fsmonitor', 'false'], ['core.hookspath', '/dev/null']])
+
 async function validConfigurationInventory(
     bytes: Buffer,
     checkout: string,
@@ -741,7 +745,7 @@ async function validConfigurationInventory(
         const value = entry.slice(separator + 1)
         if (key === 'include.path' || key.startsWith('includeif.')) return false
         if (origin === 'command line:') {
-            if (key !== 'core.excludesfile' || value !== '/dev/null') return false
+            if (COMMAND_LINE_CONFIG.get(key) !== value) return false
             continue
         }
         if (!origin.startsWith('file:')) return false
@@ -838,7 +842,7 @@ function setupProbeStep(
 ): ExecutionStep {
     return probeStep(
         id,
-        [executable.canonicalPath, '-c', 'core.excludesFile=/dev/null', '-C', checkout, ...args],
+        [executable.canonicalPath, '-c', 'core.excludesFile=/dev/null', ...GIT_CHILD_CONFIG, '-C', checkout, ...args],
         checkout,
         env,
         executable,
@@ -1743,7 +1747,7 @@ export async function observeSetupPath(
 
     const identityStep = probeStep(
         'setup:observe:identity',
-        [executable.canonicalPath, '-C', target, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'],
+        [executable.canonicalPath, ...GIT_CHILD_CONFIG, '-C', target, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'],
         siblingsRoot,
         env,
         executable,
@@ -1800,7 +1804,7 @@ export async function observeSetupPath(
 
     const confirmedIdentity = await authenticatedProbe(probeStep(
         'setup:observe:identity-confirm',
-        [executable.canonicalPath, '-C', target, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'],
+        [executable.canonicalPath, ...GIT_CHILD_CONFIG, '-C', target, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'],
         siblingsRoot,
         env,
         executable,
@@ -1814,7 +1818,7 @@ export async function observeSetupPath(
 
     const configurationInventory = await authenticatedProbe(probeStep(
         'setup:observe:config-origins',
-        [executable.canonicalPath, '-c', 'core.excludesFile=/dev/null', '-C', target, 'config', '--show-origin', '--null', '--list'],
+        [executable.canonicalPath, '-c', 'core.excludesFile=/dev/null', ...GIT_CHILD_CONFIG, '-C', target, 'config', '--show-origin', '--null', '--list'],
         siblingsRoot,
         env,
         executable,
@@ -1828,7 +1832,7 @@ export async function observeSetupPath(
 
     const remote = await authenticatedProbeOutcome(probeStep(
         'setup:observe:origin',
-        [executable.canonicalPath, '-C', target, 'config', '--get', 'remote.origin.url'],
+        [executable.canonicalPath, ...GIT_CHILD_CONFIG, '-C', target, 'config', '--get', 'remote.origin.url'],
         siblingsRoot,
         env,
         executable,

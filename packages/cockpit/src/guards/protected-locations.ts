@@ -9,7 +9,7 @@ import { readBoundedFile } from '../bounded-read.js'
 import { basename, dirname, join, posix, relative } from 'node:path'
 
 import { ENVIRONMENT_CODES, snapshotExecutionStep, type ExecutionStep, RefusalError } from '../environment/contract.js'
-import type { ResolvedExecutable } from '../environment/executable.js'
+import { GIT_CHILD_CONFIG, type ResolvedExecutable } from '../environment/executable.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { foldGuardSpelling, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity } from './evaluator.js'
 
@@ -175,7 +175,7 @@ const GUARD_IGNORED_ENTRY_LIMIT = GUARD_SEARCH_ENTRY_LIMIT
 async function gitPaths(git: ResolvedExecutable, repository: string, args: readonly string[], execute: GuardExecute): Promise<readonly string[] | null> {
     const step = snapshotExecutionStep({
         id: 'guard-git-paths',
-        argv: [git.canonicalPath, '-C', repository, `--work-tree=${repository}`, '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', '-c', 'core.ignoreCase=false', ...args],
+        argv: [git.canonicalPath, '-C', repository, `--work-tree=${repository}`, ...GIT_CHILD_CONFIG, '-c', 'core.untrackedCache=false', '-c', 'core.ignoreCase=false', ...args],
         argv0: git.invocationPath, cwd: repository, env: {}, timeoutMs: 10_000,
         stdoutLimitBytes: GIT_LIST_BYTES, stderrLimitBytes: 65_536, paths: [repository], ports: [], labels: { action: 'guard-git-paths' },
         expected: [{ kind: 'path', target: repository, state: 'repository' }],
