@@ -536,7 +536,7 @@ describe('CLI help', () => {
             'Generate and verify:\n' +
             '  sync              Write the Compose ownership override and agent files from cockpit.toml\n' +
             '  check             Report generated files that no longer match cockpit.toml\n' +
-            '  selftest          Test whether agent tools enforce the generated controls\n\n' +
+            '  selftest          Measure supported agent capabilities and report unverified cells\n\n' +
             'Run the stack:\n' +
             '  runtime           Measure the local container runtime (runtime measure) and record the result for this machine\n' +
             '  up                Start or resume the declared environment\n' +
