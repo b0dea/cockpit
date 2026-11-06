@@ -371,20 +371,23 @@ describe('the signature audit', () => {
     const audit = (replies: readonly (readonly [number, string])[]) => {
         const bin = scratch('audit')
         const calls = join(bin, 'calls')
-        const cases = replies.map(([code, text], index) => `  ${index + 1}) echo '${text}'; exit ${code} ;;`).join('\n')
+        const cases = replies.map(([code, text], index) => `  ${index + 1}) echo '${text.replace('<log>', join(bin, 'debug.log'))}'; exit ${code} ;;`).join('\n')
         writeFileSync(join(bin, 'npm'), `#!/bin/sh\necho "$*" >> '${calls}'\ncase $(wc -l < '${calls}' | tr -d ' ') in\n${cases}\nesac\n`, { mode: 0o755 })
         writeFileSync(join(bin, 'sleep'), '#!/bin/sh\n', { mode: 0o755 })
+        writeFileSync(join(bin, 'debug.log'), 'http fetch GET 200 synthetic/attestations/@scope%2fpad@1.3.0 40ms (cache hit)\n')
         const result = spawnSync('bash', [join(REPOSITORY, '.github/scripts/audit-signatures.sh')],
             { encoding: 'utf8', env: { PATH: `${bin}:${process.env.PATH}` } })
         return { code: result.status, output: result.stdout, attempts: readFileSync(calls, 'utf8').trim().split('\n') }
     }
-    const MISSING_KEY = [1, 'npm error code EMISSINGSIGNATUREKEY'] as const
+    const MISSING_KEY = [1, 'npm error code EMISSINGSIGNATUREKEY\nnpm error @scope/pad@1.3.0 has attestations but no corresponding public key(s) can be found\nnpm error A complete log of this run can be found in: <log>'] as const
 
     it('passes when a missing-key report does not recur, and says it retried', () => {
         const { code, output, attempts } = audit([MISSING_KEY, [0, 'all verified']])
         expect(code).toBe(0)
         expect(attempts).toEqual(['audit signatures --prefer-online', 'audit signatures --prefer-online'])
         expect(output).toContain('::warning title=npm audit signatures::EMISSINGSIGNATUREKEY on attempt 1')
+        // The cause on a runner is unproven, so each occurrence records how that fetch was answered.
+        expect(output).toContain('attestations/@scope%2fpad@1.3.0 40ms (cache hit)')
     })
 
     it('fails when the key stays missing', () => {

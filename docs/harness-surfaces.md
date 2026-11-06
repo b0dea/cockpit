@@ -140,7 +140,13 @@ and blocks cockpit's per-user state root and the Docker socket, so only `cockpit
 `codex sandbox` and its built-in workspace profile, which agreed with a Codex session under the
 generated configuration: `doctor`, `preflight`, `logs` and `work status` could not read cockpit's
 state and `test-run` reported `DEGRADED`, while outside the sandbox they reported the real state and
-the gate passed.
+the gate passed. A declared `[browser]` makes `check` and `sync --dry-run` read the state root too,
+and so does `sync --dry-run` after a `cockpit.name` rename on a cockpit with Compose files, so those
+also stop with `STATE_ROOT_UNAVAILABLE` there. Granting that one directory, or its nearest
+existing parent before it exists, lifts the state limit alone: under Codex 0.166.0's `codex sandbox`
+with a permissions profile writing only that directory, every state selector and a real write
+succeeded while the home directory stayed read-only, and without the grant they refused (measured
+2026-11-06). `/bin/ps` stays refused there, and so does the Docker socket.
 
 Run every other cockpit command, and `git commit` in the cockpit, outside the sandbox: from a
 terminal, or by approving Codex's request. A `codex exec` run cannot ask, so a person runs those
@@ -356,14 +362,14 @@ writes to that machine-local, ignored file, and refuses to start, naming the fil
 run on the machine.
 
 **A checkout `cockpit use` serves** from outside the declared one needs a grant that names a path on
-one machine. Measured on 2026-11-04, each run writing into the granted directory and an ungranted
+one machine. Measured on 2026-11-04 unless noted, each run writing into the granted directory and an ungranted
 control beside it:
 
-- Claude Code 2.1.318, `claude -p --permission-mode acceptEdits`: a directory listed in
-  `.claude/settings.local.json` `permissions.additionalDirectories` was written and the control
-  refused. A twin whose list was a string was reported as not loaded, and granted nothing. The run
-  was in an untrusted workspace, where Claude Code ignored the committed list, so whether the two
-  lists combine once a person trusts the workspace is unmeasured.
+- Claude Code 2.1.319, `claude -p --permission-mode acceptEdits` (measured 2026-11-06): a directory
+  listed in `.claude/settings.local.json` `permissions.additionalDirectories` was written and the
+  control refused, trusted or not. In a trusted workspace the committed list combines with it; in an
+  untrusted one Claude Code ignores the committed list. A string-valued list in either file grants
+  nothing from that file, with no report, while the other file's list still holds.
 - OpenCode 1.19.5, `opencode run`: the grant file holding the worktree path allowed the write, the
   control was denied, and a pattern naming a missing grant file stopped OpenCode at start, naming
   the file.

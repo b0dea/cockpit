@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { constants, lstatSync } from 'node:fs'
-import { chmod, link, lstat, mkdir, mkdtemp, open, realpath, rm, unlink } from 'node:fs/promises'
+import { chmod, link, lstat, mkdir, mkdtemp, open, readdir, realpath, rm, unlink } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, normalize } from 'node:path'
@@ -242,6 +242,34 @@ export async function repairFencedExecution(fence: ExecutionFence): Promise<
     return { kind: 'refusal', code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }
 }
 
+// Nothing else removes what a crash leaves in this directory. A settled file only stops a late executor
+// or recoverer, and its attempt's validity, at most minutes, has long expired by this age. Age proves
+// nothing about a socket: a hung action can keep its supervisor running, and its repair needs that path.
+const FENCE_RESIDUE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
+
+function socketRefusesConnection(path: string): Promise<boolean> {
+    return new Promise(resolve => {
+        const socket = createConnection(path)
+        const settle = (refused: boolean) => { clearTimeout(timer); socket.destroy(); resolve(refused) }
+        // A supervisor acts only on what a client writes, so connecting stops nothing.
+        const timer = setTimeout(() => settle(false), 1_000)
+        socket.once('connect', () => settle(false))
+        socket.once('error', error => settle(hasErrorCode(error, 'ECONNREFUSED')))
+    })
+}
+
+async function sweepFenceResidue(directory: string): Promise<void> {
+    const cutoff = Date.now() - FENCE_RESIDUE_MAX_AGE_MS
+    try {
+        for (const name of await readdir(directory)) {
+            if (!/^[a-f0-9]{24}\.sock(\.settled)?$/.test(name)) continue
+            const path = join(directory, name)
+            if ((await lstat(path)).mtimeMs >= cutoff) continue
+            if (name.endsWith('.settled') || await socketRefusesConnection(path)) await unlink(path)
+        }
+    } catch { /* Housekeeping only: the attempt is already cleaned up, and a later sweep retries. */ }
+}
+
 export async function cleanupFencedExecution(fence: ExecutionFence): Promise<boolean> {
     if (!validExecutionFence(fence) || !await secureFenceSocketDirectory(fence)) return false
     const marker = readFenceMarker(fence)
@@ -251,11 +279,12 @@ export async function cleanupFencedExecution(fence: ExecutionFence): Promise<boo
         || !await pathAbsent(fence.socketPath)) return false
     try {
         // Once the marker is gone, an executor still starting could publish its own and run, and a
-        // second recoverer could recreate it. This stays for the life of the temporary directory.
+        // second recoverer could recreate it. sweepFenceResidue removes this once neither can happen.
         await (await open(settledFencePath(fence), constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)).close()
         await unlink(fence.markerPath)
         const directory = await open(dirname(fence.markerPath), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
         try { await directory.sync() } finally { await directory.close() }
+        await sweepFenceResidue(dirname(fence.socketPath))
         return true
     } catch { /* A marker that cannot be removed durably leaves the fence unreleased, which the false result reports. */ return false }
 }

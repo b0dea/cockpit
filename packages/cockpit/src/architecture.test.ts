@@ -304,6 +304,7 @@ const JUSTIFIED_EMPTY_CATCHES: readonly (readonly [site: string, why: string])[]
     ['packages/cockpit/src/environment-exec/execute.ts#spawnFencedSupervisor', 'a marker that cannot be removed stays visible, and the state scan refuses it'],
     ['packages/cockpit/src/environment-exec/execute.ts#stageVerifiedFile', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/environment-exec/execute.ts#stageVerifiedFile', CLOSE_AFTER_DECISION],
+    ['packages/cockpit/src/environment-exec/execute.ts#sweepFenceResidue', 'housekeeping after the attempt is cleaned up, and a later sweep retries'],
     ['packages/cockpit/src/environment-exec/execute.ts#terminate', SIGNAL_RACES_EXIT],
     ['packages/cockpit/src/environment-exec/execute.ts#terminate', SIGNAL_RACES_EXIT],
     ['packages/cockpit/src/environment-exec/execute.ts#terminate', SIGNAL_RACES_EXIT],

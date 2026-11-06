@@ -327,12 +327,10 @@ jobs:
           # The guard that judges a change must not come from the change: a pull request could
           # loosen it and weaken tests in the same diff. Fail closed when the base has no copy
           # (first commit, new branch, or a base that is no longer fetched).
-          # The script imports the shared detector, so both come from the base. A base from before
-          # that split holds a self-contained script, which is then the whole guard.
+          # The script imports the shared detector, so both come from the base.
           mkdir -p "$RUNNER_TEMP/guard"
-          if ! git archive "$BASE_SHA" scripts/check-test-protection.mjs packages/cockpit/src/testing/test-protection.ts 2>/dev/null | tar -x -C "$RUNNER_TEMP/guard" \
-            && ! git archive "$BASE_SHA" scripts/check-test-protection.mjs | tar -x -C "$RUNNER_TEMP/guard"; then
-            echo "::error::Cannot read scripts/check-test-protection.mjs at the base revision $BASE_SHA, so this change cannot be checked against a trusted guard. Refusing to run the copy from the change itself."
+          if ! git archive "$BASE_SHA" scripts/check-test-protection.mjs packages/cockpit/src/testing/test-protection.ts | tar -x -C "$RUNNER_TEMP/guard"; then
+            echo "::error::Cannot read scripts/check-test-protection.mjs and packages/cockpit/src/testing/test-protection.ts at the base revision $BASE_SHA, so this change cannot be checked against a trusted guard. Refusing to run the copy from the change itself."
             exit 1
           fi
           node "$RUNNER_TEMP/guard/scripts/check-test-protection.mjs" "$BASE_SHA" "$HEAD_SHA" merge-base
@@ -343,12 +341,10 @@ jobs:
         run: |
           set -euo pipefail
           # Same as the pull request step: the base's guard, and fail closed without one.
-          # The script imports the shared detector, so both come from the base. A base from before
-          # that split holds a self-contained script, which is then the whole guard.
+          # The script imports the shared detector, so both come from the base.
           mkdir -p "$RUNNER_TEMP/guard"
-          if ! git archive "$BEFORE_SHA" scripts/check-test-protection.mjs packages/cockpit/src/testing/test-protection.ts 2>/dev/null | tar -x -C "$RUNNER_TEMP/guard" \
-            && ! git archive "$BEFORE_SHA" scripts/check-test-protection.mjs | tar -x -C "$RUNNER_TEMP/guard"; then
-            echo "::error::Cannot read scripts/check-test-protection.mjs at the base revision $BEFORE_SHA, so this change cannot be checked against a trusted guard. Refusing to run the copy from the change itself."
+          if ! git archive "$BEFORE_SHA" scripts/check-test-protection.mjs packages/cockpit/src/testing/test-protection.ts | tar -x -C "$RUNNER_TEMP/guard"; then
+            echo "::error::Cannot read scripts/check-test-protection.mjs and packages/cockpit/src/testing/test-protection.ts at the base revision $BEFORE_SHA, so this change cannot be checked against a trusted guard. Refusing to run the copy from the change itself."
             exit 1
           fi
           node "$RUNNER_TEMP/guard/scripts/check-test-protection.mjs" "$BEFORE_SHA" "$AFTER_SHA" exact

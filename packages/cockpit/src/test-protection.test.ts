@@ -344,8 +344,9 @@ describe('CI runs the base revision of its change guards', () => {
         ['test protection push step', 'BEFORE_SHA: ${{ github.event.before }}', 'scripts/check-test-protection.mjs', 'BEFORE_SHA', 'AFTER_SHA'],
         ['test protection pull request step', 'BASE_SHA: ${{ github.event.pull_request.base.sha }}', 'scripts/check-test-protection.mjs', 'BASE_SHA', 'HEAD_SHA'],
     ])('%s executes the base copy and refuses when the base has none', (_name, anchor, script, baseVar, headVar) => {
+        const detector = 'packages/cockpit/src/testing/test-protection.ts'
         const repo = repository()
-        const base = repo.commit({ [script]: marker('base copy') })
+        const base = repo.commit({ [script]: marker('base copy'), [detector]: 'export {}\n' })
         const head = repo.commit({ [script]: marker('head copy') }, base)
         const temp = mkdtempSync(join(tmpdir(), 'test-protection-temp-'))
         roots.push(temp)
@@ -360,8 +361,18 @@ describe('CI runs the base revision of its change guards', () => {
 
         const missing = run('0'.repeat(40))
         expect(missing.status).toBe(1)
-        expect(missing.stdout).toContain(`Cannot read ${script} at the base revision`)
+        expect(missing.stdout).toContain(`Cannot read ${script} and ${detector} at the base revision`)
         expect(missing.stdout).not.toContain('head copy')
+
+        // A base holding the script without the detector it imports has no usable guard either.
+        const noDetector = repository()
+        const scriptOnly = noDetector.commit({ [script]: marker('base copy') })
+        noDetector.commit({ [script]: marker('head copy') }, scriptOnly)
+        const partial = spawnSync('bash', ['-c', stepAfter(anchor)], {
+            cwd: noDetector.root, encoding: 'utf8', env: { ...process.env, RUNNER_TEMP: temp, [baseVar]: scriptOnly, [headVar]: head },
+        })
+        expect(partial.status).toBe(1)
+        expect(partial.stdout).toContain(`Cannot read ${script} and ${detector} at the base revision`)
     })
 
     // The script imports the shared detector, so the base's detector must travel with it.

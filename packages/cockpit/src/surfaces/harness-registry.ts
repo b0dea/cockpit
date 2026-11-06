@@ -1,9 +1,9 @@
 // Guard firing and instruction loading for these harnesses are dated runs (the firing records below
-// and the projection's instruction capabilities), so this record claims no pending measurement for
-// them; what stays open is a person's review of the rendered skills.
-const reviewedNative = Object.freeze({
-    state: 'instructed' as const,
-    reason: 'a person has not yet reviewed whether the tool loads and triggers them as written',
+// and the projection's instruction capabilities). Each skills record below is a request to a loopback
+// model from an isolated home, beside broken twins: it shows the tool lists the skill, not that a
+// model chooses to use it or that the tool loads its body.
+const listedSkills = (measuredVersion: string, provenance: string) => Object.freeze({
+    state: 'instructed' as const, measuredOn: '2026-11-06', measuredVersion, provenance,
 })
 
 // Cockpit writes rules, skills, MCP and permission files for these harnesses through the
@@ -58,7 +58,7 @@ const noRemoteMcp = Object.freeze({ state: 'unavailable' as const, evidence: 'no
 // Whether `cockpit use` can grant a checkout served from outside the declared one through a
 // machine-local file the tool reads. Each run wrote into the granted directory and into an
 // ungranted control beside it.
-const servedGrant = (fact: { state: 'enforced' | 'unavailable'; evidence: 'not_applicable' | 'human_needed'; measuredVersion: string | null; provenance: string }) =>
+const servedGrant = (fact: { state: 'enforced' | 'unavailable'; evidence: 'not_applicable' | 'human_needed'; measuredVersion: string | null; provenance: string; measuredOn?: string }) =>
     Object.freeze({ measuredOn: '2026-11-04', ...fact })
 const noServedGrant = servedGrant({ state: 'unavailable', evidence: 'not_applicable', measuredVersion: null,
     provenance: 'the tool was not installed where this was measured, so cockpit use writes nothing for it' })
@@ -73,8 +73,8 @@ const noMcpToolRestriction = mcpToolRestriction({ mechanism: 'unavailable', stat
 // home with synthetic credentials, beside a broken control definition in the same directory. Where no
 // subagent ran, read-only stays instructed; enforced means the spawned evaluator was refused the file
 // writes and shell its generated tool list leaves out. The verdict the working agent relays is its word either way.
-const subagentOffered = (measuredVersion: string, provenance: string) => Object.freeze({ state: 'instructed' as const, evidence: 'not_applicable' as const,
-    measuredOn: '2026-11-05', measuredVersion, provenance })
+const subagentOffered = (measuredOn: string, measuredVersion: string, provenance: string) => Object.freeze({ state: 'instructed' as const, evidence: 'not_applicable' as const,
+    measuredOn, measuredVersion, provenance })
 const claudeSubagentGrader = Object.freeze({ state: 'enforced' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-05', measuredVersion: '2.1.318',
     provenance: 'claude -p listed the generated evaluator in the Agent tool description and left out a definition with no front-matter beside it. The spawned evaluator was offered only Read, Grep, Glob and the browser server\'s tools from its generated tools list, and Claude Code refused its Write and Bash calls by name while a browser tool and Read ran; a twin whose tools key was misspelled ran Bash, and without disallowedTools also wrote. No workspace trust was given' })
 const subagentUnmeasured = Object.freeze({ state: 'generated' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-05', measuredVersion: null,
@@ -87,21 +87,23 @@ export const HARNESS_REGISTRY = Object.freeze([
         target: 'claudecode', type: 'agent' as const, displayName: 'Claude Code', rulesyncTarget: 'claudecode',
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'CLAUDE.md', skills: '.claude/skills', mcp: '.mcp.json', permissions: Object.freeze(['.claude/settings.json']) }),
-        guard: Object.freeze({ capability: 'instructed' as const, firing: claudeFiring }), native: reviewedNative, sessionStart: claudeSessionStart,
+        guard: Object.freeze({ capability: 'instructed' as const, firing: claudeFiring }), sessionStart: claudeSessionStart,
+        native: listedSkills('2.1.319', 'claude -p listed all four generated skills to the model, trusted or not, but did not reject broken twins: one with no front-matter and one with malformed YAML were both listed with descriptions from their bodies, and only a directory with no SKILL.md was left out'),
         subagentGrader: claudeSubagentGrader,
         mcpToolRestriction: mcpToolRestriction({ mechanism: 'hook', state: 'enforced', evidence: 'human_needed', measuredVersion: '2.1.318',
             provenance: 'claude -p with generated settings and a loopback synthetic model left the listed read tool denied by native permissions without a grant; with a grant it called only that tool, including with large arguments, and denied write, dispatcher and new tools despite readOnlyHint annotations. Unrestricted server tools ran even with a missing guard; restricted calls were held, an oversized envelope was refused, and a broken hook file was named. Project hooks still require workspace trust. Claude Code rewrites a dot in a tool name to an underscore before the hook sees it and keeps only the first of two tools that collide, so read.record and read_record are one name here' }),
         remoteMcp: remoteMcpMeasured({ evidence: 'human_needed', measuredVersion: '2.1.318', helper: true,
             provenance: 'from a project .mcp.json, Claude Code sent the Authorization header a ${NAME} reference named while a $NAME control went out literally; it ran a headersHelper given with --mcp-config, but refused to run one from the project file until a person trusts the workspace, and a misspelled headerHelper sent nothing' }),
-        servedCheckoutGrant: servedGrant({ state: 'enforced', evidence: 'human_needed', measuredVersion: '2.1.318',
-            provenance: 'a directory in .claude/settings.local.json permissions.additionalDirectories was written and the control refused, and a malformed twin granted nothing; measured in an untrusted workspace, so whether it combines with the committed list once a person trusts the workspace is unmeasured' }),
+        servedCheckoutGrant: servedGrant({ state: 'enforced', evidence: 'not_applicable', measuredOn: '2026-11-06', measuredVersion: '2.1.319',
+            provenance: 'in a trusted workspace the committed and .claude/settings.local.json permissions.additionalDirectories lists combined: both directories were written and an ungranted control refused; untrusted, only the local list applied, which is the one cockpit use writes, and a string-valued list in either file granted nothing from that file, without any report, while the other file\'s list held' }),
     }),
     Object.freeze({
         target: 'codexcli', type: 'agent' as const, displayName: 'Codex', rulesyncTarget: 'codexcli',
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.agents/skills', mcp: '.codex/config.toml', permissions: Object.freeze(['.codex/config.toml']) }),
-        guard: Object.freeze({ capability: 'instructed' as const, firing: codexFiring }), native: reviewedNative, sessionStart: codexSessionStart,
-        subagentGrader: subagentOffered('0.166.0', 'codex exec in a project a person had trusted listed the generated evaluator under the spawn_agent roles it sent to the model, and named and left out a malformed definition beside it'),
+        guard: Object.freeze({ capability: 'instructed' as const, firing: codexFiring }), sessionStart: codexSessionStart,
+        native: listedSkills('0.166.0', 'codex exec listed all four generated skills, trusted or not, and named and left out twins with missing front-matter and invalid YAML'),
+        subagentGrader: subagentOffered('2026-11-05', '0.166.0', 'codex exec in a project a person had trusted listed the generated evaluator under the spawn_agent roles it sent to the model, and named and left out a malformed definition beside it'),
         mcpToolRestriction: mcpToolRestriction({ mechanism: 'enabled-tools', state: 'enforced', evidence: 'not_applicable', measuredVersion: '0.166.0',
             provenance: 'codex exec with generated project enabled_tools and a loopback synthetic model called the listed read tool and rejected forced write, dispatcher and new tool calls as unsupported. The unrestricted control called all four; an empty list made no server call; a string-valued enabled_tools twin was named and rejected before startup. enabled_tools matches the server\'s raw tool name, so read.record and read_record stay distinct. No hook trust was granted' }),
         remoteMcp: remoteMcpMeasured({ evidence: 'not_applicable', measuredVersion: '0.166.0', helper: true,
@@ -113,11 +115,12 @@ export const HARNESS_REGISTRY = Object.freeze([
         target: 'opencode', type: 'agent' as const, displayName: 'OpenCode', rulesyncTarget: 'opencodev1',
         rulesyncFeatures: nonPermissionRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.opencode/skills', mcp: 'opencode.jsonc', permissions: Object.freeze(['opencode.jsonc']) }),
-        guard: Object.freeze({ capability: 'instructed' as const, firing: openCodeFiring }), native: reviewedNative, subagentGrader: subagentUnmeasured,
+        guard: Object.freeze({ capability: 'instructed' as const, firing: openCodeFiring }),
+        native: listedSkills('1.19.5', 'opencode run listed all four generated skills and left out twins with missing front-matter and invalid YAML, without naming them even at DEBUG'),
+        subagentGrader: subagentOffered('2026-11-06', '1.19.5', 'opencode run listed the generated evaluator in the task tool description, while twins with no front-matter or malformed YAML were still listed with a fallback description, primary-mode and .txt twins were left out, and an invalid mode or permission stopped OpenCode at start, naming the file. No subagent was run, so read-only stays instructed'),
         mcpToolRestriction: noMcpToolRestriction,
-        // OpenCode 1.19.5 delivered session.created to a project plugin beside a misspelled hook that
-        // never ran, but its model call failed, so no plugin hook was shown to put text in the agent's context.
-        sessionStart: noSessionStart('OpenCode 1.19.5 delivers session.created to a plugin, but no run has shown a plugin putting text in the agent\'s context, so cockpit generates no session-start check'),
+        sessionStart: Object.freeze({ state: 'unavailable' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-06', measuredVersion: '1.19.5',
+            provenance: 'a plugin\'s session.created handler put text in the request through a noReply prompt when it ran at once, but the request went out without it after a 3-second delay, as a real cockpit check could take, and the experimental chat.system.transform hook that survived the delay also reached the title request, so cockpit generates no session-start check. A plugin with a syntax error or that throws exited 0 with no failure reported, and only debug config lists it' }),
         remoteMcp: remoteMcpMeasured({ evidence: 'not_applicable', measuredVersion: '1.19.5', helper: false,
             provenance: 'opencode mcp list sent headers expanded from {env:NAME} in a project opencode.jsonc while a ${NAME} control went out literally; its remote server schema has no headers helper, so a server that declares one is not written for it' }),
         servedCheckoutGrant: servedGrant({ state: 'enforced', evidence: 'not_applicable', measuredVersion: '1.19.5',

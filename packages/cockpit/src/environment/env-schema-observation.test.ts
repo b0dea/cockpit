@@ -293,6 +293,18 @@ describe('env schema report categories', () => {
         }
     })
 
+    // Varlock 1.23.0, measured with synthetic values, prints a parse error's source line and a failing
+    // exec()'s command and stderr on stderr, and the exec() text in the report too.
+    it('keeps nothing of what Varlock prints on either stream when a schema fails', async () => {
+        const body = JSON.stringify({ config: { API_KEY: { isSensitive: true } },
+            errors: { root: [`.env.schema: Parse error: ${SECRET}`], configItems: { API_KEY: `exec(): command failed (exit code 3): echo ${SECRET}` } } })
+        const space = await workspace(`echo 'exec(): command failed: ${SECRET}' >&2\ncat <<'JSON'\n${body}\nJSON\nexit 1`)
+        await trackedSchemas(space.api, '')
+        const { observation } = await observe(space)
+        expect(observation.observed).toMatchObject({ state: 'failed' })
+        expect(JSON.stringify(observation)).not.toContain(SECRET)
+    })
+
     it('fails the row only for a key that is actually missing or a schema that does not load', async () => {
         const mixed = await classified({ configItems: { API_KEY: REQUIRED_EMPTY, REGION: `exec(): command failed (exit code 3): ${SECRET}` } })
         expect(mixed.observed).toMatchObject({ state: 'failed', reason: 'env schema is invalid in api (.): missing required API_KEY; could not validate or resolve REGION' })

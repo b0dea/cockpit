@@ -74,9 +74,10 @@ Done when the exact project-local executable lists the commands.
 
 Run every command from the cockpit root through `./node_modules/.bin/cockpit`; if that file is
 absent, stop and repair the project-local install. Read flags from
-`./node_modules/.bin/cockpit <command> --help`. In Codex's sandbox only `check`, `sync --dry-run`
-and `--help` run; ask the person to approve running any other cockpit command outside the sandbox,
-or to run it in a terminal. Pass `--json` and read `result`,
+`./node_modules/.bin/cockpit <command> --help`. In Codex's sandbox `check`, `sync --dry-run` and
+`--help` run as it stands, unless `[browser]` is declared; other cockpit commands also need write
+access to the state root, the Docker socket, or on macOS `/bin/ps`, so ask the person to approve
+running them outside the sandbox, or to run them in a terminal. Pass `--json` and read `result`,
 `diagnostics[].code` and `invocation.exitCode`. A pending `init` also exits 0, so read its
 `result.stage` and `result.question`.
 
@@ -281,7 +282,12 @@ started it, even where it lives outside this root.
      `environment.test_data` yourself instead, as in
      `./node_modules/.bin/cockpit confirm cockpit.name --config cockpit.toml --json`; the record says
      you decided them.
-   Done when `doctor` reports no required gap and every other gap is cleared or reported.
+   Done when `doctor` reports no required gap and every other gap is cleared or reported. Report
+   four things separately, because none implies another: **configuration generated** (`check`
+   passes), **machine ready** (`doctor`, run where it can read this machine, has no required gap),
+   **hooks enforced** (a person trusted the hook from the checkout the tool loads it from, so
+   `CODEX_HOOK_UNTRUSTED` and `CODEX_HOOK_SOURCE_MISMATCH` are clear) and **integrations proven
+   live** (the stack or provider was actually exercised, which no passing check shows).
 8. **Put product changes where the person reviews them.** A Dockerfile, Compose file or
    `.env.schema` the product needs goes on a new branch in that sibling's checkout: start the branch
    only when `git -C <sibling> status --short` prints nothing, write the files there, and put their
@@ -399,7 +405,9 @@ from the product manifest and lock; runtime commands never fetch with `npx`. If 
 adopted Varlock, adding and locking it needs product-change authorization; reuse explicit authorization
 already given for this adoption rather than asking again. `varlock init`,
 provider login, encryption and secret migration stay with a person; preview their file and
-provider scope instead of running them automatically.
+provider scope instead of running them automatically. Warn them that Varlock evaluates env files, so
+a copied value holding `$(...)` runs a command on load, even in double quotes: they single-quote each
+migrated value, as `./node_modules/@b00dea/cockpit/docs/environment.md` describes.
 
 Set `VARLOCK_TELEMETRY_DISABLED=true` in each declared Varlock command's environment, including
 status and trusted product processes. Cockpit sets it for its own schema probes. This disables
@@ -414,7 +422,9 @@ and reruns. To diagnose, a person runs `VARLOCK_TELEMETRY_DISABLED=true varlock 
 `./node_modules/.bin/cockpit doctor --config cockpit.toml` on a cockpit that declares no runtime, where preflight refuses; raw Varlock output is
 not safe to read.
 
-Treat Varlock output as secret-tainted even in agent mode. Report variable names, validation state,
+Treat Varlock output as secret-tainted even in agent mode: `--redact-stdout` does not cover Varlock's
+own errors, which can print source lines and a failing resolver's command and stderr. Keep raw
+diagnostics with the person and use cockpit's schema probes for failures you see. Report variable names, validation state,
 exit status and provenance only. Never copy raw resolved values, stdout or stderr into work-order
 records. Varlock's credential proxy is preview software and same-user code is not confined here;
 report secure agent secret use as unavailable unless a sandbox that has been tested proves it.

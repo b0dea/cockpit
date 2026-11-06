@@ -28,9 +28,9 @@ describe('shipped harness registry', () => {
             row.native.state,
             'measuredOn' in row.native ? row.native.measuredOn : null,
         ])).toEqual([
-            ['claudecode', 'Claude Code', 'claudecode', 'CLAUDE.md', '.claude/skills', '.mcp.json', ['.claude/settings.json'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'instructed', 'instructed', null],
-            ['codexcli', 'Codex', 'codexcli', 'AGENTS.md', '.agents/skills', '.codex/config.toml', ['.codex/config.toml'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'instructed', 'instructed', null],
-            ['opencode', 'OpenCode', 'opencodev1', 'AGENTS.md', '.opencode/skills', 'opencode.jsonc', ['opencode.jsonc'], ['rules', 'mcp', 'subagents', 'skills', 'hooks'], 'instructed', 'instructed', null],
+            ['claudecode', 'Claude Code', 'claudecode', 'CLAUDE.md', '.claude/skills', '.mcp.json', ['.claude/settings.json'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'instructed', 'instructed', '2026-11-06'],
+            ['codexcli', 'Codex', 'codexcli', 'AGENTS.md', '.agents/skills', '.codex/config.toml', ['.codex/config.toml'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'instructed', 'instructed', '2026-11-06'],
+            ['opencode', 'OpenCode', 'opencodev1', 'AGENTS.md', '.opencode/skills', 'opencode.jsonc', ['opencode.jsonc'], ['rules', 'mcp', 'subagents', 'skills', 'hooks'], 'instructed', 'instructed', '2026-11-06'],
             ['cursor', 'Cursor', 'cursor', '.cursor/rules', '.cursor/skills', '.cursor/mcp.json', ['.cursor/cli.json'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'unavailable', 'generated', '2026-10-28'],
             ['grokcli', 'Grok Build', 'grokcli', 'AGENTS.md', '.grok/skills', '.grok/config.toml', ['.grok/config.toml'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'unavailable', 'generated', '2026-10-28'],
         ])
@@ -54,7 +54,7 @@ describe('shipped harness registry', () => {
             .toMatchObject({ code: 'EVALUATOR_UNAVAILABLE', message: expect.stringMatching(/generates none for team-tool$/) })
         // A definition the tool was shown to offer is measured, and enforced only where a spawned evaluator was refused writes; one only written is not called more than that.
         expect(HARNESS_REGISTRY.map(row => [row.target, row.subagentGrader.state, row.subagentGrader.measuredVersion])).toEqual([
-            ['claudecode', 'enforced', '2.1.318'], ['codexcli', 'instructed', '0.166.0'], ['opencode', 'generated', null], ['cursor', 'generated', null], ['grokcli', 'generated', null]])
+            ['claudecode', 'enforced', '2.1.318'], ['codexcli', 'instructed', '0.166.0'], ['opencode', 'instructed', '1.19.5'], ['cursor', 'generated', null], ['grokcli', 'generated', null]])
     })
 
     it('accepts a measurement date only as a real calendar day that is not in the future', () => {

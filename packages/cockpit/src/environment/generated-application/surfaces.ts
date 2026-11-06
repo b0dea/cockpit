@@ -254,7 +254,7 @@ export async function prepareSurfaces(
             return refuse('SURFACE_INPUT_INVALID', 'browser posture authority could not be observed', prepared.configPath)
         }
         if (namespace.kind !== 'complete') return namespace.kind === 'refusal'
-            ? refuse('SURFACE_INPUT_INVALID', namespace.message, namespace.target)
+            ? refuse(namespace.code, namespace.message, namespace.target)
             : refuse('SURFACE_INPUT_INVALID', `browser posture state is ${namespace.kind}`, prepared.root)
         try {
             const authority = await resolveObservationPostures({

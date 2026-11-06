@@ -41,8 +41,9 @@ const EXPECTED_PACKAGE_LINKS = Object.freeze({
 // against the repository's own review. `--refresh-pins` rewrites it from the lockfile; the review
 // is of its diff, and an install script stays unapproved until allowScripts names it.
 const PINS_PATH = fileURLToPath(new URL('./supply-chain-pins.json', import.meta.url))
-// Only gates no file in this repository can prove.
-const OPERATOR_GAPS = Object.freeze(['package-scope-owner', 'trusted-publisher', 'superseded-minor-deprecation'])
+// What a person holds and no file here can prove, listed so a reader does not take a green check to
+// cover them. Printed on every run whether or not each has been done.
+const OPERATOR_CHECKS = Object.freeze(['package-scope-owner', 'trusted-publisher', 'superseded-minor-deprecation'])
 const MINIMUM_COOLDOWN_DAYS = 7
 // npm 11 and later hold back a release published less than this many days ago while resolving.
 const MINIMUM_RELEASE_AGE_DAYS = 2
@@ -342,7 +343,7 @@ function releaseDiagnostics(root: string): SupplyChainDiagnostic[] {
     return diagnostics
 }
 
-export function inspectSupplyChain(root: string, packFiles: unknown): Readonly<{ diagnostics: readonly SupplyChainDiagnostic[]; operatorGaps: readonly string[] }> {
+export function inspectSupplyChain(root: string, packFiles: unknown): Readonly<{ diagnostics: readonly SupplyChainDiagnostic[]; operatorChecks: readonly string[] }> {
     const diagnostics: SupplyChainDiagnostic[] = []
     const rootManifest = json(root, 'package.json')
     const packageManifest = json(root, 'packages/cockpit/package.json')
@@ -399,13 +400,18 @@ export function inspectSupplyChain(root: string, packFiles: unknown): Readonly<{
         if (packed.size !== packFiles.length) diagnostics.push(diagnostic('PACK_METADATA_INVALID', 'packages/cockpit', 'pack metadata contains duplicate paths'))
     }
     diagnostics.push(...workflowDiagnostics(root, rootManifest), ...releaseDiagnostics(root))
-    return { diagnostics, operatorGaps: OPERATOR_GAPS }
+    return { diagnostics, operatorChecks: OPERATOR_CHECKS }
 }
 
 export function runSupplyChainCheck(root: string): number {
-    const output = execFileSync('npm', ['pack', '--json', '--dry-run', '--workspace', '@b00dea/cockpit'], {
+    // A dry run downloads nothing, and the shared cache can be out of reach in a sandbox, where npm
+    // then fails with a cache error that says nothing about the package. A failing run keeps this
+    // cache, because the error it prints points at the log inside it.
+    const cache = mkdtempSync(join(tmpdir(), 'cockpit-pack-cache-'))
+    const output = execFileSync('npm', ['pack', '--json', '--dry-run', '--workspace', '@b00dea/cockpit', '--cache', cache], {
         cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'],
     })
+    rmSync(cache, { recursive: true, force: true })
     const decoded: unknown = JSON.parse(output)
     const records = Array.isArray(decoded) ? decoded : record(decoded) ? Object.values(decoded) : []
     if (records.length !== 1 || !Array.isArray(records[0]?.files)
@@ -417,7 +423,7 @@ export function runSupplyChainCheck(root: string): number {
         for (const row of result.diagnostics) process.stderr.write(`${row.code} ${row.path}: ${row.message}\n`)
         return 1
     }
-    process.stdout.write(`${JSON.stringify({ status: 'ready', operatorGaps: result.operatorGaps })}\n`)
+    process.stdout.write(`${JSON.stringify({ status: 'ready', operatorChecks: result.operatorChecks })}\n`)
     return 0
 }
 
@@ -436,7 +442,7 @@ export function generateSbom(root: string, output: string): void {
             ...lock, packages: { ...lock.packages, '': { ...lock.packages[''], version: packageManifest.version } },
         }, null, 2)}\n`)
         cpSync(resolve(root, 'packages/cockpit/package.json'), resolve(temporaryRoot, 'packages/cockpit/package.json'))
-        const bytes = execFileSync('npm', ['sbom', '--workspace', '@b00dea/cockpit', '--sbom-format', 'cyclonedx', '--package-lock-only'],
+        const bytes = execFileSync('npm', ['sbom', '--workspace', '@b00dea/cockpit', '--sbom-format', 'cyclonedx', '--package-lock-only', '--cache', join(temporaryRoot, '.cache')],
             { cwd: temporaryRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] })
         mkdirSync(dirname(output), { recursive: true })
         writeFileSync(output, bytes)

@@ -72,9 +72,10 @@ Done when the exact project-local executable lists the commands.
 
 Run every command from the cockpit root through `./node_modules/.bin/cockpit`; if that file is
 absent, stop and repair the project-local install. Read flags from
-`./node_modules/.bin/cockpit <command> --help`. In Codex's sandbox only `check`, `sync --dry-run`
-and `--help` run; ask the person to approve running any other cockpit command outside the sandbox,
-or to run it in a terminal. Pass `--json` and read `result`,
+`./node_modules/.bin/cockpit <command> --help`. In Codex's sandbox `check`, `sync --dry-run` and
+`--help` run as it stands, unless `[browser]` is declared; other cockpit commands also need write
+access to the state root, the Docker socket, or on macOS `/bin/ps`, so ask the person to approve
+running them outside the sandbox, or to run them in a terminal. Pass `--json` and read `result`,
 `diagnostics[].code` and `invocation.exitCode`. A pending `init` also exits 0, so read its
 `result.stage` and `result.question`.
 

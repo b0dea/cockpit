@@ -330,15 +330,19 @@ describe('reference pages', () => {
         // check is generated only where a dated run saw the hook fire and reach the agent. The evaluator
         // subagent is instructed only where a dated run saw the tool offer the generated definition.
         expect(matrix).toContain('| Tool | Written | Guard firing | Instruction loading | Skills | Session-start check | Evaluator subagent | Remote MCP servers | MCP tool restrictions | Worktree grants |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
-            + '| Claude Code (`claudecode`) | by default | enforced | instructed | instructed | instructed | enforced | instructed (needs a person) | enforced (needs a person) | enforced (needs a person) |\n'
+            + '| Claude Code (`claudecode`) | by default | enforced | instructed | instructed | instructed | enforced | instructed (needs a person) | enforced (needs a person) | enforced |\n'
             + '| Codex (`codexcli`) | by default | enforced (needs a person) | instructed | instructed | instructed (needs a person) | instructed | instructed | enforced | unavailable |\n'
-            + '| OpenCode (`opencode`) | by default | enforced | instructed | instructed | unavailable | generated | instructed | unavailable | enforced |\n'
+            + '| OpenCode (`opencode`) | by default | enforced | instructed | instructed | unavailable | instructed | instructed | unavailable | enforced |\n'
             + '| Cursor (`cursor`) | when listed | unavailable | generated | generated | unavailable | generated | unavailable | unavailable | unavailable |\n'
             + '| Grok Build (`grokcli`) | when listed | unavailable | generated | generated | unavailable | generated | unavailable | unavailable | unavailable |\n')
         expect(section('Without a measurement')).toContain('- Remote MCP servers in Cursor and Grok Build: cockpit writes no remote MCP server for this tool')
         expect(section('Measurements')).toMatch(/^- Codex, guard firing \(\d{4}-\d{2}-\d{2}, version [^)]+\): only after a person trusts the hook: [^\n]+\.$/m)
         expect(section('Measurements')).toMatch(/^- Codex, MCP tool restrictions \(\d{4}-\d{2}-\d{2}, version [^)]+\): [^\n]+No hook trust was granted\.$/m)
-        expect(section('Measurements')).not.toMatch(/Cursor|Grok Build|skills/)
+        expect(section('Measurements')).not.toMatch(/Cursor|Grok Build/)
+        expect(matrix).toContain('or the tool loading its body: `cockpit-setup`, `cockpit-explain`, `cockpit-fix` and `cockpit-work`.')
+        expect(matrix).not.toContain('))}')
+        // Listing is what those runs measured, and each line must keep saying what the tool did with its broken twins.
+        expect(section('Measurements')).toContain('- Codex, skills (2026-11-06, version 0.166.0): codex exec listed all four generated skills, trusted or not, and named and left out twins')
         // A date reads as a run of the tool, so cells nobody ran carry none.
         expect(section('Without a measurement')).not.toMatch(/\d{4}-\d{2}-\d{2}/)
         expect(section('Without a measurement')).toContain('- Guard firing in Cursor and Grok Build: no guard adapter is checked in, so cockpit generates no guard hook.\n')
