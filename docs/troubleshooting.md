@@ -205,6 +205,23 @@ Under it, `cockpits/cockpit_<name>_<hash>/` holds one cockpit's state, where `<n
 `cockpit.name` and `<hash>` identifies the cockpit's main checkout; `checkouts/` holds `init`
 progress per checkout. A state diagnostic's target names the exact directory.
 
+For `STATE_ROOT_UNAVAILABLE`, grant write access to the existing state root, or to the nearest
+existing parent if cockpit must create the remaining directories. The directories between the home
+directory and the state root need safe ownership and traversal, not write access: an already-created
+private state root can be writable while the rest of the home directory stays read-only. Symlinks,
+another owner's directories and group- or other-writable directories on that path remain refused. A
+sandbox denial at the required write location still refuses the command; cockpit never switches to
+another state directory to escape it.
+
+A granted state root does not lift a sandbox's other limits. macOS's Seatbelt refuses to run
+`/bin/ps`, which is setuid, even under a profile that allows everything else (measured 2026-11-06
+with `sandbox-exec` and inside Codex 0.166.0's `codex sandbox`). Cockpit then cannot read when a process started. Work-order lock recovery says
+so; a stack's hold names the holder instead. A pid that has gone is still released, since that takes
+no `ps`, but a running pid reads as the session, so a hold stays while its pid exists. A session
+started inside the sandbox records only its pid, so a command outside the sandbox cannot release that
+hold any sooner, and that pid may since name another process: the refusal asks you to confirm it with
+`ps -p` before stopping it.
+
 These records are how cockpit knows which containers and ports a stack owns. Do not edit them by
 hand, and do not delete them while the stack runs: its containers would keep running with nothing
 that knows about them.
@@ -343,6 +360,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `STACKS_ORPHANED` | [see above](#clear-cockpit-state) |
 | `STATE_FORMAT_UNSUPPORTED` | [see above](#clear-cockpit-state) |
 | `STATE_RECORD_MALFORMED` | [see above](#clear-cockpit-state) |
+| `STATE_ROOT_UNAVAILABLE` | [see above](#clear-cockpit-state) |
 | `SURFACE_ADOPTION_REFUSED` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_ARTIFACT_INVALID` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_BOUNDS` | [see above](#merge-ownership-and-generation) |

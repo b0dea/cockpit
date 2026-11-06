@@ -467,6 +467,17 @@ native_hooks = { install = "inspect" }
                 const synchronized = await syncGeneratedEnvironment({ configPath: fixture.configPath })
                 expect(synchronized, JSON.stringify(synchronized.diagnostics)).toMatchObject({ kind: 'complete' })
                 if (synchronized.kind !== 'complete') throw new Error('browser and testing surfaces were not synchronized')
+                // A declared browser makes check read the state root, so a sandbox hiding it must read
+                // as a state problem: that is the code the setup procedure tells an agent to act on.
+                const notADirectory = join(stateHome, 'not-a-directory')
+                await writeFile(notADirectory, '')
+                process.env.HOME = notADirectory
+                process.env.XDG_STATE_HOME = notADirectory
+                const hidden = await checkGeneratedEnvironment({ configPath: fixture.configPath })
+                expect(hidden.diagnostics, JSON.stringify(hidden.diagnostics)).toEqual(expect.arrayContaining(
+                    [expect.objectContaining({ code: 'STATE_ROOT_UNAVAILABLE', message: expect.stringContaining(`${notADirectory} is not a directory`) })]))
+                process.env.HOME = stateHome
+                process.env.XDG_STATE_HOME = join(stateHome, 'state')
                 const application = generatedApplicationProjection(synchronized.result.application)
                 if (!application) throw new Error('generated application projection was not issued')
                 const installedSkills = application.surfaceSelftest.entries.filter(entry => entry.kind === 'file'

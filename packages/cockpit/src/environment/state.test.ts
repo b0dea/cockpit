@@ -21,6 +21,7 @@ import {
     removeStackState,
     SERIALIZED_RECORD_BYTE_LIMIT,
     selectBootstrapStateRoot,
+    selectMachineStateRoot,
     selectStateRoot,
     snapshotBootstrapStateNamespace,
     transactState,
@@ -317,6 +318,52 @@ describe('selectStateRoot', () => {
             target: '',
         })
         expect(JSON.stringify(missingHome)).not.toContain(tmpdir())
+    })
+
+    it.each(['darwin', 'linux', 'xdg'] as const)('writes beneath an existing %s state root without ancestor write grants', async (layout) => {
+        const parent = await temporaryDirectory()
+        const base = join(parent, 'base')
+        const root = layout === 'darwin' ? join(base, 'Library', 'Application Support', 'cockpit', 'state', 'v1')
+            : layout === 'linux' ? join(base, '.local', 'state', 'cockpit', 'v1') : join(base, 'cockpit', 'v1')
+        const checkout = join(parent, 'checkout')
+        await mkdir(root, { recursive: true, mode: 0o700 })
+        await mkdir(checkout)
+        const input = { platform: layout === 'darwin' ? 'darwin' as const : 'linux' as const,
+            home: layout === 'xdg' ? undefined : base, xdgStateHome: layout === 'xdg' ? base : undefined }
+        const bootstrapInput = { ...input, checkoutRoot: await realpath(checkout), target: 'codexcli' as const }
+        sandboxDenied.path = base
+        await chmod(dirname(root), 0o500)
+        try {
+            const selected = await selectStateRoot({ ...input, cockpitId })
+            expect(selected).toMatchObject({ kind: 'complete', value: { root } })
+            if (selected.kind !== 'complete') throw new Error('expected a writable state root')
+            expect(await selectMachineStateRoot(input)).toEqual({ kind: 'complete', value: root })
+            expect(await selectBootstrapStateRoot(bootstrapInput)).toMatchObject({ kind: 'complete', value: { root } })
+            const address = selected.value.paths.lifecycle(stackId)
+            const record = lifecycleRecord(0, 1)
+            expect(await transactState(selected.value, address, { ownerId: holderA }, () => record))
+                .toEqual({ kind: 'complete', value: record })
+            expect(await readState(address)).toEqual({ kind: 'complete', value: record })
+
+            // Granting only ancestors must not authorize writes to the actual state directory.
+            sandboxDenied.path = root
+            for (const result of await Promise.all([selectStateRoot({ ...input, cockpitId }),
+                selectMachineStateRoot(input), selectBootstrapStateRoot(bootstrapInput)])) {
+                expect(result).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
+                    target: root, message: expect.stringContaining(`${root} is not writable by this process`) })
+            }
+
+            await chmod(dirname(root), 0o700)
+            await rm(root, { recursive: true })
+            sandboxDenied.path = dirname(root)
+            for (const result of await Promise.all([selectStateRoot({ ...input, cockpitId }),
+                selectMachineStateRoot(input), selectBootstrapStateRoot(bootstrapInput)])) {
+                expect(result).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
+                    target: root, message: expect.stringContaining(`${dirname(root)} is not writable by this process`) })
+            }
+        } finally {
+            await chmod(dirname(root), 0o700)
+        }
     })
 
     it('refuses symlinked, wrong-type, unwritable, and checkout-contained selected roots', async () => {

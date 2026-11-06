@@ -534,7 +534,9 @@ export function processHost(execute: (step: ExecutionStep) => Promise<ExecutePro
             }
             if (!ps) return { kind: 'failed' as const, reason: 'ps is not installed at /bin/ps or /usr/bin/ps' }
             const text = await runBoundedProbe(ps, `process:start:${pid}`, ['-o', 'lstart=', '-p', String(pid)], { LC_ALL: 'C', TZ: 'UTC0' }, execute)
-            return text === undefined ? { kind: 'failed' as const, reason: `ps did not report when process ${pid} started` } : { kind: 'complete' as const, text }
+            return text === undefined
+                ? { kind: 'failed' as const, reason: `ps did not report when process ${pid} started; a sandbox can refuse to run ps, so if one is in use, run this command outside it` }
+                : { kind: 'complete' as const, text }
         },
         readFile: (path: string) => readFile(path, 'utf8'),
     }
@@ -573,8 +575,9 @@ function describeHolder(holder: ClaimHolder): string {
 // reached, so every holder named here is running, or could not be confirmed gone.
 export function liveHolderMessage(holders: readonly ClaimHolder[]): string {
     const pids = holders.flatMap(({ pid }) => pid === undefined ? [] : [pid])
-    return `another cockpit session holds this stack (${holders.map(describeHolder).join(', ')}), and down and reset never displace a running session; `
-        + `let its command finish${pids.length > 0 ? ` or stop it with \`kill ${pids.join(' ')}\`` : ''}, then retry`
+    // A pid can have been reused, and a hold may stand on a pid alone, so stopping one is only safe once confirmed.
+    return `another cockpit session holds this stack (${holders.map(describeHolder).join(', ')}), or its process could not be confirmed gone, and down and reset never displace a running session; `
+        + `let its command finish${pids.length > 0 ? ` or, once \`ps -p ${pids.join(',')}\` shows it is that session, stop it with \`kill ${pids.join(' ')}\`` : ''}, then retry`
 }
 
 type ReleaseDeadSessionHoldersResult =

@@ -442,7 +442,7 @@ function privatelyOwned(status: { readonly uid: number; readonly mode: number },
 // with EPERM, and reporting that as an unusable home directory sent people looking for a HOME problem.
 type Unusable = Readonly<{ reason: string; denied: boolean }>
 
-async function unusableDirectory(path: string, uid: number): Promise<Unusable | 'missing' | undefined> {
+async function unusableDirectory(path: string, uid: number, needsWrite: boolean): Promise<Unusable | 'missing' | undefined> {
     let status
     try { status = await lstat(path) } catch (error) {
         if (hasErrorCode(error, 'ENOENT')) return 'missing'
@@ -451,6 +451,7 @@ async function unusableDirectory(path: string, uid: number): Promise<Unusable | 
     if (status.isSymbolicLink()) return { reason: `${path} is a symbolic link`, denied: false }
     if (!status.isDirectory()) return { reason: `${path} is not a directory`, denied: false }
     if (!privatelyOwned(status, uid)) return { reason: `${path} is not owned by this user or is writable by its group or others`, denied: false }
+    if (!needsWrite) return undefined
     if ((status.mode & 0o200) === 0) return { reason: `${path} is not writable by its owner`, denied: false }
     try { await access(path, constants.W_OK) } catch (error) {
         return { reason: `${path} is not writable by this process (${errorCause(error)})`, denied: deniedAccess(error) }
@@ -464,15 +465,15 @@ function deniedAccess(error: unknown): boolean {
 
 async function usableBase(path: string, uid: number): Promise<Unusable | undefined> {
     if (!isAbsolute(path)) return { reason: `${path} is not an absolute path`, denied: false }
-    const unusable = await unusableDirectory(path, uid)
+    const unusable = await unusableDirectory(path, uid, false)
     return unusable === 'missing' ? { reason: `${path} does not exist`, denied: false } : unusable
 }
 
-async function usableSelectedBase(path: string, uid: number): Promise<Unusable | undefined> {
+async function usableSelectedBase(path: string, uid: number, needsWrite: boolean): Promise<Unusable | undefined> {
     if (!isAbsolute(path)) return { reason: `${path} is not an absolute path`, denied: false }
     let cursor = path
     while (true) {
-        const unusable = await unusableDirectory(cursor, uid)
+        const unusable = await unusableDirectory(cursor, uid, needsWrite)
         if (unusable !== 'missing') return unusable
         const parent = dirname(cursor)
         if (parent === cursor) return { reason: `no ancestor of ${path} exists`, denied: false }
@@ -481,15 +482,17 @@ async function usableSelectedBase(path: string, uid: number): Promise<Unusable |
 }
 
 async function safeDescendant(base: string, candidate: string, uid: number): Promise<Unusable | undefined> {
-    const unusableBase = await usableSelectedBase(base, uid)
+    const unusableBase = await usableSelectedBase(base, uid, false)
     if (unusableBase) return unusableBase
     if (!confinedTo(base, candidate)) return { reason: `${candidate} is outside ${base}`, denied: false }
     const relation = relative(base, candidate)
     let cursor = base
-    for (const segment of relation.split(sep).filter(Boolean)) {
+    // Existing ancestors protect the path without needing writes. Creation starts
+    // at the nearest existing parent; otherwise only the selected root needs a grant.
+    for (const segment of ['', ...relation.split(sep).filter(Boolean)]) {
         cursor = join(cursor, segment)
-        const unusable = await unusableDirectory(cursor, uid)
-        if (unusable === 'missing') break
+        const unusable = await unusableDirectory(cursor, uid, cursor === candidate)
+        if (unusable === 'missing') return usableSelectedBase(cursor, uid, true)
         if (unusable) return unusable
     }
     return undefined
@@ -860,7 +863,7 @@ async function selectStateBase(
 ): Promise<StateBase | StateRefusal> {
     if (input.platform === 'linux' && input.xdgStateHome !== undefined) {
         const root = join(input.xdgStateHome, 'cockpit', 'v1')
-        const unusable = await usableSelectedBase(input.xdgStateHome, uid)
+        const unusable = await usableSelectedBase(input.xdgStateHome, uid, false)
         if (unusable) return unusableStateRoot<never>(root, unusable) as StateRefusal
         return { kind: 'complete', value: { base: input.xdgStateHome, root } }
     }

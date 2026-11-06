@@ -712,12 +712,8 @@ const INSTRUCTION_CAPABILITIES = Object.freeze([
     // in its sibling failed in Claude Code or Codex, so sync writes none.
     Object.freeze({
         target: 'claudecode', mechanism: 'root-agents-guide', capability: 'instructed', evidence: 'not_applicable',
-        characterizedOn: '2026-11-03', measuredVersion: '2.1.317',
-        provenance: 'in a workspace Claude Code had not trusted, a sibling guide copied into the root AGENTS.md that CLAUDE.md imports loaded, '
-            + 'with or without Claude Code\'s user option for reading AGENTS.md, while the undeclared sibling\'s guide and the decoy did not; '
-            + 'nothing loaded through a committed CLAUDE.md @-import of a link to the guide or of its relative path, through '
-            + 'permissions.additionalDirectories with CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD in the settings env (ignored until a person trusts the workspace), '
-            + 'or through --add-dir with that variable set',
+        characterizedOn: '2026-11-06', measuredVersion: '2.1.319',
+        provenance: 'in a trusted workspace, as in an untrusted one, a sibling guide copied into the root AGENTS.md that CLAUDE.md imports loaded while the undeclared sibling\'s guides and the decoys did not; permissions.additionalDirectories with CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD still loaded nothing, --add-dir with that variable loaded the sibling\'s CLAUDE.md but never its AGENTS.md, and a CLAUDE.md @-import loaded only once its external-include approval was set',
     }),
     Object.freeze({
         target: 'codexcli', mechanism: 'root-agents-guide', capability: 'instructed', evidence: 'not_applicable',

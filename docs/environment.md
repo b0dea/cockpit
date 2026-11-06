@@ -358,7 +358,8 @@ time `ps` reports), so the next `up`, `sleep`, `down` or `reset` from the checko
 is gone, or its ID now belongs to another process, and releases the hold. When it was the last hold,
 the command's own hold takes the running stack over. A hold whose process still runs is kept, and so
 is one whose start could not be read while its process ID is in use: the `CLAIM_CO_TENANT` refusal
-names each holder and process ID, so you can end it and retry.
+names each holder and process ID, so you can confirm with `ps -p` that it is that session, end it
+and retry. A process ID can be reused, so a hold standing on one alone may name another process.
 
 The wrapper passes this identity to its command in `COCKPIT_SESSION_PROCESS`, so a hold that a
 `sleep` and then an `up` inside the session re-add stays tied to the wrapper. `up` refuses with
@@ -615,6 +616,19 @@ provider login, encryption and migration need explicit permission from whoever o
 the provider. See the [Varlock CLI reference](https://varlock.dev/reference/cli/load-and-run/) and
 [AI tools guide](https://varlock.dev/guides/ai-tools/).
 
+`--redact-stdout` redacts the spawned process's output, not Varlock's own diagnostics. With that flag
+set, a parse error printed the offending source line and a failing `exec()` printed its command and
+stderr, all on Varlock's stderr (measured with synthetic values on Varlock 1.23.0, 2026-11-06). Keep
+those diagnostics with the operator. Cockpit's schema probes read only Varlock's report, and keep key
+names and status.
+
+**Moving an existing dotenv file.** Varlock evaluates env files, including gitignored ones such as
+`.env.local`, so a copied file is not inert data. In the same measurement, a bare `exec(...)` and a
+`$(...)` that was bare, embedded in a bare value or inside double quotes each ran the command when
+the file loaded. Only single quotes kept `$(...)` literal, and `\'` kept a single quote inside one.
+A password holding `$(` can therefore run a command on the next `preflight` or `doctor`, so
+single-quote every migrated value and review resolver expressions as code.
+
 **What the probe does.** `cockpit preflight` and `cockpit doctor` look at every `.env.schema` a
 sibling tracks (`git ls-files`), plus a sibling's root schema whether tracked or not and the cockpit
 root's own, and load each one that is [committed](#a-schema-runs-only-once-committed). In a sibling
@@ -660,11 +674,14 @@ A schema that is edited, staged, untracked, ignored, hidden behind Git's assume-
 skip-worktree flag, a symbolic link or outside a repository is not run. Its row keeps passing, and
 `ENV_SCHEMA_UNCOMMITTED` warns, naming the schema and the fix: commit it to have it validated, or
 have a person review it and run the `VARLOCK_TELEMETRY_DISABLED=true varlock load` the warning
-prints. Git failing for any other reason makes the schema unavailable, again without running
-Varlock.
+prints. While another schema fails or cannot be checked, the row reports that instead, and this
+warning appears once it clears. Git failing for any other reason makes the schema unavailable, again
+without running Varlock.
 
 **The limit.** This does not cover an agent's commit that a person approves, local plugin or
-`@import` files beside a schema, or declared test commands, which also run edited code. An agent
+`@import` files beside a schema, or declared test commands, which also run edited code. It checks
+the schema alone: gitignored env files beside it and the central store load unchecked, and what
+keeps agents out of those is the guard's secret-file denial. An agent
 that can get a schema committed can have commands run, with your environment, by a `doctor` or
 `preflight` it may run unprompted. Cockpit is not a sandbox: review schema changes as you review
 code, and run `doctor` with a provider sign-in only on schemas you trust. This was reasoned from

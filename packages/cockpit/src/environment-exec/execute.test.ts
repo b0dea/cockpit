@@ -1,8 +1,8 @@
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs'
-import { chmodSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, linkSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { execFileSync, spawn } from 'node:child_process'
-import { createConnection } from 'node:net'
+import { createConnection, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -200,6 +200,47 @@ describe('mechanical environment executor', () => {
 
         expect((await repairFencedExecution(fence)).kind).toBe('complete')
         expect(existsSync(fence.markerPath)).toBe(false)
+    })
+
+    it('clears week-old fence residue when an attempt is cleaned up, sparing a socket that still answers', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-residue-'))
+        scratch.push(directory)
+        const attemptId = sha256(directory)
+        const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+        const fence = { attemptId, markerPath: join(directory, 'executor.json'), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
+        expect((await repairFencedExecution(fence)).kind).toBe('complete')
+        const name = (label: string) => sha256(`${directory}${label}`).slice(0, 24)
+        const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000)
+        // A hard link keeps a socket's path after its server has gone, which is what a crash leaves.
+        const stale = join(socketRoot, `${name('stale')}.sock`)
+        const live = join(socketRoot, `${name('live')}.sock`)
+        const server = createServer()
+        await new Promise<void>(resolve => server.listen(live, resolve))
+        linkSync(live, stale)
+        const staleOwner = createServer()
+        const oldSettled = join(socketRoot, `${name('settled')}.sock.settled`)
+        const freshSettled = join(socketRoot, `${name('fresh')}.sock.settled`)
+        const foreign = join(socketRoot, `${name('foreign')}.unrelated`)
+        const liveSocketStays = join(socketRoot, `${name('held')}.sock`)
+        await new Promise<void>(resolve => staleOwner.listen(liveSocketStays, resolve))
+        await new Promise<void>(resolve => server.close(() => resolve()))
+        for (const path of [oldSettled, freshSettled, foreign]) writeFileSync(path, '')
+        for (const path of [stale, liveSocketStays, oldSettled, foreign]) utimesSync(path, eightDaysAgo, eightDaysAgo)
+        scratch.push(freshSettled, foreign)
+
+        try {
+            await expect(cleanupFencedExecution(fence)).resolves.toBe(true)
+
+            expect(existsSync(stale)).toBe(false)
+            expect(existsSync(oldSettled)).toBe(false)
+            expect(existsSync(freshSettled)).toBe(true)
+            expect(existsSync(foreign)).toBe(true)
+            expect(existsSync(`${fence.socketPath}.settled`)).toBe(true)
+            // A hung action can keep its supervisor past any age; its repair needs this socket.
+            expect(existsSync(liveSocketStays)).toBe(true)
+        } finally {
+            await new Promise<void>(resolve => staleOwner.close(() => resolve()))
+        }
     })
 
     describe('a supervisor whose action is not released yet', () => {

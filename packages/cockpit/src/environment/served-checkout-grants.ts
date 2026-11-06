@@ -4,11 +4,10 @@
  * path is one person's disk, so it goes only where a tool reads a machine-local setting.
  *
  * Measured on 2026-11-04 beside an ungranted control directory, each run writing into both:
- * - Claude Code 2.1.318 (`claude -p --permission-mode acceptEdits`): a directory listed in
- *   `.claude/settings.local.json` `permissions.additionalDirectories` was written and the control
- *   refused; a twin whose list was a string was named as not loaded and granted nothing. The run
- *   was in an untrusted workspace, where Claude ignored the committed `.claude/settings.json` list,
- *   so whether the two lists combine once a person trusts the workspace was not measured.
+ * - Claude Code 2.1.319 (`claude -p --permission-mode acceptEdits`, 2026-11-06): a directory listed
+ *   in `.claude/settings.local.json` `permissions.additionalDirectories` was written and the control
+ *   refused, trusted or not. A trusted workspace combines it with the committed list; an untrusted one
+ *   ignores the committed list. A string-valued list granted nothing from that file, with no report.
  * - OpenCode 1.19.5 (`opencode run`): the `{file:...}` grant file `sync` writes, holding the
  *   worktree path, allowed the write and the control was denied; a pattern naming a missing grant
  *   file stopped OpenCode at start, naming the file.

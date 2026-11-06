@@ -26,10 +26,13 @@ budget: uncapped
   `./node_modules/.bin/cockpit sync --config cockpit.toml` yourself where `[autonomy] sync =
   "agent"`; any other hold clears only when a person runs it in a terminal. A refused command is the
   person's to run: never reword, wrap or re-spell it to get past the guard.
-- In Codex's sandbox only `check`, `sync --dry-run` and `--help` work. Every other cockpit command
-  there cannot read cockpit's state or the Docker socket, so a failure it reports is not evidence:
-  ask the person to approve running it outside the sandbox, or to run it in a terminal. Under
-  `codex exec`, which cannot ask, a person runs it.
+- In Codex's sandbox `check`, `sync --dry-run` and `--help` work as it stands, unless `[browser]` is
+  declared, which makes the first two read cockpit's state too. Other cockpit commands need what the
+  sandbox withholds: write access to the state root, which `STATE_ROOT_UNAVAILABLE` names and a person
+  can grant on that directory alone, or on its nearest existing parent before it exists; the Docker
+  socket; and on macOS `/bin/ps`. So a failure one reports there is not evidence. Ask the person to
+  approve running it outside the sandbox, or to run it in a terminal. Under `codex exec`, which cannot
+  ask, a person runs it.
 - Ask, never invent. A port, image, command, host, purpose, name, version, role or credential comes
   from a file you read or from the person; with neither, name the gap and ask.
 

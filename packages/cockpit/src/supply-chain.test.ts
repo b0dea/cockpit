@@ -18,7 +18,7 @@ vi.mock('node:child_process', async importOriginal => ({
 
 interface SupplyChainResult {
     readonly diagnostics: readonly Readonly<{ code: string; path: string; message: string }>[]
-    readonly operatorGaps: readonly string[]
+    readonly operatorChecks: readonly string[]
 }
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
 const detector = join(repositoryRoot, 'scripts/supply-chain-check.ts')
@@ -78,12 +78,21 @@ describe('the supply-chain readiness detector', () => {
         generateSbom(repositoryRoot, output)
 
         expect(childProcess.execFileSync).toHaveBeenNthCalledWith(1, 'npm', [
-            'pack', '--json', '--dry-run', '--workspace', '@b00dea/cockpit',
+            'pack', '--json', '--dry-run', '--workspace', '@b00dea/cockpit', '--cache', expect.stringContaining('cockpit-pack-cache-'),
         ], expect.objectContaining({ cwd: repositoryRoot }))
         expect(childProcess.execFileSync).toHaveBeenNthCalledWith(2, 'npm', [
-            'sbom', '--workspace', '@b00dea/cockpit', '--sbom-format', 'cyclonedx', '--package-lock-only',
+            'sbom', '--workspace', '@b00dea/cockpit', '--sbom-format', 'cyclonedx', '--package-lock-only', '--cache', expect.stringContaining('cockpit-sbom-input-'),
         ], expect.objectContaining({ cwd: expect.stringContaining('cockpit-sbom-input-') }))
         expect(readFileSync(output, 'utf8')).toBe('{"bomFormat":"CycloneDX"}\n')
+    })
+
+    it('keeps npm\'s private cache when pack fails, because npm\'s error points at the log inside it', () => {
+        childProcess.execFileSync.mockImplementationOnce(() => { throw new Error('synthetic pack failure') })
+        expect(() => runSupplyChainCheck(repositoryRoot)).toThrow('synthetic pack failure')
+        const args = childProcess.execFileSync.mock.calls[0]![1] as string[]
+        const cache = args[args.indexOf('--cache') + 1]!
+        scratch.push(cache)
+        expect(existsSync(cache)).toBe(true)
     })
 
     it('installs CI dependencies without executing lifecycle scripts', () => {
@@ -119,7 +128,7 @@ describe('the supply-chain readiness detector', () => {
     it('accepts exact local inputs and keeps every external publication gate held', () => {
         const result = inspect(repositoryRoot, PACK_FILES)
         expect(result.diagnostics).toEqual([])
-        expect(result.operatorGaps).toEqual([
+        expect(result.operatorChecks).toEqual([
             'package-scope-owner', 'trusted-publisher', 'superseded-minor-deprecation',
         ])
     })

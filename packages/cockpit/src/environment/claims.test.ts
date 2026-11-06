@@ -21,6 +21,7 @@ import {
     coordinationStateRecord,
     decodeCoordinationRecord,
     observeProcessStart,
+    liveHolderMessage,
     processHost,
     commitDrainOutcome,
     releaseDeadSessionHolders,
@@ -1264,6 +1265,25 @@ describe('dead session holders', () => {
             expect(await readFile(state.paths.coordination(stackId).path)).toEqual(before)
         }
         expect(observed).toEqual([])
+    })
+
+    // A pid outlives its process, and a hold can stand on a pid alone, so advice to kill one has to
+    // make the reader confirm it first: a reused pid names a stranger.
+    it('tells the reader to confirm a held pid before stopping it, and admits it may be unconfirmed', () => {
+        const holder = (pid?: number) => ({ holderId: `holder:${'d'.repeat(64)}:session`, checkoutId: `checkout:${'e'.repeat(64)}`,
+            claimedAt: '2026-09-07T12:00:00.000Z', ...pid === undefined ? {} : { pid } }) as Parameters<typeof liveHolderMessage>[0][number]
+        const message = liveHolderMessage([holder(4242), holder(4343)])
+        expect(message).toContain('or its process could not be confirmed gone')
+        expect(message).toContain('once `ps -p 4242,4343` shows it is that session, stop it with `kill 4242 4343`')
+        expect(liveHolderMessage([holder()])).not.toMatch(/kill|ps -p/)
+    })
+
+    // macOS's Seatbelt refuses to run /bin/ps, which is setuid, even under an allow-all profile, and a
+    // bare "ps did not report" sent people looking at the process rather than the sandbox.
+    it('points at a sandbox when ps cannot report a process start', async () => {
+        const refused = processHost(async () => ({ kind: 'refusal' }) as never)
+        expect(await refused.psStart(4242)).toEqual({ kind: 'failed',
+            reason: 'ps did not report when process 4242 started; a sandbox can refuse to run ps, so if one is in use, run this command outside it' })
     })
 
     // procps derives a wall-clock start from the boot time, which moves when the wall clock is

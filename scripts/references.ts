@@ -192,12 +192,12 @@ async function capabilityCells(sources: ReferenceSources) {
         }
         cells.push(native.state === 'generated'
             ? { target, capability: 'skill-parity', state: native.state, evidence: 'pending_evidence', provenance: native.reason, measuredOn: NEVER_PROBED, measuredVersion: null, location }
-            : { target, capability: 'skill-parity', state: native.state, evidence: 'human_needed', provenance: native.reason, measuredOn: NEVER_PROBED, measuredVersion: null, location })
+            : { target, capability: 'skill-parity', state: native.state, evidence: 'not_applicable', provenance: native.provenance, measuredOn: native.measuredOn, measuredVersion: native.measuredVersion, location })
     }
     for (const target of SURFACE_TARGETS) {
         const start = harnessFact(target).sessionStart
         cells.push({ target, capability: 'session-start', state: start.state, evidence: start.evidence, provenance: start.provenance,
-            measuredOn: start.state === 'unavailable' ? NEVER_PROBED : start.measuredOn, measuredVersion: start.measuredVersion, location: null })
+            measuredOn: start.measuredVersion === null ? NEVER_PROBED : start.measuredOn, measuredVersion: start.measuredVersion, location: null })
     }
     for (const target of SURFACE_TARGETS) {
         const grader = harnessFact(target).subagentGrader
@@ -234,8 +234,7 @@ function renderCapabilityMatrix(cells: readonly CapabilityCell[], manifestSha256
         if (rows.length !== 1) throw new Error(`capability matrix needs exactly one ${capability} cell for ${target}`)
         return rows[0]!
     }
-    // A verdict that holds only once a person acts says so where the reader looks first; the skills'
-    // pending review is a maintainer's task and does not condition their use.
+    // A verdict that holds only once a person acts says so where the reader looks first.
     const state = (row: CapabilityCell) => row.measuredOn !== NEVER_PROBED && row.evidence === 'human_needed' ? `${row.state} (needs a person)` : row.state
     const rendered = (target: SurfaceTarget) => (DEFAULT_SURFACE_TOOLS as readonly string[]).includes(target) ? 'by default' : 'when listed'
     const grid = `| Tool | Written | ${CAPABILITY_COLUMNS.map(([, label]) => label).join(' | ')} |\n| --- | --- |${' --- |'.repeat(CAPABILITY_COLUMNS.length)}\n`
@@ -263,7 +262,7 @@ function renderCapabilityMatrix(cells: readonly CapabilityCell[], manifestSha256
         + `<!-- Source manifest: ${manifestSha256} -->\n\n`
         + 'This generated page is for users checking what cockpit actually enforces in each agent tool. ' + MATRIX_STATES
         + `Written says whether \`sync\` writes the tool's files for a cockpit.toml that lists no tools: the tools whose guard firing is measured are the default \`[surfaces] tools\`, and any other tool is written only once listed (\`npx --no cockpit tool add <tool> --config <your cockpit.toml>\`).\n\n`
-        + `Guard firing is the generated hook refusing a protected operation. Instruction loading is the tool reading the guidance cockpit writes for it, including the guides of sibling repositories. Evaluator subagent is the tool offering the generated evaluator definition to the working agent for \`[work] grading = "subagent"\`: \`instructed\` there means offered, with no subagent run and read-only never claimed, and \`enforced\` means a spawned evaluator was refused the file writes and shell commands its generated tool list leaves out; the verdict the working agent relays is its word either way. Skills are the tool loading the skills cockpit renders: ${listed(skills.map(code))}. The session-start check is the tool running \`cockpit check\` as a session starts and showing its drift report to the agent. Remote MCP servers are the tool connecting to an approved streamable HTTP server with the credential cockpit spells for it: an environment reference or a headers helper. MCP tool restrictions deny calls outside a server's exact \`[mcp.allowed_tools]\` list; they do not inspect allowed tools' arguments or implementation. Worktree grants are the tool letting the agent write a checkout \`cockpit use\` serves from outside the declared one, through a machine-local file cockpit writes.\n\n`
+        + `Guard firing is the generated hook refusing a protected operation. Instruction loading is the tool reading the guidance cockpit writes for it, including the guides of sibling repositories. Evaluator subagent is the tool offering the generated evaluator definition to the working agent for \`[work] grading = "subagent"\`: \`instructed\` there means offered, with no subagent run and read-only never claimed, and \`enforced\` means a spawned evaluator was refused the file writes and shell commands its generated tool list leaves out; the verdict the working agent relays is its word either way. Skills is the tool listing the skills cockpit renders to its model, which does not show a model choosing one or the tool loading its body: ${listed(skills.map(code))}. The session-start check is the tool running \`cockpit check\` as a session starts and showing its drift report to the agent. Remote MCP servers are the tool connecting to an approved streamable HTTP server with the credential cockpit spells for it: an environment reference or a headers helper. MCP tool restrictions deny calls outside a server's exact \`[mcp.allowed_tools]\` list; they do not inspect allowed tools' arguments or implementation. Worktree grants are the tool letting the agent write a checkout \`cockpit use\` serves from outside the declared one, through a machine-local file cockpit writes.\n\n`
         + grid
         + '\n## Measurements\n\nEach line gives the date and tool version of the run and what it showed.\n\n' + measured.join('')
         + '\n## Without a measurement\n\n' + unmeasured.join('')
