@@ -72,6 +72,7 @@ describe('the minimal example cockpit', () => {
         expect(guide).toContain('./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --dry-run')
         // The minimal example declares no [testing], so agents are told no gate exists rather than to run one.
         expect(guide).toContain('This cockpit declares no product test gate, so no change can be graded PASS.')
+        expect(guide).not.toContain('npx --no cockpit test-run')
         expect(guide).not.toContain('./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run')
         expect(guide).toContain('database hosts: not declared')
         expect(guide).toMatch(/A local mistake is cheap; a production one is not/)
