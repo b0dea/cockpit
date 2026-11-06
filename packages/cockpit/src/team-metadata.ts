@@ -503,7 +503,7 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
     }
     if (own === undefined) {
         const { manager } = await rootPackageManager(root)
-        const installedCopy = `${NODE_EXEC[manager].join(' ')} cockpit`
+        const installedCopy = './node_modules/@b00dea/cockpit/bin/cockpit.mjs'
         findings.push({
             severity: 'warning' as const,
             // A literal, so the diagnostic inventory captures the fix beside the code.

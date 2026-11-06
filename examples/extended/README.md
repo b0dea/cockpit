@@ -8,7 +8,7 @@ commands aimed at a shared environment, and repeated `sync` leaves the team's fi
 before running the example.
 
 ```sh executable
-./node_modules/.bin/cockpit sync --config cockpit.toml --json
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --json
 make verify
-./node_modules/.bin/cockpit sync --config cockpit.toml --json
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --json
 ```
