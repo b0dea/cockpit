@@ -5,7 +5,8 @@
 //
 // argv: <config>, base64url JSON { command, args, argv0, cwd, spawnNotAfter, fence }.
 // fd 3 to the executor: 'READY\n' once the repair socket listens; 'EXPIRED\n' before exiting when the
-// action was never released because its spawn deadline passed or the executor cancelled it.
+// action was never released because its spawn deadline passed, the executor cancelled it, or a stop
+// arrived first.
 // stdin from the executor: one release line, 'GO' or 'CANCEL', then the attempt id and the device and
 // inode of the active marker and its parent directory that the executor published. Anything else exits.
 // repair socket: a client that writes the attempt id is answered { attemptId, supervisorPid } and the
@@ -17,7 +18,7 @@ const { spawn } = require('node:child_process')
 const { createServer } = require('node:net')
 const fs = require('node:fs')
 const path = require('node:path')
-const { replaceApprovedActiveMarker } = require('./fence-marker.cjs')
+const { readFenceMarkerFile, replaceApprovedActiveMarker } = require('./fence-marker.cjs')
 
 const FENCE_LOST = 125
 const GROUP_EXIT_WAIT_MS = 2000
@@ -32,6 +33,7 @@ let started = false
 let finished = false
 let terminating = false
 let expired = false
+let stopRequested = false
 let actionCode = 1
 
 const groupGone = pid => {
@@ -77,7 +79,9 @@ function finish(deadline) {
 }
 
 function terminate(code) {
-    if (!action || terminating) return
+    // A stop can be acknowledged before the release line arrives; that line must not start the action.
+    if (!action) { stopRequested = true; return }
+    if (terminating) return
     terminating = true
     actionCode = Number.isInteger(code) ? code : 1
     // A stop line that cannot be written means the action is unreachable; abandon exits with the fence-lost status.
@@ -126,12 +130,29 @@ process.stdin.on('data', chunk => {
         || fields.slice(2).some(value => !/^[0-9]+$/.test(value))) return abandon()
     approved = { markerDev: fields[2], markerIno: fields[3], parentDev: fields[4], parentIno: fields[5] }
     started = true
-    if (fields[0] === 'CANCEL' || config.spawnNotAfter !== undefined && Date.now() > Date.parse(config.spawnNotAfter)) {
+    if (stopRequested || fields[0] === 'CANCEL' || config.spawnNotAfter !== undefined && Date.now() > Date.parse(config.spawnNotAfter)) {
         expired = true
         return finish(Date.now() + GROUP_EXIT_WAIT_MS)
     }
     startAction()
 })
-process.stdin.on('end', () => { if (!started) abandon() })
+process.stdin.on('end', () => {
+    if (started) return
+    // The executor died without releasing the action, so nothing ran. Its marker would otherwise name
+    // this dead process for good, and repair could never finish. publishTerminated re-checks the marker.
+    const read = readFenceMarkerFile(fence.markerPath)
+    if (!read) return abandon()
+    // A recoverer already settled this attempt (execute.ts writes this file), so no later cleanup will
+    // come for the marker, and the state scan refuses a marker no attempt names.
+    if (fs.existsSync(`${fence.socketPath}.settled`)) {
+        if (read.value?.supervisorPid === process.pid) {
+            try { fs.unlinkSync(fence.markerPath) } catch { /* the state scan reports what remains */ }
+        }
+        return abandon()
+    }
+    approved = read.identity
+    started = true
+    finish(Date.now())
+})
 process.on('SIGTERM', () => terminate(1))
 process.on('SIGINT', () => terminate(1))

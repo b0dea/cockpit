@@ -1,13 +1,11 @@
-// Says which checks have not passed on one exact tree, so the push to main, the Version Packages pull
-// request and the release gate run or wait for only those. Usage: tested-tree.mjs <commit> <tree>
+// Says which checks have not passed on one exact tree, so a push to main, a version-only pull request
+// and the release gate run or wait for only those. Usage: tested-tree.mjs <commit> <tree>
 // [group...]. The groups are `linux` and `platforms`, the test cells, which are the default, and
 // `ci-ok`, the required check. Prints one missing group per line, or `none`. Every caller treats a
 // failed lookup or no output as everything missing, so nothing can pass by failing to say anything.
 //
-// A pull request run tests the merge of its head with the base of that moment, which can differ from
-// the head and from what lands on main. So a cell's job name carries the tree it checked out, and a
-// run's commit only says where to look; the tree in the name is what must match. ci-ok's name carries
-// no tree, so it counts only from a run whose head commit has this tree.
+// A cell's job name carries the tree it checked out, and the tree in the name is what must match.
+// ci-ok's name carries no tree, so it counts only from a run whose head commit has this tree.
 //
 // Runs from a copy taken from the base revision, like the other change guards, so it must stay
 // self-contained.
@@ -22,13 +20,12 @@ const CELL_JOB = /^test \((?<cell>.+)\) tree (?<tree>[0-9a-f]{40})$/
 
 // Job names are whatever the workflow file of that run says, and anyone who can push a branch can
 // run an edited ci.yml: through a pull request into a scratch base, or a push trigger added on their
-// branch. Only the default branch's own pushes, and pull requests into it from this repository, run
-// a workflow that reached review or is headed there.
+// branch. Only the default branch's own pushes run a workflow that passed review.
+// No pull request run counts: GitHub drops a closed pull request from both the run and the commit's
+// pull request list, so which base a run merged with cannot be proven after the fact.
 function qualifies(run, repository, defaultBranch) {
-    if (run.path !== '.github/workflows/ci.yml' || run.conclusion !== 'success' || run.head_repository?.full_name !== repository) return false
-    if (run.event === 'push') return run.head_branch === defaultBranch
-    // Every pull request the run lists, so a branch that is also open against a scratch base counts for nothing.
-    return run.event === 'pull_request' && run.pull_requests?.length > 0 && run.pull_requests.every(pull => pull.base?.ref === defaultBranch)
+    return run.path === '.github/workflows/ci.yml' && run.conclusion === 'success' && run.head_repository?.full_name === repository
+        && run.event === 'push' && run.head_branch === defaultBranch
 }
 
 function missingGroups(runs, tree, repository, defaultBranch, groups) {
@@ -60,9 +57,7 @@ const api = async path => {
 }
 const defaultBranch = (await api(`repos/${repository}`)).default_branch
 if (typeof defaultBranch !== 'string' || defaultBranch === '') throw new Error(`repos/${repository} reported no default branch`)
-const heads = (await api(`repos/${repository}/commits/${commit}/pulls`)).map(pull => pull.head.sha)
-const runs = (await Promise.all([...new Set([commit, ...heads])].map(async sha =>
-    (await api(`repos/${repository}/actions/workflows/ci.yml/runs?head_sha=${sha}&status=success&per_page=100`)).workflow_runs))).flat()
+const runs = (await api(`repos/${repository}/actions/workflows/ci.yml/runs?head_sha=${commit}&status=success&per_page=100`)).workflow_runs
 const withJobs = await Promise.all(runs.map(async run => ({ ...run, jobs: (await api(`repos/${repository}/actions/runs/${run.id}/jobs?per_page=100`)).jobs })))
 const missing = missingGroups(withJobs, tree, repository, defaultBranch, groups)
 console.log(missing.length === 0 ? 'none' : missing.join('\n'))

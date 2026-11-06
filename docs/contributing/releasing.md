@@ -39,33 +39,34 @@ When you are ready to release:
 3. Merge it once `ci-ok` passes. If main moves before you merge, the workflow rebuilds the pull
    request; close and reopen it again.
 
-This run is the release gate, and the code it releases has already been tested. A pull request
-runs the full suite on Linux, and a push to main runs whatever has not passed on that exact tree:
-usually the full suite on macOS and the compatibility subset on the other supported Node lines. So
-when the diff holds only what the version step writes, and every cell passed on the tree of its base
-commit, this run is the scope check, the anonymisation scan, test protection, and a package smoke:
-build and pack through the real `prepack`, install the tarball, run the CLI, confirm the version it
-reports, and repeat the supply-chain checks.
+The code this run releases has already been tested. Only runs of pushes to main count as evidence
+that a test passed. A pull request runs the full suite on Linux, and the push that merges it runs
+every cell that has not passed on that commit: the full suite on Linux and macOS, and the
+compatibility subset on the other supported Node lines. So Linux runs twice for each change, once on
+the pull request and once on main, because a pull request run cannot be trusted as evidence after it
+merges. When the diff holds only what the version step writes, and every cell passed on its parent's
+tree in the parent's own push, the pull request and the push that merges it run no test cell. They
+run the scope check, the anonymisation scan, test protection, and a package smoke: build and pack
+through the real `prepack`, install the tarball, run the CLI, confirm the version it reports, and
+repeat the supply-chain checks.
 
-The diff decides that, never the branch name or title. Anything else runs the full matrix on
-every platform: a file outside the scope, a cell that failed on main or has not finished, a failed
-lookup, or a base with no guard. That is how a failure on main stops a release, since the release
-workflow does not wait for CI on main. It is also why a documentation merge just before a release
-costs a full run, as nothing tested its tree. A pull request that moves the package's `version`
-field, or that runs while the current version is unpublished, gets every platform too, because the
-release workflow publishes any version that is not on npm yet.
+The diff decides that, never the branch name or title. Anything else runs the full matrix: a file
+outside the scope, a cell that failed on main or has not finished, a failed lookup, or a base with
+no guard. A push of several commits ending in the bump runs the cells too, because the commit before
+the bump was never pushed alone and so has no evidence. A documentation merge just before a release
+therefore costs a full run, as nothing tested its tree. A pull request that moves the package's
+`version` field, or that runs while the current version is unpublished, gets every platform too,
+because the release workflow publishes any version that is not on npm yet.
 
 `ci-ok` does not require an up-to-date branch, so a green run can be stale by the time it merges. The
-release workflow's `tested before publishing` job therefore reads what passed on the commit about to
-publish, and refuses unless every test cell passed on its tree, or on its parent's tree when the
-commit only moves the version, and `ci-ok` passed on its tree too, in the Version Packages pull
-request's run or in the push's own. It counts only runs of pushes to the default branch and of pull
-requests into it from this repository, since a run on any other branch executes that branch's
-`ci.yml`. Evidence from a pull request into the default branch can still come from that pull
-request's own edited `ci.yml`, which a reviewer sees in the diff and which then merges into the tree
-the evidence names. Merge soon after the run, because a merge made before the workflow
-rebuilds the pull request can stop here. If it refuses, nothing was published: wait for CI on that
-commit or re-run its failed or cancelled jobs, then re-run the release workflow with
+release workflow's `tested before publishing` job therefore waits for CI on the commit about to
+publish, then refuses unless every test cell passed on its tree, or on its parent's tree when the
+commit only moves the version, and `ci-ok` passed on its tree too. It counts only runs of pushes to
+the default branch. A run on any other branch executes that branch's `ci.yml`, and a pull request
+run may have merged with a scratch base whose `ci.yml` nobody reviewed, which GitHub no longer shows
+once the pull request closes. If main moves while the gate waits, the newer push cancels CI on this
+commit and the gate refuses. If it refuses, nothing was published: wait for CI on that commit or
+re-run its failed or cancelled jobs, then re-run the release workflow with
 `gh run rerun <run-id> --repo b0dea/cockpit`.
 
 `ci-ok` includes the `version pull request scope` check, which fails when the pull request
