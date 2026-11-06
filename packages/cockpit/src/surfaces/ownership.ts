@@ -54,8 +54,8 @@ export interface SurfaceDiagnostic {
 
 // An agent once read "delete the file" as permission and deleted a file without asking. A hand
 // edit is the person's work: say where it belongs, and that discarding it is their call.
-export const SURFACE_HAND_EDIT_FIX = 'keep the edit by moving it into cockpit.toml or a surface overlay, then ask the person who owns the cockpit before you discard the hand edit (undo it or delete the file), and rerun npx --no cockpit sync --config <your cockpit.toml>'
-export const SURFACE_UNRECORDED_FIX = 'ask the person who owns the cockpit whether this file is theirs; move anything they want kept into cockpit.toml or a surface overlay, and only with their approval move the file away or delete it, then rerun npx --no cockpit sync --config <your cockpit.toml>'
+export const SURFACE_HAND_EDIT_FIX = 'keep the edit by moving it into cockpit.toml or a surface overlay, then ask the person who owns the cockpit before you discard the hand edit (undo it or delete the file), and rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>'
+export const SURFACE_UNRECORDED_FIX = 'ask the person who owns the cockpit whether this file is theirs; move anything they want kept into cockpit.toml or a surface overlay, and only with their approval move the file away or delete it, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>'
 
 export type SurfaceOwnershipResult =
     | Readonly<{ kind: 'complete'; entries: readonly SurfaceDesiredEntry[] }>

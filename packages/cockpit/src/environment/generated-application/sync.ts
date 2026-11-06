@@ -44,10 +44,10 @@ async function prepareGeneratedEnvironmentSync(
         const destination = metadataChanges.find(change => generatedPaths.some(path => path === change.path || path.startsWith(`${change.path}/`))
             || !portablePublicationPaths([...generatedPaths, change.path]))
         if (destination) return refuse('TEAM_METADATA_UNAVAILABLE',
-            'a pending team metadata write overlaps a generated destination; move the generated output to a separate path, then run npx --no cockpit sync --config <your cockpit.toml> again', destination.path)
+            'a pending team metadata write overlaps a generated destination; move the generated output to a separate path, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> again', destination.path)
         const overlap = await ownedInputOverlap(publication.prepared, metadataChanges)
         if (overlap.kind === 'invalid' || overlap.path) return refuse('TEAM_METADATA_UNAVAILABLE',
-            'pending team metadata writes overlap an authenticated input or its identity could not be checked; move the input to a separate file, update its declaration, then run npx --no cockpit sync --config <your cockpit.toml> again',
+            'pending team metadata writes overlap an authenticated input or its identity could not be checked; move the input to a separate file, update its declaration, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> again',
             overlap.kind === 'complete' ? overlap.path : 'team-metadata')
     }
     // Restricting a server takes it out of a tool with no restriction mechanism. Waiting for a person
@@ -126,11 +126,11 @@ export async function applyGeneratedEnvironmentRepair(
         const configRead = await readBoundedInput(prepared.configPath)
         if (configRead.kind !== 'complete' || sha256(configRead.bytes) !== prepared.guardHandler.configSha256) return refuse('GENERATED_SOURCE_CHANGED',
             `the configuration changed after generated files were published, so the guard identity was not recorded; the guard refuses ${GUARD_HELD_CALLS} until it is`,
-            prepared.configSource.path, 'run `npx --no cockpit sync --config <your cockpit.toml>` again')
+            prepared.configSource.path, 'run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` again')
         const local = await writeGuardLocalIdentity(prepared.root, prepared.guardHandler, configRead.bytes.toString('utf8'))
         if (local.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
             `the committed guard files were published, but ${local.message}; the guard refuses ${GUARD_HELD_CALLS} until it exists`,
-            GUARD_LOCAL_PATHS.identity, 'fix the path, then run `npx --no cockpit sync --config <your cockpit.toml>` again in a terminal')
+            GUARD_LOCAL_PATHS.identity, 'fix the path, then run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` again in a terminal')
     }
     if (prepared.openCodeGrantRoots.length > 0 && settings.dryRun !== true) {
         // A checkout `use` serves from outside the declared one is what OpenCode is granted, as `use` wrote it.
@@ -142,11 +142,11 @@ export async function applyGeneratedEnvironmentRepair(
             bytes: openCodeGrantDirectory(row.root, Object.hasOwn(recorded.checkouts, row.slug) ? recorded.checkouts[row.slug] : undefined) }))
         const unsafe = grants.map(row => openCodePatternUnsafe(row.bytes)).find(reason => reason !== undefined)
         if (unsafe) return refuse('GENERATED_PUBLICATION_FAILED', `the committed OpenCode settings were published, but its grants were not written: ${unsafe}`,
-            GUARD_LOCAL_PATHS.directory, 'serve the sibling from a checkout at a plain path with `npx --no cockpit use`, then run sync again')
+            GUARD_LOCAL_PATHS.directory, 'serve the sibling from a checkout at a plain path with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs use`, then run sync again')
         const local = await writeCockpitLocalFiles(prepared.root, grants)
         if (local.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
             `the committed OpenCode settings were published, but ${local.message}; OpenCode refuses to start until it exists`,
-            GUARD_LOCAL_PATHS.directory, 'fix the path, then run `npx --no cockpit sync --config <your cockpit.toml>` again in a terminal')
+            GUARD_LOCAL_PATHS.directory, 'fix the path, then run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` again in a terminal')
     }
     const needsApproval = outcome.staleRemoval && !staleMcpOutputsOnly(outcome.staleRemoval.entries.map(entry => entry.path), prepared.configuredHarnesses)
     return complete('sync', prepared, settings.dryRun === true, outcome.changes, settings.dryRun && needsApproval ? outcome.staleRemoval : undefined)

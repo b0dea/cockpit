@@ -33,11 +33,11 @@ export async function signoff(request: Extract<WorkRequest, { operation: 'work-s
         const { order } = await current(request.workOrderId)
         const grade = record.state === 'graded' && record.grade?.passed === true && record.grade.digest === record.accepted.digest ? record.grade : undefined
         if (!grade && isGradeMode(policy.grading)) {
-            return refusal(operation, `${order.id} is ${record.state}, not graded; run npx --no cockpit work grade --config <your cockpit.toml> --work-order ${order.id}`)
+            return refusal(operation, `${order.id} is ${record.state}, not graded; run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work grade --config <your cockpit.toml> --work-order ${order.id}`)
         }
         // A grade made under a weaker mode than the one now in force closes nothing as done; off still closes ungraded.
         if (grade && weakerThanPolicy(grade.mode, policy.grading)) return refusal(operation, `${order.id} was graded under ${grade.mode}, weaker than the current [work] grading = "${policy.grading}"; `
-            + `grade it again under the current mode with npx --no cockpit work grade --config <your cockpit.toml> --work-order ${order.id}, or close it with --partial or --abandon`)
+            + `grade it again under the current mode with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work grade --config <your cockpit.toml> --work-order ${order.id}, or close it with --partial or --abandon`)
         const open = await Promise.all(order.depends_on.map(async dependency => (await store.read(dependency))?.state === 'done' ? undefined : dependency))
         if (open.some(Boolean)) return refusal(operation, `${order.id} depends on ${open.filter(Boolean).join(', ')}, which ${open.filter(Boolean).length === 1 ? 'is' : 'are'} not done`)
         how = GRADING[grade?.mode ?? policy.grading].closure

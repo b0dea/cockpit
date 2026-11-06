@@ -38,7 +38,7 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
         const weakened = recorded ? policyWeakening(recorded, composition.policy) : []
         if (weakened.length) {
             return refusal(operation, `cockpit.toml weakens ${weakened.map(row => `${row.field} from ${row.from} to ${row.to}`).join(', ')} since the last sync; `
-                + 'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive and accepts the weakening, or the change is reverted')
+                + 'a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive and accepts the weakening, or the change is reverted')
         }
         return await work(captured as WorkRequest, composition)
     } catch (error) { return refusal(operation, errorCause(error)) }
@@ -156,7 +156,7 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
             return { record: { ...existing, notes: [...existing.notes, { at: now(), by: 'agent', kind: request.kind, text: request.text }] }, value: existing.notes.length + 1 }
         })
         return complete(operation, { id: request.workOrderId, note: index, ...request.kind === 'question' ? { question: index, state: 'blocked' } : {},
-            ...request.kind === 'decision' ? { decision: index, resolveWith: `npx --no cockpit work decide --config <your cockpit.toml> --work-order ${request.workOrderId} --decision ${index} --record` } : {} })
+            ...request.kind === 'decision' ? { decision: index, resolveWith: `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work decide --config <your cockpit.toml> --work-order ${request.workOrderId} --decision ${index} --record` } : {} })
     }
     if (request.operation === 'work-decide') return decideOrder(request, context)
     if (request.operation === 'work-answer') {

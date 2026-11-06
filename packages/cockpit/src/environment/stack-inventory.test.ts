@@ -151,7 +151,7 @@ describe('machine stack inventory', () => {
         const doctor = await inspectMachineStacksForDoctor({ namespace, own: context.own, configPath: context.configPath })
         expect(doctor).toEqual([expect.objectContaining({ severity: 'warning', code: 'STACKS_ORPHANED',
             message: expect.stringContaining('2 whose checkout no longer exists; 2 whose state this cockpit version cannot read'),
-            fix: expect.stringContaining(`npx --no cockpit stacks prune --config ${context.configPath}`) })])
+            fix: expect.stringContaining(`./node_modules/@b00dea/cockpit/bin/cockpit.mjs stacks prune --config ${context.configPath}`) })])
 
         // State that cannot be read in an unexpected way leaves the inventory unknown: a named refusal, a doctor warning.
         await writeFile(join(namespace.root, 'cockpits', other.replaceAll(':', '_'), 'records', 'lifecycle'), 'not a directory')

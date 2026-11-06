@@ -123,7 +123,7 @@ function warning(message: string): EnvironmentDiagnostic {
         code: 'CODEX_HOOK_UNTRUSTED' satisfies typeof ENVIRONMENT_CODES.CODEX_HOOK_UNTRUSTED,
         message,
         target: HOOKS_PATH,
-        fix: 'if the hook source could not be verified, resolve the reported discovery failure first; otherwise a person runs codex -C <hook source directory> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml>',
+        fix: 'if the hook source could not be verified, resolve the reported discovery failure first; otherwise a person runs codex -C <hook source directory> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config <your cockpit.toml>',
     }
 }
 
@@ -133,7 +133,7 @@ function sourceMismatch(source: string, expected: string, reason: string): reado
         code: 'CODEX_HOOK_SOURCE_MISMATCH' satisfies typeof ENVIRONMENT_CODES.CODEX_HOOK_SOURCE_MISMATCH,
         message: `Codex discovers ${source} for this linked worktree, but ${reason}; it does not load the generated definitions in ${expected}, and trusting that worktree file cannot repair the discovery mismatch`,
         target: HOOKS_PATH,
-        fix: 'have a person review and roll out the matching generated hooks in the original checkout through its normal change process; cockpit does not copy hooks or change that checkout; rerun npx --no cockpit doctor --config <your cockpit.toml>, then review and trust the reported source in interactive Codex',
+        fix: 'have a person review and roll out the matching generated hooks in the original checkout through its normal change process; cockpit does not copy hooks or change that checkout; rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config <your cockpit.toml>, then review and trust the reported source in interactive Codex',
     }]
 }
 

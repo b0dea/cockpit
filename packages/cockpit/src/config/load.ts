@@ -395,7 +395,7 @@ export async function loadCockpitConfig(
         }
         if (observed.source.code === ENVIRONMENT_CODES.CONFIG_NOT_FOUND) {
             return refusal(ENVIRONMENT_CODES.CONFIG_NOT_FOUND, 'cockpit configuration was not found', observed.source.path,
-                'pass --config the path of an existing cockpit.toml, or create one with npx --no cockpit init <cockpit root> --target <target>')
+                'pass --config the path of an existing cockpit.toml, or create one with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs init <cockpit root> --target <target>')
         }
         if (observed.tooLarge) {
             return refusal(ENVIRONMENT_CODES.CONFIG_UNREADABLE, `cockpit configuration exceeds the ${STRUCTURED_INPUT_BYTE_LIMIT}-byte input limit`, observed.source.path,

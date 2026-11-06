@@ -471,7 +471,7 @@ function cloneFailureDiagnostics(
             message: `git could not clone ${sibling.remote?.replace(/(\w+:\/\/)[^/@\s]+@/, '$1[redacted]@')} into ${target}: ${stderr ?? 'git reported no error text'}`
                 + (cloned.length === 0 ? '' : `; already cloned and left in place: ${cloned.join(', ')}`),
             target,
-            fix: 'check that this machine can reach the remote (git ls-remote <remote>) and that the sibling remote in cockpit.toml is right, or clone it into the named directory yourself; then run npx --no cockpit setup --config <your cockpit.toml> again',
+            fix: 'check that this machine can reach the remote (git ls-remote <remote>) and that the sibling remote in cockpit.toml is right, or clone it into the named directory yourself; then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> again',
         },
         ...failed.diagnostics.filter(diagnostic => diagnostic.target !== id),
     ]
@@ -827,7 +827,7 @@ export async function runSetup(
                     ? `sibling ${sibling.slug} has AGENTS.md but no CLAUDE.md; setup would create CLAUDE.md holding the single line @AGENTS.md, so Claude Code loads the same instructions as Codex and OpenCode`
                     : `sibling ${sibling.slug} has CLAUDE.md but no AGENTS.md; setup would copy CLAUDE.md byte for byte to AGENTS.md and replace CLAUDE.md with the single line @AGENTS.md, so Codex and OpenCode load the same instructions as Claude Code`,
                 target: siblingResult.target,
-                fix: 'review the proposed change with a person, then run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-files',
+                fix: 'review the proposed change with a person, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> --write-instruction-files',
             })
             mutationMayHaveOccurred ||= files.kind === 'written'
         }
@@ -870,7 +870,7 @@ export async function runSetup(
                 code: ENVIRONMENT_CODES.SETUP_INSTRUCTION_POINTER_OFFERED,
                 message: 'the declared sibling has no cockpit instruction pointer',
                 target: pointer.path,
-                fix: 'review the proposed AGENTS.md block, then run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-pointers',
+                fix: 'review the proposed AGENTS.md block, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> --write-instruction-pointers',
             })
             mutationMayHaveOccurred ||= pointer.kind === 'written'
         }

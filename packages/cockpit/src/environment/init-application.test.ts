@@ -642,7 +642,7 @@ describe('init application', () => {
         expect(written).toContain('# Derived: ports.bases was read from app/compose.yml:4 and accepted by the setup agent; bring-up proves it.')
         expect(written).toContain('unconfirmed = [ "sibling", "environment.install_policies", "environment.machine", "environment.posture", "testing", "guards", "work.grading" ]\n')
         // An answer an observation can verify points the agent at the command that does, not at a person.
-        expect(written).toMatch(/# To confirm: run npx --no cockpit confirm environment\.machine\b/)
+        expect(written).toMatch(/# To confirm: run \.\/node_modules\/@b00dea\/cockpit\/bin\/cockpit\.mjs confirm environment\.machine\b/)
     })
 
     it('names the deferred greenfield dependency without fabricating a configuration', async () => {
@@ -980,7 +980,7 @@ describe('init application', () => {
 
         expect(changed).toEqual(expect.objectContaining({ kind: 'refusal', status: 2 }))
         expect(changed.diagnostics).toEqual([expect.objectContaining({ code: 'INIT_TARGET_CHANGED',
-            fix: expect.stringMatching(/^to resume the init started for codexcli, run npx --no cockpit init .+ --target codexcli .*ask the person who owns this machine before you delete .+codexcli\.json.* --target claudecode$/) })])
+            fix: expect.stringMatching(/^to resume the init started for codexcli, run \.\/node_modules\/@b00dea\/cockpit\/bin\/cockpit\.mjs init .+ --target codexcli .*ask the person who owns this machine before you delete .+codexcli\.json.* --target claudecode$/) })])
     })
 
     it('refuses when the accepted preview changes before publication', async () => {

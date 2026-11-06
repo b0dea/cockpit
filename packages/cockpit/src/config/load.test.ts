@@ -384,7 +384,7 @@ install_policies = [{ toolchain = "node", lockfile = "package-lock.json", build 
             label: 'missing',
             arrange: () => join(mkdtemp(), 'missing.toml'),
             code: 'CONFIG_NOT_FOUND',
-            fix: 'npx --no cockpit init <cockpit root> --target <target>',
+            fix: './node_modules/@b00dea/cockpit/bin/cockpit.mjs init <cockpit root> --target <target>',
         },
         {
             label: 'unreadable',
@@ -429,7 +429,7 @@ install_policies = [{ toolchain = "node", lockfile = "package-lock.json", build 
     it('tells a deleted configuration in a cockpit checkout apart from a mistyped path', async () => {
         const directory = mkdtemp()
         const configPath = join(directory, 'cockpit.toml')
-        const notFoundFix = 'pass --config the path of an existing cockpit.toml, or create one with npx --no cockpit init <cockpit root> --target <target>'
+        const notFoundFix = 'pass --config the path of an existing cockpit.toml, or create one with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs init <cockpit root> --target <target>'
         expect((await loadCockpitConfig(configPath)).diagnostics).toEqual([{ severity: 'error', code: 'CONFIG_NOT_FOUND',
             message: 'cockpit configuration was not found', target: configPath, fix: notFoundFix }])
         recordSyncedConfig(directory, 'cockpit.toml')

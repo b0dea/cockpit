@@ -305,7 +305,7 @@ describe('setup planner', () => {
         const unresolved = expect.objectContaining({
             code: 'SETUP_REMOTE_UNRESOLVABLE',
             message: expect.stringMatching(/"plain-file\/api\.git".*ENOTDIR/),
-            fix: expect.stringContaining('npx --no cockpit setup'),
+            fix: expect.stringContaining('./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup'),
         })
 
         const clone = await planSetup({ siblingsRoot, sibling: declared, observation: observed({ kind: 'absent' }), env })

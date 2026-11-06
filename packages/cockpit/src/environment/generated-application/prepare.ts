@@ -201,7 +201,7 @@ export async function prepare(input: unknown, adapters: GeneratedEnvironmentComm
         env: adapters.observationEnv ?? process.env })
     if (checkoutIdentity.state === 'failed') return refuse('GENERATED_INPUT_INVALID',
         `generated checkout identity is unavailable: ${checkoutIdentity.reason}`, loaded.result.source.path,
-        'correct what the reason names (restore the checkout or Git installation, or make each absolute PATH entry canonical), then run npx --no cockpit sync --config <your cockpit.toml>')
+        'correct what the reason names (restore the checkout or Git installation, or make each absolute PATH entry canonical), then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>')
     const currentCockpit = checkoutIdentity.cockpitId
     const publishedCockpit = publicationCockpitId({ name: config.cockpit.name })
     const currentCheckout = checkoutIdentity.checkoutId
@@ -237,7 +237,7 @@ export async function prepare(input: unknown, adapters: GeneratedEnvironmentComm
     const endpoint = workEnvironment.browser?.endpoint
     const unpublished = endpoint === undefined ? undefined : browserEndpointUnpublished(endpoint, sources, config.ports.bases)
     if (unpublished) return refuse('GENERATED_BROWSER_ENDPOINT_UNPUBLISHED', unpublished, 'browser',
-        'publish the endpoint port from exactly one service in environment.compose_files as "127.0.0.1:${VAR}:<container port>" with VAR under [ports.bases] set to the endpoint port, or remove browser.endpoint to drive a local browser, then run npx --no cockpit sync --config <your cockpit.toml>')
+        'publish the endpoint port from exactly one service in environment.compose_files as "127.0.0.1:${VAR}:<container port>" with VAR under [ports.bases] set to the endpoint port, or remove browser.endpoint to drive a local browser, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>')
     const generated = composeOwnership ? [composeOwnership] : []
     // The anchored read of the configuration file pins the publication root's identity for the whole sync.
     const sourcePath = relative(root, loaded.result.source.path)

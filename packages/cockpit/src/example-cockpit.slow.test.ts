@@ -208,7 +208,7 @@ describe('the compose-first and docs-only example cockpits', () => {
             expect.objectContaining({ code: 'GENERATED_HOST_PATH_UNMOUNTED', target: 'environment.generated_host_paths:.cache',
                 message: expect.stringContaining('environment.generated_host_paths lists .cache, but no Compose service bind-mounts') })])
         expect(unmounted.response.guidance).toContainEqual({ code: 'GENERATED_HOST_PATH_UNMOUNTED', target: 'environment.generated_host_paths:.cache',
-            text: expect.stringMatching(/remove "\.cache" from environment\.generated_host_paths in cockpit\.toml; then run npx --no cockpit check --config /) })
+            text: expect.stringMatching(/remove "\.cache" from environment\.generated_host_paths in cockpit\.toml; then run \.\/node_modules\/@b00dea\/cockpit\/bin\/cockpit\.mjs check --config /) })
     })
 
     it('fails check for a missing sibling and for a hand-edited surface', () => {

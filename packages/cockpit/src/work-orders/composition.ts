@@ -792,7 +792,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             const manifest = JSON.parse(readBounded(root, '.cockpit/generated-environment-ownership.json', MAX_DOCUMENT_BYTES).toString('utf8')) as { entries?: unknown }
             if (Array.isArray(manifest.entries)) for (const entry of manifest.entries) if (typeof (entry as { path?: unknown })?.path === 'string') generated.add((entry as { path: string }).path)
         } catch (error) {
-            if (error instanceof SyntaxError) throw new RefusalError('.cockpit/generated-environment-ownership.json is not JSON; run npx --no cockpit sync --config <your cockpit.toml>')
+            if (error instanceof SyntaxError) throw new RefusalError('.cockpit/generated-environment-ownership.json is not JSON; run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>')
             if (!hasErrorCode(error, 'ENOENT')) throw error
         }
         for (const repository of repositories) {

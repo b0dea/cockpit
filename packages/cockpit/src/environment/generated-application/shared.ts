@@ -559,7 +559,7 @@ function overrideChanged(finding: SurfaceUpgradeFinding, severity: 'error' | 'wa
     return {
         severity, code: 'OVERRIDDEN_CORE_CHANGED' as const satisfies SurfaceUpgradeFinding['code'], target: finding.overlaySource,
         message: `overlay ${finding.name} replaces the built-in ${finding.name} recorded as sha256 ${finding.recordedSha256}, but this cockpit version's built-in is sha256 ${finding.currentSha256}`,
-        fix: 'review the new built-in against your override, set the overlay\'s replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml>',
+        fix: 'review the new built-in against your override, set the overlay\'s replaces.sha256 to the current digest this message names, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>',
     }
 }
 
@@ -569,7 +569,7 @@ export function guideCapExceeded(cost: Readonly<{ target: string; value: number;
         diagnostics: [{
             severity: 'error' as const, code: ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED, target: 'cockpit.guide_cap',
             message: `the instructions ${cost.target} loads at start are ${cost.value} lines, over cockpit.guide_cap ${cost.cap}; the count includes each sibling guide copied into the root AGENTS.md`,
-            fix: 'shorten the root or sibling guides, or move conditional guidance into a skill, or raise cockpit.guide_cap in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>',
+            fix: 'shorten the root or sibling guides, or move conditional guidance into a skill, or raise cockpit.guide_cap in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>',
         }] }
 }
 
@@ -586,7 +586,7 @@ export function guideBytesExceeded(bytes: number): RefusalOutcome {
             code: 'GUIDE_CAP_EXCEEDED' as const satisfies typeof ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED,
             target: 'AGENTS.md',
             message: `cockpit's part of the root AGENTS.md, with the sibling guides it copies, is ${bytes} bytes; Codex drops whatever follows the first 32768 bytes of a project AGENTS.md without saying so`,
-            fix: 'shorten the root or sibling guides, or name fewer guides in sibling.guides, then run npx --no cockpit sync --config <your cockpit.toml>',
+            fix: 'shorten the root or sibling guides, or name fewer guides in sibling.guides, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>',
         }] }
 }
 
@@ -598,7 +598,7 @@ export function siblingGuideMissing(slug: string, guide: string, sourcePath: str
             code: 'SIBLING_GUIDE_MISSING' as const satisfies typeof ENVIRONMENT_CODES.SIBLING_GUIDE_MISSING,
             target: `sibling.${slug}.guides`,
             message: `sibling ${slug} declares the guide ${guide}, but ${sourcePath} does not exist, so no harness would load it`,
-            fix: 'correct or remove the guide name in that sibling\'s guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>',
+            fix: 'correct or remove the guide name in that sibling\'s guides list in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>',
         }] }
 }
 
@@ -653,12 +653,12 @@ export function complete(
             ...prepared.unapprovedMcpServers.map(server => ({
                 severity: 'warning' as const, code: 'MCP_NOT_APPROVED' as const satisfies McpDiagnostic['code'], target: server.name,
                 message: `MCP server ${server.name}, declared in ${server.sources.join(', ')}, has no approval in [mcp.approved] for its current declaration (command, arguments, working directory and environment names for a local server; URL, header references and headers helper for a remote one) (sha256 ${server.sha256}), so every harness keeps it disabled`,
-                fix: 'a person reviews its declaration, sets its name to the sha256 in this message under [mcp.approved] in cockpit.toml and runs npx --no cockpit sync --config <your cockpit.toml>; while [autonomy] mcp_approve is person, the default, the guard refuses an agent enabling or changing approvals or widening tool access. Agents may remove unchanged approvals and add or narrow exact tool allowlists under [mcp.allowed_tools]. To keep it off, nothing is needed',
+                fix: 'a person reviews its declaration, sets its name to the sha256 in this message under [mcp.approved] in cockpit.toml and runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; while [autonomy] mcp_approve is person, the default, the guard refuses an agent enabling or changing approvals or widening tool access. Agents may remove unchanged approvals and add or narrow exact tool allowlists under [mcp.allowed_tools]. To keep it off, nothing is needed',
             })),
             ...prepared.mcpTransportGaps.map(gap => ({
                 severity: 'warning' as const, code: 'MCP_TRANSPORT_UNAVAILABLE' as const satisfies McpDiagnostic['code'], target: gap.name,
                 message: `${gap.reason}, so sync writes nothing for it there and the server is unavailable in those tools`,
-                fix: 'nothing is needed if the server is not wanted in those tools; otherwise declare it with credentials the tool can carry (an environment reference in headers rather than a headersHelper for OpenCode), or remove those tools from [surfaces] tools, then run npx --no cockpit sync --config <your cockpit.toml>',
+                fix: 'nothing is needed if the server is not wanted in those tools; otherwise declare it with credentials the tool can carry (an environment reference in headers rather than a headersHelper for OpenCode), or remove those tools from [surfaces] tools, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>',
             })),
             // Real sync and check refuse a changed original; a preview reports it so it can be reviewed.
             ...prepared.changedOverrideOriginals.map(finding => overrideChanged(finding, 'warning')),

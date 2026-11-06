@@ -229,12 +229,12 @@ export async function prepareSurfaces(
         if (playwright.length !== 1 || declarations.filter(row => row.name === 'playwright').length !== 1) {
             return refuse('MCP_DECLARATION_INVALID',
                 `[browser] requires exactly one local-command MCP server named playwright, and the declared MCP sources hold ${declarations.filter(row => row.name === 'playwright').length} servers by that name, ${playwright.length} of them local`, 'playwright',
-                'declare one playwright server with a command (not a url) in a JSON file with an mcpServers object, listed in a sibling\'s derives.mcp_sources, then run npx --no cockpit sync --config <your cockpit.toml>')
+                'declare one playwright server with a command (not a url) in a JSON file with an mcpServers object, listed in a sibling\'s derives.mcp_sources, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>')
         }
         const playwrightDigest = mcpApprovalDigest(playwright[0]!, prepared.root)
         if (config.mcp.approved.playwright !== playwrightDigest) {
             return refuse('MCP_DECLARATION_INVALID', `[browser] requires the playwright MCP server to be approved at its current declaration (sha256 ${playwrightDigest})`, 'playwright',
-                'review the playwright declaration, set playwright to the sha256 in this message under [mcp.approved], then run npx --no cockpit sync --config <your cockpit.toml>')
+                'review the playwright declaration, set playwright to the sha256 in this message under [mcp.approved], then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>')
         }
         if (process.platform !== 'darwin' && process.platform !== 'linux') {
             return refuse('SURFACE_INPUT_INVALID', 'browser posture state is unavailable on this platform', process.platform)
@@ -347,7 +347,7 @@ export async function prepareSurfaces(
         if (!source.path.startsWith('rules/')) { mergedSources.push({ path: source.path, bytes: source.bytes }); continue }
         const rule = alwaysLoadedRule(source.bytes)
         if (rule.kind === 'refusal') return refuse('SURFACE_RULE_SCOPE_UNSUPPORTED', `rules overlay ${source.path} ${rule.reason}`, source.path,
-            'remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml>')
+            'remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>')
         mergedSources.push({ path: source.path, bytes: rule.bytes })
     }
     // Every sibling directory relative to the cockpit root, whether or not a grant names it.
@@ -447,7 +447,7 @@ export async function prepareSurfaces(
     // Only a fingerprint this process hashed to the authenticated digest may stand in for a re-hash.
     const nodeFingerprint = fileFingerprint(prepared.node.canonicalPath, await lstat(prepared.node.canonicalPath))
     if (verifiedDigest(nodeFingerprint) !== prepared.node.sha256) return refuse('GENERATED_EXECUTABLE_UNAVAILABLE',
-        'the Node executable changed while sync was running', 'guard', 'run `npx --no cockpit sync --config <your cockpit.toml>` again in a terminal')
+        'the Node executable changed while sync was running', 'guard', 'run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` again in a terminal')
     const guardHandler: GuardHandlerIdentity = { root: prepared.root,
         rootDevice: String(rootStat.dev), rootInode: String(rootStat.ino),
         configPath: prepared.configPath, configSha256: prepared.sourceSha256,

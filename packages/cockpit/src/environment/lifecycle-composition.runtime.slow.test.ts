@@ -396,7 +396,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(message).toContain('OperatingSystem "Docker Desktop", Name "docker-desktop", OSType "linux"; engine 27.1.2')
         expect(message).toMatch(new RegExp(`measured in ${candidate.home.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/.+/v1/machine/runtime-measurements\\.json: none`))
         // The remedy runs as printed: runtime measure selects the daemon up uses, with no prefix.
-        expect(message).toMatch(/Measure it on this machine with: npx --no cockpit runtime measure --config <your cockpit\.toml> --image <local-image>$/)
+        expect(message).toMatch(/Measure it on this machine with: \.\/node_modules\/@b00dea\/cockpit\/bin\/cockpit\.mjs runtime measure --config <your cockpit\.toml> --image <local-image>$/)
         expect(execute.mock.calls.some(([step]) => step.id.includes('topology'))).toBe(false)
     })
 
@@ -799,7 +799,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(await leftover.withAcquiredPorts(leftoverLoad.result, async () => true)).toBe(true)
         const held = await runUp({ configPath: input.configPath }, createLifecycleCommandAdapters(input, executeProbe))
         expect(held).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'EXECUTION_PRECONDITION_CHANGED',
-            fix: 'run npx --no cockpit down --config <your cockpit.toml> to release the claim, then npx --no cockpit up --config <your cockpit.toml>' }] })
+            fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config <your cockpit.toml> to release the claim, then ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml>' }] })
         const released = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({ ...input, dockerContext: 'default' }, executeProbe))
         expect(released, JSON.stringify(released)).toMatchObject({ kind: 'complete', result: { change: 'removed' } })
         await editCompose(first.candidate.checkout)

@@ -171,7 +171,7 @@ export function createWorkStore(root: string): WorkStore {
         try { await link(staged, path) }
         catch (error) {
             if (!hasErrorCode(error, 'EEXIST')) throw error
-            throw new RefusalError(`work order ${id} is locked by another cockpit command (${WORK_RECORD_DIRECTORY}/${id}.lock); wait for it, or if it crashed run npx --no cockpit work recover --config <your cockpit.toml> --work-order ${id} --apply`)
+            throw new RefusalError(`work order ${id} is locked by another cockpit command (${WORK_RECORD_DIRECTORY}/${id}.lock); wait for it, or if it crashed run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work recover --config <your cockpit.toml> --work-order ${id} --apply`)
         } finally { await rm(staged, { force: true }) }
         return async () => { await rm(path, { force: true }) }
     }

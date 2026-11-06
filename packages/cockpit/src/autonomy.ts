@@ -117,7 +117,7 @@ export function policyWeakeningDiagnostic(weakened: readonly PolicyWeakening[]):
     return { severity: 'error' as const, target: 'autonomy',
         code: 'POLICY_WEAKENING_UNCONFIRMED' as const satisfies typeof ENVIRONMENT_CODES.POLICY_WEAKENING_UNCONFIRMED,
         message: `cockpit.toml weakens the policy the last sync recorded (${shown})`,
-        fix: 'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reads the weakening it shows and types its digest, or the change is reverted' }
+        fix: 'a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal outside CI, reads the weakening it shows and types its digest, or the change is reverted' }
 }
 
 /** The digest a person types to accept exactly these weakenings of exactly this recorded policy. */
@@ -151,7 +151,7 @@ function recordedPolicy(value: unknown): EffectivePolicy | undefined {
 // Restoring the committed copy helps only where the damage is uncommitted; where the committed copy is the
 // damaged one, the record is a person's to remove, after which the next sync records cockpit.toml's policy.
 const DAMAGED_RECORD_REMEDY = `restore the committed copy with git restore -- ${POLICY_RECORD_PATH}, or if that copy is the damaged one, `
-    + `a person deletes ${POLICY_RECORD_PATH} and runs npx --no cockpit sync --config <your cockpit.toml> --interactive to record the policy cockpit.toml declares`
+    + `a person deletes ${POLICY_RECORD_PATH} and runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive to record the policy cockpit.toml declares`
 
 /** The policy the last sync recorded, or undefined before the first; an unreadable record refuses. */
 export async function readRecordedPolicy(root: string): Promise<EffectivePolicy | undefined> {

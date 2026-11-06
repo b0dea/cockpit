@@ -94,7 +94,7 @@ describe('public surface publication transaction', () => {
             await writeFile(cursorPath, cursorBytes)
 
             const reported = await checkGeneratedEnvironment({ configPath: fixture.configPath })
-            expect(reported).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_ARTIFACT_DRIFT', target: '.cursor/mcp.json', fix: 'run npx --no cockpit sync --config <your cockpit.toml>' })] })
+            expect(reported).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_ARTIFACT_DRIFT', target: '.cursor/mcp.json', fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>' })] })
             const preview = await syncGeneratedEnvironment({ configPath: fixture.configPath, dryRun: true })
             expect(preview).toMatchObject({ kind: 'complete', result: { changes: expect.arrayContaining([{ operation: 'remove', path: '.cursor/mcp.json' }]) } })
             expect(preview.result).not.toHaveProperty('staleRemoval')

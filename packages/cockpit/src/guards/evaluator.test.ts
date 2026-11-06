@@ -705,7 +705,7 @@ describe('built-in read-only profile', () => {
         // Each refusal names the command and what to do instead.
         expect(decideInRepositories('git commit -m "Add the parser"').reason).toBe('`git commit -m …` requires human approval: the guard admits only the read-only commands it classifies, '
             + 'a declared build or test command run from its checkout, and [guards] allow rules. A person approves it or runs it in a terminal. To run tests, use '
-            + '`npx --no cockpit test-run --config /workspace/project/cockpit.toml --gate <gate>`; a person can admit a command for good under [guards] allow in cockpit.toml.')
+            + '`./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run --config /workspace/project/cockpit.toml --gate <gate>`; a person can admit a command for good under [guards] allow in cockpit.toml.')
         expect(decideInRepositories('cat /etc/hosts').reason).toContain('"/etc/hosts" is outside the configured roots')
         // A path is quoted with the characters a harness rejects in a reason escaped, so the refusal still arrives.
         expect(decideInRepositories('cat /tmp/a\u2028b').reason).toContain('"/tmp/a\\u2028b" is outside the configured roots')
@@ -830,7 +830,7 @@ describe('built-in read-only profile', () => {
     it('denies reads and writes of an environment file unless its name or a declared template marks it as documentation', () => {
         const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
         const refusal = { decision: 'deny', reason: 'Refusing to read or write an environment file: `.env` and `.env.*` hold secrets unless named .env.example, .env.sample, .env.template or .env.schema, or declared as a template. '
-            + 'Fix: an agent runs the trusted process through a declared project command or script that wraps Varlock; a person in a terminal runs that same command, or `VARLOCK_TELEMETRY_DISABLED=true varlock run -- <cmd>`, without `--redact-stdout`, which Varlock refuses on a terminal. List variable names with `npx --no cockpit env keys --config <your cockpit.toml>`.' }
+            + 'Fix: an agent runs the trusted process through a declared project command or script that wraps Varlock; a person in a terminal runs that same command, or `VARLOCK_TELEMETRY_DISABLED=true varlock run -- <cmd>`, without `--redact-stdout`, which Varlock refuses on a terminal. List variable names with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs env keys --config <your cockpit.toml>`.' }
         const judge = (input: object, configured = policy()) => evaluateGuard(parseGuardInput(input), configured, withGit)
         // An undeclared `.env` at any depth is where a product keeps its values, so no tool reads or writes it.
         for (const file of ['.env', 'apps/web/.env.local', '.ENV.Production', '.env.example.local']) {

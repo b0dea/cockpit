@@ -110,7 +110,7 @@ describe('Codex hook trust', () => {
         // The remedy is a literal so the troubleshooting index can repeat it; the printed fix still
         // names this cockpit's configuration.
         expect(renderHumanDiagnostics(untrusted, undefined, { resolvedConfigPath: join(fixture.root, 'cockpit.toml'), generatedTargets: [] }))
-            .toContain(`then run npx --no cockpit doctor --config ${join(fixture.root, 'cockpit.toml')}\n`)
+            .toContain(`then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config ${join(fixture.root, 'cockpit.toml')}\n`)
 
         await fixture.trust(fixture.root, MEASURED)
         expect(await fixture.inspect()).toEqual([])

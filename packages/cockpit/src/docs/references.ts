@@ -131,7 +131,7 @@ export function staleReferences(input: Readonly<{
                 message: renamed === undefined
                     ? `${where(line)} cites ${path}, which the repository history removed`
                     : `${where(line)} cites ${path}, which the repository history renamed to ${renamed}`,
-                fix: 'cite the path that replaced it (a rename is named in the message), or rewrite or delete the sentence if what it described is gone; then rerun npx --no cockpit docs check --config <your cockpit.toml>' })
+                fix: 'cite the path that replaced it (a rename is named in the message), or rewrite or delete the sentence if what it described is gone; then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs docs check --config <your cockpit.toml>' })
         }
         const citeTargets = (line: number, text: string) => {
             for (const target of citedTargets(text)) {
@@ -140,7 +140,7 @@ export function staleReferences(input: Readonly<{
                 reported.add(key)
                 findings.push({ severity: 'error', code: 'DOCS_TARGET_REMOVED' satisfies typeof ENVIRONMENT_CODES.DOCS_TARGET_REMOVED, target: where(line),
                     message: `${where(line)} runs make ${target}, a target the Makefiles once defined and no longer do`,
-                    fix: 'cite the target or command that replaced it, or rewrite or delete the sentence if the step is gone; then rerun npx --no cockpit docs check --config <your cockpit.toml>' })
+                    fix: 'cite the target or command that replaced it, or rewrite or delete the sentence if the step is gone; then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs docs check --config <your cockpit.toml>' })
             }
         }
         for (const row of document.walked.lines) {

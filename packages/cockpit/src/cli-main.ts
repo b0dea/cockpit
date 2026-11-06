@@ -14,7 +14,7 @@ import { createInvocationRecord, EXIT_CODES } from './invocation.js'
 import { commandGroups, commandSpelling, commandStages, commands, describePublicOption, internalCommands, isWorkHandler, isRecordedAnswerField, resolveOrdinaryInvocation, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
 import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS, isGuardSurfaceTarget } from './surfaces/harness-registry.js'
-import { cockpitCommand, type FixContext } from './fix-catalogue.js'
+import { cockpitCommand, initCommand, type FixContext } from './fix-catalogue.js'
 import { type Diagnostic, renderHumanDiagnostics, renderHumanValue, renderJsonResponse } from './diagnostics.js'
 import { classifyEstateObservation, draftFromEstate, observeCockpitRoot, observePublicEstate } from './init/draft.js'
 import { runInitOperatorCommand, type UnattendedInit } from './init/command.js'
@@ -499,29 +499,29 @@ function readAdapters(configPath: string, runtime: CliRuntime, sessionId: string
 function unsatisfiedWorkDiagnostic(operation: WorkApplicationRequest['operation'], message: string): Diagnostic {
     if (operation === 'test-run') return { severity: 'error', message,
         code: 'TEST_GATE_UNSATISFIED' satisfies typeof ENVIRONMENT_CODES.TEST_GATE_UNSATISFIED,
-        fix: 'the message gives the verdict and its reasons. FAIL: a check a stage ran failed, so fix the product. DEGRADED: start the stack with npx --no cockpit up --config <your cockpit.toml> for a stage that needs it, make a stage command that could not start runnable from the cockpit root, raise testing.stages[].timeout_seconds for a stage that timed out, or declare testing.stages[].select.<kind> for a --select a stage lacks. VOID: stop changing the checkouts and run the gate again. PARTIAL: only the complete gate can PASS, so run it without --select or --mode staged' }
+        fix: 'the message gives the verdict and its reasons. FAIL: a check a stage ran failed, so fix the product. DEGRADED: start the stack with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml> for a stage that needs it, make a stage command that could not start runnable from the cockpit root, raise testing.stages[].timeout_seconds for a stage that timed out, or declare testing.stages[].select.<kind> for a --select a stage lacks. VOID: stop changing the checkouts and run the gate again. PARTIAL: only the complete gate can PASS, so run it without --select or --mode staged' }
     if (operation === 'browser-drive') return { severity: 'error', message,
         code: 'BROWSER_ROUTE_FINDINGS' satisfies typeof ENVIRONMENT_CODES.BROWSER_ROUTE_FINDINGS,
-        fix: 'this run asked for a clean route (--fail-on-findings). Read result.receipt.surfaces[].diagnostics, including excerpt.messages where present: fix the product for each console error, uncaught page error and failed request that matters, then rerun npx --no cockpit browser drive --config <your cockpit.toml> --route <name> --fail-on-findings; third-party traffic never counts' }
+        fix: 'this run asked for a clean route (--fail-on-findings). Read result.receipt.surfaces[].diagnostics, including excerpt.messages where present: fix the product for each console error, uncaught page error and failed request that matters, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs browser drive --config <your cockpit.toml> --route <name> --fail-on-findings; third-party traffic never counts' }
     if (operation === 'work-check') return { severity: 'error', message,
         code: 'WORK_CHECK_FAILED' satisfies typeof ENVIRONMENT_CODES.WORK_CHECK_FAILED,
-        fix: 'read result.results: fix the product for a check that failed, make one that did not run runnable from the cockpit root, then rerun npx --no cockpit work check --config <your cockpit.toml> --work-order <id>' }
+        fix: 'read result.results: fix the product for a check that failed, make one that did not run runnable from the cockpit root, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work check --config <your cockpit.toml> --work-order <id>' }
     if (operation === 'work-verify') return { severity: 'error', message,
         code: 'WORK_VERIFY_FAILED' satisfies typeof ENVIRONMENT_CODES.WORK_VERIFY_FAILED,
-        fix: 'for an order changed since acceptance, run npx --no cockpit work accept --config <your cockpit.toml> --work-order <id> or revert the change; for a done order without a passing grade, regrade it with work grade; for a decision record that is missing or no longer cites its order, restore it from git or put back its "Work order: <id>" line' }
+        fix: 'for an order changed since acceptance, run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config <your cockpit.toml> --work-order <id> or revert the change; for a done order without a passing grade, regrade it with work grade; for a decision record that is missing or no longer cites its order, restore it from git or put back its "Work order: <id>" line' }
     return { severity: 'error', message,
         code: 'WORK_GRADE_UNSATISFIED' satisfies typeof ENVIRONMENT_CODES.WORK_GRADE_UNSATISFIED,
         fix: operation === 'grade-criteria'
-            ? 'read result.criteria and result.checks: fix the product for an unmet or unclear criterion, make a failed check pass, revert each change outside scope the scope-changes-necessary verdict calls unneeded, then grade again with npx --no cockpit grade --config <your cockpit.toml> --criteria <file>'
-            : 'read result.criteria, result.checks and result.outOfScope: fix the product for an unmet or unclear criterion, make a failed check pass, revert each change outside scope the scope-changes-necessary verdict calls unneeded (under [work] grading = "checks", every change outside scope), have a person amend the order when amendments-hold-bar is unmet, then grade again with npx --no cockpit work grade --config <your cockpit.toml> --work-order <id>' }
+            ? 'read result.criteria and result.checks: fix the product for an unmet or unclear criterion, make a failed check pass, revert each change outside scope the scope-changes-necessary verdict calls unneeded, then grade again with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs grade --config <your cockpit.toml> --criteria <file>'
+            : 'read result.criteria, result.checks and result.outOfScope: fix the product for an unmet or unclear criterion, make a failed check pass, revert each change outside scope the scope-changes-necessary verdict calls unneeded (under [work] grading = "checks", every change outside scope), have a person amend the order when amendments-hold-bar is unmet, then grade again with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work grade --config <your cockpit.toml> --work-order <id>' }
 }
 
 function weakenedTestsDiagnostic(operation: WorkApplicationRequest['operation'], message: string): Diagnostic {
     return { severity: 'error', message,
         code: 'WORK_TEST_WEAKENED' satisfies typeof ENVIRONMENT_CODES.WORK_TEST_WEAKENED,
         fix: operation === 'work-grade'
-            ? 'read result.testProtection.findings and the verdict on them: restore each test weakened to make the change pass. Under [work] grading = "independent" the evaluator judged the test changes unjustified in the diff; under "self" or "subagent" your --note names each flagged file and why; under "checks" a person acknowledges a legitimate change at a terminal with npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why it is not a weakening> --interactive, or CI where [work.gates] acknowledge = "ci"; never type the digest for them'
-            : 'read result.testProtection: restore each deleted, skipped, suppressed or loosened test. A grade without an order has the evaluator judge the test changes; an order records the base they are compared with, and under [work] grading = "checks" a person acknowledges a legitimate change with npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why> --interactive, or CI where [work.gates] acknowledge = "ci"' }
+            ? 'read result.testProtection.findings and the verdict on them: restore each test weakened to make the change pass. Under [work] grading = "independent" the evaluator judged the test changes unjustified in the diff; under "self" or "subagent" your --note names each flagged file and why; under "checks" a person acknowledges a legitimate change at a terminal with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why it is not a weakening> --interactive, or CI where [work.gates] acknowledge = "ci"; never type the digest for them'
+            : 'read result.testProtection: restore each deleted, skipped, suppressed or loosened test. A grade without an order has the evaluator judge the test changes; an order records the base they are compared with, and under [work] grading = "checks" a person acknowledges a legitimate change with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why> --interactive, or CI where [work.gates] acknowledge = "ci"' }
 }
 
 // A person gate binds what the person reads to the digest they type, so it never completes for an agent.
@@ -988,8 +988,8 @@ async function runComposeScaffold(request: ComposeScaffoldRequest): Promise<Comm
     if (written.kind === 'exists') return { artifact: null, destination: null, result: null, status: 2,
         diagnostics: [{ severity: 'error', code: 'INIT_SCAFFOLD_COMPOSE_EXISTS', target: written.path,
             message: `${written.path} already exists, and the scaffold never replaces a Compose file`,
-            fix: 'run npx --no cockpit init <cockpit root> --target <tool>, which proposes the existing Compose file for environment.compose_files' }] }
-    const next = `declare ${rendered.portVariable} under [ports.bases]${rendered.volumes.length ? ` and resettable_volumes = ${JSON.stringify(rendered.volumes)} under [environment]` : ''}; npx --no cockpit init ${absoluteRoot} --target <tool> proposes compose_files = ["compose.yml"]`
+            fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs init <cockpit root> --target <tool>, which proposes the existing Compose file for environment.compose_files' }] }
+    const next = `declare ${rendered.portVariable} under [ports.bases]${rendered.volumes.length ? ` and resettable_volumes = ${JSON.stringify(rendered.volumes)} under [environment]` : ''}; ${initCommand({ root: absoluteRoot, target: '<tool>' })} proposes compose_files = ["compose.yml"]`
     return { artifact: `wrote ${written.path}; it is yours to edit, and cockpit never rewrites it. Next: ${next}.\n`, destination: null,
         diagnostics: [], status: 0,
         result: { action: 'scaffolded', path: written.path, service: rendered.service, portVariable: rendered.portVariable, volumes: rendered.volumes } }
@@ -1195,7 +1195,7 @@ async function decodeRequest(
         if (!values['probe-specifications']) return usageOutcome('CLI_USAGE_INVALID',
             'provide --probe-specifications <file>; write one with --write-probe-specifications <new file> first', '--probe-specifications')
         const invalidEnvironment = () => usageOutcome('CLI_USAGE_INVALID',
-            `selftest probe environment inputs must be bounded own string or undefined values; supply ${['PATH', ...INHERITED_TOOL_ENVIRONMENT].join(', ')} without accessors and run npx --no cockpit selftest --help to retry`)
+            `selftest probe environment inputs must be bounded own string or undefined values; supply ${['PATH', ...INHERITED_TOOL_ENVIRONMENT].join(', ')} without accessors and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --help to retry`)
         const env: Record<string, string | undefined> = {}
         try {
             if (runtimeEnv === null || typeof runtimeEnv !== 'object' || Array.isArray(runtimeEnv)
@@ -1311,7 +1311,7 @@ async function decodeRequest(
         const values = parsed.values as { config?: string; image?: string }
         const [operation, ...extra] = parsed.positionals
         if (operation !== 'measure' || extra.length > 0) {
-            return usageOutcome('CLI_USAGE_INVALID', 'runtime requires the measure operation: npx --no cockpit runtime measure --config <your cockpit.toml> --image <local-image>')
+            return usageOutcome('CLI_USAGE_INVALID', 'runtime requires the measure operation: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config <your cockpit.toml> --image <local-image>')
         }
         if (!values.config) return missingConfig()
         if (!values.image) return usageOutcome('CLI_USAGE_INVALID', 'provide --image <local-image>; the probe never pulls', '--image')
@@ -1335,7 +1335,7 @@ async function decodeRequest(
     if (handler === 'sibling') {
         const values = parsed.values as { config?: string; create?: boolean; from?: string; remote?: string; dir?: string; var?: string; purpose?: string; mount?: string; 'instruction-pointer'?: boolean }
         const [operation, slug, ...extra] = parsed.positionals
-        const shape = 'npx --no cockpit sibling add <slug> --config <your cockpit.toml> [--create | --from <path> | --remote <url>] [--dir <relative dir>] [--var <NAME>] [--purpose "<text>"] [--mount <always|none|profile:NAME>] [--instruction-pointer], or npx --no cockpit sibling remove <slug> --config <your cockpit.toml>'
+        const shape = './node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add <slug> --config <your cockpit.toml> [--create | --from <path> | --remote <url>] [--dir <relative dir>] [--var <NAME>] [--purpose "<text>"] [--mount <always|none|profile:NAME>] [--instruction-pointer], or ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling remove <slug> --config <your cockpit.toml>'
         if ((operation !== 'add' && operation !== 'remove') || !slug || extra.length > 0) {
             return usageOutcome('CLI_USAGE_INVALID', `sibling requires an operation and one slug: ${shape}`)
         }
@@ -1358,7 +1358,7 @@ async function decodeRequest(
     if (handler === 'use') {
         const values = parsed.values as { config?: string; clear?: boolean }
         const [slug, checkout, ...extra] = parsed.positionals
-        const shape = 'npx --no cockpit use <slug> <checkout> --config <your cockpit.toml>, or npx --no cockpit use <slug> --clear --config <your cockpit.toml>'
+        const shape = './node_modules/@b00dea/cockpit/bin/cockpit.mjs use <slug> <checkout> --config <your cockpit.toml>, or ./node_modules/@b00dea/cockpit/bin/cockpit.mjs use <slug> --clear --config <your cockpit.toml>'
         if (!slug || extra.length > 0 || (checkout === undefined) === (values.clear !== true)) {
             return usageOutcome('CLI_USAGE_INVALID', `use takes a sibling slug and either one checkout directory or --clear: ${shape}`)
         }
@@ -1378,7 +1378,7 @@ async function decodeRequest(
         const values = parsed.values as { config?: string; 'dry-run'?: boolean }
         const [operation, tool, ...extra] = parsed.positionals
         if ((operation !== 'add' && operation !== 'remove') || !tool || extra.length > 0) {
-            return usageOutcome('CLI_USAGE_INVALID', `tool requires an operation and one tool: npx --no cockpit tool add|remove <${SURFACE_TARGETS.join('|')}> --config <your cockpit.toml> [--dry-run]`)
+            return usageOutcome('CLI_USAGE_INVALID', `tool requires an operation and one tool: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs tool add|remove <${SURFACE_TARGETS.join('|')}> --config <your cockpit.toml> [--dry-run]`)
         }
         if (!values.config) return missingConfig()
         return { handler, input: { operation, configPath: values.config, tool, dryRun: values['dry-run'] === true } }
@@ -1655,9 +1655,9 @@ export async function runCli(
     const respelled = definition || !commandName ? undefined : commands.find(command => command.name === commandName.replace('-', ' '))
     // Resolved before dispatch: the publication tail below may only forward outcomes, not decide anything.
     const helpTarget = definition ?? respelled
-    const usageHint = helpTarget ? `Run 'npx --no cockpit ${helpTarget.name} --help' for usage.\n`
-        : group ? `Run 'npx --no cockpit ${group} --help' for its subcommands.\n`
-        : commandName ? `Run 'npx --no -- cockpit --help' for the command list.\n` : renderHelp()
+    const usageHint = helpTarget ? `Run './node_modules/@b00dea/cockpit/bin/cockpit.mjs ${helpTarget.name} --help' for usage.\n`
+        : group ? `Run './node_modules/@b00dea/cockpit/bin/cockpit.mjs ${group} --help' for its subcommands.\n`
+        : commandName ? `Run './node_modules/@b00dea/cockpit/bin/cockpit.mjs --help' for the command list.\n` : renderHelp()
     let jsonRequested = optionArgs.includes('--json')
     let outcome: CommandOutcome
     // parseArgs keeps the last of a repeated option, so a repeat is refused before it can be dropped.

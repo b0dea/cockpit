@@ -86,14 +86,14 @@ export async function runDocsCheck(input: DocsCheckInput, dependencies: Readonly
     if (docs === undefined) {
         return refusalOutcome('DOCS_NOT_DECLARED' satisfies typeof ENVIRONMENT_CODES.DOCS_NOT_DECLARED,
             `${source.path} has no [docs] table, so there are no living documents or decision records to check`, 'docs',
-            'add a [docs] table to cockpit.toml: living = ["README.md", "docs/**/*.md"] lists the documents that must stay true, and the optional decisions = "docs/adr" and decisions_index = "docs/adr/README.md" name the decision records and their index; then rerun npx --no cockpit docs check --config <your cockpit.toml>')
+            'add a [docs] table to cockpit.toml: living = ["README.md", "docs/**/*.md"] lists the documents that must stay true, and the optional decisions = "docs/adr" and decisions_index = "docs/adr/README.md" name the decision records and their index; then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs docs check --config <your cockpit.toml>')
     }
     const search = observationEnvironment(input.env)
     const runner = search.state === 'available' ? await createGitRunner(search.env, dependencies.execute) : { unavailable: search.reason }
     if ('unavailable' in runner) {
         return refusalOutcome(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
             `docs check reads repository history with Git, which is unavailable: ${runner.unavailable}`, 'git',
-            'put Git in an absolute PATH directory and remove noncanonical absolute entries, then rerun npx --no cockpit docs check --config <your cockpit.toml>')
+            'put Git in an absolute PATH directory and remove noncanonical absolute entries, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs docs check --config <your cockpit.toml>')
     }
     const cockpitRoot = posix.dirname(source.path)
     // A sibling `cockpit use` serves from another checkout is checked there, where the stack runs it.
@@ -133,7 +133,7 @@ async function checkRepository(input: Readonly<{
         findings.push({ severity: 'error', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
             message: `the documents in ${repository === '' ? 'the cockpit repository' : `sibling ${repository}`} could not be checked: ${error.message}`,
             target: repository === '' ? 'docs' : `sibling:${repository}`,
-            fix: 'fix what the message names (for a missing sibling checkout, run npx --no cockpit setup --config <your cockpit.toml>), then rerun npx --no cockpit docs check --config <your cockpit.toml>' })
+            fix: 'fix what the message names (for a missing sibling checkout, run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml>), then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs docs check --config <your cockpit.toml>' })
     }
     let livingDocuments = 0
     let decisionFiles = 0
@@ -155,7 +155,7 @@ async function checkRepository(input: Readonly<{
                 if (!markdown.some(scopeMatcher([glob]))) {
                     findings.push({ severity: 'error', code: 'DOCS_DECLARATION_UNMATCHED' satisfies typeof ENVIRONMENT_CODES.DOCS_DECLARATION_UNMATCHED, target: `${prefix}${glob}`,
                         message: `[docs] living entry ${prefix}${glob} matches no Markdown file, so it checks nothing`,
-                        fix: 'correct the glob under [docs] living in cockpit.toml to match the documents, or remove it; then rerun npx --no cockpit docs check --config <your cockpit.toml>' })
+                        fix: 'correct the glob under [docs] living in cockpit.toml to match the documents, or remove it; then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs docs check --config <your cockpit.toml>' })
                 }
             }
             const documents: LivingDocument[] = []
@@ -181,7 +181,7 @@ async function checkRepository(input: Readonly<{
             if (missing) {
                 findings.push({ severity: 'error', code: 'DOCS_DECLARATION_UNMATCHED' satisfies typeof ENVIRONMENT_CODES.DOCS_DECLARATION_UNMATCHED,
                     target: `${prefix}${missing.target}`, message: `${missing.message}, so it checks nothing`,
-                    fix: 'correct decisions or decisions_index under [docs] in cockpit.toml to the directory of decision records and the file that lists them, or remove the key; then rerun npx --no cockpit docs check --config <your cockpit.toml>' })
+                    fix: 'correct decisions or decisions_index under [docs] in cockpit.toml to the directory of decision records and the file that lists them, or remove the key; then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs docs check --config <your cockpit.toml>' })
             } else {
                 decisionFiles = records.length
                 findings.push(...inspectDecisionRecords({ repository: prefix, directory,

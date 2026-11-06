@@ -983,7 +983,7 @@ export const CockpitConfig = z
             // A browser wired to a tool sync does not render would be a declaration that does nothing.
             for (const [index, row] of cfg.browser.harnesses.entries()) if (!cfg.surfaces.tools.includes(row.target)) {
                 ctx.addIssue({ code: 'custom', path: ['browser', 'harnesses', index, 'target'],
-                    message: `browser harness ${row.target} is not in surfaces.tools; add it with npx --no cockpit tool add ${row.target} or remove this row` })
+                    message: `browser harness ${row.target} is not in surfaces.tools; add it with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs tool add ${row.target} --config <your cockpit.toml> or remove this row` })
             }
             const proxyVariable = cfg.browser.proxy.host_variable
             if (proxyVariable !== undefined && cfg.ports.bases[proxyVariable] !== cfg.browser.proxy.proxy_port) {

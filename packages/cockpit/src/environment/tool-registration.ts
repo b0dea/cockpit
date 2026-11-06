@@ -26,7 +26,7 @@ export interface ToolChangeInput {
     readonly dryRun: boolean
 }
 
-const EDIT_BY_HAND_FIX = 'edit the tools list under [surfaces] in cockpit.toml by hand, then run npx --no cockpit sync --config <your cockpit.toml> --dry-run'
+const EDIT_BY_HAND_FIX = 'edit the tools list under [surfaces] in cockpit.toml by hand, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --dry-run'
 
 function done(artifact: string, result: Record<string, unknown>): SiblingOutcome {
     return { status: 0, diagnostics: [], destination: null, artifact, result }
@@ -53,7 +53,7 @@ export async function runToolChange(input: ToolChangeInput): Promise<SiblingOutc
     const sha256 = createHash('sha256').update(bytes).digest('hex')
     if (sha256 !== loaded.result.source.sha256) {
         return refused(ENVIRONMENT_CODES.CONFIG_CHANGED_DURING_EXECUTION, 'cockpit.toml changed while it was being read; nothing was written', configPath,
-            `run the same npx --no cockpit tool ${input.operation} command again`)
+            `run the same ./node_modules/@b00dea/cockpit/bin/cockpit.mjs tool ${input.operation} command again`)
     }
     const edit = setSurfaceTools(bytes.toString('utf8'), after)
     if (edit.kind === 'unsupported') {
@@ -84,7 +84,7 @@ export async function runToolChange(input: ToolChangeInput): Promise<SiblingOutc
         next: preview }
     if (input.dryRun) return done(`Would set [surfaces] ${line} in ${configPath}; nothing was written.\n${next}\n`, result)
 
-    const rerun = `let the other edit finish, then run the same npx --no cockpit tool ${input.operation} command again`
+    const rerun = `let the other edit finish, then run the same ./node_modules/@b00dea/cockpit/bin/cockpit.mjs tool ${input.operation} command again`
     const written = await writeVerifiedConfig({
         path: configPath, expectedSha256: sha256, temporaryTag: 'tool',
         edit: () => edit.text,
@@ -95,7 +95,7 @@ export async function runToolChange(input: ToolChangeInput): Promise<SiblingOutc
             invalid: (reason) => ({ message: `the edit would leave cockpit.toml invalid (${reason}); nothing was written`, fix: EDIT_BY_HAND_FIX }),
             notExact: { message: 'the edit would change more than the tools list; nothing was written', fix: EDIT_BY_HAND_FIX },
             writtenMismatch: { message: 'the tools list was written, but re-reading cockpit.toml shows a change beyond it',
-                fix: 'review cockpit.toml for the change you did not make before running npx --no cockpit sync --config <your cockpit.toml> --dry-run' },
+                fix: 'review cockpit.toml for the change you did not make before running ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --dry-run' },
         },
     })
     if (written.kind !== 'complete') return refused(written.code, written.message, configPath, written.fix)

@@ -47,7 +47,7 @@ function recordRefusal(path: string, reason: string): SiblingCheckoutRecordRead 
         code: 'SIBLING_CHECKOUT_RECORD_INVALID' satisfies typeof ENVIRONMENT_CODES.SIBLING_CHECKOUT_RECORD_INVALID,
         message: `${path} is not a sibling checkout record cockpit wrote (${reason}), so cockpit cannot tell which checkout serves each sibling`,
         target: SIBLING_CHECKOUTS_PATH,
-        fix: `delete ${path}, then run npx --no cockpit use <slug> <checkout> --config <your cockpit.toml> again for each sibling another checkout should serve`,
+        fix: `delete ${path}, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs use <slug> <checkout> --config <your cockpit.toml> again for each sibling another checkout should serve`,
     } }
 }
 

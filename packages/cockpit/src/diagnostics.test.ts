@@ -36,7 +36,7 @@ describe('diagnostic envelope', () => {
     it('prints the runtime measure remedy bare, since a wrapped command prompts and some agents treat a prompt as a denial', () => {
         expect(renderHumanDiagnostics([{ severity: 'error', code: 'RUNTIME_UNMEASURED', message: 'synthetic failure' }],
             undefined, { resolvedConfigPath: '/synthetic/cockpit.toml', generatedTargets: [] }))
-            .toContain('Fix: run npx --no cockpit runtime measure --config /synthetic/cockpit.toml --image <local-image>, which records the result for this machine only, then retry\n')
+            .toContain('Fix: run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config /synthetic/cockpit.toml --image <local-image>, which records the result for this machine only, then retry\n')
     })
 
     it('summarises a successful lifecycle command and preflight in one readable line', () => {
@@ -140,10 +140,10 @@ describe('diagnostic envelope', () => {
 
     it('projects the same exact admitted command in human and JSON output only with explicit bound inputs', () => {
         const diagnostic = Object.freeze({ severity: 'error' as const, code: 'GENERATED_ARTIFACT_DRIFT',
-            message: 'Owned artifact differs', target: 'fixtures/personas.generated.ts', fix: 'run npx --no cockpit sync --config <your cockpit.toml>' })
+            message: 'Owned artifact differs', target: 'fixtures/personas.generated.ts', fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>' })
         const context = { resolvedConfigPath: '/workspace/demo config.toml', generatedTargets: ['fixtures/personas.generated.ts'] }
         const outcome = { result: { resolvedConfigPath: context.resolvedConfigPath }, diagnostics: [diagnostic] }
-        const command = "npx --no cockpit sync --config '/workspace/demo config.toml'"
+        const command = "./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config '/workspace/demo config.toml'"
         expect(JSON.parse(renderJsonResponse(outcome, context))).toEqual({ result: outcome.result,
             diagnostics: [{ ...diagnostic, fix: command }] })
         expect(renderHumanDiagnostics([diagnostic], undefined, context)).toBe(
@@ -155,6 +155,6 @@ describe('diagnostic envelope', () => {
         const unbound = JSON.parse(renderJsonResponse(outcome))
         expect(unbound.diagnostics[0]).not.toHaveProperty('fix')
         expect(unbound.guidance).toEqual([{ code: diagnostic.code, target: diagnostic.target, text: diagnostic.fix }])
-        expect(diagnostic.fix).toBe('run npx --no cockpit sync --config <your cockpit.toml>')
+        expect(diagnostic.fix).toBe('run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>')
     })
 })

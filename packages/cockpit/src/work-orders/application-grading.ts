@@ -32,7 +32,7 @@ const unaddressed = (note: string, paths: readonly string[]) => paths.filter(pat
 })
 
 type Weakening = Awaited<ReturnType<WorkApplicationComposition['testWeakening']>>
-const ACKNOWLEDGE = 'npx --no cockpit work acknowledge --config <your cockpit.toml> --work-order <id> --note <why this is not a weakening>'
+const ACKNOWLEDGE = './node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why this is not a weakening>'
 export interface AcknowledgeRule {
     /** Who passes `work acknowledge`. */
     readonly decider: Decider
@@ -107,7 +107,7 @@ const STANDING: readonly StandingCriterion[] = [
     { id: AMENDMENTS_HOLD, text: ({ amendments }) => amendments.length ? 'The amendments an agent made to the accepted contract do not lower the bar the work is held to: each clarifies or '
         + 'tightens what it replaces, and none excuses work the original asked for. Before and after: '
         + `${listed(amendments.map(row => `${row.field}: "${row.before}" -> "${row.after}"`), '; ')}.` : undefined,
-    remedy: id => `; the next amendment of ${id} is a person's: revert or rewrite workorders/${id}.md, then a person runs npx --no cockpit work accept --config <your cockpit.toml> --work-order ${id} --interactive` },
+    remedy: id => `; the next amendment of ${id} is a person's: revert or rewrite workorders/${id}.md, then a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config <your cockpit.toml> --work-order ${id} --interactive` },
 ]
 const RESERVED: ReadonlySet<string> = new Set(STANDING.map(row => row.id))
 const standingCriteria = (input: StandingInput): readonly WorkOrderCriterion[] => STANDING.flatMap(row => {
@@ -165,7 +165,7 @@ function submissionProblem(grading: WorkGrading, request: Extract<WorkRequest, {
 
 export async function gradeOrder(request: Extract<WorkRequest, { operation: 'work-grade' }>, context: WorkContext): Promise<WorkApplicationOutcome> {
     const { composition, operation, policy, store, current, runChecks } = context
-    if (!isGradeMode(policy.grading)) return refusal(operation, `[work] grading = "off": nothing grades an order; close it with npx --no cockpit work signoff --config <your cockpit.toml> --work-order ${request.workOrderId}`)
+    if (!isGradeMode(policy.grading)) return refusal(operation, `[work] grading = "off": nothing grades an order; close it with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work signoff --config <your cockpit.toml> --work-order ${request.workOrderId}`)
     const { order, record } = await current(request.workOrderId)
     const problem = submissionProblem(policy.grading, request)
     if (problem) return refusal(operation, problem)

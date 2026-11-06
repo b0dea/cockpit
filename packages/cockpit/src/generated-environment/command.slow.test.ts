@@ -716,7 +716,7 @@ describe('generated environment command', () => {
         await rm(join(absent.root, 'app'), { recursive: true })
         expect(await checkGeneratedEnvironment({ configPath: absent.configPath })).toMatchObject({ kind: 'refusal', diagnostics: [{
             code: 'SIBLING_MISSING', target: 'sibling:app', message: `sibling app is declared at ${join(absent.root, 'app')}, and nothing is there`,
-            fix: expect.stringContaining(`npx --no cockpit sibling add app --config ${absent.configPath} --remote <url>`),
+            fix: expect.stringContaining(`./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add app --config ${absent.configPath} --remote <url>`),
         }] })
 
         const partial = await consumer('partial')

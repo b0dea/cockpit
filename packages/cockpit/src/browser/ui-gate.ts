@@ -8,7 +8,7 @@ export interface UiGateInput {
 export type UiGateResult = Readonly<{ kind: 'satisfied'; activating: BrowserCommandKind; receipt: BrowserCommandReceipt }>
     | Readonly<{ kind: 'refusal'; reason: string; satisfyingCommand: string }>
 
-const satisfyingCommand = 'npx --no cockpit browser drive --config cockpit.toml or npx --no cockpit browser screenshot --config cockpit.toml'
+const satisfyingCommand = './node_modules/@b00dea/cockpit/bin/cockpit.mjs browser drive --config cockpit.toml or ./node_modules/@b00dea/cockpit/bin/cockpit.mjs browser screenshot --config cockpit.toml'
 const activatingKinds = new Set<BrowserCommandKind>(['drive', 'screenshot'])
 
 const refusal = (reason: string): UiGateResult => ({ kind: 'refusal', reason, satisfyingCommand })

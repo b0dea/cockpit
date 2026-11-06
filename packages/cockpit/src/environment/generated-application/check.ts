@@ -108,7 +108,7 @@ export async function checkCanonicalGeneratedEnvironment(
     if (ownership.kind !== 'complete') return refuse(
         ownership.kind === 'missing' ? 'GENERATED_OWNERSHIP_MISSING' : 'GENERATED_OWNERSHIP_INVALID',
         'durable generated ownership metadata is missing or invalid', OWNERSHIP_PATH,
-        'restore trusted ownership metadata or run npx --no cockpit sync --config <your cockpit.toml>',
+        'restore trusted ownership metadata or run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>',
     )
     const priorSurfaces = ownership.manifest.entries.filter((row): row is SurfacePriorOwnedEntry => 'harnesses' in row)
     const prepared = seed?.surfaceSelftest ? seed : await prepareSurfaces(base, priorSurfaces, adapters, ownership.manifest)
@@ -117,11 +117,11 @@ export async function checkCanonicalGeneratedEnvironment(
     const ownedInput = await ownedInputOverlap(prepared, ownership.manifest.entries)
     if (ownedInput.kind === 'invalid') return refuse(
         'GENERATED_OWNERSHIP_INVALID', 'authenticated input identity could not be compared with generated ownership metadata', OWNERSHIP_PATH,
-        'restore trusted ownership metadata or run npx --no cockpit sync --config <your cockpit.toml>',
+        'restore trusted ownership metadata or run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>',
     )
     if (ownedInput.path) return refuse(
         'GENERATED_OWNERSHIP_INVALID', 'generated ownership metadata overlaps an authenticated input', ownedInput.path,
-        'restore trusted ownership metadata or run npx --no cockpit sync --config <your cockpit.toml>',
+        'restore trusted ownership metadata or run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>',
     )
     const surfaceState = await observeSurfaceState(prepared, priorSurfaces, adapters)
     if (!surfaceState) return refuse('SURFACE_STATE_CONFLICT', 'surface state could not be observed safely', 'surfaces')
@@ -134,7 +134,7 @@ export async function checkCanonicalGeneratedEnvironment(
     const staleEnvironment = ownership.manifest.entries.filter(row => !('harnesses' in row) && !surfacePaths.has(row.path)
         && !prepared.owned.some(file => file.path === row.path))
     if (staleEnvironment.length > 0) return refuse('GENERATED_STALE_ARTIFACT', 'a formerly owned generated artifact remains in durable ownership metadata', staleEnvironment[0]!.path,
-        'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows')
+        'a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows')
     const required = generatedPathFacts(prepared, 'required-after-sync')
     if (required.kind !== 'complete') return refuse(required.diagnostic.code, required.diagnostic.message, required.diagnostic.target)
     const canonicalReads = await readAnchoredBatches(prepared.root, prepared.generated.map(file => ({
@@ -153,13 +153,13 @@ export async function checkCanonicalGeneratedEnvironment(
             const classification = classifyGeneratedPaths([fact], [{ path: file.path, kind: 'file', bytes: read.bytes,
                 confinement: 'confined', identity: sourceIdentity(read.identity) }])
             if (classification.kind !== 'complete' || classification.paths[0]?.state === 'unknown') return refuse(
-                'GENERATED_ARTIFACT_MISSING', 'owned generated artifact could not be classified safely', file.path, 'run npx --no cockpit sync --config <your cockpit.toml>',
+                'GENERATED_ARTIFACT_MISSING', 'owned generated artifact could not be classified safely', file.path, 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>',
             )
             if (classification.paths[0]?.state !== 'unchanged') return refuse(
-                'GENERATED_ARTIFACT_DRIFT', 'owned generated artifact differs from canonical bytes', file.path, 'run npx --no cockpit sync --config <your cockpit.toml>',
+                'GENERATED_ARTIFACT_DRIFT', 'owned generated artifact differs from canonical bytes', file.path, 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>',
             )
         } catch (error) {
-            return refuse('GENERATED_ARTIFACT_MISSING', `owned generated artifact became unreadable: ${errorCause(error)}`, file.path, 'run npx --no cockpit sync --config <your cockpit.toml>')
+            return refuse('GENERATED_ARTIFACT_MISSING', `owned generated artifact became unreadable: ${errorCause(error)}`, file.path, 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>')
         }
     }
     const comparison = planObservedSurfaces(prepared, effectivePriorSurfaces, surfaceState)
@@ -172,17 +172,17 @@ export async function checkCanonicalGeneratedEnvironment(
     const stale = removals[0]
     if (stale) return prepared.workEnvironment.policy.autonomy.stale_delete === 'agent'
         || staleMcpOutputsOnly(removals.map(action => action.path), prepared.configuredHarnesses)
-        ? refuse('GENERATED_ARTIFACT_DRIFT', 'a formerly generated path is still on disk and in the ownership record', stale.path, 'run npx --no cockpit sync --config <your cockpit.toml>')
+        ? refuse('GENERATED_ARTIFACT_DRIFT', 'a formerly generated path is still on disk and in the ownership record', stale.path, 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>')
         : refuse('GENERATED_ARTIFACT_DRIFT', 'a formerly generated path is still on disk and in the ownership record', stale.path,
-            'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows')
+            'a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows')
     const staleGuides = drift.includes('AGENTS.md') ? staleSiblingGuides(prepared, surfaceState.observed) : []
     if (staleGuides.length > 0) return refuse('GENERATED_ARTIFACT_DRIFT',
         `AGENTS.md holds an out-of-date copy of ${staleGuides.join(', ')}: the guide changed in its sibling, or the declared guides changed, since the last sync`,
-        'AGENTS.md', 'run npx --no cockpit sync --config <your cockpit.toml>, then commit AGENTS.md together with the guide change')
-    if (drift.length > 0) return refuse('GENERATED_ARTIFACT_DRIFT', 'owned surface state differs from the canonical model', drift[0]!, 'run npx --no cockpit sync --config <your cockpit.toml>')
+        'AGENTS.md', 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>, then commit AGENTS.md together with the guide change')
+    if (drift.length > 0) return refuse('GENERATED_ARTIFACT_DRIFT', 'owned surface state differs from the canonical model', drift[0]!, 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>')
     if (ownership.bytes !== encodeOwnershipManifest(prepared).bytes) return refuse(
         'GENERATED_OWNERSHIP_DRIFT', 'generated ownership metadata differs from the current canonical manifest', OWNERSHIP_PATH,
-        'run npx --no cockpit sync --config <your cockpit.toml>',
+        'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>',
     )
     const source = await observeConfigSource(prepared.configPath)
     if (source.state !== 'available' || source.sha256 !== prepared.sourceSha256

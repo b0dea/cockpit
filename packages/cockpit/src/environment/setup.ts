@@ -112,7 +112,7 @@ function unresolvableRemoteRefusal(
             code: ENVIRONMENT_CODES.SETUP_REMOTE_UNRESOLVABLE,
             message: `cannot resolve ${which} local remote ${JSON.stringify(value.declared)} (${value.errno})`,
             target,
-            fix: 'make the remote path readable, or declare the remote as a URL or an absolute path to an existing repository, then run npx --no cockpit setup --config <your cockpit.toml> again',
+            fix: 'make the remote path readable, or declare the remote as a URL or an absolute path to an existing repository, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> again',
         }],
         result: null,
     }
@@ -217,7 +217,7 @@ export async function planSetup(input: PlanSetupInput): Promise<EnvironmentComma
                     code: ENVIRONMENT_CODES.SETUP_MANUAL_MISSING,
                     message: 'manual checkout is absent',
                     target,
-                    fix: 'create the checkout, then run npx --no cockpit setup --config <your cockpit.toml> again',
+                    fix: 'create the checkout, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> again',
                 }],
                 result: result('report', false),
             }

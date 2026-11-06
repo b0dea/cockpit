@@ -291,7 +291,7 @@ function producers(input: {
             const application = await checkedApplication
             const observations = application && observeGeneratedApplicationSurfaces(application)
             if (!observations && checkRefusal.length > 0) throw new ObservationProducerRefusal('surface health needs a checked generated publication, and check refused it', checkRefusal)
-            if (!observations) throw new RefusalError('surface health needs a current checked generated publication; run npx --no cockpit sync --config <your cockpit.toml>')
+            if (!observations) throw new RefusalError('surface health needs a current checked generated publication; run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>')
             return observations
         },
         claims: async () => [await observeClaimState({

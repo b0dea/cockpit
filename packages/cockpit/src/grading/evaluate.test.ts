@@ -151,7 +151,7 @@ describe('independent evaluation', () => {
     it('refuses, naming the install and sign-in of each, when no listed evaluator is on PATH', async () => {
         const host = await machine(['opencode'])
         await expect(evaluate(await host.request(['codexcli', 'claudecode'], {}))).resolves.toMatchObject({ kind: 'refusal', code: 'EVALUATOR_UNAVAILABLE',
-            fix: expect.stringContaining('npx --no cockpit doctor --config'),
+            fix: expect.stringContaining('./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config'),
             message: expect.stringMatching(/^the Codex CLI \(codex\) is not on PATH; install it with npm install -g @openai\/codex and sign in with codex login; then Claude Code \(claude\) is not on PATH/) })
         expect(runs()).toEqual([])
         // A tool that is simply absent names no path of its own: the last PATH entry tried is not its cause.

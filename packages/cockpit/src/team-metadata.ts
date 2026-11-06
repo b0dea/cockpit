@@ -173,7 +173,7 @@ function packageDependencySlots(manifest: Record<string, unknown>): PackageDepen
 }
 
 function misplacedDependencyMessage(sections: readonly string[]): string {
-    return `package.json declares ${PACKAGE} in ${sections.join(', ')} outside cockpit-owned devDependencies; cockpit requires one exact development dependency so the team has one version authority. Run npm uninstall ${PACKAGE} && npm install --save-dev --save-exact ${PACKAGE}@${VERSION}, then run npx --no cockpit sync --config <your cockpit.toml> again`
+    return `package.json declares ${PACKAGE} in ${sections.join(', ')} outside cockpit-owned devDependencies; cockpit requires one exact development dependency so the team has one version authority. Run npm uninstall ${PACKAGE} && npm install --save-dev --save-exact ${PACKAGE}@${VERSION}, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> again`
 }
 
 function packageCandidate(bytes: string | undefined, verifiedLocalPin?: string): Readonly<{
@@ -404,7 +404,7 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
 
 export async function applyTeamMetadata(prepared: TeamMetadataAuthority): Promise<TeamMetadataResult> {
     const record = issuedMetadata.get(prepared)
-    if (!record) return refuse('TEAM_METADATA_UNAVAILABLE', 'this team metadata update was already applied or was never prepared; run npx --no cockpit sync --config <your cockpit.toml> again', 'team-metadata')
+    if (!record) return refuse('TEAM_METADATA_UNAVAILABLE', 'this team metadata update was already applied or was never prepared; run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> again', 'team-metadata')
     issuedMetadata.delete(prepared)
     const { authority, files } = record
     try {
@@ -433,7 +433,7 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
         const parsed = decoded.value
         const slots = object(parsed) ? packageDependencySlots(parsed) : undefined
         if (object(parsed) && !slots) return refuse('TEAM_METADATA_UNAVAILABLE',
-            'package.json direct npm dependency sections must be objects; repair package.json, then run npx --no cockpit sync --config <your cockpit.toml> again', packagePath)
+            'package.json direct npm dependency sections must be objects; repair package.json, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> again', packagePath)
         if (slots?.misplaced.length) return refuse('TEAM_METADATA_UNAVAILABLE',
             misplacedDependencyMessage(slots.misplaced), packagePath)
         const pinned = slots?.devDependencies[PACKAGE]
@@ -465,9 +465,9 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
         const ignore = await readOptional(authority, ignorePath)
         const expected = ignoreCandidate(ignore?.bytes ?? '', block)
         if (expected === undefined) return refuse('TEAM_METADATA_UNAVAILABLE',
-            `the cockpit-owned .gitignore block was edited; restore it exactly, or remove the whole ${START} through ${END} region and run npx --no cockpit sync --config <your cockpit.toml> again`, ignorePath)
+            `the cockpit-owned .gitignore block was edited; restore it exactly, or remove the whole ${START} through ${END} region and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> again`, ignorePath)
         if (!ignore || expected !== ignore.bytes) return refuse('TEAM_METADATA_UNAVAILABLE',
-            'the cockpit-owned .gitignore block is missing or does not match cockpit.toml and the sibling directories on disk; run npx --no cockpit sync --config <your cockpit.toml> to rewrite it', ignorePath)
+            'the cockpit-owned .gitignore block is missing or does not match cockpit.toml and the sibling directories on disk; run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> to rewrite it', ignorePath)
         return { kind: 'complete', changed: false, changes: [] }
     } catch (error) {
         return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be verified (${errorCause(error)})`, root)
@@ -509,7 +509,7 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
             // A literal, so the diagnostic inventory captures the fix beside the code.
             code: 'COCKPIT_NOT_INSTALLED' satisfies typeof ENVIRONMENT_CODES.COCKPIT_NOT_INSTALLED,
             message: linkedCopy === undefined
-                ? `cockpit is not installed in ${root}, so every npx --no cockpit command the generated instructions print fails there, and the guard hook runs whichever copy last ran sync`
+                ? `cockpit is not installed in ${root}, so every ./node_modules/@b00dea/cockpit/bin/cockpit.mjs command the generated instructions print fails there, and the guard hook runs whichever copy last ran sync`
                 : `another copy of cockpit is running: this command runs ${running}, while ${installed} links to ${linkedCopy}, so nothing here proves the installed copy, and the guard hook runs whichever copy last ran sync`,
             target: 'node_modules',
             fix: linkedCopy === undefined
@@ -528,7 +528,7 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
             code: 'COCKPIT_NOT_INSTALLED' satisfies typeof ENVIRONMENT_CODES.COCKPIT_NOT_INSTALLED,
             message: `the guard hook runs the cockpit copy at ${identity.module}, not the one installed in ${own}, so it stops working when that copy is removed and can differ from the pinned version`,
             target: GUARD_LOCAL_PATHS.identity,
-            fix: `in a terminal in ${root}, run npx --no cockpit sync --config <your cockpit.toml>, which binds the guard hook to the installed copy`,
+            fix: `in a terminal in ${root}, run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>, which binds the guard hook to the installed copy`,
         })
         // The guard's own proof, run as it runs it from the cockpit root once it runs the installed copy.
         // A root .npmrc, a bin the root package.json declares, or a link that is not npm's leaves every
@@ -566,7 +566,7 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
             code: 'SIBLING_REMOTE_UNRECORDED' satisfies typeof ENVIRONMENT_CODES.SIBLING_REMOTE_UNRECORDED,
             message: `sibling ${sibling.slug} is its own Git repository, but cockpit.toml records no remote for it (acquire = "none"), so setup in a teammate's clone of this cockpit leaves ${sibling.dir} absent`,
             target: `sibling:${sibling.slug}`,
-            fix: `once the repository is pushed, run npx --no cockpit sibling add ${sibling.slug} --remote <url> --config <your cockpit.toml> and commit cockpit.toml`,
+            fix: `once the repository is pushed, run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add ${sibling.slug} --remote <url> --config <your cockpit.toml> and commit cockpit.toml`,
         })
     }
     return findings

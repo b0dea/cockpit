@@ -24,7 +24,7 @@ describe('init operator command', () => {
 
             expect(outcome).toMatchObject({ kind: 'refusal', status: 2, diagnostics: [{
                 code: 'STATE_ROOT_UNAVAILABLE',
-                message: 'init cannot select a state root on freebsd — bootstrap state ownership is implemented only for macOS and Linux; fix: run npx --no cockpit init <cockpit root> --target <target> on a supported macOS or Linux host',
+                message: 'init cannot select a state root on freebsd — bootstrap state ownership is implemented only for macOS and Linux; fix: run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs init <cockpit root> --target <target> on a supported macOS or Linux host',
             }] })
             expect(applicationCalls).toBe(0)
 

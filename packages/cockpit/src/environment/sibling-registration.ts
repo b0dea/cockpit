@@ -211,8 +211,8 @@ interface Prepared {
  * Build the edited text and the exact configuration it must parse to. The schema is run on the
  * candidate before any directory is touched, so a refusal never leaves a stray repository behind.
  */
-const EDIT_BY_HAND_FIX = 'make the [[sibling]] change in cockpit.toml by hand, then run npx --no cockpit sync --config <your cockpit.toml> --dry-run'
-const CORRECT_OPTION_FIX = 'correct the value the message names in the sibling options and run the command again, or make the [[sibling]] change in cockpit.toml by hand, then run npx --no cockpit sync --config <your cockpit.toml> --dry-run'
+const EDIT_BY_HAND_FIX = 'make the [[sibling]] change in cockpit.toml by hand, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --dry-run'
+const CORRECT_OPTION_FIX = 'correct the value the message names in the sibling options and run the command again, or make the [[sibling]] change in cockpit.toml by hand, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --dry-run'
 
 function prepare(base: CockpitConfig, edit: SiblingEdit, siblings: readonly unknown[]): Prepared | SiblingOutcome {
     if (edit.kind === 'unsupported') return refused(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, `cockpit.toml cannot be edited safely: ${edit.reason}; nothing was written`, 'sibling', EDIT_BY_HAND_FIX)
@@ -236,7 +236,7 @@ function prepare(base: CockpitConfig, edit: SiblingEdit, siblings: readonly unkn
 const isOutcome = (value: Prepared | SiblingOutcome): value is SiblingOutcome => 'diagnostics' in value
 
 async function commit(path: string, sha256: string, prepared: Prepared, verb: 'add' | 'remove'): Promise<SiblingOutcome | null> {
-    const rerun = `let the other edit finish, then run the same npx --no cockpit sibling ${verb} command again`
+    const rerun = `let the other edit finish, then run the same ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling ${verb} command again`
     const written = await writeVerifiedConfig({
         path, expectedSha256: sha256, temporaryTag: 'sibling',
         edit: () => prepared.text,
@@ -247,7 +247,7 @@ async function commit(path: string, sha256: string, prepared: Prepared, verb: 'a
             invalid: (reason) => ({ message: `the edit would leave cockpit.toml invalid (${reason}); nothing was written`, fix: CORRECT_OPTION_FIX }),
             notExact: { message: 'the edit would change more than the one sibling table; nothing was written', fix: EDIT_BY_HAND_FIX },
             writtenMismatch: { message: 'the table was written, but re-reading cockpit.toml shows a change beyond it',
-                fix: 'review cockpit.toml for the change you did not make before running npx --no cockpit sync --config <your cockpit.toml> --dry-run' },
+                fix: 'review cockpit.toml for the change you did not make before running ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --dry-run' },
         },
     })
     return written.kind === 'complete' ? null : refused(written.code, written.message, path, written.fix)

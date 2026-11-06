@@ -184,7 +184,7 @@ describe('lifecycle application contracts', () => {
 
         expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{
             code: 'CLAIM_CO_TENANT',
-            message: `lifecycle progress belongs to another active session; run \`npx --no cockpit up --config ${configPath}\` to resume it or \`npx --no cockpit down --config ${configPath}\` to release it`,
+            message: `lifecycle progress belongs to another active session; run \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config ${configPath}\` to resume it or \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config ${configPath}\` to release it`,
         }] })
         expect(await readState(lifecycleAddress)).toMatchObject({
             kind: 'complete', value: { value: { holderId: previousHolder } },

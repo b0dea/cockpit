@@ -397,7 +397,7 @@ describe('public estate observation', () => {
             answers: [...configuration.answers, answerQuestion(pending.question!, changedDirectory)] } })).toMatchObject({
             kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_ESTATE_TOPOLOGY_MISMATCH', target: 'sibling',
                 message: 'the sibling answer must declare exactly the repositories init observed (app (dir "app")); it declares app (dir "different-app"), which init did not observe; it omits app (dir "app")',
-                fix: 'declare one sibling for each repository the message says init observed, with that slug and dir, and no other; add any other repository after init with npx --no cockpit sibling add <slug> --config <your cockpit.toml>' }],
+                fix: 'declare one sibling for each repository the message says init observed, with that slug and dir, and no other; add any other repository after init with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add <slug> --config <your cockpit.toml>' }],
         })
         configuration.answers.push(answerQuestion(pending.question!, generatedConfig.sibling))
         pending = await draftFromEstate({ root: canonical, configuration })
@@ -709,7 +709,7 @@ describe('operator-confirmed document completion', () => {
         const policyAnswer = answer(afterPorts.question!, generatedConfig.environment.install_policies)
         const generated = await draftFromRegistry({ ...input, configuration: { ...configuration, answers: [nameAnswer, portAnswer, policyAnswer] } })
         // A product with no Compose file is pointed at the one-time scaffold rather than left stuck.
-        expect(generated.question!.why).toContain('npx --no cockpit init <cockpit root> --scaffold-compose <app dir> --port <port>')
+        expect(generated.question!.why).toContain('./node_modules/@b00dea/cockpit/bin/cockpit.mjs init <cockpit root> --scaffold-compose <app dir> --port <port>')
         const composeAnswer = answer(generated.question!, ['compose.yml'])
         // Runtime commands refuse a declared runtime without a machine floor, and the floor is a
         // product requirement: it is asked, never defaulted.
