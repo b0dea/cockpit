@@ -13,6 +13,18 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.5
+
+### Patch Changes
+
+- 7744503: Printed recovery commands and generated testing guidance use the installed package entrypoint so they work under pnpm without weakening launcher checks. Suggested init commands quote their root paths, and browser harness registration guidance includes the required configuration argument.
+- 7744503: Require successful, complete skill evidence before accepting a passing skill review. Unavailable capabilities and partial samples remain evidence without substantiating all review checks.
+- 7744503: Diagnose missing guard configuration and dependencies before prescribing recovery. Native session-start checks and guard failures name the path they checked, send a person back to the intended checkout, preserve native hooks across branch changes, and print the installed package entrypoint only when it is available. Reopen native sessions after restoring hook definitions.
+  
+  Upgrade: after sync, review the regenerated native hook definitions through the tool's normal trust flow and reopen the agent session.
+- 7744503: Measure native Codex instruction loading from canonical AGENTS.md controls and structured prompt-input evidence. New selftest specifications need no invented diagnostic codes; unsupported native adapters remain explicitly pending. Preserve strict legacy probes and executable approval, and bind native evidence to the generated instruction source. The command output shows the summary and pending cells and withholds the control streams, which hold inherited instructions; they stay in the private local transcript.
+- 7744503: Recommend the installed package entrypoint in generated skills and launcher refusals so pnpm shell shims do not lead agents to an unproven command. Include the same path in Claude command allowances while retaining executable identity checks.
+
 ## 0.1.4
 
 ### Patch Changes
