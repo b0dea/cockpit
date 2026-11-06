@@ -13,6 +13,34 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.3
+
+### Patch Changes
+
+- 8677d16: Check Codex hook discovery against the original checkout before checking trust in linked worktrees. Report missing or different source hooks separately, and name the actual source when matching hooks need human trust review.
+  
+  Upgrade: if a linked worktree reports CODEX_HOOK_SOURCE_MISMATCH, review and roll out matching hooks in the original checkout, then trust that source in interactive Codex.
+- 091bc20: Under `[work] grading = "checks"`, acknowledging a test weakening is a person's or CI's step even where `[work.gates] acknowledge = "agent"`, because no model reads the change and the acknowledgement alone passes the `test-protection` check. An agent's `work acknowledge` there is refused with `WORK_PERSON_REQUIRED` unless the gate is `ci`, and an acknowledgement the agent recorded under another grading mode no longer passes the check. Under `independent`, `subagent` and `self` grading the field works as before.
+- f4233e2: Avoid stale-directory findings for bare inline identifiers that name tables or APIs. Docs check still reports explicit directory paths, relative links and deleted bare file names.
+- 45e44a4: Clarify MCP approval recovery guidance: enabling or changing server approvals and widening tool access require a person under the default policy, while agents may remove unchanged approvals and add or narrow exact tool allowlists. Guard enforcement is unchanged.
+- 5c916fe: `doctor` and `check` now check Codex hook trust against the hooks file Codex actually loads in a bare repository's worktree, a submodule, a checkout with a separate Git directory and a cockpit root outside Git: the directory's own `.codex/hooks.json`. They used to report `CODEX_HOOK_UNTRUSTED` as unverified in those layouts, which no trust could clear. A linked worktree whose shared Git directory is named `.git` still sources its hooks from the original checkout.
+- aba9b01: Let a team hand two more process gates to the agent, both still a person's by default. `[autonomy] confirm_answers = "agent"` lets `cockpit confirm` confirm `cockpit.name`, `estate.runnable` and `environment.test_data`, and records the confirmation as the agent's decision under that field; trust decisions stay a person's. `[autonomy] instruction_files = "agent"` lets the guard admit `setup --write-instruction-files` and `--write-instruction-pointers`. Safety and autonomy now classifies every gate as a guardrail or a process gate, shows the shipped, stricter and most agentic setting for each, and gives a fully agentic `cockpit.toml` that keeps every guardrail.
+- c0131f2: `sync` now writes a tool list into Claude Code's evaluator subagent definition: `Read`, `Grep`, `Glob` and exactly the browser tools the cockpit lets Claude Code call (every tool of the `playwright` server, or those `[mcp.allowed_tools]` lists for it). Claude Code refuses the subagent's file writes and shell commands, so under `[work] grading = "subagent"` its read-only is enforced there; the capability matrix records the measurement. Codex and OpenCode definitions are unchanged, and the verdict the working agent relays is still its word.
+- faa9132: `sync` and `check` no longer spend time describing every byte of a generated file they read, which took about 67 ms for each 128 KiB.
+- 121c2b3: Allow `cockpit env schema --replace-from` to create the first schema in an existing sibling component directory with a regular Git-tracked product file directly inside it. Secret files, protected locations and links cannot authorize a component. Creation does not stage the schema or run its resolvers; discovery requires Git tracking and validation still requires a commit.
+- bd1a125: Recognize numbered decisions, possessive clauses, "only for" qualifiers and a clause-qualified
+  record listed after a whole one as partial ADR supersessions in `docs check`. Keep the original
+  record accepted when only part changes, and avoid treating incidental guide paths as missing ADRs
+  while still checking record references.
+- d834631: `[work] grading` gains two choices, so every way of grading is supported and documented. `subagent` records a verdict the working agent relays from a read-only subagent it spawned, closes as `subagent-reported` and says cockpit cannot verify it; with nothing submitted, `work grade` runs a separate evaluator instead. `off` makes the grader optional: orders are tracked and close as `ungraded` whatever their checks showed, with those facts kept on the record. Moving to either from a stronger mode needs a person, as moving to `self` does.
+  
+  `init` now asks `work.grading`, proposing a value from the listed tools it finds on `PATH` with its reason. An answers file that omits it stops at that question. Existing cockpits keep their value. `doctor` now reports whether `independent` or `subagent` can run here once a `workorders/` directory exists or `cockpit.toml` sets `[work] grading`, and no longer warns about evaluators under `checks`, `self` or `off`. A grade by the tool running the command, with no other tool passed over, now warns (`EVALUATOR_IS_RUNNING_TOOL`).
+  
+  `work signoff` no longer closes an order as done on a grade made under a weaker mode than the one now in force, and `work verify` reports such a closure.
+  
+  An answers file can be written by an agent, so `init --answers` now records every trust answer it supplies (`sibling`, `environment.install_policies`, `environment.posture`, `testing`, `guards`, `work.grading`) under `unconfirmed`, whatever its `[provenance]` claims. While `work.grading` or `environment.install_policies` waits there, the stronger default holds: grading runs as `independent`, and the guard admits no install policy's build or test command. `doctor` and `work status` say what is held; a person confirms by deleting the entry and running `sync` in a terminal.
+- 8a36a40: The guides are shorter, with each fact on one page. The README no longer claims that `cat .env.example` works under Claude Code: use `cockpit env keys` and `cockpit env schema`. The adoption skill no longer says the package is missing from npm.
+
 ## 0.1.2
 
 ### Patch Changes
