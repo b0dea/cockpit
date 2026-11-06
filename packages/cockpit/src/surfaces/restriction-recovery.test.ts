@@ -149,3 +149,30 @@ it.each(['claudecode', 'codexcli'] as const)('prints an executable quoted recove
     expect(existsSync(canary)).toBe(true)
     expect(existsSync(join(root, 'injected'))).toBe(false)
 })
+
+it.each(['claudecode', 'codexcli'] as const)('does not take a directory at the launcher path for an installed %s package', async harness => {
+    const { configPath, run, launcher, handler } = await fixture()
+    await writeFile(configPath, '[cockpit]\n')
+    await mkdir(launcher, { recursive: true })
+    await mkdir(dirname(handler), { recursive: true })
+    await writeFile(handler, '')
+    const refused = run(harness)
+    expect(refused).toMatchObject({ status: 2, stdout: '' })
+    expect(refused.stderr).toContain('@b00dea/cockpit is not installed or is incomplete')
+    expect(refused.stderr).not.toContain('sync --config')
+    const session = run(harness, '', 'SessionStart')
+    expect(session.status).toBe(0)
+    expect(session.stdout).toContain('@b00dea/cockpit is not installed or is incomplete')
+})
+
+it('names no invented path and asks for the cockpit root when the hook finds no checkout', async () => {
+    const { root, rendered } = await fixture()
+    const configFile = "-cock'pit$(printf injected); config.toml"
+    const hook = (JSON.parse(rendered.targets.find(target => target.target === 'claudecode')!.files[0]!.bytes) as { hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> } }).hooks.PreToolUse[0]!.hooks[0]!.command
+    const refused = spawnSync('/bin/sh', ['-c', hook], { cwd: root, encoding: 'utf8', input: '{}', env: { ...process.env, CLAUDE_PROJECT_DIR: '' } })
+    expect(refused).toMatchObject({ status: 2, stdout: '' })
+    expect(refused.stderr).toContain(`<cockpit checkout>/${configFile} is missing or unreadable`)
+    expect(refused.stderr).not.toContain(` /${configFile}`)
+    expect(refused.stderr).toContain('start the agent from its cockpit root')
+    expect(existsSync(join(root, 'injected'))).toBe(false)
+})

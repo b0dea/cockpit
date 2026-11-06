@@ -395,7 +395,7 @@ function hooksBytes(target: keyof typeof HOOK_ROOT, matcher: string, guardPath: 
     // Claude Code 2.1.317 and Codex 0.166.0 (a trusted hook) each ran a SessionStart command and put its
     // stdout in the agent's context, measured 2026-11-03 beside a misspelled event that never ran. A
     // drift report there tells the agent what to re-sync before it works; the hook never blocks.
-    const sessionStart = `${GUARD_RECOVERY_SHELL}\nR="${root.expression}"; C="$R/"'${shellLiteral(configFile)}'; P="$R/node_modules/@b00dea/cockpit"; if test -n "$R" && test -f "$C" && test -r "$C" && test -x "$P/bin/cockpit.mjs" && test -f "$P/dist/cli.js" && test -r "$P/dist/cli.js"; then cd "$R" && "$P/bin/cockpit.mjs" check --config "$C" 2>&1 | tail -n 40; else cockpit_guard_recovery "$R" '${shellLiteral(configFile)}' 2>&1; fi; exit 0`
+    const sessionStart = `${GUARD_RECOVERY_SHELL}\nR="${root.expression}"; C="$R/"'${shellLiteral(configFile)}'; P="$R/node_modules/@b00dea/cockpit"; if test -n "$R" && test -f "$C" && test -r "$C" && cockpit_package_ready "$P"; then cd "$R" && "$P/bin/cockpit.mjs" check --config "$C" 2>&1 | tail -n 40; else cockpit_guard_recovery "$R" '${shellLiteral(configFile)}' 2>&1; fi; exit 0`
     const hooks = { PreToolUse: [{ matcher, hooks: [{ type: 'command', command: guard }] }], SessionStart: [{ hooks: [{ type: 'command', command: sessionStart }] }] }
     const value = target === 'codexcli' ? { description: 'Generated authenticated restriction transport and session-start drift check.', hooks } : { hooks }
     return `${JSON.stringify(value, null, 2)}\n`

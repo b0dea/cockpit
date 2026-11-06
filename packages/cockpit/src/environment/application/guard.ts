@@ -52,7 +52,7 @@ import { classifyReadOnlyInvocation, cockpitLauncherPrefix } from '../../guards/
 import { fileFingerprint, recordVerifiedDigest } from '../../environment-exec/verified-digest.js'
 import { GUARD_HELD_CALLS, GUARD_UNHELD_CALLS, isGuardSurfaceTarget, type GuardSurfaceTarget } from '../../surfaces/harness-registry.js'
 import { formatShellCommand, type FixContext } from '../../fix-catalogue.js'
-import { guardRecovery } from '../../surfaces/guard-recovery.js'
+import { guardRecovery, installedSyncCommand } from '../../surfaces/guard-recovery.js'
 import { redactSensitiveMessage } from '../sensitive.js'
 import { observeComposeTopology } from '../compose-topology.js'
 import { declaredRuntime } from '../declaration.js'
@@ -153,7 +153,7 @@ function guardHeld(identity: GuardHandlerIdentity, what: string, why: string): s
 // still refuse such an edit, so undoing it exactly stays open or the agent could never recover.
 function unsyncedHold(identity: GuardHandlerIdentity, detail: string): GuardEvaluationApplicationResult {
     const available = recoveryState(identity)
-    const sync = formatShellCommand([join(identity.root, 'node_modules/@b00dea/cockpit/bin/cockpit.mjs'), 'sync', '--config', identity.configPath])
+    const sync = installedSyncCommand(identity.root, identity.configPath)
     const ready = available.config && available.package
     const fix = ready ? `run \`${sync}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files`
         : guardRecovery(identity.root, identity.configPath, available)
@@ -442,8 +442,8 @@ export async function runGuardEvaluationApplication(
         const cockpitInvocations: GuardInvocationProfile[] = []
         const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')
         const searchPath = data.searchPath ?? ''
-        // Skills and fix hints print `npx --no cockpit …` and the onboarding procedure the installed
-        // bin link; every spelling counts as the launcher only where it provably starts this installation.
+        // Skills and fix hints print the installed entrypoint, and people also run `npx --no cockpit …` and
+        // the bin link; every spelling counts as the launcher only where it provably starts this installation.
         type Launched = { readonly executable: string; readonly cwd: string; readonly argv: readonly string[]; readonly prefix: number; readonly session: boolean }
         const launched: Launched[] = []
         const prove = (executable: string | null, cwd: string, argv: readonly string[], session: boolean) => {
