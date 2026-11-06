@@ -1093,6 +1093,10 @@ function validateSelftestReview(row, expectedReview, skills, evidence, errors) {
         const evidenceRow = evidence.find(record => record.runId === row.evidenceRunId)
         if (!evidenceRow || evidenceRow.capability !== 'skill-parity' || evidenceRow.sample?.skill !== row.skill
             || evidenceRow.harness?.name !== row.harness) errors.push('evidenced skill review must bind its harness skill-parity run')
+        else if (evidenceRow.verdict !== 'instructed'
+            || SELFTEST_SAMPLE_FEATURES.some(feature => !evidenceRow.sample.features.includes(feature))) {
+            errors.push('evidenced skill review requires instructed evidence covering every skill feature')
+        }
     } else if (row.status === 'human_needed') {
         if (row.reviewedOn !== null || row.evidenceRunId !== null || !Array.isArray(row.reviewers) || row.reviewers.length !== 0
             || row.checks !== null || !boundedText(row.operatorAction)) errors.push('human-needed skill review must contain only an actionable operator remainder')
