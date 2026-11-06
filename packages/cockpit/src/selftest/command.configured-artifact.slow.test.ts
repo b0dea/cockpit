@@ -90,25 +90,17 @@ describe('surface selftest command', () => {
             generatedManifestSha256: application.surfaceSelftest.manifestSha256,
         })
 
-        const unfilled = await runConfiguredSurfaceSelftestApplication({
+        const unapproved = await runConfiguredSurfaceSelftestApplication({
             configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin },
         }, { execute: async () => { throw new Error('an unfilled file must not run a probe') } })
-        expect(unfilled).toMatchObject({
-            kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID',
-            reason: expect.stringContaining('Claude Code guard-firing: invocation, candidateCode, brokenCode'),
+        expect(unapproved).toMatchObject({
+            kind: 'refusal', code: 'SELFTEST_EXECUTION_INVALID',
+            reason: expect.stringContaining('requires independent approval'),
         })
 
-        // The person's part: the probe arguments and the lines the tool prints. Everything else is
-        // what cockpit wrote.
+        // Previously filled exact-code rows remain a supported legacy protocol.
         const supplied = specifications(application)
-        const filled = draft.specifications.map((row, index) => ({
-            ...row,
-            invocation: supplied[index]!.invocation,
-            candidateCode: supplied[index]!.candidateCode,
-            brokenCode: supplied[index]!.brokenCode,
-            sample: supplied[index]!.sample,
-        }))
-        expect(filled).toEqual(supplied)
+        const filled = supplied.map(row => ({ ...row }))
         const artifactBytes = JSON.stringify({ ...draft, specifications: filled })
         await writeFile(artifactPath, artifactBytes)
 
@@ -240,7 +232,7 @@ describe('surface selftest command', () => {
         const missing = await runConfiguredSurfaceSelftestApplication({
             configPath, probeSpecificationsPath: join(root, 'missing.json'), env: { PATH: bin },
         }, { execute })
-        const producer = 'npx --no cockpit selftest --config <your cockpit.toml> --write-probe-specifications <new file>'
+        const producer = './node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --write-probe-specifications <new file>'
         expect(missing).toEqual(expect.objectContaining({
             kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', fix: expect.stringContaining(producer),
         }))

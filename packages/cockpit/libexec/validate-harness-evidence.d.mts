@@ -64,6 +64,7 @@ export type SelftestCellKey =
 export interface SelftestExpectation {
     schema: 'cockpit-harness-selftest-expectation/v1'
     generatedManifestSha256: string
+    instructionSourceSha256?: string
     cells: readonly SelftestCellKey[]
     shippedSkills: readonly string[]
     reviewHarnesses: readonly [
@@ -101,6 +102,7 @@ export interface CustomExecutionAuthority {
 export type SelftestExecutionAuthority = BuiltinExecutionAuthority | CustomExecutionAuthority
 export interface SelftestSample { skill: string; features: readonly string[] }
 export interface SelftestEvidenceRecord {
+    protocol?: 'codex-prompt-input/v1'
     kind: 'evidence'
     harness: SelftestHarnessRef
     capability: SelftestCapability
@@ -132,7 +134,7 @@ export type SelftestHumanNeededRecord = {
     harness: SelftestHarnessRef
     generatedManifestSha256: string
     observedAt: string
-    reason: 'executable_missing' | 'authentication_required' | 'isolation_unavailable' | 'enforcement_probe_required'
+    reason: 'executable_missing' | 'authentication_required' | 'isolation_unavailable' | 'enforcement_probe_required' | 'native_protocol_unsupported'
     operatorAction: string
 } & (
     | { capability: 'instruction-loading' | 'guard-firing' }
@@ -181,3 +183,6 @@ export function validateSelftestEvidenceBundle(
     options?: SelftestEvidenceValidationOptions,
 ): SelftestEvidenceValidationResult
 export function runHarnessEvidenceValidatorCli(paths: readonly string[]): number
+
+export const NATIVE_SELFTEST_STREAM_BYTES: number
+export function validateNativeInstructionPair(candidateOutput: string, brokenOutput: string, candidateCwd: string, brokenCwd: string, candidateBytes: string, brokenBytes: string): string | null

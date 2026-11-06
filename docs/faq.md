@@ -33,7 +33,7 @@ No. One tool is a complete setup; see [Choose the tools](harness-surfaces.md#cho
 It depends on the tool. The guard script denies the operation whenever a tool runs it, and fails
 closed on input it cannot read; what differs is whether the tool runs it. The
 [capability matrix](capability-matrix.md) has each tool's state, and `cockpit selftest` checks the
-tools on your machine with [probes you write](harness-surfaces.md#skills-and-selftest-evidence). In
+tools on your machine with [supported native probes](harness-surfaces.md#skills-and-selftest-evidence). In
 short: Claude Code and OpenCode are `enforced`; Codex only after a person
 [trusts the hook](harness-surfaces.md#trust-the-codex-hook); Cursor and Grok Build get no guard.
 

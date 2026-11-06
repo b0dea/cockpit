@@ -381,7 +381,7 @@ const sources = [
     {
         name: 'selftest',
         stage: 'generate-and-verify',
-        summary: 'Test whether agent tools enforce the generated controls',
+        summary: 'Measure supported agent capabilities and report unverified cells',
         handler: 'selftest',
         visibility: 'public',
         ordinary: ordinary('selftest', { forbidden: Object.freeze({ presence: Object.freeze(['interactive']) }) }),

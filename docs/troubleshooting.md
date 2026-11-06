@@ -165,13 +165,14 @@ file is not a repair.
 ### Selftest and override inspection
 
 `SELFTEST_SOURCE_INVALID` means the generated check, resolved probe-specification path, source
-digest, generated-manifest digest or specification size failed its check, or the file still has a
-`null` where a probe belongs. For a missing file, write a fresh one with
-`npx --no cockpit selftest --config <path> --write-probe-specifications <new file>` and fill in its
-`null` fields; for a stale one, add `--probe-specifications <stale file>` to that command so the
-rows you filled for unchanged cells are kept. Do not edit the stored digests. For a `null`, fill in the rows the message lists.
-[Skills and selftest evidence](harness-surfaces.md#skills-and-selftest-evidence) describes each
-field.
+digest, generated-manifest digest or specification shape failed its check. Write a fresh file with
+`./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <path> --write-probe-specifications <new file>`.
+New files contain supported native protocols and explicit pending rows; they need no invented
+markers. For a stale file, add `--probe-specifications <stale file>` to preserve unchanged filled
+legacy rows. Do not edit stored digests. Legacy rows still containing `null` must be completed with
+a demonstrably compatible native diagnostic contract or replaced with a fresh file.
+[Skills and selftest evidence](harness-surfaces.md#skills-and-selftest-evidence) describes the
+supported native scope and remaining operator work.
 
 `SELFTEST_EXECUTION_INVALID` has two causes:
 
@@ -181,7 +182,7 @@ field.
   did not give the expected result. Inspect the named harness and the retained output.
 
 A missing executable, a sign-in requirement, missing process isolation or a pending enforcement
-probe stays `human_needed` until the manual action in the record is done. Run
+probe or unsupported native adapter stays `human_needed` until the manual action in the record is done. Run
 `selftest --interactive` at a terminal outside CI; approve the full file digest and commands
 first, then each executable path and SHA-256. Approval lasts only for that run.
 

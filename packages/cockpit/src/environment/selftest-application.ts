@@ -8,7 +8,7 @@ import { createInterface } from 'node:readline/promises'
 import { types as utilTypes } from 'node:util'
 
 import {
-    PROBE_EVIDENCE_ROOT,
+    PROBE_EVIDENCE_ROOT, NATIVE_SELFTEST_STREAM_BYTES, validateNativeInstructionPair,
     validateSelftestEvidenceBundle,
     type SelftestEvidenceBundle,
     type SelftestEvidenceRecord,
@@ -21,7 +21,7 @@ import { checkGeneratedEnvironment } from './generated-application/check.js'
 import { type GeneratedApplicationProjection } from './generated-application/shared.js'
 import { redactSensitiveMessage } from './sensitive.js'
 import {
-    snapshotExecutionStep, snapshotGeneratedJson, ENVIRONMENT_CODES, errorCause, hasErrorCode, INHERITED_TOOL_ENVIRONMENT, type ConsumedFile, type ExecutionStep,
+    snapshotExecutionStep, snapshotGeneratedJson, ENVIRONMENT_CODES, errorCause, hasErrorCode, INHERITED_TOOL_ENVIRONMENT, type ConsumedFile, type ExecutionStep, type FilesystemCheck,
 } from './contract.js'
 import { resolveExecutable, type ResolvedExecutable } from './executable.js'
 import { cockpitCommand, formatShellCommand } from '../fix-catalogue.js'
@@ -73,6 +73,8 @@ export interface SurfaceSelftestProbeSpecificationsCandidate {
         capability: string
         skill: string | null
         invocation: readonly [string, ...string[]]
+        protocol?: string
+        executes?: boolean
         versionCommand: readonly [string, ...string[]]
         helpCommand: readonly [string, ...string[]]
     }>[]
@@ -207,7 +209,7 @@ function causeSuffix(cause: string | undefined): string {
 function probeSpecificationsRefusal(reason: string): SurfaceSelftestCommandOutcome {
     return {
         kind: 'refusal', status: 2, code: 'SELFTEST_SOURCE_INVALID', reason,
-        fix: 'write a new file with npx --no cockpit selftest --config <your cockpit.toml> --write-probe-specifications <new file>, fill the fields it lists, then pass that file to --probe-specifications',
+        fix: 'write a new file with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --write-probe-specifications <new file>, fill the fields it lists, then pass that file to --probe-specifications',
     }
 }
 
@@ -254,13 +256,13 @@ function exactLine(value: string, code: string): boolean {
     return value.split(/\r?\n/).some((line) => line.trim() === code)
 }
 
-function boundedStream(value: Buffer): string | undefined {
+function boundedStream(value: Buffer, limit = STREAM_BYTES): string | undefined {
     let text: string
     try { text = new TextDecoder('utf-8', { fatal: true }).decode(value) } catch { return undefined } // Fatal decoding throws only for invalid UTF-8, which the caller rejects as an unusable stream.
     const redacted = redactSensitiveMessage(text)
     if (redacted === undefined) return undefined
     text = redacted
-    if (Buffer.byteLength(text) > STREAM_BYTES) return undefined
+    if (Buffer.byteLength(text) > limit) return undefined
     return text
 }
 
@@ -273,13 +275,15 @@ function step(
     deadline: number,
     labels: Readonly<Record<string, string>>,
     env: Readonly<Record<string, string>>,
+    filesystemChecks: readonly FilesystemCheck[] = [],
+    streamBytes = STREAM_BYTES,
 ): ExecutionStep | undefined {
     const remaining = deadline - Date.now()
     if (remaining <= 0) return undefined
     return snapshotExecutionStep({
         id, argv, argv0, cwd: root, env, timeoutMs: Math.min(PROBE_TIMEOUT_MS, remaining),
-        spawnNotAfter: new Date(deadline).toISOString(), stdoutLimitBytes: STREAM_BYTES, stderrLimitBytes: STREAM_BYTES,
-        paths: [root], ports: [], labels, expected: [], consumedFiles, filesystemChecks: [], compensation: [],
+        spawnNotAfter: new Date(deadline).toISOString(), stdoutLimitBytes: streamBytes, stderrLimitBytes: streamBytes,
+        paths: [root], ports: [], labels, expected: [], consumedFiles, filesystemChecks, compensation: [],
     })
 }
 
@@ -309,9 +313,10 @@ function event(
     execution: ExecuteProbeOutcome,
     result: SelftestProbeEvent['result'],
     code: string,
+    streamBytes = STREAM_BYTES,
 ): SelftestProbeEvent | undefined {
-    const stdout = boundedStream(execution.stdout)
-    const stderr = boundedStream(execution.stderr)
+    const stdout = boundedStream(execution.stdout, streamBytes)
+    const stderr = boundedStream(execution.stderr, streamBytes)
     if (stdout === undefined || stderr === undefined) return undefined
     return {
         cwd, command: [...command], exitCode: execution.execution.exitCode,
@@ -379,15 +384,20 @@ async function ensureEvidenceDirectory(root: string): Promise<string | Readonly<
 async function writeControlPair(
     directory: string,
     probe: PlannedSelftestProbe,
-): Promise<{ candidate: string; broken: string; candidateSha256: string; brokenSha256: string } | undefined> {
-    const candidate = join(directory, 'candidate.json')
-    const broken = join(directory, 'broken.json')
+): Promise<{ candidate: string; broken: string; candidateSha256: string; brokenSha256: string; brokenBytes: string } | undefined> {
+    const native = probe.protocol === 'codex-prompt-input/v1'
+    if (native) {
+        await mkdir(join(directory, 'candidate'), { mode: 0o700 })
+        await mkdir(join(directory, 'broken'), { mode: 0o700 })
+    }
+    const candidate = native ? join(directory, 'candidate', 'AGENTS.md') : join(directory, 'candidate.json')
+    const broken = native ? join(directory, 'broken', 'AGENTS.md') : join(directory, 'broken.json')
     const candidateBytes = selectedEntryBytes(probe)
     if (!candidateBytes || Buffer.byteLength(candidateBytes) > MAX_CONTROL_BYTES) return undefined
-    const brokenBytes = '{\n'
+    const brokenBytes = native ? `Cockpit selftest replacement control ${randomBytes(12).toString('hex')}.\n` : '{\n'
     await writeFile(candidate, candidateBytes, { flag: 'wx', mode: 0o600 })
     await writeFile(broken, brokenBytes, { flag: 'wx', mode: 0o600 })
-    return { candidate, broken, candidateSha256: sha256Hex(candidateBytes), brokenSha256: sha256Hex(brokenBytes) }
+    return { candidate, broken, candidateSha256: sha256Hex(candidateBytes), brokenSha256: sha256Hex(brokenBytes), brokenBytes }
 }
 
 function consumedExecutable(executable: ResolvedExecutable): ConsumedFile {
@@ -411,6 +421,11 @@ async function runEvidenceProbe(
 ): Promise<SelftestEvidenceRecord | ReturnType<typeof surfaceSelftestHumanNeeded> | ProbeFailure | undefined> {
     const harnessName = probe.harness.name
     const observedAt = new Date().toISOString()
+    if (probe.protocol === 'native-unsupported/v1') return surfaceSelftestHumanNeeded(
+        expectation, probe.cell, 'native_protocol_unsupported', observedAt,
+        `${harnessName} ${probe.capability} has no verified native selftest protocol. Measure the generated surface with its real loader and a deliberately broken control; preserve native tool events, not assistant claims. Claude print mode ignores malformed settings, and a native tool denial need not fail its parent process. Do not substitute diagnostic echo commands.`,
+    )
+    const native = probe.protocol === 'codex-prompt-input/v1'
     const resolution = await resolveExecutable(BUILTIN_EXECUTABLES[probe.harness.target], env)
     if (resolution.state === 'unavailable') return surfaceSelftestHumanNeeded(
         expectation,
@@ -450,23 +465,27 @@ async function runEvidenceProbe(
     const probeEnvironment = Object.fromEntries(Object.entries(env).filter(
         (row): row is [string, string] => typeof row[1] === 'string' && row[1].length > 0 && !row[1].includes('\0')))
     const controlIndex = invocation.indexOf('{control}')
-    if (controlIndex < 0) return undefined
+    if (!native && controlIndex < 0) return undefined
     const candidateCommand = publicCommand(invocation, executable.canonicalPath, candidatePath)
     const brokenCommand = publicCommand(invocation, executable.canonicalPath, brokenPath)
     const createStep = (role: string, command: readonly [string, ...string[]], control?: typeof controls.candidate): ExecutionStep | undefined => {
         const execution = executionCommand(command, root, control ? relativeEvidencePath(root, control) : undefined)
         const files = [...commonFiles]
-        if (control) files.push({ path: control, sha256: control === controls.candidate ? controls.candidateSha256 : controls.brokenSha256,
+        if (control && !native) files.push({ path: control, sha256: control === controls.candidate ? controls.candidateSha256 : controls.brokenSha256,
             maxBytes: MAX_CONTROL_BYTES, argvIndexes: [controlIndex], executable: false })
-        return step(`surface-selftest-${randomBytes(8).toString('hex')}-${role}`, root, execution, executable.invocationPath, files, deadline,
-            { harness: harnessName, capability: probe.capability, role }, probeEnvironment)
+        const cwd = native && control ? dirname(control) : root
+        const checks: FilesystemCheck[] = native && control ? [{ path: control, expected: 'file',
+            sha256: control === controls.candidate ? controls.candidateSha256 : controls.brokenSha256, maxBytes: MAX_CONTROL_BYTES },
+            { path: join(cwd, 'AGENTS.override.md'), expected: 'absent' }] : []
+        return step(`surface-selftest-${randomBytes(8).toString('hex')}-${role}`, cwd, execution, executable.invocationPath, files, deadline,
+            { harness: harnessName, capability: probe.capability, role }, probeEnvironment, checks, native ? NATIVE_SELFTEST_STREAM_BYTES : STREAM_BYTES)
     }
     const version = await run(adapters, createStep('version', versionCommand))
     const help = await run(adapters, createStep('help', helpCommand))
     const broken = await run(adapters, createStep('broken', brokenCommand, controls.broken))
     const candidate = await run(adapters, createStep('candidate', candidateCommand, controls.candidate))
     if (!version || !help || !broken || !candidate) return undefined
-    if ([version, help, broken, candidate].some((row) => authenticationRequired(row.outcome))) {
+    if ([version, help, broken, candidate].some((row) => (!native || row.outcome.kind !== 'complete') && authenticationRequired(row.outcome))) {
         return surfaceSelftestHumanNeeded(
             expectation, probe.cell, 'authentication_required', observedAt,
             `Authenticate ${harnessName} and rerun its ${probe.capability} probe`,
@@ -474,12 +493,22 @@ async function runEvidenceProbe(
     }
     if (version.outcome.kind !== 'complete' || help.outcome.kind !== 'complete') return undefined
     const brokenOutput = `${broken.outcome.stdout.toString('utf8')}\n${broken.outcome.stderr.toString('utf8')}`
-    if (broken.outcome.kind !== 'refusal' || !exactLine(brokenOutput, probe.brokenCode)) return undefined
+    if (!native && (broken.outcome.kind !== 'refusal' || !exactLine(brokenOutput, probe.brokenCode))) return { probeFailure: `${harnessName} did not reject the broken control with the legacy exact diagnostic and process status. Rewrite the probe specifications to select a supported native protocol; malformed Markdown and Claude print-mode settings do not provide syntax rejection.` }
     const candidateOutput = `${candidate.outcome.stdout.toString('utf8')}\n${candidate.outcome.stderr.toString('utf8')}`
     let verdict: SelftestEvidenceRecord['verdict']
     let candidateResult: SelftestProbeEvent['result']
     let candidateCode: string
-    if (candidate.outcome.kind === 'complete' && exactLine(candidateOutput, probe.candidateCode)) {
+    if (native) {
+        if (candidate.outcome.kind !== 'complete' || broken.outcome.kind !== 'complete') {
+            const failures = [broken, candidate].map((row, index) => `${index === 0 ? 'broken' : 'candidate'}: ${row.outcome.kind === 'refusal' ? row.outcome.code : 'complete'} (exit ${row.outcome.execution.exitCode}, signal ${row.outcome.execution.signal})`)
+            return { probeFailure: `native prompt-input did not complete both controls: ${failures.join('; ')}; inspect tool availability, output bounds and project trust without bypassing policy` }
+        }
+        const problem = validateNativeInstructionPair(candidate.outcome.stdout.toString('utf8'), broken.outcome.stdout.toString('utf8'),
+            dirname(controls.candidate), dirname(controls.broken), selectedEntryBytes(probe)!,
+            controls.brokenBytes)
+        if (problem) return { probeFailure: problem }
+        verdict = 'instructed'; candidateResult = 'accepted'; candidateCode = probe.candidateCode
+    } else if (candidate.outcome.kind === 'complete' && exactLine(candidateOutput, probe.candidateCode)) {
         verdict = 'instructed'; candidateResult = 'accepted'; candidateCode = probe.candidateCode
     } else if (candidate.outcome.kind === 'refusal' && probe.capability === 'guard-firing' && exactLine(candidateOutput, probe.candidateCode)) {
         verdict = 'enforced'; candidateResult = 'refused'; candidateCode = probe.candidateCode
@@ -492,14 +521,16 @@ async function runEvidenceProbe(
     const events = {
         version: event(versionCommand, '.', version.outcome, 'completed', 'VERSION_OK'),
         help: event(helpCommand, '.', help.outcome, 'completed', 'HELP_OK'),
-        brokenControl: event(brokenCommand, '.', broken.outcome, 'rejected', probe.brokenCode),
-        candidateControl: event(candidateCommand, '.', candidate.outcome, candidateResult, candidateCode),
+        brokenControl: event(brokenCommand, native ? relative(root, dirname(controls.broken)) : '.', broken.outcome, native ? 'accepted' : 'rejected', probe.brokenCode, native ? NATIVE_SELFTEST_STREAM_BYTES : STREAM_BYTES),
+        candidateControl: event(candidateCommand, native ? relative(root, dirname(controls.candidate)) : '.', candidate.outcome, candidateResult, candidateCode, native ? NATIVE_SELFTEST_STREAM_BYTES : STREAM_BYTES),
     }
     if (!events.version || !events.help || !events.brokenControl || !events.candidateControl) return undefined
     const versionText = `${events.version.stdout} ${events.version.stderr}`.trim()
-    const versionValue = versionText.split(/\s+/).find(Boolean)
+    const versionValue = native ? /^codex-cli (\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/.exec(events.version.stdout.trim())?.[1]
+        : versionText.split(/\s+/).find(Boolean)
     if (!versionValue || Buffer.byteLength(versionValue) > 256) return undefined
     const record: SelftestEvidenceRecord = {
+        ...(native ? { protocol: 'codex-prompt-input/v1' as const } : {}),
         kind: 'evidence', harness: probe.harness, capability: probe.capability,
         generatedManifestSha256: expectation.generatedManifestSha256, verdict, version: versionValue, measuredOn: startedAt.slice(0, 10),
         runId: `selftest-${randomBytes(16).toString('hex')}`, startedAt, finishedAt, expiresAt,
@@ -599,7 +630,7 @@ export async function runConfiguredSurfaceSelftestApplication(
         return {
             kind: 'refusal', status: 2, code: 'SELFTEST_SOURCE_INVALID',
             reason: `probe specification file ${artifactPath} was written for a different cockpit.toml or generated manifest`,
-            fix: 'write a new file that keeps the rows you filled for unchanged cells with npx --no cockpit selftest --config <your cockpit.toml> --write-probe-specifications <new file> --probe-specifications <this file>, fill the fields it lists, then pass the new file to --probe-specifications',
+            fix: 'write a new file that keeps the rows you filled for unchanged cells with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --write-probe-specifications <new file> --probe-specifications <this file>, fill the fields it lists, then pass the new file to --probe-specifications',
         }
     }
     const unfilled = unfilledSurfaceSelftestSpecifications(artifact.specifications)
@@ -622,6 +653,7 @@ export async function runConfiguredSurfaceSelftestApplication(
         commandVectors: plan.probes.map((probe) => ({
             harness: probe.harness.name,
             capability: probe.capability,
+            ...(probe.protocol ? { protocol: probe.protocol, executes: probe.protocol !== 'native-unsupported/v1' } : {}),
             skill: probe.sample?.skill ?? null,
             invocation: [...probe.invocation] as readonly [string, ...string[]],
             versionCommand: [...probe.versionCommand] as readonly [string, ...string[]],
@@ -731,11 +763,11 @@ async function writeConfiguredSurfaceSelftestSpecifications(
             probeSpecifications: destination,
             rows: specifications.length,
             fromGeneratedManifest: 'harness, capability, sample.skill and unavailableCode for every cell that needs evidence',
-            fromCockpit: 'versionCommand and helpCommand, the --version and --help identity probes; review them when you approve the file',
+            fromCockpit: 'closed native protocols and command vectors; unsupported native rows execute nothing. Review the runnable commands when you approve the file',
             ...(previousPath === undefined ? {} : {
                 carriedForward: `${carried} of ${specifications.length} row(s) kept unchanged from ${previousPath}; every other row is new or changed, or was not complete there`,
             }),
-            fromYou: 'each null: invocation (argv starting with the placeholder already in versionCommand, with exactly one {control}), candidateCode and brokenCode (the exact lines the tool prints for an accepted and a broken control), and sample.features for skill-parity rows',
+            fromYou: 'review the closed native protocol and commands; unsupported native cells remain human_needed. Previously filled legacy exact-code probes are preserved unchanged',
             unfilled,
             then: cockpitCommand('selftest', { config: configPath, args: `--interactive --probe-specifications ${formatShellCommand([destination])}` }),
         },
@@ -753,7 +785,13 @@ export async function runConfiguredSurfaceSelftestOutcome(
         ...(requestProbeSpecificationsApproval ? { requestProbeSpecificationsApproval } : {}),
     })
     return outcome.kind === 'complete'
-        ? { status: 0, diagnostics: [], result: { bundle: outcome.bundle, evidence: outcome.evidence } }
+        ? { status: 0, diagnostics: outcome.evidence.pending.map(row => ({ severity: 'warning' as const,
+            code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, message: `${surfaceSelftestCellLabel(row)} remains human_needed: ${row.operatorAction}`,
+            target: surfaceSelftestCellLabel(row),
+        })), result: { bundle: outcome.bundle, evidence: outcome.evidence,
+            summary: { measuredCells: outcome.evidence.evidence.length, pendingCells: outcome.evidence.pending.length,
+                pendingSkillReviews: outcome.evidence.skillReviews.filter(row => row.status === 'human_needed').length,
+                complete: outcome.evidence.pending.length === 0 && outcome.evidence.skillReviews.every(row => row.status === 'evidenced') } } }
         : { status: 2, diagnostics: [{ severity: 'error', code: outcome.code, message: outcome.reason,
             ...(outcome.fix ? { fix: outcome.fix } : {}) }], result: null }
 }

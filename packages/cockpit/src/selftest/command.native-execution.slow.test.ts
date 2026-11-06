@@ -1,8 +1,11 @@
-import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { createSelftestFixture } from '../../test-support/selftest-fixture.js'
+import { draftSurfaceSelftestSpecifications, surfaceSelftestExpectation, type SelftestProbeSpecification } from '../surfaces/selftest.js'
+import { validateSelftestEvidenceBundle } from '../../libexec/validate-harness-evidence.mjs'
+import { executeProbe } from '../environment-exec/execute.js'
 import type { ExecutionStep } from '../environment/contract.js'
 import { runSurfaceSelftestApplication } from '../environment/selftest-application.js'
 
@@ -76,6 +79,65 @@ describe('surface selftest command', () => {
         expect(await runSurfaceSelftestApplication({
             application: { ...application }, root, specifications: specifications(application), env: { PATH: bin },
         })).toEqual(expect.objectContaining({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID' }))
+    }, 180_000)
+
+    it('loads exact generated instructions through the native discovery protocol and leaves unsupported cells pending', async () => {
+        const { root, application } = fixture()
+        const bin = join(root, 'harness-bin')
+        await mkdir(bin)
+        const executable = join(bin, 'codex')
+        await writeFile(executable, `#!${process.execPath}
+const fs = require('node:fs')
+if (process.argv[2] === '--version') process.stdout.write('codex-cli 0.0.0-synthetic')
+else if (process.argv[2] === '--help') process.stdout.write('debug prompt-input')
+else {
+ const bytes = fs.readFileSync('AGENTS.md', 'utf8')
+ process.stdout.write(JSON.stringify([{type:'message',role:'user',content:[{type:'input_text',text:
+ '# AGENTS.md instructions for '+process.cwd()+'\\n\\n<INSTRUCTIONS>\\nInherited guidance.\\n\\n'+bytes+'\\n</INSTRUCTIONS>'}]}]))
+}
+`)
+        await chmod(executable, 0o700)
+        const draft = draftSurfaceSelftestSpecifications(application.surfaceSelftest)!
+        const steps: ExecutionStep[] = []
+        const outcome = await runSurfaceSelftestApplication({ root, application,
+            specifications: draft.specifications as readonly SelftestProbeSpecification[], env: { PATH: bin } }, {
+            testOnlyExecutableIdentities: { Codex: [executable] },
+            execute: async step => { steps.push(step); return executeProbe(step) },
+        })
+        expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: 'complete', status: 0 })
+        if (outcome.kind !== 'complete') throw new Error('native instruction evidence failed')
+        expect(outcome.evidence.errors).toEqual([])
+        expect(outcome.evidence.evidence).toHaveLength(1)
+        expect(outcome.evidence.pending).toHaveLength(26)
+        expect(outcome.evidence.pending.every(row => row.reason === 'native_protocol_unsupported')).toBe(true)
+        const record = outcome.evidence.evidence[0]!
+        expect(record).toMatchObject({ protocol: 'codex-prompt-input/v1', verdict: 'instructed' })
+        expect(record.version).toBe('0.0.0-synthetic')
+        const forged = structuredClone(outcome.bundle)
+        const forgedRecord = forged.records.find(row => row.kind === 'evidence')!
+        if (forgedRecord.kind !== 'evidence') throw new Error('native evidence missing')
+        forgedRecord.candidateSha256 = 'f'.repeat(64)
+        expect(validateSelftestEvidenceBundle(forged, surfaceSelftestExpectation(application.surfaceSelftest)!, root, {
+            testOnlyExecutableIdentities: { Codex: [executable] },
+        }).errors).toEqual(expect.arrayContaining([expect.stringContaining('native candidate does not match the generated AGENTS.md source authority')]))
+        for (const events of [
+            { ...record.events, candidateControl: { ...record.events.candidateControl, cwd: {} } },
+            { ...record.events, version: { ...record.events.version, stdout: {} } },
+        ]) {
+            const malformed = { ...outcome.bundle, records: outcome.bundle.records.map(row => row.kind === 'evidence' && row.runId === record.runId ? { ...record, events } : row) }
+            const check = () => validateSelftestEvidenceBundle(malformed, surfaceSelftestExpectation(application.surfaceSelftest)!, root, {
+                testOnlyExecutableIdentities: { Codex: [executable] },
+            })
+            expect(check).not.toThrow()
+            expect(check().errors).not.toEqual([])
+        }
+        expect(record.candidatePath).toMatch(/\/candidate\/AGENTS\.md$/)
+        const generated = application.surfaceSelftest.entries.find(entry => entry.path === 'AGENTS.md')!
+        const expectedBytes = generated.kind === 'file' ? generated.bytes
+            : generated.region.format === 'markdown-delimited' ? generated.region.bytes : ''
+        expect(await readFile(join(root, record.candidatePath), 'utf8')).toBe(expectedBytes)
+        expect(steps.filter(step => step.labels.role === 'candidate')[0]?.filesystemChecks)
+            .toContainEqual(expect.objectContaining({ path: join(root, record.candidatePath), sha256: record.candidateSha256 }))
     }, 180_000)
 
     it('preserves POSIX executable approval with an undefined search alias without reading unrelated values', async () => {

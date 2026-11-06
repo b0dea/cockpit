@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
     validateEvidenceManifest,
     validateEvidenceManifests,
-    validateSelftestEvidenceBundle,
+    validateSelftestEvidenceBundle, validateNativeInstructionPair,
 } from '../libexec/validate-harness-evidence.mjs'
 import type {
     BuiltinExecutionAuthority,
@@ -1098,6 +1098,34 @@ describe('operator executable identity', () => {
             rmSync(fixture.root, { recursive: true, force: true })
             rmSync(selftest.root, { recursive: true, force: true })
         }
+    })
+})
+
+describe('native instruction discovery evidence', () => {
+    it('requires path-scoped native input messages and a differential leaf control', () => {
+        const candidate = 'Generated instructions.\n'
+        const broken = `Cockpit selftest replacement control ${'a'.repeat(24)}.\n`
+        const candidateCwd = '/synthetic/candidate'
+        const brokenCwd = '/synthetic/broken'
+        const message = (cwd: string, bytes: string, inherited = 'Inherited instructions.\n\n') => ({
+            type: 'message', role: 'user', content: [{ type: 'input_text',
+                text: `# AGENTS.md instructions for ${cwd}\n\n<INSTRUCTIONS>\n${inherited}${bytes}\n</INSTRUCTIONS>` }],
+        })
+        const candidateMessage = message(candidateCwd, candidate)
+        const candidateOutput = JSON.stringify([candidateMessage])
+        const brokenOutput = JSON.stringify([message(brokenCwd, broken)])
+        const validate = (left: string, right = brokenOutput) => validateNativeInstructionPair(
+            left, right, candidateCwd, brokenCwd, candidate, broken)
+        expect(validate(candidateOutput)).toBeNull()
+        for (const output of [
+            JSON.stringify([{ ...candidateMessage, role: 'assistant' }]),
+            JSON.stringify([message('/synthetic/other', candidate)]),
+            JSON.stringify([candidateMessage, candidateMessage]),
+            JSON.stringify([message(candidateCwd, '', candidate)]),
+            candidateOutput.slice(0, -1),
+            `NATIVE_INSTRUCTIONS_LOADED\n${candidateOutput}`,
+        ]) expect(validate(output)).toBeTypeOf('string')
+        expect(validate(candidateOutput, JSON.stringify([message(brokenCwd, candidate)]))).toBeTypeOf('string')
     })
 })
 
