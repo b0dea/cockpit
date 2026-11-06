@@ -86,7 +86,7 @@ verified either tool loads those files, and neither gets a guard hook.
 `[surfaces] tools` lists the agent tools `sync` writes and `check` compares; it defaults to
 `claudecode`, `codexcli` and `opencode`, the tools whose guard is measured, and must name at least
 one of them. A tool left out gets no files, and doctor and check give no advice about it.
-`npx --no cockpit tool add <tool> --config <your cockpit.toml>` and `tool remove` edit only that
+`./node_modules/@b00dea/cockpit/bin/cockpit.mjs tool add <tool> --config <your cockpit.toml>` and `tool remove` edit only that
 line (`--dry-run` previews). A removed tool's files are deleted only after a person approves the
 stale-removal digest with `sync --interactive`.
 
@@ -506,9 +506,9 @@ An upgrade replaces the generated files that guard and instruct every agent, so 
 `sync` would change before it writes:
 
 ```sh
-npx --no cockpit upgrade --config cockpit.toml            # latest published release
-npx --no cockpit upgrade 1.4.0 --config cockpit.toml      # a named version, including an older one
-npx --no cockpit upgrade --config cockpit.toml --dry-run  # resolve the target, print the commands, run nothing
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config cockpit.toml            # latest published release
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade 1.4.0 --config cockpit.toml      # a named version, including an older one
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config cockpit.toml --dry-run  # resolve the target, print the commands, run nothing
 ```
 
 `upgrade` resolves the target, refuses one that is not newer than the installed version unless you
@@ -528,8 +528,8 @@ release changed is reported as `OVERRIDDEN_CORE_CHANGED`. Then review `git diff`
 `package.json`, the lockfile and the regenerated files together.
 
 Dependabot and Renovate can bump the pin on their own; the `cockpit-check` action then reports drift
-until someone runs `npx --no cockpit sync --config cockpit.toml` and commits the result.
+until someone runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` and commits the result.
 
 By hand: `npm install --save-dev --save-exact @b00dea/cockpit@<version>` (`npm update` does not move
 an exact pin), read `./node_modules/@b00dea/cockpit/CHANGELOG.md`, preview with
-`npx --no cockpit sync --config cockpit.toml --dry-run`, then run `sync` in a terminal.
+`./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --dry-run`, then run `sync` in a terminal.

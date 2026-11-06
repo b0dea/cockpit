@@ -223,7 +223,7 @@ Reads `cockpit.toml` from `--config`.
 
 ## cockpit selftest
 
-Test whether agent tools enforce the generated controls.
+Measure supported agent capabilities and report unverified cells.
 
 Reads `cockpit.toml` from `--config`.
 

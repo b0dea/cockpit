@@ -7,21 +7,21 @@ Every diagnostic message names what failed and how to fix it. The sections below
 
 | Diagnostic | Why it stops | Fix |
 | --- | --- | --- |
-| `INIT_CANONICAL_OWNERSHIP_MISSING` | The saved bootstrap stage and generated ownership disagree. | Restore the committed ownership metadata, then rerun the same `npx --no cockpit init . --target <tool>` command. |
-| `SURFACE_SOURCE_UNAVAILABLE` | A declared sibling source cannot be read or checked. | Restore the named checkout at its declared path, then rerun `npx --no cockpit sync --config cockpit.toml`. |
-| `SURFACE_OWNERSHIP_INVALID` | Cockpit cannot tell which settings it may replace. | Restore the last committed ownership metadata, then rerun `npx --no cockpit sync --config cockpit.toml`. |
-| `SURFACE_STATE_CONFLICT` | Sync would overwrite a hand edit or a file cockpit has no record of writing. | Move a hand edit into `cockpit.toml` or a surface overlay and ask a person before discarding it; for a team's own settings file, have a person approve `npx --no cockpit sync --adopt <path> --config cockpit.toml`. |
-| `GENERATED_ARTIFACT_DRIFT` | Generated files no longer match the canonical configuration. | Review the diff, run `npx --no cockpit sync --config cockpit.toml`, then retry. |
-| `GENERATED_OWNERSHIP_INVALID` | Cockpit has no trustworthy record of which files it owns. | Restore the committed ownership metadata, then rerun `npx --no cockpit sync --config cockpit.toml`. |
-| `GUARD_AUTHORITY_UNAVAILABLE` | The guard cannot read the current policy it needs to decide safely. | Restore `cockpit.toml` and generated guard files, then have a human run `npx --no cockpit sync --config cockpit.toml`. |
-| `GUARD_REFUSED` | The command is outside the current guard policy. | Follow the named reason, or ask a human to update `cockpit.toml` and run `npx --no cockpit sync --config cockpit.toml`. |
+| `INIT_CANONICAL_OWNERSHIP_MISSING` | The saved bootstrap stage and generated ownership disagree. | Restore the committed ownership metadata, then rerun the same `./node_modules/@b00dea/cockpit/bin/cockpit.mjs init . --target <tool>` command. |
+| `SURFACE_SOURCE_UNAVAILABLE` | A declared sibling source cannot be read or checked. | Restore the named checkout at its declared path, then rerun `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
+| `SURFACE_OWNERSHIP_INVALID` | Cockpit cannot tell which settings it may replace. | Restore the last committed ownership metadata, then rerun `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
+| `SURFACE_STATE_CONFLICT` | Sync would overwrite a hand edit or a file cockpit has no record of writing. | Move a hand edit into `cockpit.toml` or a surface overlay and ask a person before discarding it; for a team's own settings file, have a person approve `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --adopt <path> --config cockpit.toml`. |
+| `GENERATED_ARTIFACT_DRIFT` | Generated files no longer match the canonical configuration. | Review the diff, run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`, then retry. |
+| `GENERATED_OWNERSHIP_INVALID` | Cockpit has no trustworthy record of which files it owns. | Restore the committed ownership metadata, then rerun `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
+| `GUARD_AUTHORITY_UNAVAILABLE` | The guard cannot read the current policy it needs to decide safely. | Restore `cockpit.toml` and generated guard files, then have a human run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
+| `GUARD_REFUSED` | The command is outside the current guard policy. | Follow the named reason, or ask a human to update `cockpit.toml` and run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
 | `RUNTIME_UNAVAILABLE` | The container runtime cannot be reached or identified. | Start it and verify `docker info`; if the message names a Docker or Compose version with no X.Y.Z core, install a release that prints one. Then retry. |
-| `RUNTIME_UNMEASURED` | This machine has no passing measurement for the current runtime and engine version. | Run `npx --no cockpit runtime measure --config cockpit.toml --image <local-image>`, which records the result for this machine only, then retry. |
-| `CLAIM_CO_TENANT` | Another [holder](concepts.md#holder) is using the stack. | After a failed `up`, run `npx --no cockpit up --config cockpit.toml` to resume or `npx --no cockpit down --config cockpit.toml` to release. Otherwise, have every session that holds the stack run `npx --no cockpit sleep --config cockpit.toml`, then retry. |
+| `RUNTIME_UNMEASURED` | This machine has no passing measurement for the current runtime and engine version. | Run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config cockpit.toml --image <local-image>`, which records the result for this machine only, then retry. |
+| `CLAIM_CO_TENANT` | Another [holder](concepts.md#holder) is using the stack. | After a failed `up`, run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml` to resume or `./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config cockpit.toml` to release. Otherwise, have every session that holds the stack run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config cockpit.toml`, then retry. |
 | `PORT_FAMILY_COLLISION` | A selected host port is already in use. | Stop the named listener or release the inactive stack, then retry. |
 | `PORT_LEASE_EXHAUSTED` | Every declared port family is leased or occupied. | Release an inactive stack or extend `ports.count` after checking host capacity. |
-| `SETUP_MANUAL_MISSING` | A manually managed sibling checkout is absent. | Create it at the declared path, then rerun `npx --no cockpit setup --config cockpit.toml`. |
-| `SETUP_REMOTE_MISMATCH` | The checkout remote and declaration name different sources. | Correct the remote or declaration, then rerun `npx --no cockpit setup --config cockpit.toml`. |
+| `SETUP_MANUAL_MISSING` | A manually managed sibling checkout is absent. | Create it at the declared path, then rerun `./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config cockpit.toml`. |
+| `SETUP_REMOTE_MISMATCH` | The checkout remote and declaration name different sources. | Correct the remote or declaration, then rerun `./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config cockpit.toml`. |
 
 ## GENERATED_ARTIFACT_DRIFT
 
@@ -31,14 +31,14 @@ their sources now produce ([Check and sync](environment.md#check-and-sync)).
 **Remedy.** Inspect the target named in the diagnostic, then run:
 
 ```sh
-npx --no cockpit check --config ./cockpit.toml
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config ./cockpit.toml
 ```
 
 Review the declaration and source change. If the new bytes are intended, publish the complete
 owned manifest:
 
 ```sh
-npx --no cockpit sync --config ./cockpit.toml
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ./cockpit.toml
 ```
 
 Do not edit the ownership manifest or lifecycle state. If changed bytes belong to a formerly
@@ -47,7 +47,7 @@ owned path, preserve them until the declaration and ownership transition are und
 ## Harness surface failures
 
 1. Read the target and message in the diagnostic.
-2. Run `cockpit sync --config ./cockpit.toml --dry-run`; it prepares everything without changing
+2. Run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ./cockpit.toml --dry-run`; it prepares everything without changing
    the checkout.
 3. Correct the named declaration or source, and repeat the preview.
 4. Apply `sync`, then confirm the installed state with `check`.
@@ -238,7 +238,7 @@ port leases.
 have:
 
 1. Stop the stack and release its claims from the cockpit directory:
-   `./node_modules/.bin/cockpit down --config cockpit.toml`.
+   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config cockpit.toml`.
 2. If `down` refuses because the state cannot be read, stop the stack with Docker instead: find
    its project with `docker compose ls`, then run `docker compose -p <project> down`.
 3. Delete the directory the diagnostic names, for example
@@ -256,25 +256,25 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | --- | --- |
 | `AUTONOMY_CI_ONLY` | push the change and let the CI job run the command, or have a person change the field in cockpit.toml and accept the change at sync |
 | `AUTONOMY_PERSON_REQUIRED` | a person runs the same command with --interactive in a terminal outside CI, or a person changes the field in cockpit.toml and accepts the change at sync |
-| `BROWSER_ROUTE_FINDINGS` | this run asked for a clean route (--fail-on-findings). Read result.receipt.surfaces[].diagnostics, including excerpt.messages where present: fix the product for each console error, uncaught page error and failed request that matters, then rerun npx --no cockpit browser drive --config <your cockpit.toml> --route <name> --fail-on-findings; third-party traffic never counts |
+| `BROWSER_ROUTE_FINDINGS` | this run asked for a clean route (--fail-on-findings). Read result.receipt.surfaces[].diagnostics, including excerpt.messages where present: fix the product for each console error, uncaught page error and failed request that matters, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs browser drive --config <your cockpit.toml> --route <name> --fail-on-findings; third-party traffic never counts |
 | `CLAIM_CO_TENANT` | [see above](#common-refusal-guidance) |
 | `COCKPIT_REVISION_UNSTAMPED` | install a released @b00dea/cockpit when the resolved data must name the exact cockpit source commit |
-| `CODEX_HOOK_SOURCE_MISMATCH` | have a person review and roll out the matching generated hooks in the original checkout through its normal change process; cockpit does not copy hooks or change that checkout; rerun npx --no cockpit doctor --config <your cockpit.toml>, then review and trust the reported source in interactive Codex; [see above](#codex-hooks-in-linked-worktrees) |
-| `CODEX_HOOK_UNTRUSTED` | if the hook source could not be verified, resolve the reported discovery failure first; otherwise a person runs codex -C <hook source directory> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml>; [see above](#codex-hooks-in-linked-worktrees) |
-| `COMPOSE_FILE_UNREADABLE` | make environment.compose_files name a readable Compose file inside the cockpit root, then run npx --no cockpit check --config <your cockpit.toml> |
+| `CODEX_HOOK_SOURCE_MISMATCH` | have a person review and roll out the matching generated hooks in the original checkout through its normal change process; cockpit does not copy hooks or change that checkout; rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config <your cockpit.toml>, then review and trust the reported source in interactive Codex; [see above](#codex-hooks-in-linked-worktrees) |
+| `CODEX_HOOK_UNTRUSTED` | if the hook source could not be verified, resolve the reported discovery failure first; otherwise a person runs codex -C <hook source directory> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config <your cockpit.toml>; [see above](#codex-hooks-in-linked-worktrees) |
+| `COMPOSE_FILE_UNREADABLE` | make environment.compose_files name a readable Compose file inside the cockpit root, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config <your cockpit.toml> |
 | `CONFIG_ENCODING_INVALID` | save the configuration as UTF-8, then retry |
-| `DATA_SEED_UNAVAILABLE` | make sure the Docker daemon this stack runs on answers docker volume ls, then rerun npx --no cockpit up --config <your cockpit.toml> |
+| `DATA_SEED_UNAVAILABLE` | make sure the Docker daemon this stack runs on answers docker volume ls, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml> |
 | `DECISION_INDEX_ENTRY_MISSING` | correct the link to the record's current file name, or remove the entry if the record was deleted on purpose |
 | `DECISION_LINK_UNRESOLVED` | correct the number or link to name an existing record, or restore the record it names |
 | `DECISION_NUMBER_REUSED` | renumber the later record to the next free number, then update the index and every supersedes line that cites it |
 | `DECISION_UNINDEXED` | add a line linking the record to the decision index |
-| `DOCS_NOT_DECLARED` | add a [docs] table to cockpit.toml: living = ["README.md", "docs/**/*.md"] lists the documents that must stay true, and the optional decisions = "docs/adr" and decisions_index = "docs/adr/README.md" name the decision records and their index; then rerun npx --no cockpit docs check --config <your cockpit.toml> |
-| `DOCS_REFERENCE_REMOVED` | cite the path that replaced it (a rename is named in the message), or rewrite or delete the sentence if what it described is gone; then rerun npx --no cockpit docs check --config <your cockpit.toml> |
-| `DOCS_TARGET_REMOVED` | cite the target or command that replaced it, or rewrite or delete the sentence if the step is gone; then rerun npx --no cockpit docs check --config <your cockpit.toml> |
-| `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` | declare one sibling for each repository the message says init observed, with that slug and dir, and no other; add any other repository after init with npx --no cockpit sibling add <slug> --config <your cockpit.toml> |
-| `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
-| `DOCUMENT_RUNTIME_NOT_DECLARED` | to adopt a runtime, declare environment.compose_files, environment.machine and the environment postures, then run npx --no cockpit sync --config <your cockpit.toml> |
-| `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your Compose file (for a small app with none, npx --no cockpit init <cockpit root> --scaffold-compose <app dir> --port <port> writes a starting one), then run npx --no cockpit sync --config <your cockpit.toml> |
+| `DOCS_NOT_DECLARED` | add a [docs] table to cockpit.toml: living = ["README.md", "docs/**/*.md"] lists the documents that must stay true, and the optional decisions = "docs/adr" and decisions_index = "docs/adr/README.md" name the decision records and their index; then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs docs check --config <your cockpit.toml> |
+| `DOCS_REFERENCE_REMOVED` | cite the path that replaced it (a rename is named in the message), or rewrite or delete the sentence if what it described is gone; then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs docs check --config <your cockpit.toml> |
+| `DOCS_TARGET_REMOVED` | cite the target or command that replaced it, or rewrite or delete the sentence if the step is gone; then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs docs check --config <your cockpit.toml> |
+| `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` | declare one sibling for each repository the message says init observed, with that slug and dir, and no other; add any other repository after init with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add <slug> --config <your cockpit.toml> |
+| `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> once a non-local environment exists |
+| `DOCUMENT_RUNTIME_NOT_DECLARED` | to adopt a runtime, declare environment.compose_files, environment.machine and the environment postures, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> |
+| `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your Compose file (for a small app with none, ./node_modules/@b00dea/cockpit/bin/cockpit.mjs init <cockpit root> --scaffold-compose <app dir> --port <port> writes a starting one), then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> |
 | `ENV_KEYS_SOURCE_SKIPPED` | replace it with a regular file in that directory |
 | `ENV_SCHEMA_OVERRIDDEN` | unset those variables in the shell, then rerun this command to check the schema's own sources |
 | `ENV_SCHEMA_TOOL_MISSING` | install Varlock (https://varlock.dev) and put it on PATH |
@@ -284,20 +284,20 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `EVALUATOR_IS_RUNNING_TOOL` | list a second tool in work.evaluators so another tool grades the work, or accept this as the grade you chose |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [see above](#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [see above](#generated_artifact_drift) |
-| `GENERATED_ARTIFACT_MISSING` | run npx --no cockpit sync --config <your cockpit.toml> |
-| `GENERATED_BROWSER_ENDPOINT_UNPUBLISHED` | publish the endpoint port from exactly one service in environment.compose_files as "127.0.0.1:${VAR}:<container port>" with VAR under [ports.bases] set to the endpoint port, or remove browser.endpoint to drive a local browser, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `GENERATED_ARTIFACT_MISSING` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> |
+| `GENERATED_BROWSER_ENDPOINT_UNPUBLISHED` | publish the endpoint port from exactly one service in environment.compose_files as "127.0.0.1:${VAR}:<container port>" with VAR under [ports.bases] set to the endpoint port, or remove browser.endpoint to drive a local browser, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> |
 | `GENERATED_CHECKOUT_STANDALONE` | in a terminal, outside the agent, run git init if this directory has no repository, remove a stale .git entry or repair it with git worktree repair, and install Git on an absolute PATH entry if it is missing; held calls then continue without a sync |
-| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
+| `GENERATED_OWNERSHIP_DRIFT` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [see above](#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [see above](#merge-ownership-and-generation) |
 | `GENERATED_STALE_APPROVAL_REQUIRED` | [see above](#merge-ownership-and-generation) |
-| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
+| `GENERATED_STALE_ARTIFACT` | a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `GUARD_AUTHORITY_UNAVAILABLE` | [see above](#common-refusal-guidance) |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
+| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [see above](#common-refusal-guidance) |
 | `GUARD_SEARCH_PATH_RELATIVE` | check PATH in the shell or launcher that starts the agent harness; if it contains relative or empty entries, remove them there and restart the harness |
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | [see above](#common-refusal-guidance) |
-| `INIT_SCAFFOLD_COMPOSE_EXISTS` | run npx --no cockpit init <cockpit root> --target <tool>, which proposes the existing Compose file for environment.compose_files |
+| `INIT_SCAFFOLD_COMPOSE_EXISTS` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs init <cockpit root> --target <tool>, which proposes the existing Compose file for environment.compose_files |
 | `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
 | `MCP_APPROVAL_UNKNOWN` | [see above](#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [see above](#mcp-and-restrictions) |
@@ -324,7 +324,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `RESTRICTION_INPUT_INVALID` | [see above](#mcp-and-restrictions) |
 | `RESTRICTION_OUTPUT_LIMIT` | [see above](#mcp-and-restrictions) |
 | `RESTRICTION_TEMPLATE_INVALID` | [see above](#mcp-and-restrictions) |
-| `RUNTIME_IMAGE_UNAVAILABLE` | pull or build it first (docker pull <image>), then run npx --no cockpit runtime measure --config <your cockpit.toml> --image <image> again |
+| `RUNTIME_IMAGE_UNAVAILABLE` | pull or build it first (docker pull <image>), then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config <your cockpit.toml> --image <image> again |
 | `RUNTIME_UNAVAILABLE` | [see above](#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [see above](#common-refusal-guidance) |
 | `SECRET_FILE_TRACKED` | a person decides with the repository owner: stop tracking each file with git rm --cached <file>, add it to .gitignore, commit, and rotate any credential it held; commit a .env.example with the variable names instead |
@@ -332,17 +332,17 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SELFTEST_EXECUTION_INVALID` | [see above](#selftest-and-override-inspection) |
 | `SELFTEST_SOURCE_INVALID` | [see above](#selftest-and-override-inspection) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
-| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
-| `SETUP_CLONE_FAILED` | check that this machine can reach the remote (git ls-remote <remote>) and that the sibling remote in cockpit.toml is right, or clone it into the named directory yourself; then run npx --no cockpit setup --config <your cockpit.toml> again |
-| `SETUP_INSTRUCTION_FILES_OFFERED` | review the proposed change with a person, then run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-files |
-| `SETUP_INSTRUCTION_POINTER_OFFERED` | review the proposed AGENTS.md block, then run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-pointers |
-| `SETUP_MANUAL_MISSING` | create the checkout, then run npx --no cockpit setup --config <your cockpit.toml> again; [see above](#common-refusal-guidance) |
+| `SESSION_STACK_RETAINED` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config <your cockpit.toml> to release this checkout's remaining hold |
+| `SETUP_CLONE_FAILED` | check that this machine can reach the remote (git ls-remote <remote>) and that the sibling remote in cockpit.toml is right, or clone it into the named directory yourself; then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> again |
+| `SETUP_INSTRUCTION_FILES_OFFERED` | review the proposed change with a person, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> --write-instruction-files |
+| `SETUP_INSTRUCTION_POINTER_OFFERED` | review the proposed AGENTS.md block, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> --write-instruction-pointers |
+| `SETUP_MANUAL_MISSING` | create the checkout, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> again; [see above](#common-refusal-guidance) |
 | `SETUP_REMOTE_MISMATCH` | [see above](#common-refusal-guidance) |
-| `SETUP_REMOTE_UNRESOLVABLE` | make the remote path readable, or declare the remote as a URL or an absolute path to an existing repository, then run npx --no cockpit setup --config <your cockpit.toml> again |
-| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
-| `SIBLING_INSTRUCTIONS_AGENTS_ONLY` | run npx --no cockpit setup --config <your cockpit.toml> to see the CLAUDE.md it proposes (one line, @AGENTS.md); once a person approves it, or without one where [autonomy] instruction_files = "agent", run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-files |
-| `SIBLING_INSTRUCTIONS_CLAUDE_ONLY` | run npx --no cockpit setup --config <your cockpit.toml> to see the move it proposes (CLAUDE.md copied byte for byte to AGENTS.md, CLAUDE.md replaced by @AGENTS.md) and, once a person approves it, or without one where [autonomy] instruction_files = "agent", rerun it with --write-instruction-files; when CLAUDE.md imports other files with @, setup proposes nothing and a person moves the shared instructions into AGENTS.md by hand |
-| `SIBLING_INSTRUCTIONS_MISSING` | a person writes AGENTS.md with what an agent must know to work in the repository, then runs npx --no cockpit setup --config <your cockpit.toml> --write-instruction-files to add the CLAUDE.md that imports it |
+| `SETUP_REMOTE_UNRESOLVABLE` | make the remote path readable, or declare the remote as a URL or an absolute path to an existing repository, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> again |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> |
+| `SIBLING_INSTRUCTIONS_AGENTS_ONLY` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> to see the CLAUDE.md it proposes (one line, @AGENTS.md); once a person approves it, or without one where [autonomy] instruction_files = "agent", run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> --write-instruction-files |
+| `SIBLING_INSTRUCTIONS_CLAUDE_ONLY` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> to see the move it proposes (CLAUDE.md copied byte for byte to AGENTS.md, CLAUDE.md replaced by @AGENTS.md) and, once a person approves it, or without one where [autonomy] instruction_files = "agent", rerun it with --write-instruction-files; when CLAUDE.md imports other files with @, setup proposes nothing and a person moves the shared instructions into AGENTS.md by hand |
+| `SIBLING_INSTRUCTIONS_MISSING` | a person writes AGENTS.md with what an agent must know to work in the repository, then runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> --write-instruction-files to add the CLAUDE.md that imports it |
 | `SIBLING_INSTRUCTIONS_TOOL_ONLY` | a person moves the instructions every tool needs from those files into AGENTS.md, and keeps only settings specific to one tool where they are |
 | `SIBLING_INSTRUCTIONS_UNLINKED` | a person merges the instructions every tool needs into AGENTS.md, then makes CLAUDE.md a line reading @AGENTS.md followed only by instructions that apply to Claude Code alone |
 | `SKILL_COMMAND_UNDECLARED` | [see above](#sibling-projection-and-skills) |
@@ -383,7 +383,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SURFACE_OWNERSHIP_INVALID` | [see above](#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [see above](#merge-ownership-and-generation) |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [see above](#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [see above](#merge-ownership-and-generation) |
@@ -394,15 +394,15 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SURFACE_WORKER_SIGNAL` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_WORKER_STDERR` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_WORKER_TIMEOUT` | [see above](#merge-ownership-and-generation) |
-| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
-| `TEST_GATE_UNSATISFIED` | the message gives the verdict and its reasons. FAIL: a check a stage ran failed, so fix the product. DEGRADED: start the stack with npx --no cockpit up --config <your cockpit.toml> for a stage that needs it, make a stage command that could not start runnable from the cockpit root, raise testing.stages[].timeout_seconds for a stage that timed out, or declare testing.stages[].select.<kind> for a --select a stage lacks. VOID: stop changing the checkouts and run the gate again. PARTIAL: only the complete gate can PASS, so run it without --select or --mode staged |
-| `UPGRADE_ALREADY_CURRENT` | nothing to upgrade; to move to another version name it: npx --no cockpit upgrade --config <your cockpit.toml> <version> |
-| `UPGRADE_INSTALL_FAILED` | fix what the package manager reported (is the version published?), then run npx --no cockpit upgrade --config <your cockpit.toml> <version> |
-| `UPGRADE_PACKAGE_MANAGER_UNKNOWN` | keep exactly one of package-lock.json, pnpm-lock.yaml or yarn.lock at the cockpit root and put its package manager (npm, pnpm or yarn) on PATH, then run npx --no cockpit upgrade --config <your cockpit.toml> |
-| `UPGRADE_REGISTRY_UNREACHABLE` | check the network, the registry login and that npm is on PATH, or name the version: npx --no cockpit upgrade --config <your cockpit.toml> <version> |
-| `UPGRADE_SYNC_FAILED` | act on what sync reported above or put npx on PATH, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> |
+| `TEST_GATE_UNSATISFIED` | the message gives the verdict and its reasons. FAIL: a check a stage ran failed, so fix the product. DEGRADED: start the stack with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml> for a stage that needs it, make a stage command that could not start runnable from the cockpit root, raise testing.stages[].timeout_seconds for a stage that timed out, or declare testing.stages[].select.<kind> for a --select a stage lacks. VOID: stop changing the checkouts and run the gate again. PARTIAL: only the complete gate can PASS, so run it without --select or --mode staged |
+| `UPGRADE_ALREADY_CURRENT` | nothing to upgrade; to move to another version name it: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version> |
+| `UPGRADE_INSTALL_FAILED` | fix what the package manager reported (is the version published?), then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version> |
+| `UPGRADE_PACKAGE_MANAGER_UNKNOWN` | keep exactly one of package-lock.json, pnpm-lock.yaml or yarn.lock at the cockpit root and put its package manager (npm, pnpm or yarn) on PATH, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> |
+| `UPGRADE_REGISTRY_UNREACHABLE` | check the network, the registry login and that npm is on PATH, or name the version: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version> |
+| `UPGRADE_SYNC_FAILED` | act on what sync reported above or put npx on PATH, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> |
 | `UPGRADE_VERSION_INVALID` | give a full version such as 1.2.3, not a range or tag |
-| `WORK_CHECK_FAILED` | read result.results: fix the product for a check that failed, make one that did not run runnable from the cockpit root, then rerun npx --no cockpit work check --config <your cockpit.toml> --work-order <id> |
+| `WORK_CHECK_FAILED` | read result.results: fix the product for a check that failed, make one that did not run runnable from the cockpit root, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work check --config <your cockpit.toml> --work-order <id> |
 | `WORK_PERSON_REQUIRED` | stop and ask a person to run the same command with --interactive in a terminal outside CI, read what it shows, and type the digest; never type it for them |
-| `WORK_VERIFY_FAILED` | for an order changed since acceptance, run npx --no cockpit work accept --config <your cockpit.toml> --work-order <id> or revert the change; for a done order without a passing grade, regrade it with work grade; for a decision record that is missing or no longer cites its order, restore it from git or put back its "Work order: <id>" line |
+| `WORK_VERIFY_FAILED` | for an order changed since acceptance, run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config <your cockpit.toml> --work-order <id> or revert the change; for a done order without a passing grade, regrade it with work grade; for a decision record that is missing or no longer cites its order, restore it from git or put back its "Work order: <id>" line |
 <!-- cockpit:diagnostic-index:end -->
