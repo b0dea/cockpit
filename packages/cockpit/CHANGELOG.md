@@ -13,6 +13,25 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.4
+
+### Patch Changes
+
+- ae67d7a: Correct the Varlock guidance with measured behaviour. `--redact-stdout` does not cover Varlock's own errors, which can print source lines and a failing resolver's command and stderr. Env files are evaluated when loaded, so a migrated value holding `$(...)` runs a command, even in double quotes; only single quotes keep it literal. Cockpit's schema probes already keep only key names and status, and their behaviour does not change.
+- ae67d7a: A refusal naming a stack's hold now says its process may only be unconfirmed, and asks you to check `ps -p` before the `kill` it suggests, because a pid can have been reused. Cleaning up an attempt also clears week-old socket files that a crash left in cockpit's private temporary directory.
+- 450ff5d: Fix races in fenced execution that could run a cancelled action or leave an attempt stuck on "repair required".
+  
+  - An executor that started late could still run its action after that attempt's cancellation was certified and cleaned up. It now refuses.
+  - A stop acknowledged before the action was released was dropped, so the action still ran. It now never starts.
+  - An attempt stayed stuck when its supervisor was killed for losing the marker race, when the executor died after publishing its marker, or when a marker landed although publishing it reported failure. Each of these now repairs normally.
+  - A second recoverer, or an executor that died late, could leave a marker the state inventory refuses. Neither does now.
+- ae67d7a: Publish new measurements in the capability matrix. Claude Code's committed and local `additionalDirectories` lists combine in a trusted workspace, so a worktree grant no longer needs a person. Claude Code, Codex and OpenCode each list the generated skills, and OpenCode lists the generated evaluator. Workspace trust does not make Claude Code load a sibling guide through `additionalDirectories`. OpenCode exits 0 with no failure when a plugin has a syntax error or throws, so a guard plugin that fails to load reports nothing.
+- ae67d7a: Say what a sandbox withholds. A `ps` that cannot report a process start now points at a sandbox, because macOS's Seatbelt refuses to run `/bin/ps`. With `[browser]` declared, `check` now reports an unreachable state root as `STATE_ROOT_UNAVAILABLE` rather than `SURFACE_INPUT_INVALID`. The setup procedure no longer says state is out of reach in Codex's sandbox when its directory can be granted alone, and it reports generated configuration, machine readiness, hook enforcement and live proof separately.
+- ae67d7a: Allow an existing private state directory to work under a narrowly scoped sandbox write grant
+  without also requiring writes to the home directory and other ancestors. Missing state directories
+  still require write access where creation starts, and unsafe ownership, symlinks and denied writes
+  remain refusals.
+
 ## 0.1.3
 
 ### Patch Changes
