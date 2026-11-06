@@ -62,14 +62,6 @@ export interface SelftestProbeSpecification {
     readonly sample: Readonly<{ skill: string; features: readonly ('name' | 'trigger' | 'body-load' | 'tools' | 'non-goals')[] }> | null
 }
 
-/** Legacy incomplete rows remain readable so an operator can replace or complete an older file. */
-export type SelftestProbeSpecificationDraft = Omit<SelftestProbeSpecification, 'invocation' | 'candidateCode' | 'brokenCode' | 'sample'> & Readonly<{
-    invocation: null
-    candidateCode: null
-    brokenCode: null
-    sample: Readonly<{ skill: string; features: null }> | null
-}>
-
 export interface PlannedSelftestProbe extends SelftestProbeSpecification {
     readonly cell: SelftestCellKey
     readonly entries: readonly SurfaceDesiredEntry[]
@@ -357,7 +349,7 @@ export function draftSurfaceSelftestSpecifications(
     projection: GeneratedSurfaceSelftestProjection,
     previous: readonly unknown[] = [],
 ): Readonly<{
-    specifications: readonly (SelftestProbeSpecificationDraft | SelftestProbeSpecification)[]
+    specifications: readonly SelftestProbeSpecification[]
     unprobeable: readonly SelftestCellKey[]
     carried: number
 }> | undefined {

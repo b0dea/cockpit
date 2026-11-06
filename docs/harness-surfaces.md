@@ -435,18 +435,30 @@ run, what it changes, what it must not do, its review requirements and a line ca
 refuses embedded decision logic, undeclared commands, missing tool equivalents, missing procedures,
 duplicate names, and skills over the always-loaded size limit.
 
-`selftest` currently measures native Codex instruction loading through `codex debug prompt-input`.
+`selftest` currently measures native Codex instruction loading through `codex debug prompt-input`
+(measured 2026-11-06 on Codex 0.167.0).
 It copies the exact generated `AGENTS.md` into a candidate directory and writes replacement
 instructions in a separate broken-control directory. Both use the native `AGENTS.md` filename.
 The validator checks the native structured input for each exact directory, the copied source digest,
 and the difference between the leaf controls while keeping inherited instructions identical.
-This establishes that instructions reached the tool, not that it obeys them.
+An empty `.git` directory above the controls ends Codex's `AGENTS.md` chain there, so the candidate
+has the instruction limit to itself, as the root file does in a session; on that version a
+32,000-byte guide loaded whole and a 40,000-byte one did not. A guide the tool cuts refuses the run.
+This establishes that instructions reached the tool, not that it obeys them. The tool's identity
+rests on the executable digest you approve: cockpit cannot tell that an approved file is really Codex.
+
+The two control streams hold every instruction the tool inherited, including your global ones. The
+output shows only their digest and size. The full streams stay in the run's transcript under the
+ignored `.cockpit/local/probes`, readable only by you; delete that directory when you no longer need
+the evidence. Credential-shaped text in a generated guide refuses the run, because evidence redacts
+it and the stored stream could no longer match the source.
 
 Other built-in capabilities remain explicitly `human_needed` with `native_protocol_unsupported`:
 no authenticated native selftest adapter has been established for those cells. Their rows do not
 execute any commands or request executable approval. This is a limitation of the selftest adapter,
 not a claim that the harness lacks the capability. In particular, native tool denials can leave the
-parent process successful, and Claude print mode can ignore malformed settings. Neither is evidence
+parent process successful, and Claude print mode can ignore malformed settings (both measured
+2026-11-06, on Claude Code 2.1.319 and, for denials, Codex 0.167.0). Neither is evidence
 that a generated guard failed or succeeded. Skills and generated guards need their own measured
 protocols; instruction loading does not establish skill parity or guard enforcement.
 

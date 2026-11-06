@@ -939,7 +939,7 @@ export function validateNativeInstructionPair(candidateOutput, brokenOutput, can
     if (!candidateBytes || candidateBytes === brokenBytes || !/^Cockpit selftest replacement control [a-f0-9]{24}\.\n$/.test(brokenBytes)
         || candidate === null || broken === null || !candidate.endsWith(candidateBytes) || !broken.endsWith(brokenBytes)
         || candidate.slice(0, -candidateBytes.length) !== broken.slice(0, -brokenBytes.length)) {
-        return 'native prompt-input did not independently load the exact candidate and replacement instructions at their control paths'
+        return 'native prompt-input did not independently load the exact candidate and replacement instructions at their control paths, or the tool cut the candidate at its instruction size limit'
     }
     return null
 }

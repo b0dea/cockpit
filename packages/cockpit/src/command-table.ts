@@ -155,7 +155,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     verdict: 'Under [work] grading = "self" or "subagent": met or unmet',
     with: 'With --scaffold-compose: backing services to add, from postgres and redis, separated by commas',
     'work-order': 'Work-order identifier',
-    'write-probe-specifications': 'Write a probe-specification file for the current manifest to this new path, with the probe fields left for you',
+    'write-probe-specifications': 'Write a probe-specification file for the current manifest to this new path, for you to review and approve',
     'write-instruction-pointers': 'Write the reviewed instruction links into opted-in sibling guides',
     'write-instruction-files': 'Write the reviewed AGENTS.md and CLAUDE.md changes that let every agent tool load a sibling\'s instructions',
 })

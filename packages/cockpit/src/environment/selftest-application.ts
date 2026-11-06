@@ -209,7 +209,7 @@ function causeSuffix(cause: string | undefined): string {
 function probeSpecificationsRefusal(reason: string): SurfaceSelftestCommandOutcome {
     return {
         kind: 'refusal', status: 2, code: 'SELFTEST_SOURCE_INVALID', reason,
-        fix: 'write a new file with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --write-probe-specifications <new file>, fill the fields it lists, then pass that file to --probe-specifications',
+        fix: 'write a new file with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --write-probe-specifications <new file>, review it, then pass that file to --probe-specifications',
     }
 }
 
@@ -387,6 +387,10 @@ async function writeControlPair(
 ): Promise<{ candidate: string; broken: string; candidateSha256: string; brokenSha256: string; brokenBytes: string } | undefined> {
     const native = probe.protocol === 'codex-prompt-input/v1'
     if (native) {
+        // Codex 0.167.0 on 2026-11-06 applied its instruction limit to the whole AGENTS.md chain up to the
+        // nearest .git. Under the cockpit root, a guide over half the limit cut its own copy, though a session
+        // loads the root file whole. This marker ends the chain here: 32,000 bytes then loaded, 40,000 did not.
+        await mkdir(join(directory, '.git'), { mode: 0o700 })
         await mkdir(join(directory, 'candidate'), { mode: 0o700 })
         await mkdir(join(directory, 'broken'), { mode: 0o700 })
     }
@@ -525,6 +529,10 @@ async function runEvidenceProbe(
         candidateControl: event(candidateCommand, native ? relative(root, dirname(controls.candidate)) : '.', candidate.outcome, candidateResult, candidateCode, native ? NATIVE_SELFTEST_STREAM_BYTES : STREAM_BYTES),
     }
     if (!events.version || !events.help || !events.brokenControl || !events.candidateControl) return undefined
+    if (native && validateNativeInstructionPair(events.candidateControl.stdout, events.brokenControl.stdout,
+        dirname(controls.candidate), dirname(controls.broken), selectedEntryBytes(probe)!, controls.brokenBytes)) {
+        return { probeFailure: 'the generated AGENTS.md holds credential-shaped text such as api_key=<value>, which evidence redacts, so the stored stream cannot match the source. Reword that text in the guide it came from, run sync, then rerun selftest' }
+    }
     const versionText = `${events.version.stdout} ${events.version.stderr}`.trim()
     const versionValue = native ? /^codex-cli (\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/.exec(events.version.stdout.trim())?.[1]
         : versionText.split(/\s+/).find(Boolean)
@@ -630,7 +638,7 @@ export async function runConfiguredSurfaceSelftestApplication(
         return {
             kind: 'refusal', status: 2, code: 'SELFTEST_SOURCE_INVALID',
             reason: `probe specification file ${artifactPath} was written for a different cockpit.toml or generated manifest`,
-            fix: 'write a new file that keeps the rows you filled for unchanged cells with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --write-probe-specifications <new file> --probe-specifications <this file>, fill the fields it lists, then pass the new file to --probe-specifications',
+            fix: 'write a new file that keeps the rows you filled for unchanged cells with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --write-probe-specifications <new file> --probe-specifications <this file>, review it, then pass the new file to --probe-specifications',
         }
     }
     const unfilled = unfilledSurfaceSelftestSpecifications(artifact.specifications)
@@ -638,7 +646,7 @@ export async function runConfiguredSurfaceSelftestApplication(
         return {
             kind: 'refusal', status: 2, code: 'SELFTEST_SOURCE_INVALID',
             reason: `probe specification file ${artifactPath} still has ${unfilled.length} row(s) with fields only a person can supply: ${unfilled.slice(0, 5).join('; ')}${unfilled.length > 5 ? `; and ${unfilled.length - 5} more` : ''}`,
-            fix: 'replace each null in the listed rows with the probe for that tool, then rerun selftest with the same file',
+            fix: 'write a new file with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --write-probe-specifications <new file>, whose rows need no filling, or replace each null in the listed rows with the probe for that tool',
         }
     }
     const specifications = artifact.specifications as readonly SelftestProbeSpecification[]
@@ -742,7 +750,6 @@ async function writeConfiguredSurfaceSelftestSpecifications(
     if (!draft) return refused('generated selftest projection is invalid')
     const { specifications, unprobeable, carried } = draft
     const destination = resolve(input.writeProbeSpecificationsPath)
-    const unfilled = unfilledSurfaceSelftestSpecifications(specifications)
     return {
         status: 0,
         diagnostics: unprobeable.map((cell) => ({
@@ -768,10 +775,21 @@ async function writeConfiguredSurfaceSelftestSpecifications(
                 carriedForward: `${carried} of ${specifications.length} row(s) kept unchanged from ${previousPath}; every other row is new or changed, or was not complete there`,
             }),
             fromYou: 'review the closed native protocol and commands; unsupported native cells remain human_needed. Previously filled legacy exact-code probes are preserved unchanged',
-            unfilled,
             then: cockpitCommand('selftest', { config: configPath, args: `--interactive --probe-specifications ${formatShellCommand([destination])}` }),
         },
     }
+}
+
+// A native prompt-input stream holds every instruction the tool inherited, including a person's global
+// ones, and is larger than the renderer shows, which would hide the summary. It stays in the private
+// transcript; the output keeps its digest and size.
+function withholdNativeStreams<T extends SelftestEvidenceBundle['records'][number]>(record: T): T {
+    if (record.kind !== 'evidence' || record.protocol !== 'codex-prompt-input/v1') return record
+    const withheld = (event: SelftestProbeEvent): SelftestProbeEvent => ({ ...event,
+        stdout: `[${Buffer.byteLength(event.stdout)} bytes withheld; see the transcript]`,
+        stderr: `[${Buffer.byteLength(event.stderr)} bytes withheld; see the transcript]` })
+    return { ...record, events: { ...record.events,
+        brokenControl: withheld(record.events.brokenControl), candidateControl: withheld(record.events.candidateControl) } }
 }
 
 export async function runConfiguredSurfaceSelftestOutcome(
@@ -784,16 +802,17 @@ export async function runConfiguredSurfaceSelftestOutcome(
         ...(requestExecutableApproval ? { requestExecutableApproval } : {}),
         ...(requestProbeSpecificationsApproval ? { requestProbeSpecificationsApproval } : {}),
     })
-    return outcome.kind === 'complete'
-        ? { status: 0, diagnostics: outcome.evidence.pending.map(row => ({ severity: 'warning' as const,
-            code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, message: `${surfaceSelftestCellLabel(row)} remains human_needed: ${row.operatorAction}`,
-            target: surfaceSelftestCellLabel(row),
-        })), result: { bundle: outcome.bundle, evidence: outcome.evidence,
-            summary: { measuredCells: outcome.evidence.evidence.length, pendingCells: outcome.evidence.pending.length,
-                pendingSkillReviews: outcome.evidence.skillReviews.filter(row => row.status === 'human_needed').length,
-                complete: outcome.evidence.pending.length === 0 && outcome.evidence.skillReviews.every(row => row.status === 'evidenced') } } }
-        : { status: 2, diagnostics: [{ severity: 'error', code: outcome.code, message: outcome.reason,
-            ...(outcome.fix ? { fix: outcome.fix } : {}) }], result: null }
+    if (outcome.kind !== 'complete') return { status: 2, diagnostics: [{ severity: 'error', code: outcome.code, message: outcome.reason,
+        ...(outcome.fix ? { fix: outcome.fix } : {}) }], result: null }
+    return { status: 0, diagnostics: outcome.evidence.pending.map(row => ({ severity: 'warning' as const,
+        code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, message: `${surfaceSelftestCellLabel(row)} remains human_needed: ${row.operatorAction}`,
+        target: surfaceSelftestCellLabel(row),
+    })), result: {
+        bundle: { ...outcome.bundle, records: outcome.bundle.records.map(withholdNativeStreams) },
+        evidence: { ...outcome.evidence, evidence: outcome.evidence.evidence.map(withholdNativeStreams) },
+        summary: { measuredCells: outcome.evidence.evidence.length, pendingCells: outcome.evidence.pending.length,
+            pendingSkillReviews: outcome.evidence.skillReviews.filter(row => row.status === 'human_needed').length,
+            complete: outcome.evidence.pending.length === 0 && outcome.evidence.skillReviews.every(row => row.status === 'evidenced') } } }
 }
 
 function selftestOperatorRefusal(message: string): SurfaceSelftestDispatchOutcome {
