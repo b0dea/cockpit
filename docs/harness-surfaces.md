@@ -129,10 +129,35 @@ machine (a Codex home exists); before that, no Codex session can skip the hook.
 ### Session-start drift check
 
 The generated `.claude/settings.json` and `.codex/hooks.json` register a `SessionStart` hook that
-runs `./node_modules/.bin/cockpit check --config cockpit.toml` in the cockpit root and prints the
-end of its report, so the agent sees drift and its fix before it works. It never blocks a session.
+runs the installed package's `node_modules/@b00dea/cockpit/bin/cockpit.mjs` entrypoint with `check`
+and the configured file's absolute path, then prints the end of its report. Missing configuration
+or dependencies produce recovery guidance before the first tool call. It never blocks a session.
 Codex runs it only once a person trusts it. OpenCode gets none: its plugins receive
 `session.created`, but no run has shown a plugin putting text in the agent's context.
+
+### Recover a missing guard
+
+A missing guard or machine-local guard identity holds guarded tool calls, including a sync or Git
+restore attempted through the agent. Recovery happens in a human terminal, outside that session.
+The message names the checkout and configured file it checked:
+
+- If the configuration is absent, return to the intended configured checkout/worktree and branch.
+  Local hook changes can survive a branch switch, whether the hook file is tracked or ignored.
+  When the intended branch has no cockpit, review the active hook source against that branch,
+  preserve a backup and the original native guards, and undo only the reviewed cockpit changes.
+  A Git restore is appropriate only for a tracked file whose branch version is the intended one;
+  preserve unrelated local hook changes. For Codex worktrees, review the
+  [hook source](#trust-the-codex-hook), which can differ from the session checkout.
+- If the configuration exists but the installed package is absent or incomplete, restore the
+  repository's pinned dependencies using its documented package-manager command and lockfile.
+  If that branch declares no cockpit dependency, return to the configured branch first. Retry
+  afterwards so the hook can name the installed sync command.
+- If the configuration and package entrypoint exist, the message prints the direct package command
+  with the exact configuration path. Run it in the human terminal and review regenerated files.
+
+Close and reopen the native agent session after restoring hook definitions or changing its
+checkout. An open session can keep a cached hook even after the file on disk is restored. Recovery
+does not require changing hook trust or removing native guards.
 
 ### Run cockpit outside the Codex sandbox
 
