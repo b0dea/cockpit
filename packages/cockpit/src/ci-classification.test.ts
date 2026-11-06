@@ -43,7 +43,8 @@ type Run = Readonly<{ sha: string; jobs: readonly { name: string; conclusion?: s
     event?: 'push' | 'pull_request'; branch?: string; base?: string; tree?: string }>
 const cellJobs = (cells: readonly string[], tree: string) => cells.map(cell => ({ name: `test (${cell}) tree ${tree}` }))
 const CI_OK = { name: 'ci-ok' }
-type Trees = { base: string; head: string; baseSha: string; headSha: string }
+/** The trees and commits of the last commit and its parent, and the first commit's when `before` puts one between them. */
+type Trees = { base: string; head: string; start: string; baseSha: string; headSha: string; startSha: string }
 
 type Scenario = Readonly<{
     changed: Record<string, string | null>
@@ -53,8 +54,6 @@ type Scenario = Readonly<{
     npm?: string
     /** Runs the API reports, from the base and head trees; `null` makes every API call fail. */
     runs?: ((trees: Trees) => readonly Run[]) | null
-    /** The heads of the pull requests that hold the last commit. */
-    pulls?: readonly string[]
     baseFiles?: Record<string, string>
     /** A commit between the base files and `changed`, so the last commit's parent is not the base. */
     before?: Record<string, string | null>
@@ -75,7 +74,9 @@ function scenario(options: Scenario) {
     write(options.baseFiles ?? BASE_FILES)
     if (options.before) write(options.before)
     write(options.changed)
-    const trees = { base: git('rev-parse', 'HEAD^^{tree}'), head: git('rev-parse', 'HEAD^{tree}'), baseSha: git('rev-parse', 'HEAD^'), headSha: git('rev-parse', 'HEAD') }
+    const startSha = git('rev-list', '--max-parents=0', 'HEAD')
+    const trees = { base: git('rev-parse', 'HEAD^^{tree}'), head: git('rev-parse', 'HEAD^{tree}'), start: git('rev-parse', `${startSha}^{tree}`),
+        baseSha: git('rev-parse', 'HEAD^'), headSha: git('rev-parse', 'HEAD'), startSha }
 
     const bin = scratch('bin')
     const fixtures = scratch('fixtures')
@@ -83,13 +84,12 @@ function scenario(options: Scenario) {
     writeFileSync(join(bin, 'npm'), options.npm ?? (published === null ? '#!/bin/sh\nexit 1\n' : `#!/bin/sh\necho ${published}\n`), { mode: 0o700 })
     // A path with no fixture fails like an unreachable API.
     writeFileSync(join(bin, 'gh'), `#!/bin/sh\nf="${fixtures}/$(printf '%s' "$2" | tr '/?&=' '____')"\n[ -f "$f" ] && exec cat "$f"\nexit 1\n`, { mode: 0o700 })
-    const fixture = (path: string, value: unknown) => writeFileSync(join(fixtures, path.replace(/[/?&=]/g, '_')), JSON.stringify(value))
+    const fixture = (path: string, value: unknown, directory = fixtures) => writeFileSync(join(directory, path.replace(/[/?&=]/g, '_')), JSON.stringify(value))
     if (options.runs !== null) {
         const runs = options.runs?.(trees) ?? []
-        const treeOf = (sha: string) => sha === trees.baseSha ? trees.base : sha === trees.headSha ? trees.head : undefined
+        const treeOf = (sha: string) => sha === trees.baseSha ? trees.base : sha === trees.headSha ? trees.head : trees.start
         fixture(`repos/${SLUG}`, { default_branch: 'main' })
-        for (const sha of [trees.baseSha, trees.headSha]) fixture(`repos/${SLUG}/commits/${sha}/pulls`, sha === trees.headSha ? (options.pulls ?? []).map(head => ({ head: { sha: head } })) : [])
-        for (const sha of new Set([trees.baseSha, trees.headSha, ...(options.pulls ?? [])])) {
+        for (const sha of new Set([trees.startSha, trees.baseSha, trees.headSha])) {
             fixture(`repos/${SLUG}/actions/workflows/ci.yml/runs?head_sha=${sha}&status=success&per_page=100`, { workflow_runs: runs.flatMap((run, index) => run.sha === sha ? [{
                 id: index + 1, path: run.path ?? '.github/workflows/ci.yml', conclusion: run.conclusion ?? 'success', head_repository: { full_name: run.repository ?? SLUG },
                 event: run.event ?? 'push', head_branch: run.branch ?? 'main', head_commit: { id: sha, tree_id: run.tree ?? treeOf(sha) },
@@ -98,7 +98,7 @@ function scenario(options: Scenario) {
         }
         runs.forEach((run, index) => fixture(`repos/${SLUG}/actions/runs/${index + 1}/jobs?per_page=100`, { jobs: run.jobs.map(job => ({ conclusion: 'success', ...job })) }))
     }
-    return { root, trees, env: { ...process.env, GITHUB_REPOSITORY: SLUG, PATH: `${bin}:${process.env.PATH}`, ...options.env } }
+    return { root, trees, bin, fixtures, fixture, env: { ...process.env, GITHUB_REPOSITORY: SLUG, PATH: `${bin}:${process.env.PATH}`, ...options.env } }
 }
 
 function classify(options: Scenario) {
@@ -138,8 +138,8 @@ describe('a version-only pull request', () => {
         ['the run that holds them failed', ({ base, baseSha }: { base: string; baseSha: string }) => [{ sha: baseSha, conclusion: 'failure', jobs: cellJobs([...LINUX, ...PLATFORMS], base) }]],
         ['the run came from a fork', ({ base, baseSha }: { base: string; baseSha: string }) => [{ sha: baseSha, repository: 'stranger/cockpit', jobs: cellJobs([...LINUX, ...PLATFORMS], base) }]],
         ['the run is another workflow', ({ base, baseSha }: { base: string; baseSha: string }) => [{ sha: baseSha, path: '.github/workflows/other.yml', jobs: cellJobs([...LINUX, ...PLATFORMS], base) }]],
-        // A branch's own ci.yml names its jobs, so only runs headed for the default branch count.
-        ['the run is a pull request into another base', ({ base, baseSha }: Trees) => [{ sha: baseSha, event: 'pull_request', base: 'scratch', jobs: cellJobs([...LINUX, ...PLATFORMS], base) }]],
+        // A branch's own ci.yml names its jobs, and which base a pull request run merged with cannot be proven once it closes.
+        ['the run is a pull request, even into the default branch', ({ base, baseSha }: Trees) => [{ sha: baseSha, event: 'pull_request', jobs: cellJobs([...LINUX, ...PLATFORMS], base) }]],
         ['the run is a push to another branch', ({ base, baseSha }: Trees) => [{ sha: baseSha, branch: 'scratch', jobs: cellJobs([...LINUX, ...PLATFORMS], base) }]],
         ['the API cannot answer', null],
     ] as const)('falls back to the full matrix when %s', (_name, runs) => {
@@ -199,8 +199,22 @@ describe('a push to main', () => {
             .toMatchObject({ code: 'false', cells: [] })
         expect(classify({ changed, env: push, runs: ({ head, headSha }) => [{ sha: headSha, jobs: cellJobs(LINUX, head) }] }))
             .toMatchObject({ code: 'true', cells: PLATFORMS })
-        expect(classify({ changed, env: push, pulls: ['d'.repeat(40)], runs: ({ head }) => [{ sha: 'd'.repeat(40), event: 'pull_request', jobs: cellJobs([...LINUX, ...PLATFORMS], head) }] }))
-            .toMatchObject({ code: 'false', cells: [] })
+    })
+
+    it('never counts a pull request run, even one into the default branch on this exact tree', () => {
+        expect(classify({ changed, env: push, runs: ({ head, headSha }) => [{ sha: headSha, event: 'pull_request', jobs: cellJobs([...LINUX, ...PLATFORMS], head) }] }))
+            .toMatchObject({ code: 'true', smoke: 'false', cells: [...LINUX, ...PLATFORMS] })
+    })
+
+    it('runs no cell for a version-only commit whose parent passed every cell, only the scope check and the package smoke', () => {
+        expect(classify({ changed: VERSION_BUMP, env: push, runs: everyCellPassedOnBase })).toMatchObject({ code: 'false', smoke: 'true', cells: [] })
+    })
+
+    // The last commit's parent was never pushed alone, so the earlier commit's evidence says nothing about it.
+    it('runs the missing cells for a push of several commits ending in a version bump', () => {
+        expect(classify({ before: changed, changed: VERSION_BUMP, env: push,
+            runs: ({ head, headSha, start, startSha }) => [{ sha: startSha, jobs: cellJobs([...LINUX, ...PLATFORMS], start) }, { sha: headSha, jobs: cellJobs(LINUX, head) }] }))
+            .toMatchObject({ code: 'true', smoke: 'false', cells: PLATFORMS })
     })
 
     it.each([
@@ -261,9 +275,9 @@ describe('the required check', () => {
         }
     })
 
-    it('runs the scope check on the short path and on the version branch whatever the diff holds', () => {
+    it('runs the scope check on the short path of a pull request or a push, and on the version branch whatever the diff holds', () => {
         const scope = /\n  version-pr-scope:\n(?<body>[\s\S]*?)\n {4}runs-on/.exec(workflow)?.groups?.body ?? ''
-        expect(scope).toContain("github.head_ref == 'changeset-release/main' || needs.changes.outputs.smoke == 'true'")
+        expect(scope).toContain("if: needs.changes.outputs.smoke == 'true' || (github.event_name == 'pull_request' && github.head_ref == 'changeset-release/main')")
     })
 })
 
@@ -275,16 +289,12 @@ describe('the release gate', () => {
     }
     const source = { 'src.ts': 'changed\n' }
 
-    const versionPull = 'd'.repeat(40)
-    // The Version Packages pull request's run, on a head whose tree is this commit's unless it says otherwise.
-    const pullRun = (overrides: Partial<Run> = {}) => ({ head }: Trees): Run => ({ sha: versionPull, event: 'pull_request', tree: head, jobs: [CI_OK], ...overrides })
-
     it.each([
         ['every cell and ci-ok passed on this tree', source, ({ head, headSha }: Trees) => [{ sha: headSha, jobs: [...cellJobs([...LINUX, ...PLATFORMS], head), CI_OK] }]],
-        ['this commit only moves the version, every cell passed on its parent, and ci-ok on its pull request head with this tree', VERSION_BUMP,
-            (trees: Trees) => [...everyCellPassedOnBase(trees), pullRun()(trees)]],
+        ['this commit only moves the version, every cell passed on its parent, and ci-ok on this commit', VERSION_BUMP,
+            (trees: Trees) => [...everyCellPassedOnBase(trees), { sha: trees.headSha, jobs: [CI_OK] }]],
     ] as const)('publishes when %s', (_name, changed, runs) => {
-        const ran = gate({ changed, pulls: [versionPull], runs: runs as never })
+        const ran = gate({ changed, runs: runs as never })
         expect(ran.status, ran.stderr).toBe(0)
     })
 
@@ -296,12 +306,28 @@ describe('the release gate', () => {
         ['the API cannot answer', VERSION_BUMP, null],
         // The cells do not hold the scope check, the package smoke, the scan or test protection.
         ['every cell passed on this tree but ci-ok failed', source, ({ head, headSha }: Trees) => [{ sha: headSha, jobs: [...cellJobs([...LINUX, ...PLATFORMS], head), { ...CI_OK, conclusion: 'failure' }] }]],
-        ['ci-ok passed only on a pull request head with another tree', VERSION_BUMP, (trees: Trees) => [...everyCellPassedOnBase(trees), pullRun({ tree: 'e'.repeat(40) })(trees)]],
-        ['ci-ok passed only in a pull request into another base', VERSION_BUMP, (trees: Trees) => [...everyCellPassedOnBase(trees), pullRun({ base: 'scratch' })(trees)]],
+        ['ci-ok passed only in a pull request run into the default branch on this commit', VERSION_BUMP,
+            (trees: Trees) => [...everyCellPassedOnBase(trees), { sha: trees.headSha, event: 'pull_request', jobs: [CI_OK] }]],
     ] as const)('refuses when %s', (_name, changed, runs) => {
-        const ran = gate({ changed, pulls: [versionPull], runs: runs as never })
+        const ran = gate({ changed, runs: runs as never })
         expect(ran.status).toBe(1)
         expect(ran.stderr).toContain('Refusing to publish')
+    })
+
+    // The release workflow starts beside this commit's own CI run, which is where its ci-ok comes from.
+    it('waits for this commit\'s CI run to finish before reading what passed', () => {
+        const { root, trees, env, bin, fixtures, fixture } = scenario({ changed: VERSION_BUMP, runs: everyCellPassedOnBase })
+        const pending = `repos/${SLUG}/actions/workflows/ci.yml/runs?head_sha=${trees.headSha}&event=push&per_page=100`
+        fixture(pending, { workflow_runs: [{ status: 'in_progress' }] })
+        const finished = scratch('finished')
+        fixture(pending, { workflow_runs: [{ status: 'completed' }] }, finished)
+        fixture(`repos/${SLUG}/actions/workflows/ci.yml/runs?head_sha=${trees.headSha}&status=success&per_page=100`, { workflow_runs: [{ id: 99, path: '.github/workflows/ci.yml',
+            conclusion: 'success', head_repository: { full_name: SLUG }, event: 'push', head_branch: 'main', head_commit: { id: trees.headSha, tree_id: trees.head } }] }, finished)
+        fixture(`repos/${SLUG}/actions/runs/99/jobs?per_page=100`, { jobs: [{ ...CI_OK, conclusion: 'success' }] }, finished)
+        // The run finishes while the gate sleeps.
+        writeFileSync(join(bin, 'sleep'), `#!/bin/sh\ncp ${finished}/* ${fixtures}/\n`, { mode: 0o700 })
+        const ran = spawnSync('bash', [join(REPOSITORY, '.github/scripts/release-gate.sh')], { cwd: root, encoding: 'utf8', env })
+        expect(ran.status, ran.stderr).toBe(0)
     })
 
     it('runs before the publish job, which cannot start without it', () => {
@@ -338,5 +364,38 @@ describe('the weekly run', () => {
     it('runs the upper edge of the Node range whatever the commit changed', () => {
         expect(classify({ changed: { 'README.md': 'changed\n' }, env: { EVENT_NAME: 'schedule', HEAD_REF: '' }, runs: null }))
             .toMatchObject({ code: 'true', cells: ['ubuntu-latest, node 26, full'] })
+    })
+})
+
+describe('the signature audit', () => {
+    const audit = (replies: readonly (readonly [number, string])[]) => {
+        const bin = scratch('audit')
+        const calls = join(bin, 'calls')
+        const cases = replies.map(([code, text], index) => `  ${index + 1}) echo '${text}'; exit ${code} ;;`).join('\n')
+        writeFileSync(join(bin, 'npm'), `#!/bin/sh\necho "$*" >> '${calls}'\ncase $(wc -l < '${calls}' | tr -d ' ') in\n${cases}\nesac\n`, { mode: 0o755 })
+        writeFileSync(join(bin, 'sleep'), '#!/bin/sh\n', { mode: 0o755 })
+        const result = spawnSync('bash', [join(REPOSITORY, '.github/scripts/audit-signatures.sh')],
+            { encoding: 'utf8', env: { PATH: `${bin}:${process.env.PATH}` } })
+        return { code: result.status, output: result.stdout, attempts: readFileSync(calls, 'utf8').trim().split('\n') }
+    }
+    const MISSING_KEY = [1, 'npm error code EMISSINGSIGNATUREKEY'] as const
+
+    it('passes when a missing-key report does not recur, and says it retried', () => {
+        const { code, output, attempts } = audit([MISSING_KEY, [0, 'all verified']])
+        expect(code).toBe(0)
+        expect(attempts).toEqual(['audit signatures --prefer-online', 'audit signatures --prefer-online'])
+        expect(output).toContain('::warning title=npm audit signatures::EMISSINGSIGNATUREKEY on attempt 1')
+    })
+
+    it('fails when the key stays missing', () => {
+        const { code, attempts } = audit([MISSING_KEY, MISSING_KEY, MISSING_KEY, [0, 'never reached']])
+        expect(code).toBe(1)
+        expect(attempts).toHaveLength(3)
+    })
+
+    it('fails at once on an invalid signature, without another attempt', () => {
+        const { code, attempts } = audit([[1, 'packages have invalid registry signatures'], [0, 'never reached']])
+        expect(code).toBe(1)
+        expect(attempts).toHaveLength(1)
     })
 })

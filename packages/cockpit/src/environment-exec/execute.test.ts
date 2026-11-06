@@ -1,7 +1,8 @@
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs'
 import { chmodSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { execFileSync, spawn } from 'node:child_process'
+import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,6 +15,16 @@ import { cleanupFencedExecution, consumeFencedExecutionTermination, executeForeg
 // expect.poll's 1 s default failed these waits whenever a full suite shared the machine. The wait
 // matches the steps' own 10 s bound.
 const PROCESS_START_POLL = { timeout: 10_000 }
+
+const failure = vi.hoisted(() => ({ preparedMarkerUnlink: false }))
+vi.mock('node:fs/promises', async original => {
+    const actual = await original<typeof import('node:fs/promises')>()
+    return { ...actual, unlink: (path: Parameters<typeof actual.unlink>[0]) => {
+        if (!failure.preparedMarkerUnlink || !String(path).endsWith('.prepared')) return actual.unlink(path)
+        failure.preparedMarkerUnlink = false
+        return Promise.reject(Object.assign(new Error('synthetic unlink failure'), { code: 'EIO' }))
+    } }
+})
 
 const nodeStep = (id: string, script: string, overrides: Partial<ExecutionStep> = {}): ExecutionStep => ({
     id, argv: [process.execPath, '-e', script], argv0: process.execPath, cwd: process.cwd(), env: { PATH: process.env.PATH ?? '' },
@@ -110,6 +121,161 @@ describe('mechanical environment executor', () => {
         expect(repaired.kind).toBe('complete')
         expect(outcome).toMatchObject({ kind: 'refusal', execution: { started: false } })
         expect(existsSync(effect)).toBe(false)
+    })
+
+    // A slow marker fsync lets the supervisor bind its socket before repair looks for it. The
+    // supervisor is then killed for losing the marker race and cannot remove that socket itself.
+    it('leaves a cancelled attempt repairable after the supervisor that lost the marker race is killed', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-lost-race-'))
+        scratch.push(directory)
+        const attemptId = sha256(directory)
+        const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+        const fence = { attemptId, markerPath: join(directory, 'executor.json'), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
+        const effect = join(directory, 'effect')
+
+        expect((await repairFencedExecution(fence)).kind).toBe('complete')
+        const outcome = await executeProbe(nodeStep('fenced-lost-race',
+            `require('node:fs').writeFileSync(${JSON.stringify(effect)}, 'started')`, { executionFence: fence }))
+
+        expect(outcome).toMatchObject({ kind: 'refusal', execution: { started: false } })
+        expect(existsSync(effect)).toBe(false)
+        expect(existsSync(fence.socketPath)).toBe(false)
+        expect((await repairFencedExecution(fence)).kind).toBe('complete')
+        await expect(cleanupFencedExecution(fence)).resolves.toBe(true)
+    })
+
+    it('leaves no way to start an attempt whose cancellation was already certified and cleaned up', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-late-executor-'))
+        scratch.push(directory)
+        const attemptId = sha256(directory)
+        const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+        const fence = { attemptId, markerPath: join(directory, 'executor.json'), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
+        const effect = join(directory, 'effect')
+
+        expect((await repairFencedExecution(fence)).kind).toBe('complete')
+        await expect(cleanupFencedExecution(fence)).resolves.toBe(true)
+        expect(existsSync(fence.markerPath)).toBe(false)
+        const outcome = await executeProbe(nodeStep('fenced-late-executor',
+            `require('node:fs').writeFileSync(${JSON.stringify(effect)}, 'started')`, { executionFence: fence }))
+
+        expect(outcome).toMatchObject({ kind: 'refusal', execution: { started: false } })
+        expect(existsSync(effect)).toBe(false)
+        // The inventory scan refuses a marker no attempt names, so the late executor must not leave one.
+        expect(existsSync(fence.markerPath)).toBe(false)
+        expect(existsSync(fence.socketPath)).toBe(false)
+    })
+
+    it('retires a marker that landed although publishing it reported failure', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-landed-marker-'))
+        scratch.push(directory)
+        const attemptId = sha256(directory)
+        const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+        const fence = { attemptId, markerPath: join(directory, 'executor.json'), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
+        const effect = join(directory, 'effect')
+
+        failure.preparedMarkerUnlink = true
+        const outcome = await executeProbe(nodeStep('fenced-landed-marker',
+            `require('node:fs').writeFileSync(${JSON.stringify(effect)}, 'started')`, { executionFence: fence }))
+            .finally(() => { failure.preparedMarkerUnlink = false })
+
+        expect(outcome).toMatchObject({ kind: 'refusal', execution: { started: false } })
+        expect(existsSync(effect)).toBe(false)
+        expect((await repairFencedExecution(fence)).kind).toBe('complete')
+        await expect(cleanupFencedExecution(fence)).resolves.toBe(true)
+        // The state scan refuses any entry it cannot name, so nothing of the fence may stay behind.
+        expect(readdirSync(directory)).toEqual([])
+    })
+
+    it.each(['cancelled', 'terminated'] as const)('does not recreate the marker of a %s attempt that another recoverer already cleaned up', async status => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-second-recoverer-'))
+        scratch.push(directory)
+        const attemptId = sha256(directory)
+        const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+        const fence = { attemptId, markerPath: join(directory, 'executor.json'), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
+
+        if (status === 'terminated') {
+            expect(await executeProbe(nodeStep('fenced-second-recoverer', 'process.exit(0)', { executionFence: fence }))).toMatchObject({ kind: 'complete' })
+        } else expect((await repairFencedExecution(fence)).kind).toBe('complete')
+        await expect(cleanupFencedExecution(fence)).resolves.toBe(true)
+
+        expect((await repairFencedExecution(fence)).kind).toBe('complete')
+        expect(existsSync(fence.markerPath)).toBe(false)
+    })
+
+    describe('a supervisor whose action is not released yet', () => {
+        const startSupervisor = async (prefix: string) => {
+            const directory = mkdtempSync(join(tmpdir(), prefix))
+            scratch.push(directory)
+            const attemptId = sha256(directory)
+            const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+            mkdirSync(socketRoot, { recursive: true, mode: 0o700 })
+            const fence = { attemptId, markerPath: join(directory, 'executor.json'), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
+            const effect = join(directory, 'effect')
+            const config = Buffer.from(JSON.stringify({
+                command: process.execPath, args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(effect)}, 'started')`],
+                argv0: process.execPath, cwd: directory, fence,
+            })).toString('base64url')
+            const supervisor = spawn(process.execPath,
+                ['--', fileURLToPath(new URL('../../libexec/fenced-supervisor.cjs', import.meta.url)), config],
+                { cwd: directory, detached: true, stdio: ['pipe', 'ignore', 'ignore', 'pipe'] })
+            const closed = new Promise<void>(resolve => supervisor.once('close', () => resolve()))
+            const control = { text: '' }
+            const controlStream = supervisor.stdio[3] as NodeJS.ReadableStream
+            controlStream.setEncoding('utf8')
+            controlStream.on('data', (chunk: string) => { control.text += chunk })
+            await expect.poll(() => control.text, PROCESS_START_POLL).toBe('READY\n')
+
+            writeFileSync(fence.markerPath, '')
+            const marker = lstatSync(fence.markerPath, { bigint: true })
+            const parent = lstatSync(directory, { bigint: true })
+            const identity = [marker.dev, marker.ino, parent.dev, parent.ino].map(String)
+            writeFileSync(fence.markerPath, `${JSON.stringify({
+                format: 'cockpit-executor/v1', attemptId, supervisorPid: supervisor.pid, status: 'active',
+                markerDev: identity[0], markerIno: identity[1], parentDev: identity[2], parentIno: identity[3],
+            })}\n`)
+            return { fence, effect, supervisor, closed, control, release: `GO ${attemptId} ${identity.join(' ')}\n` }
+        }
+
+        it('honours a stop acknowledged before the release line, so the action never starts', async () => {
+            const { fence, effect, supervisor, closed, control, release } = await startSupervisor('cockpit-fenced-early-stop-')
+            const reply = await new Promise<string>((resolve, reject) => {
+                let input = ''
+                const socket = createConnection(fence.socketPath, () => socket.write(`${fence.attemptId}\n`))
+                socket.setEncoding('utf8')
+                socket.on('data', chunk => { input += chunk })
+                socket.once('error', reject)
+                socket.once('close', () => resolve(input))
+            })
+            expect(JSON.parse(reply)).toEqual({ attemptId: fence.attemptId, supervisorPid: supervisor.pid })
+            supervisor.stdin?.end(release)
+            await closed
+
+            expect(existsSync(effect)).toBe(false)
+            expect(control.text).toBe('READY\nEXPIRED\n')
+            expect((await repairFencedExecution(fence)).kind).toBe('complete')
+        })
+
+        it('stays repairable when the executor dies after publishing its marker', async () => {
+            const { fence, effect, supervisor, closed } = await startSupervisor('cockpit-fenced-dead-executor-')
+            supervisor.stdin?.end()
+            await closed
+
+            expect(existsSync(effect)).toBe(false)
+            expect(existsSync(fence.socketPath)).toBe(false)
+            expect((await repairFencedExecution(fence)).kind).toBe('complete')
+            await expect(cleanupFencedExecution(fence)).resolves.toBe(true)
+        })
+
+        it('removes its own marker when the executor dies on an attempt already cleaned up', async () => {
+            const { fence, effect, supervisor, closed } = await startSupervisor('cockpit-fenced-dead-late-executor-')
+            writeFileSync(`${fence.socketPath}.settled`, '')
+            supervisor.stdin?.end()
+            await closed
+
+            expect(existsSync(effect)).toBe(false)
+            expect(existsSync(fence.markerPath)).toBe(false)
+            expect(existsSync(fence.socketPath)).toBe(false)
+        })
     })
 
     it.each(['parent', 'supervisor', 'runner'] as const)(

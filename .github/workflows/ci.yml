@@ -32,19 +32,18 @@ jobs:
   # Decides which heavy jobs a change needs, inside the workflow. A workflow-level paths-ignore
   # would leave required checks pending forever on docs-only pull requests.
   #
-  # Each cell runs once per tree where it can still count. Pull requests run the Linux cells. A push
-  # to main runs what has not passed on its exact tree, which is usually the macOS and Node line
-  # cells, since a pull request does not run them. A version-only pull request whose base has passed
-  # every cell runs the scope check and the package smoke instead; that is how a failure of those
-  # main cells stops a release, because a missing cell sends the pull request to the full matrix.
+  # Only runs of pushes to main count as evidence that a cell passed. Pull requests run the Linux
+  # cells. A push to main runs what has not passed on its exact tree, which is every cell unless a run
+  # of that commit already passed some. A version-only change whose parent passed every cell, as a
+  # pull request or as the push that merges it, runs the scope check and the package smoke instead;
+  # that is how a failure on main stops a release, because a missing cell sends it to the full matrix.
   changes:
     name: classify changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
-      actions: read        # which cells passed on which tree
-      pull-requests: read  # the pull request heads of a commit
+      actions: read  # which cells passed on which tree
     outputs:
       code: ${{ steps.classify.outputs.code }}
       lockfile: ${{ steps.classify.outputs.lockfile }}
@@ -107,14 +106,19 @@ jobs:
             code=true
             cells="$weekly_cells"
           elif [[ "$EVENT_NAME" == push ]]; then
-            # A push to main cannot stop a publish: the release workflow runs beside this one. Its
-            # cells count through the Version Packages pull request and the release gate, which read
-            # them. The diff decides nothing here: a push can carry several commits, and a newer push
-            # cancels the run of the one before it, so the last commit's diff does not say what was
-            # tested. A cell is skipped only when it passed on this exact tree.
-            missing="$(missing_cells "$(git rev-parse HEAD)" "$tree")"
-            if [[ "$missing" == *linux* ]]; then cells="$linux_cells"; fi
-            if [[ "$missing" == *platforms* ]]; then cells="${cells:+$cells,}$platform_cells"; fi
+            # A push to main cannot stop a publish: the release workflow runs beside this one, and its
+            # gate reads what this run passed. The last commit's diff alone says nothing about what was
+            # tested: a push can carry several commits, and a newer push cancels the run of the one
+            # before it. So a version-only commit skips the cells only when its parent passed every
+            # cell in its own push, which a commit inside a multi-commit push never did; anything else
+            # skips a cell only when it passed on this exact tree.
+            if version_only && [[ "$(missing_cells "$(git rev-parse HEAD^1)" "$(git rev-parse 'HEAD^1^{tree}')")" == none ]]; then
+              smoke=true
+            else
+              missing="$(missing_cells "$(git rev-parse HEAD)" "$tree")"
+              if [[ "$missing" == *linux* ]]; then cells="$linux_cells"; fi
+              if [[ "$missing" == *platforms* ]]; then cells="${cells:+$cells,}$platform_cells"; fi
+            fi
             code=false
             if [[ -n "$cells" ]]; then code=true; fi
           else
@@ -295,10 +299,8 @@ jobs:
         run: npm run lint:supply-chain
       - if: matrix.extras
         run: node scripts/supply-chain-check.ts --sbom "$RUNNER_TEMP/cockpit-sbom.cdx.json"
-      # Registry signatures and provenance attestations of every installed package: catches a
-      # tampered or unsigned tarball that the lockfile integrity hash alone would accept.
       - if: matrix.extras
-        run: npm audit signatures
+        run: bash .github/scripts/audit-signatures.sh
 
   test-protection:
     name: test protection
@@ -408,7 +410,7 @@ jobs:
   version-pr-scope:
     name: version pull request scope
     needs: changes
-    if: github.event_name == 'pull_request' && (github.head_ref == 'changeset-release/main' || needs.changes.outputs.smoke == 'true')
+    if: needs.changes.outputs.smoke == 'true' || (github.event_name == 'pull_request' && github.head_ref == 'changeset-release/main')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -416,7 +418,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The merge commit and its base parent: the pull request's change against main.
+          # The commit and its first parent: the pull request's merge against main, or the pushed commit.
           fetch-depth: 2
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -431,8 +433,8 @@ jobs:
           fi
           bash "$RUNNER_TEMP/check-version-pr-scope.sh" HEAD^1 HEAD
 
-  # Stands in for the test matrix on a version-only pull request, whose code already passed every
-  # cell on its base tree. The supply-chain checks read the lockfile and registry the bump changed.
+  # Stands in for the test matrix on a version-only change, whose code already passed every cell on
+  # its parent's tree. The supply-chain checks read the lockfile and registry the bump changed.
   package-smoke:
     name: package smoke
     needs: changes
@@ -453,7 +455,7 @@ jobs:
       - run: bash .github/scripts/package-smoke.sh
       - run: npm run lint:supply-chain
       - run: node scripts/supply-chain-check.ts --sbom "$RUNNER_TEMP/cockpit-sbom.cdx.json"
-      - run: npm audit signatures
+      - run: bash .github/scripts/audit-signatures.sh
 
   # Needs a public repository (or GitHub Advanced Security), so it skips itself in a private
   # repository instead of failing every dependency change there.
