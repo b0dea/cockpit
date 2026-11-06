@@ -37,7 +37,7 @@ ask when scope is missing or an exact preview still needs acceptance:
    marking it `"derived"`. Show every other proposal with the file it came from; it becomes an
    answer only on the human's word.
 5. Ask the human for the database and live vendor API hosts of every non-local environment
-   (production, staging, shared) for the `guards` answer; env templates give variable names only, and once a cockpit exists `npx --no cockpit env keys --config cockpit.toml` lists them.
+   (production, staging, shared) for the `guards` answer; env templates give variable names only, and once a cockpit exists `./node_modules/@b00dea/cockpit/bin/cockpit.mjs env keys --config cockpit.toml` lists them.
 6. Offer the human `work.grading` as a real choice with `init`'s proposal and reason: the grader is
    optional, and `off` is reasonable when tracking matters but grading is not wanted.
 7. "Use sensible defaults" covers `init` answers only, never another change inside a product
@@ -48,7 +48,7 @@ ask when scope is missing or an exact preview still needs acceptance:
    `environment.posture`, `testing`, `guards`, `work.grading`) lands under `unconfirmed` whatever the
    file says, and the stronger default holds until a person confirms it. End your report by telling
    the human to confirm each: delete its entry from `unconfirmed`, then run
-   `npx --no cockpit sync --config cockpit.toml --interactive` in a terminal outside the agent
+   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a terminal outside the agent
    (the confirm command refuses these).
 
 ## Install cockpit if it is missing
@@ -63,16 +63,16 @@ Done when the exact project-local executable lists the commands.
 3. Verify without permitting an implicit download:
 
    ```sh
-   ./node_modules/.bin/cockpit --help
+   ./node_modules/@b00dea/cockpit/bin/cockpit.mjs --help
    ```
 
 4. Every `init` below takes `--target <tool>`: replace `<tool>` with the target of the agent tool
    you are running in. For an instructions-only tool, follow
    the *Capability states* section of `./node_modules/@b00dea/cockpit/docs/harness-surfaces.md`.
 
-Run every command from the cockpit root through `./node_modules/.bin/cockpit`; if that file is
+Run every command from the cockpit root through `./node_modules/@b00dea/cockpit/bin/cockpit.mjs`; if that file is
 absent, stop and repair the project-local install. Read flags from
-`./node_modules/.bin/cockpit <command> --help`. In Codex's sandbox `check`, `sync --dry-run` and
+`./node_modules/@b00dea/cockpit/bin/cockpit.mjs <command> --help`. In Codex's sandbox `check`, `sync --dry-run` and
 `--help` run as it stands, unless `[browser]` is declared; other cockpit commands also need write
 access to the state root, the Docker socket, or on macOS `/bin/ps`, so ask the person to approve
 running them outside the sandbox, or to run them in a terminal. Pass `--json` and read `result`,
@@ -86,39 +86,39 @@ Look at the directory before asking. Several cases can apply; bootstrap first.
 | On disk | Do | Guide section |
 |---|---|---|
 | Inside an existing product repository (a Git checkout with a language manifest, Dockerfile or Compose file at its root) | A single repository gets an in-repo cockpit by default. If the human wants the cockpit in a folder of its own beside several repositories, put `cockpit.root = "dedicated"` in the answers file; never choose that for them. | *Chapter 1* and *The init interview* |
-| An empty directory, or only documents and decisions | Follow **Bootstrap** below. With no manifest, `init` builds a surfaces-only cockpit whose first sibling is the root itself (`dir = "."`, `mount = "none"`); the purpose comes from the human. Add each repository later with `./node_modules/.bin/cockpit sibling add <slug> --config cockpit.toml --create --purpose "<purpose>" --json` and hand the human its `result.publish.command` (`gh repo create`). | *The init interview* |
-| One or several repositories with services | From the directory that holds them, follow **Bootstrap** below: `./node_modules/.bin/cockpit init "$(pwd)" --target <tool> --json`, then the same command with `--accept-preview` and `--answers`, then with `--accept-defaults` as well. | *The init interview* |
-| Repositories scattered across the disk | Moving them is the human's call. Otherwise declare each with `./node_modules/.bin/cockpit sibling add <slug> --config cockpit.toml --from <path> --purpose "<purpose>" --json`, then run `./node_modules/.bin/cockpit setup --config cockpit.toml --json`. | *Other situations* |
+| An empty directory, or only documents and decisions | Follow **Bootstrap** below. With no manifest, `init` builds a surfaces-only cockpit whose first sibling is the root itself (`dir = "."`, `mount = "none"`); the purpose comes from the human. Add each repository later with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add <slug> --config cockpit.toml --create --purpose "<purpose>" --json` and hand the human its `result.publish.command` (`gh repo create`). | *The init interview* |
+| One or several repositories with services | From the directory that holds them, follow **Bootstrap** below: `./node_modules/@b00dea/cockpit/bin/cockpit.mjs init "$(pwd)" --target <tool> --json`, then the same command with `--accept-preview` and `--answers`, then with `--accept-defaults` as well. | *The init interview* |
+| Repositories scattered across the disk | Moving them is the human's call. Otherwise declare each with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add <slug> --config cockpit.toml --from <path> --purpose "<purpose>" --json`, then run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config cockpit.toml --json`. | *Other situations* |
 | An existing Compose file | Answer `environment.compose_files = ["compose.yml"]`. For a Compose file inside a product repository, declare that repository as a sibling and point `compose_files` at the file in its checkout. Ask the human for the `environment.machine` floors and the `environment.posture` (how the product is reached and signed into) that `init` asks next. | *Chapter 2* |
 | A service with no local setup | Follow **Create a local setup** below. | *Other situations* |
-| Committed `.claude/settings.json`, `.codex/config.toml` or `.codex/hooks.json` | `sync` refuses with `SURFACE_STATE_CONFLICT`. With the human's yes, run `./node_modules/.bin/cockpit sync --config cockpit.toml --adopt <path> --json`. | *Adopt existing agent settings* |
-| A repository joins or leaves an existing cockpit | Run `./node_modules/.bin/cockpit sibling add <slug> --config cockpit.toml` or `./node_modules/.bin/cockpit sibling remove <slug> --config cockpit.toml`, then `sync --dry-run`, `sync` and `check`. | *Add or remove a repository* |
+| Committed `.claude/settings.json`, `.codex/config.toml` or `.codex/hooks.json` | `sync` refuses with `SURFACE_STATE_CONFLICT`. With the human's yes, run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --adopt <path> --json`. | *Adopt existing agent settings* |
+| A repository joins or leaves an existing cockpit | Run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add <slug> --config cockpit.toml` or `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling remove <slug> --config cockpit.toml`, then `sync --dry-run`, `sync` and `check`. | *Add or remove a repository* |
 | A repository has dotenv files, environment templates or a `.env.schema` | Follow **Secret handling** below. | *Other situations* |
 
 ## After bootstrap
 
-Done when `./node_modules/.bin/cockpit check --config cockpit.toml --json` exits 0, where a
-runtime is declared `./node_modules/.bin/cockpit preflight --config cockpit.toml --json` passes,
-and every gap in `result.readiness` of `./node_modules/.bin/cockpit doctor --config cockpit.toml --json`
+Done when `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml --json` exits 0, where a
+runtime is declared `./node_modules/@b00dea/cockpit/bin/cockpit.mjs preflight --config cockpit.toml --json` passes,
+and every gap in `result.readiness` of `./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml --json`
 has been cleared or reported to the human.
 
 - **Before the first `up`**, run
-  `./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --json`.
+  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config cockpit.toml --image <local-image> --json`.
   It measures the local daemon `up` will use, can run for minutes with no progress output, records
   the result for this machine only and leaves `cockpit.toml` unchanged, so go straight on to `up`.
   The guide's *Chapter 2* says which runtimes are recognised.
-- **Daily:** `./node_modules/.bin/cockpit session --config cockpit.toml -- <agent command>`.
-  `./node_modules/.bin/cockpit sleep --config cockpit.toml` releases this checkout's hold.
-  `./node_modules/.bin/cockpit down --config cockpit.toml` removes its containers, keeping data
+- **Daily:** `./node_modules/@b00dea/cockpit/bin/cockpit.mjs session --config cockpit.toml -- <agent command>`.
+  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config cockpit.toml` releases this checkout's hold.
+  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config cockpit.toml` removes its containers, keeping data
   volumes, from the local Docker daemon fixed at the start of the run.
-- **Upgrade:** `./node_modules/.bin/cockpit upgrade --config cockpit.toml` does the move (`--dry-run`
+- **Upgrade:** `./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config cockpit.toml` does the move (`--dry-run`
   previews). By hand, install the new version, then run
-  `./node_modules/.bin/cockpit check --config cockpit.toml`,
-  `./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run` and
-  `./node_modules/.bin/cockpit sync --config cockpit.toml`. The guard trusts only the cockpit, Node
+  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml`,
+  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --dry-run` and
+  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. The guard trusts only the cockpit, Node
   and `cockpit.toml` it was generated for, so after an upgrade, a Node switch or a `cockpit.toml`
   edit it holds tool calls until the human runs
-  `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal. Guide: *Upgrade cockpit*.
+  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` in a terminal. Guide: *Upgrade cockpit*.
 
 ## Shipped procedure
 

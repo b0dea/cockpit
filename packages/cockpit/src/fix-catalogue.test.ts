@@ -273,7 +273,7 @@ describe('printed cockpit commands', () => {
             'packages/cockpit/surfaces/references/testing-tiers.md', 'docs/getting-started.md']))
         const sources = [...documents, ['examples/compose-first AGENTS.md as synced', await readFile(join(example, 'AGENTS.md'), 'utf8')] as const]
 
-        const prefix = /(?:npx --no |\.\/node_modules\/\.bin\/)cockpit(?![\w-])/g
+        const prefix = /(?:npx --no cockpit|\.\/node_modules\/(?:\.bin\/cockpit|@b00dea\/cockpit\/bin\/cockpit\.mjs))(?![\w.-])/g
         const printed: { at: string; command: string }[] = []
         const bare: string[] = []
         const unrunnable: string[] = []
@@ -308,7 +308,7 @@ describe('printed cockpit commands', () => {
             }
         }
         // These name the installed executable or the command line's shape, not a command to run.
-        const shapes = new Set(['./node_modules/.bin/cockpit', './node_modules/.bin/cockpit <command>', './node_modules/.bin/cockpit <command> --help', 'npx --no cockpit <command>'])
+        const shapes = new Set(['./node_modules/.bin/cockpit', './node_modules/.bin/cockpit <command>', './node_modules/@b00dea/cockpit/bin/cockpit.mjs', './node_modules/@b00dea/cockpit/bin/cockpit.mjs <command>', './node_modules/@b00dea/cockpit/bin/cockpit.mjs <command> --help', 'npx --no cockpit <command>'])
         const commands = [...new Map(printed.filter(row => !shapes.has(row.command)).map(row => [row.command, row])).values()]
         expect(commands.length).toBeGreaterThan(60)
         for (const name of shapes) expect(printed.map(row => row.command)).toContain(name)

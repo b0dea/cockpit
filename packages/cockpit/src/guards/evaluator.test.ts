@@ -594,6 +594,8 @@ describe('built-in read-only profile', () => {
             expect(decideLaunched(command, { ...launched(), cockpitLaunchers: [] }).decision, command).toBe('ask')
         }
         expect(decideLaunched('cockpit check', { ...launched(), cockpitLaunchers: [] }).reason).toContain('could not prove it starts the installed cockpit')
+        expect(decideLaunched('npx --no cockpit check', { ...launched(), cockpitLaunchers: [] }).reason)
+            .toContain('`./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml`')
         for (const command of [
             // Without --no, npx may download a package; any other npx option picks another package, command or shell.
             'npx cockpit doctor', 'npx --yes cockpit doctor', 'npx --no --package other cockpit doctor', 'npx --no -p other cockpit doctor',

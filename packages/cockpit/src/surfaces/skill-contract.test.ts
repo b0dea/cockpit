@@ -248,7 +248,7 @@ describe('shipped skill contract', () => {
             expect(fix).not.toContain('work intake')
             expect(fix).toContain('It needs no intake, draft, source audit or work-order file')
             expect(fix).toContain('Use the cockpit-work skill instead when someone else must certify the result')
-            const before = fix.indexOf('cockpit test-run --config cockpit.toml --gate')
+            const before = fix.indexOf('./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run --config cockpit.toml --gate')
             const edit = fix.indexOf('Then change the repository that owns the defect')
             expect(before).toBeGreaterThan(-1)
             expect(edit).toBeGreaterThan(before)
@@ -325,28 +325,29 @@ describe('shipped skill contract', () => {
         expect(body).toContain('prove the fix with the product\'s own test runner, and report that no gate graded it')
         expect(body).toContain('Is this a work order?')
         expect(body).toContain('Never type the digest yourself.')
-        expect(body).toContain('cockpit work accept --config cockpit.toml --work-order WO-001')
+        expect(body).toContain('./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config cockpit.toml --work-order WO-001')
         expect(body).toContain('## On drift')
         expect(body).toContain('commit it together with the guide change')
-        expect(body).toContain('cockpit test-run --config cockpit.toml --gate declared-gate-id')
+        expect(body).toContain('./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run --config cockpit.toml --gate declared-gate-id')
         const work = body.slice(body.indexOf('## Work'))
         expect(work).toContain('as the *Write a work order* section of `./node_modules/@b00dea/cockpit/docs/work-and-browser.md` shows')
         expect(work).toContain('reuse the planning skills the harness already has')
         expect(work).not.toContain("Run the harness's installed brainstorming and planning skills")
         const installedReview = work.indexOf("Run the harness's installed simplification and code-review skills")
         expect(installedReview).toBeGreaterThan(-1)
-        expect(work.indexOf('cockpit work grade')).toBeGreaterThan(installedReview)
+        expect(work.indexOf('./node_modules/@b00dea/cockpit/bin/cockpit.mjs work grade')).toBeGreaterThan(installedReview)
         expect(body).toContain('npm install --save-dev --save-exact @b00dea/cockpit@<version>')
         expect(body).not.toContain('`npm update` moves the pinned')
-        expect(body).toContain('cockpit sibling add billing --config cockpit.toml --from ../billing --purpose "<purpose>" --json')
-        expect(body).toContain('cockpit sibling add billing --config cockpit.toml --create --purpose "<purpose>" --json')
-        expect(body).toContain('cockpit sibling add billing --config cockpit.toml --remote <url> --purpose "<purpose>" --json')
+        expect(body).toContain('./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add billing --config cockpit.toml --from ../billing --purpose "<purpose>" --json')
+        expect(body).toContain('./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add billing --config cockpit.toml --create --purpose "<purpose>" --json')
+        expect(body).toContain('./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add billing --config cockpit.toml --remote <url> --purpose "<purpose>" --json')
         expect(body).toContain('Show the human the proposed sibling declaration before invoking the command')
         expect(body).toContain('The command writes cockpit.toml immediately; `--json` changes only its output format')
         // A new repository is a new directory the agent may write, so its sync is a person's; an added tool is not, so the agent runs it.
-        expect(body).toContain('Adding or removing a repository widens what agents may do (a new repository is a new directory they may write), so the hold names the sibling and a person runs `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal')
+        expect(body).toContain('Adding or removing a repository widens what agents may do (a new repository is a new directory they may write), so the hold names the sibling and a person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` in a terminal')
         expect(body).toContain('Adding a tool does not widen what agents may do, so you may run `tool add`')
         expect(body).not.toContain('until a person runs `./node_modules/.bin/cockpit down')
+        expect(body).not.toContain('until a person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs down')
         expect(body).not.toContain('--gate unit')
         expect(body).not.toContain('`work accept --interactive`')
         const explain = result.files.find(file => file.target === 'codexcli' && file.path === '.agents/skills/cockpit-explain/SKILL.md')
@@ -357,7 +358,7 @@ describe('shipped skill contract', () => {
         // Installing a release by hand makes the guard hold every agent call, so the sync that follows is a person's.
         const upgrade = body.slice(body.indexOf('## After upgrading cockpit'))
         const exactInstall = upgrade.indexOf('npm install --save-dev --save-exact @b00dea/cockpit@<version>')
-        const humanSync = upgrade.indexOf('a person runs `./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run` and then `./node_modules/.bin/cockpit sync --config cockpit.toml --interactive` in a terminal')
+        const humanSync = upgrade.indexOf('a person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --dry-run` and then `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a terminal')
         expect(exactInstall).toBeGreaterThan(-1)
         expect(humanSync).toBeGreaterThan(exactInstall)
         expect(explain?.bytes).toContain('This skill changes nothing.')
@@ -488,8 +489,8 @@ describe('shipped skill descriptions', () => {
             total += Buffer.byteLength(description)
         }
         const browser = await readFile(join(surfaceRoot, 'cockpit-browser.skill.md'), 'utf8')
-        expect(browser).toContain('cockpit browser drive --config cockpit.toml --json')
-        expect(browser).toContain('cockpit browser screenshot --config cockpit.toml --json')
+        expect(browser).toContain('./node_modules/@b00dea/cockpit/bin/cockpit.mjs browser drive --config cockpit.toml --json')
+        expect(browser).toContain('./node_modules/@b00dea/cockpit/bin/cockpit.mjs browser screenshot --config cockpit.toml --json')
         // Rendered frontmatter adds per-harness keys; the neutral descriptions alone must leave room for them.
         expect(total).toBeLessThan(8192 / 4)
     })
@@ -499,8 +500,8 @@ describe('shipped procedure commands', () => {
     it('routes every procedure command with its required source arguments', async () => {
         const procedure = procedureAssets.map(asset => asset.bytes).join('\n')
         // `<tool>` is the reader's own agent tool target; any valid one routes the same way.
-        const invocations = [...procedure.matchAll(/`\.\/node_modules\/\.bin\/cockpit ([^`]+)`/g)]
-            .map(match => match[1]!.replaceAll('<tool>', 'claudecode').split(' '))
+        const invocations = [...procedure.matchAll(/`\.\/node_modules\/(?:\.bin\/cockpit|@b00dea\/cockpit\/bin\/cockpit\.mjs) ([^`]+)`/g)]
+            .map(match => match[1]!.replaceAll('<tool>', 'claudecode').replaceAll('<reference>', 'app:.env.schema').split(' '))
         expect(invocations.length).toBeGreaterThanOrEqual(9)
         // The procedure is run by a person at a terminal; a CI runner's CI variable would make the
         // interactive sync step refuse, correctly, before routing.

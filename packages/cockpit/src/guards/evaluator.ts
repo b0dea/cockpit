@@ -189,7 +189,9 @@ const unavailable = (reason: string): GuardDecision => ({ decision: 'unavailable
 const ask = (reason: string): GuardDecision => ({ decision: 'ask', reason })
 const UNPROVEN_LAUNCHER = 'This cockpit command requires human approval: the guard could not prove it starts the installed cockpit. '
     + 'npx --no cockpit counts only from the cockpit root with no root .npmrc and no bin in the root package.json, and bare cockpit only when '
-    + 'the command search path finds the installed package; a path such as ./node_modules/.bin/cockpit counts whenever it resolves to the installed package.'
+    + 'the command search path finds the installed package. From the cockpit root, use the installed package entrypoint, for example '
+    + '`./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml`; it counts only when it resolves to the installed package. '
+    + 'pnpm writes node_modules/.bin/cockpit as a shell shim, which the guard cannot prove.'
 const deny = (reason: string): GuardDecision => ({ decision: 'deny', reason })
 // A refusal names the command it judged, so an agent can tell which part of a chain was refused.
 const named = (invocation: ParsedInvocation) => {

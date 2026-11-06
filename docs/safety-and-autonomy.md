@@ -276,7 +276,8 @@ invocation, which prompts, and none needs one. They count from the cockpit root 
 naming the configured `cockpit.toml`; `check`, `doctor` and help also count from any directory. Each
 spelling counts only where the guard proves it starts its own installed package:
 
-- a path such as `./node_modules/.bin/cockpit`, or one given to `node`, must resolve to it;
+- the installed entrypoint `./node_modules/@b00dea/cockpit/bin/cockpit.mjs`, a `.bin` symlink, or a
+  path given to `node` must resolve to it;
 - bare `cockpit` must be what the command search path finds first;
 - the npx spellings must run from the cockpit root with no root `.npmrc` and no `bin` or
   `directories.bin` in the root `package.json`, because npm would otherwise run that program or
@@ -288,7 +289,9 @@ Where npx cannot be proven, every npx spelling prompts, and Codex and OpenCode r
 path spelling still counts from the cockpit root. pnpm writes `node_modules/.bin/cockpit` as a shell
 shim neither can follow, so there the provable spelling is
 `./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml`. `doctor` reports this
-as `COCKPIT_LAUNCHER_UNPROVEN` and names which spelling it can prove. The guard does not check which
+as `COCKPIT_LAUNCHER_UNPROVEN` and names which spelling it can prove. Generated skills and the
+launcher refusal recommend the direct package entrypoint; replacing it with another executable
+still requires approval. The guard does not check which
 `npx` the search path finds: it assumes that program behaves as npm's own, as the version-manager
 and package-firewall shims that hand over to npm do.
 

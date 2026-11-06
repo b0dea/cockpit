@@ -160,8 +160,10 @@ user, so no committed path fits every clone.
 
 Claude Code's default mode runs no shell command without an allow rule, so the generated
 `.claude/settings.json` allows, by prefix, the cockpit commands the shipped skills tell an agent to
-run and the [guard admits](safety-and-autonomy.md#cockpit-commands-an-agent-can-run), spelled both
-as `npx --no cockpit <command>` and `./node_modules/.bin/cockpit <command>`. Commands that are
+run and the [guard admits](safety-and-autonomy.md#cockpit-commands-an-agent-can-run), spelled as
+`./node_modules/@b00dea/cockpit/bin/cockpit.mjs <command>`, `npx --no cockpit <command>` or
+`./node_modules/.bin/cockpit <command>`. The direct package entrypoint also works with pnpm;
+its `.bin` shell shim remains unproven by the guard. Commands that are
 always a person's, such as `init` and `sibling add`, have no rule. A command the policy decides,
 such as `sync`, has one: the guard hook still runs first, and its ask or deny wins. Claude Code
 ignores a project's allow rules until a person has trusted the workspace by starting Claude Code

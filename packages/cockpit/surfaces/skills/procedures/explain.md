@@ -10,10 +10,11 @@ budget: uncapped
 ## Running cockpit
 
 - Run every command from the cockpit root, the directory holding `cockpit.toml`, through the
-  project-local binary, for example `./node_modules/.bin/cockpit check --config cockpit.toml`.
-  `npx --no cockpit <command>` starts the same binary, but the path form still runs where the
-  guard cannot prove what npx starts. If the binary is missing, stop and ask the person to install cockpit; a
-  runner that downloads a package is never a substitute.
+  installed package entrypoint, for example `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml`.
+  This path resolves to the installed package even when pnpm writes a shell shim in `node_modules/.bin`.
+  `npx --no cockpit <command>` and the `.bin` launcher count only where the guard can prove they
+  start that same package. If the entrypoint is missing, stop and ask the person to install cockpit;
+  a runner that downloads a package is never a substitute.
 - Take flags from each command's `--help`. With `--json`, read `result`, `diagnostics[].code` and
   `invocation.exitCode`. Every diagnostic names its fix, and
   `./node_modules/@b00dea/cockpit/docs/troubleshooting.md` covers the codes that need more; the
@@ -23,7 +24,7 @@ budget: uncapped
   guarded tool call (a guard message saying so, `GUARD_AUTHORITY_UNAVAILABLE` or `GUARD_CONFIG_UNSYNCED`)
   follows any edit to `cockpit.toml` or reinstall of cockpit or Node. `GUARD_CONFIG_UNSYNCED` means
   the edit does not widen what agents may do, so run
-  `./node_modules/.bin/cockpit sync --config cockpit.toml` yourself where `[autonomy] sync =
+  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself where `[autonomy] sync =
   "agent"`; any other hold clears only when a person runs it in a terminal. A refused command is the
   person's to run: never reword, wrap or re-spell it to get past the guard.
 - In Codex's sandbox `check`, `sync --dry-run` and `--help` work as it stands, unless `[browser]` is
@@ -41,12 +42,12 @@ budget: uncapped
 You answer a question about this cockpit from what its commands report now, and change nothing.
 
 1. **Pick the command that answers the question**, and only that one:
-   `./node_modules/.bin/cockpit doctor --config cockpit.toml --json` for environment health, wiring
-   and readiness gaps; `./node_modules/.bin/cockpit check --config cockpit.toml --json` for generated
-   files that drift from `cockpit.toml`; `./node_modules/.bin/cockpit preflight --config cockpit.toml --json`
+   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml --json` for environment health, wiring
+   and readiness gaps; `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml --json` for generated
+   files that drift from `cockpit.toml`; `./node_modules/@b00dea/cockpit/bin/cockpit.mjs preflight --config cockpit.toml --json`
    for whether the environment passes the gate work needs;
-   `./node_modules/.bin/cockpit ps --config cockpit.toml --json` for which services of this
-   checkout's stack run; `./node_modules/.bin/cockpit stacks --config cockpit.toml --json` for every
+   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs ps --config cockpit.toml --json` for which services of this
+   checkout's stack run; `./node_modules/@b00dea/cockpit/bin/cockpit.mjs stacks --config cockpit.toml --json` for every
    stack on the machine. Run two only when the question spans them.
    A question about one diagnostic code, or a refusal the person pasted, may need no command: read
    what `./node_modules/@b00dea/cockpit/docs/troubleshooting.md` says about the code, and for a guard

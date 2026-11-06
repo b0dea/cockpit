@@ -10,7 +10,7 @@ description: "Use when what the running application shows must be checked or evi
 You look at the running product and report what you saw. You do not change code: a finding you fix
 yourself has nobody left to check it, so hand it to whoever owns the repository.
 
-Run cockpit from the cockpit root as `./node_modules/.bin/cockpit`, taking flags from each
+Run cockpit from the cockpit root as `./node_modules/@b00dea/cockpit/bin/cockpit.mjs`, taking flags from each
 command's `--help`. When the guard asks before a command, the person decides in Claude Code; Codex
 and OpenCode deny it instead, so hand the person the exact command to run in a terminal. In Codex's
 sandbox the browser commands cannot reach the stack: ask the person to approve running them outside
@@ -19,8 +19,8 @@ it.
 1. **Orient before driving.** Read `cockpit.toml` for the application entry points (the routes),
    `[browser.authentication]` (its policy and the saved sign-in state of each role) and
    `[browser.data]` (whether the data is seeded, restored, or reaches production). Run
-   `./node_modules/.bin/cockpit doctor --config cockpit.toml --json` and confirm the stack is up;
-   when it is down, start it with `./node_modules/.bin/cockpit up --config cockpit.toml` or report
+   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml --json` and confirm the stack is up;
+   when it is down, start it with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml` or report
    what stops it. A page that fails because the stack is down is not a finding, and neither is a
    refusal that says nothing answered at a URL (`ERR_CONNECTION_REFUSED`,
    `ERR_SOCKS_CONNECTION_FAILED`). Done when you can list the routes, the roles and the sign-in
@@ -30,9 +30,9 @@ it.
    then the routes that share its data. When the data is restored or reaches production, plan only
    actions that read; anything that submits, deletes or pays waits for the person's yes. Done when
    the list is written down before the first page opens.
-3. **Drive with the real commands.** `./node_modules/.bin/cockpit browser drive --config cockpit.toml --json`
+3. **Drive with the real commands.** `./node_modules/@b00dea/cockpit/bin/cockpit.mjs browser drive --config cockpit.toml --json`
    visits every declared route and
-   `./node_modules/.bin/cockpit browser screenshot --config cockpit.toml --json` captures each
+   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs browser screenshot --config cockpit.toml --json` captures each
    surface. Under real sign-in each run takes `--role <role>`, one of the roles
    `[browser.authentication]` saves state for; with sign-in bypassed or absent, pass no role. Where
    `[browser.data]` is not isolated, non-production and non-restored (or `request_preapproval` is
