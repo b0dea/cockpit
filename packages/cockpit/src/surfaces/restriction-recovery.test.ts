@@ -173,6 +173,8 @@ it('names no invented path and asks for the cockpit root when the hook finds no 
     expect(refused).toMatchObject({ status: 2, stdout: '' })
     expect(refused.stderr).toContain(`<cockpit checkout>/${configFile} is missing or unreadable`)
     expect(refused.stderr).not.toContain(` /${configFile}`)
+    expect(refused.stderr).toContain('cockpit restriction guard missing: <cockpit checkout>/.cockpit/guards/bash-guard.sh')
+    expect(refused.stderr).not.toContain(' /.cockpit/')
     expect(refused.stderr).toContain('start the agent from its cockpit root')
     expect(existsSync(join(root, 'injected'))).toBe(false)
 })
