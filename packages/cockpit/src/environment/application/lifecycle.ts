@@ -117,7 +117,7 @@ function machineFloorRefusal(failed: EnvironmentObservation): Extract<Environmen
                 : 'MACHINE_MEMORY_BELOW_FLOOR' satisfies typeof ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR,
         message: `the container runtime has ${measured}, below the ${declared} that environment.machine.${field} declares`,
         target: failed.source,
-        fix: 'give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry',
+        fix: 'give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>, then retry',
     }] }
 }
 
@@ -329,14 +329,14 @@ async function executeUpRound(
             if (leftClaim) {
                 return { kind: 'complete', result: lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
                     `this checkout still holds a claim on the stack down removed, left by an earlier command, so up cannot start it afresh; run \`${lifecycleSuggestion(context, 'down')}\` to release the claim, then \`${lifecycleSuggestion(context, 'up')}\``, context.stackId,
-                    'run npx --no cockpit down --config <your cockpit.toml> to release the claim, then npx --no cockpit up --config <your cockpit.toml>') }
+                    'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config <your cockpit.toml> to release the claim, then ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml>') }
             }
             if (!freshSoleHolder || !sourceCurrent || !currentProgress || 'status' in currentProgress
                 || !isDeepStrictEqual(currentProgress.record, stored.record)
                 || !await revalidatePortLeaseProjection({ projection: ports.projection, namespace: context.namespace })) {
                 return { kind: 'complete', result: lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
                     `completed teardown requires unchanged configuration, lifecycle progress and a fresh sole-holder claim; rerun \`${lifecycleSuggestion(context, 'up')}\``, context.stackId,
-                    'rerun npx --no cockpit up --config <your cockpit.toml> once nothing else is changing cockpit.toml or bringing the stack up') }
+                    'rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml> once nothing else is changing cockpit.toml or bringing the stack up') }
             }
         }
         const resetProgress = forceReset || teardownComplete
@@ -572,7 +572,7 @@ async function executeUpRound(
                 message: `the runtime took ${seconds(coldStartObservation.observed.value)} s to start its services, over the `
                     + `${seconds(coldStartObservation.expectation.value)} s that environment.machine.cold_start_seconds allows`,
                 target: coldStartObservation.source,
-                fix: 'make the services start faster, or raise environment.machine.cold_start_seconds in cockpit.toml above the measured time and run npx --no cockpit sync --config <your cockpit.toml>; then run npx --no cockpit down --config <your cockpit.toml> and npx --no cockpit up --config <your cockpit.toml>',
+                fix: 'make the services start faster, or raise environment.machine.cold_start_seconds in cockpit.toml above the measured time and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config <your cockpit.toml> and ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml>',
             }] } }
         }
         const coldStart = {
@@ -752,7 +752,7 @@ function sessionStackRetained(stackId: string) {
         code: 'SESSION_STACK_RETAINED' as const satisfies typeof ENVIRONMENT_CODES.SESSION_STACK_RETAINED,
         message: 'the session released its hold, and the stack keeps running because another holder, such as an earlier up from this checkout, still holds it',
         target: stackId,
-        fix: 'run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout\'s remaining hold',
+        fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config <your cockpit.toml> to release this checkout\'s remaining hold',
     }
 }
 

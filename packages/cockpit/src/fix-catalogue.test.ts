@@ -19,7 +19,7 @@ afterEach(async () => {
 
 describe('executable remedy catalogue', () => {
     const diagnostic = { severity: 'error' as const, code: 'GENERATED_ARTIFACT_DRIFT', message: 'Owned artifact differs',
-        target: 'compose.cockpit.yml', fix: 'run npx --no cockpit sync --config <your cockpit.toml>' }
+        target: 'compose.cockpit.yml', fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>' }
     const context = { resolvedConfigPath: '/workspace/cockpit.toml', generatedTargets: [diagnostic.target] }
 
     it('refuses unregistered guidance and unbound or unsafe command inputs', () => {
@@ -48,8 +48,8 @@ describe('executable remedy catalogue', () => {
         const admitted = admitDiagnosticFix(diagnostic, { ...context,
             resolvedConfigPath: "/workspace/a'$(echo injected);`id` config.toml" })
         expect(admitted).toEqual({
-            argv: ['npx', '--no', 'cockpit', 'sync', '--config', "/workspace/a'$(echo injected);`id` config.toml"],
-            command: "npx --no cockpit sync --config '/workspace/a'\"'\"'$(echo injected);`id` config.toml'",
+            argv: ['./node_modules/@b00dea/cockpit/bin/cockpit.mjs', 'sync', '--config', "/workspace/a'$(echo injected);`id` config.toml"],
+            command: "./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config '/workspace/a'\"'\"'$(echo injected);`id` config.toml'",
         })
     })
 
@@ -96,24 +96,19 @@ describe('executable remedy catalogue', () => {
         const failure = before.diagnostics.find(row => row.code === 'GENERATED_ARTIFACT_DRIFT')
         if (!failure) throw new Error('Synthetic fixture did not produce generated drift')
         const admitted = admitDiagnosticFix(failure, { resolvedConfigPath: configPath, generatedTargets: synced.result.paths })
-        expect(admitted?.argv).toEqual(['npx', '--no', 'cockpit', 'sync', '--config', configPath])
+        expect(admitted?.argv).toEqual(['./node_modules/@b00dea/cockpit/bin/cockpit.mjs', 'sync', '--config', configPath])
         if (!admitted) throw new Error('Catalogue did not admit the generated drift remedy')
 
-        const bin = join(root, 'bin')
-        await mkdir(bin)
-        const launcher = join(bin, 'cockpit')
+        const launcher = join(root, 'node_modules/@b00dea/cockpit/bin/cockpit.mjs')
+        await mkdir(join(root, 'node_modules/@b00dea/cockpit/bin'), { recursive: true })
         const cliUrl = pathToFileURL(resolve('packages/cockpit/src/cli.ts')).href
-        // Bind the installed executable name to the current source CLI, never to a user's installation.
-        await writeFile(launcher, `#!/usr/bin/env -S node --import tsx\nimport { runCli } from ${JSON.stringify(cliUrl)};\nprocess.exitCode = await runCli(process.argv.slice(2));\n`)
+        // Bind the installed entrypoint to this checkout's source CLI, never to a user's installation.
+        const loaderUrl = pathToFileURL(resolve('node_modules/tsx/dist/esm/api/index.mjs')).href
+        await writeFile(launcher, `#!/usr/bin/env node\nimport { tsImport } from ${JSON.stringify(loaderUrl)};\nconst { runCli } = await tsImport(${JSON.stringify(cliUrl)}, import.meta.url);\nprocess.exitCode = await runCli(process.argv.slice(2));\n`)
         await chmod(launcher, 0o755)
-        // The remedy runs through npx; this stand-in resolves only the cockpit bin, as npx does for a
-        // project that installs cockpit, without consulting the npm registry.
-        const npx = join(bin, 'npx')
-        await writeFile(npx, `#!/bin/sh\ntest "$1" = --no && test "$2" = cockpit || exit 64\nshift 2\nexec ${JSON.stringify(launcher)} "$@"\n`)
-        await chmod(npx, 0o755)
         const [executable, ...args] = admitted.argv
-        const executed = spawnSync(executable, args, { shell: false, cwd: resolve('.'), encoding: 'utf8',
-            env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH ?? ''}` } })
+        const executed = spawnSync(executable, args, { shell: false, cwd: root, encoding: 'utf8',
+            env: process.env })
         expect(executed.error).toBeUndefined()
         expect(executed.status, executed.stderr).toBe(0)
         // Human mode prints nothing: the invocation record belongs to the --json envelope, and the
@@ -131,13 +126,13 @@ describe('printed cockpit commands', () => {
     const VERBS = 'sibling add|sibling remove|runtime measure|setup|sync|check|confirm|selftest|up|sleep|session|down|reset|preflight|doctor|logs'
     // Every work, browser and test command reads --config too; they are spelled through their own owners, not cockpitCommand.
     const SCANNED = `${VERBS}|test-run|${commandGroups.map(group => `${group.name} [a-z][a-z-]*`).join('|')}`
-    const runnable = new RegExp(`(?:npx --no |\\./node_modules/\\.bin/)cockpit (${SCANNED})(?![\\w-])`, 'g')
+    const runnable = new RegExp(`(?:npx --no cockpit|\\./node_modules/(?:\\.bin/cockpit|@b00dea/cockpit/bin/cockpit\\.mjs)) (${SCANNED})(?![\\w-])`, 'g')
     const bare = new RegExp(`\\b(?:run|rerun|re-run)\\s+\`?cockpit (?:${SCANNED})(?![\\w-])`, 'gi')
     // A command ends at its closing quote or the prose around it.
     const commandEnd = /[`'";,)|\\]| then | to | and | or /
     // init takes no --config: it refuses without its root operand and --target, and a bare
     // `cockpit init <root>` is not on PATH for a dev-dependency install.
-    const runnableInit = /(?:npx --no |\.\/node_modules\/\.bin\/)cockpit init(?![\w-])/g
+    const runnableInit = /(?:npx --no cockpit|\.\/node_modules\/(?:\.bin\/cockpit|@b00dea\/cockpit\/bin\/cockpit\.mjs)) init(?![\w-])/g
     const bareInit = /(?<!npx --no |\.bin\/)\bcockpit init (?=[./<$])/g
     // npx reads a flag that directly follows the package name as its own, so `npx --no cockpit
     // --help` prints npm's help and `--version` npm's version.
@@ -154,9 +149,9 @@ describe('printed cockpit commands', () => {
             .test(before.slice(0, assignments.index)) ? 'a wrapper prefix' : undefined
     }
 
-    it('spell every configured command from npx itself, with no wrapper or environment prefix', () => {
+    it('spell every configured command from the installed package entrypoint, with no wrapper or environment prefix', () => {
         for (const verb of VERBS.split('|') as ConfiguredCommand[]) {
-            expect(cockpitCommand(verb, { config: '/synthetic/cockpit.toml' })).toMatch(new RegExp(`^npx --no cockpit ${verb} --config `))
+            expect(cockpitCommand(verb, { config: '/synthetic/cockpit.toml' })).toMatch(new RegExp(`^\\./node_modules/@b00dea/cockpit/bin/cockpit\\.mjs ${verb} --config `))
         }
         for (const [before, reason] of [['env -u DOCKER_CONTEXT ', 'a wrapper prefix'], ['run `env FOO=1 ', 'a wrapper prefix'],
             ['nohup ', 'a wrapper prefix'], ['DOCKER_CONTEXT="$(docker context show)" ', 'a substituted environment prefix'],
@@ -215,27 +210,27 @@ describe('printed cockpit commands', () => {
         const io = { stdout: { write: (chunk: string) => { stdout += chunk; return true } },
             stderr: { write: (chunk: string) => { stderr += chunk; return true } } }
         expect(await runCli(['up', '--config', configPath], io, {}, { env }), stderr).toBe(2)
-        const sync = `npx --no cockpit sync --config ${quoted}`
+        const sync = `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${quoted}`
         expect(stderr).toContain(sync)
         expect(await runCli(['up', '--config', configPath, '--json'], io, {}, { env })).toBe(2)
         expect(JSON.parse(stdout).guidance).toEqual([expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED', text: expect.stringContaining(sync) })])
-        const down = `npx --no cockpit down --config ${quoted}`
+        const down = `./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config ${quoted}`
         expect(renderHumanDiagnostics([{ severity: 'error', code: 'CLAIM_CO_TENANT', message: 'another holder owns the stack' }],
             undefined, { resolvedConfigPath: configPath, generatedTargets: [] })).toContain(down)
 
         const bin = join(root, 'bin')
         await mkdir(bin)
-        const launcher = join(bin, 'cockpit')
+        const launcher = join(root, 'node_modules/@b00dea/cockpit/bin/cockpit.mjs')
+        await mkdir(join(root, 'node_modules/@b00dea/cockpit/bin'), { recursive: true })
         const cliUrl = pathToFileURL(resolve('packages/cockpit/src/cli.ts')).href
-        await writeFile(launcher, `#!/usr/bin/env -S node --import tsx\nimport { runCli } from ${JSON.stringify(cliUrl)};\nprocess.exitCode = await runCli(process.argv.slice(2));\n`)
+        const loaderUrl = pathToFileURL(resolve('node_modules/tsx/dist/esm/api/index.mjs')).href
+        await writeFile(launcher, `#!/usr/bin/env node\nimport { tsImport } from ${JSON.stringify(loaderUrl)};\nconst { runCli } = await tsImport(${JSON.stringify(cliUrl)}, import.meta.url);\nprocess.exitCode = await runCli(process.argv.slice(2));\n`)
         await chmod(launcher, 0o755)
-        await writeFile(join(bin, 'npx'), `#!/bin/sh\ntest "$1" = --no && test "$2" = cockpit || exit 64\nshift 2\nexec ${JSON.stringify(launcher)} "$@"\n`)
-        await chmod(join(bin, 'npx'), 0o755)
         // Answers the context reads down makes to pin the active daemon; any other Docker call fails.
         await writeFile(join(bin, 'docker'), '#!/bin/sh\ntest "$1 $2" = "context show" && echo stand-in && exit 0\n'
             + 'test "$1 $2" = "context inspect" && echo unix:///synthetic/docker.sock && exit 0\nexit 1\n')
         await chmod(join(bin, 'docker'), 0o755)
-        const run = (command: string) => spawnSync('/bin/sh', ['-c', command], { cwd: resolve('.'), encoding: 'utf8',
+        const run = (command: string) => spawnSync('/bin/sh', ['-c', command], { cwd: root, encoding: 'utf8',
             env: { ...env, PATH: `${bin}${delimiter}${process.env.PATH ?? ''}` } })
 
         const synced = run(sync)
@@ -273,7 +268,7 @@ describe('printed cockpit commands', () => {
             'packages/cockpit/surfaces/references/testing-tiers.md', 'docs/getting-started.md']))
         const sources = [...documents, ['examples/compose-first AGENTS.md as synced', await readFile(join(example, 'AGENTS.md'), 'utf8')] as const]
 
-        const prefix = /(?:npx --no |\.\/node_modules\/\.bin\/)cockpit(?![\w-])/g
+        const prefix = /(?:npx --no cockpit|\.\/node_modules\/(?:\.bin\/cockpit|@b00dea\/cockpit\/bin\/cockpit\.mjs))(?![\w.-])/g
         const printed: { at: string; command: string }[] = []
         const bare: string[] = []
         const unrunnable: string[] = []
@@ -308,7 +303,7 @@ describe('printed cockpit commands', () => {
             }
         }
         // These name the installed executable or the command line's shape, not a command to run.
-        const shapes = new Set(['./node_modules/.bin/cockpit', './node_modules/.bin/cockpit <command>', './node_modules/.bin/cockpit <command> --help', 'npx --no cockpit <command>'])
+        const shapes = new Set(['./node_modules/.bin/cockpit', './node_modules/.bin/cockpit <command>', './node_modules/@b00dea/cockpit/bin/cockpit.mjs', './node_modules/@b00dea/cockpit/bin/cockpit.mjs <command>', './node_modules/@b00dea/cockpit/bin/cockpit.mjs <command> --help', 'npx --no cockpit <command>'])
         const commands = [...new Map(printed.filter(row => !shapes.has(row.command)).map(row => [row.command, row])).values()]
         expect(commands.length).toBeGreaterThan(60)
         for (const name of shapes) expect(printed.map(row => row.command)).toContain(name)

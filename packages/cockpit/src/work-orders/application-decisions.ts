@@ -28,7 +28,7 @@ export async function unresolvedDecisions(record: WorkRecord, composition: WorkA
     const rows: string[] = []
     for (const row of decisions(record)) {
         const name = `decision ${row.decision} (${row.title})`
-        if (!row.resolution) rows.push(`${name} is unresolved; run npx --no cockpit work decide --config <your cockpit.toml> --work-order ${record.id} --decision ${row.decision} --record, or with --none --reason "<why>"`)
+        if (!row.resolution) rows.push(`${name} is unresolved; run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work decide --config <your cockpit.toml> --work-order ${record.id} --decision ${row.decision} --record, or with --none --reason "<why>"`)
         else if (row.resolution.record) {
             const problem = recordProblem(await composition.readDocsFile(row.resolution.record), row.resolution.record, record.id, true)
             if (problem) rows.push(`${name}: ${problem}`)

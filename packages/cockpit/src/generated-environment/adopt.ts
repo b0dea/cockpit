@@ -49,7 +49,7 @@ function tomlFailure(error: unknown): string {
     return error instanceof TomlError ? `TOML error at line ${error.line}, column ${error.column}` : errorCause(error)
 }
 
-const ADOPT_BY_HAND_FIX = 'move the settings file to cockpit/adopted/<the same path>, add its [[surfaces.adopted]] row to cockpit.toml by hand with the fields the configuration reference lists, then run npx --no cockpit sync --config <your cockpit.toml>'
+const ADOPT_BY_HAND_FIX = 'move the settings file to cockpit/adopted/<the same path>, add its [[surfaces.adopted]] row to cockpit.toml by hand with the fields the configuration reference lists, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>'
 
 function adoptionTable(row: SurfaceAdoption): string {
     return [
@@ -86,14 +86,14 @@ async function candidate(
     const path = requested as AdoptableSurfacePath
     const destinationPath = adoptedCopyPath(path)
     if (adopted.has(path)) {
-        return refused('SURFACE_ADOPTION_REFUSED', `${path} is already adopted from ${destinationPath}. Delete the duplicate ${path} and run npx --no cockpit sync --config <your cockpit.toml>; its settings are kept in ${destinationPath}`, path)
+        return refused('SURFACE_ADOPTION_REFUSED', `${path} is already adopted from ${destinationPath}. Delete the duplicate ${path} and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; its settings are kept in ${destinationPath}`, path)
     }
     if (owned.has(path)) return refused('SURFACE_ADOPTION_REFUSED', `${path} is cockpit's own published output, not a team file; nothing to adopt`, path)
     const target = path
     const source = await readAnchoredFile(root, target, SURFACE_FILE_MAX_BYTES, node, adapters)
     if (source.kind === 'missing') return refused('SURFACE_ADOPTION_REFUSED', `${path} does not exist; there is nothing to adopt`, path)
     if (source.kind !== 'complete') {
-        return refused('SURFACE_ADOPTION_REFUSED', `${path} could not be read as one stable regular file no larger than ${SURFACE_FILE_MAX_BYTES} bytes. Replace links, special files, or oversized content with the plain settings file inside the cockpit root, then re-run npx --no cockpit sync --config <your cockpit.toml> --adopt ${path}`, path)
+        return refused('SURFACE_ADOPTION_REFUSED', `${path} could not be read as one stable regular file no larger than ${SURFACE_FILE_MAX_BYTES} bytes. Replace links, special files, or oversized content with the plain settings file inside the cockpit root, then re-run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --adopt ${path}`, path)
     }
     let text: string
     try { text = new TextDecoder('utf-8', { fatal: true }).decode(source.bytes) } catch {
@@ -103,7 +103,7 @@ async function candidate(
     const inspected = inspectAdoptedSettings(path, text, path)
     if (inspected.kind !== 'complete') return refused(inspected.diagnostic.code, inspected.diagnostic.message, inspected.diagnostic.target)
     const destination = await readAnchoredEntry(root, destinationPath, SURFACE_FILE_MAX_BYTES, node, adapters)
-    if (destination.kind === 'invalid') return refused('SURFACE_ADOPTION_REFUSED', `${destinationPath} could not be confirmed missing through plain directories inside the cockpit root. Remove links, special files, oversized files, or unstable entries on that path, then re-run npx --no cockpit sync --config <your cockpit.toml> --adopt ${path}`, path)
+    if (destination.kind === 'invalid') return refused('SURFACE_ADOPTION_REFUSED', `${destinationPath} could not be confirmed missing through plain directories inside the cockpit root. Remove links, special files, oversized files, or unstable entries on that path, then re-run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --adopt ${path}`, path)
     if (destination.kind !== 'missing') return refused('SURFACE_ADOPTION_REFUSED', `${destinationPath} already exists; move it aside before adopting ${path}`, destinationPath)
     return { path, target, destination: destinationPath, sha256: source.sha256 }
 }
@@ -246,7 +246,7 @@ export async function runSyncAdoption(
         }
         moved.push(item)
     }
-    const rerun = `npx --no cockpit sync --config <your cockpit.toml> ${input.adopt.map(path => `--adopt ${path}`).join(' ')}`
+    const rerun = `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> ${input.adopt.map(path => `--adopt ${path}`).join(' ')}`
     let written
     try {
         written = await writeVerifiedConfig({
@@ -260,7 +260,7 @@ export async function runSyncAdoption(
                     fix: `correct what the message names in cockpit.toml, then have a human approve ${rerun} again` }),
                 notExact: { message: 'recording the adoption would change more than the [[surfaces.adopted]] rows', fix: ADOPT_BY_HAND_FIX },
                 writtenMismatch: { message: 'the adoption was recorded, but re-reading cockpit.toml shows a further change',
-                    fix: 'review cockpit.toml for the change you did not make before running npx --no cockpit sync --config <your cockpit.toml>' },
+                    fix: 'review cockpit.toml for the change you did not make before running ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>' },
             },
         })
     } catch (error) {

@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -48,6 +49,22 @@ describe('init --scaffold-compose', () => {
         expect(renderComposeOwnership({ sources: [{ reference: 'compose.yml', source: await readFile(join(root, 'compose.yml'), 'utf8') }],
             stackId: `stack:${'a'.repeat(64)}`, cockpitId: `cockpit:scaffold:${'b'.repeat(64)}`, configSha256: 'c'.repeat(64),
             resettableVolumes: ['postgres-data', 'redis-data'] })).toMatchObject({ kind: 'complete' })
+    })
+
+    it('prints a resumable init command whose root remains one literal shell argument', async () => {
+        const parent = await app({})
+        const root = join(parent, "the team's $(printf injected); `printf injected`")
+        await mkdir(join(root, 'api'), { recursive: true })
+        await writeFile(join(root, 'api/Dockerfile'), 'FROM node:22-alpine\n')
+        const output = capture()
+        expect(await runCli(['init', root, '--scaffold-compose', 'api', '--port', '3000'], output.io as never)).toBe(0)
+        const launcher = './node_modules/@b00dea/cockpit/bin/cockpit.mjs'
+        const printed = output.output().stdout.split(`${launcher} init `)[1]?.split(' proposes compose_files')[0]
+        expect(printed).toBeDefined()
+        const executed = spawnSync('/bin/sh', ['-c', `cockpit() { printf '%s\\0' "$@"; }\n` +
+            `cockpit init ${printed!.replace('<tool>', 'codexcli')}`], { cwd: parent, encoding: 'utf8' })
+        expect(executed.status, executed.stderr).toBe(0)
+        expect(executed.stdout.split('\0').slice(0, -1)).toEqual(['init', root, '--target', 'codexcli'])
     })
 
     it('runs a package.json app on the stock Node image only with the command that starts it', async () => {

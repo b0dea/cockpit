@@ -451,7 +451,9 @@ it('consumes vendor and exact build/test authority through installed hook regist
     const original = await readFile(configPath, 'utf8')
     await writeFile(configPath, original.replace('api.vendor.example.test', 'replacement.vendor.example.test')
         .replace('build = [ "npm", "run", "build" ]\n', '').replace('"unit.test.ts" ]', '"other.test.ts" ]'))
-    expect(invoke('npm run build')).toMatchObject({ status: 2, stdout: '', stderr: expect.stringContaining(`Fix: a human must run \`npx --no cockpit sync --config ${await realpath(configPath)}\` in a terminal`) })
+    const held = invoke('npm run build')
+    expect(held).toMatchObject({ status: 2, stdout: '', stderr: expect.stringContaining('@b00dea/cockpit is not installed or is incomplete') })
+    expect(held.stderr).not.toContain('sync --config')
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
     expect(invoke('npm run build').stdout).toContain('permissionDecision":"ask')
     expect(invoke('npm test -- unit.test.ts').stdout).toContain('permissionDecision":"ask')
@@ -554,6 +556,48 @@ native_hooks = { install = "inspect" }
     await writeFile(bin, '#!/bin/sh\n', { mode: 0o755 })
     expect(decision('npx --no cockpit doctor --config cockpit.toml')).toBe('ask')
     expect(decision('./node_modules/.bin/cockpit doctor --config cockpit.toml')).toBe('ask')
+}, 120_000)
+
+it('emits path-proven launcher remedies for a pnpm-style install', async () => {
+    const { root, configPath } = await surfaceConsumer('launcher-guidance')
+    expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
+    await writeFile(join(root, 'app/package-lock.json'), '{}')
+    expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+    const settings = JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8'))
+    const hook = settings.hooks.PreToolUse.flatMap((row: { hooks: { command: string }[] }) => row.hooks)
+        .find((row: { command: string }) => row.command.includes('bash-guard.sh')).command as string
+    const invoke = (command: string) => {
+        const result = spawnSync('/bin/sh', ['-c', hook], {
+            cwd: root, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: root },
+            input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: root, tool_input: { command } }),
+        })
+        expect(result.status, result.stderr).toBe(0)
+        return result.stdout ? JSON.parse(result.stdout).hookSpecificOutput : { permissionDecision: 'allow' }
+    }
+    const launcher = fileURLToPath(new URL('../../bin/cockpit.mjs', import.meta.url))
+    await mkdir(join(root, 'node_modules/.bin'), { recursive: true })
+    await mkdir(join(root, 'node_modules/@b00dea'), { recursive: true })
+    await symlink(dirname(dirname(launcher)), join(root, 'node_modules/@b00dea/cockpit'))
+    await writeFile(join(root, 'node_modules/.bin/cockpit'),
+        '#!/bin/sh\nexec node "$(dirname "$0")/../@b00dea/cockpit/bin/cockpit.mjs" "$@"\n', { mode: 0o755 })
+    expect(invoke('npx --no cockpit check --config cockpit.toml').permissionDecision).toBe('ask')
+    expect(invoke('./node_modules/.bin/cockpit check --config cockpit.toml').permissionDecision).toBe('ask')
+    for (const procedure of ['setup', 'explain', 'fix', 'work']) {
+        const guidance = await readFile(join(root, `.agents/skills/cockpit-${procedure}/procedures/${procedure}.md`), 'utf8')
+        const command = guidance.match(/`([^`]+ check --config cockpit\.toml)`/)?.[1]
+        expect(command, procedure).toBeDefined()
+        expect(invoke(command!).permissionDecision, `${procedure}: ${command}`).toBe('allow')
+    }
+    const refused = invoke('npx --no cockpit check --config cockpit.toml')
+    const remedy = refused.permissionDecisionReason.match(/`([^`]+ check --config cockpit\.toml)`/)?.[1]
+    expect(remedy).toBe('./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml')
+    expect(invoke(remedy!).permissionDecision).toBe('allow')
+    expect(settings.permissions.allow).toContain('Bash(./node_modules/@b00dea/cockpit/bin/cockpit.mjs check *)')
+    // Substituting the package path is still unproven; guidance is not an authority grant.
+    await rm(join(root, 'node_modules/@b00dea/cockpit'))
+    await mkdir(join(root, 'node_modules/@b00dea/cockpit/bin'), { recursive: true })
+    await writeFile(join(root, 'node_modules/@b00dea/cockpit/bin/cockpit.mjs'), '#!/bin/sh\n', { mode: 0o755 })
+    expect(invoke(remedy!).permissionDecision).toBe('ask')
 }, 120_000)
 
 it('admits a writing sync, an applied reset and setup\'s sibling instruction writes unprompted where [autonomy] gives them to the agent', async () => {
@@ -674,7 +718,7 @@ describe('generated environment command', () => {
         await rm(join(absent.root, 'app'), { recursive: true })
         expect(await checkGeneratedEnvironment({ configPath: absent.configPath })).toMatchObject({ kind: 'refusal', diagnostics: [{
             code: 'SIBLING_MISSING', target: 'sibling:app', message: `sibling app is declared at ${join(absent.root, 'app')}, and nothing is there`,
-            fix: expect.stringContaining(`npx --no cockpit sibling add app --config ${absent.configPath} --remote <url>`),
+            fix: expect.stringContaining(`./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add app --config ${absent.configPath} --remote <url>`),
         }] })
 
         const partial = await consumer('partial')

@@ -257,7 +257,7 @@ describe('stale stack inputs', () => {
         expect(stale).toMatchObject({ code: 'STACK_INPUTS_CHANGED', severity: 'warning', target: 'sibling:app' })
         expect(stale!.message).toContain('package-lock.json (common lockfile names) changed')
         expect(stale!.message).toContain('db/migrations (rebuild_inputs) changed')
-        expect(stale!.fix).toContain('npx --no cockpit down')
+        expect(stale!.fix).toContain('./node_modules/@b00dea/cockpit/bin/cockpit.mjs down')
 
         await recordStackInputs(cockpit, config, await served(), { keepExisting: false })
         expect(await staleStackDiagnostics(cockpit, await served())).toEqual([])

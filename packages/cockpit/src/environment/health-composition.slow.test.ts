@@ -163,7 +163,7 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
 
         const preflight = await runPreflight({ configPath: candidate.configPath }, adapters)
         const doctor = await runDoctor({ configPath: candidate.configPath }, adapters)
-        const fix = `npx --no cockpit up --config ${candidate.configPath}`
+        const fix = `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config ${candidate.configPath}`
 
         expect(preflight).toMatchObject({ kind: 'blocked', status: 2, result: { verdict: 'fail' } })
         expect(doctor).toMatchObject({ kind: 'complete', status: 0, result: { verdict: 'fail' } })
@@ -226,7 +226,7 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
             expect(outcome.diagnostics[0]).toMatchObject({
                 severity: 'error', code: 'STACK_NOT_RUNNING', target: candidate.stack,
                 message: expect.stringContaining('is asleep'),
-                fix: `npx --no cockpit up --config ${candidate.configPath}`,
+                fix: `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config ${candidate.configPath}`,
             })
             expect(outcome.result.checks).toEqual(expect.arrayContaining([
                 expect.objectContaining({ code: 'MACHINE_MEMORY_BELOW_FLOOR', verdict: 'pass' }),
@@ -795,7 +795,7 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
                 reason: 'Runtime docker-desktop on daemon "docker-desktop" has not been measured on this machine (docker info: OperatingSystem "Docker Desktop", '
                     + `Name "docker-desktop", OSType "linux"; engine 27.1.2; host ${process.platform}; `
                     + `measured in ${join(candidate.namespace.root, 'machine', 'runtime-measurements.json')}: none). `
-                    + 'Measure it on this machine with: npx --no cockpit runtime measure --config <your cockpit.toml> --image <local-image>',
+                    + 'Measure it on this machine with: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config <your cockpit.toml> --image <local-image>',
             }),
         ]))
     })

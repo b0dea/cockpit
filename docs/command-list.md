@@ -20,7 +20,7 @@ This generated index is for users choosing the command that owns their next oper
 
 - `cockpit sync`: Write the Compose ownership override and agent files from cockpit.toml.
 - `cockpit check`: Report generated files that no longer match cockpit.toml.
-- `cockpit selftest`: Test whether agent tools enforce the generated controls.
+- `cockpit selftest`: Measure supported agent capabilities and report unverified cells.
 
 ## Run the stack
 

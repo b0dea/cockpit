@@ -88,7 +88,7 @@ export async function inspectSiblingInstructions(
         code: 'SIBLING_INSTRUCTIONS_AGENTS_ONLY' satisfies typeof ENVIRONMENT_CODES.SIBLING_INSTRUCTIONS_AGENTS_ONLY,
         message: `sibling ${repository.slug} has AGENTS.md but no CLAUDE.md, so Claude Code started there loads none of its instructions`,
         target,
-        fix: 'run npx --no cockpit setup --config <your cockpit.toml> to see the CLAUDE.md it proposes (one line, @AGENTS.md); once a person approves it, or without one where [autonomy] instruction_files = "agent", run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-files',
+        fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> to see the CLAUDE.md it proposes (one line, @AGENTS.md); once a person approves it, or without one where [autonomy] instruction_files = "agent", run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> --write-instruction-files',
     })
     if (classified.state === 'claude-only' && tools.includes('codexcli')) findings.push({
         severity: 'warning' as const,
@@ -97,7 +97,7 @@ export async function inspectSiblingInstructions(
         message: `sibling ${repository.slug} has CLAUDE.md but no AGENTS.md, so Codex started there loads none of its instructions`
             + (classified.claudeImports ? '; CLAUDE.md imports other files with @, which only Claude Code follows, so setup proposes no move' : ''),
         target,
-        fix: 'run npx --no cockpit setup --config <your cockpit.toml> to see the move it proposes (CLAUDE.md copied byte for byte to AGENTS.md, CLAUDE.md replaced by @AGENTS.md) and, once a person approves it, or without one where [autonomy] instruction_files = "agent", rerun it with --write-instruction-files; when CLAUDE.md imports other files with @, setup proposes nothing and a person moves the shared instructions into AGENTS.md by hand',
+        fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> to see the move it proposes (CLAUDE.md copied byte for byte to AGENTS.md, CLAUDE.md replaced by @AGENTS.md) and, once a person approves it, or without one where [autonomy] instruction_files = "agent", rerun it with --write-instruction-files; when CLAUDE.md imports other files with @, setup proposes nothing and a person moves the shared instructions into AGENTS.md by hand',
     })
     if (classified.state === 'unlinked' && claude && agentsReaders) findings.push({
         severity: 'warning' as const,
@@ -113,7 +113,7 @@ export async function inspectSiblingInstructions(
         code: 'SIBLING_INSTRUCTIONS_MISSING' satisfies typeof ENVIRONMENT_CODES.SIBLING_INSTRUCTIONS_MISSING,
         message: `sibling ${repository.slug} has neither AGENTS.md nor CLAUDE.md, so no agent tool started there loads instructions for it`,
         target,
-        fix: 'a person writes AGENTS.md with what an agent must know to work in the repository, then runs npx --no cockpit setup --config <your cockpit.toml> --write-instruction-files to add the CLAUDE.md that imports it',
+        fix: 'a person writes AGENTS.md with what an agent must know to work in the repository, then runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> --write-instruction-files to add the CLAUDE.md that imports it',
     })
     if (toolOnly.length > 0) findings.push({
         severity: 'warning' as const,

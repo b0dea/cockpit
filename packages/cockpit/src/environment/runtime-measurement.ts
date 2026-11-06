@@ -145,7 +145,7 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
             code: ENVIRONMENT_CODES.RUNTIME_IMAGE_UNAVAILABLE,
             message: `--image ${JSON.stringify(input.image)} is not a local image (${image.kind === 'complete' ? 'unexpected image ID' : image.detail}); the probe never pulls`,
             target: '--image',
-            fix: 'pull or build it first (docker pull <image>), then run npx --no cockpit runtime measure --config <your cockpit.toml> --image <image> again',
+            fix: 'pull or build it first (docker pull <image>), then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config <your cockpit.toml> --image <image> again',
         }] }
     }
 

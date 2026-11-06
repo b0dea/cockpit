@@ -145,16 +145,16 @@ export function workContext(composition: WorkApplicationComposition, operation: 
     const attemptCapRemedy = (orderId: string) => {
         const by = (gate: WorkGate, verb: string, command: string) => policy.gates[gate] === 'person' ? `a person ${verb} it with ${command} --interactive`
             : `${verb.replace(/s$/, '')} it with ${command}${policy.gates[gate] === 'ci' ? ', which the work verify job confirms in CI' : ''}`
-        return `${by('signoff', 'closes', `npx --no cockpit work signoff --config <your cockpit.toml> --work-order ${orderId} --partial|--abandon --note <why>`)}, `
-            + `or ${by('amend', 'amends', `an edit to workorders/${orderId}.md and npx --no cockpit work accept --config <your cockpit.toml> --work-order ${orderId}`)}`
+        return `${by('signoff', 'closes', `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work signoff --config <your cockpit.toml> --work-order ${orderId} --partial|--abandon --note <why>`)}, `
+            + `or ${by('amend', 'amends', `an edit to workorders/${orderId}.md and ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config <your cockpit.toml> --work-order ${orderId}`)}`
     }
     const current = async (orderId: string): Promise<Readonly<{ row: Observed; record: WorkRecord; order: WorkOrder }>> => {
         const row = await observe(orderId)
-        if (!row.record) throw new RefusalError(`${orderId} is not accepted yet; run npx --no cockpit work accept --config <your cockpit.toml> --work-order ${orderId}`)
+        if (!row.record) throw new RefusalError(`${orderId} is not accepted yet; run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config <your cockpit.toml> --work-order ${orderId}`)
         const state = displayState(row, attemptCap)
         if (TERMINAL.has(row.record.state)) throw new RefusalError(`${orderId} is closed (${row.record.state})`)
         if (state === 'stale') throw new RefusalError(`${orderId} changed since it was accepted${row.problems.length ? ` and does not parse: ${row.problems.join('; ')}` : ''}; `
-            + `run npx --no cockpit work accept --config <your cockpit.toml> --work-order ${orderId} to accept the change`)
+            + `run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config <your cockpit.toml> --work-order ${orderId} to accept the change`)
         if (state === 'blocked') throw new RefusalError(openQuestions(row.record).length
             ? `${orderId} has open question ${openQuestions(row.record).join(', ')}; it is answered with work answer`
             : `${orderId} reached the attempt cap (${composition.caps.attempts}); record the root cause with work note, then ${attemptCapRemedy(orderId)}`)

@@ -401,7 +401,7 @@ export function surfacePlanRefusal(prepared: PreparedEnvironment, diagnostic: Su
     }
     return adopted
         ? refuse(diagnostic.code, `${diagnostic.message}; ${adopted.path} is merged from ${adopted.source}`, diagnostic.target,
-            `make the change in ${adopted.source}, then ask the person who owns the cockpit before you delete ${adopted.path}, and run npx --no cockpit sync --config <your cockpit.toml>`)
+            `make the change in ${adopted.source}, then ask the person who owns the cockpit before you delete ${adopted.path}, and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>`)
         : refuse(diagnostic.code, diagnostic.message, diagnostic.target, diagnostic.fix)
 }
 

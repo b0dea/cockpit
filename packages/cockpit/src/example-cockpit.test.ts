@@ -71,8 +71,8 @@ describe('the public example cockpits', () => {
         for (const example of ['minimal', 'docs-only', 'compose-first', 'extended']) {
             const commands = inventory(readFileSync(join(repositoryRoot, 'examples', example, 'README.md'), 'utf8'))
             const cockpitExecutables = [...commands.executable, ...commands.humanOnly].flat()
-                .filter(token => token === 'cockpit' || !token.startsWith('@') && token.endsWith('/cockpit'))
-            expect(new Set(cockpitExecutables), example).toEqual(new Set(['./node_modules/.bin/cockpit']))
+                .filter(token => token === 'cockpit' || !token.startsWith('@') && /\/cockpit(?:\.mjs)?$/.test(token))
+            expect(new Set(cockpitExecutables), example).toEqual(new Set(['./node_modules/@b00dea/cockpit/bin/cockpit.mjs']))
             // preflight compares a declared remote with the checkout only through a hosted https or
             // ssh identity, and refuses a local path; an example must not teach a remote it refuses.
             for (const file of readdirSync(join(repositoryRoot, 'examples', example)).filter(name => /^cockpit.*\.toml$/.test(name))) {

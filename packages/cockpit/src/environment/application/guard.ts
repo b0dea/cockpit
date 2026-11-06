@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { lstatIfPresentSync } from '../presence.js'
-import { lstatSync, realpathSync, type Stats } from 'node:fs'
+import { accessSync, constants, lstatSync, realpathSync, statSync, type Stats } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -51,7 +51,8 @@ import {
 import { classifyReadOnlyInvocation, cockpitLauncherPrefix } from '../../guards/read-only.js'
 import { fileFingerprint, recordVerifiedDigest } from '../../environment-exec/verified-digest.js'
 import { GUARD_HELD_CALLS, GUARD_UNHELD_CALLS, isGuardSurfaceTarget, type GuardSurfaceTarget } from '../../surfaces/harness-registry.js'
-import { cockpitCommand, formatShellCommand, type FixContext } from '../../fix-catalogue.js'
+import { formatShellCommand, type FixContext } from '../../fix-catalogue.js'
+import { guardRecovery, installedSyncCommand } from '../../surfaces/guard-recovery.js'
 import { redactSensitiveMessage } from '../sensitive.js'
 import { observeComposeTopology } from '../compose-topology.js'
 import { declaredRuntime } from '../declaration.js'
@@ -122,23 +123,44 @@ interface GuardEvaluationApplicationResult {
 // failed, why that blocks everything, and the human action that clears it. Regeneration is a human
 // step on purpose: guard policy comes from cockpit.toml, and an agent able to apply its own edit
 // could loosen its guard.
-type GuardFix = { readonly kind: 'sync' } | { readonly kind: 'restore'; readonly path: string }
-function guardHeld(identity: GuardHandlerIdentity, what: string, why: string, fix: GuardFix): string {
-    const sync = `\`${cockpitCommand('sync', { config: identity.configPath })}\` in a terminal, outside the agent`
-    const action = fix.kind === 'sync' ? `a human must run ${sync}, then commit any regenerated files`
-        : `a human must restore it with \`${formatShellCommand(['git', '-C', identity.root, 'restore', '--', fix.path])}\` (it is committed), or run ${sync}`
-    return `${what}; ${why}, so ${GUARD_HELD_CALLS} are held, including a sync run through this agent, while ${GUARD_UNHELD_CALLS} continue. Fix: ${action}.`
+function recoveryFile(path: string, mode: number): boolean {
+    try {
+        if (!statSync(path).isFile()) return false
+        accessSync(path, mode)
+        return true
+    } catch (error) {
+        if (['ENOENT', 'ENOTDIR', 'EACCES', 'ELOOP'].some(code => hasErrorCode(error, code))) return false
+        throw error
+    }
+}
+
+function recoveryState(identity: GuardHandlerIdentity): Readonly<{ config: boolean; package: boolean }> {
+    const installed = join(identity.root, 'node_modules/@b00dea/cockpit')
+    return {
+        config: recoveryFile(identity.configPath, constants.R_OK),
+        package: recoveryFile(join(installed, 'bin/cockpit.mjs'), constants.X_OK)
+            && recoveryFile(join(installed, 'dist/cli.js'), constants.R_OK),
+    }
+}
+
+function guardHeld(identity: GuardHandlerIdentity, what: string, why: string): string {
+    const fix = guardRecovery(identity.root, identity.configPath, recoveryState(identity))
+    return `${what}; ${why}, so ${GUARD_HELD_CALLS} are held, including a sync run through this agent, while ${GUARD_UNHELD_CALLS} continue. ${fix}`
 }
 
 // An edit that does not widen what agents may do needs only a sync, which the agent may run itself;
 // every other call waits for it, so no call is judged under a policy sync has not published. Sync can
 // still refuse such an edit, so undoing it exactly stays open or the agent could never recover.
 function unsyncedHold(identity: GuardHandlerIdentity, detail: string): GuardEvaluationApplicationResult {
-    const sync = cockpitCommand('sync', { config: identity.configPath })
-    const reason = `${identity.configPath} changed since the guards were generated without widening what agents may do${detail}; ${GUARD_HELD_CALLS} are held, except ${UNSYNCED_ADMITTED_PROSE}, until it is synced, while ${GUARD_UNHELD_CALLS} continue. Fix: run \`${sync}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files. If sync refuses the edit, undo it: one edit or write of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig} is admitted; ${GUARD_RESTORE_LIMIT}.`
+    const available = recoveryState(identity)
+    const sync = installedSyncCommand(identity.root, identity.configPath)
+    const ready = available.config && available.package
+    const fix = ready ? `run \`${sync}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files`
+        : guardRecovery(identity.root, identity.configPath, available)
+    const reason = `${identity.configPath} changed since the guards were generated without widening what agents may do${detail}; ${GUARD_HELD_CALLS} are held, except ${UNSYNCED_ADMITTED_PROSE}, until it is synced, while ${GUARD_UNHELD_CALLS} continue. ${ready ? `Fix: ${fix}.` : fix} If sync refuses the edit, undo it: one edit or write of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig} is admitted; ${GUARD_RESTORE_LIMIT}.`
     return { decision: { decision: 'unavailable', reason }, diagnostics: [{ severity: 'error', target: 'guard', message: reason,
         code: 'GUARD_CONFIG_UNSYNCED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_UNSYNCED,
-        fix: `run ${sync}; an agent may run it where [autonomy] sync = "agent". If sync refuses the edit, undo it: the guard admits one edit of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}; ${GUARD_RESTORE_LIMIT}` }] }
+        fix: `${fix}. If sync refuses the edit, undo it: the guard admits one edit of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}; ${GUARD_RESTORE_LIMIT}` }] }
 }
 
 // A guard message reaches the agent and the harness's log: text it forwards from a failure stays one
@@ -148,9 +170,6 @@ function forwardedReason(reason: string): string {
 }
 
 const restored: GuardEvaluationApplicationResult = { decision: { decision: 'allow', reason: 'The edit restores the configuration the guards were generated from.' }, diagnostics: [] }
-
-const GUARD_RESTORABLE = new Set(['.cockpit/generated-environment-ownership.json', '.cockpit/guards/bash-guard.sh',
-    '.claude/settings.json', '.codex/hooks.json', '.opencode/plugin/cockpit-guards.js'])
 
 /** Installed bytes are authority only while their source, roots and publication still match. */
 export async function runGuardEvaluationApplication(
@@ -179,9 +198,8 @@ export async function runGuardEvaluationApplication(
             // A local identity copied from another checkout would evaluate this one under that one's policy.
             || data.guardRoot !== identity.root
             ) return unavailable('Installed guard location does not match this application.')
-        const configFile = relative(identity.root, identity.configPath)
         const changed = (what: string) => unavailable(guardHeld(identity, `${what} since the guards were generated`,
-            'the guard trusts only the cockpit, Node and configuration it was generated for', { kind: 'sync' }))
+            'the guard trusts only the cockpit, Node and configuration it was generated for'))
         if (realpathSync(fileURLToPath(new URL('../../../dist/cli.js', import.meta.url))) !== identity.module) return changed('a different cockpit installation is running')
         const roots = new Map<string, Stats>()
         for (const [path, directory] of [[identity.root, true], [identity.configPath, false]] as const) {
@@ -189,7 +207,7 @@ export async function runGuardEvaluationApplication(
             try { status = lstatSync(path) }
             catch (error) {
                 if (hasErrorCode(error, 'ENOENT') && !directory) return unavailable(guardHeld(identity,
-                    `${identity.configPath} is missing`, 'guard policy comes from it', { kind: 'restore', path: configFile }))
+                    `${identity.configPath} is missing`, 'guard policy comes from it'))
                 throw error
             }
             // The configuration is authenticated by its content digest below. Holding on its inode
@@ -251,9 +269,9 @@ export async function runGuardEvaluationApplication(
             try { publication = unwrap(await pending) }
             catch (error) {
                 if (!(error instanceof GuardFileMissing)) throw error
-                return { held: unavailable(GUARD_RESTORABLE.has(error.path)
-                    ? guardHeld(identity, `${error.path} is missing`, 'it authenticates the guard and the hook that launches it', { kind: 'restore', path: error.path })
-                    : guardHeld(identity, `${error.path} is missing`, 'it records the Node executable and cockpit handler on this machine, which committed files cannot carry', { kind: 'sync' })) }
+                return { held: unavailable(guardHeld(identity, `${error.path} is missing`, error.path === GUARD_LOCAL_PATHS.identity
+                    ? 'it records the Node executable and cockpit handler on this machine, which committed files cannot carry'
+                    : 'it authenticates the guard and the hook that launches it')) }
             }
             const local = parseGuardLocalIdentity(publication.get(GUARD_LOCAL_PATHS.identity)!.bytes.toString('utf8'))
             if (!local || !isDeepStrictEqual(local, identity)) return { held: unavailable('Installed guard identity does not match its machine-local record.') }
@@ -280,7 +298,7 @@ export async function runGuardEvaluationApplication(
         const loaded = unwrap(await configPending)
         if (loaded.kind !== 'complete' || loaded.result.source.path !== identity.configPath) {
             const held = guardHeld(identity, `${identity.configPath} changed since the guards were generated and does not load${loaded.kind === 'complete' ? '' : ` (${forwardedReason(loaded.diagnostics[0]?.message ?? 'no reason given')})`}`,
-                'guard policy comes from it and an edit takes effect only once a human approves it', { kind: 'sync' })
+                'guard policy comes from it and an edit takes effect only once a human approves it')
             const hold = unavailable(`${held} Sync refuses a file that does not load, so correct it first, or undo it: one edit or write of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig} is admitted; ${GUARD_RESTORE_LIMIT}.`)
             // Restoring the recorded bytes needs no policy, so a file with none to offer is no reason to
             // refuse it; without this an agent's valid-TOML edit the schema rejects stranded it.
@@ -304,7 +322,7 @@ export async function runGuardEvaluationApplication(
                 { sha256: configSha256, config: loaded.result.config }, confirmations.kind === 'complete' ? confirmations.bytes : undefined)
             if (change.kind === 'widening' || change.kind === 'unrecorded') return unavailable(guardHeld(identity,
                 `${identity.configPath} changed since the guards were generated and ${guardConfigHeldReason(change)}`,
-                'guard policy comes from it and an edit that may widen it takes effect only once a human approves it', { kind: 'sync' }))
+                'guard policy comes from it and an edit that may widen it takes effect only once a human approves it'))
         }
         const config = loaded.result.config
         const authenticated = await authenticatePublication(publicationPending, config.cockpit.name)
@@ -424,8 +442,8 @@ export async function runGuardEvaluationApplication(
         const cockpitInvocations: GuardInvocationProfile[] = []
         const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')
         const searchPath = data.searchPath ?? ''
-        // Skills and fix hints print `npx --no cockpit …` and the onboarding procedure the installed
-        // bin link; every spelling counts as the launcher only where it provably starts this installation.
+        // Skills and fix hints print the installed entrypoint, and people also run `npx --no cockpit …` and
+        // the bin link; every spelling counts as the launcher only where it provably starts this installation.
         type Launched = { readonly executable: string; readonly cwd: string; readonly argv: readonly string[]; readonly prefix: number; readonly session: boolean }
         const launched: Launched[] = []
         const prove = (executable: string | null, cwd: string, argv: readonly string[], session: boolean) => {

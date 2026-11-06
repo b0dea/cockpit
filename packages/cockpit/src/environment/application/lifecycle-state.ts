@@ -104,7 +104,7 @@ export async function publishLifecycleRecord(
                 || !await revalidatePortLeaseProjection({ projection: rebind, namespace: context.namespace }))) {
                 return abortStateTransaction(lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
                     `configuration or sole-holder lease changed before generated lifecycle refresh; rerun \`${lifecycleSuggestion(context, 'up')}\``, context.stackId,
-                    'rerun npx --no cockpit up --config <your cockpit.toml> once nothing else is changing cockpit.toml or bringing the stack up'))
+                    'rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml> once nothing else is changing cockpit.toml or bringing the stack up'))
             }
             return lifecycleStateRecord(context, current, value, new Date().toISOString())
         },

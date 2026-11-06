@@ -630,7 +630,7 @@ describe('setup checkout observation', () => {
             reason: 'Git could not authenticate the current checkout; setup requires a Git working tree to bound repository writes. '
                 + `Inspect it with ${formatShellCommand(['git', '-C', root, 'rev-parse', '--show-toplevel'])}; `
                 + `if this is a new directory, initialize it with ${formatShellCommand(['git', '-C', root, 'init'])}, `
-                + `then retry ${formatShellCommand(['npx', '--no', 'cockpit', 'setup', '--config', configPath])}`,
+                + `then retry ${formatShellCommand(['./node_modules/@b00dea/cockpit/bin/cockpit.mjs', 'setup', '--config', configPath])}`,
         })
         await expect(lstat(join(root, '.git'))).rejects.toMatchObject({ code: 'ENOENT' })
         expect(await readFile(configPath, 'utf8')).toBe(configText())

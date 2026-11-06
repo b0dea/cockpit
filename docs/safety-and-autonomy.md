@@ -112,7 +112,7 @@ turn every hard denial into an allow. So these are hard denials:
 **Relative `PATH` entries.** Only absolute search path entries can be protected: a relative entry
 such as `.`, `./node_modules/.bin` or an empty one names whatever directory a command runs in, so a
 file the agent wrote could run in place of a permitted command, or as the interpreter
-`./node_modules/.bin/cockpit` starts through `#!/usr/bin/env node`. While the harness's `PATH` holds
+`./node_modules/@b00dea/cockpit/bin/cockpit.mjs` starts through `#!/usr/bin/env node`. While the harness's `PATH` holds
 one, no command is allowed without a prompt, and the reason names the entry. Keep relative entries
 off the `PATH` an agent harness starts with. `doctor` reports one in the `PATH` it runs with as
 `GUARD_SEARCH_PATH_RELATIVE`; that describes the CLI process, not a running harness's environment,
@@ -240,25 +240,25 @@ the cockpit commands [below](#cockpit-commands-an-agent-can-run). The
 
 | Command | Decision | Why |
 | --- | --- | --- |
-| `npx --no cockpit check --config cockpit.toml`, and likewise `doctor`, `preflight`, `ps`, `logs --service <service>`, `stacks`, `stacks prune`, `docs check`, `env keys`, `env schema --path <schema reference>` and `sync --dry-run` | allowed | They read and report; nothing they do changes a file the guard relies on. A `--path` that names anything but `.env.schema`, or that climbs, is a prompt. |
-| `npx --no -- cockpit --help`, `npx --no cockpit up --help`, and the version | allowed | They print and exit before any command runs. |
-| `npx --no cockpit up --config cockpit.toml`, and likewise `sleep`, `down`, `restart --service <service>` and `rebuild --service <service>` | allowed | They act only on the stack cockpit declared and owns; `down` keeps data volumes, and deletes only from the local Docker daemon it fixes at the start of the run. |
+| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml`, and likewise `doctor`, `preflight`, `ps`, `logs --service <service>`, `stacks`, `stacks prune`, `docs check`, `env keys`, `env schema --path <schema reference>` and `sync --dry-run` | allowed | They read and report; nothing they do changes a file the guard relies on. A `--path` that names anything but `.env.schema`, or that climbs, is a prompt. |
+| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs --help`, `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --help`, and the version | allowed | They print and exit before any command runs. |
+| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml`, and likewise `sleep`, `down`, `restart --service <service>` and `rebuild --service <service>` | allowed | They act only on the stack cockpit declared and owns; `down` keeps data volumes, and deletes only from the local Docker daemon it fixes at the start of the run. |
 | `up --profile <profile>` | allowed for a profile in `environment.profiles` that mounts no sibling with `gate = "operator"`, otherwise a prompt | Another profile starts services no person declared for agents, and an operator-gated sibling touches live data or local hardware. |
-| `npx --no cockpit env schema --config cockpit.toml --path <schema reference> --replace-from <draft>` | allowed only as the whole command, for a draft the guard can prove safe to read; otherwise a prompt | A schema that is not committed is never run, and a draft that could hold a secret is refused, so a replacement cannot launder one back out through `env schema`. |
-| `npx --no cockpit exec --config cockpit.toml --service <service> -- <command>` | allowed when a `[guards] allow` rule or a declared build or test command admits `<command>`, otherwise a prompt | The command runs in a container whose files the guard cannot see, so it is never proven read-only, and the name-based denials still apply to it. |
-| `npx --no cockpit pull --config cockpit.toml` | allowed | It only fetches and fast-forwards, and leaves a modified or diverged checkout as it was. |
-| `npx --no cockpit use <slug> <checkout> --config cockpit.toml`, and `use <slug> --clear` | allowed for a checkout inside a directory the agent may already write, otherwise a prompt | The choice is recorded for this checkout of the cockpit only, so it never widens what the agent can reach. |
-| `npx --no cockpit runtime measure --config cockpit.toml --image <local-image>` | allowed | The probe runs a disposable stack under its own project, removes it, and records the result only in this machine's git-ignored state; `cockpit.toml` never changes. |
-| `npx --no cockpit session --config cockpit.toml -- <command>`, with a `--profile` that `up` admits | the decision for `<command>` | A session runs its command as the agent could run it directly, so it never admits more. |
-| `npx --no cockpit test-run --config cockpit.toml --gate <gate>`, with an optional `--mode` and a `--select <kind>:<value>` whose value does not start with `-` | allowed for a gate `cockpit.toml` declares | The gate runs only the stages a person declared in the reviewed configuration, the trust `up` already has. |
-| `npx --no cockpit work status --config cockpit.toml`, `work accept`, `work check`, `work note`, `work decide`, `work answer`, `work acknowledge`, `work grade`, `work signoff`, `work recover` (with or without `--apply`), `work verify` and `cockpit grade --criteria <file>`, each with its own options | allowed | They report, or take a step [`[work.gates]`](#who-decides) gives the agent; a step it gives a person waits for the digest typed after `--interactive`, which no agent invocation carries. Grading runs in a separate evaluator. `work recover --apply` removes a lock only once it has shown the holder gone on the lock's own host and among the containers cockpit labels. |
-| `npx --no cockpit sync --config cockpit.toml`, and `upgrade`, whose sync child writes | allowed where `[autonomy] sync = "agent"`, otherwise a prompt | It regenerates the files the configuration declares; after `cockpit.toml` changes, the guard admits it only when the edit [does not widen](#edits-the-guard-has-not-applied) what agents may do, so an agent's sync never publishes a widening of its own. |
-| `npx --no cockpit tool add <tool> --config cockpit.toml`, with an optional `--dry-run` | allowed | It edits only `[surfaces] tools`, and an added tool [does not widen](#edits-the-guard-has-not-applied) what agents may do, so the agent's sync applies it. |
-| `npx --no cockpit reset --config cockpit.toml --apply` | allowed where `[autonomy] reset = "agent"`, otherwise a prompt | It deletes stack data. |
-| `npx --no cockpit stacks prune --config cockpit.toml --apply` | allowed; the command itself refuses a prune that deletes volumes unless `[autonomy] reset = "agent"` | It removes only stacks whose checkout is gone, which bringing the stack up again recreates, and their data only where a reset could delete it. |
-| `npx --no cockpit browser drive --config cockpit.toml`, and likewise `screenshot`, with an optional `--role` | allowed where `browser.request_preapproval` is on, otherwise a prompt | They sign in and capture the declared application, so they run unprompted only on the isolated, non-production data the configuration declares. Preapproval is on by default exactly when `browser.data` is isolated, not restored and not reaching production, and off otherwise; an explicit `request_preapproval` wins, and `true` on a posture that does not qualify is refused. `drive` also accepts `--fail-on-findings`. |
+| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs env schema --config cockpit.toml --path <schema reference> --replace-from <draft>` | allowed only as the whole command, for a draft the guard can prove safe to read; otherwise a prompt | A schema that is not committed is never run, and a draft that could hold a secret is refused, so a replacement cannot launder one back out through `env schema`. |
+| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs exec --config cockpit.toml --service <service> -- <command>` | allowed when a `[guards] allow` rule or a declared build or test command admits `<command>`, otherwise a prompt | The command runs in a container whose files the guard cannot see, so it is never proven read-only, and the name-based denials still apply to it. |
+| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs pull --config cockpit.toml` | allowed | It only fetches and fast-forwards, and leaves a modified or diverged checkout as it was. |
+| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs use <slug> <checkout> --config cockpit.toml`, and `use <slug> --clear` | allowed for a checkout inside a directory the agent may already write, otherwise a prompt | The choice is recorded for this checkout of the cockpit only, so it never widens what the agent can reach. |
+| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config cockpit.toml --image <local-image>` | allowed | The probe runs a disposable stack under its own project, removes it, and records the result only in this machine's git-ignored state; `cockpit.toml` never changes. |
+| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs session --config cockpit.toml -- <command>`, with a `--profile` that `up` admits | the decision for `<command>` | A session runs its command as the agent could run it directly, so it never admits more. |
+| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run --config cockpit.toml --gate <gate>`, with an optional `--mode` and a `--select <kind>:<value>` whose value does not start with `-` | allowed for a gate `cockpit.toml` declares | The gate runs only the stages a person declared in the reviewed configuration, the trust `up` already has. |
+| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work status --config cockpit.toml`, `work accept`, `work check`, `work note`, `work decide`, `work answer`, `work acknowledge`, `work grade`, `work signoff`, `work recover` (with or without `--apply`), `work verify` and `cockpit grade --criteria <file>`, each with its own options | allowed | They report, or take a step [`[work.gates]`](#who-decides) gives the agent; a step it gives a person waits for the digest typed after `--interactive`, which no agent invocation carries. Grading runs in a separate evaluator. `work recover --apply` removes a lock only once it has shown the holder gone on the lock's own host and among the containers cockpit labels. |
+| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`, and `upgrade`, whose sync child writes | allowed where `[autonomy] sync = "agent"`, otherwise a prompt | It regenerates the files the configuration declares; after `cockpit.toml` changes, the guard admits it only when the edit [does not widen](#edits-the-guard-has-not-applied) what agents may do, so an agent's sync never publishes a widening of its own. |
+| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs tool add <tool> --config cockpit.toml`, with an optional `--dry-run` | allowed | It edits only `[surfaces] tools`, and an added tool [does not widen](#edits-the-guard-has-not-applied) what agents may do, so the agent's sync applies it. |
+| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs reset --config cockpit.toml --apply` | allowed where `[autonomy] reset = "agent"`, otherwise a prompt | It deletes stack data. |
+| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs stacks prune --config cockpit.toml --apply` | allowed; the command itself refuses a prune that deletes volumes unless `[autonomy] reset = "agent"` | It removes only stacks whose checkout is gone, which bringing the stack up again recreates, and their data only where a reset could delete it. |
+| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs browser drive --config cockpit.toml`, and likewise `screenshot`, with an optional `--role` | allowed where `browser.request_preapproval` is on, otherwise a prompt | They sign in and capture the declared application, so they run unprompted only on the isolated, non-production data the configuration declares. Preapproval is on by default exactly when `browser.data` is isolated, not restored and not reaching production, and off otherwise; an explicit `request_preapproval` wins, and `true` on a posture that does not qualify is refused. `drive` also accepts `--fail-on-findings`. |
 | `work accept`, `work answer`, `work acknowledge` and `work signoff` with `--interactive` | a prompt, which Codex and OpenCode turn into a denial | `--interactive` asks for a person at a terminal to type the digest of what it shows. |
-| `npx --no cockpit setup --config cockpit.toml --write-instruction-files`, and likewise `--write-instruction-pointers` | allowed where `[autonomy] instruction_files = "agent"`, otherwise a prompt | They write the sibling `AGENTS.md`, `CLAUDE.md` and guide links `setup` proposes, which the agent could write with its own tools. |
+| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config cockpit.toml --write-instruction-files`, and likewise `--write-instruction-pointers` | allowed where `[autonomy] instruction_files = "agent"`, otherwise a prompt | They write the sibling `AGENTS.md`, `CLAUDE.md` and guide links `setup` proposes, which the agent could write with its own tools. |
 | `sync --adopt`, `sync --interactive`, `reset --interactive`, `stacks prune --interactive`, `sibling add`, `sibling remove`, `tool remove` and every other command | a prompt, which Codex and OpenCode turn into a denial | They widen what agents may do through `cockpit.toml`, rewrite a team's own settings, ask for a person, or delete data. |
 
 A file such a command names, like `--criteria`, is checked as a read: a declared instance, a file
@@ -276,7 +276,8 @@ invocation, which prompts, and none needs one. They count from the cockpit root 
 naming the configured `cockpit.toml`; `check`, `doctor` and help also count from any directory. Each
 spelling counts only where the guard proves it starts its own installed package:
 
-- a path such as `./node_modules/.bin/cockpit`, or one given to `node`, must resolve to it;
+- the installed entrypoint `./node_modules/@b00dea/cockpit/bin/cockpit.mjs`, a `.bin` symlink, or a
+  path given to `node` must resolve to it;
 - bare `cockpit` must be what the command search path finds first;
 - the npx spellings must run from the cockpit root with no root `.npmrc` and no `bin` or
   `directories.bin` in the root `package.json`, because npm would otherwise run that program or
@@ -288,7 +289,9 @@ Where npx cannot be proven, every npx spelling prompts, and Codex and OpenCode r
 path spelling still counts from the cockpit root. pnpm writes `node_modules/.bin/cockpit` as a shell
 shim neither can follow, so there the provable spelling is
 `./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml`. `doctor` reports this
-as `COCKPIT_LAUNCHER_UNPROVEN` and names which spelling it can prove. The guard does not check which
+as `COCKPIT_LAUNCHER_UNPROVEN` and names which spelling it can prove. Generated skills and the
+launcher refusal recommend the direct package entrypoint; replacing it with another executable
+still requires approval. The guard does not check which
 `npx` the search path finds: it assumes that program behaves as npm's own, as the version-manager
 and package-firewall shims that hand over to npm do.
 
@@ -361,7 +364,7 @@ denials stay. The supported route is
 | Claude Code 2.1.318, generated `Read(//**/.env.*)` denials, no hook, 2026-11-05 | Read, Edit and Write of `.env.schema` were refused as covered by a Read deny rule; `cat` and `sed -i` were refused. `git show HEAD:.env.schema`, `printf ... >> .env.schema`, `cp draft .env.schema` and `mv draft .env.schema` worked. |
 
 An agent reads a schema with `env schema`, writes a draft with its normal tools, then runs
-`npx --no cockpit env schema --config cockpit.toml --path <schema reference> --replace-from <draft>`.
+`./node_modules/@b00dea/cockpit/bin/cockpit.mjs env schema --config cockpit.toml --path <schema reference> --replace-from <draft>`.
 The result is
 [not validated until it is committed](environment.md#a-schema-runs-only-once-committed), and
 committing is the guarded checkpoint, so an edit here is not itself a security boundary.

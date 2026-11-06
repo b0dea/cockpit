@@ -7,7 +7,7 @@ refuse with `ENVIRONMENT_NOT_DECLARED` and exit 2, and `doctor` reports no runti
 before running the example.
 
 ```sh executable
-./node_modules/.bin/cockpit sync --config cockpit.toml --json
-./node_modules/.bin/cockpit check --config cockpit.toml --json
-./node_modules/.bin/cockpit up --config cockpit.toml --json
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --json
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml --json
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml --json
 ```

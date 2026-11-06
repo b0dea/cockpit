@@ -188,7 +188,7 @@ describe('lifecycle application contracts', () => {
 
         expect(outcome).toMatchObject({ kind: 'complete', status: 0, result: { sleep: { change: 'retained' } },
             diagnostics: [{ severity: 'info', code: 'SESSION_STACK_RETAINED', target: stack,
-                fix: 'run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout\'s remaining hold' }] })
+                fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config <your cockpit.toml> to release this checkout\'s remaining hold' }] })
     })
 
     it('hands the supervised command the leased ports and entrypoints, over values its caller set', async () => {

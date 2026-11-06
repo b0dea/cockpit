@@ -10,10 +10,11 @@ budget: uncapped
 ## Running cockpit
 
 - Run every command from the cockpit root, the directory holding `cockpit.toml`, through the
-  project-local binary, for example `./node_modules/.bin/cockpit check --config cockpit.toml`.
-  `npx --no cockpit <command>` starts the same binary, but the path form still runs where the
-  guard cannot prove what npx starts. If the binary is missing, stop and ask the person to install cockpit; a
-  runner that downloads a package is never a substitute.
+  installed package entrypoint, for example `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml`.
+  This path resolves to the installed package even when pnpm writes a shell shim in `node_modules/.bin`.
+  `npx --no cockpit <command>` and the `.bin` launcher count only where the guard can prove they
+  start that same package. If the entrypoint is missing, stop and ask the person to install cockpit;
+  a runner that downloads a package is never a substitute.
 - Take flags from each command's `--help`. With `--json`, read `result`, `diagnostics[].code` and
   `invocation.exitCode`. Every diagnostic names its fix, and
   `./node_modules/@b00dea/cockpit/docs/troubleshooting.md` covers the codes that need more; the
@@ -23,7 +24,7 @@ budget: uncapped
   guarded tool call (a guard message saying so, `GUARD_AUTHORITY_UNAVAILABLE` or `GUARD_CONFIG_UNSYNCED`)
   follows any edit to `cockpit.toml` or reinstall of cockpit or Node. `GUARD_CONFIG_UNSYNCED` means
   the edit does not widen what agents may do, so run
-  `./node_modules/.bin/cockpit sync --config cockpit.toml` yourself where `[autonomy] sync =
+  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself where `[autonomy] sync =
   "agent"`; any other hold clears only when a person runs it in a terminal. A refused command is the
   person's to run: never reword, wrap or re-spell it to get past the guard.
 - In Codex's sandbox `check`, `sync --dry-run` and `--help` work as it stands, unless `[browser]` is
@@ -50,21 +51,21 @@ scope changes, not at hand-back.
    no gate is declared, follow it instead: prove the fix with the product's own test runner, and
    report that no gate graded it. Done when you hold one gate ID, or know there is none.
 3. **Record the baseline before you edit**:
-   `./node_modules/.bin/cockpit test-run --config cockpit.toml --gate declared-gate-id --json`, with
+   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run --config cockpit.toml --gate declared-gate-id --json`, with
    the ID from step 2. Any verdict but PASS exits with `TEST_GATE_UNSATISFIED`, and its fix says
    what FAIL, DEGRADED, VOID and PARTIAL each need. Done when you know what already passed and what
    already failed.
 4. **Reproduce at the narrowest real boundary.** Extend the nearest behavior test through its
    public surface so it fails on this defect, and run it with the narrowest selector the gate takes.
-   Start the stack with `./node_modules/.bin/cockpit up --config cockpit.toml` only when the
+   Start the stack with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml` only when the
    behavior needs a live process or integration, adding `--profile <name>` for a service behind a
-   Compose profile. Read `./node_modules/.bin/cockpit ps --config cockpit.toml --json` for each
-   service's state, `./node_modules/.bin/cockpit logs --config cockpit.toml --service service-id`,
-   naming the declared service, and `./node_modules/.bin/cockpit doctor --config cockpit.toml --json`
+   Compose profile. Read `./node_modules/@b00dea/cockpit/bin/cockpit.mjs ps --config cockpit.toml --json` for each
+   service's state, `./node_modules/@b00dea/cockpit/bin/cockpit.mjs logs --config cockpit.toml --service service-id`,
+   naming the declared service, and `./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml --json`
    only for the runtime output the defect needs; a `STACK_INPUTS_CHANGED` warning there goes to
    *Keep checkouts and stacks current* in the cockpit-setup skill's procedure first. A command inside
    a service, such as a migration or a query, runs through
-   `./node_modules/.bin/cockpit exec --config cockpit.toml --service service-id -- <command>`; the
+   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs exec --config cockpit.toml --service service-id -- <command>`; the
    guard asks unless a `[guards] allow` rule or a declared build or test command admits it. When the
    stack will not start (no Docker, another holder, an unmeasured runtime), report the code `up`
    gives and its fix rather than proving the fix some other way. Done when a test goes red on
@@ -72,12 +73,12 @@ scope changes, not at hand-back.
 5. **Then change the repository that owns the defect**, and nothing else. Leave uncommitted changes
    that were already in the checkout as you found them. If you change it in a worktree rather than
    the checkout `cockpit.toml` declares, first run
-   `./node_modules/.bin/cockpit use sibling-slug /absolute/path/to/worktree --config cockpit.toml`
+   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs use sibling-slug /absolute/path/to/worktree --config cockpit.toml`
    so the stack, the guard and the gates use that worktree, and `use sibling-slug --clear` at step 8. For an environment or credential defect,
    follow the *Secret handling* section of the cockpit-setup skill's procedure,
    `../../cockpit-setup/procedures/setup.md` from this file, before running the declared product
    command. When the running stack must pick the change up, run
-   `./node_modules/.bin/cockpit rebuild --config cockpit.toml --service service-id` for a change baked
+   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs rebuild --config cockpit.toml --service service-id` for a change baked
    into its image, or `restart --service service-id` for one its process loads at start. Done when
    the test from step 4 passes.
 6. **Prove it**: run the gate from step 3 again, complete and without a selector. Done when it
@@ -89,7 +90,7 @@ scope changes, not at hand-back.
 8. **Clean up.** List the files, temporary files, processes and stack claims this task created.
    Remove only the temporary files this task created; keep earlier uncommitted changes, other
    agents' files, claims other holders hold and the review results. Release a stack claim only
-   with the cockpit lifecycle command (`./node_modules/.bin/cockpit sleep --config cockpit.toml`),
+   with the cockpit lifecycle command (`./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config cockpit.toml`),
    following any approval it asks for; when cockpit cannot confirm that release is safe, keep the
    claim and report who holds it, the refusal and its output. Done when every item is removed or
    reported with the reason you kept it.

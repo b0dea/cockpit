@@ -191,7 +191,7 @@ describe('setup application choreography', () => {
         expect(previewed).toMatchObject({ kind: 'complete' })
         expect(previewed.diagnostics).toContainEqual(expect.objectContaining({
             severity: 'info', code: 'SETUP_INSTRUCTION_FILES_OFFERED', target: siblingRoot,
-            fix: 'review the proposed change with a person, then run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-files',
+            fix: 'review the proposed change with a person, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> --write-instruction-files',
         }))
         expect(existsSync(join(siblingRoot, 'CLAUDE.md'))).toBe(false)
 
@@ -774,7 +774,7 @@ describe('setup application choreography', () => {
         expect(failure).toEqual(expect.objectContaining({ severity: 'error', target: resolve(context.siblingsRoot, web.dir) }))
         expect(failure?.message).toContain(web.remote!)
         expect(failure?.message).toContain("fatal: repository 'synthetic' does not exist; already cloned and left in place: api")
-        expect(failure?.fix).toContain('npx --no cockpit setup --config <your cockpit.toml>')
+        expect(failure?.fix).toContain('./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml>')
         expect(outcome.diagnostics.map(diagnostic => diagnostic.code)).not.toContain('EXECUTION_STEP_FAILED')
     })
 

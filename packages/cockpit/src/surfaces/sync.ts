@@ -149,7 +149,7 @@ export function planSurfaceChanges(input: unknown): SurfaceChangePlanResult {
         }
         if (current.kind !== 'missing' && !previous && (ADOPTABLE_SURFACE_PATHS as readonly string[]).includes(desired.path)) {
             return refuse('this harness settings file exists but cockpit has no record of writing it', desired.path,
-                `to keep the settings it holds, have a human approve npx --no cockpit sync --config <your cockpit.toml> --adopt ${desired.path}`)
+                `to keep the settings it holds, have a human approve ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --adopt ${desired.path}`)
         }
         if (current.kind !== 'missing' && !previous) return refuse('this path holds a file cockpit has no record of writing', desired.path, SURFACE_UNRECORDED_FIX)
         if (current.kind !== 'missing' && previous && !priorMatchesObserved(previous, current)) {

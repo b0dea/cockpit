@@ -30,8 +30,9 @@ npx --no cockpit init . --target claudecode
 ```
 
 With pnpm or yarn, install with `pnpm add -D -E @b00dea/cockpit` or `yarn add -D -E @b00dea/cockpit`
-and run `pnpm exec cockpit` or `yarn cockpit` wherever this guide uses `npx --no`. `init` detects
-the lockfile and writes the matching commands.
+and run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs` wherever this guide uses `npx --no`.
+The guard can prove that path under an agent, and refuses or asks about `pnpm exec cockpit` and
+`yarn cockpit`. `init` detects the lockfile and writes the matching commands.
 
 Replace `claudecode` with `codexcli` or `opencode`, or list several, yours first
 (`--target claudecode,opencode`). `init` records them as `[surfaces] tools` and installs the
@@ -70,8 +71,8 @@ still missing and why. If anyone uses Codex, a person must trust its guard hook 
 [`cockpit-check` action](harness-surfaces.md#publish-and-verify).
 
 Run every command from the cockpit directory with a path that fails when the dependency is missing
-and never downloads a package: `./node_modules/.bin/cockpit`, `npx --no`, or the `cockpit:*` package
-scripts `init` writes. The package ships these guides under `./node_modules/@b00dea/cockpit/docs/`,
+and never downloads a package: `./node_modules/@b00dea/cockpit/bin/cockpit.mjs`,
+`./node_modules/.bin/cockpit`, `npx --no`, or the `cockpit:*` package scripts `init` writes. The package ships these guides under `./node_modules/@b00dea/cockpit/docs/`,
 so skills and fix hints cite them offline.
 
 ## Set up with an agent
@@ -164,7 +165,7 @@ Three answers are facts about this machine and the running product, so an agent 
 observation, one at a time:
 
 ```sh
-./node_modules/.bin/cockpit confirm ports.bases --config cockpit.toml --json
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs confirm ports.bases --config cockpit.toml --json
 ```
 
 | Answer | The observation that confirms it |
@@ -229,8 +230,8 @@ new one reports `GIT_STATE_UNHEALTHY` until a person stages and commits it.
 Preview first, then accept in a terminal:
 
 ```sh
-./node_modules/.bin/cockpit init "$(pwd)" --target <tool> --json
-./node_modules/.bin/cockpit init "$(pwd)" --target <tool> --interactive
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs init "$(pwd)" --target <tool> --json
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs init "$(pwd)" --target <tool> --interactive
 ```
 
 The preview writes nothing. It returns the files it would install, a `previewSha256` digest and the
@@ -290,8 +291,8 @@ consent and answers as arguments instead; there is no blanket `--yes`.
    refused (`INIT_PREVIEW_NOT_ACCEPTED`, `INIT_DEFAULTS_NOT_ACCEPTED`).
 
 ```sh
-./node_modules/.bin/cockpit init "$(pwd)" --target <tool> --accept-preview <previewSha256> --answers ./answers.toml --json
-./node_modules/.bin/cockpit init "$(pwd)" --target <tool> --accept-preview <previewSha256> --answers ./answers.toml --accept-defaults <expectedSha256> --json
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs init "$(pwd)" --target <tool> --accept-preview <previewSha256> --answers ./answers.toml --json
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs init "$(pwd)" --target <tool> --accept-preview <previewSha256> --answers ./answers.toml --accept-defaults <expectedSha256> --json
 ```
 
 For a directory with one library and nothing runnable, the whole answers file is:
@@ -380,11 +381,11 @@ files needs Docker Compose.
 ### Bring the product up
 
 ```sh
-./node_modules/.bin/cockpit setup --config ./cockpit.toml
-./node_modules/.bin/cockpit sync --config ./cockpit.toml
-./node_modules/.bin/cockpit check --config ./cockpit.toml
-./node_modules/.bin/cockpit up --config ./cockpit.toml
-./node_modules/.bin/cockpit preflight --config ./cockpit.toml
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config ./cockpit.toml
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ./cockpit.toml
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config ./cockpit.toml
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config ./cockpit.toml
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs preflight --config ./cockpit.toml
 ```
 
 `setup` clones or verifies each declared repository and checks its remote. `up` starts or resumes
@@ -414,8 +415,8 @@ Preview for one harness, then accept. Replace `<tool>` with its [target](#instal
 first command writes nothing, and the second needs a terminal and the exact preview digest:
 
 ```sh
-./node_modules/.bin/cockpit init . --target <tool> --registry ./env/lib/instance.sh --json
-./node_modules/.bin/cockpit init . --target <tool> --registry ./env/lib/instance.sh --interactive
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs init . --target <tool> --registry ./env/lib/instance.sh --json
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs init . --target <tool> --registry ./env/lib/instance.sh --interactive
 ```
 
 `init` reads the registry's repositories, marks every value the registry did not state with its
@@ -454,7 +455,7 @@ Two rules matter in the surfaces layer:
 `source`, so old scripts and cockpit read one checked copy:
 
 ```sh
-./node_modules/.bin/cockpit registry-resolve \
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs registry-resolve \
   --registry ./env/lib/instance.sh --siblings-root .. --adoption ./adoption.state > resolved.sh
 ```
 
@@ -483,9 +484,9 @@ a repository already commits one, a plain `sync` refuses with `SURFACE_STATE_CON
 command that keeps the team's settings:
 
 ```sh
-./node_modules/.bin/cockpit sync --config cockpit.toml
-./node_modules/.bin/cockpit sync --config cockpit.toml --adopt .claude/settings.json
-./node_modules/.bin/cockpit check --config cockpit.toml
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --adopt .claude/settings.json
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml
 ```
 
 `--adopt <path>` can be repeated, once per file. It moves the file to `cockpit/adopted/<path>`,
@@ -539,16 +540,16 @@ the repository is:
 
 ```sh
 # a directory that already exists under the siblings root (acquire = "none")
-./node_modules/.bin/cockpit sibling add api --config ./cockpit.toml --purpose "HTTP API for orders"
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add api --config ./cockpit.toml --purpose "HTTP API for orders"
 
 # a repository that does not exist yet: runs `git init` on an empty or missing path
-./node_modules/.bin/cockpit sibling add api --config ./cockpit.toml --create --purpose "HTTP API for orders"
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add api --config ./cockpit.toml --create --purpose "HTTP API for orders"
 
 # a checkout elsewhere on disk: records its origin so `setup` clones a fresh copy
-./node_modules/.bin/cockpit sibling add api --config ./cockpit.toml --from ~/code/api --purpose "HTTP API for orders"
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add api --config ./cockpit.toml --from ~/code/api --purpose "HTTP API for orders"
 
 # a known remote (acquire = "auto"); also records a remote for an existing acquire = "none" sibling
-./node_modules/.bin/cockpit sibling add api --config ./cockpit.toml --remote git@example.com:team/api.git --purpose "HTTP API for orders"
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add api --config ./cockpit.toml --remote git@example.com:team/api.git --purpose "HTTP API for orders"
 ```
 
 | Option | Meaning |
@@ -569,17 +570,17 @@ proposal first and writes it only when asked
 ([Lifecycle and ownership](environment.md#lifecycle-and-ownership) has the rules):
 
 ```sh
-./node_modules/.bin/cockpit sibling add api --config ./cockpit.toml --from ~/code/api \
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add api --config ./cockpit.toml --from ~/code/api \
   --purpose "HTTP API for orders" --instruction-pointer
-./node_modules/.bin/cockpit setup --config ./cockpit.toml --json
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config ./cockpit.toml --json
 # after a human approves the exact AGENTS.md block
-./node_modules/.bin/cockpit setup --config ./cockpit.toml --write-instruction-pointers
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config ./cockpit.toml --write-instruction-pointers
 ```
 
 The root sibling (`dir = "."`) cannot opt in: its guide is the cockpit guide.
 
 ```sh
-./node_modules/.bin/cockpit sibling remove api --config ./cockpit.toml
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling remove api --config ./cockpit.toml
 ```
 
 `remove` drops the table only if nothing refers to the sibling (generated services, vendor
@@ -589,7 +590,7 @@ After either command, run `cockpit sync --config ./cockpit.toml --dry-run` to se
 
 While a stack is up or asleep, both commands act at once only on a repository the stack does not use
 (`mount = "none"`, named by none of its Compose files); for any other they refuse and ask for
-`./node_modules/.bin/cockpit down --config ./cockpit.toml` first.
+`./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config ./cockpit.toml` first.
 [Change a running stack](environment.md#change-a-running-stack) says which hand edits need `down`
 and which need only `sync`.
 
@@ -600,10 +601,10 @@ ownership ledger, the Compose project and the stack's saved state. A running sta
 started under, and only `down` under that name removes its containers, so take the stack down first:
 
 ```sh
-./node_modules/.bin/cockpit down --config ./cockpit.toml
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config ./cockpit.toml
 # edit name under [cockpit] in cockpit.toml, then:
-./node_modules/.bin/cockpit sync --config ./cockpit.toml
-./node_modules/.bin/cockpit check --config ./cockpit.toml
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ./cockpit.toml
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config ./cockpit.toml
 ```
 
 `sync` rewrites the generated files and the ledger under the new name and keeps your own text around
@@ -618,7 +619,7 @@ are how `sync` knows which files are its own.
 it when the agent exits:
 
 ```sh
-./node_modules/.bin/cockpit session --config ./cockpit.toml -- codex
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs session --config ./cockpit.toml -- codex
 ```
 
 Put the agent command and its arguments after `--`. Use plain `up` only when the stack should
@@ -631,14 +632,14 @@ To remove the stack and its containers, run `down`. It deletes only from a local
 fixed once per run ([Choose the Docker daemon](environment.md#choose-the-docker-daemon)):
 
 ```sh
-./node_modules/.bin/cockpit down --config ./cockpit.toml
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config ./cockpit.toml
 ```
 
 ## Upgrade cockpit
 
 ```sh
-./node_modules/.bin/cockpit upgrade --config ./cockpit.toml --dry-run
-./node_modules/.bin/cockpit upgrade --config ./cockpit.toml
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config ./cockpit.toml --dry-run
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config ./cockpit.toml
 ```
 
 Review and commit the regenerated files. [Upgrade cockpit](harness-surfaces.md#upgrade-cockpit) has
@@ -658,7 +659,7 @@ COCKPIT_PACKAGE_DIR="$(mktemp -d)"
 npm pack --workspace @b00dea/cockpit --pack-destination "$COCKPIT_PACKAGE_DIR"
 cd /path/to/your/repository
 npm install -D "$COCKPIT_PACKAGE_DIR"/*.tgz
-./node_modules/.bin/cockpit --help
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs --help
 ```
 
 If `npm pack` or `npm install` fails, stop: a command run from the source checkout does not prove

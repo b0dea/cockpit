@@ -559,7 +559,7 @@ raw values so you can report them.
 
 ```sh
 docker pull node:22-alpine
-./node_modules/.bin/cockpit runtime measure --config ./cockpit.toml --image node:22-alpine
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config ./cockpit.toml --image node:22-alpine
 ```
 
 The probe runs in a throwaway directory: a candidate stack exercising profiles, bind mounts in both
@@ -826,10 +826,10 @@ Applying a reset wipes data, so it needs a person by default: `reset --interacti
 or `reset --apply` when `[autonomy] reset` allows the caller. The next `up` seeds again.
 
 ```sh human-only: resets data and requires the declared local stack
-./node_modules/.bin/cockpit up --config cockpit.toml
-./node_modules/.bin/cockpit reset --config cockpit.toml --json
-./node_modules/.bin/cockpit reset --interactive --config cockpit.toml
-./node_modules/.bin/cockpit up --config cockpit.toml
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs reset --config cockpit.toml --json
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs reset --interactive --config cockpit.toml
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml
 ```
 
 **Test users.** cockpit has no user model; the product's seed creates them. Give each a stable

@@ -34,7 +34,7 @@ export function observeGeneratedApplicationSurfaces(
             observed: { state: 'available', value: { manifestSha256: record.surfaceSelftest.manifestSha256,
                 harnesses: record.surfaceSelftest.configuredHarnesses, entries: record.surfaceSelftest.entries.length }, observedAt },
             expectation: { kind: 'present' }, applicability: required('environment'), freshness: { state: 'current' },
-            remedy: 'run npx --no cockpit sync --config <your cockpit.toml>, then rerun npx --no cockpit preflight --config <your cockpit.toml>',
+            remedy: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs preflight --config <your cockpit.toml>',
         }),
         snapshotEnvironmentObservation({
             code: ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE, owner: OWNER, stackId: record.stackId,
@@ -45,14 +45,14 @@ export function observeGeneratedApplicationSurfaces(
                 ? required('directory-grants')
                 : { state: 'not-applicable', posture: 'directory-grants', reason: 'the active sibling projection declares no directory grants' },
             freshness: { state: 'current' },
-            remedy: 'run npx --no cockpit sync --config <your cockpit.toml>, then rerun npx --no cockpit preflight --config <your cockpit.toml>',
+            remedy: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs preflight --config <your cockpit.toml>',
         }),
         snapshotEnvironmentObservation({
             code: ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED, owner: OWNER, stackId: record.stackId,
             source: `surface-guide-costs:${record.surfaceSelftest.manifestSha256}`,
             observed: { state: 'available', value: guideValue, observedAt }, expectation: { kind: 'maximum', value: guideCap },
             applicability: required('environment'), freshness: { state: 'current' },
-            remedy: 'move conditional guidance behind its scoped or pull-loaded surface, then run npx --no cockpit sync --config <your cockpit.toml>',
+            remedy: 'move conditional guidance behind its scoped or pull-loaded surface, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>',
         }),
         snapshotEnvironmentObservation({
             code: ENVIRONMENT_CODES.SKILL_BUDGET_UNAVAILABLE, owner: OWNER, stackId: record.stackId,
@@ -61,7 +61,7 @@ export function observeGeneratedApplicationSurfaces(
                 inventorySha256: record.surfaceHealth.skillInventorySha256, inventory: record.surfaceHealth.skillInventory, skills: record.surfaceHealth.skills,
                 costs: record.surfaceHealth.skillCosts.map(({ target, metric, value, cap }) => ({ target, metric, value, cap })) }, observedAt },
             expectation: { kind: 'present' }, applicability: required('environment'), freshness: { state: 'current' },
-            remedy: 'move skill procedure text out of always-loaded entry points, then run npx --no cockpit sync --config <your cockpit.toml>',
+            remedy: 'move skill procedure text out of always-loaded entry points, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>',
         }),
     ]
     if (!observations.every((observation): observation is EnvironmentObservation => observation !== undefined)) return undefined

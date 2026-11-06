@@ -189,7 +189,9 @@ const unavailable = (reason: string): GuardDecision => ({ decision: 'unavailable
 const ask = (reason: string): GuardDecision => ({ decision: 'ask', reason })
 const UNPROVEN_LAUNCHER = 'This cockpit command requires human approval: the guard could not prove it starts the installed cockpit. '
     + 'npx --no cockpit counts only from the cockpit root with no root .npmrc and no bin in the root package.json, and bare cockpit only when '
-    + 'the command search path finds the installed package; a path such as ./node_modules/.bin/cockpit counts whenever it resolves to the installed package.'
+    + 'the command search path finds the installed package. From the cockpit root, use the installed package entrypoint, for example '
+    + '`./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml`; it counts only when it resolves to the installed package. '
+    + 'pnpm writes node_modules/.bin/cockpit as a shell shim, which the guard cannot prove.'
 const deny = (reason: string): GuardDecision => ({ decision: 'deny', reason })
 // A refusal names the command it judged, so an agent can tell which part of a chain was refused.
 const named = (invocation: ParsedInvocation) => {
@@ -738,7 +740,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     // no tool reads or writes one by default: the guard only asked for `cat .env` and allowed an edit.
     const dotenvSecret = (folded: string) => { const name = posix.basename(folded); return (name === '.env' || name.startsWith('.env.')) && !documentation(folded) }
     const dotenvDenial = deny('Refusing to read or write an environment file: `.env` and `.env.*` hold secrets unless named .env.example, .env.sample, .env.template or .env.schema, or declared as a template. '
-        + 'Fix: an agent runs the trusted process through a declared project command or script that wraps Varlock; a person in a terminal runs that same command, or `VARLOCK_TELEMETRY_DISABLED=true varlock run -- <cmd>`, without `--redact-stdout`, which Varlock refuses on a terminal. List variable names with `npx --no cockpit env keys --config <your cockpit.toml>`.')
+        + 'Fix: an agent runs the trusted process through a declared project command or script that wraps Varlock; a person in a terminal runs that same command, or `VARLOCK_TELEMETRY_DISABLED=true varlock run -- <cmd>`, without `--redact-stdout`, which Varlock refuses on a terminal. List variable names with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs env keys --config <your cockpit.toml>`.')
     const manifestPath = absolute(GUARD_CONTROL_FILES[1])
     const structural = [resolved.configPath, manifestPath]
     const structuralDenial = deny(`Refusing to delete, rename, truncate, relink or make unreadable ${posix.basename(resolved.configPath)} or ${GUARD_CONTROL_FILES[1]}: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit ${posix.basename(resolved.configPath)} in place instead.`)
@@ -1174,7 +1176,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             && !resolved.projectCommands.some((profile) => matches(profile, profile.checkoutRoot))) {
             const config = /^[\w./@%+=:,-]+$/.test(resolved.configPath) ? resolved.configPath : `'${resolved.configPath.replaceAll("'", "'\\''")}'`
             return searchRefusals.get(invocation) ?? ask(`${named(invocation)} requires human approval: the guard admits only the read-only commands it classifies, a declared build or test command run from its checkout, and [guards] allow rules. `
-                + `A person approves it or runs it in a terminal. To run tests, use \`npx --no cockpit test-run --config ${config} --gate <gate>\`; a person can admit a command for good under [guards] allow in ${posix.basename(resolved.configPath)}.`)
+                + `A person approves it or runs it in a terminal. To run tests, use \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run --config ${config} --gate <gate>\`; a person can admit a command for good under [guards] allow in ${posix.basename(resolved.configPath)}.`)
         }
     }
     return declaredReasons.length === 1 ? { decision: 'allow', reason: declaredReasons[0]! } : allowed

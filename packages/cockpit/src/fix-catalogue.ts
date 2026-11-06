@@ -1,8 +1,8 @@
 import { dirname, isAbsolute, normalize } from 'node:path'
 import type { Diagnostic } from './environment/contract.js'
 
-// A printed command has to run as printed. Nothing goes in front of npx: the guard asks before a
-// wrapped command such as `env -u NAME …`, and Codex and OpenCode treat an ask as a denial. Every
+// A printed command has to run as printed. Nothing wraps the installed entrypoint: the guard asks
+// before a wrapped command such as `env -u NAME …`, and Codex and OpenCode treat an ask as a denial. Every
 // configured command refuses without --config, so a remedy written where the path is unknown names
 // this placeholder, and bindConfigPath replaces it with the resolved path wherever the command line
 // supplied one.
@@ -19,8 +19,8 @@ export interface FixContext {
 }
 
 export interface ExecutableFix {
-    // npx resolves the project's own cockpit bin; a dev-dependency install puts no `cockpit` on PATH.
-    readonly argv: readonly ['npx', '--no', 'cockpit', 'sync', '--config', string]
+    // The installed entrypoint does not depend on a package-manager shim.
+    readonly argv: readonly ['./node_modules/@b00dea/cockpit/bin/cockpit.mjs', 'sync', '--config', string]
     readonly command: string
 }
 
@@ -41,7 +41,7 @@ export function cockpitCommand(command: ConfiguredCommand,
     options: Readonly<{ config?: string; operand?: string; args?: string }> = {}): string {
     const config = options.config === undefined ? CONFIG_PLACEHOLDER : formatShellCommand([options.config])
     const operand = options.operand === undefined ? '' : ` ${formatShellCommand([options.operand])}`
-    return `npx --no cockpit ${command}${operand} --config ${config}${options.args === undefined ? '' : ` ${options.args}`}`
+    return `./node_modules/@b00dea/cockpit/bin/cockpit.mjs ${command}${operand} --config ${config}${options.args === undefined ? '' : ` ${options.args}`}`
 }
 
 /**
@@ -51,7 +51,7 @@ export function cockpitCommand(command: ConfiguredCommand,
 export function initCommand(options: Readonly<{ root?: string; target?: string; args?: string }> = {}): string {
     const root = options.root === undefined ? '<cockpit root>' : formatShellCommand([options.root])
     const target = options.target === undefined ? '<target>' : formatShellCommand([options.target])
-    return `npx --no cockpit init ${root} --target ${target}${options.args === undefined ? '' : ` ${options.args}`}`
+    return `./node_modules/@b00dea/cockpit/bin/cockpit.mjs init ${root} --target ${target}${options.args === undefined ? '' : ` ${options.args}`}`
 }
 
 function bindablePath(path: string | null | undefined): path is string {
@@ -80,7 +80,7 @@ export function admitDiagnosticFix(diagnostic: Diagnostic, context?: FixContext)
     const path = context.resolvedConfigPath
     if (!bindablePath(path) || !safeTarget(diagnostic.target)
         || !context.generatedTargets.includes(diagnostic.target)) return undefined
-    const argv = ['npx', '--no', 'cockpit', 'sync', '--config', path] as const
+    const argv = ['./node_modules/@b00dea/cockpit/bin/cockpit.mjs', 'sync', '--config', path] as const
     const command = formatShellCommand(argv)
     return { argv, command }
 }

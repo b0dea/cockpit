@@ -802,7 +802,7 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
 export async function composeFindings(input: Readonly<{ root: string; draft: string }>): Promise<readonly Diagnostic[]> {
     const unreadable = (reference: string, why: string): Diagnostic => ({ severity: 'warning', code: 'COMPOSE_FILE_UNREADABLE', target: reference,
         message: `${reference} was not checked for the Compose findings check reports (a host port outside ports.bases, a missing healthcheck): ${why}`,
-        fix: 'make environment.compose_files name a readable Compose file inside the cockpit root, then run npx --no cockpit check --config <your cockpit.toml>' })
+        fix: 'make environment.compose_files name a readable Compose file inside the cockpit root, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config <your cockpit.toml>' })
     let draft: { environment?: { compose_files?: unknown }; ports?: { bases?: unknown } }
     try { draft = parseToml(input.draft) as typeof draft }
     catch (error) { return [unreadable('cockpit.toml', `the draft is not valid TOML (${errorCause(error)})`)] }

@@ -430,7 +430,7 @@ export function createReadCommandAdapters(
                     code: published.kind === 'missing' ? ENVIRONMENT_CODES.STATE_RECORD_MALFORMED : published.code,
                     target: context.namespace.paths.lifecycle(context.stackId).path,
                     message: `the rebuilt container of service ${service} runs, and the stack record could not be updated to it${published.kind === 'missing' ? '' : `: ${published.message}`}`,
-                    fix: 'run npx --no cockpit up --config <your cockpit.toml> to record the running containers again' }]
+                    fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml> to record the running containers again' }]
             },
         }
     }

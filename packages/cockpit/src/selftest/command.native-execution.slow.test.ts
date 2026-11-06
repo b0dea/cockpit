@@ -1,10 +1,14 @@
-import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { createSelftestFixture } from '../../test-support/selftest-fixture.js'
+import { draftSurfaceSelftestSpecifications, surfaceSelftestExpectation } from '../surfaces/selftest.js'
+import { validateSelftestEvidenceBundle } from '../../libexec/validate-harness-evidence.mjs'
+import { executeProbe } from '../environment-exec/execute.js'
 import type { ExecutionStep } from '../environment/contract.js'
 import { runSurfaceSelftestApplication } from '../environment/selftest-application.js'
+import { syncGeneratedEnvironment } from '../generated-environment/command.js'
 
 const roots: string[] = []
 const {
@@ -78,6 +82,65 @@ describe('surface selftest command', () => {
         })).toEqual(expect.objectContaining({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID' }))
     }, 180_000)
 
+    it('loads exact generated instructions through the native discovery protocol and leaves unsupported cells pending', async () => {
+        const { root, application } = fixture()
+        const bin = join(root, 'harness-bin')
+        await mkdir(bin)
+        const executable = join(bin, 'codex')
+        await writeFile(executable, `#!${process.execPath}
+const fs = require('node:fs')
+if (process.argv[2] === '--version') process.stdout.write('codex-cli 0.0.0-synthetic')
+else if (process.argv[2] === '--help') process.stdout.write('debug prompt-input')
+else {
+ const bytes = fs.readFileSync('AGENTS.md', 'utf8')
+ process.stdout.write(JSON.stringify([{type:'message',role:'user',content:[{type:'input_text',text:
+ '# AGENTS.md instructions for '+process.cwd()+'\\n\\n<INSTRUCTIONS>\\nInherited guidance.\\n\\n'+bytes+'\\n</INSTRUCTIONS>'}]}]))
+}
+`)
+        await chmod(executable, 0o700)
+        const draft = draftSurfaceSelftestSpecifications(application.surfaceSelftest)!
+        const steps: ExecutionStep[] = []
+        const outcome = await runSurfaceSelftestApplication({ root, application,
+            specifications: draft.specifications, env: { PATH: bin } }, {
+            testOnlyExecutableIdentities: { Codex: [executable] },
+            execute: async step => { steps.push(step); return executeProbe(step) },
+        })
+        expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: 'complete', status: 0 })
+        if (outcome.kind !== 'complete') throw new Error('native instruction evidence failed')
+        expect(outcome.evidence.errors).toEqual([])
+        expect(outcome.evidence.evidence).toHaveLength(1)
+        expect(outcome.evidence.pending).toHaveLength(26)
+        expect(outcome.evidence.pending.every(row => row.reason === 'native_protocol_unsupported')).toBe(true)
+        const record = outcome.evidence.evidence[0]!
+        expect(record).toMatchObject({ protocol: 'codex-prompt-input/v1', verdict: 'instructed' })
+        expect(record.version).toBe('0.0.0-synthetic')
+        const forged = structuredClone(outcome.bundle)
+        const forgedRecord = forged.records.find(row => row.kind === 'evidence')!
+        if (forgedRecord.kind !== 'evidence') throw new Error('native evidence missing')
+        forgedRecord.candidateSha256 = 'f'.repeat(64)
+        expect(validateSelftestEvidenceBundle(forged, surfaceSelftestExpectation(application.surfaceSelftest)!, root, {
+            testOnlyExecutableIdentities: { Codex: [executable] },
+        }).errors).toEqual(expect.arrayContaining([expect.stringContaining('native candidate does not match the generated AGENTS.md source authority')]))
+        for (const events of [
+            { ...record.events, candidateControl: { ...record.events.candidateControl, cwd: {} } },
+            { ...record.events, version: { ...record.events.version, stdout: {} } },
+        ]) {
+            const malformed = { ...outcome.bundle, records: outcome.bundle.records.map(row => row.kind === 'evidence' && row.runId === record.runId ? { ...record, events } : row) }
+            const check = () => validateSelftestEvidenceBundle(malformed, surfaceSelftestExpectation(application.surfaceSelftest)!, root, {
+                testOnlyExecutableIdentities: { Codex: [executable] },
+            })
+            expect(check).not.toThrow()
+            expect(check().errors).not.toEqual([])
+        }
+        expect(record.candidatePath).toMatch(/\/candidate\/AGENTS\.md$/)
+        const generated = application.surfaceSelftest.entries.find(entry => entry.path === 'AGENTS.md')!
+        const expectedBytes = generated.kind === 'file' ? generated.bytes
+            : generated.region.format === 'markdown-delimited' ? generated.region.bytes : ''
+        expect(await readFile(join(root, record.candidatePath), 'utf8')).toBe(expectedBytes)
+        expect(steps.filter(step => step.labels.role === 'candidate')[0]?.filesystemChecks)
+            .toContainEqual(expect.objectContaining({ path: join(root, record.candidatePath), sha256: record.candidateSha256 }))
+    }, 180_000)
+
     it('preserves POSIX executable approval with an undefined search alias without reading unrelated values', async () => {
         const { root, application } = fixture()
         const bin = await fakeHarnesses(root)
@@ -115,6 +178,70 @@ describe('surface selftest command', () => {
         expect(outcome).toMatchObject({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID' })
         expect(selected).not.toHaveBeenCalled()
         expect(execute).not.toHaveBeenCalled()
+    }, 180_000)
+
+    // Codex 0.167.0 on 2026-11-06: the instruction limit covers the whole AGENTS.md chain up to the nearest
+    // .git, so a root guide over half the limit cut its own copy under the cockpit root, while a session
+    // that loads only the root file got all of it. This stand-in keeps that shape.
+    async function nativeChainCodex(root: string, limit: number): Promise<{ bin: string; executable: string }> {
+        const bin = join(root, 'harness-bin')
+        await mkdir(bin)
+        const executable = join(bin, 'codex')
+        await writeFile(executable, `#!${process.execPath}
+const fs = require('node:fs')
+const path = require('node:path')
+if (process.argv[2] === '--version') process.stdout.write('codex-cli 0.0.0-synthetic')
+else if (process.argv[2] === '--help') process.stdout.write('debug prompt-input')
+else {
+ const chain = []
+ for (let dir = process.cwd(); ; dir = path.dirname(dir)) {
+  if (fs.existsSync(path.join(dir, 'AGENTS.md'))) chain.unshift(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'))
+  if (fs.existsSync(path.join(dir, '.git')) || dir === path.dirname(dir)) break
+ }
+ process.stdout.write(JSON.stringify([{type:'message',role:'user',content:[{type:'input_text',text:
+ '# AGENTS.md instructions for '+process.cwd()+'\\n\\n<INSTRUCTIONS>\\n'+chain.join('\\n\\n').slice(0, ${limit})+'\\n</INSTRUCTIONS>'}]}]))
+}
+`)
+        await chmod(executable, 0o700)
+        return { bin, executable }
+    }
+
+    it('measures a guide over half the instruction limit the way a session loads it', async () => {
+        const { root, application } = fixture()
+        const guide = await readFile(join(root, 'AGENTS.md'), 'utf8')
+        const { bin, executable } = await nativeChainCodex(root, Buffer.byteLength(guide) + 200)
+        const outcome = await runSurfaceSelftestApplication({ root, application,
+            specifications: draftSurfaceSelftestSpecifications(application.surfaceSelftest)!.specifications, env: { PATH: bin } }, {
+            testOnlyExecutableIdentities: { Codex: [executable] }, execute: executeProbe,
+        })
+        expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: 'complete', status: 0 })
+    }, 180_000)
+
+    it('still refuses a candidate the tool cut at its instruction limit', async () => {
+        const { root, application } = fixture()
+        // Room for the short replacement control, not for the generated guide.
+        const { bin, executable } = await nativeChainCodex(root, 100)
+        const outcome = await runSurfaceSelftestApplication({ root, application,
+            specifications: draftSurfaceSelftestSpecifications(application.surfaceSelftest)!.specifications, env: { PATH: bin } }, {
+            testOnlyExecutableIdentities: { Codex: [executable] }, execute: executeProbe,
+        })
+        expect(outcome).toMatchObject({ kind: 'refusal', code: 'SELFTEST_EXECUTION_INVALID',
+            reason: expect.stringContaining('instruction size limit') })
+    }, 180_000)
+
+    it('names credential-shaped guide text instead of reporting that the guide did not load', async () => {
+        const issued = await issuedApplication()
+        await writeFile(join(issued.root, 'app/AGENTS.md'), 'Set api_key=synthetic-example before running.\n')
+        const synced = await syncGeneratedEnvironment({ configPath: issued.configPath })
+        if (synced.kind !== 'complete') throw new Error(JSON.stringify(synced.diagnostics))
+        const application = synced.result.application
+        const { bin, executable } = await nativeChainCodex(issued.root, 1_000_000)
+        const outcome = await runSurfaceSelftestApplication({ root: issued.root, application,
+            specifications: draftSurfaceSelftestSpecifications(application.surfaceSelftest)!.specifications, env: { PATH: bin } }, {
+            testOnlyExecutableIdentities: { Codex: [executable] }, execute: executeProbe,
+        })
+        expect(outcome).toMatchObject({ kind: 'refusal', code: 'SELFTEST_EXECUTION_INVALID',
+            reason: expect.stringContaining('credential-shaped') })
     }, 180_000)
 
     it('redacts native structured streams and the version before returning or persisting evidence', async () => {

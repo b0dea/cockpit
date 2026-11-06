@@ -166,7 +166,7 @@ describe('sibling add', () => {
         expect(row?.remote).toBeUndefined()
         const publish = {
             command: `gh repo create <owner>/billing-api --private --source ${JSON.stringify(join(siblings, 'billing-api'))} --remote origin`,
-            recordRemote: `npx --no cockpit sibling add billing-api --config ${configPath} --remote <url>`,
+            recordRemote: `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add billing-api --config ${configPath} --remote <url>`,
         }
         expect(outcome.result).toMatchObject({ action: 'created', publish })
         expect(outcome.artifact).toContain(publish.command)
@@ -185,7 +185,7 @@ describe('sibling add', () => {
 
         expect(outcome).toMatchObject({ status: 2, diagnostics: [{ code: 'CONFIG_CHANGED_DURING_EXECUTION',
             message: expect.stringContaining('nothing was written'),
-            fix: 'let the other edit finish, then run the same npx --no cockpit sibling add command again' }] })
+            fix: 'let the other edit finish, then run the same ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add command again' }] })
         expect(await readFile(configPath, 'utf8')).toBe(edited)
     })
 
@@ -388,9 +388,9 @@ describe('sibling remove', () => {
         expect(after).not.toContain('slug = "docs"')
         expect(after).toContain('# Machine floor, measured once.')
         expect(after).toContain('# Port leases.\n[ports.bases]')
-        expect(removed.artifact).toContain(`npx --no cockpit sync --config ${configPath} --dry-run`)
+        expect(removed.artifact).toContain(`./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${configPath} --dry-run`)
         expect(removed.result).toEqual({ action: 'removed', config: configPath, slug: 'docs', dir: 'docs',
-            next: `npx --no cockpit sync --config ${configPath} --dry-run` })
+            next: `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${configPath} --dry-run` })
     })
 
     it('refuses while the cockpit\'s own Compose file uses the sibling\'s variable', async () => {

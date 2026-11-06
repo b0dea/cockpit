@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util'
+
 import { sha256Hex } from '../sha256.js'
 
 import type { GeneratedCustomSurfaceSelftestInput, GeneratedSurfaceSelftestProjection } from '../environment/generated-application/shared.js'
@@ -31,6 +33,7 @@ export type SelftestCellKey =
 export interface SelftestExpectation {
     readonly schema: 'cockpit-harness-selftest-expectation/v1'
     readonly generatedManifestSha256: string
+    readonly instructionSourceSha256?: string
     readonly cells: readonly SelftestCellKey[]
     readonly shippedSkills: readonly string[]
     readonly reviewHarnesses: readonly [
@@ -47,6 +50,7 @@ export interface SelftestExpectation {
  * human_needed, and a row written for one is refused rather than accepted and ignored.
  */
 export interface SelftestProbeSpecification {
+    readonly protocol?: 'codex-prompt-input/v1' | 'native-unsupported/v1'
     readonly harness: BuiltinHarnessRef
     readonly capability: SelftestCapability
     readonly invocation: readonly [string, ...string[]]
@@ -57,19 +61,6 @@ export interface SelftestProbeSpecification {
     readonly unavailableCode: string
     readonly sample: Readonly<{ skill: string; features: readonly ('name' | 'trigger' | 'body-load' | 'tools' | 'non-goals')[] }> | null
 }
-
-/**
- * A specification row as cockpit can write it. The fields left null are the probe itself: the
- * arguments that make a tool load a control file and the lines it prints for an accepted and a
- * rejected control. Nothing in the generated manifest says what those are for a given tool and
- * version, so a person supplies them and approves the whole file before anything in it runs.
- */
-export type SelftestProbeSpecificationDraft = Omit<SelftestProbeSpecification, 'invocation' | 'candidateCode' | 'brokenCode' | 'sample'> & Readonly<{
-    invocation: null
-    candidateCode: null
-    brokenCode: null
-    sample: Readonly<{ skill: string; features: null }> | null
-}>
 
 export interface PlannedSelftestProbe extends SelftestProbeSpecification {
     readonly cell: SelftestCellKey
@@ -92,7 +83,7 @@ export type SelftestHumanNeededRecord = Readonly<{
     capability: 'instruction-loading' | 'guard-firing'
     generatedManifestSha256: string
     observedAt: string
-    reason: 'executable_missing' | 'authentication_required' | 'isolation_unavailable' | 'enforcement_probe_required'
+    reason: 'executable_missing' | 'authentication_required' | 'isolation_unavailable' | 'enforcement_probe_required' | 'native_protocol_unsupported'
     operatorAction: string
 }> | Readonly<{
     kind: 'human_needed'
@@ -101,7 +92,7 @@ export type SelftestHumanNeededRecord = Readonly<{
     skill: string
     generatedManifestSha256: string
     observedAt: string
-    reason: 'executable_missing' | 'authentication_required' | 'isolation_unavailable' | 'enforcement_probe_required'
+    reason: 'executable_missing' | 'authentication_required' | 'isolation_unavailable' | 'enforcement_probe_required' | 'native_protocol_unsupported'
     operatorAction: string
 }>
 
@@ -258,7 +249,11 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
     if (inputs.size !== captured.custom.length || usedInputs.size !== inputs.size || cells.length === 0 || cells.length > 256) return undefined
     const uniqueCells = new Map(cells.map((cell) => [cellKey(cell), cell]))
     if (uniqueCells.size !== cells.length) return undefined
+    const instructions = captured.entries.find(entry => entry.path === 'AGENTS.md' && entry.harnesses.includes('codexcli'))
+    const instructionBytes = instructions?.kind === 'file' ? instructions.bytes
+        : instructions?.region.format === 'markdown-delimited' ? instructions.region.bytes : undefined
     return {
+        ...(instructionBytes === undefined ? {} : { instructionSourceSha256: sha256Hex(instructionBytes) }),
         schema: 'cockpit-harness-selftest-expectation/v1',
         generatedManifestSha256: captured.manifestSha256,
         cells: [...uniqueCells.values()].sort((left, right) => compareCodeUnits(cellKey(left), cellKey(right))),
@@ -297,9 +292,10 @@ function validProbe(probe: SelftestProbeSpecification, cell: SelftestCellKey): b
     try {
     if (Object.keys(probe).sort().join('\0') !== [
         'brokenCode', 'candidateCode', 'capability', 'harness', 'helpCommand', 'invocation',
-        'sample', 'unavailableCode', 'versionCommand',
+        'sample', 'unavailableCode', 'versionCommand', ...(probe.protocol === undefined ? [] : ['protocol']),
     ].sort().join('\0')) return false
     if (probe.harness.kind !== 'builtin' || Object.keys(probe.harness).sort().join('\0') !== 'kind\0name\0target') return false
+    if (probe.protocol !== undefined) return builtinCell(cell) && isDeepStrictEqual(probe, snapshotGeneratedJson(nativeSpecification(cell)))
     const commands = [probe.invocation, probe.versionCommand, probe.helpCommand]
     const sample = probe.sample
     const validSample = sample !== null && Object.keys(sample).sort().join('\0') === 'features\0skill'
@@ -331,21 +327,29 @@ function builtinCell(cell: SelftestCellKey): cell is SelftestCellKey & Readonly<
     return cell.harness.kind === 'builtin'
 }
 
+function nativeSpecification(cell: SelftestCellKey & Readonly<{ harness: BuiltinHarnessRef }>): SelftestProbeSpecification {
+    const supported = cell.harness.target === 'codexcli' && cell.capability === 'instruction-loading'
+    return {
+        protocol: supported ? 'codex-prompt-input/v1' : 'native-unsupported/v1',
+        harness: cell.harness, capability: cell.capability,
+        invocation: supported ? ['{executable}', 'debug', 'prompt-input', 'Do not run tools.'] : ['{executable}', '--help'],
+        versionCommand: ['{executable}', '--version'], helpCommand: ['{executable}', '--help'],
+        candidateCode: supported ? 'NATIVE_INSTRUCTIONS_LOADED' : 'NATIVE_PROTOCOL_UNSUPPORTED',
+        brokenCode: supported ? 'NATIVE_INSTRUCTIONS_REPLACED' : 'NATIVE_PROTOCOL_UNSUPPORTED',
+        unavailableCode: `${cell.capability.replaceAll('-', '_').toUpperCase()}_UNAVAILABLE`,
+        sample: cell.capability === 'skill-parity' ? { skill: cell.skill, features: [] } : null,
+    }
+}
+
 /**
- * One row per built-in cell, with everything the generated manifest determines filled in and the
- * probe itself left null. The version and help commands are the identity probes every built-in tool
- * answers with `--version` and `--help`; they run before the controls and are shown for approval.
- * Custom cells get no row (see SelftestProbeSpecification) and are returned as `unprobeable`.
- *
- * A row from `previous` (an earlier file, usually stale after a config change) is kept as it is when
- * it is a complete, valid row for a cell that still exists, so the probes a person wrote survive the
- * rewrite; a row for a changed or removed cell, or one still partly null, is not carried.
+ * Complete legacy rows carry forward unchanged. New cells use closed native protocols, with
+ * unsupported adapters explicitly pending rather than asking people to invent diagnostic codes.
  */
 export function draftSurfaceSelftestSpecifications(
     projection: GeneratedSurfaceSelftestProjection,
     previous: readonly unknown[] = [],
 ): Readonly<{
-    specifications: readonly (SelftestProbeSpecificationDraft | SelftestProbeSpecification)[]
+    specifications: readonly SelftestProbeSpecification[]
     unprobeable: readonly SelftestCellKey[]
     carried: number
 }> | undefined {
@@ -364,17 +368,7 @@ export function draftSurfaceSelftestSpecifications(
             carried += 1
             return kept
         }
-        return {
-            harness: cell.harness,
-            capability: cell.capability,
-            invocation: null,
-            versionCommand: ['{executable}', '--version'] as const,
-            helpCommand: ['{executable}', '--help'] as const,
-            candidateCode: null,
-            brokenCode: null,
-            unavailableCode: `${cell.capability.replaceAll('-', '_').toUpperCase()}_UNAVAILABLE`,
-            sample: cell.capability === 'skill-parity' ? { skill: cell.skill, features: null } : null,
-        }
+        return nativeSpecification(cell)
     })
     return {
         specifications,

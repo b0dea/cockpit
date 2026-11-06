@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
     validateEvidenceManifest,
     validateEvidenceManifests,
-    validateSelftestEvidenceBundle,
+    validateSelftestEvidenceBundle, validateNativeInstructionPair,
 } from '../libexec/validate-harness-evidence.mjs'
 import type {
     BuiltinExecutionAuthority,
@@ -941,6 +941,7 @@ function writeSelftestEvidence(
     index: number,
     skill = 'cockpit-setup',
     harness: BuiltinHarnessRef = { kind: 'builtin', target: 'codexcli', name: 'Codex' },
+    features: readonly string[] = ['name', 'trigger'],
 ): TestBuiltinEvidenceRecord {
     const directory = `.cockpit/local/probes/selftest-${index}`
     mkdirSync(join(root, directory), { recursive: true })
@@ -978,7 +979,7 @@ function writeSelftestEvidence(
         helpCommand: [DIRECT_EXECUTABLE, '--help'],
         candidateCode,
         brokenCode: 'BROKEN_CONTROL_REJECTED',
-        sample: capability === 'skill-parity' ? { skill, features: ['name', 'trigger'] } : null,
+        sample: capability === 'skill-parity' ? { skill, features: [...features] } : null,
         authority: { kind: 'native-executable', name: harness.name, executable: DIRECT_EXECUTABLE },
         events: {
             version: selftestEvent([DIRECT_EXECUTABLE, '--version'], 'completed', 0, 'VERSION_OK', 'stdout'),
@@ -1100,6 +1101,34 @@ describe('operator executable identity', () => {
     })
 })
 
+describe('native instruction discovery evidence', () => {
+    it('requires path-scoped native input messages and a differential leaf control', () => {
+        const candidate = 'Generated instructions.\n'
+        const broken = `Cockpit selftest replacement control ${'a'.repeat(24)}.\n`
+        const candidateCwd = '/synthetic/candidate'
+        const brokenCwd = '/synthetic/broken'
+        const message = (cwd: string, bytes: string, inherited = 'Inherited instructions.\n\n') => ({
+            type: 'message', role: 'user', content: [{ type: 'input_text',
+                text: `# AGENTS.md instructions for ${cwd}\n\n<INSTRUCTIONS>\n${inherited}${bytes}\n</INSTRUCTIONS>` }],
+        })
+        const candidateMessage = message(candidateCwd, candidate)
+        const candidateOutput = JSON.stringify([candidateMessage])
+        const brokenOutput = JSON.stringify([message(brokenCwd, broken)])
+        const validate = (left: string, right = brokenOutput) => validateNativeInstructionPair(
+            left, right, candidateCwd, brokenCwd, candidate, broken)
+        expect(validate(candidateOutput)).toBeNull()
+        for (const output of [
+            JSON.stringify([{ ...candidateMessage, role: 'assistant' }]),
+            JSON.stringify([message('/synthetic/other', candidate)]),
+            JSON.stringify([candidateMessage, candidateMessage]),
+            JSON.stringify([message(candidateCwd, '', candidate)]),
+            candidateOutput.slice(0, -1),
+            `NATIVE_INSTRUCTIONS_LOADED\n${candidateOutput}`,
+        ]) expect(validate(output)).toBeTypeOf('string')
+        expect(validate(candidateOutput, JSON.stringify([message(brokenCwd, candidate)]))).toBeTypeOf('string')
+    })
+})
+
 describe('versioned harness selftest evidence', () => {
     it('refuses an empty evidence manifest list', () => {
         expect(validateEvidenceManifests([], ROOT)).toEqual({ errors: ['no evidence manifests supplied'], rows: [] })
@@ -1169,7 +1198,8 @@ describe('versioned harness selftest evidence', () => {
                 writeSelftestEvidence(root, 'instruction-loading', 'instructed', 0),
                 writeSelftestEvidence(root, 'guard-firing', 'enforced', 1),
                 ...harnesses.flatMap((harness, harnessIndex) => skills.map((skill, skillIndex) =>
-                    writeSelftestEvidence(root, 'skill-parity', 'unavailable', 2 + harnessIndex * skills.length + skillIndex, skill, harness),
+                    writeSelftestEvidence(root, 'skill-parity', 'instructed', 2 + harnessIndex * skills.length + skillIndex, skill, harness,
+                        ['name', 'trigger', 'body-load', 'tools', 'non-goals']),
                 )),
             ]
             const expectation = {
@@ -1207,6 +1237,20 @@ describe('versioned harness selftest evidence', () => {
             expect(result.errors).toEqual([])
             expect(result.evidence).toHaveLength(8)
             expect(result.skillReviews).toHaveLength(6)
+            const rejectedReviews = [
+                { verdict: 'unavailable' as const, features: ['name', 'trigger', 'body-load', 'tools', 'non-goals'] },
+                { verdict: 'instructed' as const, features: ['name', 'trigger'] },
+            ].map(({ verdict, features }) => {
+                const record = writeSelftestEvidence(root, 'skill-parity', verdict, 2, skills[0], harnesses[0], features)
+                const invalid = validateSelftestEvidenceBundle({ ...bundle, records: [...records.slice(0, 2), record, ...records.slice(3)] },
+                    expectation, root, { testOnlyNow: SELFTEST_NOW, testOnlyExecutableIdentities: SYNTHETIC_EXECUTABLE_IDENTITIES })
+                expect(invalid.evidence).toHaveLength(8)
+                return invalid.errors
+            })
+            expect(rejectedReviews).toEqual([
+                ['skill review 1: evidenced skill review requires instructed evidence covering every skill feature'],
+                ['skill review 1: evidenced skill review requires instructed evidence covering every skill feature'],
+            ])
         } finally {
             rmSync(root, { recursive: true, force: true })
         }

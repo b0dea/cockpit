@@ -1737,14 +1737,14 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
         && prior.producer.version === next.producer.version && prior.producer.sourceRevision === next.producer.sourceRevision
         && isDeepStrictEqual(prior.entries, next.entries)
     const mutations = [...captured.mutations]
-    if (!portablePublicationPaths(mutations.map(row => row.path))) return refuse('GENERATED_PUBLICATION_FAILED', 'generated output names alias or cannot be transferred between supported filesystems; rename the declared outputs and rerun npx --no cockpit sync --config <your cockpit.toml> --dry-run', 'generated-environment')
+    if (!portablePublicationPaths(mutations.map(row => row.path))) return refuse('GENERATED_PUBLICATION_FAILED', 'generated output names alias or cannot be transferred between supported filesystems; rename the declared outputs and rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --dry-run', 'generated-environment')
     if (new Set(mutations.map(row => row.path)).size !== mutations.length
         || mutations.some(row => !exactPath(authority.root, row.path) || row.path === OWNERSHIP_PATH || row.phase === 'ledger'
             || !['desired', 'stale'].includes(row.phase) || !['write-file', 'write-symlink', 'remove-file', 'remove-symlink'].includes(row.operation))) {
         return refuse('GENERATED_PUBLICATION_FAILED', 'publication contains an undeclared or non-exact operation', 'generated-environment')
     }
     const paths = [...new Set([...(prior?.entries ?? []).map(row => row.path), ...next.entries.map(row => row.path)])].sort(compareCodeUnits)
-    if (!portablePublicationPaths(paths)) return refuse('GENERATED_PUBLICATION_FAILED', 'generated output names alias or cannot be transferred between supported filesystems; rename the declared outputs and rerun npx --no cockpit sync --config <your cockpit.toml> --dry-run', 'generated-environment')
+    if (!portablePublicationPaths(paths)) return refuse('GENERATED_PUBLICATION_FAILED', 'generated output names alias or cannot be transferred between supported filesystems; rename the declared outputs and rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --dry-run', 'generated-environment')
     if (mutations.some(row => !paths.includes(row.path))) return refuse('GENERATED_PUBLICATION_FAILED', 'publication operation is absent from both ownership ledgers', 'generated-environment')
     // Sizes allocate bounded batches; anchored reads still authenticate every target and refuse growth.
     const maxBytes = await Promise.all(paths.map(async path => {
@@ -1844,7 +1844,7 @@ function approvalRefusal(record: PublicationRecord): PublicationRefusal {
             code: 'GENERATED_STALE_APPROVAL_REQUIRED',
             message: `stale generated ownership requires independent approval bound to the exact current entries (stale-removal digest ${record.staleRemoval!.digest})`,
             target: record.staleRemoval!.entries[0]!.path,
-            fix: 'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended',
+            fix: 'a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended',
         }],
     }
 }

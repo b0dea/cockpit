@@ -219,7 +219,7 @@ purpose = "Synthetic local repository"
         await writeFile(join(root, 'pnpm-lock.yaml'), 'lockfileVersion: \'9.0\'\n')
         const [elsewhere] = await inspectTeamReadiness(configPath)
         expect(elsewhere).toMatchObject({ code: 'COCKPIT_NOT_INSTALLED', target: 'node_modules',
-            message: expect.stringContaining('another copy of cockpit is running'), fix: expect.stringContaining('pnpm exec cockpit sync') })
+            message: expect.stringContaining('another copy of cockpit is running'), fix: expect.stringContaining('./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync') })
         expect(elsewhere!.message).toContain(await realpath(resolve('packages/cockpit')))
         expect(elsewhere!.message).toContain(unrelated)
         expect(elsewhere!.message).not.toContain('is not installed')

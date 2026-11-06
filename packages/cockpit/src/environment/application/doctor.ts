@@ -155,7 +155,7 @@ async function doctorGuardHostDiagnostics(loading: Promise<LoadedDoctorConfig>):
         code: 'GUARD_HOSTS_UNDECLARED' satisfies typeof ENVIRONMENT_CODES.GUARD_HOSTS_UNDECLARED,
         message: 'guards.hosted_db_hosts and guards.vendor_endpoint_hosts are both empty, so the guard denies no agent command by host even though this cockpit declares a runtime',
         target: 'guards',
-        fix: 'list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards]',
+        fix: 'list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards]',
     }]
 }
 
@@ -178,7 +178,7 @@ async function doctorTestingGateDiagnostics(loading: Promise<LoadedDoctorConfig>
         code: 'TESTING_GATE_UNDECLARED' satisfies typeof ENVIRONMENT_CODES.TESTING_GATE_UNDECLARED,
         message: 'cockpit.toml declares no [testing] gate, so test-run has nothing to run and no work in this product can be graded PASS',
         target: 'testing',
-        fix: 'declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>',
+        fix: 'declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>',
     }]
 }
 

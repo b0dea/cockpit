@@ -145,7 +145,7 @@ interface StacksPruneOperatorAdapters {
 function pruneUnconfirmed(message: string): OperatorCommandOutcome {
     return { status: 2, result: null, diagnostics: [{ severity: 'error' as const, target: 'stacks',
         code: 'STACKS_PRUNE_UNCONFIRMED' as const satisfies typeof ENVIRONMENT_CODES.STACKS_PRUNE_UNCONFIRMED,
-        message, fix: 'a person runs npx --no cockpit stacks prune --config <your cockpit.toml> --interactive in a terminal outside CI, reads the preview and types its digest' }] }
+        message, fix: 'a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs stacks prune --config <your cockpit.toml> --interactive in a terminal outside CI, reads the preview and types its digest' }] }
 }
 
 /**

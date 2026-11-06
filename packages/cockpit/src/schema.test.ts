@@ -543,7 +543,13 @@ describe('work and browser declarations', () => {
         // A measured tool the cockpit does not list gets no browser wiring either.
         const measured = { ...stackConfig, environment, browser }
         expect(CockpitConfig.safeParse(measured).success).toBe(true)
-        expect(CockpitConfig.safeParse({ ...measured, surfaces: { tools: ['claudecode'] } }).success).toBe(false)
+        const unlisted = CockpitConfig.safeParse({ ...measured, surfaces: { tools: ['claudecode'] } })
+        expect(unlisted.success).toBe(false)
+        if (unlisted.success) throw new Error('Unlisted browser harness was accepted')
+        expect(unlisted.error.issues).toContainEqual(expect.objectContaining({
+            path: ['browser', 'harnesses', 0, 'target'],
+            message: 'browser harness codexcli is not in surfaces.tools; add it with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs tool add codexcli --config <your cockpit.toml> or remove this row',
+        }))
     })
 
     it('defaults network exposure to loopback and requires a reason for declared wider rules', () => {

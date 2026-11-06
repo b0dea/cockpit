@@ -86,7 +86,7 @@ verified either tool loads those files, and neither gets a guard hook.
 `[surfaces] tools` lists the agent tools `sync` writes and `check` compares; it defaults to
 `claudecode`, `codexcli` and `opencode`, the tools whose guard is measured, and must name at least
 one of them. A tool left out gets no files, and doctor and check give no advice about it.
-`npx --no cockpit tool add <tool> --config <your cockpit.toml>` and `tool remove` edit only that
+`./node_modules/@b00dea/cockpit/bin/cockpit.mjs tool add <tool> --config <your cockpit.toml>` and `tool remove` edit only that
 line (`--dry-run` previews). A removed tool's files are deleted only after a person approves the
 stale-removal digest with `sync --interactive`.
 
@@ -106,7 +106,10 @@ and report `CODEX_HOOK_SOURCE_MISMATCH` when it is missing or differs: a person 
 the generated hooks in the original checkout through its normal change process, or validates in an
 independent clone instead. Cockpit never writes that checkout. Matching definitions are not native
 evidence: the generated commands select the guard of the session's own checkout with `pwd -P`, so
-start Codex in the cockpit root and run the [paired selftest](#skills-and-selftest-evidence).
+start Codex in the cockpit root and measure the guard with a deliberately broken control, a
+harmless rejected operation and a successful permitted companion. The
+[selftest](#skills-and-selftest-evidence) measures instruction loading; it leaves guard firing
+unverified and does not replace this paired native guard measurement.
 
 Trust is recorded per user in Codex's own configuration (`~/.codex/config.toml`, or `$CODEX_HOME`),
 keyed by the hook source's path and a hash of its command, so it is needed once per machine and again
@@ -126,10 +129,35 @@ machine (a Codex home exists); before that, no Codex session can skip the hook.
 ### Session-start drift check
 
 The generated `.claude/settings.json` and `.codex/hooks.json` register a `SessionStart` hook that
-runs `./node_modules/.bin/cockpit check --config cockpit.toml` in the cockpit root and prints the
-end of its report, so the agent sees drift and its fix before it works. It never blocks a session.
+runs the installed package's `node_modules/@b00dea/cockpit/bin/cockpit.mjs` entrypoint with `check`
+and the configured file's absolute path, then prints the end of its report. Missing configuration
+or dependencies produce recovery guidance before the first tool call. It never blocks a session.
 Codex runs it only once a person trusts it. OpenCode gets none: its plugins receive
 `session.created`, but no run has shown a plugin putting text in the agent's context.
+
+### Recover a missing guard
+
+A missing guard or machine-local guard identity holds guarded tool calls, including a sync or Git
+restore attempted through the agent. Recovery happens in a human terminal, outside that session.
+The message names the checkout and configured file it checked:
+
+- If the configuration is absent, return to the intended configured checkout/worktree and branch.
+  Local hook changes can survive a branch switch, whether the hook file is tracked or ignored.
+  When the intended branch has no cockpit, review the active hook source against that branch,
+  preserve a backup and the original native guards, and undo only the reviewed cockpit changes.
+  A Git restore is appropriate only for a tracked file whose branch version is the intended one;
+  preserve unrelated local hook changes. For Codex worktrees, review the
+  [hook source](#trust-the-codex-hook), which can differ from the session checkout.
+- If the configuration exists but the installed package is absent or incomplete, restore the
+  repository's pinned dependencies using its documented package-manager command and lockfile.
+  If that branch declares no cockpit dependency, return to the configured branch first. Retry
+  afterwards so the hook can name the installed sync command.
+- If the configuration and package entrypoint exist, the message prints the direct package command
+  with the exact configuration path. Run it in the human terminal and review regenerated files.
+
+Close and reopen the native agent session after restoring hook definitions or changing its
+checkout. An open session can keep a cached hook even after the file on disk is restored. Recovery
+does not require changing hook trust or removing native guards.
 
 ### Run cockpit outside the Codex sandbox
 
@@ -160,8 +188,10 @@ user, so no committed path fits every clone.
 
 Claude Code's default mode runs no shell command without an allow rule, so the generated
 `.claude/settings.json` allows, by prefix, the cockpit commands the shipped skills tell an agent to
-run and the [guard admits](safety-and-autonomy.md#cockpit-commands-an-agent-can-run), spelled both
-as `npx --no cockpit <command>` and `./node_modules/.bin/cockpit <command>`. Commands that are
+run and the [guard admits](safety-and-autonomy.md#cockpit-commands-an-agent-can-run), spelled as
+`./node_modules/@b00dea/cockpit/bin/cockpit.mjs <command>`, `npx --no cockpit <command>` or
+`./node_modules/.bin/cockpit <command>`. The direct package entrypoint also works with pnpm;
+its `.bin` shell shim remains unproven by the guard. Commands that are
 always a person's, such as `init` and `sibling add`, have no rule. A command the policy decides,
 such as `sync`, has one: the guard hook still runs first, and its ask or deny wins. Claude Code
 ignores a project's allow rules until a person has trusted the workspace by starting Claude Code
@@ -405,69 +435,82 @@ run, what it changes, what it must not do, its review requirements and a line ca
 refuses embedded decision logic, undeclared commands, missing tool equivalents, missing procedures,
 duplicate names, and skills over the always-loaded size limit.
 
-`selftest` runs each tool against a probe-specification file: one row per built-in tool cell the
-generated manifest expects evidence for. The file is tied to the current `cockpit.toml` digest and
-generated manifest, so it goes stale whenever either changes.
+`selftest` currently measures native Codex instruction loading through `codex debug prompt-input`
+(measured 2026-11-06 on Codex 0.167.0).
+It copies the exact generated `AGENTS.md` into a candidate directory and writes replacement
+instructions in a separate broken-control directory. Both use the native `AGENTS.md` filename.
+The validator checks the native structured input for each exact directory, the copied source digest,
+and the difference between the leaf controls while keeping inherited instructions identical.
+An empty `.git` directory above the controls ends Codex's `AGENTS.md` chain there, so the candidate
+has the instruction limit to itself, as the root file does in a session; on that version a
+32,000-byte guide loaded whole and a 40,000-byte one did not. A guide the tool cuts refuses the run.
+This establishes that instructions reached the tool, not that it obeys them. The tool's identity
+rests on the executable digest you approve: cockpit cannot tell that an approved file is really Codex.
 
-A custom harness cell gets no row, because `selftest` runs only a tool it found on `PATH` and you
-approved by digest. Writing the file warns `SELFTEST_CUSTOM_PROBE_UNSUPPORTED`, `selftest` records
-it `human_needed` with `enforcement_probe_required`, and a custom row added by hand is refused.
-Measure a custom capability yourself and record it as its `state` and `measured_on`.
+The two control streams hold every instruction the tool inherited, including your global ones. The
+output shows only their digest and size. The full streams stay in the run's transcript under the
+ignored `.cockpit/local/probes`, readable only by you; delete that directory when you no longer need
+the evidence. Credential-shaped text in a generated guide refuses the run, because evidence redacts
+it and the stored stream could no longer match the source.
 
-1. After `sync`, write the file to a new path. It refuses a path that already exists:
+Other built-in capabilities remain explicitly `human_needed` with `native_protocol_unsupported`:
+no authenticated native selftest adapter has been established for those cells. Their rows do not
+execute any commands or request executable approval. This is a limitation of the selftest adapter,
+not a claim that the harness lacks the capability. In particular, native tool denials can leave the
+parent process successful, and Claude print mode can ignore malformed settings (both measured
+2026-11-06, on Claude Code 2.1.319 and, for denials, Codex 0.167.0). Neither is evidence
+that a generated guard failed or succeeded. Skills and generated guards need their own measured
+protocols; instruction loading does not establish skill parity or guard enforcement.
+
+The probe-specification file has one row per built-in cell, bound to the current `cockpit.toml` and
+generated manifest. New files contain closed native protocol rows; no diagnostic codes need to be
+invented. Protocol fields and command vectors must match the built-in protocol exactly.
+
+1. After `sync`, write the file to a new path:
 
    ```sh
-   npx --no cockpit selftest --config ./cockpit.toml \
+   ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config ./cockpit.toml \
      --write-probe-specifications ./.cockpit/local/probe-specifications.json
    ```
 
-   The manifest decides `harness`, `capability`, the skill in `sample` and `unavailableCode`;
-   cockpit fills `versionCommand` and `helpCommand`. When your filled file goes stale, write the new
-   one from it so your probes are kept (rows for new or changed cells, and partly `null` rows, start
-   over):
+2. Review the file, then run in a terminal outside CI and outside an agent session:
 
    ```sh
-   npx --no cockpit selftest --config ./cockpit.toml \
-     --write-probe-specifications ./.cockpit/local/probe-specifications-2.json \
+   ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --interactive --config ./cockpit.toml \
      --probe-specifications ./.cockpit/local/probe-specifications.json
    ```
 
-2. Replace every `null`. Nothing in the manifest says how a given tool version can be made to load a
-   control file and report what it did:
-   - `invocation`: the arguments, starting with `{executable}`, with exactly one `{control}`, which
-     cockpit replaces with a control file it writes under `.cockpit/local/probes/`: the generated
-     file under test, or a deliberately broken copy.
-   - `candidateCode` and `brokenCode`: codes you choose (capital letters, digits and underscores,
-     starting with a letter) that the tool prints as a line of their own. With the broken control it
-     must exit non-zero and print `brokenCode`. With the candidate it must exit 0 and print
-     `candidateCode` (instructed), or, for guard firing, exit non-zero and print it (enforced), or
-     print `unavailableCode` (unavailable). Any other result refuses the whole run.
-   - `sample.features` on skill-parity rows: which of `name`, `trigger`, `body-load`, `tools` and
-     `non-goals` your invocation exercises.
+   Cockpit shows the file digest and command vectors, including which native rows will execute.
+   Approve that digest, then the digest of the executable found on `PATH`. Approval lasts only for
+   that run. Pending cells and the summary remain visible even when evidence validation succeeds;
+   command success is not a fully measured capability matrix. Without `--interactive`, or in CI
+   or JSON mode, no commands in the file run.
 
-3. In a terminal outside CI and outside an agent session, run:
+When the file goes stale, carry forward its unchanged rows into a new file:
 
-   ```sh
-   npx --no cockpit selftest --interactive --config ./cockpit.toml \
-     --probe-specifications ./.cockpit/local/probe-specifications.json
-   ```
+```sh
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config ./cockpit.toml \
+  --write-probe-specifications ./.cockpit/local/probe-specifications-2.json \
+  --probe-specifications ./.cockpit/local/probe-specifications.json
+```
 
-   It first runs the read-only generated-file check, then shows the file's canonical path, SHA-256,
-   the digests it is tied to, and each exact invocation, version and help command. Compare the
-   SHA-256 with `shasum -a 256 <file>` and type it. For each tool it then shows the absolute path
-   and SHA-256 of the executable on `PATH`; type that to let it run. Anything else leaves that cell
-   `human_needed`. Approval lasts only for that run. Without `--interactive`, or in CI or JSON mode,
-   nothing in the file runs.
+Previously completed legacy rows without `protocol` remain supported unchanged. They require an
+invocation containing exactly one `{control}`, exact native diagnostic lines in `candidateCode` and
+`brokenCode`, and a nonzero rejected broken control. Use these only when the actual harness emits
+that contract; assistant prose, echo commands and substitute executables are not proof. To replace
+legacy rows with the native defaults, write a new file without the previous-file argument.
 
-For each approved tool, `selftest` runs the version and help commands, then the invocation with the
-broken control and with the candidate. The probes inherit only `PATH`, `HOME`, `USER`, `LOGNAME`,
-`TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE` and `TZ`, so a tool signed in only through an environment
-token stays `human_needed` with `authentication_required`.
+Probes inherit only the [non-secret tool environment](../packages/cockpit/src/environment/contract.ts),
+including `HOME` for stored sign-in.
+They preserve project trust and guards. Missing executables or authentication leave an explicit
+operator remainder; unsupported output shapes, size limits and failed controls refuse the run.
+The [validator](../packages/cockpit/libexec/validate-harness-evidence.mjs) holds the evidence limits.
 
-Claude Code and Codex skill reviews also stay `human_needed` until the official-authoring or
-native-diagnostics results are attached. Repository tests and generated records do not promote
-native or human rows. The [validator](../packages/cockpit/libexec/validate-harness-evidence.mjs)
-holds the limits for legacy adapter records; passing it does not promote a native capability.
+Custom harness cells get no executable row and remain `human_needed` with
+`enforcement_probe_required`. Measure a custom capability and record its `state` and `measured_on`.
+Claude Code and Codex skill reviews stay pending until the required review results exist. A passing
+skill review must bind successful evidence covering every declared skill feature; unavailable or
+partial evidence cannot substantiate all passing checks.
 
 ## Upgrade cockpit
 
@@ -475,9 +518,9 @@ An upgrade replaces the generated files that guard and instruct every agent, so 
 `sync` would change before it writes:
 
 ```sh
-npx --no cockpit upgrade --config cockpit.toml            # latest published release
-npx --no cockpit upgrade 1.4.0 --config cockpit.toml      # a named version, including an older one
-npx --no cockpit upgrade --config cockpit.toml --dry-run  # resolve the target, print the commands, run nothing
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config cockpit.toml            # latest published release
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade 1.4.0 --config cockpit.toml      # a named version, including an older one
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config cockpit.toml --dry-run  # resolve the target, print the commands, run nothing
 ```
 
 `upgrade` resolves the target, refuses one that is not newer than the installed version unless you
@@ -497,8 +540,8 @@ release changed is reported as `OVERRIDDEN_CORE_CHANGED`. Then review `git diff`
 `package.json`, the lockfile and the regenerated files together.
 
 Dependabot and Renovate can bump the pin on their own; the `cockpit-check` action then reports drift
-until someone runs `npx --no cockpit sync --config cockpit.toml` and commits the result.
+until someone runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` and commits the result.
 
 By hand: `npm install --save-dev --save-exact @b00dea/cockpit@<version>` (`npm update` does not move
 an exact pin), read `./node_modules/@b00dea/cockpit/CHANGELOG.md`, preview with
-`npx --no cockpit sync --config cockpit.toml --dry-run`, then run `sync` in a terminal.
+`./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --dry-run`, then run `sync` in a terminal.

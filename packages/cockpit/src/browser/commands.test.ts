@@ -543,7 +543,7 @@ describe('browser driving commands', () => {
         const result = await executeBrowserCommand({ runtime: unanswered.runtime, client: unanswered.client, policy: unanswered.policy, kind: 'drive' })
         expect(result).toEqual({ kind: 'refusal', reason: 'Browser drive operation failed during navigation (navigation) for home: '
             + 'nothing answered at http://app.localhost:4000/ (ERR_SOCKS_CONNECTION_FAILED); check that the application is up with '
-            + `npx --no cockpit doctor --config ${config}` })
+            + `./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config ${config}` })
         expect(JSON.stringify(result)).not.toContain('synthetic page text')
     })
 })

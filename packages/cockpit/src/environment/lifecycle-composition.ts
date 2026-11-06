@@ -115,14 +115,14 @@ function mountMismatchDiagnostics(
                     ? `sibling ${sibling.slug} is declared mount = "always", but no Compose service bind-mounts ${source} or a directory inside it, so cockpit will not vouch for this stack`
                     : `${source} is declared for the stack to mount, but no Compose service bind-mounts it, so cockpit will not vouch for this stack`,
                 fix: sibling
-                    ? `bind-mount \${${sibling.var}}, or a directory inside it, in a Compose service, or set mount = "none" on sibling ${sibling.slug} in cockpit.toml; then run npx --no cockpit sync --config <your cockpit.toml> and npx --no cockpit check --config <your cockpit.toml>`
-                    : 'bind-mount it in a Compose service or remove it from environment.generated_host_paths; then run npx --no cockpit sync --config <your cockpit.toml> and npx --no cockpit check --config <your cockpit.toml>',
+                    ? `bind-mount \${${sibling.var}}, or a directory inside it, in a Compose service, or set mount = "none" on sibling ${sibling.slug} in cockpit.toml; then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> and ./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config <your cockpit.toml>`
+                    : 'bind-mount it in a Compose service or remove it from environment.generated_host_paths; then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> and ./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config <your cockpit.toml>',
             }
         }),
         ...mismatch.unexpected.map((source) => ({
             severity: 'error' as const, code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, target: source,
             message: `a Compose service bind-mounts ${source}, which lies inside no mount = "always" sibling and is no environment.generated_host_paths entry, so cockpit will not hand it to a container`,
-            fix: 'move the bind inside a mount = "always" sibling, declare it as one or as an environment.generated_host_paths entry, or remove the bind mount; then run npx --no cockpit sync --config <your cockpit.toml> and npx --no cockpit check --config <your cockpit.toml>',
+            fix: 'move the bind inside a mount = "always" sibling, declare it as one or as an environment.generated_host_paths entry, or remove the bind mount; then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> and ./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config <your cockpit.toml>',
         })),
     ]
 }
@@ -159,7 +159,7 @@ function undefinedProfileDiagnostics(
             severity: 'error' as const, code: 'COMPOSE_PROFILE_UNDEFINED' as const satisfies typeof ENVIRONMENT_CODES.COMPOSE_PROFILE_UNDEFINED,
             target: `profile:${profile}`,
             message: `profile ${profile}, from ${source}, is declared by no service in environment.compose_files, so it would start nothing`,
-            fix: 'add the profile to the services it should start in the Compose file, or stop requesting it: remove it from environment.profiles or --profile, and for a stack started with it run npx --no cockpit down --config <your cockpit.toml>',
+            fix: 'add the profile to the services it should start in the Compose file, or stop requesting it: remove it from environment.profiles or --profile, and for a stack started with it run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config <your cockpit.toml>',
         }
     })
 }
@@ -279,7 +279,7 @@ function seedFailed(context: LifecycleRunContext, message: string) {
     return { kind: 'refusal' as const, diagnostics: [{
         severity: 'error' as const, code: 'DATA_SEED_FAILED' as const satisfies typeof ENVIRONMENT_CODES.DATA_SEED_FAILED,
         message, target: 'environment.seed',
-        fix: `correct environment.seed in ${basename(context.source.path)} or the seed it runs, then rerun npx --no cockpit up --config <your cockpit.toml>`,
+        fix: `correct environment.seed in ${basename(context.source.path)} or the seed it runs, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml>`,
     }] }
 }
 
@@ -287,7 +287,7 @@ function seedUnavailable(context: LifecycleRunContext, message: string) {
     return { kind: 'refusal' as const, diagnostics: [{
         severity: 'error' as const, code: 'DATA_SEED_UNAVAILABLE' as const satisfies typeof ENVIRONMENT_CODES.DATA_SEED_UNAVAILABLE,
         message: `cockpit could not tell whether the seed is due: ${message}`, target: context.stackId,
-        fix: 'make sure the Docker daemon this stack runs on answers docker volume ls, then rerun npx --no cockpit up --config <your cockpit.toml>',
+        fix: 'make sure the Docker daemon this stack runs on answers docker volume ls, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml>',
     }] }
 }
 

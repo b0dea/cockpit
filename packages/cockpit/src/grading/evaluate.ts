@@ -243,7 +243,7 @@ export function evaluatorUnavailable(message: string) {
     return {
         code: 'EVALUATOR_UNAVAILABLE' as const satisfies typeof ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE,
         message,
-        fix: 'install and sign in to an agent tool work.evaluators lists (codexcli: npm install -g @openai/codex, then codex login; claudecode: npm install -g @anthropic-ai/claude-code, then claude auth login; opencode: npm install -g opencode-ai, then opencode auth login), or list one you have in work.evaluators; or have a person move [work] grading to checks, self or off, and accept it with npx --no cockpit sync --config <your cockpit.toml> --interactive; then run npx --no cockpit doctor --config <your cockpit.toml>',
+        fix: 'install and sign in to an agent tool work.evaluators lists (codexcli: npm install -g @openai/codex, then codex login; claudecode: npm install -g @anthropic-ai/claude-code, then claude auth login; opencode: npm install -g opencode-ai, then opencode auth login), or list one you have in work.evaluators; or have a person move [work] grading to checks, self or off, and accept it with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive; then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config <your cockpit.toml>',
     }
 }
 
@@ -416,5 +416,5 @@ export async function evaluate(request: EvaluationRequest): Promise<EvaluationRe
     if (attempts.every(row => row.code === ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE)) return { kind: 'refusal', attempts, ...evaluatorUnavailable(message) }
     return { kind: 'refusal', attempts, message,
         code: 'EVALUATOR_RUN_FAILED' as const satisfies typeof ENVIRONMENT_CODES.EVALUATOR_RUN_FAILED,
-        fix: 'read the message for the cause each evaluator reported: sign in to it, wait out its usage limit, raise work.evaluator_timeout_seconds, run it where its sandbox or network allows, or list another tool in work.evaluators, then rerun the command; or have a person move [work] grading to checks, self or off, and accept it with npx --no cockpit sync --config <your cockpit.toml> --interactive' }
+        fix: 'read the message for the cause each evaluator reported: sign in to it, wait out its usage limit, raise work.evaluator_timeout_seconds, run it where its sandbox or network allows, or list another tool in work.evaluators, then rerun the command; or have a person move [work] grading to checks, self or off, and accept it with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive' }
 }

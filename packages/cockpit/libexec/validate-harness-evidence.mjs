@@ -556,7 +556,7 @@ export function validateEvidenceManifest(manifest, root = process.cwd(), options
 
 const SELFTEST_CAPABILITIES = ['instruction-loading', 'guard-firing', 'skill-parity']
 const SELFTEST_VERDICTS = ['enforced', 'instructed', 'unavailable']
-const SELFTEST_HUMAN_REASONS = ['executable_missing', 'authentication_required', 'isolation_unavailable', 'enforcement_probe_required']
+const SELFTEST_HUMAN_REASONS = ['executable_missing', 'authentication_required', 'isolation_unavailable', 'enforcement_probe_required', 'native_protocol_unsupported']
 const SELFTEST_SAMPLE_FEATURES = ['name', 'trigger', 'body-load', 'tools', 'non-goals']
 const SELFTEST_EVENT_RESULTS = ['completed', 'rejected', 'accepted', 'refused', 'allowed', 'unavailable']
 const SELFTEST_ZERO_EXIT_RESULTS = ['completed', 'accepted', 'allowed']
@@ -572,6 +572,7 @@ const BUILTIN_SELFTEST_HARNESSES = Object.freeze({
 const SELFTEST_MAX_ROWS = 256
 const SELFTEST_MAX_BUNDLE_BYTES = 4_194_304
 const SELFTEST_MAX_STREAM_BYTES = 65_536
+export const NATIVE_SELFTEST_STREAM_BYTES = 1_048_576
 const SELFTEST_MAX_TEXT_BYTES = 4_096
 const SELFTEST_DIGEST = /^[a-f0-9]{64}$/
 const SELFTEST_CUSTOM_ID = /^(?!(?:claudecode|codexcli|opencode)$)[a-z0-9][a-z0-9-]{0,127}$/
@@ -847,13 +848,17 @@ function selftestCell(value, name, errors, exact = true) {
 }
 
 function validateSelftestExpectation(expectation, errors) {
-    if (!exactKeys(expectation, ['schema', 'generatedManifestSha256', 'cells', 'shippedSkills', 'reviewHarnesses'])) {
+    if (!exactKeys(expectation, ['schema', 'generatedManifestSha256', 'cells', 'shippedSkills', 'reviewHarnesses',
+        ...(expectation?.instructionSourceSha256 === undefined ? [] : ['instructionSourceSha256'])])) {
         errors.push('expectation must contain only the versioned authority fields')
         return { cells: [], cellKeys: [], skills: [], reviews: [] }
     }
     if (expectation.schema !== 'cockpit-harness-selftest-expectation/v1') errors.push('unknown selftest expectation schema')
     if (!SELFTEST_DIGEST.test(expectation.generatedManifestSha256 ?? '')) {
         errors.push('expectation generatedManifestSha256 must be a lowercase SHA-256 digest')
+    }
+    if (expectation.instructionSourceSha256 !== undefined && !SELFTEST_DIGEST.test(expectation.instructionSourceSha256)) {
+        errors.push('instructionSourceSha256 must be a lowercase SHA-256 digest')
     }
     const cells = Array.isArray(expectation.cells) ? expectation.cells : []
     if (cells.length === 0 || cells.length > SELFTEST_MAX_ROWS) errors.push('expectation cells must contain between 1 and 256 rows')
@@ -876,7 +881,7 @@ function validateSelftestExpectation(expectation, errors) {
     return { cells, cellKeys, skills, reviews: Array.isArray(reviews) ? reviews : [] }
 }
 
-function validateSelftestEvent(value, name, errors) {
+function validateSelftestEvent(value, name, errors, native = false) {
     const fields = ['cwd', 'command', 'exitCode', 'signal', 'result', 'code', 'stdout', 'stderr', 'stdoutSha256', 'stderrSha256']
     if (!exactKeys(value, fields)) {
         errors.push(`${name} must contain exactly the structured event fields`)
@@ -889,8 +894,8 @@ function validateSelftestEvent(value, name, errors) {
     if (!SELFTEST_EVENT_RESULTS.includes(value.result)) errors.push(`${name}.result is unknown`)
     if (!isText(value.code) || !SELFTEST_CODE.test(value.code)) errors.push(`${name}.code must be an uppercase diagnostic code`)
     for (const stream of ['stdout', 'stderr']) {
-        if (typeof value[stream] !== 'string' || Buffer.byteLength(value[stream]) > SELFTEST_MAX_STREAM_BYTES) {
-            errors.push(`${name}.${stream} must be a string no larger than 65536 bytes`)
+        if (typeof value[stream] !== 'string' || Buffer.byteLength(value[stream]) > (native ? NATIVE_SELFTEST_STREAM_BYTES : SELFTEST_MAX_STREAM_BYTES)) {
+            errors.push(`${name}.${stream} must be a string no larger than ${native ? NATIVE_SELFTEST_STREAM_BYTES : SELFTEST_MAX_STREAM_BYTES} bytes`)
         }
         const digest = value[`${stream}Sha256`]
         if (!isText(digest) || !SELFTEST_DIGEST.test(digest)) errors.push(`${name}.${stream}Sha256 must be a lowercase SHA-256 digest`)
@@ -901,7 +906,7 @@ function validateSelftestEvent(value, name, errors) {
     if ((name === 'version' || name === 'help') && !`${value.stdout}${value.stderr}`.trim()) {
         errors.push(`${name} event must include actual command output`)
     }
-    if (name !== 'version' && name !== 'help' && isText(value.code)
+    if (!native && name !== 'version' && name !== 'help' && isText(value.code)
         && !`${value.stdout}\n${value.stderr}`.split(/\r?\n/).some(line => line.trim() === value.code)) {
         errors.push(`${name} output does not contain its exact code`)
     }
@@ -913,12 +918,39 @@ function validateSelftestEvent(value, name, errors) {
     return { ...value, command }
 }
 
-function validateSelftestEvidence(record, expectedHarness, root, options, errors) {
+// Prompt-input is a native input dump, not an assistant response. Comparing the inherited prefix
+// prevents an ancestor AGENTS.md from substituting for the leaf control under test.
+export function validateNativeInstructionPair(candidateOutput, brokenOutput, candidateCwd, brokenCwd, candidateBytes, brokenBytes) {
+    if ([candidateOutput, brokenOutput].some(value => typeof value !== 'string' || Buffer.byteLength(value) > NATIVE_SELFTEST_STREAM_BYTES)) return 'native prompt-input output exceeds its stream bound'
+    const instructions = (output, cwd) => {
+        let messages
+        try { messages = JSON.parse(output) } catch { return null }
+        if (!Array.isArray(messages)) return null
+        const prefix = `# AGENTS.md instructions for ${cwd}\n\n<INSTRUCTIONS>\n`
+        const suffix = '\n</INSTRUCTIONS>'
+        const matches = messages.filter(message => message?.type === 'message' && message.role === 'user')
+            .flatMap(message => Array.isArray(message.content) ? message.content : [])
+            .filter(block => block?.type === 'input_text' && typeof block.text === 'string'
+                && block.text.startsWith(prefix) && block.text.endsWith(suffix))
+        return matches.length === 1 ? matches[0].text.slice(prefix.length, -suffix.length) : null
+    }
+    const candidate = instructions(candidateOutput, candidateCwd)
+    const broken = instructions(brokenOutput, brokenCwd)
+    if (!candidateBytes || candidateBytes === brokenBytes || !/^Cockpit selftest replacement control [a-f0-9]{24}\.\n$/.test(brokenBytes)
+        || candidate === null || broken === null || !candidate.endsWith(candidateBytes) || !broken.endsWith(brokenBytes)
+        || candidate.slice(0, -candidateBytes.length) !== broken.slice(0, -brokenBytes.length)) {
+        return 'native prompt-input did not independently load the exact candidate and replacement instructions at their control paths, or the tool cut the candidate at its instruction size limit'
+    }
+    return null
+}
+
+function validateSelftestEvidence(record, expectedHarness, root, options, errors, expectation) {
+    const native = record.protocol === 'codex-prompt-input/v1'
     const fields = [
         'kind', 'harness', 'capability', 'generatedManifestSha256', 'verdict', 'version', 'measuredOn', 'runId',
         'startedAt', 'finishedAt', 'expiresAt', 'candidatePath', 'brokenPath', 'transcriptPath', 'candidateSha256',
         'brokenSha256', 'transcriptSha256', 'invocation', 'versionCommand', 'helpCommand', 'candidateCode',
-        'brokenCode', 'sample', 'authority', 'events',
+        'brokenCode', 'sample', 'authority', 'events', ...(native ? ['protocol'] : []),
     ]
     if (!exactKeys(record, fields)) errors.push('evidence record contains unknown or missing fields')
     for (const field of ['version', 'runId', 'candidateCode', 'brokenCode']) {
@@ -943,7 +975,7 @@ function validateSelftestEvidence(record, expectedHarness, root, options, errors
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(record.measuredOn ?? '')) errors.push('measuredOn must use YYYY-MM-DD')
 
-    const invocation = validateCommand(record.invocation, 'invocation', errors, true)
+    const invocation = validateCommand(record.invocation, 'invocation', errors, !native)
     const versionCommand = validateCommand(record.versionCommand, 'versionCommand', errors)
     const helpCommand = validateCommand(record.helpCommand, 'helpCommand', errors)
     const candidatePath = resolveEvidencePath(root, record.candidatePath, 'candidatePath', errors)
@@ -959,7 +991,7 @@ function validateSelftestEvidence(record, expectedHarness, root, options, errors
         if (![record.candidatePath, record.brokenPath, record.transcriptPath].every(path => isProbeEvidencePath(root, path))) {
             errors.push(`evidence paths must remain under ${PROBE_EVIDENCE_ROOT}/`)
         }
-        if (new Set([candidatePath, brokenPath, transcriptPath].map(path => dirname(realpathSync(path)))).size !== 1) {
+        if (!native && new Set([candidatePath, brokenPath, transcriptPath].map(path => dirname(realpathSync(path)))).size !== 1) {
             errors.push('candidate, broken control, and transcript must be colocated')
         }
         if (realpathSync(candidatePath) === realpathSync(brokenPath)
@@ -977,7 +1009,7 @@ function validateSelftestEvidence(record, expectedHarness, root, options, errors
     const events = isRecord(record.events) ? record.events : null
     if (!events || !exactKeys(events, ['version', 'help', 'brokenControl', 'candidateControl'])) errors.push('events must contain exactly four probe events')
     const checked = Object.fromEntries(['version', 'help', 'brokenControl', 'candidateControl'].map(name => [
-        name, validateSelftestEvent(events?.[name], name, errors),
+        name, validateSelftestEvent(events?.[name], name, errors, native),
     ]))
     for (const name of ['version', 'help', 'brokenControl', 'candidateControl']) {
         resolveEventCwd(root, checked[name]?.cwd, name, errors)
@@ -989,7 +1021,7 @@ function validateSelftestEvidence(record, expectedHarness, root, options, errors
     if (checked.version && isText(record.version) && !`${checked.version.stdout}\n${checked.version.stderr}`.split(/\s+/).includes(record.version)) {
         errors.push('version event output does not contain the declared version')
     }
-    if (invocation) for (const [name, path] of [['candidateControl', record.candidatePath], ['brokenControl', record.brokenPath]]) {
+    if (!native && invocation) for (const [name, path] of [['candidateControl', record.candidatePath], ['brokenControl', record.brokenPath]]) {
         const expected = invocation.map(argument => argument === '{control}' ? path : argument)
         if (checked[name] && !isDeepStrictEqual(checked[name].command, expected)) errors.push(`${name} command does not match invocation`)
         if (checked[name] && !`${checked[name].command}\n${checked[name].stdout}\n${checked[name].stderr}`.includes(basename(path ?? ''))) {
@@ -1033,6 +1065,42 @@ function validateSelftestEvidence(record, expectedHarness, root, options, errors
         const expected = { ...record }
         delete expected.transcriptSha256
         if (transcript && !isDeepStrictEqual(transcript, expected)) errors.push('transcript does not match the complete structured evidence record')
+    }
+
+    if (native) {
+        if (expectedHarness?.kind !== 'builtin' || expectedHarness.target !== 'codexcli'
+            || record.capability !== 'instruction-loading' || record.verdict !== 'instructed' || record.sample !== null
+            || record.candidateCode !== 'NATIVE_INSTRUCTIONS_LOADED' || record.brokenCode !== 'NATIVE_INSTRUCTIONS_REPLACED') {
+            errors.push('native prompt-input evidence only establishes Codex instruction loading')
+        }
+        if (record.version !== /^codex-cli (\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/.exec(typeof checked.version?.stdout === 'string' ? checked.version.stdout.trim() : '')?.[1]) errors.push('native version must match the Codex version output')
+        if (!expectation?.instructionSourceSha256 || record.candidateSha256 !== expectation.instructionSourceSha256) {
+            errors.push('native candidate does not match the generated AGENTS.md source authority')
+        }
+        if (!isDeepStrictEqual(invocation?.slice(1), ['debug', 'prompt-input', 'Do not run tools.'])
+            || !isDeepStrictEqual(versionCommand, [invocation?.[0], '--version'])
+            || !isDeepStrictEqual(helpCommand, [invocation?.[0], '--help'])) errors.push('native prompt-input commands do not match the closed protocol')
+        for (const [name, path, code] of [
+            ['candidateControl', candidatePath, 'NATIVE_INSTRUCTIONS_LOADED'],
+            ['brokenControl', brokenPath, 'NATIVE_INSTRUCTIONS_REPLACED'],
+        ]) {
+            const event = checked[name]
+            if (!event || event.exitCode !== 0 || event.signal !== null || event.result !== 'accepted' || event.code !== code
+                || !isDeepStrictEqual(event.command, invocation) || !path || typeof event.cwd !== 'string' || resolve(root, event.cwd) !== dirname(path)) {
+                errors.push(`${name} must complete native discovery from its control directory`)
+            }
+        }
+        if ([candidatePath, brokenPath, transcriptPath].some(path => path && realpathSync(path) !== path)) errors.push('native evidence paths must be canonical without symlinks')
+        if (!candidatePath || !brokenPath || basename(candidatePath) !== 'AGENTS.md' || basename(brokenPath) !== 'AGENTS.md'
+            || basename(dirname(candidatePath)) !== 'candidate' || basename(dirname(brokenPath)) !== 'broken'
+            || dirname(dirname(candidatePath)) !== dirname(dirname(brokenPath))
+            || dirname(transcriptPath ?? '') !== dirname(dirname(candidatePath))) errors.push('native controls must use separate candidate and broken AGENTS.md directories beside the transcript')
+        if (candidateBytes && brokenBytes && checked.candidateControl && checked.brokenControl) {
+            const problem = validateNativeInstructionPair(checked.candidateControl.stdout, checked.brokenControl.stdout,
+                dirname(candidatePath), dirname(brokenPath), candidateBytes.toString('utf8'), brokenBytes.toString('utf8'))
+            if (problem) errors.push(problem)
+        }
+        return
     }
 
     const outputHasCode = (event, code) => event && `${event.stdout}\n${event.stderr}`.split(/\r?\n/).some(line => line.trim() === code)
@@ -1093,6 +1161,10 @@ function validateSelftestReview(row, expectedReview, skills, evidence, errors) {
         const evidenceRow = evidence.find(record => record.runId === row.evidenceRunId)
         if (!evidenceRow || evidenceRow.capability !== 'skill-parity' || evidenceRow.sample?.skill !== row.skill
             || evidenceRow.harness?.name !== row.harness) errors.push('evidenced skill review must bind its harness skill-parity run')
+        else if (evidenceRow.verdict !== 'instructed'
+            || SELFTEST_SAMPLE_FEATURES.some(feature => !evidenceRow.sample.features.includes(feature))) {
+            errors.push('evidenced skill review requires instructed evidence covering every skill feature')
+        }
     } else if (row.status === 'human_needed') {
         if (row.reviewedOn !== null || row.evidenceRunId !== null || !Array.isArray(row.reviewers) || row.reviewers.length !== 0
             || row.checks !== null || !boundedText(row.operatorAction)) errors.push('human-needed skill review must contain only an actionable operator remainder')
@@ -1149,7 +1221,7 @@ export function validateSelftestEvidenceBundle(bundle, expectation, root = proce
             if (!boundedText(record.operatorAction)) rowErrors.push('operatorAction must be bounded actionable text')
             if (rowErrors.length === 0) pending.push(record)
         } else if (record.kind === 'evidence') {
-            validateSelftestEvidence(record, expectedCell?.harness, root, options, rowErrors)
+            validateSelftestEvidence(record, expectedCell?.harness, root, options, rowErrors, expectation)
             if (record.capability === 'skill-parity' && !expected.skills.includes(record.sample?.skill)) {
                 rowErrors.push('skill-parity sample must name a shipped skill')
             }

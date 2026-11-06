@@ -1,14 +1,16 @@
 import { createHash } from 'node:crypto'
-import { readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { createSelftestFixture } from '../../test-support/selftest-fixture.js'
 import { runCli } from '../cli.js'
+import { renderHumanValue } from '../diagnostics.js'
 import { syncGeneratedEnvironment } from '../generated-environment/command.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import {
     runConfiguredSurfaceSelftestApplication,
+    runConfiguredSurfaceSelftestOutcome,
     runSurfaceSelftestApplication,
     type SurfaceSelftestProbeSpecificationsCandidate,
 } from '../environment/selftest-application.js'
@@ -76,6 +78,45 @@ describe('surface selftest command', () => {
         expect(executions).toBe(0)
     }, 180_000)
 
+    it('shows a real-sized native run as its summary and keeps inherited instructions out of the output', async () => {
+        const { root, configPath } = await prepareFixture()
+        const bin = join(root, 'native-bin')
+        await mkdir(bin)
+        // A real prompt-input stream holds the person's global instructions and runs to about 100 KB.
+        const executable = join(bin, 'codex')
+        await writeFile(executable, `#!${process.execPath}
+const fs = require('node:fs')
+if (process.argv[2] === '--version') process.stdout.write('codex-cli 0.0.0-synthetic')
+else if (process.argv[2] === '--help') process.stdout.write('debug prompt-input')
+else process.stdout.write(JSON.stringify([
+ {type:'message',role:'developer',content:[{type:'input_text',text:'PRIVATE-INHERITED-CANARY '.repeat(4000)}]},
+ {type:'message',role:'user',content:[{type:'input_text',text:'# AGENTS.md instructions for '+process.cwd()+'\\n\\n<INSTRUCTIONS>\\n'+fs.readFileSync('AGENTS.md','utf8')+'\\n</INSTRUCTIONS>'}]},
+]))
+`)
+        await chmod(executable, 0o700)
+        const artifactPath = join(root, 'probe-specifications.json')
+        const output: string[] = []
+        const io = { stdout: { write: (chunk: string) => output.push(chunk) > 0 }, stderr: { write: (chunk: string) => output.push(chunk) > 0 } }
+        expect(await runCli(['selftest', '--config', configPath, '--write-probe-specifications', artifactPath], io), output.join('')).toBe(0)
+        const outcome = await runConfiguredSurfaceSelftestOutcome({
+            configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin },
+            requestProbeSpecificationsApproval: async candidate => candidate.sha256,
+            requestExecutableApproval: async candidate => candidate.sha256,
+        })
+        expect(outcome.status, JSON.stringify(outcome.diagnostics)).toBe(0)
+        expect(outcome.result).toMatchObject({ summary: { measuredCells: 1, pendingCells: 26, complete: false } })
+        expect(JSON.stringify(outcome)).not.toContain('PRIVATE-INHERITED-CANARY')
+        const shown = renderHumanValue(outcome.result)
+        expect(shown).toContain('pendingCells')
+        expect(shown).not.toContain('Result is not available')
+        // The run itself stays checkable: the private transcript still holds what was measured.
+        const record = (outcome.result as { evidence: { evidence: { transcriptPath: string; events: { candidateControl: { stdoutSha256: string } } }[] } }).evidence.evidence[0]!
+        expect(record.events.candidateControl.stdoutSha256).toMatch(/^[a-f0-9]{64}$/)
+        const transcript = join(root, record.transcriptPath)
+        expect(await readFile(transcript, 'utf8')).toContain('PRIVATE-INHERITED-CANARY')
+        expect((await stat(transcript)).mode & 0o777).toBe(0o600)
+    }, 180_000)
+
     it('writes a probe specification file that selftest admits once filled, and carries the filled rows past a config change', async () => {
         // Its own checkout: this case edits cockpit.toml.
         const { root, configPath, application, bin } = await prepareFixture()
@@ -90,6 +131,17 @@ describe('surface selftest command', () => {
             generatedManifestSha256: application.surfaceSelftest.manifestSha256,
         })
 
+        const unapproved = await runConfiguredSurfaceSelftestApplication({
+            configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin },
+        }, { execute: async () => { throw new Error('an unapproved file must not run a probe') } })
+        expect(unapproved).toMatchObject({
+            kind: 'refusal', code: 'SELFTEST_EXECUTION_INVALID',
+            reason: expect.stringContaining('requires independent approval'),
+        })
+
+        // A file from before the native rows can still hold nulls, and never runs a probe.
+        await writeFile(artifactPath, JSON.stringify({ ...draft, specifications: draft.specifications.map(row =>
+            ({ ...row, invocation: null, candidateCode: null, brokenCode: null })) }))
         const unfilled = await runConfiguredSurfaceSelftestApplication({
             configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin },
         }, { execute: async () => { throw new Error('an unfilled file must not run a probe') } })
@@ -98,17 +150,9 @@ describe('surface selftest command', () => {
             reason: expect.stringContaining('Claude Code guard-firing: invocation, candidateCode, brokenCode'),
         })
 
-        // The person's part: the probe arguments and the lines the tool prints. Everything else is
-        // what cockpit wrote.
+        // Previously filled exact-code rows remain a supported legacy protocol.
         const supplied = specifications(application)
-        const filled = draft.specifications.map((row, index) => ({
-            ...row,
-            invocation: supplied[index]!.invocation,
-            candidateCode: supplied[index]!.candidateCode,
-            brokenCode: supplied[index]!.brokenCode,
-            sample: supplied[index]!.sample,
-        }))
-        expect(filled).toEqual(supplied)
+        const filled = supplied.map(row => ({ ...row }))
         const artifactBytes = JSON.stringify({ ...draft, specifications: filled })
         await writeFile(artifactPath, artifactBytes)
 
@@ -240,7 +284,7 @@ describe('surface selftest command', () => {
         const missing = await runConfiguredSurfaceSelftestApplication({
             configPath, probeSpecificationsPath: join(root, 'missing.json'), env: { PATH: bin },
         }, { execute })
-        const producer = 'npx --no cockpit selftest --config <your cockpit.toml> --write-probe-specifications <new file>'
+        const producer = './node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --write-probe-specifications <new file>'
         expect(missing).toEqual(expect.objectContaining({
             kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', fix: expect.stringContaining(producer),
         }))

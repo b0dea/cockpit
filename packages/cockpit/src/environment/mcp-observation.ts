@@ -53,7 +53,7 @@ export async function observeMcpStartup(
                 code: 'MCP_COMMAND_UNRESOLVED' satisfies typeof ENVIRONMENT_CODES.MCP_COMMAND_UNRESOLVED,
                 target: server.name,
                 message: `the ${part} of MCP server ${server.name}, ${launch.command} in ${launch.cwd}, does not resolve to an executable file (${problem.reason}), so no tool can start ${'transport' in server ? 'its connection' : 'it'}`,
-                fix: 'install the command or correct it in the sibling\'s MCP declaration, then run npx --no cockpit sync --config <your cockpit.toml>; a changed declaration needs a person to approve its new sha256 under [mcp.approved]',
+                fix: 'install the command or correct it in the sibling\'s MCP declaration, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; a changed declaration needs a person to approve its new sha256 under [mcp.approved]',
             })
             if (problem?.kind === 'relative-path') diagnostics.push({
                 severity: 'warning',

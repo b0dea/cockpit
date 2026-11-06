@@ -10,10 +10,11 @@ budget: uncapped
 ## Running cockpit
 
 - Run every command from the cockpit root, the directory holding `cockpit.toml`, through the
-  project-local binary, for example `./node_modules/.bin/cockpit check --config cockpit.toml`.
-  `npx --no cockpit <command>` starts the same binary, but the path form still runs where the
-  guard cannot prove what npx starts. If the binary is missing, stop and ask the person to install cockpit; a
-  runner that downloads a package is never a substitute.
+  installed package entrypoint, for example `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml`.
+  This path resolves to the installed package even when pnpm writes a shell shim in `node_modules/.bin`.
+  `npx --no cockpit <command>` and the `.bin` launcher count only where the guard can prove they
+  start that same package. If the entrypoint is missing, stop and ask the person to install cockpit;
+  a runner that downloads a package is never a substitute.
 - Take flags from each command's `--help`. With `--json`, read `result`, `diagnostics[].code` and
   `invocation.exitCode`. Every diagnostic names its fix, and
   `./node_modules/@b00dea/cockpit/docs/troubleshooting.md` covers the codes that need more; the
@@ -23,7 +24,7 @@ budget: uncapped
   guarded tool call (a guard message saying so, `GUARD_AUTHORITY_UNAVAILABLE` or `GUARD_CONFIG_UNSYNCED`)
   follows any edit to `cockpit.toml` or reinstall of cockpit or Node. `GUARD_CONFIG_UNSYNCED` means
   the edit does not widen what agents may do, so run
-  `./node_modules/.bin/cockpit sync --config cockpit.toml` yourself where `[autonomy] sync =
+  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself where `[autonomy] sync =
   "agent"`; any other hold clears only when a person runs it in a terminal. A refused command is the
   person's to run: never reword, wrap or re-spell it to get past the guard.
 - In Codex's sandbox `check`, `sync --dry-run` and `--help` work as it stands, unless `[browser]` is
@@ -44,7 +45,7 @@ not the thinking: reuse the planning skills the harness already has.
 
 0. **Is this a work order?** If nobody else sets the criteria and nothing must carry on in a later
    session, stop and use the cockpit-fix skill. Otherwise read
-   `./node_modules/.bin/cockpit work status --config cockpit.toml --json`: `result.wip` says how many
+   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work status --config cockpit.toml --json`: `result.wip` says how many
    accepted orders are open against `work.wip_cap`, `result.gates` who passes each step, and
    `result.grading` how an order earns done (under `off`, skip steps 5 and 6: nothing grades, and step 8
    closes the order without a grade, though an open question, a stale contract, an unresolved decision
@@ -61,7 +62,7 @@ not the thinking: reuse the planning skills the harness already has.
    criterion a `text` an independent reviewer could not read two ways and, wherever a command can
    show it, a `check`. The body below the front-matter is free for your notes and plan. Done when
    the person who set the criteria has seen the front-matter.
-2. **Accept it** with `./node_modules/.bin/cockpit work accept --config cockpit.toml --work-order WO-001`.
+2. **Accept it** with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config cockpit.toml --work-order WO-001`.
    Acceptance records the commit each repository stands at, and grading counts every change since
    then against `scope`, so first ask the person what to do with uncommitted changes already in the
    checkout. Under `accept = "agent"` it is accepted; under `ci` it is accepted pending the
@@ -75,32 +76,32 @@ not the thinking: reuse the planning skills the harness already has.
    needs a person, a rewritten criterion or widened scope needs one under `checks` grading, and
    otherwise the next grade judges whether your amendment lowered the bar. When you
    need a person's input, run
-   `./node_modules/.bin/cockpit work note --config cockpit.toml --work-order WO-001 --ask --text "<question>"`
+   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work note --config cockpit.toml --work-order WO-001 --ask --text "<question>"`
    and stop: the order is blocked until it is answered with `work answer`, which under `answer =
    "person"` only a person can run. When `work accept` or `work status` lists `relatedDecisions`,
    read those decision records before changing the code they name. When the work makes a lasting
    decision (a format, a boundary, a dependency, an option rejected), record it with
-   `./node_modules/.bin/cockpit work note --config cockpit.toml --work-order WO-001 --decision --text "<title>"`
+   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work note --config cockpit.toml --work-order WO-001 --decision --text "<title>"`
    and resolve it with `work decide --decision <n> --record` (adding `--supersedes <number>` when it
    replaces an older record), then replace every placeholder in the record it writes;
    `--record-file <path>` cites a record that already exists, and `--none --reason "<why>"` resolves
    one that turned out not to last. Update the documentation that describes behaviour you change.
    This needs `[docs] decisions` in `cockpit.toml`, and nothing enforces it under
    `[work] grading = "checks"`. Done when every criterion has code and a test that passes.
-4. **Check** with `./node_modules/.bin/cockpit work check --config cockpit.toml --work-order WO-001 --json`.
+4. **Check** with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work check --config cockpit.toml --work-order WO-001 --json`.
    It runs every criterion's check and the order's gates; a failure (`WORK_CHECK_FAILED`) returns
    each result's outcome and the end of its output under `result.results`. Fix and rerun. While
    iterating, the declared gate
-   (`./node_modules/.bin/cockpit test-run --config cockpit.toml --gate declared-gate-id --json`) is
+   (`./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run --config cockpit.toml --gate declared-gate-id --json`) is
    faster feedback. Done when `work check` exits 0.
 5. **Before grading, review.** Run the harness's installed simplification and code-review skills,
    with security emphasis when the change touches authentication, secrets, guards or reach to
    non-local hosts. Fix their blocking findings and rerun `work check`. Where `cockpit.toml` declares
-   `[docs]`, also run `./node_modules/.bin/cockpit docs check --config cockpit.toml --json` and fix
+   `[docs]`, also run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs docs check --config cockpit.toml --json` and fix
    each finding your change caused: a living document citing a path or `make` target you removed, or
    a decision record out of step with its index. Done when no blocking finding is open, `work check`
    still exits 0 and `docs check` reports nothing your change caused.
-6. **Grade** with `./node_modules/.bin/cockpit work grade --config cockpit.toml --work-order WO-001 --json`.
+6. **Grade** with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work grade --config cockpit.toml --work-order WO-001 --json`.
    Under the default `independent` grading a fresh read-only evaluator grades each criterion, in
    another listed agent tool when there is one; never grade your own work. When no evaluator can run
    (`EVALUATOR_UNAVAILABLE` or `EVALUATOR_RUN_FAILED` in the refusal: none on `PATH`, signed out,
@@ -134,7 +135,7 @@ not the thinking: reuse the planning skills the harness already has.
    `work signoff --partial` or `--abandon`, or amend the contract, yourself where `[work.gates]` gives
    that step to the agent, and otherwise hand the person the command. Done when the order is closed or
    amended, or the person has the cause and the command.
-8. **Close** with `./node_modules/.bin/cockpit work signoff --config cockpit.toml --work-order WO-001`
+8. **Close** with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work signoff --config cockpit.toml --work-order WO-001`
    once graded, or under `off` when the work is finished: it closes as `ungraded`, listing any check that
    failed or never ran, so report those, and pass a `--note` saying why if one failed (expected, not
    enforced). A grade made under a weaker mode than the one now in force does not close as done:

@@ -11,6 +11,7 @@ import { publicationCockpitId } from '../environment/identity.js'
 import { spawn, spawnSync } from 'node:child_process'
 import { encodeGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
 import { fileFingerprint } from '../environment-exec/verified-digest.js'
+import { GUARD_RECOVERY_SHELL } from './guard-recovery.js'
 
 import { afterAll, describe, expect, it } from 'vitest'
 
@@ -331,18 +332,21 @@ describe('restriction expansion', () => {
         })
 
         // At session start each registration runs the installed cockpit's check on the configuration
-        // and shows its report; it never blocks the session, and says nothing where cockpit is absent.
+        // and shows its report; it never blocks the session, including when dependencies are absent.
         const sessionStart = (name: 'claudecode' | 'codexcli', cwd: string, env: NodeJS.ProcessEnv) => {
             const registration = JSON.parse(target(result, name).files[0]!.bytes) as { hooks: { SessionStart: Array<{ hooks: Array<{ command: string }> }> } }
             return spawnSync('/bin/sh', ['-c', registration.hooks.SessionStart[0]!.hooks[0]!.command], { cwd, env, encoding: 'utf8' })
         }
         for (const [name, cwd, env] of [['claudecode', join(directory, 'nested'), { ...ambient, CLAUDE_PROJECT_DIR: directory }], ['codexcli', directory, ambient]] as const) {
-            expect(sessionStart(name, cwd, env), name).toMatchObject({ status: 0, stdout: '' })
+            expect(sessionStart(name, cwd, env), name).toMatchObject({ status: 0,
+                stdout: expect.stringContaining('@b00dea/cockpit is not installed or is incomplete') })
         }
-        await mkdir(join(directory, 'node_modules/.bin'), { recursive: true })
-        await writeFile(join(directory, 'node_modules/.bin/cockpit'), '#!/bin/sh\necho "ERROR GENERATED_ARTIFACT_DRIFT from $*"\nexit 2\n', { mode: 0o755 })
+        await mkdir(join(directory, 'node_modules/@b00dea/cockpit/bin'), { recursive: true })
+        await mkdir(join(directory, 'node_modules/@b00dea/cockpit/dist'), { recursive: true })
+        await writeFile(join(directory, 'node_modules/@b00dea/cockpit/dist/cli.js'), '')
+        await writeFile(join(directory, 'node_modules/@b00dea/cockpit/bin/cockpit.mjs'), '#!/bin/sh\necho "ERROR GENERATED_ARTIFACT_DRIFT from $*"\nexit 2\n', { mode: 0o755 })
         for (const [name, cwd, env] of [['claudecode', join(directory, 'nested'), { ...ambient, CLAUDE_PROJECT_DIR: directory }], ['codexcli', directory, ambient]] as const) {
-            expect(sessionStart(name, cwd, env), name).toMatchObject({ status: 0, stdout: 'ERROR GENERATED_ARTIFACT_DRIFT from check --config cockpit.toml\n' })
+            expect(sessionStart(name, cwd, env), name).toMatchObject({ status: 0, stdout: `ERROR GENERATED_ARTIFACT_DRIFT from check --config ${directory}/cockpit.toml\n` })
         }
     })
 
@@ -401,7 +405,7 @@ describe('restriction expansion', () => {
         const result = complete(expandRestrictions(await input({ canonicalProjectRoot: directory })))
         rmSync(join(directory, '.cockpit/local/guard-identity'))
         expect(runGuard(result, edit('env/service.env.example'))).toMatchObject({
-            status: 2, stdout: '', stderr: expect.stringContaining(`Fix: run \`npx --no cockpit sync --config ${directory}/cockpit.toml\` in a terminal`),
+            status: 2, stdout: '', stderr: expect.stringContaining('@b00dea/cockpit is not installed or is incomplete'),
         })
     })
 
@@ -410,13 +414,19 @@ describe('restriction expansion', () => {
         const result = complete(expandRestrictions(await input({ configFile })))
         const context = renderedContexts.get(result)
         if (!context) throw new Error('guard fixture was not published')
+        await writeFile(join(context.root, configFile), context.source)
+        const launcher = join(context.root, 'node_modules/@b00dea/cockpit/bin/cockpit.mjs')
+        await mkdir(dirname(launcher), { recursive: true })
+        await mkdir(join(context.root, 'node_modules/@b00dea/cockpit/dist'), { recursive: true })
+        await writeFile(join(context.root, 'node_modules/@b00dea/cockpit/dist/cli.js'), '')
+        await writeFile(launcher, '#!/bin/sh\nprintf "<%s>\\n" "$@"\n', { mode: 0o755 })
         rmSync(join(context.root, '.cockpit/local/guard-identity'))
         const refused = runGuard(result, edit('env/service.env.example'))
-        const command = /Fix: run `([^`]+)`/.exec(refused.stderr)?.[1]
+        const command = /Fix: a human must run `([^`]+)`/.exec(refused.stderr)?.[1]
         expect(command).toBeDefined()
-        const captured = spawnSync('/bin/bash', ['-c', `npx() { printf '<%s>\n' "$@"; }; ${command}`], { encoding: 'utf8' })
+        const captured = spawnSync('/bin/bash', ['-c', command!], { encoding: 'utf8' })
         expect(captured).toMatchObject({ status: 0, stderr: '', stdout:
-            `<--no>\n<cockpit>\n<sync>\n<--config>\n<${join(context.root, configFile)}>\n` })
+            `<sync>\n<--config>\n<${join(context.root, configFile)}>\n` })
     })
 
     it('turns every guard failure other than the blocking exit into a blocking exit', async () => {
@@ -695,15 +705,15 @@ while (Date.now() < end) {
             canonicalProjectRoot: quoted,
             instances: [{ kind: 'instance', name: 'quoted-instance', path: `env/${"'".repeat(100)}.env` }],
         })
-        const minimal = '#!/usr/bin/env bash\n# __COCKPIT_GUARD_CONFIG__\n'
+        const minimal = '#!/usr/bin/env bash\n# __COCKPIT_GUARD_CONFIG__\n__COCKPIT_GUARD_RECOVERY__\n'
         const rendered = complete(expandRestrictions({ ...baseInput, guardTemplate: minimal }))
-        expect(rendered.sharedGuard.bytes).toBe('#!/usr/bin/env bash\n# cockpit.toml\n')
+        expect(rendered.sharedGuard.bytes).toBe(`#!/usr/bin/env bash\n# cockpit.toml\n${GUARD_RECOVERY_SHELL}\n`)
+        expect(rendered.sharedGuard.bytes).not.toContain('__COCKPIT_GUARD_RECOVERY__')
         expect(JSON.stringify(rendered)).not.toContain(quoted)
-        // Substitution now shortens the template, so bounded input capture is the binding scalar bound.
-        const padding = RESTRICTION_OUTPUT_LIMITS.scalarBytes - Buffer.byteLength(minimal)
+        const padding = RESTRICTION_OUTPUT_LIMITS.scalarBytes - Buffer.byteLength(rendered.sharedGuard.bytes)
         complete(expandRestrictions({ ...baseInput, guardTemplate: `${minimal}${'x'.repeat(padding)}` }))
         expect(expandRestrictions({ ...baseInput, guardTemplate: `${minimal}${'x'.repeat(padding + 1)}` })).toMatchObject({
-            kind: 'refusal', code: 'RESTRICTION_INPUT_INVALID',
+            kind: 'refusal', code: 'RESTRICTION_OUTPUT_LIMIT',
         })
         // Each scalar fits, but JSON escaping doubles every quote past the aggregate bound.
         expect(expandRestrictions({ ...baseInput, guardTemplate: `${minimal}${'"'.repeat(padding)}` })).toMatchObject({

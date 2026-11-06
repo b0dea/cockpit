@@ -95,7 +95,7 @@ describe('work-order lifecycle', () => {
             message: expect.stringContaining('the Codex CLI (codex) is not on PATH') }))
         expect(graded.diagnostics.map(row => row.code)).not.toContain('EVALUATOR_FELL_BACK_TO_RUNNING_TOOL')
         // The fix names the command that was run, not an order this grade does not have.
-        expect(graded.guidance?.[0]?.text).toContain(`npx --no cockpit grade --config ${join(root, 'cockpit.toml')} --criteria <file>`)
+        expect(graded.guidance?.[0]?.text).toContain(`./node_modules/@b00dea/cockpit/bin/cockpit.mjs grade --config ${join(root, 'cockpit.toml')} --criteria <file>`)
         // A person who names the grader gets that tool or a refusal, never another listed tool that is available.
         const named = await work(root, ['grade', '--criteria', 'criteria.md', '--evaluator', 'codexcli'], env)
         expect(named).toMatchObject({ status: 2, result: null, diagnostics: [{ message: expect.stringMatching(/^EVALUATOR_UNAVAILABLE: the Codex CLI \(codex\) is not on PATH/) }] })
@@ -303,7 +303,7 @@ describe('work-order lifecycle', () => {
         // Off that no person confirmed is not in force: the default grades until a person removes it from unconfirmed.
         writeFileSync(join(root, 'cockpit.toml'), `unconfirmed = ["work.grading"]\n${readFileSync(join(root, 'cockpit.toml'), 'utf8')}`)
         expect((await work(root, ['work', 'status'])).result).toMatchObject({ grading: 'independent', awaitingConfirmation: [{ field: 'work.grading', declared: 'off',
-            inForce: 'independent', confirm: expect.stringContaining('deletes its entry from unconfirmed, then runs npx --no cockpit sync') }] })
+            inForce: 'independent', confirm: expect.stringContaining('deletes its entry from unconfirmed, then runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync') }] })
         writeFileSync(join(root, 'workorders/WO-16.md'), order('WO-16'))
         await work(root, ['work', 'accept', '--work-order', 'WO-16'])
         expect((await work(root, ['work', 'signoff', '--work-order', 'WO-16'])).diagnostics[0]?.message).toMatch(/WO-16 is accepted, not graded/)

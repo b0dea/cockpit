@@ -202,7 +202,7 @@ describe('observation application runners', () => {
             const compose = '[environment]\ncompose_files = ["compose.yml"]'
             expect(await doctorFor(compose)).toEqual([{ severity: 'warning', code: 'TESTING_GATE_UNDECLARED', target: 'testing',
                 message: 'cockpit.toml declares no [testing] gate, so test-run has nothing to run and no work in this product can be graded PASS',
-                fix: expect.stringContaining('npx --no cockpit sync --config <your cockpit.toml>') }])
+                fix: expect.stringContaining('./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>') }])
             expect(await doctorFor(`${compose}\n\n[testing]\nstages = [{ id = "unit", command = ["make", "test"], requires_stack = false }]\n`
                 + 'gates = [{ id = "all", tier = "full", stages = ["unit"], changes = "Any behavior" }]\nnative_hooks = { install = "inspect" }')).toEqual([])
             // A docs-only cockpit has no product to test.
@@ -222,7 +222,7 @@ describe('observation application runners', () => {
                 return result.result.declarations.filter(row => row.subject === 'docs')
             }
             expect(await doctorFor('[docs]\nliving = ["README.md"]')).toEqual([{ subject: 'docs', state: 'declared', source: 'docs',
-                reason: `docs check reads the declared living documents and decision records; doctor does not run it: npx --no cockpit docs check --config ${join(directory, 'cockpit.toml')}` }])
+                reason: `docs check reads the declared living documents and decision records; doctor does not run it: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs docs check --config ${join(directory, 'cockpit.toml')}` }])
             expect(await doctorFor('')).toEqual([])
         } finally { rmSync(directory, { recursive: true, force: true }) }
     })
@@ -242,8 +242,8 @@ describe('observation application runners', () => {
                 code: 'DECLARATION_UNCONFIRMED', target: 'unconfirmed',
                 message: 'environment.machine, guards in cockpit.toml were chosen by the setup agent or by no one named, not stated by a person, so they may not describe this product',
                 // The agent confirms what an observation verifies; a trust decision stays a person's.
-                fix: 'run npx --no cockpit confirm environment.machine --config <your cockpit.toml>, which confirms environment.machine only if the container runtime measured on this machine meets the declared memory, CPU and free-disk floor; '
-                    + 'a person confirms guards with whoever owns the product, corrects cockpit.toml if a value is wrong, deletes its entry from unconfirmed, then runs npx --no cockpit sync --config <your cockpit.toml> in a terminal outside the agent' }])
+                fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs confirm environment.machine --config <your cockpit.toml>, which confirms environment.machine only if the container runtime measured on this machine meets the declared memory, CPU and free-disk floor; '
+                    + 'a person confirms guards with whoever owns the product, corrects cockpit.toml if a value is wrong, deletes its entry from unconfirmed, then runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal outside the agent' }])
             // A trust answer that waits for a person is held at the stronger default meanwhile, and doctor says so.
             expect(await doctorFor('unconfirmed = ["work.grading"]\n[work]\ngrading = "off"\n')).toEqual([expect.objectContaining({
                 message: expect.stringMatching(/; awaiting confirmation, work\.grading is held at independent rather than the declared off$/),
@@ -270,7 +270,7 @@ describe('observation application runners', () => {
         expect(result.diagnostics.filter(row => row.code === 'STATE_RECORD_MALFORMED')).toEqual([{ severity: 'warning',
             code: 'STATE_RECORD_MALFORMED', target: cockpits,
             message: `2 state folders of other cockpits under ${cockpits} cannot be read by this cockpit version (format is not supported), so their claims and port leases were ignored`,
-            fix: 'preview their removal with npx --no cockpit stacks prune --config <your cockpit.toml>, which removes those an earlier cockpit build left once none of their stacks is kept, then apply it with --apply' }])
+            fix: 'preview their removal with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs stacks prune --config <your cockpit.toml>, which removes those an earlier cockpit build left once none of their stacks is kept, then apply it with --apply' }])
         expect(result.diagnostics.filter(row => row.code === 'STACKS_ORPHANED')).toEqual([orphaned])
 
         // An inventory that cannot be read is said, not taken for one with nothing in it.

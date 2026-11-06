@@ -34,7 +34,7 @@ export function inspectDecisionRecords(set: DecisionRecordSet): Diagnostic[] {
         if ('unreadable' in parsed) {
             findings.push({ severity: 'error', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
                 message: `decision record ${at(name)} could not be read: ${parsed.unreadable}`, target: at(name),
-                fix: 'correct the record so it parses as Markdown with optional YAML front matter, then rerun npx --no cockpit docs check --config <your cockpit.toml>' })
+                fix: 'correct the record so it parses as Markdown with optional YAML front matter, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs docs check --config <your cockpit.toml>' })
             continue
         }
         records.set(name, parsed)
@@ -86,7 +86,7 @@ export function inspectDecisionRecords(set: DecisionRecordSet): Diagnostic[] {
         try { links = walkMarkdownProse(set.index.body).links } catch (error) {
             findings.push({ severity: 'error', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
                 message: `decision index ${set.repository}${set.index.path} could not be read: ${(error as Error).message}`, target: `${set.repository}${set.index.path}`,
-                fix: 'close the HTML comment the message names, then rerun npx --no cockpit docs check --config <your cockpit.toml>' })
+                fix: 'close the HTML comment the message names, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs docs check --config <your cockpit.toml>' })
             return findings
         }
         const linked = new Set<string>()

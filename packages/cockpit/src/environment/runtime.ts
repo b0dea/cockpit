@@ -2672,7 +2672,7 @@ export async function observeRuntimePortFamily(input: {
                 freshness: { state: 'current' },
                 remedy: `${named.join('; ')}${mismatched.length > named.length ? `; and ${mismatched.length - named.length} more` : ''}: `
                     + 'stop the process holding a leased port (find it with `lsof -nP -iTCP:<port> -sTCP:LISTEN`), '
-                    + 'or restart the stack with `npx --no cockpit up --config <your cockpit.toml>` to restore a missing listener',
+                    + 'or restart the stack with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml>` to restore a missing listener',
             })
         }
         if (!await revalidatePortLeaseProjection({ projection: lease, namespace })) {

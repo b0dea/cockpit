@@ -241,7 +241,7 @@ const AGENT_COCKPIT_COMMANDS = [
 ] as const
 
 function claudeCommandAllowances(): Readonly<Record<string, 'allow'>> {
-    return Object.fromEntries(['npx --no cockpit', './node_modules/.bin/cockpit']
+    return Object.fromEntries(['npx --no cockpit', './node_modules/.bin/cockpit', './node_modules/@b00dea/cockpit/bin/cockpit.mjs']
         .flatMap(launcher => AGENT_COCKPIT_COMMANDS.map(command => [`${launcher} ${command}`, 'allow' as const])))
 }
 

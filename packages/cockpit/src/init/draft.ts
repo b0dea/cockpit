@@ -763,7 +763,7 @@ const QUESTION_WHY = {
     ports: 'no source establishes the host-published base port map; an explicit empty map means none',
     policies: 'declare one row per toolchain and lockfile with any build or test command the guard should allow',
     testData: 'answer with exactly { seeded_data: boolean, signed_in_users: boolean } to state whether this local setup needs seeded data and signed-in users; each false field records a precise not-declared decision, while true keeps the product-owned declaration work visible without claiming that data or authentication exists',
-    composeFiles: 'list the Compose files, relative to the cockpit root, that run the product, such as ["compose.yml"]; cockpit runs them as written. Answer [] to defer runtime adoption and publish harness surfaces first, even when the product is runnable. A small app with no Compose file gets a starting one, which it then owns, from npx --no cockpit init <cockpit root> --scaffold-compose <app dir> --port <port>',
+    composeFiles: 'list the Compose files, relative to the cockpit root, that run the product, such as ["compose.yml"]; cockpit runs them as written. Answer [] to defer runtime adoption and publish harness surfaces first, even when the product is runnable. A small app with no Compose file gets a starting one, which it then owns, from ./node_modules/@b00dea/cockpit/bin/cockpit.mjs init <cockpit root> --scaffold-compose <app dir> --port <port>',
     machine: 'declare the machine floor the product needs from the container runtime: runtime_memory_mb, runtime_cpus, free_disk_mb and cold_start_seconds; init proposes memory and CPUs from the Compose file\'s service limits, or from this machine\'s measured runtime where no limit records them; nothing records free disk or the cold start time, so a person states those, or the setup agent marks its choice "agent-default"',
     posture: `preflight refuses a runtime until its posture is declared: addressing is "port" (localhost:<port>) or "hostname"; authentication is "none" (no sign-in), "bypassed" (sign-in turned off locally) or "real"; posture_requirements names what depends on them, each tagged with the posture it needs. For a plain localhost stack with no sign-in, answer ${JSON.stringify({ addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] })}`,
     testing: 'declare the product\'s test commands as [testing] stages and gates: a targeted gate agents run while iterating and a full gate they run before handing back shared changes; init proposes them from test entry points it finds on disk. Answer "none" when the product has no tests yet: no work can then be graded PASS, and doctor warns until gates are declared',
@@ -1080,7 +1080,7 @@ async function completeConfigurationDocument(
                     undeclared.length === 0 ? '' : `; it omits ${undeclared.join(', ')}`}${
                     input.estate === undefined ? '' : '; a cockpit inside or beside a product repository starts with that repository alone'}`,
                 'sibling',
-                'declare one sibling for each repository the message says init observed, with that slug and dir, and no other; add any other repository after init with npx --no cockpit sibling add <slug> --config <your cockpit.toml>',
+                'declare one sibling for each repository the message says init observed, with that slug and dir, and no other; add any other repository after init with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add <slug> --config <your cockpit.toml>',
             )
         }
     }
@@ -1335,10 +1335,10 @@ async function completeConfigurationDocument(
         fix: unconfirmedFix([row.field]) })
     if (noGuardHosts) diagnostics.push({ severity: 'info', code: 'DOCUMENT_GUARD_HOSTS_NONE', target: 'guards',
         message: `${noGuardHostsDecision(guardRead.provenance)}, so the guard denies no command by host`,
-        fix: 'list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists' })
+        fix: 'list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> once a non-local environment exists' })
     if (surfacesOnly || runtimeDeferred) diagnostics.push({ severity: 'info', code: 'DOCUMENT_RUNTIME_NOT_DECLARED', target: 'environment',
         message: `${runtimeDeferred ? `${STATED_BY[runtimeDeferred]} runtime adoption is deferred` : 'no runnable product was observed'}, so this configuration declares no runtime environment and no Compose file: sync publishes the harness surfaces only, and up, logs and the other runtime commands refuse`,
-        fix: 'to adopt a runtime, declare environment.compose_files, environment.machine and the environment postures, then run npx --no cockpit sync --config <your cockpit.toml>' })
+        fix: 'to adopt a runtime, declare environment.compose_files, environment.machine and the environment postures, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>' })
     return { kind: 'complete', artifact, destination, diagnostics,
         result: { document: artifact, ...(unconfirmed.length === 0 ? {} : { unconfirmed }), ...(derived.length === 0 ? {} : { derived }) },
         status: 0, question: null }

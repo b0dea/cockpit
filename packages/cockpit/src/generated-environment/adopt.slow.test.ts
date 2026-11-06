@@ -62,7 +62,7 @@ describe('sync --adopt', () => {
         const refused = await syncGeneratedEnvironment({ configPath })
         expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
             code: 'SURFACE_STATE_CONFLICT', target: '.claude/settings.json',
-            fix: expect.stringContaining('have a human approve npx --no cockpit sync --config <your cockpit.toml> --adopt .claude/settings.json'),
+            fix: expect.stringContaining('have a human approve ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --adopt .claude/settings.json'),
         })] })
     })
 
@@ -215,7 +215,7 @@ describe('sync --adopt', () => {
 
             expect(refused).toMatchObject({ status: 2, diagnostics: [
                 expect.objectContaining({ code: 'CONFIG_CHANGED_DURING_EXECUTION',
-                    fix: 'let the other edit finish, then have a human approve npx --no cockpit sync --config <your cockpit.toml> --adopt .claude/settings.json again' }),
+                    fix: 'let the other edit finish, then have a human approve ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --adopt .claude/settings.json again' }),
                 expect.objectContaining({ code: 'SURFACE_ADOPTION_REFUSED' }),
             ] })
             expect(await readFile(configPath, 'utf8')).toBe(edited)

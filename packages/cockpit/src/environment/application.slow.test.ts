@@ -86,6 +86,12 @@ describe('guard policy construction', () => {
         mkdirSync(createdRoot)
         const root = realpathSync(createdRoot)
         const configPath = join(root, 'cockpit.toml')
+        writeFileSync(configPath, '')
+        const launcher = join(root, 'node_modules/@b00dea/cockpit/bin/cockpit.mjs')
+        mkdirSync(dirname(launcher), { recursive: true })
+        mkdirSync(join(root, 'node_modules/@b00dea/cockpit/dist'))
+        writeFileSync(join(root, 'node_modules/@b00dea/cockpit/dist/cli.js'), '')
+        writeFileSync(launcher, '#!/bin/sh\nprintf "<%s>\\n" "$@"\n', { mode: 0o755 })
         const digest = '0'.repeat(64)
         const identity = {
             root, rootDevice: '0', rootInode: '0', configPath, configSha256: digest,
@@ -98,11 +104,11 @@ describe('guard policy construction', () => {
         })
         const command = /run `([^`]+)` in a terminal/.exec(result.decision.reason)?.[1]
         expect(command, result.decision.reason).toBeDefined()
-        const captured = spawnSync('/bin/bash', ['-c', `npx() { printf '<%s>\\n' "$@"; }; ${command}`], { encoding: 'utf8' })
-        expect(captured).toMatchObject({ status: 0, stderr: '', stdout: `<--no>\n<cockpit>\n<sync>\n<--config>\n<${configPath}>\n` })
+        const captured = spawnSync('/bin/bash', ['-c', command!], { encoding: 'utf8' })
+        expect(captured).toMatchObject({ status: 0, stderr: '', stdout: `<sync>\n<--config>\n<${configPath}>\n` })
     })
 
-    it('delimits a dash-prefixed configuration filename in application restore guidance', async () => {
+    it('names a missing dash-prefixed configuration without claiming it can be restored from Git', async () => {
         const base = mkdtempSync(join(tmpdir(), 'cockpit-guard-restore-'))
         scratch.push(base)
         const createdRoot = join(base, "cock'pit root")
@@ -121,10 +127,11 @@ describe('guard policy construction', () => {
             loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
             resolveGit: async () => ({ state: 'unavailable', reason: 'not reached' }),
         })
-        const command = /restore it with `([^`]+)`/.exec(result.decision.reason)?.[1]
-        expect(command, result.decision.reason).toBeDefined()
-        const captured = spawnSync('/bin/bash', ['-c', `git() { printf '<%s>\\n' "$@"; }; ${command}`], { encoding: 'utf8' })
-        expect(captured).toMatchObject({ status: 0, stderr: '', stdout: `<-C>\n<${root}>\n<restore>\n<-->\n<${configFile}>\n` })
+        expect(result.decision).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining(`${configPath} is missing`) })
+        expect(result.decision.reason).toContain('return to the intended configured checkout/worktree and branch')
+        expect(result.decision.reason).toContain('preserve native guards')
+        expect(result.decision.reason).not.toContain('git ')
+        expect(result.decision.reason).not.toContain('sync --config')
     })
     async function observedPolicy(declared = true, tuple?: string[]) {
         const { configPath } = fixture()
@@ -158,6 +165,8 @@ describe('guard policy construction', () => {
         if (scratchIndex < 0) throw new Error('installed guard fixture root was not registered for cleanup')
         scratch.splice(scratchIndex, 1)
         sharedInstalledGuardRoot = root
+        mkdirSync(join(root, 'node_modules/@b00dea'), { recursive: true })
+        symlinkSync(fileURLToPath(new URL('../../', import.meta.url)), join(root, 'node_modules/@b00dea/cockpit'))
         mkdirSync(join(root, 'fixtures'), { recursive: true })
         writeFileSync(join(root, 'fixtures/personas.json'), '[{"id":"synthetic"}]\n')
         expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
@@ -347,7 +356,7 @@ describe('guard policy construction', () => {
         })
         expect(result).toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining(
             change === 'changed' ? 'publication changed during evaluation'
-                : change === 'missing' ? `.cockpit/guards/bash-guard.sh is missing; it authenticates the guard and the hook that launches it, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are held, including a sync run through this agent, while file reads and unrestricted MCP tools continue. Fix: a human must restore it with \`git -C ${root} restore -- .cockpit/guards/bash-guard.sh\``
+                : change === 'missing' ? `.cockpit/guards/bash-guard.sh is missing; it authenticates the guard and the hook that launches it, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are held, including a sync run through this agent, while file reads and unrestricted MCP tools continue. Fix: a human must run \`${root}/node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${root}/cockpit.toml\``
                     : 'could not be read or revalidated',
         ) } })
         expect(observeCheckout).toHaveBeenCalledTimes(change === 'changed' ? 1 : 0)
@@ -355,12 +364,11 @@ describe('guard policy construction', () => {
     }, 120_000)
 
     it.each([
-        // Restoring committed bytes clears the hold by itself: the guard authenticates their content.
-        ['cockpit.toml', 'guard policy comes from it', true],
-        ['.cockpit/generated-environment-ownership.json', 'it authenticates the guard and the hook that launches it', true],
-        ['.claude/settings.json', 'it authenticates the guard and the hook that launches it', true],
-        ['.cockpit/local/guard-identity', 'it records the Node executable and cockpit handler on this machine, which committed files cannot carry', false],
-    ] as const)('names a deleted %s, why every call is held, and the fix', async (file, why, restorable) => {
+        ['cockpit.toml', 'guard policy comes from it'],
+        ['.cockpit/generated-environment-ownership.json', 'it authenticates the guard and the hook that launches it'],
+        ['.claude/settings.json', 'it authenticates the guard and the hook that launches it'],
+        ['.cockpit/local/guard-identity', 'it records the Node executable and cockpit handler on this machine, which committed files cannot carry'],
+    ] as const)('names a deleted %s, why every call is held, and the fix', async (file, why) => {
         const { root, configPath, request, adapters } = await installedGuardRequest()
         // A rename keeps the file's identity, so the shared fixture stays authenticated afterwards.
         renameSync(join(root, file), join(root, `${file}.away`))
@@ -368,10 +376,30 @@ describe('guard policy construction', () => {
             const { decision } = await runGuardEvaluationApplication(request, adapters)
             expect(decision.decision).toBe('unavailable')
             expect(decision.reason).toContain(`${file === 'cockpit.toml' ? configPath : file} is missing; ${why}, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are held`)
-            expect(decision.reason).toContain(restorable
-                ? `Fix: a human must restore it with \`git -C ${root} restore -- ${file}\` (it is committed), or run \`npx --no cockpit sync --config ${configPath}\``
-                : `Fix: a human must run \`npx --no cockpit sync --config ${configPath}\` in a terminal, outside the agent`)
+            expect(decision.reason).toContain(file === 'cockpit.toml'
+                ? 'Fix: a human must return to the intended configured checkout/worktree and branch'
+                : `Fix: a human must run \`${root}/node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${configPath}\` in a terminal, outside the agent`)
+            expect(decision.reason).not.toContain('git ')
+            expect(decision.reason).not.toContain('npx ')
         } finally { renameSync(join(root, `${file}.away`), join(root, file)) }
+    }, 120_000)
+
+    it('holds missing guard authority while explaining an absent local package before regeneration', async () => {
+        const { root, request, adapters } = await installedGuardRequest()
+        const installed = join(root, 'node_modules/@b00dea/cockpit')
+        const registration = join(root, '.claude/settings.json')
+        renameSync(installed, `${installed}.away`)
+        renameSync(registration, `${registration}.away`)
+        try {
+            const result = await runGuardEvaluationApplication(request, adapters)
+            expect(result.decision).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('@b00dea/cockpit is not installed or is incomplete') })
+            expect(result.decision.reason).toContain("repository's documented dependency-install command")
+            expect(result.decision.reason).not.toContain('sync --config')
+            expect(result.decision.reason).not.toContain('git restore')
+        } finally {
+            renameSync(`${installed}.away`, installed)
+            renameSync(`${registration}.away`, registration)
+        }
     }, 120_000)
 
     it.each([1, 2])('refuses forged guard publication batch evidence at checkpoint %s', async checkpoint => {
@@ -452,6 +480,8 @@ describe('guard policy construction', () => {
 
     it('authenticates the installed application route and refuses copied, unresolved, ambiguous and changed authority', async () => {
         const { root, configPath } = await observedPolicy()
+        mkdirSync(join(root, 'node_modules/@b00dea'), { recursive: true })
+        symlinkSync(fileURLToPath(new URL('../../', import.meta.url)), join(root, 'node_modules/@b00dea/cockpit'))
         mkdirSync(join(root, 'fixtures'), { recursive: true })
         writeFileSync(join(root, 'fixtures/personas.json'), '[{"id":"synthetic"}]\n')
         expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
@@ -489,7 +519,7 @@ describe('guard policy construction', () => {
         const canonicalConfig = realpathSync(configPath)
         const sync = { ...request, searchPath: '/usr/bin:/bin', payload: shellPayload(`${resolve(dirname(identity.module), '../bin/cockpit.mjs')} sync --config ${canonicalConfig}`, root) }
         expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({ decision: { decision: 'unavailable', reason:
-            `${canonicalConfig} changed since the guards were generated without widening what agents may do; shell commands, file edits and writes, and restricted MCP tools under Claude Code are held, except cockpit sync and check, until it is synced, while file reads and unrestricted MCP tools continue. Fix: run \`npx --no cockpit sync --config ${canonicalConfig}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files. If sync refuses the edit, undo it: one edit or write of ${canonicalConfig} that leaves it byte-identical to .cockpit/local/guard-config is admitted; an agent can restore only what was recorded, so authority never exceeds the recorded policy, and this may also discard a person's unsynced narrowing edit.` },
+            `${canonicalConfig} changed since the guards were generated without widening what agents may do; shell commands, file edits and writes, and restricted MCP tools under Claude Code are held, except cockpit sync and check, until it is synced, while file reads and unrestricted MCP tools continue. Fix: run \`${root}/node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${canonicalConfig}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files. If sync refuses the edit, undo it: one edit or write of ${canonicalConfig} that leaves it byte-identical to .cockpit/local/guard-config is admitted; an agent can restore only what was recorded, so authority never exceeds the recorded policy, and this may also discard a person's unsynced narrowing edit.` },
         diagnostics: [{ code: 'GUARD_CONFIG_UNSYNCED' }] })
         expect(await runGuardEvaluationApplication(sync, adapters)).toMatchObject({ decision: { decision: 'allow' } })
         const restricted = parse(readFileSync(configPath, 'utf8')) as { guards: { deny: unknown[] } }
@@ -504,7 +534,7 @@ describe('guard policy construction', () => {
         widened.guards.allow.push({ argv: ['make', 'release'], reason: 'Releases are routine.' })
         writeFileSync(configPath, stringify(widened))
         for (const call of [request, sync]) expect(await runGuardEvaluationApplication(call, adapters)).toMatchObject({ decision: { decision: 'unavailable', reason:
-            `${canonicalConfig} changed since the guards were generated and it widens what agents may do (guards.allow); guard policy comes from it and an edit that may widen it takes effect only once a human approves it, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are held, including a sync run through this agent, while file reads and unrestricted MCP tools continue. Fix: a human must run \`npx --no cockpit sync --config ${canonicalConfig}\` in a terminal, outside the agent, then commit any regenerated files.` } })
+            `${canonicalConfig} changed since the guards were generated and it widens what agents may do (guards.allow); guard policy comes from it and an edit that may widen it takes effect only once a human approves it, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are held, including a sync run through this agent, while file reads and unrestricted MCP tools continue. Fix: a human must run \`${root}/node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${canonicalConfig}\` in a terminal, outside the agent, then retry. If hook definitions changed, close and reopen the agent first.` } })
     }, 120_000)
 
     it('admits only the exact restoration of the recorded configuration out of a hold sync cannot clear', async () => {
