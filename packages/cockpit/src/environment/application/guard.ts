@@ -3,6 +3,7 @@ import { lstatIfPresentSync } from '../presence.js'
 import { accessSync, constants, lstatSync, realpathSync, statSync, type Stats } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { executeProbe, type ExecuteProbeOutcome } from '../../environment-exec/execute.js'
 import {
@@ -360,10 +361,13 @@ export async function runGuardEvaluationApplication(
         // These are exact observation requests, never roots for mutation or arbitrary execution.
         const approvedReads = new Set<string>()
         const approvedDirectories = new Set<string>()
+        // A Git command requires its repository directory, which it reads through Git, not as content.
+        const approvedRequirements = new Set<string>()
         for (const invocation of parsed.invocations) {
             const access = approvedReadOnlyInvocation(invocation, { ...policy, ripgrepConfigActive: data.ripgrepConfigActive === true })
             if (!access) continue
-            for (const path of [...access.reads, ...access.trees, ...access.listings, ...access.requires ?? []]) approvedReads.add(resolve(access.cwd, path))
+            for (const path of [...access.reads, ...access.trees, ...access.listings]) approvedReads.add(resolve(access.cwd, path))
+            for (const path of access.requires ?? []) approvedRequirements.add(resolve(access.cwd, path))
             if (access.cwd !== invocation.cwd) approvedDirectories.add(access.cwd)
         }
         // Each entry starts as the answer for Git not answering and is replaced by Git's.
@@ -424,7 +428,10 @@ export async function runGuardEvaluationApplication(
         const inspect: import('../../guards/evaluator.js').PathInspection = request => {
             const path = resolve(request.cwd, request.path)
             const managedRoot = policy.allowedRoots.filter(root => confinedPath(root, path)).sort((a, b) => b.length - a.length)[0]
-            const externalRead = ['read', 'search', 'unignored-search'].includes(request.operation) && approvedReads.has(path)
+            // A person's read path admits this read, or with native external reads the agent tool's own permission decided it.
+            const declaredRead = !managedRoot && ['read', 'list', 'search', 'unignored-search'].includes(request.operation)
+                && (policy.externalReads === 'native' || (policy.readPaths ?? []).some(root => confinedPath(root, path)))
+            const externalRead = ['read', 'list', 'search', 'unignored-search'].includes(request.operation) && (approvedReads.has(path) || approvedRequirements.has(path)) || declaredRead
                 || request.operation === 'cwd' && approvedDirectories.has(path)
             const root = managedRoot ?? (externalRead ? '/' : undefined)
             if (!root) return { status: 'unavailable', path, symlink: false }
@@ -461,6 +468,10 @@ export async function runGuardEvaluationApplication(
                 inspected.set(cursor, status)
                 chain.push(guardIdentity(status))
             }
+            // Outside the managed roots the walk recognises only `.env*` and `.secrets` names, not other
+            // credential files, so an approved external read or search names a regular file, never a tree.
+            if (!managedRoot && request.operation !== 'cwd' && !approvedRequirements.has(path) && exists && !inspected.get(path)!.isFile()
+                && !(request.operation === 'list' && inspected.get(path)!.isDirectory())) return { status: 'unavailable', path, symlink: false }
             const search = request.operation === 'search' || request.operation === 'unignored-search'
             return { status: 'resolved', path, symlink: false, identity: exists ? chain.at(-1)! : null, ancestors: exists ? chain.slice(0, -1) : chain,
                 ...(search ? { sensitive: exists ? searched(path, request.operation === 'unignored-search') : [] } : {}),
@@ -734,7 +745,12 @@ export async function prepareGuardEvaluationPolicy(
                     argv: [...('prefix' in rule ? rule.prefix : rule.contains)], reason: rule.reason,
                     ...(rule.fix === undefined ? {} : { fix: rule.fix }),
                 })),
-                ripgrepConfigActive: false,
+                ripgrepConfigActive: false, externalReads: config.guards.external_reads,
+                readPaths: config.guards.read_paths.flatMap(({ path }) => {
+                    const spelled = path.startsWith('~/') ? join(homedir(), path.slice(2)) : path
+                    // A missing location grants nothing; a linked one is held to where it leads.
+                    try { return [realpathSync(spelled)] } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error }
+                }).filter(path => path !== '/' && path !== realpathSync(homedir())),
                 executionDirectories, searchDirectories: [], searchPathRelativeEntry: null,
                 secretFileIdentities: secretFiles.identities && [...secretFiles.identities], protectedFilesLinked,
                 cockpitInvocations: [], cockpitLaunchers: [], projectCommands: [],

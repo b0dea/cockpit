@@ -210,7 +210,7 @@ describe('guard policy construction', () => {
         config.surfaces.tools = ['claudecode', 'codexcli', 'opencode']
         const commands = [['cat', input], ['git', '-C', external, 'status', '--short'],
             ['rg', '-n', 'synthetic', input], ['cat', join(external, 'missing.md')], ['cat', join(external, 'alias.md')],
-            ['cat', join(external, '.env')], ['node', '--test', '--test-concurrency=1', 'verify.mjs']]
+            ['cat', join(external, '.env')], ['node', '--test', '--test-concurrency=1', 'verify.mjs'], ['rg', '-n', 'synthetic', external]]
         config.guards.allow.push(...commands.map(argv => ({ argv, cwd: '.', reason: 'Read the selected input or run the reviewed verifier.' })))
         writeFileSync(configPath, stringify(config))
         expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
@@ -221,9 +221,10 @@ describe('guard policy construction', () => {
             payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
         const spell = (argv: string[]) => argv.map(word => `'${word}'`).join(' ')
         for (const argv of commands.slice(0, 3)) expect(await decide(spell(argv))).toMatchObject({ decision: 'allow' })
-        const head = readFileSync(join(external, '.git/HEAD'), 'utf8')
-        execFileSync('git', commands[1]!.slice(1), { stdio: 'pipe' })
-        expect(readFileSync(join(external, '.git/HEAD'), 'utf8')).toBe(head)
+        // The status grant admits that command only; changing the related checkout's branch stays refused.
+        expect(await decide(`git -C '${external}' checkout -b other`)).toEqual({ decision: 'unavailable', reason: expect.stringContaining('A working directory in this command is outside every root') })
+        // Outside the roots the guard recognises only .env and .secrets names, so a granted search must name a file.
+        expect(await decide(spell(commands[7]!))).toEqual({ decision: 'ask', reason: expect.stringContaining('outside the configured roots must name a regular file') })
         expect(await decide(spell(commands[6]!))).toMatchObject({ decision: 'allow' })
         expect(await decide(`cat '${input}' '${join(external, 'other.md')}'`)).not.toMatchObject({ decision: 'allow' })
         expect(await decide(`cat '${input}' > copied.md`)).not.toMatchObject({ decision: 'allow' })
@@ -235,13 +236,81 @@ describe('guard policy construction', () => {
         expect(secretDecision, secretDecision.reason).toMatchObject({ decision: 'deny' })
         expect(await decide('git push origin HEAD:main')).toMatchObject({ decision: 'deny' })
         expect(await decide('curl https://db.example.test')).toMatchObject({ decision: 'deny' })
-        // A repository edit cannot activate another grant, and removing a grant takes effect before sync.
-        config.guards.allow.push({ argv: ['cat', join(external, 'other.md')], cwd: '.', reason: 'Another selected file.' })
+        // A repository edit cannot activate another grant: it is held until a person syncs it.
+        const other = join(external, 'other.md')
+        writeFileSync(other, 'other synthetic notes\n')
+        config.guards.allow.push({ argv: ['cat', other], cwd: '.', reason: 'Another selected file.' })
         writeFileSync(configPath, stringify(config))
-        expect(await decide(`cat '${input}'`)).toMatchObject({ decision: 'unavailable' })
+        const held = await decide(`cat '${other}'`)
+        expect(held.decision).toBe('unavailable')
+        expect(held.reason).toMatch(/cockpit\.toml|sync/)
+        expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        const reloaded = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
+        const decideSynced = async (command: string) => (await runGuardEvaluationApplication({ identity: reloaded, guardRoot: root, harness, cwd: root,
+            payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+        expect(await decideSynced(`cat '${other}'`)).toMatchObject({ decision: 'allow' })
+        // Removing every grant stops the read before sync, and after sync it is outside the roots again.
         config.guards.allow = []
         writeFileSync(configPath, stringify(config))
-        expect(await decide(`cat '${input}'`)).toMatchObject({ decision: 'unavailable' })
+        expect(await decideSynced(`cat '${input}'`)).toMatchObject({ decision: 'unavailable' })
+        expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        const narrowed = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
+        expect((await runGuardEvaluationApplication({ identity: narrowed, guardRoot: root, harness, cwd: root,
+            payload: shellPayload(`cat '${input}'`, root), searchPath: '/usr/bin:/bin' }, adapters)).decision)
+            .toEqual({ decision: 'ask', reason: expect.stringContaining('is outside the configured roots') })
+    }, 120_000)
+
+    it('reads a person\'s declared folder, or defers to native permissions, without writes or recursive searches there', async () => {
+        const { root, configPath } = await observedPolicy()
+        const inputs = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-read-path-')))
+        scratch.push(inputs)
+        writeFileSync(join(inputs, 'photo.jpg'), 'synthetic image bytes\n')
+        writeFileSync(join(inputs, '.env'), 'SYNTHETIC_KEY=synthetic\n')
+        mkdirSync(join(inputs, 'album'))
+        symlinkSync(join(inputs, 'photo.jpg'), join(inputs, 'alias.jpg'))
+        const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-unlisted-')))
+        scratch.push(elsewhere)
+        writeFileSync(join(elsewhere, 'notes.md'), 'synthetic notes\n')
+        const config = CockpitConfig.parse(parse(readFileSync(configPath, 'utf8')))
+        const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
+            resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }) }
+        const decide = async (command: string) => {
+            const identity = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
+            return (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'codexcli', cwd: root,
+                payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+        }
+        const sync = async () => expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        await sync()
+        expect(await decide(`cat '${inputs}/photo.jpg'`)).toMatchObject({ decision: 'ask' })
+        config.guards.read_paths = [{ path: inputs, reason: 'Inputs a person drops in.' }]
+        writeFileSync(configPath, stringify(config))
+        // Adding a read path widens what agents may read, so it waits for a person's sync.
+        expect(await decide(`cat '${inputs}/photo.jpg'`)).toMatchObject({ decision: 'unavailable' })
+        await sync()
+        for (const command of [`cat '${inputs}/photo.jpg'`, `ls '${inputs}'`, `rg -n synthetic '${inputs}/photo.jpg'`]) {
+            expect(await decide(command), command).toMatchObject({ decision: 'allow' })
+        }
+        expect(await decide(`cat '${inputs}/.env'`)).toMatchObject({ decision: 'deny' })
+        expect(await decide(`ls '${inputs}/album'`)).toMatchObject({ decision: 'allow' })
+        // Outside its work tree git diff compares two directories file by file, reading every file below them.
+        mkdirSync(join(inputs, 'empty'))
+        for (const command of [`git diff '${inputs}/empty' '${inputs}/album'`, `git diff '${inputs}/empty' '${root}/app'`, `cat '${inputs}/album'`,
+            `rg -n synthetic '${inputs}'`, `rg -n synthetic '${inputs}/album'`, `cat '${inputs}/alias.jpg'`,
+            `cat '${elsewhere}/notes.md'`, `cp README.md '${inputs}/copy.md'`]) {
+            expect((await decide(command)).decision, command).not.toBe('allow')
+        }
+        // Native external reads hand every named read outside the roots to the agent tool's own permission.
+        config.guards.read_paths = []
+        config.guards.external_reads = 'native'
+        writeFileSync(configPath, stringify(config))
+        await sync()
+        expect(await decide(`cat '${elsewhere}/notes.md'`)).toMatchObject({ decision: 'allow' })
+        expect(await decide(`rg -n synthetic '${elsewhere}'`)).toEqual({ decision: 'ask', reason: expect.stringContaining('outside the configured roots must name a regular file') })
+        expect(await decide(`cat '${inputs}/.env'`)).toMatchObject({ decision: 'deny' })
+        config.guards.external_reads = 'grant'
+        writeFileSync(configPath, stringify(config))
+        await sync()
+        expect(await decide(`cat '${elsewhere}/notes.md'`)).toEqual({ decision: 'ask', reason: expect.stringContaining('is outside the configured roots') })
     }, 120_000)
 
     it('reads an explicitly named package document through a confined package symlink', async () => {
@@ -730,7 +799,7 @@ describe('guard policy construction', () => {
             protectedBranches: ['main', 'master'], hostedDatabaseHosts: ['db.example.test'], vendorHosts: ['api.vendor.example.test'],
             declaredAllows: [{ argv: ['make', 'verify'], reason: 'Repository verification is safe.', cwd: root }],
             declaredDenies: [{ match: 'contains', argv: ['--environment', 'shared'], reason: 'Shared environments are human-operated.', fix: 'Use a local environment.' }],
-            ripgrepConfigActive: false,
+            ripgrepConfigActive: false, externalReads: 'grant', readPaths: [],
             // The running package lives outside this checkout, so no installed directory is in reach.
             executionDirectories: [], searchDirectories: [], searchPathRelativeEntry: null, secretFileIdentities: [], protectedFilesLinked: false,
             cockpitLaunchers: [],

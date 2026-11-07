@@ -584,7 +584,10 @@ describe('built-in read-only profile', () => {
 
     it('keeps a Node verifier on its original runner when explaining execution approval', () => {
         const command = 'node --test --test-concurrency=1 evidence/verify.mjs'
-        expect(decide(command)).toEqual({ decision: 'ask', reason: expect.stringContaining('Preserve this Node argv') })
+        const refusal = decide(command)
+        expect(refusal.decision).toBe('ask')
+        expect(refusal.reason).toContain('a person admits it under [guards] allow')
+        expect(refusal.reason).toContain('[[testing.stages]] command in a gate that agents run with')
         const granted = { ...policy(), declaredAllows: [{ argv: command.split(' '), cwd: root, reason: 'Run the reviewed verifier.' }] }
         expect(decide(command, granted)).toMatchObject({ decision: 'allow' })
     })
@@ -596,7 +599,9 @@ describe('built-in read-only profile', () => {
         }
         for (const command of ['git worktree add ../copy', 'git worktree prune', 'git worktree list --unknown',
             'shasum -c checksums.txt', 'shasum --check checksums.txt', 'shasum --tag README.md',
-            'shasum -a 256 .env', 'shasum -a 256 README.md > .codex/hooks.json']) {
+            'shasum -a 256 .env', 'shasum -a 256 README.md > .codex/hooks.json',
+            // Perl's option parser takes `+` as a prefix too, so these check a manifest as -c does.
+            'shasum +c checksums.txt', 'shasum -a 256 +c checksums.txt', 'shasum +check checksums.txt', 'shasum +a 256 README.md']) {
             expect(decideInRepositories(command).decision, command).not.toBe('allow')
         }
     })
@@ -611,11 +616,11 @@ describe('built-in read-only profile', () => {
         expect(run(command)).toMatchObject({ decision: 'allow' })
         for (const grants of [policy(), { ...configured, declaredAllows: [{ argv: ['cat'], cwd: root, reason: 'Read.' }] },
             { ...configured, declaredAllows: [{ argv: ['cat', external], reason: 'Read.' }] }]) {
-            expect(run(command, grants).decision).not.toBe('allow')
+            expect(run(command, grants)).toEqual({ decision: 'ask', reason: expect.stringContaining('A person can list it under [guards] read_paths') })
         }
         expect(run(`${command} /workspace/inputs/other.md`).decision).not.toBe('allow')
         expect(run(`${command} < /workspace/inputs/other.md`).decision).not.toBe('allow')
-        expect(run(`${command} > /workspace/inputs/copy.md`).decision).not.toBe('allow')
+        expect(run(`${command} > /workspace/inputs/copy.md`)).toEqual({ decision: 'unavailable', reason: expect.stringContaining('no [guards] allow rule grants a write there') })
         expect(run(command, configured, request => ({ ...present(request), identity: null })).decision).not.toBe('allow')
         expect(run(command, configured, request => ({ ...present(request), symlink: true })).decision).not.toBe('allow')
         for (const target of ['/workspace/inputs/.env', '/workspace/inputs/.secrets/token']) {
@@ -627,13 +632,72 @@ describe('built-in read-only profile', () => {
         expect(run(`shasum ${external} --check`, checksum).decision).not.toBe('allow')
         const search = { ...configured, ripgrepConfigActive: true,
             declaredAllows: [{ argv: ['rg', 'needle', external], cwd: root, reason: 'Search the selected input.' }] }
-        expect(run(`rg needle ${external}`, search).decision).not.toBe('allow')
+        expect(run(`rg needle ${external}`, search)).toEqual({ decision: 'ask', reason: expect.stringContaining('RIPGREP_CONFIG_PATH') })
         const status = 'git -C /workspace/related status --short'
         const related = { ...configured, declaredAllows: [{ argv: status.split(' '), cwd: root, reason: 'Inspect the related checkout.' }] }
         expect(run(status, related)).toMatchObject({ decision: 'allow' })
         expect(run(`${status} && rg needle src`, related).decision).not.toBe('allow')
         expect(run(`${status} | cat`, related).decision).not.toBe('allow')
         expect(run('git -C /workspace/related checkout other', related).decision).not.toBe('allow')
+        // The remedy names what a grant can and cannot admit in another checkout.
+        expect(run('git -C /workspace/related diff', { ...related, declaredAllows: [{ argv: ['git', '-C', '/workspace/related', 'diff'], cwd: root, reason: 'Diff.' }] }))
+            .toEqual({ decision: 'unavailable', reason: expect.stringContaining('Commands that print file content there, such as diff or show, stay refused') })
+    })
+
+    it('leaves named external reads to the agent tool when a person chose native external reads', () => {
+        const native = { ...policy(), externalReads: 'native' as const }
+        const present = (request: Parameters<typeof inspect>[0]) => ({ ...withGit(request), identity: '8:2' })
+        const run = (text: string, configured: object = native) => evaluateGuard(parseGuardInput(shellPayload(text)), configured, present)
+        for (const command of ['cat /workspace/inputs/photo.jpg', 'ls /workspace/inputs', 'head -n 5 /workspace/inputs/notes.md | wc -l']) {
+            expect(run(command), command).toMatchObject({ decision: 'allow' })
+        }
+        // Copying an input in is a write, admitted as any write is: here by a person's rule for cp.
+        const copying = { ...native, declaredAllows: [{ argv: ['cp'], cwd: root, reason: 'Copy inputs into the project.' }] }
+        expect(run('cp /workspace/inputs/photo.jpg assets/photo.jpg', copying)).toMatchObject({ decision: 'allow' })
+        expect(run('cp /workspace/inputs/photo.jpg assets/photo.jpg', { ...copying, externalReads: 'grant' }).decision).not.toBe('allow')
+        expect(run('cp /workspace/inputs/.env assets/env', copying)).toMatchObject({ decision: 'deny' })
+        // The default keeps external reads behind exact grants.
+        expect(run('cat /workspace/inputs/photo.jpg', policy())).toEqual({ decision: 'ask', reason: expect.stringContaining('is outside the configured roots') })
+        // Secret names, writes and an external working directory stay the guard's.
+        expect(run('cat /workspace/inputs/.env')).toMatchObject({ decision: 'deny' })
+        expect(run('cat /workspace/inputs/.secrets/token')).toMatchObject({ decision: 'deny' })
+        expect(run('cp README.md /workspace/inputs/copy.md')).toEqual({ decision: 'unavailable', reason: expect.stringContaining('no [guards] allow rule grants a write there') })
+        expect(run('cd /workspace/inputs && cat notes.md').decision).toBe('unavailable')
+        expect(evaluateGuard(parseGuardInput(shellPayload('cat /workspace/inputs/missing.md')), native, request => ({ ...present(request), identity: null })).decision).not.toBe('allow')
+        // A person's read path gives the guard's own default the same reach for one location.
+        const readPath = { ...policy(), readPaths: ['/workspace/inputs'] }
+        for (const command of ['cat /workspace/inputs/photo.jpg', 'ls /workspace/inputs', 'rg needle /workspace/inputs/notes.md']) {
+            expect(run(command, readPath), command).toMatchObject({ decision: 'allow' })
+        }
+        expect(run('cat /workspace/elsewhere/notes.md', readPath)).toEqual({ decision: 'ask', reason: expect.stringContaining('is outside the configured roots') })
+        expect(run('cat /workspace/inputs/.env', readPath)).toMatchObject({ decision: 'deny' })
+        expect(run('cp README.md /workspace/inputs/copy.md', readPath).decision).toBe('unavailable')
+    })
+
+    it('keeps secret names, external paths and search proofs beyond a declared rule', () => {
+        // macOS cat prints every named file before it rejects an unknown option.
+        const granted = (...argv: string[]) => ({ ...policy(), declaredAllows: [{ argv, cwd: root, reason: 'Declared.' }] })
+        expect(decide('cat README.md', granted('cat', 'README.md'))).toMatchObject({ decision: 'allow' })
+        for (const [command, rule] of [['cat README.md .env -x', ['cat', 'README.md']], ['rg KEY .env --pre cat', ['rg']],
+            ['grep KEY .env --bogus', ['grep']], ['head -n 5 .env -x', ['head', '-n']], ['git show HEAD:.env', ['git']]] as const) {
+            expect(decide(command, granted(...rule)), command).toMatchObject({ decision: 'deny' })
+        }
+        expect(decide('cat README.md .secrets/token -x', granted('cat', 'README.md'))).toMatchObject({ decision: 'deny' })
+        expect(decide('cat README.md /workspace/inputs/secret.md -x', granted('cat', 'README.md')))
+            .toEqual({ decision: 'ask', reason: expect.stringContaining('outside the configured roots, with words the read-only profile cannot classify') })
+        // A search the guard found would read an undeclared environment file stays refused under a rule for it.
+        const sensitive = (request: Parameters<typeof inspect>[0]) => request.operation === 'search'
+            ? { ...inspect(request), sensitive: [`${root}/.env.local`] } : inspect(request)
+        expect(evaluateGuard(parseGuardInput(shellPayload('grep -rn KEY .')), granted('grep', '-rn'), sensitive))
+            .toEqual({ decision: 'ask', reason: expect.stringContaining('would read .env.local') })
+        expect(decide('sed -f.env notes.md', granted('sed'))).toMatchObject({ decision: 'deny' })
+        // A command that may only pass the name on is a person's decision rather than a hard denial.
+        expect(decide('docker compose --env-file .env up', granted('docker', 'compose')))
+            .toEqual({ decision: 'ask', reason: expect.stringContaining('names an environment file, secrets directory or declared instance') })
+        expect(decide('docker compose --env-file .env.example up', granted('docker', 'compose'))).toMatchObject({ decision: 'allow' })
+        // Rules for commands that change things keep admitting their own arguments.
+        expect(decide('git branch new-feature', granted('git', 'branch'))).toMatchObject({ decision: 'allow' })
+        expect(decide('make build -j4', granted('make'))).toMatchObject({ decision: 'allow' })
     })
 
     it('judges every launcher spelling by the one proof that it starts the installed cockpit', () => {

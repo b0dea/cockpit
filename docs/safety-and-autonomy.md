@@ -241,21 +241,41 @@ on Codex and OpenCode, where a prompt becomes a denial. It covers exact argument
 
 ### External inputs and native permissions
 
-Native file tools keep their native permissions. For shell reads, Cockpit does not import global
-settings as effective permission: a user file alone cannot prove which session, managed policy,
-profile or command-line overrides the running tool applied. Sandbox visibility, including a
-filesystem readable from `/`, is not consent to read credentials.
+Each agent tool already has its own permissions for files outside the project: Claude Code's
+permission rules and additional directories, Codex's sandbox and approval policy, OpenCode's
+`external_directory`. Cockpit never overrides them: its successful hook response is neutral, so a
+native denial still wins. What cockpit adds is its own guard on shell commands, and a person picks
+how that guard treats a named file outside the managed roots:
 
-| Harness | Incoming native grants consumed by this guard | Remaining authority |
+| Setting | A named read outside the roots | Use it when |
 | --- | --- | --- |
-| Claude Code | No effective additional-directory or Read-rule import. | Native rules and the session's permission mode still apply. |
-| Codex CLI | No effective filesystem-profile or additional-directory import. | Native filesystem restrictions still apply; writable roots are not read-only grants. |
-| OpenCode | No effective external-directory or ordered permission-rule import. | Native read, edit, shell and external-directory checks still apply. |
+| default | asks, unless a `[guards] allow` rule names the complete command | external reads are rare and each is reviewed |
+| `read_paths` | allowed below each listed file or directory | a few known folders, such as `~/Downloads` or a memory directory, held by cockpit itself |
+| `external_reads = "native"` | left to the agent tool's own permission | the person already manages outside access in each tool's settings |
 
-This is an explicit unsupported import capability, with a bounded fallback through the existing
-authenticated `guards.allow` policy. A person reviews the **complete** read-only argv and an
-explicit managed `cwd`, then runs `cockpit sync` outside the agent. For example, a selected safe
-input can be approved without making its containing directory a product repository:
+```toml
+[guards]
+read_paths = [{ path = "~/Downloads", reason = "Inputs the person drops in." }]
+# or hand every named external read to the tools' own permissions:
+# external_reads = "native"
+```
+
+`~/` means the home directory of whoever runs the agent. A listed path that does not exist grants
+nothing, and `/` or the home directory itself is never granted. In every mode the guard still
+refuses `.env*` and `.secrets` names and declared instances, writes outside the roots, an external
+working directory, and a recursive search or comparison of an external directory: outside the
+roots it recognises only those names, not other credential files, so a read or search must name a
+regular file, and only a listing, which reports names, may name a directory. A link outside the roots stays refused. Copying an input in, as
+`cp ~/Downloads/photo.jpg assets/`, is a write and is admitted as any write is, for example by a
+`[guards] allow` rule for `cp`.
+
+Choosing native external reads hands named reads to each tool's own boundary. That boundary
+differs: Codex's sandbox reads most of the disk unless its own permissions narrow it, while Claude
+Code asks for an unapproved shell command and OpenCode applies `external_directory`. Adding a read
+path or switching to `native` widens what agents may read, so it waits for a person's sync;
+removing one takes effect at the next sync.
+
+For a single command, a person reviews the **complete** argv and an explicit managed `cwd` instead:
 
 ```toml
 [[guards.allow]]
@@ -264,39 +284,64 @@ cwd = "."
 reason = "Read the selected design notes."
 ```
 
-For external read authority, the entire argv must match; the usual prefix matching is insufficient.
-The guard inspects only the named locations. A file-read approval grants no external writes,
-execution roots or shell working directory. A reviewed `git -C /workspace/related status --short`
-can inspect a related checkout from the managed cwd; changing its branch remains a separate
-operation. **External Git approval is command execution consent**, including that repository's
-configured helpers: status can run fsmonitor and clean filters. Review that configuration before
-approving the command. It runs only as the whole call, never as part of a read-only pipeline or
-chain whose file evidence a helper could invalidate. Native read permission alone supplies none
-of this execution consent. Git commands
-that print history still need repository-content evidence, which external grants do not provide.
-Redirection to another file is never covered by an external read grant. Mixed read/write execution,
-missing targets and external symlinks stay refused. A named file under a managed root may follow
-a package-manager link only to a regular file inside a managed root; both spellings and the target's
-identity are checked, and the link is revalidated before the decision is returned.
+For that exact grant the entire argv must match, options included; the usual prefix matching is
+insufficient. Each argv word is at most 128 characters. OpenCode's own read tool reaches the guard
+as `cat -- <path>`, and its refusal names that form, so a grant for OpenCode reads spells it that
+way. A file-read approval grants no external writes, execution roots or shell working directory,
+and redirection to another file is never covered.
+
+A reviewed `git -C /workspace/related status --short` or `git -C /workspace/related log` can inspect
+a related checkout from the managed cwd; changing its branch remains a separate operation, and
+commands that print file content there, such as `diff` or `show`, stay refused. **External Git
+approval is command execution consent**, including that repository's configured helpers: status can
+run fsmonitor and clean filters. Review that configuration before approving the command; the
+approval is bound to the argv, so a later change to those helpers is not detected and needs another
+review. It runs only as the whole call, never as part of a pipeline or chain whose file evidence a
+helper could invalidate. Native read permission alone supplies none of this execution consent.
+
+A named file under a managed root may follow a package-manager link only to a regular file inside a
+managed root; both spellings and the target's identity are checked, and the link is revalidated
+before the decision is returned.
+
+A `[guards] allow` rule admits a command the read-only profile cannot classify, but never past the
+secret names: each argument is checked whole, after `=`, after `:` and after an attached short
+option, so `cat README.md .env -x` (`cat` prints `.env` before it rejects `-x`) and
+`git show HEAD:.env` are denied under any rule. Another command that names one, such as
+`docker compose --env-file .env up`, may only pass the name on, so it asks instead. A rule for a
+reading command such as `cat`, `head` or `rg` asks for an argument outside the roots that no read
+path or native external reads covers, and no rule admits a search the guard found would read an
+environment file.
 
 Review memory directories or selected files narrowly. Configuration and logs can contain secrets:
-approve a named safe file or a redacted copy, never an entire agent configuration or Downloads
-directory as an incidental grant. The existing secret, hosted-endpoint, protected-branch and
-control-write denials take precedence. A path approval cannot override them.
+list a named safe file or a redacted copy rather than a whole agent configuration directory. The
+existing secret, hosted-endpoint, protected-branch and control-write denials take precedence. A
+path approval cannot override them.
 
 Adding or widening a rule is held until person-owned sync activates it. Removing a rule or changing
-its scope invalidates the old permission on the next call, before another sync. Cockpit's successful
-hook response is neutral: it never emits a native permission override. Native denials and revocations
-remain the native tool's responsibility; a Cockpit approval does not undo them. Re-trusting hooks
+its scope invalidates the old permission on the next call, before another sync. Re-trusting hooks
 does not repair missing location authority or unsupported command arguments.
 
-A Node test verifier remains executable code, not a read-only inspection command. Preserve its
-`node --test --test-concurrency=1 <verifier>` argv in a reviewed Node test stage or a declared
-project test command. Do not substitute a Vitest gate or grant the whole `node` interpreter.
+A Node test verifier remains executable code, not a read-only inspection command. Keep its
+`node --test --test-concurrency=1 <verifier>` argv: a person admits that argv under `[guards] allow`,
+or declares it as a `[[testing.stages]]` command in a gate that agents run with `cockpit test-run`.
+Do not substitute a gate whose stages use another runner, or grant the whole `node` interpreter.
 
-The application tests cover these boundaries independently for each harness registration. They do
-not establish native execution acceptance or automatic settings import; dated native evidence
-remains in the [capability matrix](capability-matrix.md).
+Measured on 2026-11-07 with Claude Code 2.1.319, Codex CLI 0.167.0 and OpenCode 1.19.5, each driven
+by a loopback synthetic model against an installed cockpit. Codex ran with hook trust forced for the
+run (`--dangerously-bypass-hook-trust`), as a person's trust would give it. In all three:
+
+- with exact grants, the granted file read and the granted related-checkout status ran, while an
+  ungranted external read, a redirect into the external directory and an external `.env` read were
+  refused by the guard;
+- with a read path, a file in it was read and the directory listed, while a file in an unlisted
+  directory and the read path's `.env` were refused;
+- with `external_reads = "native"`, files in both directories were read, while `.env` and a
+  recursive search of the external directory were refused;
+- with a native rule refusing `cat` (Claude Code `--disallowedTools`, a Codex execpolicy `forbidden`
+  prefix rule, an OpenCode bash `deny` pattern), each tool refused a read the guard allowed.
+
+Without its own `external_directory` grant, OpenCode rejected an external read before the guard
+ran. These runs establish behaviour for these versions only; cockpit imports no tool's settings.
 
 ### Cockpit commands an agent can run
 

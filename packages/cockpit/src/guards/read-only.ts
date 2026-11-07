@@ -324,6 +324,9 @@ function classify(invocation: ParsedInvocation, environment: { readonly ripgrepC
         case 'wc': return shape(files(argv, WC))
         case 'shasum': {
             // Check mode reads filenames from a manifest, so only direct file hashing is classified.
+            // shasum is Perl, whose option parser also takes `+` as a prefix: `shasum +c` checks.
+            const end = argv.indexOf('--')
+            if ((end < 0 ? argv : argv.slice(0, end)).some(arg => arg.startsWith('+'))) return undefined
             const parsed = parseOptions(argv, { flags: set('-b', '--binary', '-t', '--text'), values: set('-a', '--algorithm'), countValues: set('-a', '--algorithm') })
             return parsed && shape({ reads: parsed.positionals, trees: [], listings: [] })
         }

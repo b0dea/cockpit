@@ -97,6 +97,10 @@ export interface GuardEvaluationPolicy {
     readonly cockpitLaunchers: readonly GuardInvocationProfile[]
     readonly projectCommands: readonly GuardProjectCommand[]
     readonly mcpAllowedTools?: Readonly<Record<string, readonly string[]>>
+    /** `native` leaves a named read outside the roots to the agent tool's own permission. */
+    readonly externalReads?: 'grant' | 'native'
+    /** Canonical files and directories outside the roots whose named files may be read. */
+    readonly readPaths?: readonly string[]
 }
 interface PathInspectionRequest {
     readonly path: string
@@ -109,7 +113,8 @@ interface PathInspectionRequest {
      * at the path; its evidence carries `tracked`, every `.env*`, secrets or instance path its index
      * holds, or null when Git could not say.
      */
-    readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'remove' | 'search' | 'unignored-search' | 'repository'
+    /** `list` reads names only; it is asked for a listing outside the roots, where a directory may be listed but not read. */
+    readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'list' | 'remove' | 'search' | 'unignored-search' | 'repository'
 }
 /** The application supplies current, symlink-aware facts; the evaluator performs no I/O. */
 export type PathInspection = (request: PathInspectionRequest) => unknown
@@ -236,7 +241,9 @@ function projectTuple(value: JsonSnapshotObject): boolean {
 }
 function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     const p = snapshotJson(value)
-    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'searchPathRelativeEntry', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands', ...p.mcpAllowedTools === undefined ? [] : ['mcpAllowedTools']])
+    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'searchPathRelativeEntry', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands', ...p.mcpAllowedTools === undefined ? [] : ['mcpAllowedTools'], ...p.externalReads === undefined ? [] : ['externalReads'], ...p.readPaths === undefined ? [] : ['readPaths']])
+        || p.readPaths !== undefined && (!strings(p.readPaths) || p.readPaths.length > 64 || !p.readPaths.every(canonical))
+        || p.externalReads !== undefined && p.externalReads !== 'grant' && p.externalReads !== 'native'
         || p.mcpAllowedTools !== undefined && !McpAllowedTools.safeParse(p.mcpAllowedTools).success
         || !canonical(p.canonicalRoot) || !canonical(p.configPath) || posix.dirname(p.configPath) !== p.canonicalRoot || !strings(p.allowedRoots) || !p.allowedRoots.includes(p.canonicalRoot) || !p.allowedRoots.every(canonical)
         || !strings(p.protectedBranches) || !strings(p.hostedDatabaseHosts) || !strings(p.vendorHosts)
@@ -296,6 +303,9 @@ function hostUsed(value: string, configured: string): boolean {
     }
     return false
 }
+
+// Commands whose arguments name files they read, so a rule for one is a rule for reading those files.
+const READING_EXECUTABLES = new Set(['cat', 'head', 'tail', 'wc', 'shasum', 'jq', 'sed', 'grep', 'rg', 'fd', 'find', 'ls'])
 
 function ruleMatches(invocation: ParsedInvocation, rule: GuardDeclaredAllow | GuardDeclaredDeny): boolean {
     if (invocation.executable === null) return false
@@ -835,8 +845,11 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (request.operation === 'write' && posix.basename(folded) === '.npmrc') hold(npmrcDenial)
         if (mutating && folded.split('/').includes('.git')) hold(gitMetadataDenial)
         if (!resolved.allowedRoots.some((root) => within(lexical, root)) && !(request.operation === 'cwd' && approvedReadCwd)) {
-            hold(unavailable('Guard path escapes configured roots. A path or working directory in this command is outside every root this cockpit manages, '
-                + 'which the guard does not judge. For a read-only git -C command, a person can review its complete argv with cwd under [guards] allow and sync; otherwise work inside the cockpit, or a person runs the command.'))
+            hold(unavailable(request.operation === 'write'
+                ? 'Guard path escapes configured roots. This command writes outside every root this cockpit manages, and no [guards] allow rule grants a write there: write inside the cockpit, or a person runs the command.'
+                : request.operation === 'cwd'
+                    ? 'Guard path escapes configured roots. A working directory in this command is outside every root this cockpit manages. A person can admit one read-only Git command in a related checkout, such as `git -C <checkout> status --short` or `git -C <checkout> log`, by its complete argv with a managed cwd under [guards] allow and a sync; it then runs only as the whole command. Commands that print file content there, such as diff or show, stay refused. Otherwise work inside the cockpit, or a person runs the command.'
+                    : 'Guard path escapes configured roots. A path in this command is outside every root this cockpit manages, which the guard does not judge: work inside the cockpit, or a person runs the command.'))
             return
         }
         const evidence = resolvedEvidence(request)
@@ -935,6 +948,9 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     // configured roots; reading a protected instance is a hard denial, anything doubtful is not safe.
     // `chainReadOnly` says no other command in the call can create a protected path before the
     // search runs, which is what lets an absent one be ignored.
+    // A person's read paths, or native external reads, admit named reads outside the roots; the
+    // application then admits only an existing regular file, or a directory to list.
+    const readableOutside = (lexical: string) => resolved.externalReads === 'native' || (resolved.readPaths ?? []).some(path => within(lexical, path))
     const inspectReadOnly = (access: ReadOnlyAccess, chainReadOnly = false, approvedExternalRead = false): boolean => {
         let safe = true
         searchBlocker = undefined
@@ -948,9 +964,10 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             if (kind !== 'listing' && dotenvSecret(folded)) hold(dotenvDenial)
             if (kind !== 'listing' && protectedRead) hold(readDenial)
             const external = !resolved.allowedRoots.some((root) => within(lexical, root))
-            if (external && !approvedExternalRead) {
+            // The application admits only an existing regular file, or a directory to list, there.
+            if (external && !approvedExternalRead && !readableOutside(lexical)) {
                 safe = false
-                searchBlocker ??= ask(`${shownGuardWord(path)} is outside the configured roots, where the guard cannot prove it holds no secret. A person must review a complete read-only argv and explicit managed cwd under [guards] allow, then sync. Native permission is still required; trusting hooks again does not add location authority.`)
+                searchBlocker ??= ask(`${shownGuardWord(path)} is outside the configured roots, where the guard cannot prove it holds no secret. A person can list it under [guards] read_paths, hand such reads to the agent tool's own permissions with [guards] external_reads = "native", or admit this complete command with an explicit managed cwd under [guards] allow, then sync. Native permission still applies; trusting hooks again does not add location authority.`)
                 return
             }
             pathCount++
@@ -959,8 +976,13 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             // Unenumerated secrets leave every content read unproven, and a second hard link to a
             // protected file leaves every recursive search unproven: either may reach it unnamed.
             if (kind !== 'listing' && !secretFiles || kind === 'tree' && resolved.protectedFilesLinked) safe = false
-            const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: kind !== 'tree' ? 'read' : access.skipsIgnored ? 'unignored-search' : 'search' })
-            if (!evidence || external && evidence.identity === null) { safe = false; return }
+            const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: kind === 'tree' ? access.skipsIgnored ? 'unignored-search' : 'search' : kind === 'listing' && external ? 'list' : 'read' })
+            if (!evidence || external && evidence.identity === null) {
+                if (external && kind === 'tree' && evidence) searchBlocker ??= ask(`${shownGuardWord(path)} does not exist outside the configured roots. Name an existing regular file.`)
+                else if (external && kind === 'tree') searchBlocker ??= ask(`A search of ${shownGuardWord(path)} outside the configured roots must name a regular file: there the guard recognises only .env and .secrets names, not other credential files, so it does not search a directory or follow a link. Search the named files instead.`)
+                safe = false
+                return
+            }
             const canonicalName = fold(typeof evidence.canonicalPath === 'string' ? evidence.canonicalPath : lexical)
             if (kind === 'read' && /^\.env/.test(posix.basename(canonicalName)) && !documentation(canonicalName)) safe = false
             if (kind !== 'listing' && dotenvSecret(canonicalName)) hold(dotenvDenial)
@@ -1113,19 +1135,51 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             }
             if (possibleControlCount > GUARD_INPUT_LIMITS.paths) hold(unavailable('Potential guard control operand limit exceeded.'))
         }
+        // A declared rule admits a command the profile cannot classify, but never past the secret names
+        // or the roots: macOS `cat a .env -x` prints .env before it rejects -x, and `git show HEAD:.env`
+        // prints a committed one. Each argument is judged whole, after `=` and after `:`.
+        // A visible writer's operands already meet the stronger mutation and link denials above.
+        if (!access && !writes && !removed?.paths.length && resolved.declaredAllows.some(rule => ruleMatches(invocation, rule))) {
+            // A reading command or Git prints what it names; another command, such as `docker compose
+            // --env-file .env`, may only pass the name on, so a person decides it.
+            const prints = READING_EXECUTABLES.has(invocation.executable!) || invocation.executable === 'git'
+            const secretName = (decision: GuardDecision) => prints ? hold(decision)
+                : !approvalBarriers.has(invocation) && approvalBarriers.set(invocation, ask(`${named(invocation)} names an environment file, secrets directory or declared instance, so a [guards] allow rule does not admit it. A person approves it or runs it, or declares it as a project command.`))
+            for (const word of invocation.argv) {
+                // An attached short option value, as in `sed -f.env`, is a candidate too.
+                const attached = /^-[^-]/.test(word) && word.length > 2 ? [word.slice(2)] : []
+                for (const candidate of new Set([word, word.slice(word.indexOf('=') + 1), word.slice(word.lastIndexOf(':') + 1), ...attached])) {
+                    if (!candidate || candidate.startsWith('-') || !scalar(candidate)) continue
+                    const lexical = posix.resolve(invocation.cwd, candidate)
+                    const folded = fold(lexical)
+                    if (dotenvSecret(folded)) secretName(dotenvDenial)
+                    if (folded.split('/').includes('.secrets') || resolved.instances.some((item) => within(folded, fold(item.path)))) secretName(readDenial)
+                    if (READING_EXECUTABLES.has(invocation.executable!) && !resolved.allowedRoots.some(root => within(lexical, root)) && !readableOutside(lexical) && !approvalBarriers.has(invocation)) {
+                        approvalBarriers.set(invocation, ask(`${named(invocation)} names ${shownGuardWord(candidate)}, outside the configured roots, with words the read-only profile cannot classify, so a [guards] allow rule does not admit it. Run it as the rule names it, or a person reviews and admits this complete argv.`))
+                    }
+                }
+            }
+        }
         const externalAccess = access ?? classifyReadOnlyInvocation({ ...invocation, redirects: invocation.redirects.filter(item => !item.write) }, { ripgrepConfigActive: resolved.ripgrepConfigActive })
-        const outsideRoots = (read: ReadOnlyAccess | undefined) => read && [read.cwd, ...read.reads, ...read.trees, ...read.listings]
-            .some(path => !resolved.allowedRoots.some(root => within(posix.resolve(read.cwd, path), root)))
-        // An appended execution flag or ambient configuration must not turn an external read grant into generic execution.
+        const outsideRoots = (read: ReadOnlyAccess | undefined) => read && ([read.cwd].some(path => !resolved.allowedRoots.some(root => within(posix.resolve(read.cwd, path), root)))
+            || [...read.reads, ...read.trees, ...read.listings].some(path => { const lexical = posix.resolve(read.cwd, path)
+                return !resolved.allowedRoots.some(root => within(lexical, root)) && !readableOutside(lexical) }))
+        // Ambient configuration such as RIPGREP_CONFIG_PATH must not turn an external read grant into generic execution.
         const externalGrant = resolved.declaredAllows.some(rule => rule.cwd === invocation.cwd && ruleMatches(invocation, rule)
             && outsideRoots(classifyReadOnlyInvocation({ ...invocation, argv: rule.argv.slice(1), redirects: [] }, { ripgrepConfigActive: false })))
         const external = outsideRoots(externalAccess) || externalGrant
+        const exactGrant = resolved.declaredAllows.some(rule => rule.cwd === invocation.cwd && rule.argv.length === invocation.argv.length + 1
+            && rule.argv[0] === invocation.executable && invocation.argv.every((word, index) => word === rule.argv[index + 1]))
         const approvedExternalRead = !!approvedReadOnlyInvocation(invocation, resolved)
             && (chainReadOnly || externalGit(invocation, access) && invocations.length === 1)
         if (access && inspectReadOnly(access, chainReadOnly, approvedExternalRead)) readOnly.add(invocation)
         else if (searchBlocker) searchRefusals.set(invocation, searchBlocker)
         if (external && (!approvedExternalRead || !readOnly.has(invocation))) approvalBarriers.set(invocation, searchBlocker
-            ?? ask('External read proof is unavailable: use a complete cwd-bound read-only grant and existing canonical targets, without writes or mixed execution. A person reviews and syncs the grant; native permission still applies.'))
+            ?? ask(!exactGrant
+                ? `${named(invocation)} reads outside the configured roots. A person can list the location under [guards] read_paths, set [guards] external_reads = "native", or admit this complete command with an explicit managed cwd under [guards] allow, then sync; native permission still applies.`
+                : invocation.executable === 'git'
+                    ? `${named(invocation)} is admitted in another checkout only as the whole command, since its repository can configure helpers that run; Git commands that print file content there, such as diff or show, stay refused.`
+                    : `${named(invocation)} matches a [guards] allow rule, but the guard cannot prove this read now: it must run without writes or other commands, name existing regular files rather than directories or links, and run without ambient search configuration such as RIPGREP_CONFIG_PATH.`))
         // A cockpit command that parses a named file can quote it in a refusal, so the file is read
         // into the agent context as surely as `cat` would read it.
         for (const profile of resolved.cockpitInvocations) {
@@ -1191,6 +1245,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (invocation.expandsStatus && !readOnly.has(invocation)) return ask(`${named(invocation)} has an argument holding $?, whose digits the guard cannot see, so it cannot prove which path the argument names. Write the value out, or print it with echo on its own.`)
         const declared = !invocation.wrapped && !invocation.words.some((word) => word.role === 'environment-assignment-value')
             ? resolved.declaredAllows.find(rule => ruleMatches(invocation, rule)) : undefined
+        // A rule admits a command, never a search the guard found would read a secret.
+        if (declared && searchRefusals.has(invocation)) return searchRefusals.get(invocation)!
         if (declared) { declaredReasons.push(declared.reason); continue }
         const pending = askDecisions.get(invocation)
         if (pending) return pending
@@ -1206,7 +1262,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (!readOnly.has(invocation) && !resolved.cockpitInvocations.some((profile) => matches(profile, profile.cwd))
             && !resolved.projectCommands.some((profile) => matches(profile, profile.checkoutRoot))) {
             const config = /^[\w./@%+=:,-]+$/.test(resolved.configPath) ? resolved.configPath : `'${resolved.configPath.replaceAll("'", "'\\''")}'`
-            if (invocation.executable === 'node' && invocation.argv[0] === '--test') return ask(`${named(invocation)} requires human approval: Node tests execute code. Preserve this Node argv in a declared project test command or Node testing stage; a person reviews and syncs it. A gate using another runner cannot run this verifier.`)
+            if (invocation.executable === 'node' && invocation.argv[0] === '--test') return ask(`${named(invocation)} requires human approval: Node tests execute code. Keep this Node argv: a person admits it under [guards] allow in ${posix.basename(resolved.configPath)}, `
+                + `or declares it as a [[testing.stages]] command in a gate that agents run with \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run --config ${config} --gate <gate>\`; a gate whose stages use another runner does not run this verifier.`)
             return searchRefusals.get(invocation) ?? ask(`${named(invocation)} requires human approval: the guard admits only the read-only commands it classifies, a declared build or test command run from its checkout, and [guards] allow rules. `
                 + `A person approves it or runs it in a terminal. To run tests, use \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run --config ${config} --gate <gate>\`; a person can admit a command for good under [guards] allow in ${posix.basename(resolved.configPath)}.`)
         }

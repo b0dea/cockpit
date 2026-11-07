@@ -409,6 +409,13 @@ const GuardAllow = z.object({
     reason: GuardRuleText.describe('Why the command is allowed.'),
     cwd: z.union([z.literal('.'), SafeRelativePath.max(4096)]).optional().describe('Allow only when run from this directory, relative to the cockpit.'),
 }).strict()
+// A location a person lets agents read, as a native additional-directory grant would, but held by the guard.
+const GuardReadPath = z.object({
+    path: z.string().max(4096).regex(/^(?:\/|~\/)[^\x00-\x1f\x7f]+$/u)
+        .refine(path => !path.endsWith('/') && !path.split('/').slice(1).some(part => ['', '.', '..'].includes(part)), 'write the path without empty, . or .. segments or a trailing slash')
+        .describe('File or directory outside the cockpit, absolute or starting with ~/ for the home directory of whoever runs the agent.'),
+    reason: GuardRuleText.describe('Why agents may read it.'),
+}).strict()
 const GuardDeny = z.union([
     z.object({ prefix: GuardCommandArgv.describe('Command prefix, as an argument list, that is refused.'), reason: GuardRuleText.describe('Why the command is refused.'), fix: GuardRuleText.optional().describe('Safer command or step to suggest instead.') }).strict(),
     z.object({ contains: GuardCommandArgv.describe('Argument sequence that is refused wherever it appears in a command.'), reason: GuardRuleText.describe('Why the command is refused.'), fix: GuardRuleText.optional().describe('Safer command or step to suggest instead.') }).strict(),
@@ -421,6 +428,8 @@ export const Guards = z
         protected_branches: z.array(z.string()).default(['main', 'master']).describe('Branches the guards keep agents from pushing to or rewriting.'),
         allow: z.array(GuardAllow).max(64).default([]).describe('Commands allowed in addition to the built-in rules.'),
         deny: z.array(GuardDeny).max(64).default([]).describe('Commands refused in addition to the built-in rules.'),
+        read_paths: z.array(GuardReadPath).max(64).default([]).describe('Files and directories outside the cockpit whose named files agents may read, list and search; never written, searched recursively or used as a working directory.'),
+        external_reads: z.enum(['grant', 'native']).default('grant').describe('Who admits a shell read of a named file outside the cockpit: grant needs its complete command under allow; native leaves it to the agent tool\'s own permissions. Secret names, recursive searches and writes stay guarded either way.'),
     })
     .strict()
 
