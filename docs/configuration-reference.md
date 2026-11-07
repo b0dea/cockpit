@@ -36,7 +36,9 @@ The values cockpit uses for a key the configuration leaves out.
       "master"
     ],
     "allow": [],
-    "deny": []
+    "deny": [],
+    "read_paths": [],
+    "external_reads": "grant"
   },
   "mcp": {
     "allowed_tools": {},
@@ -165,6 +167,8 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `protected_branches` | Branches the guards keep agents from pushing to or rewriting. | array of string | `["main","master"]` |  |
 | `allow` | Commands allowed in addition to the built-in rules. | array of table: [`[[guards.allow]]`](#guardsallow) | `[]` | at most 64 items |
 | `deny` | Commands refused in addition to the built-in rules. | array of table, one of: [`[[guards.deny]]` form 1](#guardsdeny-form-1), [`[[guards.deny]]` form 2](#guardsdeny-form-2) | `[]` | at most 64 items |
+| `read_paths` | Files and directories outside the cockpit whose named files agents may read, list and search; never written, searched recursively or used as a working directory. | array of table: [`[[guards.read_paths]]`](#guardsread_paths) | `[]` | at most 64 items |
+| `external_reads` | Who admits a shell read of a named file outside the cockpit: grant needs its complete command under allow; native leaves it to the agent tool's own permissions. Secret names, recursive searches and writes stay guarded either way. | string | `"grant"` | one of `"grant"`, `"native"` |
 
 ### `[[guards.allow]]`
 
@@ -189,6 +193,13 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `contains` | Argument sequence that is refused wherever it appears in a command. | array of string |  | required; 1–32 items; each item: pattern [P4](#patterns) |
 | `reason` | Why the command is refused. | string |  | required; 1–512 characters; pattern `\S`; pattern `^[^\x00-\x1f\x7f-\x9f]+$` |
 | `fix` | Safer command or step to suggest instead. | string |  | 1–512 characters; pattern `\S`; pattern `^[^\x00-\x1f\x7f-\x9f]+$` |
+
+### `[[guards.read_paths]]`
+
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `path` | File or directory outside the cockpit, absolute or starting with ~/ for the home directory of whoever runs the agent. | string |  | required; pattern `^(?:\/\|~\/)[^\x00-\x1f\x7f]+$`; at most 4096 characters |
+| `reason` | Why agents may read it. | string |  | required; 1–512 characters; pattern `\S`; pattern `^[^\x00-\x1f\x7f-\x9f]+$` |
 
 ### `[mcp]`
 

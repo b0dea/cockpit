@@ -58,6 +58,8 @@ describe('policyChange', () => {
         ['a removed vendor host', config => { config.guards.vendor_endpoint_hosts = [] }, ['guards.vendor_endpoint_hosts']],
         ['a removed protected branch', config => { config.guards.protected_branches = ['main'] }, ['guards.protected_branches']],
         ['a removed deny rule', config => { config.guards.deny = [] }, ['guards.deny']],
+        ['a new read path', config => { config.guards.read_paths = [{ path: '~/Downloads', reason: 'Inputs a person drops in.' }] }, ['guards.read_paths']],
+        ['external reads handed to the agent tools', config => { config.guards.external_reads = 'native' }, ['guards.external_reads']],
         ['an autonomy decision moved toward agent', config => { config.autonomy = { reset: 'agent' } }, ['autonomy.reset']],
         ['a work gate moved toward agent', config => { config.work.gates.accept = 'agent' }, ['work.gates.accept']],
         ['weaker grading', config => { config.work.grading = 'self' }, ['work.grading']],
@@ -121,6 +123,13 @@ describe('policyChange', () => {
         ['an added tool and unconfirmed answer', config => { config.surfaces.tools.push('opencode'); config.unconfirmed.push('testing') }],
     ])('does not widen on %s', (_name, edit) => {
         expect(changed(edit)).toEqual({ kind: 'non-widening' })
+    })
+
+    it('narrows when external reads return to grants and a read path is removed', () => {
+        const wide = structuredClone(declared)
+        wide.guards.external_reads = 'native'
+        wide.guards.read_paths = [{ path: '~/Downloads', reason: 'Inputs a person drops in.' }]
+        expect(policyChange(CockpitConfig.parse(wide), before)).toEqual({ kind: 'non-widening' })
     })
 
     it('ignores MCP approvals only while both configurations delegate them to the agent', () => {

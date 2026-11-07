@@ -31,6 +31,7 @@ const UNREAD_BY_DESIGN: Readonly<Record<string, string>> = {
     'surfaces.adopted.[].provenance.confirmed': 'a person\'s confirmation of an inferred value; schema.ts refuses an inferred one without it',
     'surfaces.harnesses.[].capabilities.[].reason': 'why a capability is unavailable, recorded for the reader of the support matrix',
     'surfaces.harnesses.[].capabilities.[].control': 'the broken control the measurement ran beside, recorded as evidence',
+    'guards.read_paths.[].reason': 'why a person lets agents read the location, recorded for the reviewer of cockpit.toml',
 }
 
 // Leaves whose one legal value is a person's explicit statement, each with its reason. A stale entry fails the test.

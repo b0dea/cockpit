@@ -674,6 +674,53 @@
               }
             ]
           }
+        },
+        "read_paths": {
+          "default": [],
+          "description": "Files and directories outside the cockpit whose named files agents may read, list and search; never written, searched recursively or used as a working directory.",
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "maxLength": 4096,
+                "pattern": "^(?:\\/|~\\/)[^\\x00-\\x1f\\x7f]+$",
+                "description": "File or directory outside the cockpit, absolute or starting with ~/ for the home directory of whoever runs the agent."
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "allOf": [
+                  {
+                    "type": "string",
+                    "pattern": "\\S"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]+$"
+                  }
+                ],
+                "description": "Why agents may read it."
+              }
+            },
+            "required": [
+              "path",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "external_reads": {
+          "default": "grant",
+          "description": "Who admits a shell read of a named file outside the cockpit: grant needs its complete command under allow; native leaves it to the agent tool's own permissions. Secret names, recursive searches and writes stay guarded either way.",
+          "type": "string",
+          "enum": [
+            "grant",
+            "native"
+          ]
         }
       },
       "additionalProperties": false

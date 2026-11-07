@@ -124,6 +124,9 @@ const CHANGE_RULES: Rules = {
     'cockpit.guide_cap': safe,
     'guards.allow': onlyRemoves,
     'guards.deny': onlyAdds,
+    'guards.read_paths': onlyRemoves,
+    // Handing named external reads to the agent tool's own permissions widens; returning to grants narrows.
+    'guards.external_reads': (before: string | undefined, after: string | undefined, at: string) => after === 'native' && before !== 'native' ? [at] : [],
     'guards.hosted_db_hosts': onlyAdds,
     'guards.vendor_endpoint_hosts': onlyAdds,
     'guards.protected_branches': onlyAdds,

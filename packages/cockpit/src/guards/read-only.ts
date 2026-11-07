@@ -235,6 +235,8 @@ function git(argv: readonly string[], cwd: string): ReadOnlyAccess | undefined {
     const verb = argv[index++]
     const args = argv.slice(index)
     const requires = ['.git']
+    if (verb === 'worktree') return args[0] === 'list' && args.slice(1).every(arg => ['--porcelain', '-z', '-v', '--verbose'].includes(arg))
+        ? { cwd: directory, reads: [], trees: [], listings: [], requires } : undefined
     // Branch names are positional only when creating, renaming or deleting, so flags alone only list.
     if (verb === 'branch') return args.every(arg => GIT_BRANCH_LIST.has(arg)) ? { cwd: directory, reads: [], trees: [], listings: [], requires } : undefined
     // rev-parse prints object names, refs and repository paths, never file content.
@@ -320,6 +322,14 @@ function classify(invocation: ParsedInvocation, environment: { readonly ripgrepC
         case 'head': case 'tail': return shape(files(argv, HEAD_TAIL))
         case 'jq': return shape(jq(argv))
         case 'wc': return shape(files(argv, WC))
+        case 'shasum': {
+            // Check mode reads filenames from a manifest, so only direct file hashing is classified.
+            // shasum is Perl, whose option parser also takes `+` as a prefix: `shasum +c` checks.
+            const end = argv.indexOf('--')
+            if ((end < 0 ? argv : argv.slice(0, end)).some(arg => arg.startsWith('+'))) return undefined
+            const parsed = parseOptions(argv, { flags: set('-b', '--binary', '-t', '--text'), values: set('-a', '--algorithm'), countValues: set('-a', '--algorithm') })
+            return parsed && shape({ reads: parsed.positionals, trees: [], listings: [] })
+        }
         case 'grep': return shape(search(argv, GREP, false))
         // Every option ripgrep is admitted with keeps its ignore filters, which the trees are then judged by.
         case 'rg': {
