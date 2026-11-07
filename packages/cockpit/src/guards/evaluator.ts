@@ -305,6 +305,14 @@ function ruleMatches(invocation: ParsedInvocation, rule: GuardDeclaredAllow | Gu
     return words.some((_, start) => rule.argv.every((word, index) => words[start + index] === word))
 }
 
+
+/** A complete cwd-bound command approval supplies the paths this invocation may inspect. */
+export function approvedReadOnlyInvocation(invocation: ParsedInvocation, policy: Pick<GuardEvaluationPolicy, 'declaredAllows' | 'ripgrepConfigActive'>): ReadOnlyAccess | undefined {
+    if (invocation.redirects.length || !policy.declaredAllows.some(rule => rule.cwd === invocation.cwd && rule.argv.length === invocation.argv.length + 1
+        && rule.argv[0] === invocation.executable && invocation.argv.every((word, index) => word === rule.argv[index + 1]))) return undefined
+    return classifyReadOnlyInvocation(invocation, policy)
+}
+
 /** `directories` holds each `-C` operand as spelled, with the directory it resolves from. */
 interface GitInvocation { verb: string; args: readonly string[]; cwd: string; directories: readonly { path: string; cwd: string }[]; uncertain: boolean }
 function gitInvocation(invocation: ParsedInvocation): GitInvocation | undefined {
@@ -792,15 +800,19 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         catch (error) { inspectionFailure = errorCause(error); return undefined }
         const lexical = posix.resolve(request.cwd, request.path)
         const listed = request.operation === 'search' || request.operation === 'unignored-search' ? 'sensitive' : request.operation === 'repository' ? 'tracked' : undefined
+        const canonicalPath = evidence !== undefined && record(evidence) ? evidence.canonicalPath : undefined
+        const observedPath = canonicalPath ?? lexical
         const paths = listed && evidence !== undefined && record(evidence) ? evidence[listed] : null
-        return record(evidence) && keys(evidence, ['status', 'path', 'symlink', 'identity', 'ancestors', ...(listed ? [listed] : [])]) && evidence.status === 'resolved'
+        return record(evidence) && keys(evidence, ['status', 'path', 'symlink', 'identity', 'ancestors', ...(listed ? [listed] : []), ...(canonicalPath === undefined ? [] : ['canonicalPath'])]) && evidence.status === 'resolved'
+            && (canonicalPath === undefined || ['read', 'search', 'unignored-search'].includes(request.operation) && canonical(canonicalPath)
+                && resolved.allowedRoots.some(root => within(lexical, root)) && resolved.allowedRoots.some(root => within(canonicalPath, root)))
             && evidence.path === lexical && evidence.symlink === false && (evidence.identity === null || identity(evidence.identity))
             && Array.isArray(evidence.ancestors) && evidence.ancestors.every(identity)
             && (paths === null || Array.isArray(paths) && paths.length <= GUARD_LOCATION_LIMITS.sensitivePaths
-                && paths.every((path) => canonical(path) && within(path, lexical))) ? evidence : undefined
+                && paths.every((path) => canonical(path) && typeof observedPath === 'string' && within(path, observedPath))) ? evidence : undefined
     }
     let pathCount = input.paths.length + input.invocations.reduce((sum, item) => sum + item.redirects.length, 0)
-    const inspectPath = (request: PathInspectionRequest, controlCoverage = false): JsonSnapshotObject | undefined => {
+    const inspectPath = (request: PathInspectionRequest, controlCoverage = false, approvedReadCwd = false): JsonSnapshotObject | undefined => {
         if (!scalar(request.path) || Buffer.byteLength(request.path) > GUARD_INPUT_LIMITS.pathBytes || !canonical(request.cwd)) {
             hold(unavailable('Guard path or working directory is malformed.'))
             return
@@ -822,9 +834,9 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (request.operation === 'write' && executes(folded, controlCoverage)) hold(executionDenial)
         if (request.operation === 'write' && posix.basename(folded) === '.npmrc') hold(npmrcDenial)
         if (mutating && folded.split('/').includes('.git')) hold(gitMetadataDenial)
-        if (!resolved.allowedRoots.some((root) => within(lexical, root))) {
+        if (!resolved.allowedRoots.some((root) => within(lexical, root)) && !(request.operation === 'cwd' && approvedReadCwd)) {
             hold(unavailable('Guard path escapes configured roots. A path or working directory in this command is outside every root this cockpit manages, '
-                + 'which the guard does not judge: work inside the cockpit, or a person runs the command.'))
+                + 'which the guard does not judge. For a read-only git -C command, a person can review its complete argv with cwd under [guards] allow and sync; otherwise work inside the cockpit, or a person runs the command.'))
             return
         }
         const evidence = resolvedEvidence(request)
@@ -923,7 +935,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     // configured roots; reading a protected instance is a hard denial, anything doubtful is not safe.
     // `chainReadOnly` says no other command in the call can create a protected path before the
     // search runs, which is what lets an absent one be ignored.
-    const inspectReadOnly = (access: ReadOnlyAccess, chainReadOnly = false): boolean => {
+    const inspectReadOnly = (access: ReadOnlyAccess, chainReadOnly = false, approvedExternalRead = false): boolean => {
         let safe = true
         searchBlocker = undefined
         const visit = (path: string, kind: 'read' | 'tree' | 'listing') => {
@@ -935,9 +947,10 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             const protectedRead = folded.split('/').includes('.secrets') || resolved.instances.some((item) => within(folded, fold(item.path)))
             if (kind !== 'listing' && dotenvSecret(folded)) hold(dotenvDenial)
             if (kind !== 'listing' && protectedRead) hold(readDenial)
-            if (!resolved.allowedRoots.some((root) => within(lexical, root))) {
+            const external = !resolved.allowedRoots.some((root) => within(lexical, root))
+            if (external && !approvedExternalRead) {
                 safe = false
-                searchBlocker ??= ask(`${shownGuardWord(path)} is outside the configured roots, where the guard cannot prove it holds no secret. Read a copy inside the cockpit, or a person approves it.`)
+                searchBlocker ??= ask(`${shownGuardWord(path)} is outside the configured roots, where the guard cannot prove it holds no secret. A person must review a complete read-only argv and explicit managed cwd under [guards] allow, then sync. Native permission is still required; trusting hooks again does not add location authority.`)
                 return
             }
             pathCount++
@@ -947,7 +960,11 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             // protected file leaves every recursive search unproven: either may reach it unnamed.
             if (kind !== 'listing' && !secretFiles || kind === 'tree' && resolved.protectedFilesLinked) safe = false
             const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: kind !== 'tree' ? 'read' : access.skipsIgnored ? 'unignored-search' : 'search' })
-            if (!evidence) { safe = false; return }
+            if (!evidence || external && evidence.identity === null) { safe = false; return }
+            const canonicalName = fold(typeof evidence.canonicalPath === 'string' ? evidence.canonicalPath : lexical)
+            if (kind === 'read' && /^\.env/.test(posix.basename(canonicalName)) && !documentation(canonicalName)) safe = false
+            if (kind !== 'listing' && dotenvSecret(canonicalName)) hold(dotenvDenial)
+            if (kind !== 'listing' && canonicalName.split('/').includes('.secrets')) hold(readDenial)
             const { is, below, covers } = evidenceFacts(evidence)
             if (kind !== 'listing' && (is(secretRoot) || below(secretRoot) || secretFile(evidence) || resolved.instances.some((item) => is(item.path)))) hold(readDenial)
             if (kind !== 'tree') return
@@ -1037,7 +1054,10 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         return [invocation, classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive, ...(cockpit ? { cockpit } : {}) })]
     }))
     // A definition or a `cd` runs nothing, so it cannot create a path before a search reads it; a bare redirect writes one.
-    const chainReadOnly = [...accesses].every(([invocation, access]) => access !== undefined
+    const externalGit = (invocation: ParsedInvocation, access: ReadOnlyAccess | undefined) => invocation.executable === 'git' && access !== undefined
+        && !resolved.allowedRoots.some(root => within(access.cwd, root))
+    // An external Git command is reviewed execution: its repository can configure helpers that write.
+    const chainReadOnly = [...accesses].every(([invocation, access]) => access !== undefined && !externalGit(invocation, access)
         || invocation.executable === null && !invocation.redirects.some((redirect) => redirect.write))
     let possibleControlCount = 0
     inspectPath({ path: input.cwd, cwd: input.cwd, operation: 'cwd' })
@@ -1093,8 +1113,19 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             }
             if (possibleControlCount > GUARD_INPUT_LIMITS.paths) hold(unavailable('Potential guard control operand limit exceeded.'))
         }
-        if (access && inspectReadOnly(access, chainReadOnly)) readOnly.add(invocation)
+        const externalAccess = access ?? classifyReadOnlyInvocation({ ...invocation, redirects: invocation.redirects.filter(item => !item.write) }, { ripgrepConfigActive: resolved.ripgrepConfigActive })
+        const outsideRoots = (read: ReadOnlyAccess | undefined) => read && [read.cwd, ...read.reads, ...read.trees, ...read.listings]
+            .some(path => !resolved.allowedRoots.some(root => within(posix.resolve(read.cwd, path), root)))
+        // An appended execution flag or ambient configuration must not turn an external read grant into generic execution.
+        const externalGrant = resolved.declaredAllows.some(rule => rule.cwd === invocation.cwd && ruleMatches(invocation, rule)
+            && outsideRoots(classifyReadOnlyInvocation({ ...invocation, argv: rule.argv.slice(1), redirects: [] }, { ripgrepConfigActive: false })))
+        const external = outsideRoots(externalAccess) || externalGrant
+        const approvedExternalRead = !!approvedReadOnlyInvocation(invocation, resolved)
+            && (chainReadOnly || externalGit(invocation, access) && invocations.length === 1)
+        if (access && inspectReadOnly(access, chainReadOnly, approvedExternalRead)) readOnly.add(invocation)
         else if (searchBlocker) searchRefusals.set(invocation, searchBlocker)
+        if (external && (!approvedExternalRead || !readOnly.has(invocation))) approvalBarriers.set(invocation, searchBlocker
+            ?? ask('External read proof is unavailable: use a complete cwd-bound read-only grant and existing canonical targets, without writes or mixed execution. A person reviews and syncs the grant; native permission still applies.'))
         // A cockpit command that parses a named file can quote it in a refusal, so the file is read
         // into the agent context as surely as `cat` would read it.
         for (const profile of resolved.cockpitInvocations) {
@@ -1110,7 +1141,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (!git) continue
         // Git changes directory as the system does, resolving `..` from where a link leads, so each
         // directory is inspected as spelled rather than by the path `cwd` names.
-        for (const directory of git.directories) inspectPath({ ...directory, operation: 'cwd' })
+        for (const directory of git.directories) inspectPath({ ...directory, operation: 'cwd' }, false, approvedExternalRead && readOnly.has(invocation))
         if (git.uncertain) holdAsk(invocation, ask('Git execution context is not an exact resolved profile.'))
         if (git.verb === 'push') {
             const decision = pushDecision(git.args, resolved.protectedBranches)
@@ -1175,6 +1206,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (!readOnly.has(invocation) && !resolved.cockpitInvocations.some((profile) => matches(profile, profile.cwd))
             && !resolved.projectCommands.some((profile) => matches(profile, profile.checkoutRoot))) {
             const config = /^[\w./@%+=:,-]+$/.test(resolved.configPath) ? resolved.configPath : `'${resolved.configPath.replaceAll("'", "'\\''")}'`
+            if (invocation.executable === 'node' && invocation.argv[0] === '--test') return ask(`${named(invocation)} requires human approval: Node tests execute code. Preserve this Node argv in a declared project test command or Node testing stage; a person reviews and syncs it. A gate using another runner cannot run this verifier.`)
             return searchRefusals.get(invocation) ?? ask(`${named(invocation)} requires human approval: the guard admits only the read-only commands it classifies, a declared build or test command run from its checkout, and [guards] allow rules. `
                 + `A person approves it or runs it in a terminal. To run tests, use \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run --config ${config} --gate <gate>\`; a person can admit a command for good under [guards] allow in ${posix.basename(resolved.configPath)}.`)
         }

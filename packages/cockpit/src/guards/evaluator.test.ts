@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync, rmSy
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
-import { evaluateGuard, GUARD_ROOT_PROTECTIONS } from './evaluator.js'
+import { evaluateGuard, GUARD_ROOT_PROTECTIONS, type PathInspection } from './evaluator.js'
 import { parseGuardInput } from './invocation-parser.js'
 import { invocationCorpus, shellPayload } from './fixtures/invocation-corpus.js'
 import { GuardCommandArgv } from '../schema.js'
@@ -580,6 +580,60 @@ describe('built-in read-only profile', () => {
             'cd ./src && cat a.ts | wc -l', 'cd ./src && grep -rn needle .', 'cd ../other; git status', 'grep -rn needle src 2>/dev/null | head -30']) {
             expect(decideInRepositories(command), command).toEqual({ decision: 'allow', reason: expect.any(String) })
         }
+    })
+
+    it('keeps a Node verifier on its original runner when explaining execution approval', () => {
+        const command = 'node --test --test-concurrency=1 evidence/verify.mjs'
+        expect(decide(command)).toEqual({ decision: 'ask', reason: expect.stringContaining('Preserve this Node argv') })
+        const granted = { ...policy(), declaredAllows: [{ argv: command.split(' '), cwd: root, reason: 'Run the reviewed verifier.' }] }
+        expect(decide(command, granted)).toMatchObject({ decision: 'allow' })
+    })
+
+    it('admits worktree inventories and checksums without granting their mutating modes', () => {
+        for (const command of ['git worktree list', 'git worktree list --porcelain', 'git worktree list --porcelain -z',
+            'shasum -a 256 .codex/hooks.json README.md', 'shasum --algorithm=256 -- README.md']) {
+            expect(decideInRepositories(command), command).toMatchObject({ decision: 'allow' })
+        }
+        for (const command of ['git worktree add ../copy', 'git worktree prune', 'git worktree list --unknown',
+            'shasum -c checksums.txt', 'shasum --check checksums.txt', 'shasum --tag README.md',
+            'shasum -a 256 .env', 'shasum -a 256 README.md > .codex/hooks.json']) {
+            expect(decideInRepositories(command).decision, command).not.toBe('allow')
+        }
+    })
+
+    it('requires a complete cwd-bound read grant and current evidence for external locations', () => {
+        const external = '/workspace/inputs/notes.md'
+        const command = `cat ${external}`
+        const configured = policy()
+        configured.declaredAllows.push({ argv: ['cat', external], cwd: root, reason: 'Read the selected input.' })
+        const present = (request: Parameters<typeof inspect>[0]) => ({ ...withGit(request), identity: '8:2' })
+        const run = (text: string, grants = configured, evidence: PathInspection = present) => evaluateGuard(parseGuardInput(shellPayload(text)), grants, evidence)
+        expect(run(command)).toMatchObject({ decision: 'allow' })
+        for (const grants of [policy(), { ...configured, declaredAllows: [{ argv: ['cat'], cwd: root, reason: 'Read.' }] },
+            { ...configured, declaredAllows: [{ argv: ['cat', external], reason: 'Read.' }] }]) {
+            expect(run(command, grants).decision).not.toBe('allow')
+        }
+        expect(run(`${command} /workspace/inputs/other.md`).decision).not.toBe('allow')
+        expect(run(`${command} < /workspace/inputs/other.md`).decision).not.toBe('allow')
+        expect(run(`${command} > /workspace/inputs/copy.md`).decision).not.toBe('allow')
+        expect(run(command, configured, request => ({ ...present(request), identity: null })).decision).not.toBe('allow')
+        expect(run(command, configured, request => ({ ...present(request), symlink: true })).decision).not.toBe('allow')
+        for (const target of ['/workspace/inputs/.env', '/workspace/inputs/.secrets/token']) {
+            const granted = { ...configured, declaredAllows: [{ argv: ['cat', target], cwd: root, reason: 'Read.' }] }
+            expect(run(`cat ${target}`, granted).decision).toBe('deny')
+        }
+        const checksum = { ...configured, declaredAllows: [{ argv: ['shasum', external], cwd: root, reason: 'Hash the selected input.' }] }
+        expect(run(`shasum ${external}`, checksum)).toMatchObject({ decision: 'allow' })
+        expect(run(`shasum ${external} --check`, checksum).decision).not.toBe('allow')
+        const search = { ...configured, ripgrepConfigActive: true,
+            declaredAllows: [{ argv: ['rg', 'needle', external], cwd: root, reason: 'Search the selected input.' }] }
+        expect(run(`rg needle ${external}`, search).decision).not.toBe('allow')
+        const status = 'git -C /workspace/related status --short'
+        const related = { ...configured, declaredAllows: [{ argv: status.split(' '), cwd: root, reason: 'Inspect the related checkout.' }] }
+        expect(run(status, related)).toMatchObject({ decision: 'allow' })
+        expect(run(`${status} && rg needle src`, related).decision).not.toBe('allow')
+        expect(run(`${status} | cat`, related).decision).not.toBe('allow')
+        expect(run('git -C /workspace/related checkout other', related).decision).not.toBe('allow')
     })
 
     it('judges every launcher spelling by the one proof that it starts the installed cockpit', () => {

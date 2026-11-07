@@ -202,9 +202,9 @@ once; the evaluator accepts only input that parser produced.
 
 A built-in read-only profile lets agents inspect the checkout without a prompt, which matters most
 on Codex and OpenCode, where a prompt becomes a denial. It covers exact argument shapes of `ls`,
-`pwd`, `cat`, `head`, `tail`, `wc`, `rg`, `grep`, `fd`, `find`, `echo`, `printf`, `sed`,
-`git status`, `git diff`, `git log`, `git show`, `git rev-parse`, `git branch` listing flags, and
-the cockpit commands [below](#cockpit-commands-an-agent-can-run). The
+`pwd`, `cat`, `head`, `tail`, `wc`, `shasum`, `rg`, `grep`, `fd`, `find`, `echo`, `printf`, `sed`,
+`git status`, `git diff`, `git log`, `git show`, `git rev-parse`, `git branch` listing flags,
+`git worktree list`, and the cockpit commands [below](#cockpit-commands-an-agent-can-run). The
 [read-only profile](../packages/cockpit/src/guards/read-only.ts) lists each permitted option.
 
 - Any other option falls back to the ordinary rules, including options that run programs or write
@@ -216,7 +216,10 @@ the cockpit commands [below](#cockpit-commands-an-agent-can-run). The
   with numeric or `$` addresses. `git rev-parse` is read-only except `--git-path`,
   `--resolve-git-dir`, `--parseopt` and `--sq-quote`. `git branch` is read-only with no argument or
   with `--list`, `-a`, `-r`, `-v`, `-vv` or `--show-current` (and their long forms), never with a
-  branch name.
+  branch name. `git worktree list` accepts its porcelain, NUL and verbose listing flags;
+  worktree creation, removal and pruning remain outside the read-only profile. `shasum` hashes
+  named files, including guard controls, with algorithm and text/binary options. Check mode is
+  excluded because a checksum manifest names additional files. Output redirects remain writes.
 - `$?` is allowed as an argument only to a read-only command, and never as the directory of
   `env -C`.
 - A command may follow `cd ./dir`, `cd ../dir` or `cd /abs/dir` joined by `&&` or `;`, with the
@@ -235,6 +238,65 @@ the cockpit commands [below](#cockpit-commands-an-agent-can-run). The
   `rg -g '.env*'` would print a hidden environment file.
 - A pipeline or chain is permitted only when every segment is. Redirecting output to `/dev/null`,
   `/dev/stdout` or `/dev/stderr`, or input from `/dev/null`, does not change the decision.
+
+### External inputs and native permissions
+
+Native file tools keep their native permissions. For shell reads, Cockpit does not import global
+settings as effective permission: a user file alone cannot prove which session, managed policy,
+profile or command-line overrides the running tool applied. Sandbox visibility, including a
+filesystem readable from `/`, is not consent to read credentials.
+
+| Harness | Incoming native grants consumed by this guard | Remaining authority |
+| --- | --- | --- |
+| Claude Code | No effective additional-directory or Read-rule import. | Native rules and the session's permission mode still apply. |
+| Codex CLI | No effective filesystem-profile or additional-directory import. | Native filesystem restrictions still apply; writable roots are not read-only grants. |
+| OpenCode | No effective external-directory or ordered permission-rule import. | Native read, edit, shell and external-directory checks still apply. |
+
+This is an explicit unsupported import capability, with a bounded fallback through the existing
+authenticated `guards.allow` policy. A person reviews the **complete** read-only argv and an
+explicit managed `cwd`, then runs `cockpit sync` outside the agent. For example, a selected safe
+input can be approved without making its containing directory a product repository:
+
+```toml
+[[guards.allow]]
+argv = ["rg", "-n", "decision", "/workspace/selected/notes.md"]
+cwd = "."
+reason = "Read the selected design notes."
+```
+
+For external read authority, the entire argv must match; the usual prefix matching is insufficient.
+The guard inspects only the named locations. A file-read approval grants no external writes,
+execution roots or shell working directory. A reviewed `git -C /workspace/related status --short`
+can inspect a related checkout from the managed cwd; changing its branch remains a separate
+operation. **External Git approval is command execution consent**, including that repository's
+configured helpers: status can run fsmonitor and clean filters. Review that configuration before
+approving the command. It runs only as the whole call, never as part of a read-only pipeline or
+chain whose file evidence a helper could invalidate. Native read permission alone supplies none
+of this execution consent. Git commands
+that print history still need repository-content evidence, which external grants do not provide.
+Redirection to another file is never covered by an external read grant. Mixed read/write execution,
+missing targets and external symlinks stay refused. A named file under a managed root may follow
+a package-manager link only to a regular file inside a managed root; both spellings and the target's
+identity are checked, and the link is revalidated before the decision is returned.
+
+Review memory directories or selected files narrowly. Configuration and logs can contain secrets:
+approve a named safe file or a redacted copy, never an entire agent configuration or Downloads
+directory as an incidental grant. The existing secret, hosted-endpoint, protected-branch and
+control-write denials take precedence. A path approval cannot override them.
+
+Adding or widening a rule is held until person-owned sync activates it. Removing a rule or changing
+its scope invalidates the old permission on the next call, before another sync. Cockpit's successful
+hook response is neutral: it never emits a native permission override. Native denials and revocations
+remain the native tool's responsibility; a Cockpit approval does not undo them. Re-trusting hooks
+does not repair missing location authority or unsupported command arguments.
+
+A Node test verifier remains executable code, not a read-only inspection command. Preserve its
+`node --test --test-concurrency=1 <verifier>` argv in a reviewed Node test stage or a declared
+project test command. Do not substitute a Vitest gate or grant the whole `node` interpreter.
+
+The application tests cover these boundaries independently for each harness registration. They do
+not establish native execution acceptance or automatic settings import; dated native evidence
+remains in the [capability matrix](capability-matrix.md).
 
 ### Cockpit commands an agent can run
 

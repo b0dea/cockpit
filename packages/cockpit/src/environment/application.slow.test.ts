@@ -199,6 +199,82 @@ describe('guard policy construction', () => {
         return { root, configPath, request, adapters }
     }
 
+    it.each(['claudecode', 'codexcli', 'opencode'] as const)('keeps reviewed external reads bounded through the %s application', async harness => {
+        const { root, configPath } = await observedPolicy()
+        const external = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-selected-input-')))
+        scratch.push(external)
+        const input = join(external, 'notes.md')
+        writeFileSync(input, 'synthetic notes\n')
+        execFileSync('git', ['init', '--quiet', external])
+        const config = CockpitConfig.parse(parse(readFileSync(configPath, 'utf8')))
+        config.surfaces.tools = ['claudecode', 'codexcli', 'opencode']
+        const commands = [['cat', input], ['git', '-C', external, 'status', '--short'],
+            ['rg', '-n', 'synthetic', input], ['cat', join(external, 'missing.md')], ['cat', join(external, 'alias.md')],
+            ['cat', join(external, '.env')], ['node', '--test', '--test-concurrency=1', 'verify.mjs']]
+        config.guards.allow.push(...commands.map(argv => ({ argv, cwd: '.', reason: 'Read the selected input or run the reviewed verifier.' })))
+        writeFileSync(configPath, stringify(config))
+        expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        const identity = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
+        const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
+            resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }) }
+        const decide = async (command: string) => (await runGuardEvaluationApplication({ identity, guardRoot: root, harness, cwd: root,
+            payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+        const spell = (argv: string[]) => argv.map(word => `'${word}'`).join(' ')
+        for (const argv of commands.slice(0, 3)) expect(await decide(spell(argv))).toMatchObject({ decision: 'allow' })
+        const head = readFileSync(join(external, '.git/HEAD'), 'utf8')
+        execFileSync('git', commands[1]!.slice(1), { stdio: 'pipe' })
+        expect(readFileSync(join(external, '.git/HEAD'), 'utf8')).toBe(head)
+        expect(await decide(spell(commands[6]!))).toMatchObject({ decision: 'allow' })
+        expect(await decide(`cat '${input}' '${join(external, 'other.md')}'`)).not.toMatchObject({ decision: 'allow' })
+        expect(await decide(`cat '${input}' > copied.md`)).not.toMatchObject({ decision: 'allow' })
+        expect(await decide(`cat '${input}' > '${join(external, 'copy.md')}'`)).not.toMatchObject({ decision: 'allow' })
+        expect(await decide(spell(commands[3]!))).not.toMatchObject({ decision: 'allow' })
+        symlinkSync(input, join(external, 'alias.md'))
+        expect(await decide(spell(commands[4]!))).not.toMatchObject({ decision: 'allow' })
+        const secretDecision = await decide(spell(commands[5]!))
+        expect(secretDecision, secretDecision.reason).toMatchObject({ decision: 'deny' })
+        expect(await decide('git push origin HEAD:main')).toMatchObject({ decision: 'deny' })
+        expect(await decide('curl https://db.example.test')).toMatchObject({ decision: 'deny' })
+        // A repository edit cannot activate another grant, and removing a grant takes effect before sync.
+        config.guards.allow.push({ argv: ['cat', join(external, 'other.md')], cwd: '.', reason: 'Another selected file.' })
+        writeFileSync(configPath, stringify(config))
+        expect(await decide(`cat '${input}'`)).toMatchObject({ decision: 'unavailable' })
+        config.guards.allow = []
+        writeFileSync(configPath, stringify(config))
+        expect(await decide(`cat '${input}'`)).toMatchObject({ decision: 'unavailable' })
+    }, 120_000)
+
+    it('reads an explicitly named package document through a confined package symlink', async () => {
+        const { root, request, adapters } = await installedGuardRequest()
+        const store = join(root, 'packages/docs-fixture')
+        mkdirSync(store, { recursive: true })
+        writeFileSync(join(store, 'guide.md'), 'synthetic guide\n')
+        const alias = join(root, 'package-docs')
+        symlinkSync(store, alias)
+        const decide = async (file: string) => (await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin',
+            payload: shellPayload(`rg -n 'roots|read path|allow' ${file}`, root) }, adapters)).decision
+        try {
+            const result = await decide('package-docs/guide.md')
+            expect(result, JSON.stringify(result)).toMatchObject({ decision: 'allow' })
+            writeFileSync(join(store, '.env'), 'SYNTHETIC_KEY=synthetic\n')
+            symlinkSync(join(store, '.env'), join(store, 'secret-alias.md'))
+            expect(await decide('package-docs/secret-alias.md')).toMatchObject({ decision: 'deny' })
+            writeFileSync(join(store, '.envrc'), 'synthetic environment script\n')
+            symlinkSync(join(store, '.envrc'), join(store, 'script-alias.md'))
+            const scriptRead = await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin',
+                payload: shellPayload('cat package-docs/script-alias.md', root) }, adapters)
+            expect(scriptRead.decision).toMatchObject({ decision: 'ask' })
+            const outside = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-unapproved-input-')))
+            scratch.push(outside)
+            writeFileSync(join(outside, 'guide.md'), 'synthetic external guide\n')
+            symlinkSync(join(outside, 'guide.md'), join(store, 'outside-alias.md'))
+            expect(await decide('package-docs/outside-alias.md')).not.toMatchObject({ decision: 'allow' })
+        } finally {
+            rmSync(alias)
+            rmSync(store, { recursive: true })
+        }
+    }, 120_000)
+
     it('guards native notebook edits against the same authenticated control paths as text edits', async () => {
         const { root, request, adapters } = await installedGuardRequest()
         for (const [file, decision] of [['app/analysis.ipynb', 'allow'], ['.cockpit/local/analysis.ipynb', 'deny']] as const) {
