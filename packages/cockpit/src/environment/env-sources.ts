@@ -467,8 +467,12 @@ export async function runEnvSchema(input: EnvCommandInput & Readonly<{ reference
     const read = await readDocumentationFile(file)
     switch (read.kind) {
         case 'text': return { status: 0, diagnostics: [], result: { reference, path: file, text: read.text } }
-        case 'missing': return refused(reference, `${file} does not exist`,
-            `to create it, write a draft away from environment files and run ${cockpitCommand('env schema', { args: `--path ${reference} --replace-from <draft>` })}; to read an existing schema instead, ${list}`)
+        case 'missing': {
+            // The directory form, because agent secret guards refuse any word containing .env.
+            const where = slug === undefined ? directory || '.' : `${slug}:${directory}`
+            return refused(reference, `${file} does not exist`,
+                `to create it, write a draft away from environment files and run ${cockpitCommand('env schema', { args: `--path ${where} --replace-from <draft>` })}; to read an existing schema instead, ${list}`)
+        }
         case 'symbolic-link': return refused(reference, `${file} is a symbolic link`, 'replace the link with a regular file')
         case 'not-a-file': return refused(reference, `${file} is not a regular file`, 'replace it with a regular file')
         case 'hard-link': return refused(reference, `${file} has another hard link, so its bytes may be another file's`, 'replace it with a regular file of its own')

@@ -400,7 +400,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `UPGRADE_INSTALL_FAILED` | fix what the package manager reported (is the version published?), then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version> |
 | `UPGRADE_PACKAGE_MANAGER_UNKNOWN` | keep exactly one of package-lock.json, pnpm-lock.yaml or yarn.lock at the cockpit root and put its package manager (npm, pnpm or yarn) on PATH, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> |
 | `UPGRADE_REGISTRY_UNREACHABLE` | check the network, the registry login and that npm is on PATH, or name the version: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version> |
-| `UPGRADE_SYNC_FAILED` | act on what sync reported above or put npx on PATH, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> |
+| `UPGRADE_SYNC_FAILED` | act on what sync reported above, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> |
 | `UPGRADE_VERSION_INVALID` | give a full version such as 1.2.3, not a range or tag |
 | `WORK_CHECK_FAILED` | read result.results: fix the product for a check that failed, make one that did not run runnable from the cockpit root, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work check --config <your cockpit.toml> --work-order <id> |
 | `WORK_PERSON_REQUIRED` | stop and ask a person to run the same command with --interactive in a terminal outside CI, read what it shows, and type the digest; never type it for them |

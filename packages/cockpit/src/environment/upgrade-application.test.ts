@@ -26,10 +26,12 @@ function fixture(latest: string, lockfiles: readonly string[] = ['package-lock.j
         writeFileSync(join(bin, name), `#!/bin/sh\necho "${name} $*" >> '${log}'\n${body}\n`)
         chmodSync(join(bin, name), 0o755)
     }
-    const install = `cat > '${join(project, 'node_modules', '@b00dea', 'cockpit', 'CHANGELOG.md')}' <<'EOF'\n${changelog}EOF`
+    // The install also puts the new package's entrypoint in place, which records how it was run.
+    const entry = join(project, 'node_modules', '@b00dea', 'cockpit', 'bin', 'cockpit.mjs')
+    const entrypoint = `import { appendFileSync } from 'node:fs'\nappendFileSync('${log}', 'cockpit ' + process.argv.slice(2).join(' ') + '\\n')\n`
+    const install = `cat > '${join(project, 'node_modules', '@b00dea', 'cockpit', 'CHANGELOG.md')}' <<'EOF'\n${changelog}EOF\nmkdir -p '${join(project, 'node_modules', '@b00dea', 'cockpit', 'bin')}'\ncat > '${entry}' <<'EOF'\n${entrypoint}EOF`
     script('npm', `if [ "$1" = view ]; then cat <<'VIEW'\n${view}\nVIEW\nexit 0; fi\n${install}`)
     script('pnpm', install)
-    script('npx', 'echo synced')
     const calls = () => existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []
     const run = (options: { version?: string; dryRun?: boolean } = {}) => runUpgrade({
         configPath: join(project, 'cockpit.toml'), dryRun: options.dryRun === true,
@@ -46,8 +48,10 @@ describe('cockpit upgrade', () => {
         expect(f.calls()).toEqual([
             'npm view @b00dea/cockpit version --json',
             'npm install --save-dev --save-exact @b00dea/cockpit@9.9.9',
-            `npx --no cockpit sync --config ${f.project}/cockpit.toml`,
+            // The newly installed entrypoint, which the guard can prove, not a package-manager shim.
+            `cockpit sync --config ${f.project}/cockpit.toml`,
         ])
+        expect(outcome.result).toMatchObject({ sync: `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${f.project}/cockpit.toml` })
         expect(outcome.result).toMatchObject({ from: installedPackageMetadata.version, to: '9.9.9', packageManager: 'npm',
             upgradeSteps: ['a1: Upgrade: rename the old key.'], next: expect.stringContaining('git diff') })
     })
@@ -81,6 +85,9 @@ describe('cockpit upgrade', () => {
         expect(await noisy.run({ dryRun: true })).toMatchObject({ status: 0, result: { to: '9.9.9' } })
         const listed = fixture('9.9.9', ['package-lock.json'], '["9.9.9"]')
         expect(await listed.run({ dryRun: true })).toMatchObject({ status: 0, result: { to: '9.9.9' } })
+        // npm prints a list of several versions one per line; no line of it is the answer.
+        const several = fixture('9.9.9', ['package-lock.json'], '[\n  "1.0.0",\n  "1.0.1"\n]')
+        expect((await several.run({ dryRun: true })).diagnostics).toEqual([expect.objectContaining({ code: 'UPGRADE_REGISTRY_UNREACHABLE' })])
         const unusable = fixture('9.9.9', ['package-lock.json'], 'notice: nothing to see\n["1.0.0", "1.0.1"]')
         expect((await unusable.run({ dryRun: true })).diagnostics).toEqual([expect.objectContaining({ code: 'UPGRADE_REGISTRY_UNREACHABLE',
             message: expect.stringContaining('["1.0.0", "1.0.1"]') })])

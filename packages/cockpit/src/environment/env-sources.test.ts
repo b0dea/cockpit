@@ -282,8 +282,11 @@ describe('env schema', () => {
                 expect(`${ran.stdout}${ran.stderr}`, path).not.toContain(SENTINEL)
             }
         }
-        // A schema that does not exist yet is created, not read: the remedy names that route.
-        expect((await schemaAt(space, `absent:${SCHEMA}`)).stderr).toContain(`--path absent:${SCHEMA} --replace-from <draft>`)
+        // A schema that does not exist yet is created, not read: the remedy names that route, in the
+        // directory form an agent's secret guard lets through.
+        const absent = (await schemaAt(space, `absent:${SCHEMA}`)).stderr
+        expect(absent).toContain('--path absent: --replace-from <draft>')
+        expect(absent).not.toContain(`--path absent:${SCHEMA}`)
         expect(space.varlockRan()).toBe(false)
     })
 

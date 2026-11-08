@@ -410,6 +410,9 @@ purpose = "Synthetic local repository"
         const managerDocument = `---\nlockfileVersion: '9.0'\nimporters:\n  .:\n    packageManagerDependencies:\n      pnpm:\n        specifier: 12.5.1\n        version: 12.5.1\n`
         await writeFile(join(root, 'pnpm-lock.yaml'), `${managerDocument}\n---\n${lock(spec)}`)
         expect(await validateTeamMetadata(configPath)).toMatchObject({ kind: 'complete' })
+        // The project's lock is the last document; an earlier one naming the pin decides nothing.
+        await writeFile(join(root, 'pnpm-lock.yaml'), `---\n${lock(spec)}\n---\n${lock('file:/synthetic/archives/another.tgz')}`)
+        expect(await validateTeamMetadata(configPath)).toMatchObject({ kind: 'refusal', code: 'COCKPIT_VERSION_MISMATCH' })
 
         await writeFile(join(root, 'pnpm-lock.yaml'), lock('file:/synthetic/archives/another.tgz'))
         expect(await validateTeamMetadata(configPath)).toMatchObject({ kind: 'refusal', code: 'COCKPIT_VERSION_MISMATCH',

@@ -276,15 +276,16 @@ async function pnpmLockResolves(authority: RootAuthority, spec: string): Promise
     const lockFile = await readOptional(authority, join(authority.root, 'pnpm-lock.yaml'))
     if (!lockFile) return false
     // pnpm 11 and later write the package manager's own lock as a first YAML document when package.json
-    // names a packageManager, and the project's lock as the next; the pin is in whichever names it.
+    // names a packageManager, and the project's lock last; only the project's decides what a teammate's
+    // install resolves, so an earlier document naming the pin verifies nothing.
     // An unparseable lockfile verifies no pin; the caller then refuses the file: pin as unresolved.
-    let documents: unknown[]
+    let project: unknown
     try {
         const parsed = parseAllDocuments(lockFile.bytes)
-        if (!Array.isArray(parsed) || parsed.some(document => document.errors.length > 0)) return false
-        documents = parsed.map(document => document.toJS() as unknown)
+        if (!Array.isArray(parsed) || parsed.length === 0 || parsed.some(document => document.errors.length > 0)) return false
+        project = parsed[parsed.length - 1]!.toJS() as unknown
     } catch { return false }
-    return documents.some(lock => pnpmImporterResolves(lock, spec))
+    return pnpmImporterResolves(project, spec)
 }
 
 function pnpmImporterResolves(lock: unknown, spec: string): boolean {
