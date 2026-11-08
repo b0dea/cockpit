@@ -7,10 +7,13 @@ type GuardPair = Parameters<typeof validateNativeGuardPair>[0]
 function guardPair(): GuardPair {
     const host = 'vendor.example.test'
     const brokenCommand = `cockpit-selftest-missing-hook-${'b'.repeat(24)}`
-    const candidateBytes = JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [
-        { type: 'command', command: 'node ./guard.mjs' },
-    ] }] } })
-    const brokenBytes = brokenNativeGuardSettings(candidateBytes, brokenCommand)
+    const guardCommand = 'node ./guard.mjs'
+    // A team's hooks sit beside cockpit's guard, before and after it.
+    const candidateBytes = `${JSON.stringify({ hooks: { PreToolUse: [
+        { matcher: 'Bash', hooks: [{ type: 'command', command: './team-bash-guard.sh' }] },
+        { matcher: 'Bash', hooks: [{ type: 'command', command: guardCommand }, { type: 'command', command: './team-audit.sh' }] },
+    ] } }, null, 2)}\n`
+    const brokenBytes = brokenNativeGuardSettings(candidateBytes, guardCommand, brokenCommand).bytes
     if (!brokenBytes) throw new Error('synthetic guard registration is invalid')
 
     function trace(denied: boolean, nonce: string) {
@@ -46,7 +49,7 @@ function guardPair(): GuardPair {
     }
 
     const candidate = trace(true, 'c'.repeat(48)), broken = trace(false, 'd'.repeat(48))
-    return { host, brokenCommand, candidateBytes, brokenBytes,
+    return { host, guardCommand, brokenCommand, candidateBytes, brokenBytes,
         observations: { candidate: candidate.observation, broken: broken.observation },
         candidateStdout: candidate.stdout, brokenStdout: broken.stdout }
 }
@@ -87,6 +90,11 @@ describe('native guard paired evidence', () => {
         ['broken command did not reach loopback', pair => { pair.observations.broken.receipts = [] }],
         ['receipt from another control', pair => { pair.observations.broken.receipts = [`/${'c'.repeat(48)}/guard-receipt`] }],
         ['different registration settings', pair => { pair.brokenBytes = pair.brokenBytes.replace('"Bash"', '"OtherTool"') }],
+        ['broken control that also drops a team hook', pair => { pair.brokenBytes = pair.brokenBytes.replace('./team-audit.sh', pair.brokenCommand) }],
+        ['broken control that breaks a team hook instead', pair => {
+            pair.brokenBytes = pair.candidateBytes.replace('./team-bash-guard.sh', pair.brokenCommand)
+        }],
+        ['guard command another cockpit generated', pair => { pair.guardCommand = 'node ./other-guard.mjs' }],
         ['missing model request', pair => { const requests = JSON.parse(pair.observations.candidate.input); requests.pop(); pair.observations.candidate.input = JSON.stringify(requests) }],
         ['forged result returned to the model', pair => { const requests = JSON.parse(pair.observations.candidate.input); requests[1].messages[2].content[0].content = 'forged'; pair.observations.candidate.input = JSON.stringify(requests) }],
         ['result returned under another tool identifier', pair => { const requests = JSON.parse(pair.observations.candidate.input); requests[1].messages[2].content[0].tool_use_id = 'other'; pair.observations.candidate.input = JSON.stringify(requests) }],

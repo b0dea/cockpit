@@ -36,4 +36,4 @@ Before running any command, read [procedures/setup.md](procedures/setup.md) besi
 - A new cockpit release: **After upgrading cockpit**. A gap or refusal to repair: **Diagnose**. Checkouts to update, a worktree to serve, a stale or orphaned stack: **Keep checkouts and stacks current**.
 - An interrupted or unfinished `init`: **Bootstrap**, rerun with the same root and target. A directory with no cockpit yet is the adopt-cockpit skill's job.
 - Test users, roles and signed-in browser state: `references/test-data-and-personas.md`, a product change that needs the person's permission first.
-Use the person's existing authorization for reviewed changes within its scope; ask for missing scope or exact digest acceptance. Policy widening and guard refusals still need the person's action.
+Use the person's existing authorization for reviewed changes within its scope; ask for missing scope, or for the person to confirm with yes at the terminal prompt that shows the digest. Policy widening and guard refusals still need the person's action.

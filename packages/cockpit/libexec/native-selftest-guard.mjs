@@ -1,3 +1,5 @@
+const GUARD_DENIAL = 'Refusing executable use of a declared vendor host.'
+
 export function nativeGuardCommands(host, port, nonce) {
     const receiptMarker = `COCKPIT_GUARD_RECEIPT_${nonce}`
     const ordinaryMarker = `COCKPIT_GUARD_ORDINARY_${nonce}`
@@ -15,21 +17,51 @@ export function nativeGuardInvocation(host) {
         '--strict-mcp-config', '--permission-prompts', 'none', '--', 'Run only the synthetic loopback measurement.']
 }
 
-export function brokenNativeGuardSettings(bytes, command) {
-    let settings
-    try { settings = JSON.parse(bytes) } catch { return undefined }
-    const groups = settings?.hooks?.PreToolUse
-    if (!Array.isArray(groups) || groups.length !== 1 || !Array.isArray(groups[0]?.hooks) || groups[0].hooks.length !== 1
-        || groups[0].hooks[0]?.type !== 'command' || typeof groups[0].hooks[0].command !== 'string') return undefined
-    groups[0].hooks[0].command = command
-    return `${JSON.stringify(settings, null, 2)}\n`
+export function validNativeGuardHookCommand(value) {
+    return typeof value === 'string' && value.length > 0 && Buffer.byteLength(value) <= 65_536 && !value.includes('\0')
 }
 
-export function validateNativeGuardPair({ host, brokenCommand, candidateBytes, brokenBytes, observations, candidateStdout, brokenStdout }) {
+// The broken control differs from the generated settings in cockpit's guard command alone, so a
+// team's own hooks beside it run under both controls. The guard is found by the exact command
+// cockpit generated for it, never by position: adopted settings put the team's groups beside it.
+export function brokenNativeGuardSettings(bytes, guardCommand, brokenCommand) {
+    if (!validNativeGuardHookCommand(guardCommand)) return { problem: 'this cockpit publishes no Claude Code guard hook command to break; run sync, then regenerate the probe specifications' }
+    let settings
+    try { settings = JSON.parse(bytes) } catch { return { problem: 'the generated .claude/settings.json is not JSON; run sync to restore it, then rerun selftest' } }
+    if (`${JSON.stringify(settings, null, 2)}\n` !== bytes) return { problem: 'the generated .claude/settings.json is not in the form cockpit writes, so a broken control could not keep its other hooks byte for byte; run sync to restore it, then rerun selftest' }
+    const groups = Array.isArray(settings?.hooks?.PreToolUse) ? settings.hooks.PreToolUse : []
+    const matches = groups.flatMap(group => Array.isArray(group?.hooks) ? group.hooks : [])
+        .filter(hook => hook?.type === 'command' && hook.command === guardCommand)
+    if (matches.length !== 1) return { problem: `cockpit's generated guard hook is registered ${matches.length === 0 ? 'nowhere' : `${matches.length} times`} under hooks.PreToolUse in .claude/settings.json, where the probe needs it exactly once; run sync to restore the generated registration, then rerun selftest` }
+    matches[0].command = brokenCommand
+    return { bytes: `${JSON.stringify(settings, null, 2)}\n` }
+}
+
+// The reasons PreToolUse hooks gave for refusing a probe command: exit 2, or a deny, ask or block
+// decision. cockpit's own refusal of the forbidden command is the measurement, not interference.
+// Claude Code names a hook event only by its event and tool, so the reason is what identifies it.
+export function nativeGuardInterference(stdout) {
+    const lines = typeof stdout === 'string' ? stdout.split('\n') : []
+    return lines.flatMap(line => {
+        let event
+        try { event = JSON.parse(line) } catch { return [] } // a line that is not an event cannot be a hook refusal
+        if (event?.type !== 'system' || event.subtype !== 'hook_response' || event.hook_event !== 'PreToolUse') return []
+        let output
+        try { output = JSON.parse(event.stdout) } catch { output = undefined } // plain-text hook output carries no decision
+        const decision = output?.hookSpecificOutput
+        if (decision?.permissionDecisionReason === GUARD_DENIAL) return []
+        const refused = decision?.permissionDecision === 'deny' || decision?.permissionDecision === 'ask' || output?.decision === 'block'
+        if (event.exit_code !== 2 && !refused) return []
+        const reason = event.exit_code === 2 ? event.stderr : decision?.permissionDecisionReason ?? output?.reason
+        return [typeof reason === 'string' && reason.trim() ? reason.trim().slice(0, 300) : 'no reason given']
+    })
+}
+
+export function validateNativeGuardPair({ host, guardCommand, brokenCommand, candidateBytes, brokenBytes, observations, candidateStdout, brokenStdout }) {
     if (typeof host !== 'string' || host.length > 253 || !/^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(host)
         || typeof brokenCommand !== 'string' || !/^cockpit-selftest-missing-hook-[a-f0-9]{24}$/.test(brokenCommand)
         || typeof candidateBytes !== 'string' || typeof brokenBytes !== 'string'
-        || brokenNativeGuardSettings(candidateBytes, brokenCommand) !== brokenBytes) return 'native guard controls do not preserve the generated registration beside its broken command'
+        || brokenNativeGuardSettings(candidateBytes, guardCommand, brokenCommand).bytes !== brokenBytes) return 'native guard controls do not preserve the generated registration beside its broken command'
     for (const role of ['candidate', 'broken']) {
         const observation = observations?.[role]
         const endpoint = typeof observation?.endpoint === 'string' ? /^http:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})\/([a-f0-9]{48})$/.exec(observation.endpoint) : null
@@ -62,7 +94,7 @@ export function validateNativeGuardPair({ host, brokenCommand, candidateBytes, b
                     if (event?.type !== 'system' || event.subtype !== 'hook_response' || event.hook_event !== 'PreToolUse' || event.exit_code !== 0) return false
                     try {
                         const decision = JSON.parse(event.stdout)?.hookSpecificOutput
-                        return decision?.permissionDecision === 'deny' && decision.permissionDecisionReason === 'Refusing executable use of a declared vendor host.'
+                        return decision?.permissionDecision === 'deny' && decision.permissionDecisionReason === GUARD_DENIAL
                     } catch { return false }
                 })
                 if (!denial || result.block.is_error !== true || !(Array.isArray(result.event.tool_result_meta) && result.event.tool_result_meta.some(meta => meta?.id === id

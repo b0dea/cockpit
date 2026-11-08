@@ -3,7 +3,7 @@ import { closeSync, constants, existsSync, fstatSync, openSync, readSync, realpa
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { isDeepStrictEqual, types as utilTypes } from 'node:util'
-import { nativeGuardInvocation, validateNativeGuardPair } from './native-selftest-guard.mjs'
+import { nativeGuardInvocation, validNativeGuardHookCommand, validateNativeGuardPair } from './native-selftest-guard.mjs'
 import { MODEL_INPUT_PROTOCOLS, nativeClaudeImport, nativeInputSettings, nativeInputInvocation, validateNativeModelInputPair } from './native-selftest-input.mjs'
 
 // Unlike the TypeScript helper this cannot import: system errors keep their first message line;
@@ -853,7 +853,8 @@ function validateSelftestExpectation(expectation, errors) {
     if (!exactKeys(expectation, ['schema', 'generatedManifestSha256', 'cells', 'shippedSkills', 'reviewHarnesses',
         ...(expectation?.instructionSourceSha256 === undefined ? [] : ['instructionSourceSha256']),
         ...(expectation?.nativeSourceSha256 === undefined ? [] : ['nativeSourceSha256']),
-        ...(expectation?.guardProbeHost === undefined ? [] : ['guardProbeHost'])])) {
+        ...(expectation?.guardProbeHost === undefined ? [] : ['guardProbeHost']),
+        ...(expectation?.guardHookCommand === undefined ? [] : ['guardHookCommand'])])) {
         errors.push('expectation must contain only the versioned authority fields')
         return { cells: [], cellKeys: [], skills: [], reviews: [] }
     }
@@ -870,6 +871,7 @@ function validateSelftestExpectation(expectation, errors) {
             || typeof digest !== 'string' || !SELFTEST_DIGEST.test(digest)))) errors.push('native source authority must contain only bounded generated source paths and digests')
     if (expectation.guardProbeHost !== undefined && (typeof expectation.guardProbeHost !== 'string' || expectation.guardProbeHost.length > 253
         || !/^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(expectation.guardProbeHost))) errors.push('guard probe host must be a bounded DNS hostname')
+    if (expectation.guardHookCommand !== undefined && !validNativeGuardHookCommand(expectation.guardHookCommand)) errors.push('guard hook command must be bounded text')
     const cells = Array.isArray(expectation.cells) ? expectation.cells : []
     if (cells.length === 0 || cells.length > SELFTEST_MAX_ROWS) errors.push('expectation cells must contain between 1 and 256 rows')
     const cellKeys = cells.map((cell, index) => selftestCell(cell, `expectation cell ${index + 1}`, errors)).filter(Boolean)
@@ -1108,7 +1110,7 @@ function validateSelftestEvidence(record, expectedHarness, root, options, errors
                 || !isDeepStrictEqual(event.command, command)) errors.push(`${role} must complete the bounded native guard protocol from the generated root`)
         }
         if (candidateBytes && brokenBytes && checked.candidateControl && checked.brokenControl) {
-            const problem = validateNativeGuardPair({ host: probe?.host, brokenCommand: probe?.brokenCommand,
+            const problem = validateNativeGuardPair({ host: probe?.host, guardCommand: expectation?.guardHookCommand, brokenCommand: probe?.brokenCommand,
                 candidateBytes: candidateBytes.toString('utf8'), brokenBytes: brokenBytes.toString('utf8'),
                 observations: Object.fromEntries(['candidate', 'broken'].map(role => [role, {
                     endpoint: record.modelEndpoints?.[role], input: record.modelInputs?.[role], receipts: probe?.receipts?.[role],

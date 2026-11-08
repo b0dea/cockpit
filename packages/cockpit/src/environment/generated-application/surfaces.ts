@@ -625,6 +625,11 @@ export async function prepareSurfaces(
         return refuse('SURFACE_BOUNDS', 'combined generated ownership exceeds the entry bound', 'surfaces')
     }
     const guardProbeHost = config.guards.vendor_endpoint_hosts.find(host => host.length <= 253 && /^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(host))
+    // The guard probe breaks cockpit's registration and no other. A team's adopted hooks sit beside
+    // it in the same settings file, so the probe is given the exact command cockpit generated.
+    const claudeRegistration = listedRestrictions.targets.find(row => row.target === 'claudecode')?.files
+        .find(row => row.path === '.claude/settings.json')
+    const guardHookCommand: unknown = claudeRegistration && JSON.parse(claudeRegistration.bytes)?.hooks?.PreToolUse?.[0]?.hooks?.[0]?.command
     const selftestPayload = {
         schema: 'cockpit-generated-surface-selftest/v1' as const,
         configuredHarnesses,
@@ -632,12 +637,14 @@ export async function prepareSurfaces(
         entries: surfaceEntries,
         custom: customSelftest.sort((left, right) => compareCodeUnits(`${left.harness}\0${left.feature}`, `${right.harness}\0${right.feature}`)),
         ...(guardProbeHost ? { guardProbeHost } : {}),
+        ...(typeof guardHookCommand === 'string' ? { guardHookCommand } : {}),
     }
     const captured = snapshotGeneratedJson(selftestPayload) as unknown as Omit<GeneratedSurfaceSelftestProjection, 'manifestSha256'> | undefined
     if (!captured) return refuse('SURFACE_BOUNDS', 'authenticated selftest inputs exceed the captured bounds', 'surfaces')
     const payload = { schema: captured.schema, configuredHarnesses: selftestPayload.configuredHarnesses,
         declarations: captured.declarations, entries: surfaceEntries, custom: captured.custom,
-        ...(captured.guardProbeHost ? { guardProbeHost: captured.guardProbeHost } : {}) }
+        ...(captured.guardProbeHost ? { guardProbeHost: captured.guardProbeHost } : {}),
+        ...(captured.guardHookCommand ? { guardHookCommand: captured.guardHookCommand } : {}) }
     const surfaceSelftest = { ...payload, manifestSha256: sha256(JSON.stringify(payload)) }
     const skillInventory = surfaceEntries.filter((entry): entry is Extract<SurfaceDesiredEntry, { kind: 'file' }> =>
         entry.kind === 'file').flatMap(entry => entry.harnesses.flatMap(target => {

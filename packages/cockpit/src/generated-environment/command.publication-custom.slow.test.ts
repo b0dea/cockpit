@@ -351,11 +351,16 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             expect(application).toBe(synced.result.application)
             expect(generatedApplicationProjection({ ...application })).toBeUndefined()
             const projection = application!.surfaceSelftest
-            const { schema, configuredHarnesses, declarations, entries, custom, guardProbeHost } = projection
+            const { schema, configuredHarnesses, declarations, entries, custom, guardProbeHost, guardHookCommand } = projection
             expect(projection.manifestSha256).toBe(createHash('sha256').update(JSON.stringify({
-                schema, configuredHarnesses, declarations, entries, custom, guardProbeHost,
+                schema, configuredHarnesses, declarations, entries, custom, guardProbeHost, guardHookCommand,
             })).digest('hex'))
             expect(guardProbeHost).toBe('api.vendor.example.test')
+            // The exact command of cockpit's own Claude Code registration, as the published settings carry it.
+            const settings = entries.find(entry => entry.path === '.claude/settings.json')
+            expect(settings?.kind === 'file' && JSON.parse(settings.bytes).hooks.PreToolUse.flatMap((group: { hooks: { command: string }[] }) => group.hooks)
+                .filter((hook: { command: string }) => hook.command === guardHookCommand)).toHaveLength(1)
+            expect(guardHookCommand).toContain('.cockpit/guards/bash-guard.sh')
             expect(configuredHarnesses).toEqual([...DEFAULT_SURFACE_TOOLS, 'synthetic-harness'].sort())
             expect(declarations).toHaveLength(1)
             expect(declarations[0]?.capabilities).toHaveLength(6)

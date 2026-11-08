@@ -67,6 +67,7 @@ export interface SelftestExpectation {
     instructionSourceSha256?: string
     nativeSourceSha256?: Readonly<Record<string, string>>
     guardProbeHost?: string
+    guardHookCommand?: string
     cells: readonly SelftestCellKey[]
     shippedSkills: readonly string[]
     reviewHarnesses: readonly [
