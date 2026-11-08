@@ -10,13 +10,13 @@ afterEach(async () => {
     await Promise.all(models.splice(0).map(model => model.close()))
 })
 
-async function start(harness: 'claudecode' | 'codexcli' = 'codexcli') {
-    const model = await startSelftestModel(harness)
+async function start(harness: 'claudecode' | 'codexcli' = 'codexcli', guardHost?: string) {
+    const model = await startSelftestModel(harness, guardHost)
     models.push(model)
     return model
 }
 
-function send(url: string, body: string, method = 'POST', headers: Record<string, string> = {}) {
+function send(url: string, body: string | Buffer, method = 'POST', headers: Record<string, string> = {}) {
     return new Promise<{ status: number | undefined; contentType: string | undefined; body: string }>((resolve, reject) => {
         const call = request(url, { method, headers, agent: false }, response => {
             let result = ''
@@ -36,6 +36,74 @@ function events(body: string): unknown[] {
 }
 
 describe('bounded synthetic selftest model', () => {
+    it('streams fixed Claude guard tools and records only authenticated loopback receipts', async () => {
+        const model = await start('claudecode', 'api.vendor.example.test')
+        const guard = model.guard!
+        const url = new URL(model.endpoint)
+        const receiptPath = `${url.pathname}/guard-receipt`
+        expect(guard.host).toBe('api.vendor.example.test')
+        expect(guard.forbiddenCommand).toBe(`curl --disable --silent --show-error --noproxy '*' --connect-timeout 2 --max-time 5 --resolve api.vendor.example.test:${url.port}:127.0.0.1 http://api.vendor.example.test:${url.port}${receiptPath}`)
+        expect(guard.allowedCommand).toBe(`printf ${guard.ordinaryMarker}`)
+        expect(guard.receiptMarker).toMatch(/^COCKPIT_GUARD_RECEIPT_[a-f0-9]{48}$/)
+        expect(guard.ordinaryMarker).toMatch(/^COCKPIT_GUARD_ORDINARY_[a-f0-9]{48}$/)
+        for (const [id, command] of [['cockpit_forbidden', guard.forbiddenCommand], ['cockpit_ordinary', guard.allowedCommand]]) {
+            const result = await send(model.endpoint + '/v1/messages', '{}')
+            expect(result.status).toBe(200)
+            expect(events(result.body)).toEqual([
+                expect.objectContaining({ type: 'message_start', message: expect.objectContaining({ content: [] }) }),
+                { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id, name: 'Bash', input: {} } },
+                { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: JSON.stringify({ command }) } },
+                { type: 'content_block_stop', index: 0 },
+                expect.objectContaining({ type: 'message_delta', delta: { stop_reason: 'tool_use', stop_sequence: null } }),
+                { type: 'message_stop' },
+            ])
+        }
+        expect((await send(new URL('/foreign/guard-receipt', model.endpoint).href, '', 'GET', { Host: `api.vendor.example.test:${url.port}` })).status).toBe(404)
+        expect(guard.receipts()).toEqual([])
+        expect(model.failure()).toBeUndefined()
+        const receipt = await send(model.endpoint + '/guard-receipt', '', 'GET', { Host: `api.vendor.example.test:${url.port}` })
+        expect(receipt).toMatchObject({ status: 200, body: guard.receiptMarker })
+        expect(guard.receipts()).toEqual([receiptPath])
+        expect(events((await send(model.endpoint + '/v1/messages', '{}')).body)).toContainEqual(expect.objectContaining({ type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null } }))
+        expect((await send(model.endpoint + '/v1/messages', '{}')).status).toBe(200)
+        expect((await send(model.endpoint + '/v1/messages', '{}')).status).toBe(429)
+        expect(model.requests()).toHaveLength(4)
+        expect(model.failure()).toContain('request limit')
+    })
+
+    it.each(['', '*.example.test', 'host:80', 'host/path', '-host', 'host-', 'x'.repeat(254)])('refuses an unsafe guard hostname: %s', async host => {
+        await expect(startSelftestModel('claudecode', host)).rejects.toThrow('guard hostname')
+    })
+
+    it('refuses guard tools for Codex', async () => {
+        await expect(startSelftestModel('codexcli', 'api.vendor.example.test')).rejects.toThrow('Claude')
+    })
+
+    it.each([
+        { suffix: '/guard-receipt', host: 'foreign.example.test', method: 'GET' },
+        { suffix: '/other', host: 'api.vendor.example.test', method: 'GET' },
+        { suffix: '/guard-receipt', host: 'api.vendor.example.test', method: 'POST' },
+    ])('fails closed on unexpected guarded receipt $method $suffix from $host', async ({ suffix, host, method }) => {
+        const model = await start('claudecode', 'api.vendor.example.test')
+        const url = new URL(model.endpoint)
+        expect((await send(model.endpoint + suffix, '{}', method, { Host: `${host}:${url.port}` })).status).not.toBe(200)
+        expect(model.guard!.receipts()).toEqual([])
+        expect(model.failure()).toContain('unexpected')
+        expect((await send(model.endpoint + '/v1/messages', '{}')).status).toBe(503)
+    })
+
+    it('bounds guard receipts independently from captured model requests', async () => {
+        const model = await start('claudecode', 'api.vendor.example.test')
+        const url = new URL(model.endpoint)
+        for (let index = 0; index < 4; index++) {
+            expect((await send(model.endpoint + '/guard-receipt', '', 'GET', { Host: `api.vendor.example.test:${url.port}` })).status).toBe(200)
+        }
+        expect((await send(model.endpoint + '/guard-receipt', '', 'GET', { Host: `api.vendor.example.test:${url.port}` })).status).toBe(429)
+        expect(model.guard!.receipts()).toHaveLength(4)
+        expect(model.requests()).toEqual([])
+        expect(model.failure()).toContain('receipt limit')
+    })
+
     it.each(['codexcli', 'claudecode'] as const)('captures %s JSON and returns terminal native streaming events', async harness => {
         const model = await start(harness)
         const url = new URL(model.endpoint)
@@ -89,6 +157,15 @@ describe('bounded synthetic selftest model', () => {
         const model = await start()
         expect((await send(model.endpoint + '/responses', body)).status).toBe(400)
         expect(model.failure()).toContain('JSON object')
+        expect((await send(model.endpoint + '/responses', '{}')).status).toBe(503)
+        expect(model.requests()).toEqual([])
+    })
+
+    it('rejects malformed UTF-8 inside otherwise valid JSON before capture', async () => {
+        const model = await start()
+        const body = Buffer.concat([Buffer.from('{"text":"'), Buffer.from([0xc3, 0x28]), Buffer.from('"}')])
+        expect((await send(model.endpoint + '/responses', body)).status).toBe(400)
+        expect(model.failure()).toContain('UTF-8 JSON object')
         expect((await send(model.endpoint + '/responses', '{}')).status).toBe(503)
         expect(model.requests()).toEqual([])
     })
