@@ -366,6 +366,22 @@ describe('init operator command', () => {
             expect(partial).toMatchObject({ kind: 'pending', result: { question: { field: 'ports.bases' } } })
             expect(sent).toEqual(['[]'])
 
+            // What is still outstanding is what the file leaves out: the fields it answers are applied
+            // once the run gets past this one, so listing them read as if they were ignored.
+            const listing = (fields: readonly string[]) => (outcome: InitApplicationOutcome): InitApplicationOutcome => ({ ...outcome,
+                result: { ...outcome.result!, interview: { answered: [], inferenceSkipped: [],
+                    outstanding: fields.map(field => ({ field, why: 'unknown', confirmedBy: 'person' as const, proposals: [] })) } } })
+            // An empty Compose answer in the file also means the machine floor and posture will not be asked.
+            const fields = ['ports.bases', 'environment.install_policies', 'environment.compose_files', 'environment.machine',
+                'environment.posture', 'guards', 'work.grading', 'configuration.defaults']
+            const listed = walk([])
+            const stopped = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
+                { interactive: false, json: true, unattended: { previewSha256: digest,
+                    answers: { sibling: [], environment: { compose_files: [] }, guards, work: { grading: 'off' } },
+                    defaultsSha256: defaultsDigest } }, noTerminal, async input => listing(fields)(await listed.application(input)))
+            expect(stopped).toMatchObject({ kind: 'pending', result: { question: { field: 'ports.bases' } } })
+            expect(stopped.result!.interview!.outstanding.map(row => row.field)).toEqual(['ports.bases', 'environment.install_policies'])
+
             const held = walk([])
             const awaiting = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
                 { interactive: false, json: true, unattended: { previewSha256: digest, answers } }, noTerminal, held.application)

@@ -227,6 +227,9 @@ describe('inferred interview answers', () => {
         // A literal host port is the same port in every stack; a container-only port gets an ephemeral one.
         expect(skipped.filter(row => row.reason.includes('not read from a variable')).map(row => row.reason.split(' that ')[0])).toEqual([
             'publishes host port 8080', 'publishes host port 8081'])
+        // check refuses the file as written, so running it as written is not an answer the agent may accept.
+        expect(byTarget(facts, 'environment.compose_files')).toMatchObject({ value: ['compose.yml'], provenance: { kind: 'inferred',
+            reason: expect.stringMatching(/publishes host ports 8080, 8081 directly, which check refuses.*\$\{NAME:-<port>\}.*answer \[\] to defer/) } })
 
         // Bases read from several Compose files name each file and the variables it publishes.
         const several = estate({ 'api/compose.yml': 'services:\n  api:\n    ports: ["${API_PORT:-3000}:3000", "${DB_PORT:-5432}:5432"]\n',
@@ -271,7 +274,7 @@ describe('inferred interview answers', () => {
         const root = estate({ 'api/package.json': JSON.stringify({ scripts: { test: 'vitest run', 'test:e2e': 'playwright test' } }), 'api/pnpm-lock.yaml': '' })
         const { facts } = await deriveInferredFacts({ root, repositories: api })
         const stage = { id: 'test-api', command: ['sh', '-c', 'cd api && exec pnpm test'], requires_stack: false }
-        expect(byTarget(facts, 'testing.api')).toEqual({ fields: ['testing'], target: 'testing.api', value: { stages: [stage], gates: [
+        expect(byTarget(facts, 'api.testing')).toEqual({ fields: ['testing'], target: 'api.testing', value: { stages: [stage], gates: [
             { id: 'targeted-api', tier: 'targeted', stages: ['test-api'], changes: 'Isolated behavior in api' },
             { id: 'full-api', tier: 'full', stages: ['test-api'], changes: 'Shared or cross-system behavior in api' },
         ] }, provenance: { kind: 'inferred', source: 'api/package.json', reason: expect.stringMatching(
@@ -285,7 +288,7 @@ describe('inferred interview answers', () => {
     it('proposes the affected run of a build tool as the targeted gate', async () => {
         const root = estate({ 'api/nx.json': '{}', 'api/package.json': JSON.stringify({ scripts: { test: 'nx run-many -t test' } }) })
         const { facts } = await deriveInferredFacts({ root, repositories: api })
-        expect(byTarget(facts, 'testing.api')).toMatchObject({ value: {
+        expect(byTarget(facts, 'api.testing')).toMatchObject({ value: {
             stages: [{ id: 'affected-api', command: ['sh', '-c', 'cd api && exec npx --no nx affected -t test'] },
                 { id: 'test-api', command: ['sh', '-c', 'cd api && exec npx --no nx run-many -t test'] }],
             gates: [{ id: 'targeted-api', stages: ['affected-api'], changes: 'Isolated behavior in api; Nx selects the affected tests' },
@@ -299,10 +302,10 @@ describe('inferred interview answers', () => {
         const long = `a${'b'.repeat(59)}`
         const root = estate({ '3d-viewer/Makefile': 'test:\n\ttrue\n', [`${long}/Makefile`]: 'test:\n\ttrue\n' })
         const { facts, skipped } = await deriveInferredFacts({ root, repositories: [{ slug: '3d-viewer', path: '3d-viewer' }, { slug: long, path: long }] })
-        const proposed = byTarget(facts, 'testing.3d-viewer')?.value as { stages: unknown[]; gates: unknown[] }
+        const proposed = byTarget(facts, '3d-viewer.testing')?.value as { stages: unknown[]; gates: unknown[] }
         expect(Testing.safeParse({ ...proposed, native_hooks: {} }).success).toBe(true)
         expect(proposed.gates).toMatchObject([{ id: 'targeted-3d-viewer', stages: ['test-3d-viewer'] }, { id: 'full-3d-viewer' }])
-        expect(byTarget(facts, `testing.${long}`)).toBeUndefined()
+        expect(byTarget(facts, `${long}.testing`)).toBeUndefined()
         expect(skipped).toContainEqual({ source: `${long}/Makefile`, reason: expect.stringMatching(
             new RegExp(`^Makefile has a test entry point, but the \\[testing\\] id test-${long} formed from the slug ${long} is not .* at most 64 characters`)) })
     })

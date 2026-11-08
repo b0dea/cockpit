@@ -42,7 +42,8 @@ ask when scope is missing or an exact preview still needs acceptance:
    optional, and `off` is reasonable when tracking matters but grading is not wanted.
 7. "Use sensible defaults" covers `init` answers only, never another change inside a product
    repository: an **AGENTS.md** pointer or a `package.json` change needs explicit product-change
-   authorization covering its reviewed scope, which can already have been given. Mark every answer you chose as `"agent-default"` in the answers file's
+   authorization covering its reviewed scope, which can already have been given. For the files
+   `init` writes, that scope is the `writes` list of the preview the human accepts. Mark every answer you chose as `"agent-default"` in the answers file's
    `[provenance]` table, and end your report with every default you chose, its field and value.
 8. Every trust answer the answers file supplies (`sibling`, `environment.install_policies`,
    `environment.posture`, `testing`, `guards`, `work.grading`) lands under `unconfirmed` whatever the

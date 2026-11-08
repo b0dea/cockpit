@@ -234,8 +234,9 @@ Preview first, then accept in a terminal:
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs init "$(pwd)" --target <tool> --interactive
 ```
 
-The preview writes nothing. It returns the files it would install, a `previewSha256` digest and the
-next step; `--interactive` asks you to confirm the displayed preview with `yes`, binding its digest
+The preview writes nothing. It returns the setup skill files it would install, under `writes` every
+other path `init` creates or changes once accepted (`cockpit.toml`, the root **AGENTS.md**,
+**package.json**, **.gitignore** and each tool's files), a `previewSha256` digest and the next step; `--interactive` asks you to confirm the displayed preview with `yes`, binding its digest
 internally. It also confirms the concrete configuration defaults without hash transcription. Later
 authenticated draft stages reuse the accepted preview. Re-running resumes where it stopped, and a
 changed repository invalidates earlier answers. What you get depends on what it finds:
@@ -253,7 +254,8 @@ changed repository invalidates earlier answers. What you get depends on what it 
 
 Each outstanding field lists its `proposals`, and `confirmedBy` says who settles it: `"agent"` when
 a `derived` proposal answers the whole field (today `cockpit.name`, `ports.bases` and
-`environment.compose_files`, when the files leave no gap), `"person"` otherwise. A source `init`
+`environment.compose_files`, when the files leave no gap and `check` accepts the Compose file as
+written), `"person"` otherwise. A source `init`
 could not read, or two that disagree, leaves the field to the person.
 
 Proposals come only from exact sources:
@@ -283,7 +285,8 @@ consent and answers as arguments instead; there is no blanket `--yes`.
    every field the interview will still ask, each with a `why`, its `proposals` and `confirmedBy`.
 2. Write the answers as TOML keyed by field, and show them to the human with the digest.
 3. Rerun with `--accept-preview <previewSha256>` and `--answers <file>`. The run stops at the first
-   unanswered field, or at `configuration.defaults`, where `result.question.document` is the review
+   unanswered field, with `interview.outstanding` listing only the fields the file still lacks, or at
+   `configuration.defaults`, where `result.question.document` is the review
    draft (an array of lines). Its provenance comments split the surfaced defaults in two: schema
    defaults and the cockpit's own layout, which the agent accepts, and the security boundaries
    (protected branches, guard allow and deny lists, approved MCP servers, resettable volumes,
@@ -329,7 +332,7 @@ grading = "independent"
 | `sibling` | one `[[sibling]]` table per repository |
 | `estate.runnable` | one table per repository whose run command was unknown, keyed by its slug |
 | `ports.bases` | the host-published base port map; `{}` means none |
-| `environment.install_policies` | the build and test commands per toolchain and lockfile; `[]` for none |
+| `environment.install_policies` | asked when a sibling declares a toolchain other than `"none"`; the build and test commands per toolchain and lockfile, `[]` for none |
 | `environment.test_data` | exactly the boolean keys `seeded_data` and `signed_in_users`; `false` states it is not needed |
 | `environment.compose_files` | the Compose files that run the product, relative to the cockpit root; `[]` defers runtime adoption as in [chapter 1](#chapter-1-one-repository-one-tool-no-docker) |
 | `environment.machine` | asked when Compose files are declared; the runtime floor: `runtime_memory_mb`, `runtime_cpus`, `free_disk_mb`, `cold_start_seconds` |
