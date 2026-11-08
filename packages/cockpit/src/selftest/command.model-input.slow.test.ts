@@ -1,10 +1,13 @@
 import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { PassThrough, Writable } from 'node:stream'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import { createSelftestFixture } from '../../test-support/selftest-fixture.js'
+import { runCli } from '../cli.js'
+import { renderHumanDiagnostics } from '../diagnostics.js'
 import { executeProbe } from '../environment-exec/execute.js'
-import { runSurfaceSelftestApplication } from '../environment/selftest-application.js'
+import { runConfiguredSurfaceSelftestOutcome, runSelftestOperatorCommand, runSurfaceSelftestApplication } from '../environment/selftest-application.js'
 import { syncGeneratedEnvironment } from '../generated-environment/command.js'
 import { sha256Hex } from '../sha256.js'
 import { draftSurfaceSelftestSpecifications, surfaceSelftestExpectation } from '../surfaces/selftest.js'
@@ -232,22 +235,61 @@ provenance = { source = ".claude/settings.json", kind = "declared", reason = "Ke
         expect((await readFile(hookLog, 'utf8')).trim().split('\n')).toHaveLength(4)
 
         await writeFile(teamHook, '#!/bin/sh\necho "Team policy refuses this command." >&2\nexit 2\n')
-        const blocked = await selftest()
-        expect(blocked).toMatchObject({ kind: 'refusal', code: 'SELFTEST_EXECUTION_INVALID', reason: expect.stringContaining('beside cockpit\'s guard') })
-        if (blocked.kind !== 'refusal') throw new Error('a blocking team hook was not reported')
-        expect(blocked.reason).toContain('$CLAUDE_PROJECT_DIR/.claude/hooks/team-bash-guard.sh')
-        expect(blocked.reason).toContain('Team policy refuses this command.')
-        expect(blocked.reason).not.toContain('team-path-guard.sh')
-        expect(blocked.reason).not.toMatch(/\bremove\b/i)
+        const artifactPath = join(root, 'probe-specifications.json')
+        const quiet = { stdout: { write: () => true }, stderr: { write: () => true } }
+        expect(await runCli(['selftest', '--config', configPath, '--write-probe-specifications', artifactPath], quiet)).toBe(0)
+        const stdin = Object.assign(new PassThrough(), { isTTY: true })
+        const shown: string[] = []
+        const stderr = Object.assign(new Writable({ write: (bytes, _encoding, done) => {
+            shown.push(String(bytes))
+            if (String(bytes).includes('[yes/no]')) setImmediate(() => stdin.write('yes\n'))
+            done()
+        } }), { isTTY: true })
+        const blocked = await runSelftestOperatorCommand({ configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin, HOME: '/synthetic-owner-home' } },
+            { interactive: true, json: false, ci: undefined }, { stdin: stdin as unknown as NodeJS.ReadStream, stderr }, runConfiguredSurfaceSelftestOutcome)
+        stdin.destroy()
+
+        // Before approving, the person sees each team hook the guard probe's settings register, and none of cockpit's own.
+        const review = shown.join('').split('[yes/no]')[0]!
+        expect(review).toContain('PreToolUse matcher "Bash" runs $CLAUDE_PROJECT_DIR/.claude/hooks/team-bash-guard.sh')
+        expect(review).toContain('PreToolUse matcher "Edit|Write|MultiEdit" runs $CLAUDE_PROJECT_DIR/.claude/hooks/team-path-guard.sh')
+        expect(review).toContain('PostToolUse matcher "Edit|Write" runs $CLAUDE_PROJECT_DIR/.claude/hooks/team-format.sh')
+        expect(review).not.toContain('.cockpit/guards/bash-guard.sh')
+        expect(review).not.toContain('SessionStart')
+
+        // The blocked guard cell fails with its reason while every other cell is still measured.
+        expect(blocked.status, JSON.stringify(blocked.diagnostics)).toBe(2)
+        const terminal = renderHumanDiagnostics([], { command: 'selftest', outcome: blocked })
+        expect(terminal).toMatch(/^FAILED Claude Code guard-firing: a PreToolUse hook beside cockpit's guard refused a probe command/)
+        expect(terminal).toContain('$CLAUDE_PROJECT_DIR/.claude/hooks/team-bash-guard.sh')
+        expect(terminal).toContain('Team policy refuses this command.')
+        expect(terminal).not.toContain('team-path-guard.sh')
+        expect(terminal).not.toMatch(/\bremove\b/i)
+        expect(blocked.diagnostics[0]).toMatchObject({ severity: 'error', code: 'SELFTEST_EXECUTION_INVALID', target: 'probe_failed' })
+        const result = blocked.result as { reportPath: string; summary: Record<string, unknown>
+            evidence: { errors: string[]; evidence: { capability: string; harness: { name: string } }[] } }
+        const supported = specifications.filter(row => row.protocol !== 'native-unsupported/v1').length
+        expect(result.summary).toMatchObject({ measuredCells: supported - 1, complete: false,
+            failedCells: [{ cell: 'Claude Code guard-firing', failure: expect.stringContaining('Team policy refuses this command.') }] })
+        expect(result.evidence.errors).toEqual([])
+        expect(result.evidence.evidence.some(row => row.capability === 'guard-firing' && row.harness.name === 'Claude Code')).toBe(false)
+        expect(JSON.parse(await readFile(result.reportPath, 'utf8')).result).toEqual(result)
     }, 180_000)
 
-    it('names the step that failed instead of refusing without a reason', async () => {
+    it('records a cell whose measurement fails with its reason and still measures the other tools', async () => {
         const { root, application } = await createSelftestFixture(roots).issuedApplication()
         const bin = await nativeHarnesses(root)
         await writeFile(join(bin, 'claude'), NATIVE_HARNESS.replace('0.0.0-synthetic (Claude Code)', 'unversioned build'))
         const outcome = await runSurfaceSelftestApplication({ root, application, specifications: draftSurfaceSelftestSpecifications(application.surfaceSelftest)!.specifications,
             env: { PATH: bin, HOME: '/synthetic-owner-home' } }, { execute: executeProbe, testOnlyExecutableIdentities: { 'Claude Code': [join(bin, 'claude')], Codex: [join(bin, 'codex')] } })
-        expect(outcome).toMatchObject({ kind: 'refusal', code: 'SELFTEST_EXECUTION_INVALID',
-            reason: expect.stringMatching(/^probe execution could not establish [a-z-]+ for Claude Code: Claude Code --version printed/) })
+        expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: 'incomplete', status: 2 })
+        if (outcome.kind !== 'incomplete') throw new Error('a failed cell stopped the run')
+        expect(outcome.evidence.errors).toEqual([])
+        const failed = outcome.evidence.pending.filter(row => row.reason === 'probe_failed')
+        expect(failed.length).toBeGreaterThan(0)
+        expect(failed.every(row => row.harness.kind === 'builtin' && row.harness.target === 'claudecode'
+            && /^Claude Code --version printed no version cockpit recognises/.test(row.operatorAction))).toBe(true)
+        expect(outcome.evidence.evidence.filter(row => row.harness.kind === 'builtin' && row.harness.target === 'claudecode')).toEqual([])
+        expect(outcome.evidence.evidence.some(row => row.harness.kind === 'builtin' && row.harness.target === 'codexcli')).toBe(true)
     }, 180_000)
 })

@@ -89,7 +89,7 @@ export type SelftestHumanNeededRecord = Readonly<{
     capability: 'instruction-loading' | 'guard-firing'
     generatedManifestSha256: string
     observedAt: string
-    reason: 'executable_missing' | 'authentication_required' | 'isolation_unavailable' | 'enforcement_probe_required' | 'native_protocol_unsupported'
+    reason: 'executable_missing' | 'authentication_required' | 'isolation_unavailable' | 'enforcement_probe_required' | 'native_protocol_unsupported' | 'probe_failed'
     operatorAction: string
 }> | Readonly<{
     kind: 'human_needed'
@@ -98,7 +98,7 @@ export type SelftestHumanNeededRecord = Readonly<{
     skill: string
     generatedManifestSha256: string
     observedAt: string
-    reason: 'executable_missing' | 'authentication_required' | 'isolation_unavailable' | 'enforcement_probe_required' | 'native_protocol_unsupported'
+    reason: 'executable_missing' | 'authentication_required' | 'isolation_unavailable' | 'enforcement_probe_required' | 'native_protocol_unsupported' | 'probe_failed'
     operatorAction: string
 }>
 
@@ -192,6 +192,8 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
     if (captured.guardProbeHost !== undefined && (typeof captured.guardProbeHost !== 'string' || captured.guardProbeHost.length > 253
         || !/^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(captured.guardProbeHost))) return undefined
     if (captured.guardHookCommand !== undefined && !validNativeGuardHookCommand(captured.guardHookCommand)) return undefined
+    if (captured.cockpitHookCommands !== undefined && (!Array.isArray(captured.cockpitHookCommands) || captured.cockpitHookCommands.length === 0
+        || captured.cockpitHookCommands.length > 64 || !captured.cockpitHookCommands.every(validNativeGuardHookCommand))) return undefined
     const payload = {
         schema: captured.schema,
         configuredHarnesses: captured.configuredHarnesses,
@@ -200,6 +202,7 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
         custom: captured.custom,
         ...(captured.guardProbeHost === undefined ? {} : { guardProbeHost: captured.guardProbeHost }),
         ...(captured.guardHookCommand === undefined ? {} : { guardHookCommand: captured.guardHookCommand }),
+        ...(captured.cockpitHookCommands === undefined ? {} : { cockpitHookCommands: captured.cockpitHookCommands }),
     }
     if (sha256Hex(JSON.stringify(payload)) !== captured.manifestSha256) return undefined
     const ownership = classifySurfaceOwnership({ configuredHarnesses: captured.configuredHarnesses, entries: captured.entries })

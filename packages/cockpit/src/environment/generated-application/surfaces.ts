@@ -629,7 +629,12 @@ export async function prepareSurfaces(
     // it in the same settings file, so the probe is given the exact command cockpit generated.
     const claudeRegistration = listedRestrictions.targets.find(row => row.target === 'claudecode')?.files
         .find(row => row.path === '.claude/settings.json')
-    const guardHookCommand: unknown = claudeRegistration && JSON.parse(claudeRegistration.bytes)?.hooks?.PreToolUse?.[0]?.hooks?.[0]?.command
+    const claudeHooks: unknown = claudeRegistration && JSON.parse(claudeRegistration.bytes)?.hooks
+    const guardHookCommand: unknown = (claudeHooks as { PreToolUse?: { hooks?: { command?: unknown }[] }[] } | undefined)?.PreToolUse?.[0]?.hooks?.[0]?.command
+    // The guard probe runs every hook in that file; the approval names the ones cockpit did not generate.
+    const cockpitHookCommands = claudeHooks && typeof claudeHooks === 'object' ? Object.values(claudeHooks).flatMap((groups: unknown) =>
+        (Array.isArray(groups) ? groups : []).flatMap((group: { hooks?: unknown }) => Array.isArray(group?.hooks) ? group.hooks : [])
+            .flatMap((hook: { command?: unknown }) => typeof hook?.command === 'string' ? [hook.command] : [])) : []
     const selftestPayload = {
         schema: 'cockpit-generated-surface-selftest/v1' as const,
         configuredHarnesses,
@@ -638,13 +643,15 @@ export async function prepareSurfaces(
         custom: customSelftest.sort((left, right) => compareCodeUnits(`${left.harness}\0${left.feature}`, `${right.harness}\0${right.feature}`)),
         ...(guardProbeHost ? { guardProbeHost } : {}),
         ...(typeof guardHookCommand === 'string' ? { guardHookCommand } : {}),
+        ...(cockpitHookCommands.length > 0 ? { cockpitHookCommands } : {}),
     }
     const captured = snapshotGeneratedJson(selftestPayload) as unknown as Omit<GeneratedSurfaceSelftestProjection, 'manifestSha256'> | undefined
     if (!captured) return refuse('SURFACE_BOUNDS', 'authenticated selftest inputs exceed the captured bounds', 'surfaces')
     const payload = { schema: captured.schema, configuredHarnesses: selftestPayload.configuredHarnesses,
         declarations: captured.declarations, entries: surfaceEntries, custom: captured.custom,
         ...(captured.guardProbeHost ? { guardProbeHost: captured.guardProbeHost } : {}),
-        ...(captured.guardHookCommand ? { guardHookCommand: captured.guardHookCommand } : {}) }
+        ...(captured.guardHookCommand ? { guardHookCommand: captured.guardHookCommand } : {}),
+        ...(captured.cockpitHookCommands ? { cockpitHookCommands: captured.cockpitHookCommands } : {}) }
     const surfaceSelftest = { ...payload, manifestSha256: sha256(JSON.stringify(payload)) }
     const skillInventory = surfaceEntries.filter((entry): entry is Extract<SurfaceDesiredEntry, { kind: 'file' }> =>
         entry.kind === 'file').flatMap(entry => entry.harnesses.flatMap(target => {

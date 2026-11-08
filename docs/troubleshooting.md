@@ -174,12 +174,15 @@ a demonstrably compatible native diagnostic contract or replaced with a fresh fi
 [Skills and selftest evidence](harness-surfaces.md#skills-and-selftest-evidence) describes the
 supported native scope and remaining operator work.
 
-`SELFTEST_EXECUTION_INVALID` has two causes:
+`SELFTEST_EXECUTION_INVALID` has three causes:
 
 - An unapproved or mismatched probe file, refused before any command in it runs. Inspect its
   displayed whole-file digest and exact command vectors.
-- A candidate, deliberately broken control, version/help event, transcript or final result bundle
-  did not give the expected result. Inspect the named harness and the retained output.
+- One cell's candidate, deliberately broken control or version/help event did not give the expected
+  result. That cell is recorded `probe_failed`, the summary leads with it and what to do, and the
+  other cells are still measured. Inspect the named harness and the retained output.
+- A reviewed input changed while the run used it, the probe directory was unusable, or the final
+  result bundle failed validation. The whole run stops; rerun selftest once the named cause is fixed.
 
 A missing executable, a sign-in requirement, missing process isolation or a pending enforcement
 probe or unsupported native adapter stays `human_needed` until the manual action in the record is done. Run

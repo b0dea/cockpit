@@ -218,7 +218,7 @@ else {
         expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: 'complete', status: 0 })
     }, 180_000)
 
-    it('still refuses a candidate the tool cut at its instruction limit', async () => {
+    it('records a candidate the tool cut at its instruction limit as a failed cell', async () => {
         const { root, application } = fixture()
         // Room for the short replacement control, not for the generated guide.
         const { bin, executable } = await nativeChainCodex(root, 100)
@@ -226,8 +226,10 @@ else {
             specifications: draftSurfaceSelftestSpecifications(application.surfaceSelftest)!.specifications, env: { PATH: bin } }, {
             testOnlyExecutableIdentities: { Codex: [executable] }, execute: executeProbe,
         })
-        expect(outcome).toMatchObject({ kind: 'refusal', code: 'SELFTEST_EXECUTION_INVALID',
-            reason: expect.stringContaining('instruction size limit') })
+        expect(outcome).toMatchObject({ kind: 'incomplete', status: 2 })
+        if (outcome.kind !== 'incomplete') throw new Error('a failed cell stopped the run')
+        expect(outcome.evidence.pending).toContainEqual(expect.objectContaining({ reason: 'probe_failed', capability: 'instruction-loading',
+            harness: expect.objectContaining({ target: 'codexcli' }), operatorAction: expect.stringContaining('instruction size limit') }))
     }, 180_000)
 
     it('names credential-shaped guide text instead of reporting that the guide did not load', async () => {
@@ -241,8 +243,10 @@ else {
             specifications: draftSurfaceSelftestSpecifications(application.surfaceSelftest)!.specifications, env: { PATH: bin } }, {
             testOnlyExecutableIdentities: { Codex: [executable] }, execute: executeProbe,
         })
-        expect(outcome).toMatchObject({ kind: 'refusal', code: 'SELFTEST_EXECUTION_INVALID',
-            reason: expect.stringContaining('credential-shaped') })
+        expect(outcome).toMatchObject({ kind: 'incomplete', status: 2 })
+        if (outcome.kind !== 'incomplete') throw new Error('a failed cell stopped the run')
+        expect(outcome.evidence.pending).toContainEqual(expect.objectContaining({ reason: 'probe_failed', capability: 'instruction-loading',
+            harness: expect.objectContaining({ target: 'codexcli' }), operatorAction: expect.stringContaining('credential-shaped') }))
     }, 180_000)
 
     it('redacts native structured streams and the version before returning or persisting evidence', async () => {
@@ -264,14 +268,18 @@ else {
         expect(returnedAndPersisted).toContain('[redacted]')
     }, 180_000)
 
-    it.each(['partial', 'deep'] as const)('refuses %s structured streams before persisting a transcript', async shape => {
+    it.each(['partial', 'deep'] as const)('fails each cell with %s structured streams before persisting a transcript', async shape => {
         const { root, application } = fixture()
         const bin = await fakeHarnesses(root, shape)
         const operator = await syntheticOperatorApprovals(bin)
         const outcome = await runSurfaceSelftestApplication(
             { application, root, specifications: specifications(application), env: { PATH: bin } }, operator.adapters,
         )
-        expect(outcome).toMatchObject({ kind: 'refusal', code: 'SELFTEST_EXECUTION_INVALID' })
+        expect(outcome).toMatchObject({ kind: 'incomplete', status: 2 })
+        if (outcome.kind !== 'incomplete') throw new Error('a failed cell stopped the run')
+        expect(outcome.evidence.evidence).toEqual([])
+        expect(outcome.evidence.pending).toContainEqual(expect.objectContaining({ reason: 'probe_failed',
+            operatorAction: expect.stringContaining('cannot be kept as evidence') }))
         expect(await readdir(join(root, '.cockpit/local/probes'), { recursive: true }))
             .not.toContainEqual(expect.stringContaining('transcript.json'))
         expect(JSON.stringify(outcome)).not.toMatch(/pretty-canary|deep-canary/)

@@ -317,6 +317,21 @@ export function renderHumanDiagnostics(
         // gate, grade, step or unreadable source returns one with a failing status: the person needs that
         // evidence either way.
         if (command !== undefined && /^(?:(?:work|browser|env) |test-run$|grade$)/.test(command)) return renderHumanValue(outcome.result)
+        // A selftest whose cell failed exits non-zero with every other cell's measurement, which the person still needs.
+        if (command === 'selftest' && 'summary' in outcome.result) {
+            const result = outcome.result as { summary: { complete: boolean; measuredCells: number; pendingCells: number;
+                pendingSkillReviews: number; unavailableCells?: number; failedCells?: readonly { cell: string; failure: string }[] }; reportPath?: string }
+            const { summary } = result
+            const failed = summary.failedCells ?? []
+            const lines = [
+                ...failed.map(row => `FAILED ${row.cell}: ${row.failure}`),
+                `Selftest ${summary.complete ? 'complete' : 'incomplete'}: ${summary.measuredCells} measured, ${failed.length > 0 ? `${failed.length} failed, ` : ''}${summary.pendingCells} pending, ${summary.pendingSkillReviews} skill reviews pending.`,
+                `Unavailable capabilities measured: ${summary.unavailableCells ?? 0}.`,
+            ]
+            if (summary.pendingSkillReviews > 0) lines.push('Maintainer: complete the independent skill reviews; native measurement alone does not approve a skill.')
+            if (result.reportPath) lines.push(`Full structured report: ${result.reportPath}`)
+            return `${lines.map(escapeForTerminal).join('\n')}\n`
+        }
         if (outcome.status !== 0) return ''
         if (command === 'sync' && 'dryRun' in outcome.result && outcome.result.dryRun === true
             && 'changes' in outcome.result && Array.isArray(outcome.result.changes)) {
@@ -356,18 +371,6 @@ export function renderHumanDiagnostics(
         }
         if (command === 'doctor') {
             return doctorSummary(outcome.result as Readonly<Record<string, unknown>>, outcome.diagnostics ?? [], fixContext)
-        }
-        if (command === 'selftest' && 'summary' in outcome.result) {
-            const result = outcome.result as { summary: { complete: boolean; measuredCells: number; pendingCells: number;
-                pendingSkillReviews: number; unavailableCells?: number }; reportPath?: string }
-            const { summary } = result
-            const lines = [
-                `Selftest ${summary.complete ? 'complete' : 'incomplete'}: ${summary.measuredCells} measured, ${summary.pendingCells} pending, ${summary.pendingSkillReviews} skill reviews pending.`,
-                `Unavailable capabilities measured: ${summary.unavailableCells ?? 0}.`,
-            ]
-            if (summary.pendingSkillReviews > 0) lines.push('Maintainer: complete the independent skill reviews; native measurement alone does not approve a skill.')
-            if (result.reportPath) lines.push(`Full structured report: ${result.reportPath}`)
-            return `${lines.map(escapeForTerminal).join('\n')}\n`
         }
         if (command === 'selftest' || command === 'upgrade' || command === 'init' || command === 'stacks') {
             return renderHumanValue(outcome.result)
