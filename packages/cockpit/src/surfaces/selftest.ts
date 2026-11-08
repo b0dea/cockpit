@@ -73,6 +73,8 @@ export interface PlannedSelftestProbe extends SelftestProbeSpecification {
     readonly entries: readonly SurfaceDesiredEntry[]
     /** For Claude Code instruction loading: the team's CLAUDE.md cockpit left in place, as sync read it. */
     readonly teamClaudeGuide?: string
+    /** For instruction loading: the whole root AGENTS.md as sync leaves it, which is what the tool loads. */
+    readonly instructionFile?: string
 }
 
 export type SurfaceSelftestPlanResult =
@@ -91,7 +93,7 @@ export type SelftestHumanNeededRecord = Readonly<{
     capability: 'instruction-loading' | 'guard-firing'
     generatedManifestSha256: string
     observedAt: string
-    reason: 'executable_missing' | 'authentication_required' | 'isolation_unavailable' | 'enforcement_probe_required' | 'native_protocol_unsupported' | 'probe_failed'
+    reason: 'executable_missing' | 'authentication_required' | 'isolation_unavailable' | 'enforcement_probe_required' | 'native_protocol_unsupported' | 'guard_host_undeclared' | 'probe_failed'
     operatorAction: string
 }> | Readonly<{
     kind: 'human_needed'
@@ -100,7 +102,7 @@ export type SelftestHumanNeededRecord = Readonly<{
     skill: string
     generatedManifestSha256: string
     observedAt: string
-    reason: 'executable_missing' | 'authentication_required' | 'isolation_unavailable' | 'enforcement_probe_required' | 'native_protocol_unsupported' | 'probe_failed'
+    reason: 'executable_missing' | 'authentication_required' | 'isolation_unavailable' | 'enforcement_probe_required' | 'native_protocol_unsupported' | 'guard_host_undeclared' | 'probe_failed'
     operatorAction: string
 }>
 
@@ -198,6 +200,10 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
         || captured.cockpitHookCommands.length > 64 || !captured.cockpitHookCommands.every(validNativeGuardHookCommand))) return undefined
     if (captured.teamClaudeGuide !== undefined && (typeof captured.teamClaudeGuide !== 'string'
         || captured.entries.some(entry => entry.path === 'CLAUDE.md'))) return undefined
+    const rootGuide = captured.entries.find(entry => entry.path === 'AGENTS.md')
+    // The measured file must hold cockpit's region exactly once, or the probe would measure other text.
+    if (captured.rootGuideFile !== undefined && (typeof captured.rootGuideFile !== 'string' || rootGuide?.kind !== 'shared-region'
+        || rootGuide.region.format !== 'markdown-delimited' || captured.rootGuideFile.split(rootGuide.region.bytes).length !== 2)) return undefined
     const payload = {
         schema: captured.schema,
         configuredHarnesses: captured.configuredHarnesses,
@@ -208,6 +214,7 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
         ...(captured.guardHookCommand === undefined ? {} : { guardHookCommand: captured.guardHookCommand }),
         ...(captured.cockpitHookCommands === undefined ? {} : { cockpitHookCommands: captured.cockpitHookCommands }),
         ...(captured.teamClaudeGuide === undefined ? {} : { teamClaudeGuide: captured.teamClaudeGuide }),
+        ...(captured.rootGuideFile === undefined ? {} : { rootGuideFile: captured.rootGuideFile }),
     }
     if (sha256Hex(JSON.stringify(payload)) !== captured.manifestSha256) return undefined
     const ownership = classifySurfaceOwnership({ configuredHarnesses: captured.configuredHarnesses, entries: captured.entries })
@@ -269,15 +276,15 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
     const uniqueCells = new Map(cells.map((cell) => [cellKey(cell), cell]))
     if (uniqueCells.size !== cells.length) return undefined
     const instructions = captured.entries.find(entry => entry.path === 'AGENTS.md' && entry.harnesses.includes('codexcli'))
-    const instructionBytes = instructions?.kind === 'file' ? instructions.bytes
-        : instructions?.region.format === 'markdown-delimited' ? instructions.region.bytes : undefined
+    const instructionBytes = captured.rootGuideFile ?? (instructions?.kind === 'file' ? instructions.bytes
+        : instructions?.region.format === 'markdown-delimited' ? instructions.region.bytes : undefined)
     return {
         ...(instructionBytes === undefined ? {} : { instructionSourceSha256: sha256Hex(instructionBytes) }),
         nativeSourceSha256: Object.fromEntries(captured.entries.flatMap(entry => {
             if (!/^(?:AGENTS\.md|CLAUDE\.md|\.claude\/settings\.json|\.(?:agents|claude)\/skills\/[^/]+\/SKILL\.md)$/.test(entry.path)) return []
             const bytes = entry.kind === 'file' ? entry.bytes : entry.region.format === 'markdown-delimited' ? entry.region.bytes
                 : `${JSON.stringify(Object.fromEntries(entry.region.members.map(member => [member.key, JSON.parse(member.valueBytes)])), null, 2)}\n`
-            return bytes === undefined ? [] : [[entry.path, sha256Hex(bytes)]]
+            return bytes === undefined ? [] : [[entry.path, sha256Hex(entry.path === 'AGENTS.md' ? captured.rootGuideFile ?? bytes : bytes)]]
         }).concat(captured.teamClaudeGuide === undefined ? [] : [['CLAUDE.md', sha256Hex(captured.teamClaudeGuide)]])),
         ...(captured.guardProbeHost === undefined ? {} : { guardProbeHost: captured.guardProbeHost }),
         ...(captured.guardHookCommand === undefined ? {} : { guardHookCommand: captured.guardHookCommand }),
@@ -472,6 +479,8 @@ export function planSurfaceSelftest(
             entries: capturedProjection!.entries.filter((entry) => entry.harnesses.includes(cell.harness.target)),
             ...(capturedProjection!.teamClaudeGuide !== undefined && cell.harness.kind === 'builtin' && cell.harness.target === 'claudecode'
                 && cell.capability === 'instruction-loading' ? { teamClaudeGuide: capturedProjection!.teamClaudeGuide } : {}),
+            ...(capturedProjection!.rootGuideFile !== undefined && cell.capability === 'instruction-loading'
+                ? { instructionFile: capturedProjection!.rootGuideFile } : {}),
         })
     }
     return {
@@ -527,7 +536,7 @@ export function surfaceSelftestReviews(
         else reviews.push({
             skill, harness: harness.name, status: 'human_needed', reviewedOn: null, evidenceRunId: null,
             reviewers: [], checks: null,
-            operatorAction: `Review ${skill} with ${harness.name} and record the five authoring checks`,
+            operatorAction: `A person judges ${skill} in ${harness.name} for its trigger, silence, body loading, tools and non-goals; cockpit cannot perform or record this review`,
         })
     }
     return reviews

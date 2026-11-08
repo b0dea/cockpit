@@ -1,3 +1,4 @@
+import { claudeActiveLines } from '../../../libexec/native-selftest-input.mjs'
 import { cockpitCommand, type FixContext } from '../../fix-catalogue.js'
 import { proposeGeneratedEnvironmentRepair } from '../../repair.js'
 import { createHash } from 'node:crypto'
@@ -202,32 +203,7 @@ interface AuthenticatedSiblingRoots {
 }
 
 export function activeClaudeImports(bytes: string): readonly number[] {
-    const imports: number[] = []
-    let fence: Readonly<{ marker: '`' | '~'; length: number }> | undefined
-    let inComment = false
-    for (const [index, line] of bytes.split(/\r?\n/u).entries()) {
-        const trimmed = line.trimStart()
-        const marker = /^ {0,3}(?<fence>`{3,}|~{3,})(?<suffix>.*)$/u.exec(line)?.groups
-        if (fence) {
-            if (marker?.fence?.[0] === fence.marker && marker.fence.length >= fence.length
-                && marker.suffix?.trim() === '') fence = undefined
-            continue
-        }
-        if (inComment) {
-            if (trimmed.includes('-->')) inComment = false
-            continue
-        }
-        if (trimmed.startsWith('<!--')) {
-            if (!trimmed.includes('-->')) inComment = true
-            continue
-        }
-        if (marker?.fence && (marker.fence[0] !== '`' || !marker.suffix?.includes('`'))) {
-            fence = { marker: marker.fence[0] as '`' | '~', length: marker.fence.length }
-            continue
-        }
-        if (line === '@AGENTS.md') imports.push(index)
-    }
-    return imports
+    return claudeActiveLines(bytes).filter(row => row.line === '@AGENTS.md').map(row => row.index)
 }
 
 export async function siblingRootsCurrent(authority: AuthenticatedSiblingRoots): Promise<boolean> {
@@ -424,6 +400,8 @@ export interface GeneratedSurfaceSelftestProjection {
      * therefore leaves it in place instead of owning one; the Claude instruction probe loads through it.
      */
     readonly teamClaudeGuide?: string
+    /** The root AGENTS.md as sync leaves it, cockpit's region inside whatever the team wrote around it. */
+    readonly rootGuideFile?: string
 }
 
 export interface GeneratedSurfaceHealthEvidence {

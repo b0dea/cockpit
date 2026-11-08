@@ -134,10 +134,12 @@ else {
             expect(check().errors).not.toEqual([])
         }
         expect(record.candidatePath).toMatch(/\/candidate\/AGENTS\.md$/)
+        // The tool loads the root AGENTS.md whole, so the candidate is that file, cockpit's region inside it once.
         const generated = application.surfaceSelftest.entries.find(entry => entry.path === 'AGENTS.md')!
-        const expectedBytes = generated.kind === 'file' ? generated.bytes
-            : generated.region.format === 'markdown-delimited' ? generated.region.bytes : ''
-        expect(await readFile(join(root, record.candidatePath), 'utf8')).toBe(expectedBytes)
+        const region = generated.kind === 'shared-region' && generated.region.format === 'markdown-delimited' ? generated.region.bytes : ''
+        const candidate = await readFile(join(root, record.candidatePath), 'utf8')
+        expect(candidate).toBe(await readFile(join(root, 'AGENTS.md'), 'utf8'))
+        expect(candidate.split(region)).toHaveLength(2)
         expect(steps.filter(step => step.labels.role === 'candidate')[0]?.filesystemChecks)
             .toContainEqual(expect.objectContaining({ path: join(root, record.candidatePath), sha256: record.candidateSha256 }))
     }, 180_000)
@@ -227,6 +229,24 @@ else {
             testOnlyExecutableIdentities: { Codex: [executable] }, execute: executeProbe,
         })
         expect(outcome).toMatchObject({ kind: 'incomplete', status: 2 })
+        if (outcome.kind !== 'incomplete') throw new Error('a failed cell stopped the run')
+        expect(outcome.evidence.pending).toContainEqual(expect.objectContaining({ reason: 'probe_failed', capability: 'instruction-loading',
+            harness: expect.objectContaining({ target: 'codexcli' }), operatorAction: expect.stringContaining('instruction size limit') }))
+    }, 180_000)
+
+    it('measures the whole AGENTS.md a tool loads, so team text that pushes cockpit\'s region past the limit fails the cell', async () => {
+        // The team's own guide stays above cockpit's region in the same file, and the tool loads the file whole.
+        const teamGuide = `# Team guide\n\n${'Keep every change small and reviewed.\n'.repeat(120)}`
+        const { root, application } = await issuedApplication({ 'AGENTS.md': teamGuide })
+        const onDisk = await readFile(join(root, 'AGENTS.md'), 'utf8')
+        expect(onDisk.startsWith(teamGuide)).toBe(true)
+        // Room for cockpit's region on its own, not for the file the tool actually loads.
+        const { bin, executable } = await nativeChainCodex(root, Buffer.byteLength(onDisk) - Buffer.byteLength(teamGuide) + 200)
+        const outcome = await runSurfaceSelftestApplication({ root, application,
+            specifications: draftSurfaceSelftestSpecifications(application.surfaceSelftest)!.specifications, env: { PATH: bin } }, {
+            testOnlyExecutableIdentities: { Codex: [executable] }, execute: executeProbe,
+        })
+        expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: 'incomplete', status: 2 })
         if (outcome.kind !== 'incomplete') throw new Error('a failed cell stopped the run')
         expect(outcome.evidence.pending).toContainEqual(expect.objectContaining({ reason: 'probe_failed', capability: 'instruction-loading',
             harness: expect.objectContaining({ target: 'codexcli' }), operatorAction: expect.stringContaining('instruction size limit') }))

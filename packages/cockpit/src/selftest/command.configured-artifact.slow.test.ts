@@ -104,19 +104,19 @@ else process.stdout.write(JSON.stringify([
             requestExecutableApproval: async candidate => candidate.sha256,
         })
         expect(outcome.status, JSON.stringify(outcome.diagnostics)).toBe(0)
-        expect(outcome.result).toMatchObject({ summary: { measuredCells: 1, pendingCells: 26, complete: false } })
+        expect(outcome.result).toMatchObject({ summary: { measuredCells: 1, pendingCells: 26, measurementComplete: false } })
         expect(JSON.stringify(outcome)).not.toContain('PRIVATE-INHERITED-CANARY')
         const shown = renderHumanValue(outcome.result)
         expect(shown).toContain('pendingCells')
         expect(shown).not.toContain('Result is not available')
         const terminal = renderHumanDiagnostics([], { command: 'selftest', outcome })
-        expect(terminal).toMatch(/^Selftest incomplete: 1 measured, 26 pending, /)
+        expect(terminal).toMatch(/^Selftest incomplete: 1 measured, 26 pending\./)
         expect(terminal).not.toContain('candidateControl')
         // Cells whose native protocol exists but whose tool is absent here are the operator's to fix;
-        // cells with no protocol yet are the maintainer's. Each group is one diagnostic.
+        // cells with no protocol yet stay pending until cockpit adds one. Each group is one diagnostic.
         expect(outcome.diagnostics.map(row => [row.code, row.message])).toEqual([
             ['EVIDENCE_UNAVAILABLE', expect.stringMatching(/^9 pending cell\(s\)\. Operator: install or locate the named tool/)],
-            ['EVIDENCE_UNAVAILABLE', expect.stringMatching(/^17 pending cell\(s\)\. Maintainer: implement and measure the missing native protocol/)],
+            ['EVIDENCE_UNAVAILABLE', expect.stringMatching(/^17 pending cell\(s\)\. Unmeasurable by selftest as the files stand/)],
         ])
         const reportPath = (outcome.result as { reportPath: string }).reportPath
         expect(JSON.parse(await readFile(reportPath, 'utf8'))).toEqual({ result: outcome.result, diagnostics: outcome.diagnostics })

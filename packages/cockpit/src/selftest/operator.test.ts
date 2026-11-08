@@ -1,6 +1,7 @@
 import { PassThrough, Writable } from 'node:stream'
 import { describe, expect, it } from 'vitest'
-import { runSelftestOperatorCommand } from '../environment/selftest-application.js'
+import { runSelftestOperatorCommand, selftestApprovalCommands } from '../environment/selftest-application.js'
+import { nativeInputInvocation } from '../../libexec/native-selftest-input.mjs'
 
 const artifact = {
     canonicalPath: '/synthetic/probes.json', sha256: 'a'.repeat(64), sourceSha256: 'b'.repeat(64),
@@ -50,5 +51,26 @@ describe('selftest terminal review', () => {
         expect(shown.join('')).not.toContain('NEVER-RUN-THIS')
         expect(shown.join('')).toContain('1 unsupported')
         stdin.destroy()
+    })
+
+    it('shows each command once per skill template and still reproduces every row of the approved file exactly', () => {
+        const row = (harness: string, target: 'claudecode' | 'codexcli', skill: string | null) => ({
+            harness, capability: skill ? 'skill-parity' : 'instruction-loading', protocol: target === 'claudecode' ? 'claude-model-input/v1' : 'codex-skill-input/v1',
+            executes: true, skill, invocation: nativeInputInvocation(target, skill ?? undefined) as [string, ...string[]],
+            versionCommand: ['{executable}', '--version'] as [string, ...string[]], helpCommand: ['{executable}', '--help'] as [string, ...string[]],
+        })
+        const skills = ['alpha', 'beta', 'zeta']
+        // A row its template cannot reproduce, because the file already holds the placeholder text, is shown whole.
+        const odd = { ...row('Claude Code', 'claudecode', 'alpha'), capability: 'skill-parity', invocation: ['{executable}', '/alpha', '{skill}'] as [string, ...string[]] }
+        const rows = [row('Claude Code', 'claudecode', null), ...skills.map(skill => row('Claude Code', 'claudecode', skill)),
+            ...skills.map(skill => row('Codex', 'codexcli', skill)), odd]
+        const shown = selftestApprovalCommands(rows)
+        expect(shown).toHaveLength(4)
+        expect(shown).toContainEqual(odd)
+        const expanded = shown.flatMap((entry): unknown[] => 'skills' in entry
+            ? entry.skills.map(skill => ({ ...entry.template, skill, invocation: entry.template.invocation.map(value => value.replaceAll('{skill}', skill)) }))
+            : [entry])
+        const key = (value: unknown) => JSON.stringify(value)
+        expect(expanded.map(key).sort()).toEqual(rows.map(key).sort())
     })
 })

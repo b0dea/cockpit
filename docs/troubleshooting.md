@@ -308,6 +308,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `GENERATED_STALE_ARTIFACT` | a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal and confirms the stale-file removals it shows with yes |
 | `GUARD_AUTHORITY_UNAVAILABLE` | [see above](#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
+| `GUARD_NODE_DIFFERS` | run selftest with the Node the guard was installed for, or run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> under this Node first, which makes the guard hook run it |
 | `GUARD_REFUSED` | [see above](#common-refusal-guidance) |
 | `GUARD_SEARCH_PATH_RELATIVE` | check PATH in the shell or launcher that starts the agent harness; if it contains relative or empty entries, remove them there and restart the harness |
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | [see above](#common-refusal-guidance) |

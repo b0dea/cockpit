@@ -7,6 +7,7 @@ import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
 import { GUARD_SURFACE_TARGETS as INSTRUCTION_TARGETS, HARNESS_REGISTRY, type HarnessRegistryRow } from './harness-registry.js'
 import { INSTRUCTION_POINTER_MARKERS } from '../environment/instruction-pointer.js'
 import { exactKeys } from '../exact-keys.js'
+import { mapClaudeImports } from '../../libexec/native-selftest-input.mjs'
 import { foldGuardSpelling } from '../guards/evaluator.js'
 
 const GUIDE_BYTE_LIMIT = 65_536
@@ -680,13 +681,16 @@ const AGENTS_IMPORT_LINE = /^[ \t]*@(?:\.\/)?AGENTS\.md[ \t]*$/gm
  * The text of a guide as the root AGENTS.md carries it. The pointer setup appends to a sibling guide
  * points back at this cockpit, so the copy drops it; a CLAUDE.md line importing the sibling's own
  * AGENTS.md is dropped when that AGENTS.md is copied too, since in the cockpit root the import would
- * name the cockpit's AGENTS.md instead. Undefined when the guide holds cockpit's own region or owner
- * markers, which would end or split the generated region.
+ * name the cockpit's AGENTS.md instead. Any other import would also resolve against the cockpit root,
+ * loading nothing or the wrong file, so the copy names the sibling's file by a plain path from the
+ * cockpit root, which every tool can follow and none imports. Undefined when the guide holds
+ * cockpit's own region or owner markers, which would end or split the generated region.
  */
-function guideText(content: string, dropAgentsImport: boolean): string | undefined {
+function guideText(content: string, dropAgentsImport: boolean, siblingPath: string): string | undefined {
     if (REGION_MARKER_PREFIXES.some(marker => content.includes(marker))) return undefined
     let text = content.replace(POINTER_BLOCK, '')
     if (dropAgentsImport) text = text.replace(AGENTS_IMPORT_LINE, '')
+    text = mapClaudeImports(text, path => `\`${/^[~/]/.test(path) ? path : posix.join(siblingPath, path)}\``)
     return text.replace(/^\s*\n/, '').trimEnd()
 }
 
@@ -815,7 +819,7 @@ export function planSiblingProjection(input: unknown): ProjectionPlanResult {
             const observation = observed(guide)
             if (!observation || seenContent.has(observation.contentSha256)) continue
             seenContent.add(observation.contentSha256)
-            const text = guideText(observation.content, guide === 'CLAUDE.md' && agentsCopied)
+            const text = guideText(observation.content, guide === 'CLAUDE.md' && agentsCopied, relative(captured.canonicalMainCheckout, resolvedDirectory) || '.')
             if (text === undefined) {
                 return refuse(diagnostic('PROJECTION_INPUT_INVALID', `guide holds cockpit's own instruction region or owner markers: ${observation.sourcePath}`, { target: observation.sourcePath }))
             }

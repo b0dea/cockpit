@@ -6,8 +6,8 @@ import { lstat, mkdir, open, realpath, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { confirmDigest } from '../operator-confirmation.js'
 import { renderHumanValue } from '../diagnostics.js'
-import { types as utilTypes } from 'node:util'
-import { MODEL_INPUT_PROTOCOLS, nativeClaudeImport, nativeInputSettings, nativeSkillBody, validateNativeModelInputPair } from '../../libexec/native-selftest-input.mjs'
+import { isDeepStrictEqual, types as utilTypes } from 'node:util'
+import { MODEL_INPUT_PROTOCOLS, claudeImportPaths, foreignClaudeComment, nativeClaudeImport, nativeInputSettings, nativeSkillBody, validateNativeModelInputPair } from '../../libexec/native-selftest-input.mjs'
 import { startSelftestModel } from './selftest-model.js'
 import { brokenNativeGuardSettings, nativeGuardCommands, nativeGuardInterference, validateNativeGuardPair } from '../../libexec/native-selftest-guard.mjs'
 
@@ -371,6 +371,8 @@ function event(
 }
 
 function selectedEntryBytes(probe: PlannedSelftestProbe): string | undefined {
+    // The tools load the root AGENTS.md whole; without those bytes there is nothing honest to measure.
+    if (probe.capability === 'instruction-loading') return probe.instructionFile
     const selected = probe.entries.find((entry) => {
         if (probe.cell.capability === 'skill-parity') return entry.path.includes(`/skills/${probe.cell.skill}/`)
         if (probe.harness.kind !== 'builtin') return false
@@ -536,21 +538,34 @@ async function runEvidenceProbe(
     const humanNeeded = (reason: SelftestHumanNeededRecord['reason'], operatorAction: string): SelftestHumanNeededRecord | RunFailure =>
         surfaceSelftestHumanNeeded(expectation, probe.cell, reason, observedAt, operatorAction)
             ?? { runFailure: `the ${reason} finding could not be recorded as human_needed: ${operatorAction}` }
-    if (probe.protocol === 'native-unsupported/v1') return humanNeeded('native_protocol_unsupported',
-        `${harnessName} ${probe.capability} has no verified native selftest protocol. Measure the generated surface with its real loader and a deliberately broken control; preserve native tool events, not assistant claims. Claude print mode ignores malformed settings, and a native tool denial need not fail its parent process. Do not substitute diagnostic echo commands.`,
-    )
+    if (probe.protocol === 'native-unsupported/v1') {
+        // The Claude guard probe needs a request the guard refuses; without a declared vendor host it has none.
+        if (probe.harness.target === 'claudecode' && probe.capability === 'guard-firing') return humanNeeded('guard_host_undeclared',
+            'Claude Code guard firing is measured by asking the guard to refuse a request to a host declared under [guards] vendor_endpoint_hosts, and cockpit.toml declares none. Declare a vendor endpoint host your agents must not call directly, run sync, then write fresh probe specifications and rerun selftest; the probe points that host at a local listener and sends nothing out.',
+        )
+        return humanNeeded('native_protocol_unsupported', probe.harness.target === 'codexcli' && probe.capability === 'guard-firing'
+            ? 'cockpit cannot measure Codex guard firing yet, so this cell stays pending on every run; nothing you change clears it.'
+            : `cockpit has no native selftest protocol for ${harnessName} ${probe.capability} yet, so this cell stays pending on every run; nothing you change clears it.`)
+    }
     const guard = probe.protocol === 'claude-guard-loopback/v1'
     if (guard && (!guardRuntime || !guardRuntime.some(file => file.path === join(root, '.cockpit/guards/bash-guard.sh')))) return { runFailure: 'native guard runtime is not bound to this published cockpit root; run sync, then rerun selftest' }
     const modelInput = MODEL_INPUT_PROTOCOLS.includes(probe.protocol ?? '') || guard
     const native = probe.protocol === 'codex-prompt-input/v1' || modelInput
-    if (modelInput && probe.harness.target === 'claudecode' && probe.capability === 'instruction-loading'
-        && /(?:^|\s)@[^\s`]+/.test(selectedEntryBytes(probe) ?? '')) return humanNeeded('native_protocol_unsupported',
-        'The generated guide contains native import syntax. Its imported dependencies are not bound by this probe; measure them independently rather than loading unreviewed files.',
+    const guideImports = modelInput && probe.harness.target === 'claudecode' && probe.capability === 'instruction-loading'
+        ? claudeImportPaths(selectedEntryBytes(probe) ?? '') : []
+    if (guideImports.length > 0) return humanNeeded('native_protocol_unsupported',
+        `The root AGENTS.md imports ${guideImports.map(path => `@${path}`).join(', ')}, and a file it imports would reach the model without being bound by this probe, so this cell is not measured. To have selftest measure it, write ${guideImports.length === 1 ? 'that import' : 'those imports'} as plain paths in your part of AGENTS.md, run sync, then write fresh probe specifications; otherwise measure it by hand with a candidate and a deliberately broken control.`,
     )
-    // The measured claim is that Claude delivers AGENTS.md through a CLAUDE.md that only imports it.
-    // Anything else in the team's file, other imports included, would reach the model unbound.
-    if (modelInput && probe.teamClaudeGuide !== undefined && !nativeClaudeImport(probe.teamClaudeGuide)) return humanNeeded('native_protocol_unsupported',
-        'This checkout\'s own CLAUDE.md, which cockpit leaves as the team wrote it, holds more than its @AGENTS.md import, and the probe measures delivery only through a CLAUDE.md that is exactly that import. To have selftest measure it, move the other content out of CLAUDE.md (for example into AGENTS.md, outside cockpit\'s region) so the file is exactly @AGENTS.md, then run sync and write fresh probe specifications; otherwise measure it by hand with a candidate and a deliberately broken control.',
+    // Claude removes HTML comments before delivering the guide; the probe reproduces that only for cockpit's own markers.
+    if (modelInput && probe.harness.target === 'claudecode' && probe.capability === 'instruction-loading'
+        && foreignClaudeComment(selectedEntryBytes(probe) ?? '')) return humanNeeded('native_protocol_unsupported',
+        'The root AGENTS.md holds an HTML comment of your own, which Claude removes before delivering the guide in a way this probe does not reproduce, so this cell is not measured. Measure it by hand with a candidate and a deliberately broken control, or move the comment out of AGENTS.md, run sync, then write fresh probe specifications.',
+    )
+    // The measured claim is that Claude delivers AGENTS.md through the CLAUDE.md import. The team's
+    // own notes beside it travel with the bytes sync read; a file it imports would reach the model unbound.
+    const teamImports = probe.teamClaudeGuide === undefined ? [] : claudeImportPaths(probe.teamClaudeGuide).filter(path => path !== 'AGENTS.md')
+    if (modelInput && teamImports.length > 0) return humanNeeded('native_protocol_unsupported',
+        `This checkout's own CLAUDE.md, which cockpit leaves as the team wrote it, also imports ${teamImports.map(path => `@${path}`).join(', ')}, and a file it imports would reach the model without being bound by the probe, so this cell is not measured. To have selftest measure it, write ${teamImports.length === 1 ? 'that import' : 'those imports'} as plain paths or move the text into CLAUDE.md or AGENTS.md, run sync, then write fresh probe specifications; otherwise measure it by hand with a candidate and a deliberately broken control.`,
     )
     if (modelInput && probe.sample && nativeSkillBody(selectedEntryBytes(probe) ?? '') === undefined) return humanNeeded('native_protocol_unsupported',
         'The generated skill cannot be loaded by the bounded body-only probe: check frontmatter, direct invocation, dynamic context and agent or hook declarations. It remains unmeasured; do not remove its restrictions to pass selftest.',
@@ -1120,6 +1135,8 @@ function withholdNativeStreams<T extends SelftestEvidenceBundle['records'][numbe
         brokenControl: withheld(record.events.brokenControl), candidateControl: withheld(record.events.candidateControl) } }
 }
 
+const UNMEASURABLE_REASONS: readonly string[] = ['native_protocol_unsupported', 'enforcement_probe_required']
+
 export async function runConfiguredSurfaceSelftestOutcome(
     input: SurfaceSelftestHandlerInput | SurfaceSelftestDraftInput,
 ): Promise<SurfaceSelftestDispatchOutcome> {
@@ -1133,11 +1150,12 @@ export async function runConfiguredSurfaceSelftestOutcome(
     if (outcome.kind === 'refusal') return { status: 2, diagnostics: [{ severity: 'error', code: outcome.code, message: outcome.reason,
         ...(outcome.fix ? { fix: outcome.fix } : {}) }], result: null }
     const responsibilities = {
-        native_protocol_unsupported: 'Maintainer: implement and measure the missing native protocol; rerunning unchanged inputs cannot clear this gap',
+        native_protocol_unsupported: 'Unmeasurable by selftest as the files stand: each record says whether a change of yours lets selftest measure it; otherwise rerunning does not clear it',
         enforcement_probe_required: 'Maintainer: supply paired native evidence for the custom harness',
         executable_missing: 'Operator: install or locate the named tool before retrying',
         authentication_required: 'Operator: review the executable or complete native authentication before retrying',
         isolation_unavailable: 'Unavailable: the probe cannot establish its required isolation; inspect the report before retrying',
+        guard_host_undeclared: 'Operator: declare a vendor endpoint host under [guards] vendor_endpoint_hosts so the Claude Code guard probe has a request the guard refuses, run sync, then write fresh probe specifications',
     } as const
     const failed = outcome.evidence.pending.filter(row => row.reason === 'probe_failed')
     const pending = outcome.evidence.pending.filter((row): row is typeof row & { reason: keyof typeof responsibilities } => row.reason !== 'probe_failed')
@@ -1158,7 +1176,9 @@ export async function runConfiguredSurfaceSelftestOutcome(
             measuredCells: outcome.evidence.evidence.length, pendingCells: pending.length,
             unavailableCells: outcome.evidence.evidence.filter(row => row.verdict === 'unavailable').length,
             pendingSkillReviews: outcome.evidence.skillReviews.filter(row => row.status === 'human_needed').length,
-            complete: outcome.evidence.pending.length === 0 && outcome.evidence.skillReviews.every(row => row.status === 'evidenced') },
+            // Every cell selftest can measure was measured. Unsupported cells and skill reviews, which no
+            // command performs or records, are reported beside it rather than holding it false forever.
+            measurementComplete: outcome.evidence.pending.every(row => UNMEASURABLE_REASONS.includes(row.reason)) },
     }
     try {
         const directory = await ensureEvidenceDirectory(outcome.root)
@@ -1191,6 +1211,35 @@ async function confirmSelftestExecutable(
     return confirmDigest(io, candidate.sha256, 'Approve this executable for this selftest run?')
 }
 
+type CommandVector = SurfaceSelftestProbeSpecificationsCandidate['commandVectors'][number]
+
+function withSkill(template: CommandVector, skill: string): CommandVector {
+    return { ...template, skill, invocation: template.invocation.map(value => value.replaceAll('{skill}', skill)) as [string, ...string[]] }
+}
+
+/**
+ * The runnable commands as a person reviews them. Rows that differ only in their skill are shown once,
+ * with `{skill}` in its place and the skills it runs for; a row its template does not reproduce exactly
+ * is shown whole, so the display stays a lossless reading of the approved file.
+ */
+export function selftestApprovalCommands(rows: readonly CommandVector[]): readonly (CommandVector | Readonly<{ template: CommandVector; skills: readonly string[] }>)[] {
+    const shown: (CommandVector | { template: CommandVector; skills: string[] })[] = []
+    const groups = new Map<string, { template: CommandVector; skills: string[] }>()
+    for (const row of rows) {
+        const skill = row.skill
+        const template = skill === null ? undefined
+            : { ...row, skill: '{skill}', invocation: row.invocation.map(value => value.replaceAll(skill, '{skill}')) as [string, ...string[]] }
+        if (!template || !isDeepStrictEqual(withSkill(template, skill!), row)) { shown.push(row); continue }
+        const key = JSON.stringify(template)
+        const group = groups.get(key)
+        if (group) { group.skills.push(skill!); continue }
+        const created = { template, skills: [skill!] }
+        groups.set(key, created)
+        shown.push(created)
+    }
+    return shown
+}
+
 async function confirmSelftestProbeSpecifications(
     io: SelftestOperatorIo,
     candidate: SurfaceSelftestProbeSpecificationsCandidate,
@@ -1200,7 +1249,8 @@ async function confirmSelftestProbeSpecifications(
     const runnable = candidate.commandVectors.filter(row => row.executes !== false)
     io.stderr.write(renderHumanValue({ artifact: candidate.canonicalPath, sha256: candidate.sha256,
         sourceSha256: candidate.sourceSha256, generatedManifestSha256: candidate.generatedManifestSha256,
-        runnableCommands: runnable }))
+        runnableCommands: selftestApprovalCommands(runnable) }))
+    io.stderr.write(`${runnable.length} runnable command(s) above, shown once per skill template; ${candidate.canonicalPath} holds each one in full.\n`)
     if (candidate.guardProbeTeamHooks) {
         io.stderr.write('Team hooks the Claude Code guard probe loads beside cockpit\'s guard; Claude Code runs each one its event and matcher select, with its script as it is on disk now:\n')
         io.stderr.write(renderHumanValue(candidate.guardProbeTeamHooks))

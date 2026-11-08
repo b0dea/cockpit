@@ -1,3 +1,4 @@
+import { isUtf8 } from 'node:buffer'
 import { lstat, realpath } from 'node:fs/promises'
 import { openCodePatternUnsafe } from '../served-checkout-grants.js'
 import { basename, dirname, join, relative, resolve } from 'node:path'
@@ -21,6 +22,7 @@ import { effectivePolicy } from '../../autonomy.js'
 import { collectMcpDeclarations, mcpApprovalDigest, parseMcpDeclarationFile } from '../../surfaces/mcp.js'
 import {
     bindSurfaceOwnershipIdentity,
+    renderSharedPostimage,
     type OwnershipManifest,
     type SurfaceDesiredEntry,
     type SurfacePriorOwnedEntry,
@@ -599,6 +601,14 @@ export async function prepareSurfaces(
     if (!rootGuide || rootGuide.kind !== 'shared-region' || rootGuide.region.format !== 'markdown-delimited') {
         return refuse('SURFACE_INPUT_INVALID', 'the published always-loaded root guide is unavailable', 'AGENTS.md')
     }
+    // Every tool loads the root AGENTS.md whole, the team's own text included, so selftest measures the
+    // file as sync leaves it: the same postimage sync writes. A file sync would refuse carries none, and
+    // the instruction probes then refuse to measure; sync and check name the problem.
+    const existingGuide = await readAnchoredEntry(prepared.root, 'AGENTS.md', MAX_SURFACE_FILE_BYTES, prepared.node, adapters)
+    const existingText = existingGuide.kind === 'missing' ? ''
+        : existingGuide.kind === 'file' && isUtf8(existingGuide.bytes) ? existingGuide.bytes.toString('utf8') : undefined
+    const postimage = existingText === undefined ? undefined : renderSharedPostimage(existingText, rootGuide, priorOwned.find(entry => entry.path === 'AGENTS.md'))
+    const rootGuideFile = postimage?.kind === 'complete' ? postimage.bytes : undefined
     const characterizedGuideCosts = tierGuide.costs.filter(
         (cost): cost is Exclude<StandingCost, { status: 'unavailable' }> => cost.status !== 'unavailable',
     )
@@ -647,6 +657,7 @@ export async function prepareSurfaces(
         ...(typeof guardHookCommand === 'string' ? { guardHookCommand } : {}),
         ...(cockpitHookCommands.length > 0 ? { cockpitHookCommands } : {}),
         ...(teamClaudeGuide === undefined ? {} : { teamClaudeGuide }),
+        ...(rootGuideFile === undefined ? {} : { rootGuideFile }),
     }
     const captured = snapshotGeneratedJson(selftestPayload) as unknown as Omit<GeneratedSurfaceSelftestProjection, 'manifestSha256'> | undefined
     if (!captured) return refuse('SURFACE_BOUNDS', 'authenticated selftest inputs exceed the captured bounds', 'surfaces')
@@ -655,7 +666,8 @@ export async function prepareSurfaces(
         ...(captured.guardProbeHost ? { guardProbeHost: captured.guardProbeHost } : {}),
         ...(captured.guardHookCommand ? { guardHookCommand: captured.guardHookCommand } : {}),
         ...(captured.cockpitHookCommands ? { cockpitHookCommands: captured.cockpitHookCommands } : {}),
-        ...(captured.teamClaudeGuide === undefined ? {} : { teamClaudeGuide: captured.teamClaudeGuide }) }
+        ...(captured.teamClaudeGuide === undefined ? {} : { teamClaudeGuide: captured.teamClaudeGuide }),
+        ...(captured.rootGuideFile === undefined ? {} : { rootGuideFile: captured.rootGuideFile }) }
     const surfaceSelftest = { ...payload, manifestSha256: sha256(JSON.stringify(payload)) }
     const skillInventory = surfaceEntries.filter((entry): entry is Extract<SurfaceDesiredEntry, { kind: 'file' }> =>
         entry.kind === 'file').flatMap(entry => entry.harnesses.flatMap(target => {

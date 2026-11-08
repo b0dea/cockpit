@@ -28,8 +28,10 @@ export function createSelftestFixture(roots: string[]) {
         await mkdir(join(root, 'fixtures'), { recursive: true })
         await writeFile(join(root, 'app/AGENTS.md'), 'Synthetic sibling instruction canary.\n')
         await writeFile(join(root, 'fixtures/personas.json'), '[{"id":"first"}]\n')
+        // Any name but the registry's own: owner markers carry it, and a check that only ever saw one
+        // name once accepted that name alone.
         const declaration = (await readFile(fixture, 'utf8')).replace(
-            'name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."',
+            'name = "generated-environment"', 'name = "synthetic-product"\nsiblings_root = "."',
         ).replace(
             'purpose = "Synthetic application"', 'purpose = "Synthetic application"\nguides = ["AGENTS.md"]',
         ) + `

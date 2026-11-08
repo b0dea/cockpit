@@ -351,10 +351,12 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             expect(application).toBe(synced.result.application)
             expect(generatedApplicationProjection({ ...application })).toBeUndefined()
             const projection = application!.surfaceSelftest
-            const { schema, configuredHarnesses, declarations, entries, custom, guardProbeHost, guardHookCommand, cockpitHookCommands } = projection
+            const { schema, configuredHarnesses, declarations, entries, custom, guardProbeHost, guardHookCommand, cockpitHookCommands, rootGuideFile } = projection
             expect(projection.manifestSha256).toBe(createHash('sha256').update(JSON.stringify({
-                schema, configuredHarnesses, declarations, entries, custom, guardProbeHost, guardHookCommand, cockpitHookCommands,
+                schema, configuredHarnesses, declarations, entries, custom, guardProbeHost, guardHookCommand, cockpitHookCommands, rootGuideFile,
             })).digest('hex'))
+            // The digest binds the root AGENTS.md as the tools load it, exactly as sync wrote it.
+            expect(rootGuideFile).toBe(await readFile(join(fixture.root, 'AGENTS.md'), 'utf8'))
             expect(cockpitHookCommands).toContain(guardHookCommand)
             expect(guardProbeHost).toBe('api.vendor.example.test')
             // The exact command of cockpit's own Claude Code registration, as the published settings carry it.
