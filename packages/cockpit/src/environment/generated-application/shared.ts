@@ -415,6 +415,8 @@ export interface GeneratedSurfaceSelftestProjection {
     readonly custom: readonly GeneratedCustomSurfaceSelftestInput[]
     readonly manifestSha256: string
     readonly guardProbeHost?: string
+    /** The exact command of cockpit's own Claude Code guard hook, the one the guard probe breaks. */
+    readonly guardHookCommand?: string
 }
 
 export interface GeneratedSurfaceHealthEvidence {

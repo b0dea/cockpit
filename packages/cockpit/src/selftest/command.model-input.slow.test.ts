@@ -1,25 +1,19 @@
 import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import { createSelftestFixture } from '../../test-support/selftest-fixture.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { runSurfaceSelftestApplication } from '../environment/selftest-application.js'
+import { syncGeneratedEnvironment } from '../generated-environment/command.js'
+import { sha256Hex } from '../sha256.js'
 import { draftSurfaceSelftestSpecifications, surfaceSelftestExpectation } from '../surfaces/selftest.js'
 import { validateSelftestEvidenceBundle } from '../../libexec/validate-harness-evidence.mjs'
 
 const roots: string[] = []
 afterAll(async () => { await Promise.all(roots.map(root => rm(root, { recursive: true, force: true }))) })
 
-describe('native model input selftest', () => {
-    it('measures source-bound Claude instructions and both skill bodies and paired guard events without claiming skill review acceptance', async () => {
-        const { issuedApplication } = createSelftestFixture(roots)
-        const { root, application } = await issuedApplication()
-        const bin = join(root, 'native-bin')
-        await mkdir(bin)
-        const ancestorCanary = 'SYNTHETIC_ANCESTOR_MEMORY_MUST_STAY_LOCAL'
-        await writeFile(join(root, 'CLAUDE.local.md'), ancestorCanary)
-        const script = `#!${process.execPath}
+const NATIVE_HARNESS = `#!${process.execPath}
 const fs = require('node:fs'), path = require('node:path')
 const claude = path.basename(process.argv[1]) === 'claude'
 const args = process.argv.slice(2)
@@ -30,8 +24,9 @@ else if (args[0] === 'debug') {
  console.log(JSON.stringify([{type:'message',role:'user',content:[{type:'input_text',text:'# AGENTS.md instructions for '+process.cwd()+'\\n\\n<INSTRUCTIONS>\\n'+bytes+'\\n</INSTRUCTIONS>'}]}]))
 } else if (args.includes('--include-hook-events')) {
  const settings=JSON.parse(fs.readFileSync(args[args.indexOf('--settings')+1],'utf8'))
- const hook=settings.hooks.PreToolUse[0].hooks[0].command
- const broken=hook.startsWith('cockpit-selftest-missing-hook-')
+ // Like Claude Code, every PreToolUse registration whose matcher selects Bash runs: cockpit's beside the team's.
+ const hooks=settings.hooks.PreToolUse.filter(group=>new RegExp('^(?:'+group.matcher+')$').test('Bash')).flatMap(group=>group.hooks.map(hook=>hook.command))
+ const broken=hooks.some(hook=>hook.startsWith('cockpit-selftest-missing-hook-'))
  const endpoint=process.env.ANTHROPIC_BASE_URL, nonce=endpoint.split('/').at(-1)
  const messages=[{role:'user',content:[{type:'text',text:args.at(-1)}]}]
  async function request() {
@@ -45,12 +40,19 @@ else if (args[0] === 'debug') {
   if(!args.includes('Bash('+block.input.command+')'))throw new Error('command is not explicitly granted')
   console.log(JSON.stringify({type:'assistant',message:{content:[block]}}))
   messages.push({role:'assistant',content:[block]})
-  const denied=!broken && block.id==='cockpit_forbidden'
   const decision={permissionDecision:'deny',permissionDecisionReason:'Refusing executable use of a declared vendor host.'}
-  console.log(JSON.stringify({type:'system',subtype:'hook_response',hook_event:'PreToolUse',exit_code:broken?127:0,
-    stdout:denied?JSON.stringify({hookSpecificOutput:decision}):'',stderr:broken?hook+': command not found':''}))
-  let content=denied?'Denied by hook':'COCKPIT_GUARD_ORDINARY_'+nonce
-  if(broken && block.id==='cockpit_forbidden') {
+  const responses=hooks.map(hook=>{
+   if(hook.startsWith('cockpit-selftest-missing-hook-'))return {exit_code:127,stdout:'',stderr:hook+': command not found'}
+   if(hook.includes('.cockpit/guards/bash-guard.sh'))return {exit_code:0,stdout:block.id==='cockpit_forbidden'?JSON.stringify({hookSpecificOutput:decision}):'',stderr:''}
+   const run=require('node:child_process').spawnSync('/bin/sh',['-c',hook],{encoding:'utf8',env:{...process.env,CLAUDE_PROJECT_DIR:process.cwd()},
+    input:JSON.stringify({hook_event_name:'PreToolUse',tool_name:'Bash',tool_input:block.input})})
+   return {exit_code:run.status,stdout:run.stdout,stderr:run.stderr}
+  })
+  for(const response of responses)console.log(JSON.stringify({type:'system',subtype:'hook_response',hook_name:'PreToolUse:Bash',hook_event:'PreToolUse',...response}))
+  const blocked=responses.find(response=>response.exit_code===2)
+  const denied=blocked!==undefined || responses.some(response=>response.stdout.includes('"deny"'))
+  let content=blocked?blocked.stderr:denied?'Denied by hook':'COCKPIT_GUARD_ORDINARY_'+nonce
+  if(!denied && block.id==='cockpit_forbidden') {
    const host=block.input.command.split('http://')[1].split('/')[0]
    content=await new Promise((resolve,reject)=>require('node:http').get(endpoint+'/guard-receipt',{headers:{host}},response=>{let text='';response.on('data',chunk=>text+=chunk);response.on('end',()=>resolve(text))}).on('error',reject))
   }
@@ -88,10 +90,33 @@ else if (args[0] === 'debug') {
  }
 }
 `
-        for (const name of ['claude', 'codex']) {
-            await writeFile(join(bin, name), script)
-            await chmod(join(bin, name), 0o700)
-        }
+
+async function nativeHarnesses(root: string): Promise<string> {
+    const bin = join(root, 'native-bin')
+    await mkdir(bin)
+    for (const name of ['claude', 'codex']) {
+        await writeFile(join(bin, name), NATIVE_HARNESS)
+        await chmod(join(bin, name), 0o700)
+    }
+    return bin
+}
+
+// A team keeps its own PreToolUse hooks beside cockpit's guard in the same settings file.
+const TEAM_SETTINGS = `${JSON.stringify({ hooks: {
+    PreToolUse: [
+        { matcher: 'Bash', hooks: [{ type: 'command', command: '$CLAUDE_PROJECT_DIR/.claude/hooks/team-bash-guard.sh' }] },
+        { matcher: 'Edit|Write|MultiEdit', hooks: [{ type: 'command', command: '$CLAUDE_PROJECT_DIR/.claude/hooks/team-path-guard.sh' }] },
+    ],
+    PostToolUse: [{ matcher: 'Edit|Write', hooks: [{ type: 'command', command: '$CLAUDE_PROJECT_DIR/.claude/hooks/team-format.sh' }] }],
+} }, null, 2)}\n`
+
+describe('native model input selftest', () => {
+    it('measures source-bound Claude instructions and both skill bodies and paired guard events without claiming skill review acceptance', async () => {
+        const { issuedApplication } = createSelftestFixture(roots)
+        const { root, application } = await issuedApplication()
+        const bin = await nativeHarnesses(root)
+        const ancestorCanary = 'SYNTHETIC_ANCESTOR_MEMORY_MUST_STAY_LOCAL'
+        await writeFile(join(root, 'CLAUDE.local.md'), ancestorCanary)
         const draft = draftSurfaceSelftestSpecifications(application.surfaceSelftest)!
         expect(draft.specifications.find(row => row.harness.target === 'claudecode' && row.capability === 'guard-firing')?.protocol)
             .toBe('claude-guard-loopback/v1')
@@ -163,5 +188,66 @@ else if (args[0] === 'debug') {
             expect(check).not.toThrow()
             expect(check().errors.length).toBeGreaterThan(0)
         }
+    }, 180_000)
+
+    it('breaks only cockpit\'s guard hook in the broken control, keeps the team\'s hooks running in both, and names a team hook that blocks the probe', async () => {
+        const { issuedApplication } = createSelftestFixture(roots)
+        const { root, configPath } = await issuedApplication()
+        await mkdir(join(root, 'cockpit/adopted/.claude'), { recursive: true })
+        await writeFile(join(root, 'cockpit/adopted/.claude/settings.json'), TEAM_SETTINGS)
+        await writeFile(configPath, `${await readFile(configPath, 'utf8')}
+[[surfaces.adopted]]
+path = ".claude/settings.json"
+source = "cockpit/adopted/.claude/settings.json"
+sha256 = "${sha256Hex(TEAM_SETTINGS)}"
+adopted_on = "2026-01-01"
+provenance = { source = ".claude/settings.json", kind = "declared", reason = "Keep the team's own hooks", observed_on = "2026-01-01" }
+`)
+        const synced = await syncGeneratedEnvironment({ configPath })
+        if (synced.kind !== 'complete') throw new Error(JSON.stringify(synced.diagnostics))
+        const application = synced.result.application
+        const hookLog = join(root, 'team-hook.log')
+        const teamHook = join(root, '.claude/hooks/team-bash-guard.sh')
+        await mkdir(dirname(teamHook), { recursive: true })
+        // Shell builtins only: the probe's PATH holds nothing but the tool under test.
+        await writeFile(teamHook, `#!/bin/sh\nread -r payload\nprintf '%s\\n' "$payload" >> '${hookLog}'\n`)
+        await chmod(teamHook, 0o700)
+        const bin = await nativeHarnesses(root)
+        const specifications = draftSurfaceSelftestSpecifications(application.surfaceSelftest)!.specifications
+        const selftest = () => runSurfaceSelftestApplication({ root, application, specifications, env: { PATH: bin, HOME: '/synthetic-owner-home' } },
+            { execute: executeProbe, testOnlyExecutableIdentities: { 'Claude Code': [join(bin, 'claude')], Codex: [join(bin, 'codex')] } })
+
+        const outcome = await selftest()
+        expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: 'complete' })
+        if (outcome.kind !== 'complete') throw new Error('guard measurement beside team hooks failed')
+        expect(outcome.evidence.errors).toEqual([])
+        const guard = outcome.evidence.evidence.find(row => row.capability === 'guard-firing')!
+        expect(guard).toMatchObject({ verdict: 'enforced', protocol: 'claude-guard-loopback/v1' })
+        const candidate = await readFile(join(root, guard.candidatePath), 'utf8')
+        const cockpitHook = JSON.stringify((JSON.parse(candidate).hooks.PreToolUse as { hooks: { command: string }[] }[])
+            .flatMap(group => group.hooks).find(hook => hook.command.includes('.cockpit/guards/bash-guard.sh'))!.command)
+        expect(candidate.split(cockpitHook)).toHaveLength(2)
+        expect(await readFile(join(root, guard.brokenPath), 'utf8')).toBe(candidate.replace(cockpitHook, JSON.stringify(guard.guardProbe!.brokenCommand)))
+        // The team's Bash hook saw both probe commands under each control.
+        expect((await readFile(hookLog, 'utf8')).trim().split('\n')).toHaveLength(4)
+
+        await writeFile(teamHook, '#!/bin/sh\necho "Team policy refuses this command." >&2\nexit 2\n')
+        const blocked = await selftest()
+        expect(blocked).toMatchObject({ kind: 'refusal', code: 'SELFTEST_EXECUTION_INVALID', reason: expect.stringContaining('beside cockpit\'s guard') })
+        if (blocked.kind !== 'refusal') throw new Error('a blocking team hook was not reported')
+        expect(blocked.reason).toContain('$CLAUDE_PROJECT_DIR/.claude/hooks/team-bash-guard.sh')
+        expect(blocked.reason).toContain('Team policy refuses this command.')
+        expect(blocked.reason).not.toContain('team-path-guard.sh')
+        expect(blocked.reason).not.toMatch(/\bremove\b/i)
+    }, 180_000)
+
+    it('names the step that failed instead of refusing without a reason', async () => {
+        const { root, application } = await createSelftestFixture(roots).issuedApplication()
+        const bin = await nativeHarnesses(root)
+        await writeFile(join(bin, 'claude'), NATIVE_HARNESS.replace('0.0.0-synthetic (Claude Code)', 'unversioned build'))
+        const outcome = await runSurfaceSelftestApplication({ root, application, specifications: draftSurfaceSelftestSpecifications(application.surfaceSelftest)!.specifications,
+            env: { PATH: bin, HOME: '/synthetic-owner-home' } }, { execute: executeProbe, testOnlyExecutableIdentities: { 'Claude Code': [join(bin, 'claude')], Codex: [join(bin, 'codex')] } })
+        expect(outcome).toMatchObject({ kind: 'refusal', code: 'SELFTEST_EXECUTION_INVALID',
+            reason: expect.stringMatching(/^probe execution could not establish [a-z-]+ for Claude Code: Claude Code --version printed/) })
     }, 180_000)
 })

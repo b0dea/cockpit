@@ -462,7 +462,9 @@ settings exclude ancestor memory and rules while leaving its generated import av
 listener supplies no tools for loading probes, so no paid model call or assistant claim is needed.
 
 The Claude guard probe runs from the generated cockpit root with an exact copy of its generated
-settings and a broken twin whose guard command does not exist. It grants only a fixed `printf`
+settings and a broken twin whose guard command does not exist. Only cockpit's guard command
+differs: the team's own hooks in that file stay byte for byte and run under both controls, and one
+that refuses a probe command stops the run with its reason and registration. It grants only a fixed `printf`
 command and a bounded `curl` request to a declared vendor hostname, forced to the local listener
 with proxies and curl configuration disabled. It changes no persistent permission or trust file.
 The native hook must deny the candidate request, the ordinary command must succeed, and the broken

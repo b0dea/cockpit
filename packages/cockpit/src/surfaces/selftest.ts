@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util'
 
 import { sha256Hex } from '../sha256.js'
 import { nativeInputInvocation } from '../../libexec/native-selftest-input.mjs'
-import { nativeGuardInvocation } from '../../libexec/native-selftest-guard.mjs'
+import { nativeGuardInvocation, validNativeGuardHookCommand } from '../../libexec/native-selftest-guard.mjs'
 
 import type { GeneratedCustomSurfaceSelftestInput, GeneratedSurfaceSelftestProjection } from '../environment/generated-application/shared.js'
 import { snapshotGeneratedJson } from '../environment/contract.js'
@@ -38,6 +38,7 @@ export interface SelftestExpectation {
     readonly instructionSourceSha256?: string
     readonly nativeSourceSha256?: Readonly<Record<string, string>>
     readonly guardProbeHost?: string
+    readonly guardHookCommand?: string
     readonly cells: readonly SelftestCellKey[]
     readonly shippedSkills: readonly string[]
     readonly reviewHarnesses: readonly [
@@ -190,6 +191,7 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
     if (!captured || captured.schema !== 'cockpit-generated-surface-selftest/v1' || !SHA256.test(captured.manifestSha256)) return undefined
     if (captured.guardProbeHost !== undefined && (typeof captured.guardProbeHost !== 'string' || captured.guardProbeHost.length > 253
         || !/^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(captured.guardProbeHost))) return undefined
+    if (captured.guardHookCommand !== undefined && !validNativeGuardHookCommand(captured.guardHookCommand)) return undefined
     const payload = {
         schema: captured.schema,
         configuredHarnesses: captured.configuredHarnesses,
@@ -197,6 +199,7 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
         entries: captured.entries,
         custom: captured.custom,
         ...(captured.guardProbeHost === undefined ? {} : { guardProbeHost: captured.guardProbeHost }),
+        ...(captured.guardHookCommand === undefined ? {} : { guardHookCommand: captured.guardHookCommand }),
     }
     if (sha256Hex(JSON.stringify(payload)) !== captured.manifestSha256) return undefined
     const ownership = classifySurfaceOwnership({ configuredHarnesses: captured.configuredHarnesses, entries: captured.entries })
@@ -269,6 +272,7 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
             return bytes === undefined ? [] : [[entry.path, sha256Hex(bytes)]]
         })),
         ...(captured.guardProbeHost === undefined ? {} : { guardProbeHost: captured.guardProbeHost }),
+        ...(captured.guardHookCommand === undefined ? {} : { guardHookCommand: captured.guardHookCommand }),
         schema: 'cockpit-harness-selftest-expectation/v1',
         generatedManifestSha256: captured.manifestSha256,
         cells: [...uniqueCells.values()].sort((left, right) => compareCodeUnits(cellKey(left), cellKey(right))),
