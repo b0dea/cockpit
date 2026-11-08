@@ -12,12 +12,12 @@ it('accepts an init preview and its concrete defaults without transcribing eithe
     const defaults = 'b'.repeat(64)
     const status = await runCli(['init', process.cwd(), '--target', 'codexcli', '--interactive'], {
         stdin: stdin as unknown as NodeJS.ReadStream, stdout,
-        stderr: new Writable({ write: (bytes, _encoding, done) => {
+        stderr: Object.assign(new Writable({ write: (bytes, _encoding, done) => {
             const text = String(bytes)
             shown.push(text)
             if (text.includes('[yes/no]') || text.includes('Type the')) setImmediate(() => stdin.write('yes\n'))
             done()
-        } }),
+        } }), { isTTY: true }),
     }, { init: async (input): Promise<InitApplicationOutcome> => {
         requests.push(input)
         const result = { stage: 'surface-previewed' as const, root: input.root, target: input.target,
@@ -51,12 +51,12 @@ it('binds terminal confirmations to the displayed sync policy and removal previe
     const outcome = await runSyncOperatorCommand({ configPath: 'cockpit.toml' },
         { interactive: true, json: false, ci: undefined }, {
             stdin: stdin as unknown as NodeJS.ReadStream,
-            stderr: new Writable({ write: (bytes, _encoding, done) => {
+            stderr: Object.assign(new Writable({ write: (bytes, _encoding, done) => {
                 const text = String(bytes)
                 shown.push(text)
                 if (text.includes('[yes/no]') || text.includes('Type the')) setImmediate(() => stdin.write('yes\n'))
                 done()
-            } }),
+            } }), { isTTY: true }),
         }, async input => {
             if (input.dryRun) return { status: 0, diagnostics: [], result: { dryRun: true, changes: [], staleRemoval } }
             expect(await input.authorizeStaleRemoval?.(staleRemoval)).toEqual({ format: 'cockpit-stale-removal-approval/v1', digest: staleRemoval.digest })
@@ -69,5 +69,23 @@ it('binds terminal confirmations to the displayed sync policy and removal previe
     expect(shown.join('')).toContain('autonomy.sync: person -> agent')
     expect(shown.join('')).toContain('old-guide.md')
     expect(shown.join('')).toContain(staleRemoval.digest)
+    stdin.destroy()
+})
+
+it('refuses a yes when the preview it approves is not shown on a terminal', async () => {
+    const { runSyncOperatorCommand } = await import('./generated-environment/command.js')
+    const { effectivePolicy } = await import('./autonomy.js')
+    const { Autonomy, Work } = await import('./schema.js')
+    const stdin = Object.assign(new PassThrough(), { isTTY: true })
+    // stdin is a terminal but stderr, where the preview goes, is redirected away from the person.
+    const stderr = new Writable({ write: (_bytes, _encoding, done) => { setImmediate(() => stdin.write('yes\n')); done() } })
+    let applied = false
+    const outcome = await runSyncOperatorCommand({ configPath: 'cockpit.toml' },
+        { interactive: true, json: false, ci: undefined }, { stdin: stdin as unknown as NodeJS.ReadStream, stderr },
+        async () => { applied = true; return { status: 0, diagnostics: [], result: null } },
+        async () => ({ current: effectivePolicy({ work: Work.parse({}), autonomy: Autonomy.parse({ sync: 'agent' }) }),
+            recorded: effectivePolicy({ work: Work.parse({}), autonomy: Autonomy.parse({ sync: 'person' }) }), record: async () => {} }))
+    expect(applied).toBe(false)
+    expect(outcome.status).not.toBe(0)
     stdin.destroy()
 })

@@ -15,7 +15,7 @@ import { formatShellCommand } from '../fix-catalogue.js'
 import { EXACT_DEV_INSTALL } from '../init/derive.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { installedPackageMetadata } from '../package-metadata.js'
-import { ENVIRONMENT_CODES, errorCause, hasErrorCode, type ExecutionStep } from './contract.js'
+import { ENVIRONMENT_CODES, errorCause, hasErrorCode, tryParseJson, type ExecutionStep } from './contract.js'
 import { resolveExecutable, type ResolvedExecutable } from './executable.js'
 
 export interface UpgradeInput {
@@ -99,6 +99,20 @@ function upgradeNotes(changelog: string, from: string, to: string): string[] {
     return notes
 }
 
+/**
+ * The one version `npm view <name> version --json` answered. A wrapper around npm may print notices on
+ * the same stream, so each line is tried; a one-element list is the same answer. Anything else, such
+ * as several versions, is no answer.
+ */
+function publishedVersion(stdout: string): string | undefined {
+    const versions = stdout.split('\n').flatMap(line => {
+        const parsed = tryParseJson(line.trim())
+        const value = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : parsed
+        return typeof value === 'string' && VERSION.test(value) ? [value] : []
+    })
+    return versions.length === 1 ? versions[0] : undefined
+}
+
 export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDependencies): Promise<UpgradeOutcome> {
     const { name, version: installed } = installedPackageMetadata
     const configPath = resolve(input.configPath)
@@ -122,20 +136,22 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
             message: `npm is needed to look up the latest ${name} and is not on PATH: ${npm.reason}`, fix: 'check the network, the registry login and that npm is on PATH, or name the version: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version>' })
         const lookup = step(npm.value, root, input.env, 'upgrade:latest', ['view', name, 'version', '--json'], LOOKUP_TIMEOUT_MS)
         const outcome = authenticatedExecutionOutcome(await dependencies.execute(lookup), lookup)
-        let published: unknown
-        try { published = outcome?.kind === 'complete' ? JSON.parse(outcome.stdout.toString('utf8')) : undefined }
-        catch { published = undefined } // reported below as an answer that is not a version
-        if (typeof published !== 'string' || !VERSION.test(published)) return refused({ severity: 'error' as const, code: 'UPGRADE_REGISTRY_UNREACHABLE' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_REGISTRY_UNREACHABLE,
-            message: `the registry did not give the latest ${name} version (${outcome?.kind === 'complete' ? 'the answer was not a version' : outcome ? `${outcome.code}: ${outcome.stderr.toString('utf8').trim().split('\n').slice(0, 2).join(' | ').slice(0, 256)}` : 'the lookup could not be authenticated'})`,
+        const answer = outcome?.kind === 'complete' ? outcome.stdout.toString('utf8') : ''
+        const published = outcome?.kind === 'complete' ? publishedVersion(answer) : undefined
+        if (published === undefined) return refused({ severity: 'error' as const, code: 'UPGRADE_REGISTRY_UNREACHABLE' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_REGISTRY_UNREACHABLE,
+            message: `the registry did not give the latest ${name} version (${outcome?.kind === 'complete' ? `the answer was not one version: ${answer.trim().split('\n').slice(0, 3).join(' | ').slice(0, 256)}` : outcome ? `${outcome.code}: ${outcome.stderr.toString('utf8').trim().split('\n').slice(0, 2).join(' | ').slice(0, 256)}` : 'the lookup could not be authenticated'})`,
             fix: 'check the network, the registry login and that npm is on PATH, or name the version: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version>' })
         target = published
     } else if (!VERSION.test(target)) return refused({ severity: 'error' as const, code: 'UPGRADE_VERSION_INVALID' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_VERSION_INVALID, target: '<version>',
         message: `"${target}" is not an exact version`, fix: 'give a full version such as 1.2.3, not a range or tag' })
 
     const order = compareVersions(target, installed)
-    if (order === 0 || order < 0 && input.version === undefined) return refused({ severity: 'error' as const, code: 'UPGRADE_ALREADY_CURRENT' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_ALREADY_CURRENT,
-        message: `already on ${installed}${order === 0 ? '' : `; the latest published is ${target}`}`,
-        fix: 'nothing to upgrade; to move to another version name it: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version>' })
+    // Already at the requested or latest version is a finished upgrade, not a failure: it runs nothing
+    // and exits 0, so an agent asked to upgrade does not treat a current install as broken.
+    if (order === 0 || order < 0 && input.version === undefined) return { status: 0, result: { from: installed, to: installed, packageManager: lockfile.manager, dryRun: input.dryRun },
+        diagnostics: [{ severity: 'info' as const, code: 'UPGRADE_ALREADY_CURRENT' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_ALREADY_CURRENT,
+            message: `already on ${installed}${order === 0 ? '' : `; the latest published is ${target}`}`,
+            fix: 'nothing to upgrade; to move to another version name it: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version>' }] }
 
     const spec = `${name}@${target}`
     const installArgv = [lockfile.manager, lockfile.verb, ...lockfile.flags, spec]

@@ -1183,9 +1183,8 @@ async function decodeRequest(
         const draftPath = values['write-probe-specifications']
         if (draftPath !== undefined) {
             if (draftPath.length === 0) return usageOutcome('CLI_USAGE_INVALID', '--write-probe-specifications requires a non-empty path', '--write-probe-specifications')
-            // Writing the file runs nothing, and --json would print the envelope without creating it.
-            const conflict = values.interactive ? '--interactive' : values.json ? '--json' : undefined
-            if (conflict) return usageOutcome('CLI_USAGE_INVALID', `--write-probe-specifications only writes the file; drop ${conflict}`, conflict)
+            // Writing the file runs nothing, so there is nothing to approve interactively.
+            if (values.interactive) return usageOutcome('CLI_USAGE_INVALID', '--write-probe-specifications only writes the file; drop --interactive', '--interactive')
             const previous = values['probe-specifications']
             if (previous !== undefined && previous.length === 0) {
                 return usageOutcome('CLI_USAGE_INVALID', '--probe-specifications requires a non-empty path', '--probe-specifications')
@@ -1511,8 +1510,13 @@ async function dispatchHandler(
     if (request.handler === 'confirm') return handlers.confirm?.(request.input) ?? unavailable()
     if (request.handler === 'selftest') {
         const selftest = handlers.selftest ?? (async () => unavailable())
-        return 'writeProbeSpecificationsPath' in request.input ? selftest(request.input)
-            : runSelftestOperatorCommand(request.input, options, io, selftest)
+        // --json skips the generic artifact write, but this command exists to write its file: write it
+        // here so the envelope reports a file that exists.
+        if ('writeProbeSpecificationsPath' in request.input) {
+            const drafted = await selftest(request.input)
+            return options.json ? executeOutcome(drafted) : drafted
+        }
+        return runSelftestOperatorCommand(request.input, options, io, selftest)
     }
     if (request.handler === 'upgrade') return handlers.upgrade?.(request.input) ?? unavailable()
     if (request.handler === 'up') return handlers.up?.(request.input) ?? unavailable()

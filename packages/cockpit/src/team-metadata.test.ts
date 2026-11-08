@@ -378,6 +378,11 @@ purpose = "Synthetic local repository"
         expect(await initializeTeamMetadata(configPath)).toMatchObject({ kind: 'complete' })
         expect(await readFile(join(root, 'package.json'), 'utf8')).toBe(manifest)
         expect(await validateTeamMetadata(configPath)).toMatchObject({ kind: 'complete' })
+        // pnpm 11 and later, with a packageManager field, write the package manager's own lock as a
+        // first YAML document and the project's lock as a second.
+        const managerDocument = `---\nlockfileVersion: '9.0'\nimporters:\n  .:\n    packageManagerDependencies:\n      pnpm:\n        specifier: 12.5.1\n        version: 12.5.1\n`
+        await writeFile(join(root, 'pnpm-lock.yaml'), `${managerDocument}\n---\n${lock(spec)}`)
+        expect(await validateTeamMetadata(configPath)).toMatchObject({ kind: 'complete' })
 
         await writeFile(join(root, 'pnpm-lock.yaml'), lock('file:/synthetic/archives/another.tgz'))
         expect(await validateTeamMetadata(configPath)).toMatchObject({ kind: 'refusal', code: 'COCKPIT_VERSION_MISMATCH',

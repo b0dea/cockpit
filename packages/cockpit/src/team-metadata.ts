@@ -3,7 +3,7 @@ import { constants } from 'node:fs'
 import { lstat, open, realpath, rename, unlink } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { parse as parseYaml } from 'yaml'
+import { parseAllDocuments } from 'yaml'
 import { loadCockpitConfig, readBoundedInput } from './config/load.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, isMissing, parseJsonText, RefusalError, tryParseJson, type EnvironmentDiagnostic } from './environment/contract.js'
 import type { CockpitConfig } from './schema.js'
@@ -253,9 +253,19 @@ async function verifiedLocalPin(authority: RootAuthority, packageBytes: string |
 async function pnpmLockResolves(authority: RootAuthority, spec: string): Promise<boolean> {
     const lockFile = await readOptional(authority, join(authority.root, 'pnpm-lock.yaml'))
     if (!lockFile) return false
-    let lock: unknown
+    // pnpm 11 and later write the package manager's own lock as a first YAML document when package.json
+    // names a packageManager, and the project's lock as the next; the pin is in whichever names it.
     // An unparseable lockfile verifies no pin; the caller then refuses the file: pin as unresolved.
-    try { lock = parseYaml(lockFile.bytes) } catch { return false }
+    let documents: unknown[]
+    try {
+        const parsed = parseAllDocuments(lockFile.bytes)
+        if (!Array.isArray(parsed) || parsed.some(document => document.errors.length > 0)) return false
+        documents = parsed.map(document => document.toJS() as unknown)
+    } catch { return false }
+    return documents.some(lock => pnpmImporterResolves(lock, spec))
+}
+
+function pnpmImporterResolves(lock: unknown, spec: string): boolean {
     const importers = object(lock) && object(lock.importers) ? lock.importers : undefined
     const root = importers && object(importers['.']) ? importers['.'] : undefined
     const dependency = root && object(root.devDependencies) ? root.devDependencies[PACKAGE] : undefined

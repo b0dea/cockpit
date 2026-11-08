@@ -385,8 +385,8 @@ and waits for a person.
    where `[autonomy] sync = "agent"`; after `tool remove`, the person runs it in a terminal. An added
    tool's files are written from the same sources as the others, and a removed tool's files are
    deleted as `[autonomy] stale_delete` allows. When sync refuses with
-   `GENERATED_STALE_APPROVAL_REQUIRED`, they rerun it with `--interactive` and type the
-   stale-removal digest it shows. Done when
+   `GENERATED_STALE_APPROVAL_REQUIRED`, they rerun it with `--interactive` in a terminal and
+   confirm the stale-file removals it shows with `yes`. Done when
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml --json` exits 0.
 
 ## Add or remove a repository

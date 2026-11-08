@@ -24,7 +24,7 @@ describe('selftest terminal review', () => {
         await runSelftestOperatorCommand({ configPath: 'cockpit.toml', probeSpecificationsPath: 'probe.json', env: {} },
             { interactive: true, json: false, ci: undefined }, {
                 stdin: stdin as unknown as NodeJS.ReadStream,
-                stderr: new Writable({ write: (bytes, _encoding, done) => {
+                stderr: Object.assign(new Writable({ write: (bytes, _encoding, done) => {
                     const chunk = String(bytes)
                     shown.push(chunk)
                     if (chunk.includes('[yes/no]')) {
@@ -35,7 +35,7 @@ describe('selftest terminal review', () => {
                         setImmediate(() => stdin.write(`${answer}\n`))
                     }
                     done()
-                } }),
+                } }), { isTTY: true }),
             }, async request => {
                 approvals.push(await request.requestProbeSpecificationsApproval!(artifact))
                 if (answer !== 'eof') approvals.push(await request.requestExecutableApproval!(executable))

@@ -247,7 +247,7 @@ describe('closed ordinary invocation metadata', () => {
 
     // The install is exact and its sync child decides as sync does, so an agent with the sync grant may run the real upgrade.
     it('admits the real upgrade, with or without one exact version', () => {
-        for (const extra of [[], ['1.2.3'], ['--dry-run'], ['1.2.3', '--dry-run']]) {
+        for (const extra of [[], ['1.2.3'], ['--dry-run'], ['1.2.3', '--dry-run'], ['--dry-run', '--json']]) {
             expect(ordinary(['upgrade', ...extra, '--config', authority.configPath]), extra.join(' ')).toBeDefined()
         }
     })
@@ -987,6 +987,15 @@ describe('generated environment process contract', () => {
         expect(calls).toBe(2)
     })
 
+    // Agents are told to pass --json to every command but session.
+    it('prints an upgrade outcome as JSON', async () => {
+        const json = captureIo()
+        expect(await runCli(['upgrade', '--config', 'cockpit.toml', '--dry-run', '--json'], json.io, {
+            upgrade: async () => ({ status: 0, diagnostics: [], result: { dryRun: true } }),
+        })).toBe(0)
+        expect(JSON.parse(json.output().stdout)).toMatchObject({ result: { dryRun: true } })
+    })
+
     it('requires a measured selftest artifact', async () => {
         const selftestCalls: unknown[] = []
         const selftest = captureIo()
@@ -1007,7 +1016,17 @@ describe('generated environment process contract', () => {
                 return { status: 0, diagnostics: [], result: null }
             },
         })).toBe(0)
-        for (const conflict of [['--interactive'], ['--json'], ['--probe-specifications=']]) {
+        // Agents add --json to every command; writing the file still happens and the envelope names it.
+        const draftDirectory = mkdtempSync(join(tmpdir(), 'cockpit-probe-draft-json-'))
+        const draft = join(draftDirectory, 'probe.json')
+        const json = captureIo()
+        expect(await runCli(['selftest', '--config', 'cockpit.toml', '--write-probe-specifications', draft, '--json'], json.io, {
+            selftest: async () => ({ status: 0, diagnostics: [], artifact: '{"schema":"synthetic"}\n', destination: draft, result: { probeSpecifications: draft } }),
+        })).toBe(0)
+        expect(readFileSync(draft, 'utf8')).toBe('{"schema":"synthetic"}\n')
+        expect(JSON.parse(json.output().stdout)).toMatchObject({ result: { probeSpecifications: draft } })
+        rmSync(draftDirectory, { recursive: true, force: true })
+        for (const conflict of [['--interactive'], ['--probe-specifications=']]) {
             expect(await runCli(['selftest', '--config', 'cockpit.toml', '--write-probe-specifications', 'probe.json', ...conflict],
                 captureIo().io, { selftest: async (input) => { selftestCalls.push(input); return { status: 0, diagnostics: [], result: null } } }),
             conflict.join(' ')).toBe(2)
@@ -1852,7 +1871,7 @@ describe('generated sync operator admission', () => {
         }
         const stdin = Readable.from(['yes\n']) as NodeJS.ReadStream
         Object.defineProperty(stdin, 'isTTY', { value: true })
-        const stderr = new PassThrough()
+        const stderr = Object.assign(new PassThrough(), { isTTY: true })
         let shown = ''
         stderr.on('data', chunk => { shown += chunk.toString() })
 

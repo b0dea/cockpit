@@ -58,7 +58,7 @@ npm install --save-dev --save-exact @b00dea/cockpit
 
 ```sh
 npx --no cockpit init                          # previews what it would write; writes nothing yet
-npx --no cockpit init --interactive            # type the preview digest, answer each question
+npx --no cockpit init --interactive            # confirm the preview with yes, answer each question
 npx --no cockpit sync --config cockpit.toml    # rerun after every edit of cockpit.toml
 npx --no cockpit check --config cockpit.toml   # fail on drift; run it in CI too
 ```

@@ -354,7 +354,7 @@ const sources = [
         // exactly where [autonomy] sync lets it sync; the version is the one positional.
         ordinary: ordinary('upgrade', {
             positional: Object.freeze({ min: 0, max: 1, roles: Object.freeze(['version'] as const) }), requires: 'autonomy-sync' }),
-        flags: { config: configFlag, 'dry-run': bool(flag) },
+        flags: { config: configFlag, 'dry-run': bool(flag), json: jsonFlag },
     },
     {
         name: 'sync',

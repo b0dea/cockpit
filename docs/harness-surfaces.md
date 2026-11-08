@@ -88,7 +88,7 @@ verified either tool loads those files, and neither gets a guard hook.
 one of them. A tool left out gets no files, and doctor and check give no advice about it.
 `./node_modules/@b00dea/cockpit/bin/cockpit.mjs tool add <tool> --config <your cockpit.toml>` and `tool remove` edit only that
 line (`--dry-run` previews). A removed tool's files are deleted only after a person approves the
-stale-removal digest with `sync --interactive`.
+stale-file removals with `yes` in `sync --interactive`.
 
 ### Trust the Codex hook
 
