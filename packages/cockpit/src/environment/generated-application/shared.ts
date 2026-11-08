@@ -26,7 +26,7 @@ import {
 } from '../../surfaces/ownership.js'
 import type { DirectoryGrant, GuideObservation, GuideObservationRequest, StandingCost } from '../../surfaces/projection.js'
 import type { NativeFragmentSet, SurfaceInputEvidence } from '../../surfaces/render.js'
-import type { GuardHandlerIdentity } from '../../guards/local-identity.js'
+import { encodeGuardLocalIdentity, GUARD_LOCAL_PATHS, type GuardHandlerIdentity } from '../../guards/local-identity.js'
 import type { InspectedBootstrapOutputs, SkillStandingCost } from '../../surfaces/skill-contract.js'
 import type {
     AnchoredBatchReadResult,
@@ -414,6 +414,7 @@ export interface GeneratedSurfaceSelftestProjection {
     readonly entries: readonly SurfaceDesiredEntry[]
     readonly custom: readonly GeneratedCustomSurfaceSelftestInput[]
     readonly manifestSha256: string
+    readonly guardProbeHost?: string
 }
 
 export interface GeneratedSurfaceHealthEvidence {
@@ -493,6 +494,7 @@ interface GeneratedApplicationRecord {
     readonly root: string
     readonly stackId: ReturnType<typeof stackId>
     readonly currentPublication: true | false
+    readonly guardRuntime?: readonly Readonly<{ path: string; sha256: string; maxBytes: number }>[]
     readonly siblingRoots: AuthenticatedSiblingRoots
     readonly node: ResolvedExecutable
     readonly workApplication?: WorkApplicationAuthorityRecord
@@ -634,6 +636,16 @@ export function complete(
         root: prepared.root, stackId: prepared.stackId, currentPublication: !dryRun,
         siblingRoots: prepared.siblingRoots,
         node: prepared.node, surfaceSelftest: prepared.surfaceSelftest, surfaceHealth: prepared.surfaceHealth,
+        ...(prepared.guardHandler ? { guardRuntime: Object.freeze([
+            { path: join(prepared.root, GUARD_LOCAL_PATHS.identity), sha256: sha256(encodeGuardLocalIdentity(prepared.guardHandler)), maxBytes: 65_536 },
+            { path: join(prepared.root, GUARD_LOCAL_PATHS.generatedConfig), sha256: prepared.sourceSha256, maxBytes: MAX_GENERATED_BYTES },
+            { path: prepared.configPath, sha256: prepared.sourceSha256, maxBytes: MAX_GENERATED_BYTES },
+            { path: prepared.guardHandler.node, sha256: prepared.guardHandler.nodeSha256, maxBytes: 536_870_912 },
+            { path: prepared.guardHandler.module, sha256: prepared.guardHandler.moduleSha256, maxBytes: MAX_GENERATED_BYTES },
+            ...prepared.surfaceSelftest.entries.flatMap(entry => entry.path === '.cockpit/guards/bash-guard.sh' && entry.kind === 'file'
+                ? [{ path: join(prepared.root, entry.path), sha256: entry.sha256, maxBytes: MAX_SURFACE_FILE_BYTES }] : []),
+        ].map(row => Object.freeze(row))) } : {}),
+
         ...(!dryRun && prepared.workApplication ? { workApplication: prepared.workApplication } : {}),
     }))
     return {

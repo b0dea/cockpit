@@ -351,10 +351,11 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             expect(application).toBe(synced.result.application)
             expect(generatedApplicationProjection({ ...application })).toBeUndefined()
             const projection = application!.surfaceSelftest
-            const { schema, configuredHarnesses, declarations, entries, custom } = projection
+            const { schema, configuredHarnesses, declarations, entries, custom, guardProbeHost } = projection
             expect(projection.manifestSha256).toBe(createHash('sha256').update(JSON.stringify({
-                schema, configuredHarnesses, declarations, entries, custom,
+                schema, configuredHarnesses, declarations, entries, custom, guardProbeHost,
             })).digest('hex'))
+            expect(guardProbeHost).toBe('api.vendor.example.test')
             expect(configuredHarnesses).toEqual([...DEFAULT_SURFACE_TOOLS, 'synthetic-harness'].sort())
             expect(declarations).toHaveLength(1)
             expect(declarations[0]?.capabilities).toHaveLength(6)

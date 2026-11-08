@@ -112,8 +112,12 @@ else process.stdout.write(JSON.stringify([
         const terminal = renderHumanDiagnostics([], { command: 'selftest', outcome })
         expect(terminal).toMatch(/^Selftest incomplete: 1 measured, 26 pending, /)
         expect(terminal).not.toContain('candidateControl')
-        expect(outcome.diagnostics.filter(row => row.message.includes('Maintainer:'))).toHaveLength(1)
-        expect(outcome.diagnostics).toHaveLength(1)
+        // Cells whose native protocol exists but whose tool is absent here are the operator's to fix;
+        // cells with no protocol yet are the maintainer's. Each group is one diagnostic.
+        expect(outcome.diagnostics.map(row => [row.code, row.message])).toEqual([
+            ['EVIDENCE_UNAVAILABLE', expect.stringMatching(/^9 pending cell\(s\)\. Operator: install or locate the named tool/)],
+            ['EVIDENCE_UNAVAILABLE', expect.stringMatching(/^17 pending cell\(s\)\. Maintainer: implement and measure the missing native protocol/)],
+        ])
         const reportPath = (outcome.result as { reportPath: string }).reportPath
         expect(JSON.parse(await readFile(reportPath, 'utf8'))).toEqual({ result: outcome.result, diagnostics: outcome.diagnostics })
         expect((await stat(reportPath)).mode & 0o777).toBe(0o600)

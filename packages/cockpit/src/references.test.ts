@@ -339,10 +339,10 @@ describe('reference pages', () => {
         expect(section('Measurements')).toMatch(/^- Codex, guard firing \(\d{4}-\d{2}-\d{2}, version [^)]+\): only after a person trusts the hook: [^\n]+\.$/m)
         expect(section('Measurements')).toMatch(/^- Codex, MCP tool restrictions \(\d{4}-\d{2}-\d{2}, version [^)]+\): [^\n]+No hook trust was granted\.$/m)
         expect(section('Measurements')).not.toMatch(/Cursor|Grok Build/)
-        expect(matrix).toContain('or the tool loading its body: `cockpit-setup`, `cockpit-explain`, `cockpit-fix` and `cockpit-work`.')
+        expect(matrix).toContain('neither proves trigger selection or correct behavior: `cockpit-setup`, `cockpit-explain`, `cockpit-fix` and `cockpit-work`.')
         expect(matrix).not.toContain('))}')
-        // Listing is what those runs measured, and each line must keep saying what the tool did with its broken twins.
-        expect(section('Measurements')).toContain('- Codex, skills (2026-11-06, version 0.166.0): codex exec listed all four generated skills, trusted or not, and named and left out twins')
+        // Body loading and skill selection are different claims; keep the broken twin in the provenance.
+        expect(section('Measurements')).toContain('- Codex, skills (2026-11-08, version 0.167.0): listing (2026-11-06, 0.166.0): codex exec listed all four generated skills, trusted or not, and named and left out twins with missing front-matter and invalid YAML. Body loading (2026-11-08): codex exec with explicit dollar-name invocation sent the exact generated SKILL.md inside its native skill wrapper to an isolated loopback model; a same-name twin without front-matter was named in native stderr and its body was absent from the request. Neither shows trigger selection or skill behavior.')
         // A date reads as a run of the tool, so cells nobody ran carry none.
         expect(section('Without a measurement')).not.toMatch(/\d{4}-\d{2}-\d{2}/)
         expect(section('Without a measurement')).toContain('- Guard firing in Cursor and Grok Build: no guard adapter is checked in, so cockpit generates no guard hook.\n')
