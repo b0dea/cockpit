@@ -395,8 +395,10 @@ spelling counts only where the guard proves it starts its own installed package:
 Where npx cannot be proven, every npx spelling prompts, and Codex and OpenCode refuse it, while the
 path spelling still counts from the cockpit root. pnpm writes `node_modules/.bin/cockpit` as a shell
 shim neither can follow, so there the provable spelling is
-`./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml`. `doctor` reports this
-as `COCKPIT_LAUNCHER_UNPROVEN` and names which spelling it can prove. Generated skills and the
+`./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml`. Everything cockpit
+prints, the `cockpit:*` package scripts included, uses that spelling, so `doctor` reports
+`COCKPIT_LAUNCHER_UNPROVEN` only where a person can make npx provable, as by removing a root `.npmrc`,
+or where no spelling is provable. Generated skills and the
 launcher refusal recommend the direct package entrypoint; replacing it with another executable
 still requires approval. The guard does not check which
 `npx` the search path finds: it assumes that program behaves as npm's own, as the version-manager

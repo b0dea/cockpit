@@ -127,7 +127,9 @@ commands; see [Safety and autonomy](safety-and-autonomy.md).
 ### Read a cockpit result
 
 - Pass `--json` to every command except `session`. Each prints one JSON document with `result`,
-  `diagnostics` (each with a `severity` and a `code`) and `invocation.exitCode`.
+  `diagnostics` (each with a `severity` and a `code`) and `invocation.exitCode`. What to do about a
+  diagnostic is in `guidance`, the entry with the same `code` and `target`; a diagnostic carries
+  `fix` itself only when that fix is a cockpit command safe to run as printed.
 - A refusal exits nonzero and names its diagnostic; look the code up in
   [Troubleshooting](troubleshooting.md). Take flags from `cockpit <command> --help` or the
   [CLI reference](cli-reference.md), not from memory.
@@ -184,9 +186,11 @@ failed observation is refused with `CONFIRM_OBSERVATION_FAILED` beside the diagn
 it.
 
 Every other answer is refused with `CONFIRM_PERSON_REQUIRED`. A person confirms the value with
-whoever owns the product, corrects it if it is wrong, deletes its `unconfirmed` entry and runs
-`cockpit sync` in a terminal outside the agent, with `--interactive` when the confirmed value is
-weaker than the default held meanwhile, such as `work.grading = "off"`.
+whoever owns the product, corrects it if it is wrong, deletes its `unconfirmed` entry and its
+`# Unconfirmed` comment, and runs `cockpit sync --interactive` in a terminal outside the agent. That
+asks them to accept a confirmed value weaker than the policy the last sync recorded, such as
+`work.grading = "off"`, and then lists the files it wrote, `.cockpit/policy.json` among them the
+first time, for the person to commit.
 
 A field whose `interview.outstanding` entry says `confirmedBy = "agent"` can instead be marked
 `"derived"`, with or without a value: `init` answers it with the value it read, refuses

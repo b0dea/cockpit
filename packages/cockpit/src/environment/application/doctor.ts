@@ -328,8 +328,12 @@ export async function runDoctor(
     const loaded = await config
     if (loaded.kind === 'complete') {
         const state = declaresNothingToRun(loaded.result.config.environment) ? 'surfaces-only' as const : 'runtime' as const
-        return { ...reported, result: { ...reported.result,
-            readiness: readinessReport(state, reported.diagnostics, loaded.result.config.surfaces.tools) } }
+        // Runtime commands refuse a cockpit with no runtime, so there it is their error. For doctor,
+        // which only reports, it is the choice this cockpit made, information as init reports it.
+        const diagnostics = state === 'runtime' ? reported.diagnostics : reported.diagnostics.map(row =>
+            row.code === ENVIRONMENT_CODES.ENVIRONMENT_NOT_DECLARED ? { ...row, severity: 'info' as const } : row)
+        return { ...reported, diagnostics, result: { ...reported.result,
+            readiness: readinessReport(state, diagnostics, loaded.result.config.surfaces.tools) } }
     }
     const forwarded = new Set(reported.diagnostics.map(({ code, target }) => `${code}\0${target}`))
     return {

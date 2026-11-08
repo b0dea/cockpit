@@ -193,7 +193,7 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
             { operation: 'write', path: '.gitignore' },
         ]))
         expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))).toMatchObject({
-            scripts: { 'cockpit:sync': 'cockpit sync --config cockpit.toml' },
+            scripts: { 'cockpit:sync': './node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml' },
             devDependencies: { [actual.name]: actual.version },
         })
         expect(readFileSync(join(root, '.gitignore'), 'utf8')).toContain('# cockpit:ignore:start')
@@ -738,7 +738,7 @@ it('keeps a verified local-archive pin through installed init, check and npm ci'
 
     expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))).toMatchObject({
         name: 'synthetic-cockpit-root', private: true,
-        scripts: { lint: 'node --check synthetic.mjs', 'cockpit:setup': 'cockpit setup --config cockpit.toml' },
+        scripts: { lint: 'node --check synthetic.mjs', 'cockpit:setup': './node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config cockpit.toml' },
         synthetic: { retained: true }, devDependencies: { '@b00dea/cockpit': installedPin },
     })
     expect(readFileSync(join(root, 'package-lock.json'), 'utf8')).toBe(installedLock)
@@ -1077,9 +1077,9 @@ it.each(['dedicated', 'in-repo'] as const)('finishes installed init for a produc
         ...productManifest,
         scripts: {
             ...productManifest.scripts,
-            'cockpit:setup': 'cockpit setup --config cockpit.toml',
-            'cockpit:sync': 'cockpit sync --config cockpit.toml',
-            'cockpit:check': 'cockpit check --config cockpit.toml',
+            'cockpit:setup': './node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config cockpit.toml',
+            'cockpit:sync': './node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml',
+            'cockpit:check': './node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml',
         },
         devDependencies: { '@b00dea/cockpit': cockpitPackageVersion },
     })

@@ -51,7 +51,7 @@ describe('confirm', () => {
         const guards = await runConfirm({ configPath, answer: 'guards' }, observing)
         expect(guards).toMatchObject({ status: 2, diagnostics: [{ severity: 'error', code: 'CONFIRM_PERSON_REQUIRED', target: 'guards',
             message: expect.stringContaining('it is a trust decision'),
-            fix: `a person confirms guards with whoever owns the product, corrects cockpit.toml if a value is wrong, deletes its entry from unconfirmed, then runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${configPath} in a terminal outside the agent` }] })
+            fix: `a person confirms guards with whoever owns the product, corrects cockpit.toml if a value is wrong, deletes its entry from unconfirmed and its # Unconfirmed comment, then runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${configPath} --interactive in a terminal outside the agent` }] })
         // No observation settles a name, so it is a person's too, with the reason said.
         expect((await runConfirm({ configPath, answer: 'cockpit.name' }, observing)).diagnostics).toEqual([expect.objectContaining({
             code: 'CONFIRM_PERSON_REQUIRED', message: expect.stringContaining('no observation shows it is the one the owner wants') })])

@@ -735,7 +735,9 @@ schema's text verbatim, including every resolver expression and comment (in huma
 character is shown escaped). A schema must hold no secret values: the guard treats this name as
 documentation and Git already reaches a committed copy. `--path` is the `reference` `env keys`
 prints: `<slug>:<relative directory>/.env.schema` in a sibling, or `.env.schema` in the cockpit
-root. It refuses with `ENV_SCHEMA_READ_REFUSED` any other file name (matched exactly, including
+root. The directory alone names the same file (`api:services/web`, `api:` for the sibling's root,
+`.` for the cockpit root), for agent tools whose secret guard refuses any command containing `.env`.
+It refuses with `ENV_SCHEMA_READ_REFUSED` any other file name (matched exactly, including
 case), a symbolic or hard link, a non-regular file, a directory the probe does not discover and an
 oversized file.
 

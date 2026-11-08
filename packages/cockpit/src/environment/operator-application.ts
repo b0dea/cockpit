@@ -1,4 +1,5 @@
-import { decide, policyWeakening, policyWeakeningDiagnostic, weakeningDigest, writeRecordedPolicy, type EffectivePolicy, type PolicyWeakening } from '../autonomy.js'
+import { isDeepStrictEqual } from 'node:util'
+import { decide, policyWeakening, policyWeakeningDiagnostic, POLICY_RECORD_PATH, weakeningDigest, writeRecordedPolicy, type EffectivePolicy, type PolicyWeakening } from '../autonomy.js'
 import { loadAutonomyPolicy } from '../config/load.js'
 import type { Decider } from '../schema.js'
 import { ENVIRONMENT_CODES, type Diagnostic } from './contract.js'
@@ -277,6 +278,11 @@ export async function runSyncOperatorApplication(
             })
         }
     }
-    if (outcome.status === 0) await policy.record()
-    return outcome
+    if (outcome.status !== 0) return outcome
+    await policy.record()
+    // The record is a committed file like the generated ones; left out of the change list, the first
+    // sync after init created it unannounced and the person found an untracked file after committing.
+    const result = outcome.result as { changes?: unknown } | null
+    return policy.recorded && isDeepStrictEqual(policy.recorded, policy.current) || !Array.isArray(result?.changes) ? outcome
+        : { ...outcome, result: { ...result, changes: [...result.changes, { operation: 'write', path: POLICY_RECORD_PATH }] } }
 }

@@ -12,7 +12,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { createInterface } from 'node:readline/promises'
 import { parseArgs, types as utilTypes } from 'node:util'
 import { createInvocationRecord, EXIT_CODES } from './invocation.js'
-import { commandGroups, commandSpelling, commandStages, commands, describePublicOption, internalCommands, isWorkHandler, isRecordedAnswerField, resolveOrdinaryInvocation, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
+import { commandGroups, commandSpelling, commandStages, commands, describePublicOption, internalCommands, isWorkHandler, isRecordedAnswerField, resolveOrdinaryInvocation, schemaFileReference, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
 import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS, isGuardSurfaceTarget } from './surfaces/harness-registry.js'
 import { cockpitCommand, initCommand, type FixContext } from './fix-catalogue.js'
@@ -1263,8 +1263,10 @@ async function decodeRequest(
     if (handler === 'env-schema') {
         const values = parsed.values as { config?: string; path?: string; 'replace-from'?: string }
         if (!values.config) return missingConfig()
-        if (!values.path) return usageOutcome('CLI_USAGE_INVALID', 'provide --path <slug>:<relative directory>/.env.schema, or --path .env.schema for the cockpit root', '--path')
-        return namedOnly(handler, parsed.positionals) ?? { handler, input: { configPath: values.config, reference: values.path, ...values['replace-from'] === undefined ? {} : { replaceFrom: values['replace-from'] } } }
+        if (!values.path) return usageOutcome('CLI_USAGE_INVALID', 'provide --path <slug>:<relative directory> for a sibling\'s schema, or --path . for the cockpit root\'s; the file name .env.schema may be appended', '--path')
+        // A reference that names no schema passes through as written, and env schema refuses it by name.
+        const reference = schemaFileReference(values.path) ?? values.path
+        return namedOnly(handler, parsed.positionals) ?? { handler, input: { configPath: values.config, reference, ...values['replace-from'] === undefined ? {} : { replaceFrom: values['replace-from'] } } }
     }
 
     if (handler === 'logs') {

@@ -16,11 +16,23 @@ import { EXACT_DEV_INSTALL, NODE_EXEC, nodeLockfile } from './init/derive.js'
 const PACKAGE = installedPackageMetadata.name
 const VERSION = installedPackageMetadata.version
 const INSTALLED_PACKAGE_ROOT = dirname(fileURLToPath(new URL('../package.json', import.meta.url)))
+// The installed entrypoint, not a bare `cockpit`: that resolves through node_modules/.bin, which
+// pnpm writes as a shell shim the guard cannot prove starts this package.
 const SCRIPTS = Object.freeze({
+    'cockpit:setup': `./node_modules/${PACKAGE}/bin/cockpit.mjs setup --config cockpit.toml`,
+    'cockpit:sync': `./node_modules/${PACKAGE}/bin/cockpit.mjs sync --config cockpit.toml`,
+    'cockpit:check': `./node_modules/${PACKAGE}/bin/cockpit.mjs check --config cockpit.toml`,
+})
+// Releases before the entrypoint spelling wrote these; they are cockpit's to replace, not the product's.
+const EARLIER_SCRIPTS: Readonly<Record<string, string>> = Object.freeze({
     'cockpit:setup': 'cockpit setup --config cockpit.toml',
     'cockpit:sync': 'cockpit sync --config cockpit.toml',
     'cockpit:check': 'cockpit check --config cockpit.toml',
 })
+
+function cockpitScript(name: string, command: unknown): boolean {
+    return (SCRIPTS as Record<string, string>)[name] === command || EARLIER_SCRIPTS[name] === command
+}
 const START = '# cockpit:ignore:start'
 const END = '# cockpit:ignore:end'
 const OTHER_DEPENDENCY_SECTIONS = ['dependencies', 'optionalDependencies', 'peerDependencies'] as const
@@ -137,7 +149,7 @@ async function replaceAuthenticated(authority: RootAuthority, path: string, befo
 
 /**
  * The package manifest without the entries sync owns in it: the cockpit dependency, under any spec,
- * and each cockpit script while it is the exact command sync writes. Sections those removals leave
+ * and each cockpit script while it is the exact command sync writes or once wrote. Sections those removals leave
  * empty are dropped, so a manifest cockpit created and one it edited project the same way.
  */
 export function productPackageManifest(manifest: Readonly<Record<string, unknown>>): Record<string, unknown> {
@@ -147,7 +159,7 @@ export function productPackageManifest(manifest: Readonly<Record<string, unknown
         product.devDependencies = rest
     }
     if (object(manifest.scripts)) product.scripts = Object.fromEntries(Object.entries(manifest.scripts)
-        .filter(([name, command]) => (SCRIPTS as Record<string, string>)[name] !== command))
+        .filter(([name, command]) => !cockpitScript(name, command)))
     for (const section of ['devDependencies', 'scripts'] as const) {
         const value = product[section]
         if (object(value) && Object.keys(value).length === 0) delete product[section]
@@ -176,7 +188,9 @@ function misplacedDependencyMessage(sections: readonly string[]): string {
     return `package.json declares ${PACKAGE} in ${sections.join(', ')} outside cockpit-owned devDependencies; cockpit requires one exact development dependency so the team has one version authority. Run npm uninstall ${PACKAGE} && npm install --save-dev --save-exact ${PACKAGE}@${VERSION}, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> again`
 }
 
-function packageCandidate(bytes: string | undefined, verifiedLocalPin?: string): Readonly<{
+// Each refusal names the entry and what to run: one message for every conflict ("resolve the
+// conflict") left an adopter guessing which entry was wrong.
+function packageCandidate(bytes: string | undefined, root: Readonly<{ manager: string; lockfile: string }>, verifiedLocalPin?: string): Readonly<{
     bytes: string
     valid: boolean
     misplaced?: readonly string[]
@@ -185,18 +199,26 @@ function packageCandidate(bytes: string | undefined, verifiedLocalPin?: string):
     let parsed: unknown = {}
     if (bytes !== undefined && bytes.trim() !== '') {
         const decoded = parseJsonText(bytes, 'package.json', PACKAGE_JSON_SHAPE)
-        if ('refusal' in decoded) return { bytes: '', valid: false, cause: decoded.refusal }
+        if ('refusal' in decoded) return { bytes: '', valid: false, cause: `${decoded.refusal}; repair it` }
         parsed = decoded.value
     }
-    if (!object(parsed)) return { bytes: '', valid: false }
+    if (!object(parsed)) return { bytes: '', valid: false, cause: `package.json is not ${PACKAGE_JSON_SHAPE}; repair it` }
     const slots = packageDependencySlots(parsed)
     const scripts = parsed.scripts === undefined ? {} : parsed.scripts
-    if (!slots || !object(scripts)) return { bytes: '', valid: false }
+    if (!slots || !object(scripts)) return { bytes: '', valid: false, cause: 'package.json scripts and direct npm dependency sections must be objects; repair package.json' }
     if (slots.misplaced.length > 0) return { bytes: '', valid: false, misplaced: slots.misplaced }
-    const conflictingDependency = slots.devDependencies[PACKAGE] !== undefined && slots.devDependencies[PACKAGE] !== VERSION
-        && slots.devDependencies[PACKAGE] !== verifiedLocalPin
-    const conflictingScript = Object.entries(SCRIPTS).some(([name, command]) => scripts[name] !== undefined && scripts[name] !== command)
-    if (conflictingDependency || conflictingScript) return { bytes: '', valid: false }
+    const pinned = slots.devDependencies[PACKAGE]
+    if (pinned !== undefined && pinned !== VERSION && pinned !== verifiedLocalPin) {
+        if (typeof pinned === 'string' && pinned.startsWith('file:')) return { bytes: '', valid: false,
+            cause: `package.json pins ${PACKAGE} to ${pinned}, but ${root.lockfile} and node_modules do not resolve that archive to the running ${VERSION}; run ${root.manager} install` }
+        const install = EXACT_DEV_INSTALL[root.lockfile] ?? EXACT_DEV_INSTALL['package-lock.json']!
+        return { bytes: '', valid: false, cause: `package.json pins ${PACKAGE} ${String(pinned)}, but ${VERSION} is running; `
+            + `run ${install.manager} ${install.verb} ${install.flags.join(' ')} ${PACKAGE}@${VERSION}` }
+    }
+    // The script's own text is the product's and is not echoed.
+    const taken = Object.keys(SCRIPTS).find(name => scripts[name] !== undefined && !cockpitScript(name, scripts[name]))
+    if (taken) return { bytes: '', valid: false, cause: `package.json already defines ${taken} as another command than the one sync writes `
+        + `(${SCRIPTS[taken as keyof typeof SCRIPTS]}); rename that script or set it to that command` }
     return { valid: true, bytes: `${JSON.stringify({ ...parsed,
         scripts: { ...scripts, ...SCRIPTS }, devDependencies: { ...slots.devDependencies, [PACKAGE]: verifiedLocalPin ?? VERSION },
     }, null, 2)}\n` }
@@ -385,13 +407,11 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
         }
         const packagePath = join(root, 'package.json')
         const packageBefore = await readOptional(authority, packagePath)
-        const candidate = packageCandidate(packageBefore?.bytes, await verifiedLocalPin(authority, packageBefore?.bytes))
+        const candidate = packageCandidate(packageBefore?.bytes, await rootPackageManager(root), await verifiedLocalPin(authority, packageBefore?.bytes))
         if (candidate.misplaced) return refuse('TEAM_METADATA_UNAVAILABLE',
             misplacedDependencyMessage(candidate.misplaced), packagePath)
-        if (candidate.cause) return refuse('TEAM_METADATA_UNAVAILABLE',
-            `${candidate.cause}; repair it, then run ${cockpitCommand('sync', { config: configPath })}`, packagePath)
         if (!candidate.valid) return refuse('TEAM_METADATA_UNAVAILABLE',
-            `package.json conflicts with cockpit's exact ${PACKAGE} pin or cockpit:* scripts; resolve the conflict and run ${cockpitCommand('sync', { config: configPath })}`, packagePath)
+            `${candidate.cause}, then run ${cockpitCommand('sync', { config: configPath })}`, packagePath)
         const ignorePath = join(root, '.gitignore')
         const ignoreBefore = await readOptional(authority, ignorePath)
         const nextIgnore = ignoreCandidate(ignoreBefore?.bytes ?? '', block)
@@ -544,22 +564,27 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
         // A root .npmrc, a bin the root package.json declares, or a link that is not npm's leaves every
         // printed npx form asking a person.
         const launcher = join(own, 'bin/cockpit.mjs')
-        if (!findings.length && guardLauncherEvidence('npx', ['--no', 'cockpit'], root, root, launcher, '') === undefined) {
-            // pnpm writes .bin/cockpit as a shell shim, which no path check can follow to the installed
-            // launcher, so only the package's own script is a route the guard can prove there.
-            const packageScript = `./node_modules/${PACKAGE}/bin/cockpit.mjs`
-            const route = ['./node_modules/.bin/cockpit', packageScript].find(path => guardLauncherEvidence(path, [], root, root, launcher, '') !== undefined)
+        // pnpm writes .bin/cockpit as a shell shim, which no path check can follow to the installed
+        // launcher, so only the package's own script is a route the guard can prove there. Everything
+        // cockpit prints, package scripts included, runs that script, and nothing the person can do
+        // makes the shim provable, so that case is no gap: the guard says so if npx is typed anyway.
+        const packageScript = `./node_modules/${PACKAGE}/bin/cockpit.mjs`
+        const npmLink = './node_modules/.bin/cockpit'
+        const proven = (path: string) => guardLauncherEvidence(path, [], root, root, launcher, '') !== undefined
+        const linked = proven(npmLink)
+        if (!findings.length && guardLauncherEvidence('npx', ['--no', 'cockpit'], root, root, launcher, '') === undefined
+            && (linked || !proven(packageScript))) {
             findings.push({
                 severity: 'warning' as const,
                 // A literal, so the diagnostic inventory captures the fix beside the code.
                 code: 'COCKPIT_LAUNCHER_UNPROVEN' satisfies typeof ENVIRONMENT_CODES.COCKPIT_LAUNCHER_UNPROVEN,
                 message: `the guard cannot prove that npx --no cockpit run in ${root} starts the cockpit installed there, so it asks a person before every such command and Codex and OpenCode refuse it; `
-                    + (route === undefined ? 'node_modules/.bin/cockpit is not npm\'s link to the installed package either, and the package has no bin/cockpit.mjs'
-                        : `${route} <command> --config cockpit.toml is proven by its path and runs without asking${route === packageScript ? '; node_modules/.bin/cockpit is not, because it does not resolve to that script, as with the shell shim pnpm writes' : ''}`),
+                    + (linked ? `${npmLink} <command> --config cockpit.toml is proven by its path and runs without asking`
+                        : 'node_modules/.bin/cockpit is not npm\'s link to the installed package either, and the package has no bin/cockpit.mjs'),
                 target: 'npx --no cockpit',
                 // Computed in every branch, so the diagnostic index does not present one route as the only remedy.
-                fix: route === undefined ? `reinstall cockpit with ${(await rootPackageManager(root)).manager} install in ${root}, then rerun doctor`
-                    : `run cockpit as ${route} <command> --config <your cockpit.toml> from the cockpit root${route === packageScript ? '' : `, or remove what stops npx from proving it: a .npmrc in ${root}, or a bin or directories.bin in its package.json`}`,
+                fix: linked ? `run cockpit as ${npmLink} <command> --config <your cockpit.toml> from the cockpit root, or remove what stops npx from proving it: a .npmrc in ${root}, or a bin or directories.bin in its package.json`
+                    : `reinstall cockpit with ${(await rootPackageManager(root)).manager} install in ${root}, then rerun doctor`,
             })
         }
     }

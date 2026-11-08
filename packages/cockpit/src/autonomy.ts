@@ -127,7 +127,7 @@ export function weakeningDigest(recorded: EffectivePolicy, current: EffectivePol
 
 // Written only by cockpit: the guard protects `.cockpit/policy.json` as a control, so the policy an
 // agent's edit would weaken still stands until a person accepts the weakening at sync.
-const POLICY_RECORD_PATH = '.cockpit/policy.json'
+export const POLICY_RECORD_PATH = '.cockpit/policy.json'
 const RECORD_FORMAT = 'cockpit-policy/v1'
 
 // A record written before a decision point existed lacks its key: the 0.1.0 record has no
