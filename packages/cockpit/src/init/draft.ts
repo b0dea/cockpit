@@ -761,7 +761,7 @@ const QUESTION_WHY = {
     siblingEstate: 'the source does not establish schema-shaped sibling declarations',
     siblingRegistry: 'the registry leaves required sibling configuration unresolved',
     ports: 'no source establishes the host-published base port map; an explicit empty map means none',
-    policies: 'declare one row per toolchain and lockfile with any build or test command the guard should allow',
+    policies: 'declare one row per toolchain and lockfile with any build or test command the guard should allow; asked only when a sibling declares a toolchain other than "none"',
     testData: 'answer with exactly { seeded_data: boolean, signed_in_users: boolean } to state whether this local setup needs seeded data and signed-in users; each false field records a precise not-declared decision, while true keeps the product-owned declaration work visible without claiming that data or authentication exists',
     composeFiles: 'list the Compose files, relative to the cockpit root, that run the product, such as ["compose.yml"]; cockpit runs them as written. Answer [] to defer runtime adoption and publish harness surfaces first, even when the product is runnable. A small app with no Compose file gets a starting one, which it then owns, from ./node_modules/@b00dea/cockpit/bin/cockpit.mjs init <cockpit root> --scaffold-compose <app dir> --port <port>',
     machine: 'declare the machine floor the product needs from the container runtime: runtime_memory_mb, runtime_cpus, free_disk_mb and cold_start_seconds; init proposes memory and CPUs from the Compose file\'s service limits, or from this machine\'s measured runtime where no limit records them; nothing records free disk or the cold start time, so a person states those, or the setup agent marks its choice "agent-default"',
@@ -789,13 +789,22 @@ const DERIVED_FIX = 'answer the value init proposes for this field under intervi
 const noGuardHostsDecision = (provenance: AnswerProvenance) =>
     `${STATED_BY[provenance]} no non-local environment (production, staging, shared) has a database or live vendor host for the guard to deny`
 
+/**
+ * An install policy names a toolchain other than "none", so the interview asks for policies only
+ * when a sibling declares one; with none to name, the only valid answer is an empty list.
+ */
+export function asksInstallPolicies(siblings: unknown): boolean {
+    return Array.isArray(siblings) && siblings.some(row => isRecord(row) && row.toolchain !== undefined && row.toolchain !== 'none')
+}
+
 const runnableWhy = (gaps: EstateClassificationResult['gaps']) =>
     `resolve the exact current runnable gaps: ${gaps.map(gap => `${gap.field} from ${gap.source}`).join('; ')}`
 
 /**
  * The questions a greenfield estate interview can ask, in order. Init lists them before any answer
  * exists so an unattended caller can prepare every answer in one pass; the loop in
- * completeConfigurationDocument omits machine and posture when the Compose answer is empty.
+ * completeConfigurationDocument omits install policies when no sibling declares a toolchain, and
+ * machine and posture when the Compose answer is empty.
  */
 export function plannedGreenfieldQuestions(input: Readonly<{
     root: string
@@ -909,8 +918,8 @@ function inferGreenfieldSiblingRoot(attributions: Attribution[], siblingsRoot: G
     if (index >= 0) attributions.splice(index, 1)
     attributions.push({ target: 'cockpit.siblings_root', value: siblingsRoot, from: 'inferred',
         because: siblingsRoot === '.'
-            ? 'the authenticated greenfield estate repositories are direct children of the cockpit root'
-            : 'the cockpit was created beside the product repository, so the authenticated estate repositories are children of the cockpit root\'s parent' })
+            ? 'init observed the repositories at the cockpit root, so sibling directories are relative to it'
+            : 'the cockpit was created beside the product repository, so sibling directories are relative to the cockpit root\'s parent' })
     return attributions
 }
 
@@ -930,6 +939,7 @@ function defaultAttributions(
     source: DefaultSource,
     siblingsRoot: GreenfieldSiblingsRoot = undefined,
     inference?: InferenceResult,
+    tools?: readonly string[],
 ): Attribution[] {
     // The name is always an answer, so it is never surfaced as an inferred value to confirm.
     const attributions = buildAttributions({ siblings: detected, defaults }, root, source)
@@ -938,8 +948,11 @@ function defaultAttributions(
         if (field !== 'install_policies') attributions.push({ target: `environment.${field}`, value, from: 'default',
             because: defaultReason(`the environment ${field} declaration`, source) })
     }
-    attributions.push({ target: 'surfaces', value: defaults.surfaces, from: 'default',
-        because: defaultReason('the surfaces declaration', source) })
+    // The tools are the person's --target choice; listing the schema's default tools here contradicted the table below.
+    attributions.push(tools === undefined
+        ? { target: 'surfaces', value: defaults.surfaces, from: 'default', because: defaultReason('the surfaces declaration', source) }
+        : { target: 'surfaces', value: { ...defaults.surfaces, tools }, from: 'default',
+            because: `tools are the ones init ran with (--target); ${defaultReason('the rest of the surfaces declaration', source)}` })
     for (const sibling of siblings) {
         for (const field of ['toolchain', 'guides'] as const) if (!(field in sibling)) {
             attributions.push({ target: `sibling.${String(sibling.slug)}.${field}`,
@@ -1093,7 +1106,7 @@ async function completeConfigurationDocument(
         const question = configurationQuestion(context, 'estate.runnable', runnableWhy(estateGaps))
         const read = readConfigurationAnswer(configuration.answers, answerIndex, question)
         if (read.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: documentedRows(siblingRows),
-            attributions: defaultAttributions(defaults, siblingAnswerRows, detected, root, defaultSource, siblingsRoot, inference), gaps: [] },
+            attributions: defaultAttributions(defaults, siblingAnswerRows, detected, root, defaultSource, siblingsRoot, inference, configuration.tools), gaps: [] },
             input.output ? resolve(input.output) : null, question)
         if (read.kind === 'refusal') return read.outcome
         if (!read.value || typeof read.value !== 'object' || Array.isArray(read.value)
@@ -1126,7 +1139,7 @@ async function completeConfigurationDocument(
     const portQuestion = configurationQuestion(context, 'ports.bases', QUESTION_WHY.ports)
     const portRead = readConfigurationAnswer(configuration.answers, answerIndex, portQuestion, derivedFact('ports.bases'))
     const previewRows = documentedRows(siblingRows)
-    const attributions = defaultAttributions(defaults, siblingAnswerRows, detected, root, defaultSource, siblingsRoot, inference)
+    const attributions = defaultAttributions(defaults, siblingAnswerRows, detected, root, defaultSource, siblingsRoot, inference, configuration.tools)
     if (portRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
         attributions, gaps: [] }, destination, portQuestion)
     if (portRead.kind === 'refusal') return portRead.outcome
@@ -1142,17 +1155,21 @@ async function completeConfigurationDocument(
     let testingNone: AnswerProvenance | undefined
     let runtimeDeferred: AnswerProvenance | undefined
     if (!surfacesOnly) {
-        const policyQuestion = configurationQuestion(context, 'environment.install_policies', QUESTION_WHY.policies)
-        const policyRead = readConfigurationAnswer(configuration.answers, answerIndex, policyQuestion)
-        if (policyRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
-            attributions, gaps: [] }, destination, policyQuestion)
-        if (policyRead.kind === 'refusal') return policyRead.outcome
-        const parsedPolicies = InstallPolicy.array().max(256).safeParse(policyRead.value)
-        if (!parsedPolicies.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-            `the operator-confirmed install policies do not match the schema: ${issueSummary(parsedPolicies.error)}`,
-            policyQuestion.field)
-        record('environment.install_policies', policyRead)
-        answerIndex += 1
+        let installPolicies = defaults.environment.install_policies
+        if (asksInstallPolicies(siblingRows)) {
+            const policyQuestion = configurationQuestion(context, 'environment.install_policies', QUESTION_WHY.policies)
+            const policyRead = readConfigurationAnswer(configuration.answers, answerIndex, policyQuestion)
+            if (policyRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
+                attributions, gaps: [] }, destination, policyQuestion)
+            if (policyRead.kind === 'refusal') return policyRead.outcome
+            const parsedPolicies = InstallPolicy.array().max(256).safeParse(policyRead.value)
+            if (!parsedPolicies.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+                `the operator-confirmed install policies do not match the schema: ${issueSummary(parsedPolicies.error)}`,
+                policyQuestion.field)
+            installPolicies = parsedPolicies.data
+            record('environment.install_policies', policyRead)
+            answerIndex += 1
+        }
 
         if (registrySha256 === null) {
             const testDataQuestion = configurationQuestion(context, 'environment.test_data', QUESTION_WHY.testData)
@@ -1181,7 +1198,7 @@ async function completeConfigurationDocument(
             attributions, gaps: [] }, destination, composeQuestion)
         if (composeRead.kind === 'refusal') return composeRead.outcome
         const parsedCompose = CockpitConfig.shape.environment.safeParse({ ...defaults.environment,
-            install_policies: parsedPolicies.data, compose_files: composeRead.value })
+            install_policies: installPolicies, compose_files: composeRead.value })
         if (!parsedCompose.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
             `the operator-confirmed Compose files do not match the schema: ${issueSummary(parsedCompose.error)}`,
             composeQuestion.field)

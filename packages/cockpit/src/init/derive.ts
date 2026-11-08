@@ -292,8 +292,11 @@ function composeFacts(
     root: string,
     variables: Readonly<Record<string, string>>,
     skipped: SkippedInference[],
-): Readonly<{ binds: readonly Readonly<{ source: string; path: string }>[]; bases: ReadonlyMap<string, Readonly<ComposeBase>>; basesComplete: boolean }> {
+): Readonly<{ binds: readonly Readonly<{ source: string; path: string }>[]; bases: ReadonlyMap<string, Readonly<ComposeBase>>; basesComplete: boolean
+    unleased: readonly string[] }> {
     const binds: { source: string; path: string }[] = []
+    // Host ports published literally, which check refuses as written.
+    const unleased: string[] = []
     // Each base keeps every file and line that publishes it, so the proposal names where each value came from.
     const bases = new Map<string, ComposeBase>()
     const conflicting = new Set<string>()
@@ -318,6 +321,7 @@ function composeFacts(
                 const match = typeof published === 'string' ? PORT_VARIABLE.exec(published) : null
                 if (!match) {
                     basesComplete = false
+                    unleased.push(String(published))
                     skipped.push({ source, reason: `publishes host port ${String(published)} that is not read from a variable with a default, so every stack would bind the same host port and check refuses it; publish it as \${NAME:-<port>} and declare NAME under [ports.bases]` })
                     continue
                 }
@@ -344,7 +348,7 @@ function composeFacts(
         skipped.push({ source: bases.get(variable)!.files.join(', '), reason: `publishes \${${variable}} with different defaults, so its base port cannot be read; declare ${variable} under [ports.bases]` })
         bases.delete(variable)
     }
-    return { binds, bases, basesComplete }
+    return { binds, bases, basesComplete, unleased }
 }
 
 const BYTE_UNITS: Readonly<Record<string, number>> = { '': 1, b: 1, k: 1024, kb: 1024, m: 1024 ** 2, mb: 1024 ** 2, g: 1024 ** 3, gb: 1024 ** 3 }
@@ -613,7 +617,7 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             const invalidId = entry === undefined ? undefined : TESTING_ROLES.map(role => testingId(role, slug)).find(id => !TestingName.safeParse(id).success)
             if (entry && invalidId) skipped.push({ source: relative(directory.path, entry.file),
                 reason: `${entry.file} has a test entry point, but the [testing] id ${invalidId} formed from the slug ${slug} is not lowercase letters, digits and hyphens of at most 64 characters starting with a letter, so no gate is proposed for ${slug}; declare its stages and gates under [testing] with ids of that form` })
-            else if (entry) facts.push({ fields: ['testing'], target: `testing.${slug}`, value: testingProposal(slug, entry, relative(directory.path)),
+            else if (entry) facts.push({ fields: ['testing'], target: `${slug}.testing`, value: testingProposal(slug, entry, relative(directory.path)),
                 provenance: { kind: 'inferred', source: relative(directory.path, entry.file),
                     reason: `${entry.reason}; requires_stack is false because nothing on disk says these tests need the running stack` } })
             else if (readable) skipped.push({ source: relative(directory.path),
@@ -622,7 +626,7 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             // one, so the toolchain is proposed together with the policy row the interview must hold.
             if (node) facts.push({ fields: ['sibling', 'environment.install_policies'], target: `${slug}.toolchain`, value: 'node',
                 provenance: { kind: 'inferred', source: relative(directory.path, node.lockfile),
-                    reason: `${node.lockfile} is ${node.manager}'s lockfile, so the node toolchain is proposed; setup then needs exactly one environment.install_policies row with toolchain "node" and lockfile "${node.lockfile}" and refuses INSTALL_POLICY_MISSING without it, or keep toolchain "none", as a cockpit with no runtime environment must, since it is never asked for install policies` } })
+                    reason: `${node.lockfile} is ${node.manager}'s lockfile, so the node toolchain is proposed. A node sibling needs exactly one environment.install_policies row with toolchain "node" and lockfile "${node.lockfile}": setup refuses INSTALL_POLICY_MISSING without it. With toolchain "none", install policies are not asked` } })
             const dockerfile = await readHere('Dockerfile')
             const parsed = dockerfile === undefined ? undefined : readDockerfileFacts(dockerfile)
             if (parsed) {
@@ -783,9 +787,13 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
     // compose-first resolves every relative path against the first listed file's directory, so one
     // product Compose file can be run in place but several cannot be listed together.
     if (composeFiles.length === 1) {
-        facts.unshift({ fields: ['environment.compose_files'], target: 'environment.compose_files', value: [composeFiles[0]!.source],
-            provenance: { kind: 'derived', source: composeFiles[0]!.source,
-                reason: 'a Compose file already exists, so cockpit can run it as written' } })
+        // A file check refuses as written is not one the setup agent may accept as read: the person
+        // chooses between editing the product's Compose file and deferring the runtime.
+        const { source } = composeFiles[0]!
+        facts.unshift({ fields: ['environment.compose_files'], target: 'environment.compose_files', value: [source],
+            provenance: compose.unleased.length === 0
+                ? { kind: 'derived', source, reason: 'a Compose file already exists, so cockpit can run it as written' }
+                : { kind: 'inferred', source, reason: `${source} publishes host ${compose.unleased.length === 1 ? 'port' : 'ports'} ${compose.unleased.join(', ')} directly, which check refuses because every stack would bind the same host port; to run it, publish each as \${NAME:-<port>} in ${source} (a change to the product) and declare NAME under [ports.bases], or answer [] to defer the runtime and publish the agent surfaces first` } })
         facts.push(...composeLimits(composeFiles[0]!, skipped))
     } else if (composeFiles.length > 1) skipped.push({ source: composeFiles.map(file => file.source).join(', '),
         reason: `are Compose files in different repositories, and compose-first resolves every relative path against the first listed file's directory, so they cannot be listed together; write one compose.yml at the cockpit root that runs their services, reaching each checkout through its sibling variable (${[...siblingPaths.keys()].map(name => `\${${name}}`).join(', ')}), and answer environment.compose_files = ["compose.yml"]` })

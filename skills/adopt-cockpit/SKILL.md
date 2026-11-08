@@ -44,7 +44,8 @@ ask when scope is missing or an exact preview still needs acceptance:
    optional, and `off` is reasonable when tracking matters but grading is not wanted.
 7. "Use sensible defaults" covers `init` answers only, never another change inside a product
    repository: an **AGENTS.md** pointer or a `package.json` change needs explicit product-change
-   authorization covering its reviewed scope, which can already have been given. Mark every answer you chose as `"agent-default"` in the answers file's
+   authorization covering its reviewed scope, which can already have been given. For the files
+   `init` writes, that scope is the `writes` list of the preview the human accepts. Mark every answer you chose as `"agent-default"` in the answers file's
    `[provenance]` table, and end your report with every default you chose, its field and value.
 8. Every trust answer the answers file supplies (`sibling`, `environment.install_policies`,
    `environment.posture`, `testing`, `guards`, `work.grading`) lands under `unconfirmed` whatever the
@@ -178,10 +179,14 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
    uses them. Done when you hold the `--target` value.
 2. **Preview.** Run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs init . --target <tool> --json`, adding
    `--registry` only when adopting an existing registry. The preview writes nothing. Read
-   `result.stage`, `result.question` and `result.interview.outstanding`: every field the interview
-   will ask, each with its `proposals` (each with `provenance.kind` `derived`, `measured` or
-   `inferred`, and the file it came from) and `confirmedBy`. Done when you hold
-   `result.previewSha256` and the outstanding fields.
+   `result.interview.outstanding`: every field the interview will ask, each with its `proposals`
+   (each with `provenance.kind` `derived`, `measured` or `inferred`, and the file it came from) and
+   `confirmedBy`. Read `result.writes`: every path, relative to the cockpit root, that init creates
+   or changes once the preview is accepted, beside the setup skill in `result.files`; a path ending
+   in `/` stands for files under it. In a product repository these include its **AGENTS.md**,
+   **package.json** and **.gitignore**; existing team text stays outside the regions cockpit writes.
+   No question is asked before acceptance: the first, `result.question`, comes with the accepted
+   run. Done when you hold `result.previewSha256`, the outstanding fields and the writes.
 3. **Explore, then ask in one small round.** Read the repositories for each outstanding field
    before asking, ask only for what the files and CLI output cannot answer. A field with
    `confirmedBy = "agent"` is yours to accept as read (step 4); present every other proposal with
@@ -198,7 +203,8 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
      `cockpit.root` key: `dedicated` creates a sibling `<repo>-cockpit` directory so generated files
      stay out of the product's history; `in-repo` is the default when accepting without an answer,
      except for a directory name that is not a valid sibling slug, which refuses with
-     `INIT_COCKPIT_ROOT_REQUIRED`.
+     `INIT_COCKPIT_ROOT_REQUIRED`. The preview's outstanding fields are for `in-repo`; `dedicated`
+     changes the proposed name and sibling, which the accepted run reports.
    - **The test gates.** For a runnable product, `init` proposes `testing` stages and gates from the
      test entry points it finds. Whether each proves anything is your judgement, made on evidence:
      name the behaviours its tests exercise, break one of them on purpose, run the proposed command
@@ -246,8 +252,11 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
    `work.grading`): the file cannot show a person made it, so init writes it under `unconfirmed`
    whatever the file says, and the stronger default holds until a person confirms it (step 7).
    Done when the file holds every answer and marks each one you chose.
-5. **Accept.** Show the person the answers file and the preview digest, then rerun with
-   `--accept-preview <previewSha256> --answers <file>`. The run stops at `configuration.defaults`:
+5. **Accept.** Show the person the answers file, the preview's `writes` and its digest: accepting
+   it authorizes init to write those paths. Then rerun with
+   `--accept-preview <previewSha256> --answers <file>`. A run stops at the first field the file
+   leaves out, with `result.interview.outstanding` listing only what the file still lacks; add those
+   and rerun. Otherwise it stops at `configuration.defaults`:
    once the person has read the values the draft in `result.question.document` lists under
    "A person confirms these" (the digest covers only those), rerun adding
    `--accept-defaults` with `result.question.expectedSha256`. Each digest binds consent to the bytes

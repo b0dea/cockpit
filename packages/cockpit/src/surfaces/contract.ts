@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import { snapshotGeneratedJson, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
-import { SURFACE_TARGETS, type SurfaceTarget } from './harness-registry.js'
+import { SURFACE_TARGETS, harnessFact, type SurfaceTarget } from './harness-registry.js'
 import { exactKeys } from '../exact-keys.js'
 
 export { SURFACE_TARGETS, type SurfaceTarget } from './harness-registry.js'
@@ -19,6 +19,17 @@ export const SURFACE_OUTPUT_MAX_BYTES = 4_194_304
 export const SURFACE_OUTPUT_MAX_FILES = 256
 export type SurfaceFeature = typeof SURFACE_FEATURES[number]
 export type SurfaceBundleFormat = typeof SURFACE_BUNDLE_FORMATS[number]
+
+/**
+ * Where sync writes these tools' surfaces, at the top of the cockpit root: a file, or a directory
+ * ending in "/" that holds the tool's skills, subagents, hooks and settings.
+ */
+export function surfaceOutputRoots(tools: readonly SurfaceTarget[]): readonly string[] {
+    return [...new Set(tools.flatMap(tool => {
+        const { instruction, skills, mcp, permissions } = harnessFact(tool).outputs
+        return [instruction, skills, mcp, ...permissions].map(path => path.includes('/') ? `${path.split('/')[0]}/` : path)
+    }))]
+}
 
 export interface SurfaceSourceFile {
     readonly path: string

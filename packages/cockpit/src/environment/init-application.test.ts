@@ -159,7 +159,13 @@ describe('init application', () => {
                 { answer: 'dedicated', root: dedicated, creates: [dedicated], siblingsRoot: '..', firstSibling: f.root },
                 { answer: 'in-repo', root: f.root, creates: [], siblingsRoot: '.', firstSibling: f.root }] } } })
         expect(placement.result).not.toHaveProperty('nextCommand')
-        expect(observed).toEqual([])
+        // The person approves this preview before any question is asked, so it already lists the
+        // interview, read-only, for the in-repo default, and every path init goes on to write there.
+        expect(observed).toEqual([{ root: f.root, rootIsRepository: true }])
+        expect(placement.result?.interview?.outstanding.map(row => row.field)).toEqual(expect.arrayContaining(['cockpit.name', 'sibling', 'guards']))
+        expect(placement.result?.interview).not.toHaveProperty('cockpitRoot')
+        expect(placement.result?.writes).toEqual(expect.arrayContaining(['cockpit.toml', 'AGENTS.md', 'package.json', '.gitignore', '.cockpit/']))
+        observed.length = 0
         expect(f.calls).not.toContain('apply')
         expect(existsSync(join(f.input.home!, 'state'))).toBe(false)
 
@@ -468,16 +474,16 @@ describe('init application', () => {
         const run = (answers: Record<string, unknown>, defaultsSha256?: string) => runInitOperatorCommand(command,
             { interactive: false, json: true, unattended: { previewSha256: digest('3'), answers,
                 ...(defaultsSha256 ? { defaultsSha256 } : {}) } }, io, input => runInitApplication(input, adapters))
+        // The sibling keeps toolchain "none", for which no install policy can exist, so none is asked.
         const answers = { cockpit: { name: 'app-cockpit' },
             sibling: [{ slug: 'app', dir: 'app', mount: 'always', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic application' }],
-            ports: { bases: {} }, environment: { install_policies: [],
-                test_data: { seeded_data: false, signed_in_users: false }, compose_files: [] } }
+            ports: { bases: {} }, environment: { test_data: { seeded_data: false, signed_in_users: false }, compose_files: [] } }
         const pending = await run(answers)
         expect(pending, JSON.stringify(pending.diagnostics)).toMatchObject({ kind: 'pending', result: {
             estate: { classification: 'one-sibling', runnable: [{ slug: 'app', disposition: 'confirmed' }] },
             question: { field: 'testing' } } })
         expect(pending.result!.interview!.answered).toEqual(['cockpit.name', 'sibling', 'ports.bases',
-            'environment.install_policies', 'environment.test_data', 'environment.compose_files'])
+            'environment.test_data', 'environment.compose_files'])
         expect(pending.result!.interview!.outstanding.map(row => row.field)).toEqual(['testing', 'guards', 'work.grading', 'configuration.defaults'])
         const beforeResume = measurements
         expect(await run(answers)).toMatchObject({ kind: 'pending', result: { question: pending.result!.question } })
@@ -602,7 +608,7 @@ describe('init application', () => {
 
         const answers = {
             sibling: [{ slug: 'app', dir: 'app', mount: 'always', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic application' }],
-            environment: { install_policies: [], test_data: { seeded_data: false, signed_in_users: false },
+            environment: { test_data: { seeded_data: false, signed_in_users: false },
                 machine: { runtime_memory_mb: 768, runtime_cpus: 4, free_disk_mb: 2048, cold_start_seconds: 120 },
                 posture: { addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] } },
             testing: 'none', guards: { hosted_db_hosts: [], vendor_endpoint_hosts: [] }, work: { grading: 'independent' },
@@ -637,10 +643,10 @@ describe('init application', () => {
                 { field: 'environment.compose_files', source: 'app/compose.yml' }],
             // The machine floor holds a free disk and cold start no file records, and an answers file cannot show a
             // person made a trust decision, so each stays the person's to confirm.
-            unconfirmed: ['sibling', 'environment.install_policies', 'environment.machine', 'environment.posture', 'testing', 'guards', 'work.grading']
+            unconfirmed: ['sibling', 'environment.machine', 'environment.posture', 'testing', 'guards', 'work.grading']
                 .map(field => ({ field, provenance: 'unattributed' })) } })
         expect(written).toContain('# Derived: ports.bases was read from app/compose.yml:4 and accepted by the setup agent; bring-up proves it.')
-        expect(written).toContain('unconfirmed = [ "sibling", "environment.install_policies", "environment.machine", "environment.posture", "testing", "guards", "work.grading" ]\n')
+        expect(written).toContain('unconfirmed = [ "sibling", "environment.machine", "environment.posture", "testing", "guards", "work.grading" ]\n')
         // An answer an observation can verify points the agent at the command that does, not at a person.
         expect(written).toMatch(/# To confirm: run \.\/node_modules\/@b00dea\/cockpit\/bin\/cockpit\.mjs confirm environment\.machine\b/)
     })
@@ -966,8 +972,9 @@ describe('init application', () => {
         const second = await runInitApplication({ ...accepted, greenfieldAnswer: {
             questionId: named.result!.question!.id, bytes: '[]', provenance: 'operator-confirmed' } }, adapters)
         expect(second.result!.interview).toMatchObject({ answered: ['cockpit.name', 'sibling'] })
+        // No sibling declares a toolchain an install policy could name, so policies are no longer listed.
         expect(second.result!.interview!.outstanding.map(row => row.field)).toEqual(['ports.bases',
-            'environment.install_policies', 'environment.test_data', 'environment.compose_files', 'environment.machine',
+            'environment.test_data', 'environment.compose_files', 'environment.machine',
             'environment.posture', 'testing', 'guards', 'work.grading', 'configuration.defaults'])
     })
 
