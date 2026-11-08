@@ -53,9 +53,11 @@ describe('public observation command search paths', { timeout: 180_000 }, () => 
         expect(result.status, result.stdout + result.stderr).toBe(0)
         const report = JSON.parse(result.stdout)
         expect(report.diagnostics.filter((row: { severity: string }) => row.severity === 'error').map((row: { code: string }) => row.code)).toEqual(
-            command === 'doctor' ? ['ENVIRONMENT_NOT_DECLARED', 'GIT_STATE_UNHEALTHY'] : [],
+            command === 'doctor' ? ['GIT_STATE_UNHEALTHY'] : [],
         )
         if (command === 'doctor') {
+            // A surfaces-only cockpit declares no runtime by choice; doctor reports that as information.
+            expect(report.diagnostics).toContainEqual(expect.objectContaining({ severity: 'info', code: 'ENVIRONMENT_NOT_DECLARED' }))
             expect(report.result).toMatchObject({ freshness: { local: { kind: 'complete', status: 0 } }, surfaceOverrides: { kind: 'complete' } })
             expect(report.diagnostics).toContainEqual(expect.objectContaining({ code: 'GUARD_SEARCH_PATH_RELATIVE' }))
         }
