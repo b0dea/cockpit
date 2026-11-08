@@ -57,20 +57,19 @@ export function claudeImportPaths(bytes) {
     return paths
 }
 
-// The guide's AGENTS.md reaches Claude through one line importing it, and nothing else in the file
-// imports: anything a file imported would reach the model without being bound by the probe.
+// The guide's AGENTS.md reaches Claude through exactly one line importing it. Whether any other token
+// would import a file depends on what exists where the file lives; the probe judges that before it runs.
 export function nativeClaudeImport(bytes) {
     return claudeActiveLines(bytes).filter(row => row.line === '@AGENTS.md').length === 1
-        && claudeImportPaths(bytes).length === 1
 }
 
 export function nativeClaudeContent(bytes) {
-    // Claude removes standalone HTML comment blocks before delivering imported instructions.
-    // Only normalize cockpit's generated markers; an unrecognized transformation must fail comparison.
-    return bytes.replace(/^<!-- cockpit:(?:instructions:(?:start|end) |owner:[^\n]*|sibling-guide [^\n]*|verified [^\n]*)-->\r?\n(?:[ \t]*\r?\n)*/gm, '').trim()
+    // Claude removes standalone HTML comment lines before delivering imported instructions, as measured
+    // with cockpit's own markers. Only that shape is normalized; any other transformation fails comparison.
+    return bytes.replace(/^<!--[^\n]*-->\r?\n(?:[ \t]*\r?\n)*/gm, '').trim()
 }
 
-/** Whether the bytes hold an HTML comment Claude would remove that is not one of cockpit's own markers. */
+/** Whether the bytes hold an HTML comment the probe cannot reproduce Claude's removal of: one spanning lines. */
 export function foreignClaudeComment(bytes) {
     return /^[ \t]*<!--/m.test(nativeClaudeContent(bytes))
 }

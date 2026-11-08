@@ -1,7 +1,7 @@
 import { exactKeys } from '../exact-keys.js'
 import { randomBytes } from 'node:crypto'
 import { sha256Hex } from '../sha256.js'
-import { constants } from 'node:fs'
+import { constants, existsSync } from 'node:fs'
 import { lstat, mkdir, open, realpath, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { confirmDigest } from '../operator-confirmation.js'
@@ -22,6 +22,7 @@ import { authenticatedExecutionOutcome, changedExecutionInput, executeProbe, typ
 import type { Diagnostic } from '../diagnostics.js'
 import { generatedApplicationProjection, generatedSelftestGuardHandler, generatedSelftestGuardRuntime } from './generated-application/authorities.js'
 import { readBoundedInput } from '../config/load.js'
+import { GUARD_HELD_CALLS } from '../surfaces/harness-registry.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
 import { checkGeneratedEnvironment } from './generated-application/check.js'
 import { type GeneratedApplicationProjection } from './generated-application/shared.js'
@@ -105,6 +106,8 @@ export type SurfaceSelftestCommandOutcome =
         root: string
         bundle: SelftestEvidenceBundle
         evidence: ReturnType<typeof validateSelftestEvidenceBundle>
+        /** Every cell with a supported protocol produced evidence. */
+        measurementComplete: boolean
     }>
     // At least one cell's measurement failed; its record names why, and every other cell was still measured.
     | Readonly<{
@@ -113,6 +116,8 @@ export type SurfaceSelftestCommandOutcome =
         root: string
         bundle: SelftestEvidenceBundle
         evidence: ReturnType<typeof validateSelftestEvidenceBundle>
+        /** Every cell with a supported protocol produced evidence. */
+        measurementComplete: boolean
     }>
     | Readonly<{ kind: 'refusal'; status: 2; code: 'SELFTEST_SOURCE_INVALID' | 'SELFTEST_EXECUTION_INVALID' | 'SELFTEST_GUARD_IDENTITY_MISMATCH'; reason: string; fix?: string }>
 
@@ -522,6 +527,14 @@ function guardInterference(
         + `. Let that hook pass the probe's two Bash commands, \`${commands.allowedCommand}\` and \`${commands.forbiddenCommand}\`, which reach only a local loopback listener, while it keeps every other check it makes; then rerun selftest, or measure guard-firing by hand with a candidate and a deliberately broken control`
 }
 
+// A token imports content into the probe, or into a real session, only when it can reach a file: an
+// absolute, home or parent-relative path, or one naming a file beside the guide in the cockpit root.
+// Package names and handles in prose ("@acme/ui", "@jane.doe") resolve to nothing.
+function probeImports(bytes: string, root: string): string[] {
+    return claudeImportPaths(bytes).filter(path => path !== 'AGENTS.md'
+        && (/^[~/]/.test(path) || path.split('/').includes('..') || existsSync(resolve(root, path))))
+}
+
 async function runEvidenceProbe(
     root: string,
     evidenceRoot: string | Readonly<{ reason: string }>,
@@ -552,18 +565,18 @@ async function runEvidenceProbe(
     const modelInput = MODEL_INPUT_PROTOCOLS.includes(probe.protocol ?? '') || guard
     const native = probe.protocol === 'codex-prompt-input/v1' || modelInput
     const guideImports = modelInput && probe.harness.target === 'claudecode' && probe.capability === 'instruction-loading'
-        ? claudeImportPaths(selectedEntryBytes(probe) ?? '') : []
+        ? probeImports(selectedEntryBytes(probe) ?? '', root) : []
     if (guideImports.length > 0) return humanNeeded('native_protocol_unsupported',
         `The root AGENTS.md imports ${guideImports.map(path => `@${path}`).join(', ')}, and a file it imports would reach the model without being bound by this probe, so this cell is not measured. To have selftest measure it, write ${guideImports.length === 1 ? 'that import' : 'those imports'} as plain paths in your part of AGENTS.md, run sync, then write fresh probe specifications; otherwise measure it by hand with a candidate and a deliberately broken control.`,
     )
     // Claude removes HTML comments before delivering the guide; the probe reproduces that only for cockpit's own markers.
     if (modelInput && probe.harness.target === 'claudecode' && probe.capability === 'instruction-loading'
         && foreignClaudeComment(selectedEntryBytes(probe) ?? '')) return humanNeeded('native_protocol_unsupported',
-        'The root AGENTS.md holds an HTML comment of your own, which Claude removes before delivering the guide in a way this probe does not reproduce, so this cell is not measured. Measure it by hand with a candidate and a deliberately broken control, or move the comment out of AGENTS.md, run sync, then write fresh probe specifications.',
+        'The root AGENTS.md holds an HTML comment spanning several lines, and this probe reproduces Claude\'s removal of one-line comments only, so this cell is not measured. Put the comment on one line or move it out of AGENTS.md, run sync, then write fresh probe specifications; otherwise measure it by hand with a candidate and a deliberately broken control.',
     )
     // The measured claim is that Claude delivers AGENTS.md through the CLAUDE.md import. The team's
     // own notes beside it travel with the bytes sync read; a file it imports would reach the model unbound.
-    const teamImports = probe.teamClaudeGuide === undefined ? [] : claudeImportPaths(probe.teamClaudeGuide).filter(path => path !== 'AGENTS.md')
+    const teamImports = probe.teamClaudeGuide === undefined ? [] : probeImports(probe.teamClaudeGuide, root)
     if (modelInput && teamImports.length > 0) return humanNeeded('native_protocol_unsupported',
         `This checkout's own CLAUDE.md, which cockpit leaves as the team wrote it, also imports ${teamImports.map(path => `@${path}`).join(', ')}, and a file it imports would reach the model without being bound by the probe, so this cell is not measured. To have selftest measure it, write ${teamImports.length === 1 ? 'that import' : 'those imports'} as plain paths or move the text into CLAUDE.md or AGENTS.md, run sync, then write fresh probe specifications; otherwise measure it by hand with a candidate and a deliberately broken control.`,
     )
@@ -823,12 +836,17 @@ export async function runSurfaceSelftestApplication(
     const evidenceRoot = await ensureEvidenceDirectory(root)
     const records: SelftestEvidenceBundle['records'][number][] = []
     const approvedExecutables: OperatorExecutableIdentities = new Map()
+    // Every probe with a supported protocol produced evidence. The Claude guard has a protocol even when
+    // no vendor host is declared yet; cells without one, and custom cells, stay outside.
+    let measurementComplete = true
     for (const probe of plan.probes) {
+        const supported = probe.protocol !== 'native-unsupported/v1' || probe.harness.target === 'claudecode' && probe.capability === 'guard-firing'
         const record = await runEvidenceProbe(
             root, evidenceRoot, plan.expectation, probe, capturedInput.env, adapters, approvedExecutables, generatedSelftestGuardRuntime(application, root),
             generatedSelftestGuardHandler(application, root),
         )
         if ('runFailure' in record) return refusal('SELFTEST_EXECUTION_INVALID', `probe execution could not establish ${probe.capability} for ${probe.harness.name}: ${record.runFailure}`)
+        if (supported && !('kind' in record && record.kind === 'evidence')) measurementComplete = false
         if ('probeFailure' in record) {
             const failed = surfaceSelftestHumanNeeded(plan.expectation, probe.cell, 'probe_failed', new Date().toISOString(), boundedOperatorAction(record.probeFailure))
             if (!failed) return refusal('SELFTEST_EXECUTION_INVALID', `could not record ${surfaceSelftestCellLabel(probe.cell)} as failed: ${record.probeFailure}`)
@@ -857,8 +875,8 @@ export async function runSurfaceSelftestApplication(
     })
     if (evidence.errors.length > 0) return refusal('SELFTEST_EXECUTION_INVALID', evidence.errors.join('; '))
     return records.some(row => row.kind === 'human_needed' && row.reason === 'probe_failed')
-        ? { kind: 'incomplete', status: 2, root, bundle, evidence }
-        : { kind: 'complete', status: 0, root, bundle, evidence }
+        ? { kind: 'incomplete', status: 2, root, bundle, evidence, measurementComplete }
+        : { kind: 'complete', status: 0, root, bundle, evidence, measurementComplete }
 }
 
 const GUARD_IDENTITY_PARTS: readonly Readonly<[string, readonly (keyof GuardHandlerIdentity)[]]>[] = [
@@ -894,7 +912,13 @@ async function guardIdentityMismatch(
     const installed = bytes === undefined ? undefined : parseGuardLocalIdentity(bytes.toString('utf8'))
     const sync = cockpitCommand('sync', { config: configPath })
     const selftest = cockpitCommand('selftest', { config: configPath, args: `--interactive --probe-specifications ${formatShellCommand([artifactPath])}` })
-    if (installed && (installed.node !== current.node || installed.nodeSha256 !== current.nodeSha256)) return {
+    // The same path with other bytes is an in-place upgrade: no Node runs what sync recorded any more.
+    if (installed && installed.node === current.node && installed.nodeSha256 !== current.nodeSha256) return {
+        kind: 'refusal', status: 2, code: 'SELFTEST_GUARD_IDENTITY_MISMATCH',
+        reason: `the Node at ${current.node} changed since sync recorded it (sha256 ${installed.nodeSha256}, now ${current.nodeSha256}); until sync runs again the guard hook holds ${GUARD_HELD_CALLS}, and the guard-firing probe cannot run, so nothing was run or approved`,
+        fix: `run ${sync} under this Node, then rerun ${selftest}`,
+    }
+    if (installed && installed.node !== current.node) return {
         kind: 'refusal', status: 2, code: 'SELFTEST_GUARD_IDENTITY_MISMATCH',
         reason: `sync installed the guard for the Node at ${installed.node}, but this selftest runs under the Node at ${current.node}; the guard hook keeps running the Node sync recorded, and the guard-firing probe can measure only the guard this process would install, so nothing was run or approved`,
         fix: `run selftest with the Node the guard was installed for: ${formatShellCommand([installed.node])} ${selftest}; or run ${sync} under this Node first, which makes the guard hook run it, then rerun ${selftest}`,
@@ -1135,8 +1159,6 @@ function withholdNativeStreams<T extends SelftestEvidenceBundle['records'][numbe
         brokenControl: withheld(record.events.brokenControl), candidateControl: withheld(record.events.candidateControl) } }
 }
 
-const UNMEASURABLE_REASONS: readonly string[] = ['native_protocol_unsupported', 'enforcement_probe_required']
-
 export async function runConfiguredSurfaceSelftestOutcome(
     input: SurfaceSelftestHandlerInput | SurfaceSelftestDraftInput,
 ): Promise<SurfaceSelftestDispatchOutcome> {
@@ -1176,9 +1198,9 @@ export async function runConfiguredSurfaceSelftestOutcome(
             measuredCells: outcome.evidence.evidence.length, pendingCells: pending.length,
             unavailableCells: outcome.evidence.evidence.filter(row => row.verdict === 'unavailable').length,
             pendingSkillReviews: outcome.evidence.skillReviews.filter(row => row.status === 'human_needed').length,
-            // Every cell selftest can measure was measured. Unsupported cells and skill reviews, which no
-            // command performs or records, are reported beside it rather than holding it false forever.
-            measurementComplete: outcome.evidence.pending.every(row => UNMEASURABLE_REASONS.includes(row.reason)) },
+            // Unsupported cells and skill reviews, which no command performs or records, are reported
+            // beside it rather than holding it false forever.
+            measurementComplete: outcome.measurementComplete },
     }
     try {
         const directory = await ensureEvidenceDirectory(outcome.root)

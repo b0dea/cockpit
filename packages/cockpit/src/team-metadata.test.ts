@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
@@ -169,10 +170,11 @@ purpose = "Synthetic local repository"
         await mkdir(installed, { recursive: true })
         await mkdir(join(root, '.cockpit'))
         // The guard was installed under the Node running this command unless a case says otherwise.
+        const node = await realpath(process.execPath)
         const identity = { ...Object.fromEntries(['root', 'rootDevice', 'rootInode', 'configPath', 'configSha256', 'configDevice', 'configInode',
-            'nodeSha256', 'nodeFingerprint', 'moduleSha256'].map(key => [key, 'synthetic'])), node: await realpath(process.execPath) }
-        const bind = (module: string, node = identity.node) => writeCockpitLocalFiles(root, [{ name: 'guard-identity',
-            bytes: encodeGuardLocalIdentity({ ...identity, module, node } as never) }])
+            'nodeFingerprint', 'moduleSha256'].map(key => [key, 'synthetic'])), node, nodeSha256: createHash('sha256').update(await readFile(node)).digest('hex') }
+        const bind = (module: string, nodePath = identity.node, nodeSha256 = identity.nodeSha256) => writeCockpitLocalFiles(root, [{ name: 'guard-identity',
+            bytes: encodeGuardLocalIdentity({ ...identity, module, node: nodePath, nodeSha256 } as never) }])
         expect(await bind('/synthetic/bootstrap/node_modules/cockpit/dist/cli.js')).toEqual({ kind: 'complete' })
         expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({ code: 'COCKPIT_NOT_INSTALLED',
             target: '.cockpit/local/guard-identity', message: expect.stringContaining('/synthetic/bootstrap/') })])
@@ -191,6 +193,10 @@ purpose = "Synthetic local repository"
         expect(await bind(join(installed, 'dist/cli.js'), '/synthetic/other-node/bin/node')).toEqual({ kind: 'complete' })
         expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({ severity: 'info', code: 'GUARD_NODE_DIFFERS',
             target: '.cockpit/local/guard-identity', message: expect.stringContaining(`runs the Node at /synthetic/other-node/bin/node; this command runs the Node at ${identity.node}`) })])
+        // The same Node path holding other bytes than sync recorded: the guard holds its checked calls until sync runs again.
+        expect(await bind(join(installed, 'dist/cli.js'), identity.node, 'f'.repeat(64))).toEqual({ kind: 'complete' })
+        expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({ severity: 'warning', code: 'GUARD_NODE_DIFFERS',
+            message: expect.stringContaining(`the Node at ${identity.node} changed since sync recorded it`) })])
         expect(await bind(join(installed, 'dist/cli.js'))).toEqual({ kind: 'complete' })
         await rm(join(root, 'node_modules/.bin/cockpit'))
         await symlink('../@b00dea/cockpit/bin/cockpit.mjs'.replace('@b00dea/cockpit', installedPackageMetadata.name), join(root, 'node_modules/.bin/cockpit'))

@@ -192,8 +192,10 @@ supported native scope and remaining operator work.
 `.cockpit/local/guard-identity` differs from the one this selftest would write, so the Claude Code
 guard probe cannot run; selftest refuses before asking for any approval. Most often `sync` ran under
 another Node than this shell's, and the message names both. Run selftest with the Node the guard was
-installed for, as the fix prints it, or run `sync` under the current Node and then selftest. For any
-other difference, run `sync` with this cockpit, then selftest.
+installed for, as the fix prints it, or run `sync` under the current Node and then selftest. When the
+Node at the recorded path was upgraded in place, no Node runs what `sync` recorded and the guard holds
+its calls until `sync` runs again, so run `sync`, then selftest. For any other difference, run `sync`
+with this cockpit, then selftest. `doctor` reports `GUARD_NODE_DIFFERS` for both Node cases.
 
 A missing executable, a sign-in requirement, missing process isolation or a pending enforcement
 probe or unsupported native adapter stays `human_needed` until the manual action in the record is done. Run
@@ -308,7 +310,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `GENERATED_STALE_ARTIFACT` | a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal and confirms the stale-file removals it shows with yes |
 | `GUARD_AUTHORITY_UNAVAILABLE` | [see above](#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_NODE_DIFFERS` | run selftest with the Node the guard was installed for, or run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> under this Node first, which makes the guard hook run it |
+| `GUARD_NODE_DIFFERS` | [see above](#selftest-and-override-inspection) |
 | `GUARD_REFUSED` | [see above](#common-refusal-guidance) |
 | `GUARD_SEARCH_PATH_RELATIVE` | check PATH in the shell or launcher that starts the agent harness; if it contains relative or empty entries, remove them there and restart the harness |
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | [see above](#common-refusal-guidance) |

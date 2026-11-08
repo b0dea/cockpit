@@ -1,13 +1,13 @@
 import { createHash } from 'node:crypto'
 import { lstat, open, readlink, realpath } from 'node:fs/promises'
-import { isAbsolute, join, posix, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, posix, relative, resolve } from 'node:path'
 
 import { errorCause, snapshotJson, type JsonSnapshot, type JsonSnapshotObject, RefusalError, hasErrorCode } from '../environment/contract.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
 import { GUARD_SURFACE_TARGETS as INSTRUCTION_TARGETS, HARNESS_REGISTRY, type HarnessRegistryRow } from './harness-registry.js'
 import { INSTRUCTION_POINTER_MARKERS } from '../environment/instruction-pointer.js'
 import { exactKeys } from '../exact-keys.js'
-import { mapClaudeImports } from '../../libexec/native-selftest-input.mjs'
+import { claudeImportPaths, mapClaudeImports } from '../../libexec/native-selftest-input.mjs'
 import { foldGuardSpelling } from '../guards/evaluator.js'
 
 const GUIDE_BYTE_LIMIT = 65_536
@@ -36,6 +36,8 @@ export interface GuideObservation {
     readonly contentBytes: number
     readonly contentSha256: string
     readonly contentIdentity: string
+    /** Each `@` token in the guide that names a regular file inside the sibling, so a copy can point at it. */
+    readonly importTargets?: readonly string[]
 }
 
 type GuideObservationResult =
@@ -182,6 +184,23 @@ function safeGuidePath(path: string): boolean {
     if (path.length === 0 || path.length > 4096 || path.startsWith('/') || /^[a-z]:[/\\]/i.test(path)
         || path.includes('\\') || /[\x00-\x1f\x7f]/.test(path)) return false
     return path.split('/').every(segment => segment.length > 0 && segment !== '.' && segment !== '..')
+}
+
+// A token is an import only when it names a file: "@tanstack/react-query" or "@jane.doe" in prose
+// resolves to nothing, and rewriting it would corrupt the text. Absolute and home paths resolve the
+// same from the cockpit root, so only relative ones need pointing at the sibling.
+async function siblingImportTargets(content: string, guideDirectory: string, root: string): Promise<string[]> {
+    const targets: string[] = []
+    for (const path of new Set(claudeImportPaths(content))) {
+        if (/^[~/]/.test(path)) continue
+        try {
+            const real = await realpath(resolve(guideDirectory, path))
+            if (contained(root, real) && (await lstat(real)).isFile()) targets.push(path)
+        } catch (error) {
+            if (!hasErrorCode(error, 'ENOENT') && !hasErrorCode(error, 'ENOTDIR')) throw error
+        }
+    }
+    return targets
 }
 
 function contained(root: string, path: string): boolean {
@@ -518,7 +537,8 @@ export async function observeSiblingGuides(input: unknown): Promise<GuideObserva
         } else {
             contentBytes += observed.contentBytes
             if (contentBytes > OBSERVATION_CONTENT_BYTE_LIMIT) return finishRootObservation(allowedRoots, OBSERVATION_RESULT_BOUNDS)
-            observations.push(observed)
+            const importTargets = await siblingImportTargets(observed.content, dirname(request.sourcePath), requestRoot.canonical)
+            observations.push(importTargets.length === 0 ? observed : { ...observed, importTargets })
         }
     }
     return finishRootObservation(allowedRoots, observedOutcome({ kind: 'complete', observations, missing }))
@@ -610,7 +630,9 @@ function capturePlannerInput(input: unknown): CapturedInput | undefined {
     const guideObservations: GuideObservation[] = []
     const observationIds = new Set<string>()
     for (const row of value.guideObservations) {
-        if (!isObject(row) || !exactKeys(row, ['slug', 'sourcePath', 'sourceEntryType', 'contentPath', 'content', 'contentBytes', 'contentSha256', 'contentIdentity'], ['sourceLinkTarget'])
+        if (!isObject(row) || !exactKeys(row, ['slug', 'sourcePath', 'sourceEntryType', 'contentPath', 'content', 'contentBytes', 'contentSha256', 'contentIdentity'], ['sourceLinkTarget', 'importTargets'])
+            || row.importTargets !== undefined && (!Array.isArray(row.importTargets) || row.importTargets.length > 256
+                || !row.importTargets.every(path => typeof path === 'string' && path.length > 0 && path.length <= 4096))
             || typeof row.slug !== 'string' || !SLUG.test(row.slug) || typeof row.sourcePath !== 'string' || !isAbsolute(row.sourcePath)
             || typeof row.contentPath !== 'string' || !isAbsolute(row.contentPath)
             || row.sourceEntryType !== 'file' && row.sourceEntryType !== 'symlink'
@@ -686,11 +708,11 @@ const AGENTS_IMPORT_LINE = /^[ \t]*@(?:\.\/)?AGENTS\.md[ \t]*$/gm
  * cockpit root, which every tool can follow and none imports. Undefined when the guide holds
  * cockpit's own region or owner markers, which would end or split the generated region.
  */
-function guideText(content: string, dropAgentsImport: boolean, siblingPath: string): string | undefined {
+function guideText(content: string, dropAgentsImport: boolean, siblingPath: string, importTargets: readonly string[]): string | undefined {
     if (REGION_MARKER_PREFIXES.some(marker => content.includes(marker))) return undefined
     let text = content.replace(POINTER_BLOCK, '')
     if (dropAgentsImport) text = text.replace(AGENTS_IMPORT_LINE, '')
-    text = mapClaudeImports(text, path => `\`${/^[~/]/.test(path) ? path : posix.join(siblingPath, path)}\``)
+    text = mapClaudeImports(text, path => importTargets.includes(path) ? `\`${posix.join(siblingPath, path)}\`` : undefined)
     return text.replace(/^\s*\n/, '').trimEnd()
 }
 
@@ -819,7 +841,8 @@ export function planSiblingProjection(input: unknown): ProjectionPlanResult {
             const observation = observed(guide)
             if (!observation || seenContent.has(observation.contentSha256)) continue
             seenContent.add(observation.contentSha256)
-            const text = guideText(observation.content, guide === 'CLAUDE.md' && agentsCopied, relative(captured.canonicalMainCheckout, resolvedDirectory) || '.')
+            const text = guideText(observation.content, guide === 'CLAUDE.md' && agentsCopied, relative(captured.canonicalMainCheckout, resolvedDirectory) || '.',
+                observation.importTargets ?? [])
             if (text === undefined) {
                 return refuse(diagnostic('PROJECTION_INPUT_INVALID', `guide holds cockpit's own instruction region or owner markers: ${observation.sourcePath}`, { target: observation.sourcePath }))
             }

@@ -100,6 +100,7 @@ export async function inputSourcesCurrent(
                         || row.contentPath !== expected.contentPath || row.content !== expected.content
                         || row.contentBytes !== expected.contentBytes || row.contentSha256 !== expected.contentSha256
                         || row.contentIdentity !== expected.contentIdentity
+                        || JSON.stringify(row.importTargets ?? []) !== JSON.stringify(expected.importTargets ?? [])
                 })) return false
         }
         const mcpByRoot = new Map<string, Array<Extract<SurfaceInputEvidence, { kind: 'mcp' }>>>()

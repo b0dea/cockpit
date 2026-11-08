@@ -377,9 +377,10 @@ instruction region or owner markers.
 A copy goes stale when the guide changes: `check` and `preflight` report `GENERATED_ARTIFACT_DRIFT`
 naming each `<sibling>/<guide>`, and a person runs `sync` and commits **AGENTS.md**. That is
 deliberate: an agent editing a sibling's guide cannot change what every later agent loads until a
-person has reviewed the new text. A Claude Code `@` file import inside a copied guide would resolve
-from the cockpit root, and no other tool follows one, so the copy names that file by its plain path
-from the cockpit root instead, in backticks, which every agent can read and none imports.
+person has reviewed the new text. A Claude Code `@` import inside a copied guide would resolve from
+the cockpit root, and no other tool follows one, so when it names a file the sibling holds, the copy
+names that file by its plain path from the cockpit root instead, in backticks, which every agent can
+read and none imports. Other `@` tokens, such as package names and handles, are copied as written.
 
 **Codex grants** are `sandbox_workspace_write.writable_roots` entries under
 `sandbox_mode = "workspace-write"`, written relative to `.codex/` (`../../api` for a sibling at
@@ -450,11 +451,12 @@ text around cockpit's region included, because that is the file the tools load; 
 appear in it exactly once. The validator compares those exact bytes with replacement instructions; a
 guide the tool truncates fails that cell. Claude uses the generated `CLAUDE.md` import, or your own
 `CLAUDE.md` that cockpit left in place because it imports `AGENTS.md` once, as `sync` read it, and
-captures its native model request, allowing only Claude's removal of cockpit's standalone HTML
-comment markers. Notes beside that import are fine. A further `@` file import in either file, or an
-HTML comment of your own in `AGENTS.md`, keeps the Claude cell pending as
-`native_protocol_unsupported`, because an imported file would reach the model unbound; the record
-says which, and how to make the cell measurable.
+captures its native model request, allowing only Claude's removal of standalone one-line HTML
+comments. Notes beside that import are fine, as are package names and handles. An `@` token that can
+reach a file (an absolute, home or parent-relative path, or one naming a file beside the guide) in
+either file, or an HTML comment in `AGENTS.md` spanning several lines, keeps the Claude cell pending
+as `native_protocol_unsupported`, because the probe cannot bind what it would load; the record says
+which, and how to make the cell measurable.
 Instruction loading establishes that the guidance reached the tool, not that it obeys it.
 
 Skill probes explicitly invoke each generated skill and capture its body in the native model
@@ -542,8 +544,8 @@ not operator commands or successful measurements. A cell whose probe fails is re
 the command exits non-zero. A change to the reviewed artifact, configuration, generated manifest,
 approved executable or guard runtime, an unusable probe directory, or evidence that fails validation
 still stops the whole run; a changed input is named with its path. `summary.measurementComplete` is
-true when every cell selftest can measure was measured; unsupported cells and skill reviews remain
-outside it.
+true only when every cell with a supported protocol produced evidence, the Claude guard included;
+cells cockpit has no protocol for, custom cells and skill reviews remain outside it.
 
 Each completed run prints a path to its private structured JSON report under `.cockpit/local/probes`.
 It retains the bundle, validation results, per-cell reasons, diagnostics and summary from that run;

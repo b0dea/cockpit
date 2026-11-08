@@ -15,6 +15,7 @@ import { syncGeneratedEnvironment } from '../generated-environment/command.js'
 import { sha256Hex } from '../sha256.js'
 import { draftSurfaceSelftestSpecifications, surfaceSelftestExpectation } from '../surfaces/selftest.js'
 import { validateSelftestEvidenceBundle } from '../../libexec/validate-harness-evidence.mjs'
+import { encodeGuardLocalIdentity, parseGuardLocalIdentity } from '../guards/local-identity.js'
 
 const roots: string[] = []
 afterAll(async () => { await Promise.all(roots.map(root => rm(root, { recursive: true, force: true }))) })
@@ -82,7 +83,7 @@ else if (args[0] === 'debug') {
   else if (skill) { text=prompt; console.error('failed to load skill '+file+': missing YAML frontmatter delimited by ---') }
   else {
    if (!fs.readFileSync('CLAUDE.md','utf8').includes('@AGENTS.md')) throw new Error('generated Claude import missing')
-   const content=bytes.replace(/^<!-- cockpit:[^\\n]*-->\\n(?:[ \\t]*\\n)*/gm,'').trim()
+   const content=bytes.replace(/^<!--[^\\n]*-->\\n(?:[ \\t]*\\n)*/gm,'').trim()
    text='<system-reminder>\\nContents of '+file+' (project instructions, checked into the codebase):\\n\\n'+content+'\\n</system-reminder>'
   }
   const payload=claude ? {messages:[{role:'user',content:[{type:'text',text}]}]} : {input:[{type:'message',role:'user',content:[{type:'input_text',text}]}]}
@@ -315,21 +316,51 @@ provenance = { source = ".claude/settings.json", kind = "declared", reason = "Ke
         expect(withNotes.evidence.errors).toEqual([])
         expect(claudeInstructions(withNotes.evidence.evidence)).toMatchObject({ verdict: 'instructed', protocol: 'claude-model-input/v1' })
 
-        const withImport = await measure('@AGENTS.md\n\nAlso read @docs/claude-notes.md before editing.\n')
+        const withImport = await measure('@AGENTS.md\n\nAlso read @~/claude-notes.md before editing.\n')
         expect(withImport, JSON.stringify(withImport)).toMatchObject({ kind: 'complete' })
         if (withImport.kind !== 'complete') throw new Error('team guide with another import stopped the run')
         expect(claudeInstructions(withImport.evidence.evidence)).toBeUndefined()
         const pending = claudeInstructions(withImport.evidence.pending)
         expect(pending).toMatchObject({ reason: 'native_protocol_unsupported',
-            operatorAction: expect.stringContaining('also imports @docs/claude-notes.md') })
+            operatorAction: expect.stringContaining('also imports @~/claude-notes.md') })
         expect(pending!.operatorAction).not.toMatch(/run sync, then rerun selftest|run sync to restore/)
 
         // The tool loads the root AGENTS.md whole, so an import in the team's part of it is named too.
-        const agentsImport = await measure('@AGENTS.md\n', '# Team guide\n\nRead @docs/team.md before editing.\n')
+        const agentsImport = await measure('@AGENTS.md\n', '# Team guide\n\nRead @../shared/team.md before editing.\n')
         if (agentsImport.kind !== 'complete') throw new Error('team AGENTS.md with an import stopped the run')
         expect(claudeInstructions(agentsImport.evidence.pending)).toMatchObject({ reason: 'native_protocol_unsupported',
-            operatorAction: expect.stringContaining('The root AGENTS.md imports @docs/team.md') })
+            operatorAction: expect.stringContaining('The root AGENTS.md imports @../shared/team.md') })
+
+        // A package name or a handle in prose resolves to no file, so nothing is imported and the cell is measured.
+        const packageProse = await measure('@AGENTS.md\n\nAsk @jane.doe before a release.\n', '# Team guide\n\nUse @acme/ui for components and @types/node for types.\n')
+        if (packageProse.kind !== 'complete') throw new Error('team guide naming packages stopped the run')
+        expect(packageProse.evidence.errors).toEqual([])
+        expect(claudeInstructions(packageProse.evidence.evidence)).toMatchObject({ verdict: 'instructed' })
     }, 180_000)
+
+    it('says every supported cell was measured only when it was, and measures Claude instructions beside a one-line team comment', async () => {
+        const quiet = { stdout: { write: () => true }, stderr: { write: () => true } }
+        const configured = async (teamAgents: string) => {
+            const { root, configPath } = await createSelftestFixture(roots).issuedApplication({ 'AGENTS.md': teamAgents })
+            const bin = await nativeHarnesses(root)
+            const artifactPath = join(root, 'probe-specifications.json')
+            expect(await runCli(['selftest', '--config', configPath, '--write-probe-specifications', artifactPath], quiet)).toBe(0)
+            const outcome = await runConfiguredSurfaceSelftestOutcome({ configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin, HOME: '/synthetic-owner-home' },
+                requestProbeSpecificationsApproval: async candidate => candidate.sha256, requestExecutableApproval: async candidate => candidate.sha256 })
+            const result = outcome.result as { summary: { measurementComplete: boolean }; evidence: { evidence: { harness: { name: string }; capability: string }[] } }
+            return { outcome, summary: result.summary,
+                claudeMeasured: result.evidence.evidence.some(row => row.harness.name === 'Claude Code' && row.capability === 'instruction-loading') }
+        }
+        // Claude removes a standalone one-line comment before delivering the guide, as it does cockpit's markers.
+        const lineComment = await configured('<!-- markdownlint-disable MD013 -->\n# Team guide\n\nKeep changes small.\n')
+        expect(lineComment.claudeMeasured).toBe(true)
+        expect(lineComment.summary.measurementComplete).toBe(true)
+        // A comment spanning lines is not reproduced by the probe, so that supported cell stays unmeasured and the run says so.
+        const blockComment = await configured('# Team guide\n\n<!--\nReviewed every quarter.\n-->\n\nKeep changes small.\n')
+        expect(blockComment.claudeMeasured).toBe(false)
+        expect(blockComment.summary.measurementComplete).toBe(false)
+        expect(renderHumanDiagnostics([], { command: 'selftest', outcome: blockComment.outcome })).toMatch(/^Selftest incomplete:/)
+    }, 300_000)
 
     it('tells the operator to declare a vendor host when none is declared, and says plainly that Codex guard firing is not measured', async () => {
         const { root, configPath } = await createSelftestFixture(roots).issuedApplication()
@@ -376,6 +407,30 @@ provenance = { source = ".claude/settings.json", kind = "declared", reason = "Ke
         const { fix } = outcome.diagnostics[0]!
         expect(fix).toContain(`${syncNode} ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config ${configPath} --interactive --probe-specifications ${artifactPath}`)
         expect(fix).toContain(`./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${configPath}`)
+    }, 180_000)
+
+    it('names a Node changed in place since sync and gives only the remedy that can work', async () => {
+        const { root, configPath } = await createSelftestFixture(roots).issuedApplication()
+        // The Node at the recorded path was replaced by other bytes after sync, as an in-place upgrade does.
+        const identityPath = join(root, '.cockpit/local/guard-identity')
+        const installed = parseGuardLocalIdentity(await readFile(identityPath, 'utf8'))!
+        await writeFile(identityPath, encodeGuardLocalIdentity({ ...installed, nodeSha256: 'f'.repeat(64) }))
+        const bin = await nativeHarnesses(root)
+        const artifactPath = join(root, 'probe-specifications.json')
+        const quiet = { stdout: { write: () => true }, stderr: { write: () => true } }
+        expect(await runCli(['selftest', '--config', configPath, '--write-probe-specifications', artifactPath], quiet)).toBe(0)
+        const approvals: string[] = []
+        const outcome = await runSelftestOperatorCommand({ configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin, HOME: '/synthetic-owner-home' } },
+            { interactive: true, json: false, ci: undefined }, { stderr: quiet.stderr,
+                confirmSelftestProbeSpecifications: async candidate => { approvals.push(candidate.canonicalPath); return candidate.sha256 },
+                confirmSelftestExecutable: async candidate => { approvals.push(candidate.canonicalPath); return candidate.sha256 } },
+            runConfiguredSurfaceSelftestOutcome)
+        expect(approvals).toEqual([])
+        expect(outcome.diagnostics).toEqual([expect.objectContaining({ code: 'SELFTEST_GUARD_IDENTITY_MISMATCH',
+            message: expect.stringContaining(`the Node at ${installed.node} changed since sync recorded it`) })])
+        const { fix } = outcome.diagnostics[0]!
+        expect(fix).toContain(`./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${configPath}`)
+        expect(fix).not.toContain(`${installed.node} ./node_modules`)
     }, 180_000)
 
     it('records a cell whose measurement fails with its reason and still measures the other tools', async () => {

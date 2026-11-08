@@ -220,10 +220,13 @@ describe('live sibling projection planner', () => {
 
         // In the cockpit root a sibling's own import would name a file beside the cockpit, so the copy
         // points at the sibling's file by a plain path instead; prose mentions and code stay as written.
-        await writeFile(join(api, 'CLAUDE.md'), '@AGENTS.md\n\nRead @docs/architecture.md first; ask @oncall. `@docs/example.md` is literal.\n')
+        // Only a token naming a file the sibling holds is an import; package names and handles stay as written.
+        await mkdir(join(api, 'docs'))
+        await writeFile(join(api, 'docs/architecture.md'), '# Architecture\n')
+        await writeFile(join(api, 'CLAUDE.md'), '@AGENTS.md\n\nRead @docs/architecture.md first; ask @oncall or @jane.doe. Use @tanstack/react-query and @types/node. `@docs/example.md` is literal.\n')
         const pointed = await plan()
         expect(pointed.kind === 'complete' && pointed.guides[0]!.bytes.split('\n\n').slice(2).join('\n\n'))
-            .toBe('Read `../api/docs/architecture.md` first; ask @oncall. `@docs/example.md` is literal.')
+            .toBe('Read `../api/docs/architecture.md` first; ask @oncall or @jane.doe. Use @tanstack/react-query and @types/node. `@docs/example.md` is literal.')
 
         await writeFile(join(api, 'CLAUDE.md'), '@AGENTS.md\n')
         const importOnly = await plan()
