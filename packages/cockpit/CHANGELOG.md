@@ -13,6 +13,17 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.8
+
+### Patch Changes
+
+- 463a0bf: `selftest` no longer throws away a whole approved run when one cell's probe fails. That cell is recorded `human_needed` with the new reason `probe_failed` and what failed and what to do, every other cell is still measured, and the evidence and report are written. The command exits non-zero and its summary leads with each failed cell. A change to the reviewed artifact, configuration, generated manifest, approved executable or guard runtime, an unusable probe directory, or evidence that fails validation still stops the whole run.
+  
+  Before you approve a run that includes the Claude Code guard probe, `selftest --interactive` now lists every hook registration in the generated `.claude/settings.json` that cockpit did not generate, with its event, matcher and command. Claude Code can run each of them during the probe.
+- ce2d303: `selftest` now measures Claude Code guard firing when the team's own hooks sit beside cockpit's guard in `.claude/settings.json`. It previously stopped with `SELFTEST_EXECUTION_INVALID: probe execution could not establish guard-firing for Claude Code` and no reason. The broken control now replaces only cockpit's guard command, found by the exact command `sync` generated, so the team's hooks run unchanged under both controls. If one of them refuses a probe command, the failure names the registration and the hook's reason and asks for the probe's two commands to be let through, keeping the hook in place.
+  
+  Every other `SELFTEST_EXECUTION_INVALID` from a probe now says what failed and what to do, such as an unrecognised `--version` output, a step that could not start, or a missing generated `CLAUDE.md` import. The cockpit-setup skill now tells agents that a person approves by answering yes at the terminal prompt that shows the digest, rather than by entering a digest.
+
 ## 0.1.7
 
 ### Patch Changes
