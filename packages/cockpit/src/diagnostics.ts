@@ -326,9 +326,28 @@ export function renderHumanDiagnostics(
             const stale = 'staleRemoval' in outcome.result ? outcome.result.staleRemoval as { digest?: unknown } | undefined : undefined
             const approval = typeof stale?.digest === 'string' && /^[a-f0-9]{64}$/.test(stale.digest)
                 ? `${escapeForTerminal(`Stale-removal digest ${stale.digest}: to approve these removals, a person runs `
-                    + `${bindConfigPath(cockpitCommand('sync', { args: '--interactive' }), fixContext)} in a terminal and types it.`)}\n` : ''
+                    + `${bindConfigPath(cockpitCommand('sync', { args: '--interactive' }), fixContext)} in a terminal and confirms the displayed removals.`)}\n` : ''
             return (changes.length === 0 ? 'No generated changes.\n'
                 : `${changes.map((change) => `${change.operation} ${terminalSafeJson(change.path)}`).join('\n')}\n`) + approval
+        }
+        // An applied sync printed nothing, so a person confirming answers at a terminal could not tell
+        // that it ran, or that it left files to commit.
+        if (command === 'sync' && 'dryRun' in outcome.result && outcome.result.dryRun === false
+            && 'changes' in outcome.result && Array.isArray(outcome.result.changes)
+            && 'paths' in outcome.result && Array.isArray(outcome.result.paths)) {
+            const changes = outcome.result.changes as readonly { operation: unknown; path: unknown }[]
+            if (!changes.every((change) => change && (change.operation === 'write' || change.operation === 'remove')
+                && typeof change.path === 'string')) return ''
+            const changed = new Set(changes.map(change => change.path))
+            const current = (outcome.result.paths as readonly unknown[]).filter(path => !changed.has(path)).length
+            const files = (count: number) => `${count} ${count === 1 ? 'file' : 'files'}`
+            const unchanged = `${current} generated ${current === 1 ? 'file was' : 'files were'} already current`
+            if (changes.length === 0) return `Nothing to sync: all ${unchanged}.\n`
+            const written = changes.filter(change => change.operation === 'write').length
+            const removed = changes.length - written
+            return `${changes.map((change) => `${change.operation} ${terminalSafeJson(change.path)}`).join('\n')}\n`
+                + `Sync ${[written ? `wrote ${files(written)}` : '', removed ? `removed ${files(removed)}` : ''].filter(Boolean).join(' and ')}; ${unchanged}. `
+                + 'Review them with git status --short and commit them so teammates get the same files.\n'
         }
         if (command === 'logs' && 'records' in outcome.result && Array.isArray(outcome.result.records)) {
             const records = outcome.result.records as readonly { timestamp: unknown; stream: unknown; message: unknown }[]
@@ -337,6 +356,18 @@ export function renderHumanDiagnostics(
         }
         if (command === 'doctor') {
             return doctorSummary(outcome.result as Readonly<Record<string, unknown>>, outcome.diagnostics ?? [], fixContext)
+        }
+        if (command === 'selftest' && 'summary' in outcome.result) {
+            const result = outcome.result as { summary: { complete: boolean; measuredCells: number; pendingCells: number;
+                pendingSkillReviews: number; unavailableCells?: number }; reportPath?: string }
+            const { summary } = result
+            const lines = [
+                `Selftest ${summary.complete ? 'complete' : 'incomplete'}: ${summary.measuredCells} measured, ${summary.pendingCells} pending, ${summary.pendingSkillReviews} skill reviews pending.`,
+                `Unavailable capabilities measured: ${summary.unavailableCells ?? 0}.`,
+            ]
+            if (summary.pendingSkillReviews > 0) lines.push('Maintainer: complete the independent skill reviews; native measurement alone does not approve a skill.')
+            if (result.reportPath) lines.push(`Full structured report: ${result.reportPath}`)
+            return `${lines.map(escapeForTerminal).join('\n')}\n`
         }
         if (command === 'selftest' || command === 'upgrade' || command === 'init' || command === 'stacks') {
             return renderHumanValue(outcome.result)

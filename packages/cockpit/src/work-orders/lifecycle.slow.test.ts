@@ -303,7 +303,7 @@ describe('work-order lifecycle', () => {
         // Off that no person confirmed is not in force: the default grades until a person removes it from unconfirmed.
         writeFileSync(join(root, 'cockpit.toml'), `unconfirmed = ["work.grading"]\n${readFileSync(join(root, 'cockpit.toml'), 'utf8')}`)
         expect((await work(root, ['work', 'status'])).result).toMatchObject({ grading: 'independent', awaitingConfirmation: [{ field: 'work.grading', declared: 'off',
-            inForce: 'independent', confirm: expect.stringContaining('deletes its entry from unconfirmed, then runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync') }] })
+            inForce: 'independent', confirm: expect.stringContaining('deletes its entry from unconfirmed and its # Unconfirmed comment, then runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive') }] })
         writeFileSync(join(root, 'workorders/WO-16.md'), order('WO-16'))
         await work(root, ['work', 'accept', '--work-order', 'WO-16'])
         expect((await work(root, ['work', 'signoff', '--work-order', 'WO-16'])).diagnostics[0]?.message).toMatch(/WO-16 is accepted, not graded/)

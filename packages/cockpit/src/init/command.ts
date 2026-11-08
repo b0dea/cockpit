@@ -145,6 +145,26 @@ function noteInterview(asked: Set<string>, outcome: InitApplicationOutcome): voi
     if (outcome.result?.question !== undefined) asked.add(outcome.result.question.field)
 }
 
+/**
+ * The run stops at the first field the answers file leaves out, so the fields after it that the file
+ * does answer, or makes irrelevant, are not recorded yet. They are applied once that one is answered,
+ * so they are not outstanding: listing them read as if init had ignored them.
+ */
+function leftOutstanding(outcome: InitApplicationOutcome, supplied: ReadonlyMap<string, unknown>,
+    marks: ReadonlyMap<string, AnswerProvenance>, unattended: UnattendedInit): InitApplicationOutcome {
+    const interview = outcome.result?.interview
+    if (!interview) return outcome
+    const stopped = outcome.result?.question?.field
+    // The document owner asks for the machine floor and posture only when Compose files are declared.
+    const compose = supplied.get('environment.compose_files')
+    const runtimeDeferred = Array.isArray(compose) && compose.length === 0
+    const answered = (field: string) => field === 'configuration.defaults' ? unattended.defaultsSha256 !== undefined
+        : supplied.has(field) || marks.get(field) === 'derived'
+            || runtimeDeferred && (field === 'environment.machine' || field === 'environment.posture')
+    return { ...outcome, result: { ...outcome.result!, interview: { ...interview,
+        outstanding: interview.outstanding.filter(row => row.field === stopped || !answered(row.field)) } } }
+}
+
 type UnattendedAnswer = { kind: 'answer'; bytes: string } | { kind: 'missing' } | { kind: 'refusal'; outcome: InitApplicationOutcome }
 
 /**
@@ -331,10 +351,14 @@ async function drive(
         const conflict = recordedAnswerConflict(input, preview, supplied.fields, marks, unattended)
         if (conflict) return conflict
     }
-    if (preview.result?.question === undefined && !unattended) {
+    // These stages are returned only after the application authenticates the recorded digest and
+    // sources. surface-published can instead present changed bootstrap bytes for fresh acceptance.
+    const acceptedDraft = preview.result?.stage === 'draft-prepared' || preview.result?.stage === 'draft-observed'
+        || preview.result?.stage === 'surfaces-verified' || preview.result?.stage === 'environment-verified'
+    if (preview.result?.question === undefined && !unattended && !acceptedDraft) {
         const answer = await io.confirm(preview.result!)
         if (answer !== preview.result!.previewSha256) {
-            return refusal('INIT_PREVIEW_NOT_ACCEPTED', 'type the exact preview digest to accept the selected bootstrap target')
+            return refusal('INIT_PREVIEW_NOT_ACCEPTED', 'explicitly confirm the displayed preview to accept the selected bootstrap target')
         }
         outcome = await application(accepted)
     } else if (preview.result?.question === undefined) outcome = await application(accepted)
@@ -350,7 +374,7 @@ async function drive(
             const resolved = unattendedAnswer(question.field, question.expectedSha256, supplied.fields, unattended, marks, outcome)
             if (resolved.kind === 'refusal') return resolved.outcome
             // An unanswered field is not a failure: the pending result lists what is still outstanding.
-            if (resolved.kind === 'missing') return outcome
+            if (resolved.kind === 'missing') return leftOutstanding(outcome, supplied.fields, marks, unattended)
             bytes = resolved.bytes
             answerProvenanceValue = provenanceFor(question.field, marks)
         } else {

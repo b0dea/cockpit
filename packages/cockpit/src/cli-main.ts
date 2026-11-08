@@ -1,3 +1,4 @@
+import { confirmDigest } from './operator-confirmation.js'
 import { randomUUID } from 'node:crypto'
 import { ComposeProfileName, EVALUATOR_COMMANDS, runningEvaluatorTool, UNCONFIRMABLE_ANSWERS, type EvaluatorTool } from './schema.js'
 import { installedPackageMetadata } from './package-metadata.js'
@@ -11,7 +12,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { createInterface } from 'node:readline/promises'
 import { parseArgs, types as utilTypes } from 'node:util'
 import { createInvocationRecord, EXIT_CODES } from './invocation.js'
-import { commandGroups, commandSpelling, commandStages, commands, describePublicOption, internalCommands, isWorkHandler, isRecordedAnswerField, resolveOrdinaryInvocation, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
+import { commandGroups, commandSpelling, commandStages, commands, describePublicOption, internalCommands, isWorkHandler, isRecordedAnswerField, resolveOrdinaryInvocation, schemaFileReference, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
 import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS, isGuardSurfaceTarget } from './surfaces/harness-registry.js'
 import { cockpitCommand, initCommand, type FixContext } from './fix-catalogue.js'
@@ -1182,9 +1183,8 @@ async function decodeRequest(
         const draftPath = values['write-probe-specifications']
         if (draftPath !== undefined) {
             if (draftPath.length === 0) return usageOutcome('CLI_USAGE_INVALID', '--write-probe-specifications requires a non-empty path', '--write-probe-specifications')
-            // Writing the file runs nothing, and --json would print the envelope without creating it.
-            const conflict = values.interactive ? '--interactive' : values.json ? '--json' : undefined
-            if (conflict) return usageOutcome('CLI_USAGE_INVALID', `--write-probe-specifications only writes the file; drop ${conflict}`, conflict)
+            // Writing the file runs nothing, so there is nothing to approve interactively.
+            if (values.interactive) return usageOutcome('CLI_USAGE_INVALID', '--write-probe-specifications only writes the file; drop --interactive', '--interactive')
             const previous = values['probe-specifications']
             if (previous !== undefined && previous.length === 0) {
                 return usageOutcome('CLI_USAGE_INVALID', '--probe-specifications requires a non-empty path', '--probe-specifications')
@@ -1263,8 +1263,10 @@ async function decodeRequest(
     if (handler === 'env-schema') {
         const values = parsed.values as { config?: string; path?: string; 'replace-from'?: string }
         if (!values.config) return missingConfig()
-        if (!values.path) return usageOutcome('CLI_USAGE_INVALID', 'provide --path <slug>:<relative directory>/.env.schema, or --path .env.schema for the cockpit root', '--path')
-        return namedOnly(handler, parsed.positionals) ?? { handler, input: { configPath: values.config, reference: values.path, ...values['replace-from'] === undefined ? {} : { replaceFrom: values['replace-from'] } } }
+        if (!values.path) return usageOutcome('CLI_USAGE_INVALID', 'provide --path <slug>:<relative directory> for a sibling\'s schema, or --path . for the cockpit root\'s; the file name .env.schema may be appended', '--path')
+        // A reference that names no schema passes through as written, and env schema refuses it by name.
+        const reference = schemaFileReference(values.path) ?? values.path
+        return namedOnly(handler, parsed.positionals) ?? { handler, input: { configPath: values.config, reference, ...values['replace-from'] === undefined ? {} : { replaceFrom: values['replace-from'] } } }
     }
 
     if (handler === 'logs') {
@@ -1478,8 +1480,7 @@ async function dispatchHandler(
             if (io.confirmInit) return io.confirmInit(preview)
             if (!io.stdin) return undefined
             io.stderr.write(renderHumanValue(preview))
-            const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
-            try { return await prompt.question('Type the exact bootstrap preview digest to accept: ') } finally { prompt.close() }
+            return confirmDigest(io, preview.previewSha256, 'Accept this bootstrap preview?')
         },
         writeArtifact: (destination, artifact) => writeFile(destination, artifact, { flag: 'wx', mode: 0o600 }),
         createCockpitRoot: path => createDedicatedCockpitRoot(path, options.env),
@@ -1493,6 +1494,10 @@ async function dispatchHandler(
             if (io.answerInitQuestion) return io.answerInitQuestion(question)
             if (!io.stdin) return undefined
             io.stderr.write(renderHumanValue(question))
+            if (question.field === 'configuration.defaults' && question.expectedSha256) {
+                const approved = await confirmDigest(io, question.expectedSha256, 'Accept these configuration defaults?')
+                return approved === undefined ? undefined : JSON.stringify({ confirmed: true, sha256: approved })
+            }
             const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
             try { return await prompt.question(`Enter a JSON value for ${question.field} (strings need quotes): `) } finally { prompt.close() }
         },
@@ -1507,8 +1512,13 @@ async function dispatchHandler(
     if (request.handler === 'confirm') return handlers.confirm?.(request.input) ?? unavailable()
     if (request.handler === 'selftest') {
         const selftest = handlers.selftest ?? (async () => unavailable())
-        return 'writeProbeSpecificationsPath' in request.input ? selftest(request.input)
-            : runSelftestOperatorCommand(request.input, options, io, selftest)
+        // --json skips the generic artifact write, but this command exists to write its file: write it
+        // here so the envelope reports a file that exists.
+        if ('writeProbeSpecificationsPath' in request.input) {
+            const drafted = await selftest(request.input)
+            return options.json ? executeOutcome(drafted) : drafted
+        }
+        return runSelftestOperatorCommand(request.input, options, io, selftest)
     }
     if (request.handler === 'upgrade') return handlers.upgrade?.(request.input) ?? unavailable()
     if (request.handler === 'up') return handlers.up?.(request.input) ?? unavailable()

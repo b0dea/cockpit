@@ -395,8 +395,10 @@ spelling counts only where the guard proves it starts its own installed package:
 Where npx cannot be proven, every npx spelling prompts, and Codex and OpenCode refuse it, while the
 path spelling still counts from the cockpit root. pnpm writes `node_modules/.bin/cockpit` as a shell
 shim neither can follow, so there the provable spelling is
-`./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml`. `doctor` reports this
-as `COCKPIT_LAUNCHER_UNPROVEN` and names which spelling it can prove. Generated skills and the
+`./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml`. Everything cockpit
+prints, the `cockpit:*` package scripts included, uses that spelling, so `doctor` reports
+`COCKPIT_LAUNCHER_UNPROVEN` only where a person can make npx provable, as by removing a root `.npmrc`,
+or where no spelling is provable. Generated skills and the
 launcher refusal recommend the direct package entrypoint; replacing it with another executable
 still requires approval. The guard does not check which
 `npx` the search path finds: it assumes that program behaves as npm's own, as the version-manager
@@ -546,7 +548,7 @@ stricter setting and the most agentic one that keeps every guardrail.
 ### Fully agentic setup
 
 The most agentic configuration that keeps every guardrail. A person writes it into `cockpit.toml`,
-runs `sync --interactive` once and types the digest of the weakening it reports, because `reset`,
+runs `sync --interactive` once, reviews the weakening and confirms it with `yes`, because `reset`,
 `confirm_answers` and `instruction_files` move from `person` to `agent`:
 
 ```toml
@@ -583,7 +585,7 @@ pin holds only for the tool calls the guard inspects.
 Every writing `sync` records the policy it ran under in `.cockpit/policy.json`. A later sync that
 finds a field weaker than that record, such as a gate moved from `person` to `agent` or grading from
 `independent` to `self`, writes nothing and reports `POLICY_WEAKENING_UNCONFIRMED` with the change
-and its digest; a person runs `sync --interactive`, reads it and types the digest. `check` and
+and its digest; a person runs `sync --interactive`, reads it and confirms with `yes`. `check` and
 `doctor` report the same weakening. Until then every work command refuses to run under the weaker
 policy, and so does `reset --apply` when `[autonomy] reset` is the weakened field. A stronger policy
 needs nobody.

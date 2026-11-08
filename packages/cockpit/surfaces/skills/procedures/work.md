@@ -15,8 +15,9 @@ budget: uncapped
   `npx --no cockpit <command>` and the `.bin` launcher count only where the guard can prove they
   start that same package. If the entrypoint is missing, stop and ask the person to install cockpit;
   a runner that downloads a package is never a substitute.
-- Take flags from each command's `--help`. With `--json`, read `result`, `diagnostics[].code` and
-  `invocation.exitCode`. Every diagnostic names its fix, and
+- Take flags from each command's `--help`. With `--json`, read `result`, `diagnostics[].code`,
+  `guidance[]` and `invocation.exitCode`. A diagnostic's remedy is the `guidance` entry with its
+  `code` and `target`; `diagnostics[].fix` appears only for a command safe to run as printed, and
   `./node_modules/@b00dea/cockpit/docs/troubleshooting.md` covers the codes that need more; the
   other user-guide pages cited here sit beside it.
 - When the guard asks before a command, the person decides in Claude Code; Codex and OpenCode deny
@@ -31,9 +32,10 @@ budget: uncapped
   declared, which makes the first two read cockpit's state too. Other cockpit commands need what the
   sandbox withholds: write access to the state root, which `STATE_ROOT_UNAVAILABLE` names and a person
   can grant on that directory alone, or on its nearest existing parent before it exists; the Docker
-  socket; and on macOS `/bin/ps`. So a failure one reports there is not evidence. Ask the person to
-  approve running it outside the sandbox, or to run it in a terminal. Under `codex exec`, which cannot
-  ask, a person runs it.
+  socket; and on macOS `/bin/ps`. First inspect the named failure and request only the missing
+  access through the native approval mechanism. Prepare the concrete command and reason before
+  asking; preserve existing grants. Under `codex exec`, which cannot ask, hand that command to the
+  person. A sandbox refusal does not establish product failure.
 - Ask, never invent. A port, image, command, host, purpose, name, version, role or credential comes
   from a file you read or from the person; with neither, name the gap and ask.
 

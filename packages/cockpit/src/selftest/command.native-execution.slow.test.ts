@@ -110,7 +110,8 @@ else {
         expect(outcome.evidence.errors).toEqual([])
         expect(outcome.evidence.evidence).toHaveLength(1)
         expect(outcome.evidence.pending).toHaveLength(26)
-        expect(outcome.evidence.pending.every(row => row.reason === 'native_protocol_unsupported')).toBe(true)
+        for (const row of outcome.evidence.pending) expect(row.reason).toBe(row.harness.kind === 'builtin'
+            && row.harness.target === 'claudecode' ? 'executable_missing' : 'native_protocol_unsupported')
         const record = outcome.evidence.evidence[0]!
         expect(record).toMatchObject({ protocol: 'codex-prompt-input/v1', verdict: 'instructed' })
         expect(record.version).toBe('0.0.0-synthetic')

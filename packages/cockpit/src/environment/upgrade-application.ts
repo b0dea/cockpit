@@ -15,8 +15,8 @@ import { formatShellCommand } from '../fix-catalogue.js'
 import { EXACT_DEV_INSTALL } from '../init/derive.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { installedPackageMetadata } from '../package-metadata.js'
-import { ENVIRONMENT_CODES, errorCause, hasErrorCode, type ExecutionStep } from './contract.js'
-import { resolveExecutable, type ResolvedExecutable } from './executable.js'
+import { ENVIRONMENT_CODES, errorCause, hasErrorCode, tryParseJson, type ExecutionStep } from './contract.js'
+import { resolveExecutable, resolveExecutablePath, type ResolvedExecutable } from './executable.js'
 
 export interface UpgradeInput {
     readonly configPath: string
@@ -99,6 +99,29 @@ function upgradeNotes(changelog: string, from: string, to: string): string[] {
     return notes
 }
 
+/**
+ * The one version `npm view <name> version --json` answered. A wrapper around npm may print notices on
+ * the same stream, so the answer is found among them: a whole-line JSON value, or a list npm spread
+ * over lines from `[` to `]`. A one-element list is the same answer; several versions are none.
+ */
+function publishedVersion(stdout: string): string | undefined {
+    const values: unknown[] = []
+    const lines = stdout.split('\n').map(line => line.trim())
+    for (let index = 0; index < lines.length; index++) {
+        if (lines[index] === '[') {
+            const end = lines.indexOf(']', index)
+            if (end < 0) return undefined
+            values.push(tryParseJson(lines.slice(index, end + 1).join('')))
+            index = end
+        } else values.push(tryParseJson(lines[index]!))
+    }
+    const versions = values.flatMap(parsed => {
+        const value = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : parsed
+        return typeof value === 'string' && VERSION.test(value) ? [value] : []
+    })
+    return versions.length === 1 ? versions[0] : undefined
+}
+
 export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDependencies): Promise<UpgradeOutcome> {
     const { name, version: installed } = installedPackageMetadata
     const configPath = resolve(input.configPath)
@@ -122,24 +145,29 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
             message: `npm is needed to look up the latest ${name} and is not on PATH: ${npm.reason}`, fix: 'check the network, the registry login and that npm is on PATH, or name the version: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version>' })
         const lookup = step(npm.value, root, input.env, 'upgrade:latest', ['view', name, 'version', '--json'], LOOKUP_TIMEOUT_MS)
         const outcome = authenticatedExecutionOutcome(await dependencies.execute(lookup), lookup)
-        let published: unknown
-        try { published = outcome?.kind === 'complete' ? JSON.parse(outcome.stdout.toString('utf8')) : undefined }
-        catch { published = undefined } // reported below as an answer that is not a version
-        if (typeof published !== 'string' || !VERSION.test(published)) return refused({ severity: 'error' as const, code: 'UPGRADE_REGISTRY_UNREACHABLE' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_REGISTRY_UNREACHABLE,
-            message: `the registry did not give the latest ${name} version (${outcome?.kind === 'complete' ? 'the answer was not a version' : outcome ? `${outcome.code}: ${outcome.stderr.toString('utf8').trim().split('\n').slice(0, 2).join(' | ').slice(0, 256)}` : 'the lookup could not be authenticated'})`,
+        const answer = outcome?.kind === 'complete' ? outcome.stdout.toString('utf8') : ''
+        const published = outcome?.kind === 'complete' ? publishedVersion(answer) : undefined
+        if (published === undefined) return refused({ severity: 'error' as const, code: 'UPGRADE_REGISTRY_UNREACHABLE' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_REGISTRY_UNREACHABLE,
+            message: `the registry did not give the latest ${name} version (${outcome?.kind === 'complete' ? `the answer was not one version: ${answer.trim().split('\n').slice(0, 3).join(' | ').slice(0, 256)}` : outcome ? `${outcome.code}: ${outcome.stderr.toString('utf8').trim().split('\n').slice(0, 2).join(' | ').slice(0, 256)}` : 'the lookup could not be authenticated'})`,
             fix: 'check the network, the registry login and that npm is on PATH, or name the version: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version>' })
         target = published
     } else if (!VERSION.test(target)) return refused({ severity: 'error' as const, code: 'UPGRADE_VERSION_INVALID' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_VERSION_INVALID, target: '<version>',
         message: `"${target}" is not an exact version`, fix: 'give a full version such as 1.2.3, not a range or tag' })
 
     const order = compareVersions(target, installed)
-    if (order === 0 || order < 0 && input.version === undefined) return refused({ severity: 'error' as const, code: 'UPGRADE_ALREADY_CURRENT' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_ALREADY_CURRENT,
-        message: `already on ${installed}${order === 0 ? '' : `; the latest published is ${target}`}`,
-        fix: 'nothing to upgrade; to move to another version name it: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version>' })
+    // Already at the requested or latest version is a finished upgrade, not a failure: it runs nothing
+    // and exits 0, so an agent asked to upgrade does not treat a current install as broken.
+    if (order === 0 || order < 0 && input.version === undefined) return { status: 0, result: { from: installed, to: installed, packageManager: lockfile.manager, dryRun: input.dryRun },
+        diagnostics: [{ severity: 'info' as const, code: 'UPGRADE_ALREADY_CURRENT' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_ALREADY_CURRENT,
+            message: order === 0 ? `already on ${installed}` : `installed ${installed} is newer than the latest published ${target}`,
+            fix: 'nothing to upgrade; to move to another version name it: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version>' }] }
 
     const spec = `${name}@${target}`
     const installArgv = [lockfile.manager, lockfile.verb, ...lockfile.flags, spec]
-    const syncArgv = ['npx', '--no', 'cockpit', 'sync', '--config', configPath]
+    // Sync runs from the newly installed package's own entrypoint with this Node: a package manager's
+    // shim (npx, pnpm's .bin script) is a launcher the guard cannot prove, so printing it would send an
+    // agent to a command that is asked about or refused.
+    const syncArgv = [`./node_modules/${name}/bin/cockpit.mjs`, 'sync', '--config', configPath]
     const result = { from: installed, to: target, packageManager: lockfile.manager,
         install: formatShellCommand(installArgv), sync: formatShellCommand(syncArgv), dryRun: input.dryRun }
     if (input.dryRun) return { status: 0, diagnostics: [],
@@ -151,13 +179,14 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
         message: `${result.install} failed (${installOutcome ? `${installOutcome.code}, exit ${installOutcome.execution.exitCode}: ${installOutcome.stderr.toString('utf8').trim().split('\n').slice(-3).join(' | ').slice(0, 512)}` : 'the outcome could not be authenticated'})`,
         fix: 'fix what the package manager reported (is the version published?), then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version>' })
 
-    const npx = await resolveExecutable('npx', input.env)
-    if (npx.state !== 'available') return refused({ severity: 'error' as const, code: 'UPGRADE_SYNC_FAILED' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_SYNC_FAILED,
-        message: `${spec} is installed but npx is not on PATH: ${npx.reason}`, fix: 'act on what sync reported above or put npx on PATH, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>' })
-    const synced = await dependencies.executeForeground({ executable: npx.value, argv: syncArgv.slice(1), cwd: root, env: input.env })
+    const node = await resolveExecutablePath(process.execPath)
+    if (node.state !== 'available') return refused({ severity: 'error' as const, code: 'UPGRADE_SYNC_FAILED' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_SYNC_FAILED,
+        message: `${spec} is installed but the running Node could not be resolved: ${node.reason}`, fix: 'act on what sync reported above, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>' })
+    const synced = await dependencies.executeForeground({ executable: node.value,
+        argv: [join(root, 'node_modules', name, 'bin', 'cockpit.mjs'), ...syncArgv.slice(1)], cwd: root, env: input.env })
     if (synced.kind !== 'complete' || synced.exitCode !== 0) return refused({ severity: 'error' as const, code: 'UPGRADE_SYNC_FAILED' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_SYNC_FAILED,
         message: `${spec} is installed but sync did not finish (${synced.kind === 'refusal' ? synced.code : `exit ${synced.exitCode}`}); the generated files are still those of ${installed}`,
-        fix: 'act on what sync reported above or put npx on PATH, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>' }, synced.exitCode === 0 ? 1 : synced.exitCode)
+        fix: 'act on what sync reported above, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>' }, synced.exitCode === 0 ? 1 : synced.exitCode)
 
     let notes: string[]
     try { notes = upgradeNotes(await readFile(join(root, 'node_modules', name, 'CHANGELOG.md'), 'utf8'), installed, target) }

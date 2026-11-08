@@ -4,8 +4,12 @@ import { sha256Hex } from '../sha256.js'
 import { constants } from 'node:fs'
 import { lstat, mkdir, open, realpath, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
-import { createInterface } from 'node:readline/promises'
+import { confirmDigest } from '../operator-confirmation.js'
+import { renderHumanValue } from '../diagnostics.js'
 import { types as utilTypes } from 'node:util'
+import { MODEL_INPUT_PROTOCOLS, nativeClaudeImport, nativeInputSettings, nativeSkillBody, validateNativeModelInputPair } from '../../libexec/native-selftest-input.mjs'
+import { startSelftestModel } from './selftest-model.js'
+import { brokenNativeGuardSettings, validateNativeGuardPair } from '../../libexec/native-selftest-guard.mjs'
 
 import {
     PROBE_EVIDENCE_ROOT, NATIVE_SELFTEST_STREAM_BYTES, validateNativeInstructionPair,
@@ -16,7 +20,7 @@ import {
 } from '../../libexec/validate-harness-evidence.mjs'
 import { authenticatedExecutionOutcome, executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import type { Diagnostic } from '../diagnostics.js'
-import { generatedApplicationProjection } from './generated-application/authorities.js'
+import { generatedApplicationProjection, generatedSelftestGuardRuntime } from './generated-application/authorities.js'
 import { checkGeneratedEnvironment } from './generated-application/check.js'
 import { type GeneratedApplicationProjection } from './generated-application/shared.js'
 import { redactSensitiveMessage } from './sensitive.js'
@@ -93,6 +97,7 @@ export type SurfaceSelftestCommandOutcome =
     | Readonly<{
         kind: 'complete'
         status: 0
+        root: string
         bundle: SelftestEvidenceBundle
         evidence: ReturnType<typeof validateSelftestEvidenceBundle>
     }>
@@ -384,8 +389,10 @@ async function ensureEvidenceDirectory(root: string): Promise<string | Readonly<
 async function writeControlPair(
     directory: string,
     probe: PlannedSelftestProbe,
-): Promise<{ candidate: string; broken: string; candidateSha256: string; brokenSha256: string; brokenBytes: string } | undefined> {
-    const native = probe.protocol === 'codex-prompt-input/v1'
+): Promise<{ candidate: string; broken: string; candidateSha256: string; brokenSha256: string; brokenBytes: string; brokenHookCommand?: string } | undefined> {
+    const guard = probe.protocol === 'claude-guard-loopback/v1'
+    const modelInput = MODEL_INPUT_PROTOCOLS.includes(probe.protocol ?? '')
+    const native = probe.protocol === 'codex-prompt-input/v1' || modelInput
     if (native) {
         // Codex 0.167.0 on 2026-11-06 applied its instruction limit to the whole AGENTS.md chain up to the
         // nearest .git. Under the cockpit root, a guide over half the limit cut its own copy, though a session
@@ -394,14 +401,36 @@ async function writeControlPair(
         await mkdir(join(directory, 'candidate'), { mode: 0o700 })
         await mkdir(join(directory, 'broken'), { mode: 0o700 })
     }
-    const candidate = native ? join(directory, 'candidate', 'AGENTS.md') : join(directory, 'candidate.json')
-    const broken = native ? join(directory, 'broken', 'AGENTS.md') : join(directory, 'broken.json')
+    const skillPath = modelInput && probe.sample ? join(probe.harness.target === 'claudecode' ? '.claude' : '.agents', 'skills', probe.sample.skill, 'SKILL.md') : undefined
+    if (skillPath) for (const role of ['candidate', 'broken']) await mkdir(dirname(join(directory, role, skillPath)), { recursive: true, mode: 0o700 })
+    const candidate = native ? join(directory, 'candidate', skillPath ?? 'AGENTS.md') : join(directory, 'candidate.json')
+    const broken = native ? join(directory, 'broken', skillPath ?? 'AGENTS.md') : join(directory, 'broken.json')
     const candidateBytes = selectedEntryBytes(probe)
     if (!candidateBytes || Buffer.byteLength(candidateBytes) > MAX_CONTROL_BYTES) return undefined
-    const brokenBytes = native ? `Cockpit selftest replacement control ${randomBytes(12).toString('hex')}.\n` : '{\n'
+    const replacement = `Cockpit selftest replacement control ${randomBytes(12).toString('hex')}.\n`
+    const brokenHookCommand = guard ? `cockpit-selftest-missing-hook-${randomBytes(12).toString('hex')}` : undefined
+    const brokenBytes = guard ? brokenNativeGuardSettings(candidateBytes, brokenHookCommand!) : skillPath && probe.harness.target === 'claudecode'
+        ? `---\nname: ${probe.sample!.skill}\ndescription: Cockpit selftest broken control.\nuser-invocable: false\n---\n${replacement}`
+        : native ? replacement : '{\n'
+    if (brokenBytes === undefined) return undefined
+    if (modelInput || guard) {
+        await mkdir(join(directory, 'home'), { mode: 0o700 })
+        await mkdir(join(directory, 'home', '.codex'), { mode: 0o700 })
+        await mkdir(join(directory, 'home', '.claude'), { mode: 0o700 })
+        if (!guard && probe.harness.target === 'claudecode') for (const role of ['candidate', 'broken']) {
+            await writeFile(join(directory, role, 'native-settings.json'), nativeInputSettings(join(directory, role)), { flag: 'wx', mode: 0o600 })
+        }
+        if (probe.capability === 'instruction-loading') {
+            const wrapper = probe.entries.find(entry => entry.path === 'CLAUDE.md')
+            const bytes = wrapper?.kind === 'file' ? wrapper.bytes : wrapper?.region.format === 'markdown-delimited' ? wrapper.region.bytes : undefined
+            if (!bytes || !nativeClaudeImport(bytes)) return undefined
+            for (const role of ['candidate', 'broken']) await writeFile(join(directory, role, 'CLAUDE.md'), bytes, { flag: 'wx', mode: 0o600 })
+        }
+    }
     await writeFile(candidate, candidateBytes, { flag: 'wx', mode: 0o600 })
     await writeFile(broken, brokenBytes, { flag: 'wx', mode: 0o600 })
-    return { candidate, broken, candidateSha256: sha256Hex(candidateBytes), brokenSha256: sha256Hex(brokenBytes), brokenBytes }
+    return { candidate, broken, candidateSha256: sha256Hex(candidateBytes), brokenSha256: sha256Hex(brokenBytes), brokenBytes,
+        ...(brokenHookCommand ? { brokenHookCommand } : {}) }
 }
 
 function consumedExecutable(executable: ResolvedExecutable): ConsumedFile {
@@ -422,6 +451,7 @@ async function runEvidenceProbe(
     env: SurfaceSelftestCommandInput['env'],
     adapters: SurfaceSelftestCommandAdapters,
     approvedExecutables: OperatorExecutableIdentities,
+    guardRuntime: ReturnType<typeof generatedSelftestGuardRuntime>,
 ): Promise<SelftestEvidenceRecord | ReturnType<typeof surfaceSelftestHumanNeeded> | ProbeFailure | undefined> {
     const harnessName = probe.harness.name
     const observedAt = new Date().toISOString()
@@ -429,7 +459,19 @@ async function runEvidenceProbe(
         expectation, probe.cell, 'native_protocol_unsupported', observedAt,
         `${harnessName} ${probe.capability} has no verified native selftest protocol. Measure the generated surface with its real loader and a deliberately broken control; preserve native tool events, not assistant claims. Claude print mode ignores malformed settings, and a native tool denial need not fail its parent process. Do not substitute diagnostic echo commands.`,
     )
-    const native = probe.protocol === 'codex-prompt-input/v1'
+    const guard = probe.protocol === 'claude-guard-loopback/v1'
+    if (guard && (!guardRuntime || !guardRuntime.some(file => file.path === join(root, '.cockpit/guards/bash-guard.sh')))) return { probeFailure: 'native guard runtime is not bound to this published cockpit root' }
+    const modelInput = MODEL_INPUT_PROTOCOLS.includes(probe.protocol ?? '') || guard
+    const native = probe.protocol === 'codex-prompt-input/v1' || modelInput
+    if (modelInput && probe.harness.target === 'claudecode' && probe.capability === 'instruction-loading'
+        && /(?:^|\s)@[^\s`]+/.test(selectedEntryBytes(probe) ?? '')) return surfaceSelftestHumanNeeded(
+        expectation, probe.cell, 'native_protocol_unsupported', observedAt,
+        'The generated guide contains native import syntax. Its imported dependencies are not bound by this probe; measure them independently rather than loading unreviewed files.',
+    )
+    if (modelInput && probe.sample && nativeSkillBody(selectedEntryBytes(probe) ?? '') === undefined) return surfaceSelftestHumanNeeded(
+        expectation, probe.cell, 'native_protocol_unsupported', observedAt,
+        'The generated skill cannot be loaded by the bounded body-only probe: check frontmatter, direct invocation, dynamic context and agent or hook declarations. It remains unmeasured; do not remove its restrictions to pass selftest.',
+    )
     const resolution = await resolveExecutable(BUILTIN_EXECUTABLES[probe.harness.target], env)
     if (resolution.state === 'unavailable') return surfaceSelftestHumanNeeded(
         expectation,
@@ -468,26 +510,71 @@ async function runEvidenceProbe(
     const commonFiles = [consumedExecutable(executable)]
     const probeEnvironment = Object.fromEntries(Object.entries(env).filter(
         (row): row is [string, string] => typeof row[1] === 'string' && row[1].length > 0 && !row[1].includes('\0')))
+    const controlCwd = (control: string): string => guard ? root : modelInput ? join(directory, control === controls.candidate ? 'candidate' : 'broken') : dirname(control)
     const controlIndex = invocation.indexOf('{control}')
     if (!native && controlIndex < 0) return undefined
     const candidateCommand = publicCommand(invocation, executable.canonicalPath, candidatePath)
     const brokenCommand = publicCommand(invocation, executable.canonicalPath, brokenPath)
-    const createStep = (role: string, command: readonly [string, ...string[]], control?: typeof controls.candidate): ExecutionStep | undefined => {
+    const modelEndpoints = { candidate: '', broken: '' }
+    const modelCommand = (command: readonly [string, ...string[]], cwd: string, endpoint: string): [string, ...string[]] => {
+        const url = new URL(endpoint)
+        return command.map(value => value.replace('{model-endpoint}', endpoint).replace('{native-settings}', join(cwd, 'native-settings.json'))
+            .replaceAll('{loopback-port}', url.port).replaceAll('{nonce}', url.pathname.slice(1))) as [string, ...string[]]
+    }
+    const createStep = (role: string, command: readonly [string, ...string[]], control?: typeof controls.candidate, endpoint?: string): ExecutionStep | undefined => {
         const execution = executionCommand(command, root, control ? relativeEvidencePath(root, control) : undefined)
         const files = [...commonFiles]
-        if (control && !native) files.push({ path: control, sha256: control === controls.candidate ? controls.candidateSha256 : controls.brokenSha256,
+        if (control && (!native || guard)) files.push({ path: control, sha256: control === controls.candidate ? controls.candidateSha256 : controls.brokenSha256,
             maxBytes: MAX_CONTROL_BYTES, argvIndexes: [controlIndex], executable: false })
-        const cwd = native && control ? dirname(control) : root
-        const checks: FilesystemCheck[] = native && control ? [{ path: control, expected: 'file',
+        const cwd = native && control ? controlCwd(control) : root
+        const checks: FilesystemCheck[] = native && !guard && control ? [{ path: control, expected: 'file',
             sha256: control === controls.candidate ? controls.candidateSha256 : controls.brokenSha256, maxBytes: MAX_CONTROL_BYTES },
             { path: join(cwd, 'AGENTS.override.md'), expected: 'absent' }] : []
-        return step(`surface-selftest-${randomBytes(8).toString('hex')}-${role}`, cwd, execution, executable.invocationPath, files, deadline,
-            { harness: harnessName, capability: probe.capability, role }, probeEnvironment, checks, native ? NATIVE_SELFTEST_STREAM_BYTES : STREAM_BYTES)
+        if (guard && control) checks.push(...guardRuntime!.map(file => ({ ...file, expected: 'file' as const })))
+        if (modelInput && control && probe.capability === 'instruction-loading') checks.push({ path: join(cwd, 'CLAUDE.md'), expected: 'file',
+            sha256: expectation.nativeSourceSha256?.['CLAUDE.md'], maxBytes: MAX_CONTROL_BYTES })
+        if (modelInput && !guard && control && probe.harness.target === 'claudecode') files.push({ path: join(cwd, 'native-settings.json'),
+            sha256: sha256Hex(nativeInputSettings(cwd)), maxBytes: MAX_CONTROL_BYTES, argvIndexes: [invocation.indexOf('{native-settings}')], executable: false })
+        const environment = modelInput ? { PATH: probeEnvironment.PATH ?? '', HOME: join(directory, 'home'),
+            CODEX_HOME: join(directory, 'home', '.codex'), CLAUDE_CONFIG_DIR: join(directory, 'home', '.claude'),
+            DISABLE_AUTOUPDATER: '1', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+            ...(endpoint && probe.harness.target === 'claudecode' ? { ANTHROPIC_BASE_URL: endpoint, ANTHROPIC_API_KEY: 'synthetic-local-not-a-credential' } : {}),
+        } : probeEnvironment
+        const vector = endpoint ? modelCommand(execution, cwd, endpoint) : execution
+        return step(`surface-selftest-${randomBytes(8).toString('hex')}-${role}`, cwd, vector, executable.invocationPath, files, deadline,
+            { harness: harnessName, capability: probe.capability, role }, environment, checks, native ? NATIVE_SELFTEST_STREAM_BYTES : STREAM_BYTES)
     }
     const version = await run(adapters, createStep('version', versionCommand))
     const help = await run(adapters, createStep('help', helpCommand))
-    const broken = await run(adapters, createStep('broken', brokenCommand, controls.broken))
-    const candidate = await run(adapters, createStep('candidate', candidateCommand, controls.candidate))
+    if (modelInput && help?.outcome.kind === 'complete'
+        && !(guard ? /--settings\b/ : probe.harness.target === 'claudecode' ? /--print\b/ : /\bexec\b/).test(help.outcome.stdout.toString('utf8'))) {
+        return surfaceSelftestHumanNeeded(expectation, probe.cell, 'native_protocol_unsupported', observedAt,
+            `${harnessName} does not advertise the command required by this native input protocol. Update the harness and regenerate the probe specifications; no capability was measured.`)
+    }
+    const modelInputs: { candidate: string; broken: string } = { candidate: '[]', broken: '[]' }
+    const guardReceipts: { candidate: readonly string[]; broken: readonly string[] } = { candidate: [], broken: [] }
+    let captureFailure: string | undefined
+    const runControl = async (role: 'candidate' | 'broken') => {
+        const command = role === 'candidate' ? candidateCommand : brokenCommand
+        const control = role === 'candidate' ? controls.candidate : controls.broken
+        if (!modelInput) return run(adapters, createStep(role, command, control))
+        const model = await startSelftestModel(probe.harness.target as 'claudecode' | 'codexcli', guard ? probe.guardHost : undefined)
+        try {
+            modelEndpoints[role] = model.endpoint
+            const result = await run(adapters, createStep(role, command, control, model.endpoint))
+            captureFailure ??= model.failure()
+            if (captureFailure) return undefined
+            const captured = boundedStream(Buffer.from(JSON.stringify(model.requests())), NATIVE_SELFTEST_STREAM_BYTES)
+            if (captured === undefined) { captureFailure = 'native model input could not be captured within its redaction and size bounds'; return undefined }
+            modelInputs[role] = captured
+            guardReceipts[role] = model.guard?.receipts() ?? []
+            return result
+        } finally { await model.close() }
+    }
+    let broken: Awaited<ReturnType<typeof run>>, candidate: Awaited<ReturnType<typeof run>>
+    try { broken = await runControl('broken'); candidate = await runControl('candidate') }
+    catch (error) { return { probeFailure: `native input capture failed: ${errorCause(error)}` } }
+    if (captureFailure) return { probeFailure: captureFailure }
     if (!version || !help || !broken || !candidate) return undefined
     if ([version, help, broken, candidate].some((row) => (!native || row.outcome.kind !== 'complete') && authenticationRequired(row.outcome))) {
         return surfaceSelftestHumanNeeded(
@@ -507,11 +594,21 @@ async function runEvidenceProbe(
             const failures = [broken, candidate].map((row, index) => `${index === 0 ? 'broken' : 'candidate'}: ${row.outcome.kind === 'refusal' ? row.outcome.code : 'complete'} (exit ${row.outcome.execution.exitCode}, signal ${row.outcome.execution.signal})`)
             return { probeFailure: `native prompt-input did not complete both controls: ${failures.join('; ')}; inspect tool availability, output bounds and project trust without bypassing policy` }
         }
-        const problem = validateNativeInstructionPair(candidate.outcome.stdout.toString('utf8'), broken.outcome.stdout.toString('utf8'),
+        const problem = guard ? validateNativeGuardPair({ host: probe.guardHost!, brokenCommand: controls.brokenHookCommand!,
+            candidateBytes: selectedEntryBytes(probe)!, brokenBytes: controls.brokenBytes,
+            observations: {
+                candidate: { endpoint: modelEndpoints.candidate, input: modelInputs.candidate, receipts: guardReceipts.candidate },
+                broken: { endpoint: modelEndpoints.broken, input: modelInputs.broken, receipts: guardReceipts.broken },
+            }, candidateStdout: candidate.outcome.stdout.toString('utf8'), brokenStdout: broken.outcome.stdout.toString('utf8') })
+            : modelInput ? validateNativeModelInputPair({ target: probe.harness.target as 'claudecode' | 'codexcli',
+            skill: probe.sample?.skill, candidateInput: modelInputs.candidate, brokenInput: modelInputs.broken,
+            candidatePath: controls.candidate, brokenPath: controls.broken, candidateBytes: selectedEntryBytes(probe)!, brokenBytes: controls.brokenBytes,
+            brokenStdout: broken.outcome.stdout.toString('utf8'), brokenStderr: broken.outcome.stderr.toString('utf8') })
+            : validateNativeInstructionPair(candidate.outcome.stdout.toString('utf8'), broken.outcome.stdout.toString('utf8'),
             dirname(controls.candidate), dirname(controls.broken), selectedEntryBytes(probe)!,
             controls.brokenBytes)
         if (problem) return { probeFailure: problem }
-        verdict = 'instructed'; candidateResult = 'accepted'; candidateCode = probe.candidateCode
+        verdict = guard ? 'enforced' : 'instructed'; candidateResult = guard ? 'refused' : 'accepted'; candidateCode = probe.candidateCode
     } else if (candidate.outcome.kind === 'complete' && exactLine(candidateOutput, probe.candidateCode)) {
         verdict = 'instructed'; candidateResult = 'accepted'; candidateCode = probe.candidateCode
     } else if (candidate.outcome.kind === 'refusal' && probe.capability === 'guard-firing' && exactLine(candidateOutput, probe.candidateCode)) {
@@ -525,20 +622,25 @@ async function runEvidenceProbe(
     const events = {
         version: event(versionCommand, '.', version.outcome, 'completed', 'VERSION_OK'),
         help: event(helpCommand, '.', help.outcome, 'completed', 'HELP_OK'),
-        brokenControl: event(brokenCommand, native ? relative(root, dirname(controls.broken)) : '.', broken.outcome, native ? 'accepted' : 'rejected', probe.brokenCode, native ? NATIVE_SELFTEST_STREAM_BYTES : STREAM_BYTES),
-        candidateControl: event(candidateCommand, native ? relative(root, dirname(controls.candidate)) : '.', candidate.outcome, candidateResult, candidateCode, native ? NATIVE_SELFTEST_STREAM_BYTES : STREAM_BYTES),
+        brokenControl: event(modelInput ? modelCommand(brokenCommand, controlCwd(controls.broken), modelEndpoints.broken) : brokenCommand,
+            native ? relative(root, controlCwd(controls.broken)) || '.' : '.', broken.outcome, guard ? 'allowed' : native ? 'accepted' : 'rejected', probe.brokenCode, native ? NATIVE_SELFTEST_STREAM_BYTES : STREAM_BYTES),
+        candidateControl: event(modelInput ? modelCommand(candidateCommand, controlCwd(controls.candidate), modelEndpoints.candidate) : candidateCommand,
+            native ? relative(root, controlCwd(controls.candidate)) || '.' : '.', candidate.outcome, candidateResult, candidateCode, native ? NATIVE_SELFTEST_STREAM_BYTES : STREAM_BYTES),
     }
     if (!events.version || !events.help || !events.brokenControl || !events.candidateControl) return undefined
-    if (native && validateNativeInstructionPair(events.candidateControl.stdout, events.brokenControl.stdout,
+    if (native && !modelInput && validateNativeInstructionPair(events.candidateControl.stdout, events.brokenControl.stdout,
         dirname(controls.candidate), dirname(controls.broken), selectedEntryBytes(probe)!, controls.brokenBytes)) {
         return { probeFailure: 'the generated AGENTS.md holds credential-shaped text such as api_key=<value>, which evidence redacts, so the stored stream cannot match the source. Reword that text in the guide it came from, run sync, then rerun selftest' }
     }
     const versionText = `${events.version.stdout} ${events.version.stderr}`.trim()
-    const versionValue = native ? /^codex-cli (\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/.exec(events.version.stdout.trim())?.[1]
+    const versionValue = native ? (probe.harness.target === 'claudecode' ? /^(\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?) \(Claude Code\)$/
+        : /^codex-cli (\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/).exec(events.version.stdout.trim())?.[1]
         : versionText.split(/\s+/).find(Boolean)
     if (!versionValue || Buffer.byteLength(versionValue) > 256) return undefined
     const record: SelftestEvidenceRecord = {
-        ...(native ? { protocol: 'codex-prompt-input/v1' as const } : {}),
+        ...(native ? { protocol: probe.protocol as SelftestEvidenceRecord['protocol'] } : {}),
+        ...(modelInput ? { modelInputs, modelEndpoints } : {}),
+        ...(guard ? { guardProbe: { host: probe.guardHost!, brokenCommand: controls.brokenHookCommand!, receipts: guardReceipts } } : {}),
         kind: 'evidence', harness: probe.harness, capability: probe.capability,
         generatedManifestSha256: expectation.generatedManifestSha256, verdict, version: versionValue, measuredOn: startedAt.slice(0, 10),
         runId: `selftest-${randomBytes(16).toString('hex')}`, startedAt, finishedAt, expiresAt,
@@ -573,7 +675,7 @@ export async function runSurfaceSelftestApplication(
     const approvedExecutables: OperatorExecutableIdentities = new Map()
     for (const probe of plan.probes) {
         const record = await runEvidenceProbe(
-            root, evidenceRoot, plan.expectation, probe, capturedInput.env, adapters, approvedExecutables,
+            root, evidenceRoot, plan.expectation, probe, capturedInput.env, adapters, approvedExecutables, generatedSelftestGuardRuntime(application, root),
         )
         if (!record) return refusal('SELFTEST_EXECUTION_INVALID', `probe execution could not establish ${probe.capability} for ${probe.harness.name}`)
         if ('probeFailure' in record) return refusal('SELFTEST_EXECUTION_INVALID', `probe execution could not establish ${probe.capability} for ${probe.harness.name}: ${record.probeFailure}`)
@@ -598,7 +700,7 @@ export async function runSurfaceSelftestApplication(
         testOnlyExecutableIdentities,
     })
     if (evidence.errors.length > 0) return refusal('SELFTEST_EXECUTION_INVALID', evidence.errors.join('; '))
-    return { kind: 'complete', status: 0, bundle, evidence }
+    return { kind: 'complete', status: 0, root, bundle, evidence }
 }
 
 export async function runConfiguredSurfaceSelftestApplication(
@@ -662,6 +764,7 @@ export async function runConfiguredSurfaceSelftestApplication(
             harness: probe.harness.name,
             capability: probe.capability,
             ...(probe.protocol ? { protocol: probe.protocol, executes: probe.protocol !== 'native-unsupported/v1' } : {}),
+            ...(probe.guardHost ? { guardHost: probe.guardHost } : {}),
             skill: probe.sample?.skill ?? null,
             invocation: [...probe.invocation] as readonly [string, ...string[]],
             versionCommand: [...probe.versionCommand] as readonly [string, ...string[]],
@@ -674,15 +777,38 @@ export async function runConfiguredSurfaceSelftestApplication(
         // SELFTEST_EXECUTION_INVALID, including probes that ran and failed.
         return refusal(
             'SELFTEST_EXECUTION_INVALID',
-            'probe specification artifact requires independent approval of its exact digest and command vectors; run selftest with --interactive at a terminal outside CI and type the file SHA-256 it displays',
+            'probe specification artifact requires independent approval of its exact digest and command vectors; run selftest with --interactive at a terminal outside CI and confirm the displayed artifact and runnable commands',
         )
     }
-    return runSurfaceSelftestApplication({
-        application: checked.result.application,
-        root: dirname(configPath),
-        specifications,
-        env: capturedInput.env,
-    }, adapters)
+    const changedReview = new Error('selftest artifact, configuration or generated manifest changed after review; prepare a fresh preview and review it before retrying')
+    const revalidate = async () => {
+        const reviewedBytes = await readProbeSpecificationsArtifact(artifactPath)
+        const reviewedSource = await checkGeneratedEnvironment({ configPath })
+        if (reviewedBytes !== bytes || reviewedSource.kind !== 'complete'
+            || reviewedSource.result.application.sourceSha256 !== checked.result.application.sourceSha256
+            || reviewedSource.result.application.surfaceSelftest.manifestSha256 !== checked.result.application.surfaceSelftest.manifestSha256) {
+            throw changedReview
+        }
+    }
+    try {
+        await revalidate()
+        return await runSurfaceSelftestApplication({
+            application: checked.result.application,
+            root: dirname(configPath),
+            specifications,
+            env: capturedInput.env,
+        }, { ...adapters, ...(adapters.requestExecutableApproval ? {
+            requestExecutableApproval: async (executable: SurfaceSelftestExecutableCandidate) => {
+                const approval = await adapters.requestExecutableApproval!(executable)
+                // The person's second review can outlive the inputs authenticated by the first.
+                await revalidate()
+                return approval
+            },
+        } : {}) })
+    } catch (error) {
+        if (error === changedReview) return refusal('SELFTEST_SOURCE_INVALID', changedReview.message)
+        throw error
+    }
 }
 
 export interface SurfaceSelftestHandlerInput extends ConfiguredSurfaceSelftestCommandInput {
@@ -784,11 +910,14 @@ async function writeConfiguredSurfaceSelftestSpecifications(
 // ones, and is larger than the renderer shows, which would hide the summary. It stays in the private
 // transcript; the output keeps its digest and size.
 function withholdNativeStreams<T extends SelftestEvidenceBundle['records'][number]>(record: T): T {
-    if (record.kind !== 'evidence' || record.protocol !== 'codex-prompt-input/v1') return record
+    if (record.kind !== 'evidence' || record.protocol === undefined) return record
     const withheld = (event: SelftestProbeEvent): SelftestProbeEvent => ({ ...event,
         stdout: `[${Buffer.byteLength(event.stdout)} bytes withheld; see the transcript]`,
         stderr: `[${Buffer.byteLength(event.stderr)} bytes withheld; see the transcript]` })
-    return { ...record, events: { ...record.events,
+    return { ...record, ...(record.modelInputs ? { modelInputs: {
+        candidate: `[${Buffer.byteLength(record.modelInputs.candidate)} bytes withheld; see the transcript]`,
+        broken: `[${Buffer.byteLength(record.modelInputs.broken)} bytes withheld; see the transcript]`,
+    } } : {}), events: { ...record.events,
         brokenControl: withheld(record.events.brokenControl), candidateControl: withheld(record.events.candidateControl) } }
 }
 
@@ -804,15 +933,38 @@ export async function runConfiguredSurfaceSelftestOutcome(
     })
     if (outcome.kind !== 'complete') return { status: 2, diagnostics: [{ severity: 'error', code: outcome.code, message: outcome.reason,
         ...(outcome.fix ? { fix: outcome.fix } : {}) }], result: null }
-    return { status: 0, diagnostics: outcome.evidence.pending.map(row => ({ severity: 'warning' as const,
-        code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, message: `${surfaceSelftestCellLabel(row)} remains human_needed: ${row.operatorAction}`,
-        target: surfaceSelftestCellLabel(row),
-    })), result: {
+    const responsibilities = {
+        native_protocol_unsupported: 'Maintainer: implement and measure the missing native protocol; rerunning unchanged inputs cannot clear this gap',
+        enforcement_probe_required: 'Maintainer: supply paired native evidence for the custom harness',
+        executable_missing: 'Operator: install or locate the named tool before retrying',
+        authentication_required: 'Operator: review the executable or complete native authentication before retrying',
+        isolation_unavailable: 'Unavailable: the probe cannot establish its required isolation; inspect the report before retrying',
+    } as const
+    const counts = new Map<keyof typeof responsibilities, number>()
+    for (const row of outcome.evidence.pending) counts.set(row.reason, (counts.get(row.reason) ?? 0) + 1)
+    const diagnostics: Diagnostic[] = [...counts].map(([reason, count]) => ({ severity: 'warning',
+        code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, message: `${count} pending cell(s). ${responsibilities[reason]}`,
+        target: reason,
+    }))
+    const result = {
         bundle: { ...outcome.bundle, records: outcome.bundle.records.map(withholdNativeStreams) },
         evidence: { ...outcome.evidence, evidence: outcome.evidence.evidence.map(withholdNativeStreams) },
         summary: { measuredCells: outcome.evidence.evidence.length, pendingCells: outcome.evidence.pending.length,
+            unavailableCells: outcome.evidence.evidence.filter(row => row.verdict === 'unavailable').length,
             pendingSkillReviews: outcome.evidence.skillReviews.filter(row => row.status === 'human_needed').length,
-            complete: outcome.evidence.pending.length === 0 && outcome.evidence.skillReviews.every(row => row.status === 'evidenced') } } }
+            complete: outcome.evidence.pending.length === 0 && outcome.evidence.skillReviews.every(row => row.status === 'evidenced') },
+    }
+    try {
+        const directory = await ensureEvidenceDirectory(outcome.root)
+        if (typeof directory !== 'string') throw new Error(directory.reason)
+        const reportPath = join(directory, `selftest-${randomBytes(16).toString('hex')}.json`)
+        const report = { result: { ...result, reportPath }, diagnostics }
+        await writeFile(reportPath, `${JSON.stringify(report)}\n`, { flag: 'wx', mode: 0o600 })
+        return { status: 0, ...report }
+    } catch (error) {
+        return { status: 2, result, diagnostics: [...diagnostics, { severity: 'error', code: 'SELFTEST_EXECUTION_INVALID',
+            message: `selftest report could not be saved: ${errorCause(error)}` }] }
+    }
 }
 
 function selftestOperatorRefusal(message: string): SurfaceSelftestDispatchOutcome {
@@ -829,14 +981,8 @@ async function confirmSelftestExecutable(
 ): Promise<string | undefined> {
     if (io.confirmSelftestExecutable) return io.confirmSelftestExecutable(candidate)
     if (!io.stdin) return undefined
-    io.stderr.write(`${JSON.stringify(candidate)}\n`)
-    const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
-    try {
-        const answer = await prompt.question('Type the exact SHA-256 to approve this executable for this selftest run: ')
-        return answer.trim()
-    } finally {
-        prompt.close()
-    }
+    io.stderr.write(renderHumanValue({ executable: candidate.canonicalPath, harness: candidate.harness, sha256: candidate.sha256 }))
+    return confirmDigest(io, candidate.sha256, 'Approve this executable for this selftest run?')
 }
 
 async function confirmSelftestProbeSpecifications(
@@ -845,14 +991,12 @@ async function confirmSelftestProbeSpecifications(
 ): Promise<string | undefined> {
     if (io.confirmSelftestProbeSpecifications) return io.confirmSelftestProbeSpecifications(candidate)
     if (!io.stdin) return undefined
-    io.stderr.write(`${JSON.stringify(candidate)}\n`)
-    const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
-    try {
-        const answer = await prompt.question('Type the exact SHA-256 to approve this probe artifact and its command vectors: ')
-        return answer.trim()
-    } finally {
-        prompt.close()
-    }
+    const runnable = candidate.commandVectors.filter(row => row.executes !== false)
+    io.stderr.write(renderHumanValue({ artifact: candidate.canonicalPath, sha256: candidate.sha256,
+        sourceSha256: candidate.sourceSha256, generatedManifestSha256: candidate.generatedManifestSha256,
+        runnableCommands: runnable }))
+    io.stderr.write(`${candidate.commandVectors.length - runnable.length} unsupported cell(s) execute nothing and remain incomplete.\n`)
+    return confirmDigest(io, candidate.sha256, 'Approve this artifact and its runnable commands for this selftest run?')
 }
 
 export async function runSelftestOperatorCommand(

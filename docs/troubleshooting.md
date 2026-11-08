@@ -92,7 +92,7 @@ did not match its declared SHA-256. Inspect the module, the evidence file refere
 
 `GENERATED_STALE_APPROVAL_REQUIRED` means a dry run found stale entries but the apply has no
 approval for their exact digest. Run `sync --interactive` from a terminal outside CI, review the
-listed entries, and type the displayed digest only if every removal is intended.
+listed entries, and explicitly confirm only if every removal is intended.
 `GENERATED_STALE_APPROVAL_INVALID` means the request could not be bound safely; inspect the
 reported path and current ownership before retrying. Neither code permits deleting the path by
 hand.
@@ -291,7 +291,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `GENERATED_OWNERSHIP_INVALID` | [see above](#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [see above](#merge-ownership-and-generation) |
 | `GENERATED_STALE_APPROVAL_REQUIRED` | [see above](#merge-ownership-and-generation) |
-| `GENERATED_STALE_ARTIFACT` | a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
+| `GENERATED_STALE_ARTIFACT` | a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal and confirms the stale-file removals it shows with yes |
 | `GUARD_AUTHORITY_UNAVAILABLE` | [see above](#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [see above](#common-refusal-guidance) |
@@ -400,7 +400,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `UPGRADE_INSTALL_FAILED` | fix what the package manager reported (is the version published?), then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version> |
 | `UPGRADE_PACKAGE_MANAGER_UNKNOWN` | keep exactly one of package-lock.json, pnpm-lock.yaml or yarn.lock at the cockpit root and put its package manager (npm, pnpm or yarn) on PATH, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> |
 | `UPGRADE_REGISTRY_UNREACHABLE` | check the network, the registry login and that npm is on PATH, or name the version: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version> |
-| `UPGRADE_SYNC_FAILED` | act on what sync reported above or put npx on PATH, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> |
+| `UPGRADE_SYNC_FAILED` | act on what sync reported above, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> |
 | `UPGRADE_VERSION_INVALID` | give a full version such as 1.2.3, not a range or tag |
 | `WORK_CHECK_FAILED` | read result.results: fix the product for a check that failed, make one that did not run runnable from the cockpit root, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work check --config <your cockpit.toml> --work-order <id> |
 | `WORK_PERSON_REQUIRED` | stop and ask a person to run the same command with --interactive in a terminal outside CI, read what it shows, and type the digest; never type it for them |

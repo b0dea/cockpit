@@ -649,47 +649,43 @@ describe('operator-confirmed document completion', () => {
             message: expect.stringContaining('bases.APP_HOST_PORT: Invalid input: expected number, received string'),
         }])
         const portAnswer = answer(ports.question!, { APP_HOST_PORT: 4100 })
-        const policies = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer],
-        } })
-        expect(policies).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.install_policies' } })
-        const policyAnswer = answer(policies.question!, generatedConfig.environment.install_policies)
+        // The registry records no sibling toolchain, and an install policy names one, so none is asked.
         const generated = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer],
+            ...configuration, answers: [nameAnswer, portAnswer],
         } })
         expect(generated).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.compose_files' } })
         const generatedAnswer = answer(generated.question!, ['compose.yml'])
         const machine = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer],
+            ...configuration, answers: [nameAnswer, portAnswer, generatedAnswer],
         } })
         // Free disk and the cold start time have no source, so the question says who supplies them.
         expect(machine.question).toMatchObject({ field: 'environment.machine', why: expect.stringContaining('nothing records free disk or the cold start time, so a person states those') })
         const machineAnswer = answer(machine.question!, machineFloor)
         const posture = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer],
+            ...configuration, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer],
         } })
         const postureAnswer = answer(posture.question!, localPosture)
         const testingDraft = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer],
+            ...configuration, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer],
         } })
         const testingAnswer = answer(testingDraft.question!, 'none')
         const guards = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer],
+            ...configuration, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer],
         } })
         const guardAnswer = answer(guards.question!, guardHosts)
         const gradingDraft = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer],
+            ...configuration, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer],
         } })
         const gradingAnswer = answer(gradingDraft.question!, 'independent')
         const defaults = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer],
+            ...configuration, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer],
         } })
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: {
             field: 'configuration.defaults', expectedSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         } })
         expect(defaults.diagnostics.some(item => item.code === 'DOCUMENT_DEFAULT')).toBe(true)
         const complete = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer, confirmDefaults(defaults.question!)],
+            ...configuration, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer, confirmDefaults(defaults.question!)],
         } })
 
         expect(complete).toMatchObject({ kind: 'complete', status: 0, question: null })
@@ -705,47 +701,46 @@ describe('operator-confirmed document completion', () => {
         const nameAnswer = await answerName(input)
         const configuration = { sourceObservationSha256, answers: [nameAnswer] }
         const portAnswer = answer((await draftFromRegistry({ ...input, configuration }))!.question!, {})
-        const afterPorts = await draftFromRegistry({ ...input, configuration: { ...configuration, answers: [nameAnswer, portAnswer] } })
-        const policyAnswer = answer(afterPorts.question!, generatedConfig.environment.install_policies)
-        const generated = await draftFromRegistry({ ...input, configuration: { ...configuration, answers: [nameAnswer, portAnswer, policyAnswer] } })
+        // The registry records no sibling toolchain, and an install policy names one, so none is asked.
+        const generated = await draftFromRegistry({ ...input, configuration: { ...configuration, answers: [nameAnswer, portAnswer] } })
         // A product with no Compose file is pointed at the one-time scaffold rather than left stuck.
         expect(generated.question!.why).toContain('./node_modules/@b00dea/cockpit/bin/cockpit.mjs init <cockpit root> --scaffold-compose <app dir> --port <port>')
         const composeAnswer = answer(generated.question!, ['compose.yml'])
         // Runtime commands refuse a declared runtime without a machine floor, and the floor is a
         // product requirement: it is asked, never defaulted.
         const machine = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, composeAnswer] } })
+            ...configuration, answers: [nameAnswer, portAnswer, composeAnswer] } })
         expect(machine).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.machine' } })
-        expect(await draftFromRegistry({ ...input, configuration: { ...configuration, answers: [nameAnswer, portAnswer, policyAnswer,
+        expect(await draftFromRegistry({ ...input, configuration: { ...configuration, answers: [nameAnswer, portAnswer,
             composeAnswer, answer(machine.question!, { runtime_memory_mb: 2048 })] } })).toMatchObject({ kind: 'refusal',
             diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID', message: expect.stringContaining('machine floor') }] })
         const machineAnswer = answer(machine.question!, machineFloor)
         // Preflight refuses a runtime whose posture is undeclared, so it is asked with a plain-localhost example.
         const posture = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, composeAnswer, machineAnswer] } })
+            ...configuration, answers: [nameAnswer, portAnswer, composeAnswer, machineAnswer] } })
         expect(posture).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.posture',
             why: expect.stringContaining(JSON.stringify(localPosture)) } })
-        expect(await draftFromRegistry({ ...input, configuration: { ...configuration, answers: [nameAnswer, portAnswer, policyAnswer,
+        expect(await draftFromRegistry({ ...input, configuration: { ...configuration, answers: [nameAnswer, portAnswer,
             composeAnswer, machineAnswer, answer(posture.question!, { ...localPosture, authentication: 'real' })] } })).toMatchObject({
             kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID',
                 message: expect.stringContaining('authentication posture real is not named by a requirement') }] })
         const postureAnswer = answer(posture.question!, localPosture)
         const testingDraft = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, composeAnswer, machineAnswer, postureAnswer] } })
+            ...configuration, answers: [nameAnswer, portAnswer, composeAnswer, machineAnswer, postureAnswer] } })
         const testingAnswer = answer(testingDraft.question!, 'none')
         const guards = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, composeAnswer, machineAnswer, postureAnswer, testingAnswer] } })
+            ...configuration, answers: [nameAnswer, portAnswer, composeAnswer, machineAnswer, postureAnswer, testingAnswer] } })
         const guardAnswer = answer(guards.question!, guardHosts)
         const gradingDraft = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, composeAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer] } })
+            ...configuration, answers: [nameAnswer, portAnswer, composeAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer] } })
         const gradingAnswer = answer(gradingDraft.question!, 'independent')
         const defaults = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, composeAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer] } })
+            ...configuration, answers: [nameAnswer, portAnswer, composeAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer] } })
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
         expect(defaults.artifact).not.toContain('# [default] environment.compose_files')
         expect(defaults.artifact).toContain('# [default] environment.resettable_volumes = []')
         const complete = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, composeAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer, confirmDefaults(defaults.question!)] } })
+            ...configuration, answers: [nameAnswer, portAnswer, composeAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer, confirmDefaults(defaults.question!)] } })
         expect(complete).toMatchObject({ kind: 'complete', status: 0 })
         const document = parseToml(complete.artifact!) as { environment: { compose_files: string[]; machine?: unknown } }
         expect(document.environment.compose_files).toEqual(['compose.yml'])
@@ -758,7 +753,7 @@ describe('operator-confirmed document completion', () => {
         expect(testingDraft).toMatchObject({ kind: 'gap-draft', question: { field: 'testing' } })
         const declaredTesting = { stages: [{ id: 'app-test', command: ['make', 'test'], requires_stack: false }],
             gates: [{ id: 'app-full', tier: 'full', stages: ['app-test'], changes: 'Any behavior' }] }
-        const throughTesting = (value: unknown) => [nameAnswer, portAnswer, policyAnswer, composeAnswer, machineAnswer, postureAnswer,
+        const throughTesting = (value: unknown) => [nameAnswer, portAnswer, composeAnswer, machineAnswer, postureAnswer,
             answer(testingDraft.question!, value), guardAnswer, gradingAnswer]
         expect(await draftFromRegistry({ ...input, configuration: { ...configuration, answers: throughTesting({ stages: [] }) } })).toMatchObject({
             kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID', message: expect.stringContaining('"none" or a [testing] table') }] })
@@ -768,7 +763,7 @@ describe('operator-confirmed document completion', () => {
         expect(parseToml(tested.artifact!)).toMatchObject({ testing: { ...declaredTesting, native_hooks: { install: 'inspect' } } })
 
         const invalid = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, answer(generated.question!, 'compose.yml')] } })
+            ...configuration, answers: [nameAnswer, portAnswer, answer(generated.question!, 'compose.yml')] } })
         expect(invalid).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID' }] })
     })
 
@@ -776,7 +771,8 @@ describe('operator-confirmed document completion', () => {
         const { input } = sourceInput('X_SIBLINGS=(\n  "app|app|app|app|APP_DIR|Synthetic application"\n)\n')
         const configuration = { sourceObservationSha256, answers: [] as DocumentConfigurationAnswer[] }
         let pending = await draftFromRegistry({ ...input, configuration })
-        for (const value of ['app-cockpit', {}, generatedConfig.environment.install_policies]) {
+        // The registry records no sibling toolchain, so no install policy is asked or recorded.
+        for (const value of ['app-cockpit', {}]) {
             configuration.answers.push(answer(pending.question!, value))
             pending = await draftFromRegistry({ ...input, configuration })
         }
@@ -797,7 +793,7 @@ describe('operator-confirmed document completion', () => {
         expect(complete).toMatchObject({ kind: 'complete', status: 0 })
         const config = CockpitConfig.parse(parseToml(complete.artifact!))
         expect(config.environment.compose_files).toEqual([])
-        expect(config.environment.install_policies).toEqual(generatedConfig.environment.install_policies)
+        expect(config.environment.install_policies).toEqual([])
         expect(config.environment.machine).toBeUndefined()
         expect(config.environment.addressing).toBeUndefined()
         expect(config.guards).toMatchObject(guardHosts)
@@ -911,7 +907,7 @@ describe('operator-confirmed document completion', () => {
         expect(parseToml(complete.artifact!).cockpit).not.toHaveProperty('scope')
         expect(complete.diagnostics).toContainEqual(expect.objectContaining({
             code: 'DOCUMENT_INFERRED', target: 'cockpit.siblings_root',
-            message: expect.stringContaining('authenticated greenfield estate'),
+            message: 'init observed the repositories at the cockpit root, so sibling directories are relative to it',
         }))
     })
 
@@ -940,36 +936,32 @@ describe('operator-confirmed document completion', () => {
         const nameAnswer = await answerName(input)
         const pending = await draftFromRegistry({ ...input, configuration: { sourceObservationSha256, answers: [nameAnswer] } })
         const valid = answer(pending.question!, { APP_HOST_PORT: 4100 })
-        const policies = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, valid],
-        } })
-        const policyAnswer = answer(policies.question!, generatedConfig.environment.install_policies)
         const generated = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, valid, policyAnswer],
+            sourceObservationSha256, answers: [nameAnswer, valid],
         } })
         const generatedAnswer = answer(generated.question!, ['compose.yml'])
         const machine = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, valid, policyAnswer, generatedAnswer],
+            sourceObservationSha256, answers: [nameAnswer, valid, generatedAnswer],
         } })
         const machineAnswer = answer(machine.question!, machineFloor)
         const posture = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, valid, policyAnswer, generatedAnswer, machineAnswer],
+            sourceObservationSha256, answers: [nameAnswer, valid, generatedAnswer, machineAnswer],
         } })
         const postureAnswer = answer(posture.question!, localPosture)
         const testingDraft = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, valid, policyAnswer, generatedAnswer, machineAnswer, postureAnswer],
+            sourceObservationSha256, answers: [nameAnswer, valid, generatedAnswer, machineAnswer, postureAnswer],
         } })
         const testingAnswer = answer(testingDraft.question!, 'none')
         const guards = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, valid, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer],
+            sourceObservationSha256, answers: [nameAnswer, valid, generatedAnswer, machineAnswer, postureAnswer, testingAnswer],
         } })
         const guardAnswer = answer(guards.question!, guardHosts)
         const gradingDraft = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, valid, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer],
+            sourceObservationSha256, answers: [nameAnswer, valid, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer],
         } })
         const gradingAnswer = answer(gradingDraft.question!, 'independent')
         const defaults = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, valid, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer],
+            sourceObservationSha256, answers: [nameAnswer, valid, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer],
         } })
         const cases = [
             [nameAnswer, { ...valid, questionId: `question:${'b'.repeat(64)}` }],
@@ -981,7 +973,7 @@ describe('operator-confirmed document completion', () => {
                 .toMatchObject({ kind: 'refusal', status: 2 })
         }
         expect(await draftFromRegistry({ ...input, configuration: { sourceObservationSha256,
-            answers: [nameAnswer, valid, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer, confirmDefaults(defaults.question!), valid] } }))
+            answers: [nameAnswer, valid, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer, confirmDefaults(defaults.question!), valid] } }))
             .toMatchObject({ kind: 'refusal', status: 2,
                 diagnostics: [expect.objectContaining({ code: 'DOCUMENT_CONFIGURATION_ANSWER_EXTRA' })] })
 
@@ -996,41 +988,37 @@ describe('operator-confirmed document completion', () => {
         const nameAnswer = await answerName(input)
         const ports = await draftFromRegistry({ ...input, configuration: { sourceObservationSha256, answers: [nameAnswer] } })
         const portAnswer = answer(ports.question!, { APP_HOST_PORT: 4100 })
-        const policies = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, portAnswer],
-        } })
-        const policyAnswer = answer(policies.question!, generatedConfig.environment.install_policies)
         const generated = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, portAnswer, policyAnswer],
+            sourceObservationSha256, answers: [nameAnswer, portAnswer],
         } })
         const generatedAnswer = answer(generated.question!, ['compose.yml'])
         const machine = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer],
+            sourceObservationSha256, answers: [nameAnswer, portAnswer, generatedAnswer],
         } })
         const machineAnswer = answer(machine.question!, machineFloor)
         const posture = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer],
+            sourceObservationSha256, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer],
         } })
         const postureAnswer = answer(posture.question!, localPosture)
         const testingDraft = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer],
+            sourceObservationSha256, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer],
         } })
         const testingAnswer = answer(testingDraft.question!, 'none')
         const guards = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer],
+            sourceObservationSha256, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer],
         } })
         const guardAnswer = answer(guards.question!, guardHosts)
         const gradingDraft = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer],
+            sourceObservationSha256, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer],
         } })
         const gradingAnswer = answer(gradingDraft.question!, 'independent')
         const defaults = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer],
+            sourceObservationSha256, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer],
         } })
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
         const changed = answer(defaults.question!, { confirmed: true, sha256: 'f'.repeat(64) })
         expect(await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer, changed],
+            sourceObservationSha256, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer, changed],
         } })).toMatchObject({ kind: 'refusal', status: 2 })
     })
 
@@ -1126,8 +1114,9 @@ describe('operator-confirmed document completion', () => {
             configuration.answers.push(answer(pending.question!, value))
             pending = await draftFromEstate({ root: product, estate, configuration })
         }
-        // The product keeps its runtime interview instead of collapsing to a surfaces-only cockpit.
-        expect(pending, JSON.stringify(pending.diagnostics)).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.install_policies' } })
+        // The product keeps its runtime interview instead of collapsing to a surfaces-only cockpit; its sibling has
+        // toolchain "none", which no install policy can name, so the interview moves on to the test data.
+        expect(pending, JSON.stringify(pending.diagnostics)).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.test_data' } })
     })
 
     it('binds an in-repo estate to its manifest while unrelated child directories change', async () => {
@@ -1157,7 +1146,8 @@ describe('operator-confirmed document completion', () => {
     it('completes a no-runnable estate as a surfaces-only configuration that states no runtime is declared', async () => {
         const estateRoot = temporaryPath('empty-product')
         mkdirSync(estateRoot)
-        const configuration = { sourceObservationSha256, classification: 'no-runnable-product' as const, answers: [] as ReturnType<typeof answer>[] }
+        const configuration = { sourceObservationSha256, classification: 'no-runnable-product' as const, answers: [] as ReturnType<typeof answer>[],
+            tools: ['claudecode'] }
         let pending = await draftFromRegistry({ root: estateRoot, configuration })
         for (const value of ['empty-product', generatedConfig.sibling, {}]) {
             configuration.answers.push(answer(pending.question!, value))
@@ -1175,6 +1165,10 @@ describe('operator-confirmed document completion', () => {
         pending = await draftFromRegistry({ root: estateRoot, configuration })
         expect(pending).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
         expect(pending.diagnostics.map(row => row.target)).not.toContain('guards.hosted_db_hosts')
+        // The reviewed draft describes the surfaces it writes: the chosen tools, not the schema's default list.
+        const surfacesNote = pending.artifact!.split('\n').filter(line => line.includes('surfaces = '))
+        expect(surfacesNote).toEqual([expect.stringContaining('"tools":["claudecode"]')])
+        expect(parseToml(pending.artifact!)).toMatchObject({ surfaces: { tools: ['claudecode'] } })
         configuration.answers.push(confirmDefaults(pending.question!))
         const completed = await draftFromRegistry({ root: estateRoot, configuration })
         expect(completed).toMatchObject({ kind: 'complete', status: 0 })

@@ -1,4 +1,4 @@
-import { createInterface } from 'node:readline/promises'
+import { confirmDigest } from '../operator-confirmation.js'
 import { renderHumanValue } from '../diagnostics.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { loadOperatorPolicy, runSyncOperatorApplication } from '../environment/operator-application.js'
@@ -142,13 +142,7 @@ async function confirmStaleRemoval(
     if (io.confirmStaleRemoval) return io.confirmStaleRemoval(request)
     if (!io.stdin) return undefined
     io.stderr.write(renderHumanValue(request))
-    const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
-    try {
-        const answer = await prompt.question('Type the exact stale-removal digest to approve this sync: ')
-        return answer.trim()
-    } finally {
-        prompt.close()
-    }
+    return confirmDigest(io, request.digest, 'Approve these exact stale-file removals for this sync?')
 }
 
 export async function runSyncOperatorCommand(
@@ -169,8 +163,7 @@ export async function runSyncOperatorCommand(
             if (io.confirmPolicyWeakening) return io.confirmPolicyWeakening(request)
             if (!io.stdin) return undefined
             io.stderr.write(renderHumanValue({ weakens: request.weakened.map(row => `${row.field}: ${row.from} -> ${row.to}`), digest: request.digest }))
-            const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
-            try { return (await prompt.question('Type the digest to accept this weaker policy: ')).trim() } finally { prompt.close() }
+            return confirmDigest(io, request.digest, 'Accept this exact policy weakening?')
         },
     })
 }

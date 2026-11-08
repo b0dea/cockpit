@@ -193,7 +193,7 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
             { operation: 'write', path: '.gitignore' },
         ]))
         expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))).toMatchObject({
-            scripts: { 'cockpit:sync': 'cockpit sync --config cockpit.toml' },
+            scripts: { 'cockpit:sync': './node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml' },
             devDependencies: { [actual.name]: actual.version },
         })
         expect(readFileSync(join(root, '.gitignore'), 'utf8')).toContain('# cockpit:ignore:start')
@@ -322,6 +322,10 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
                 'libexec/fenced-supervisor.cjs',
                 'libexec/generated-filesystem.cjs',
                 'libexec/install-filesystem.cjs',
+                'libexec/native-selftest-guard.d.mts',
+                'libexec/native-selftest-guard.mjs',
+                'libexec/native-selftest-input.d.mts',
+                'libexec/native-selftest-input.mjs',
                 'libexec/rulesync-generator.cjs',
                 'libexec/rulesync-generator.NOTICE.md',
                 'libexec/surface-generator-worker.cjs',
@@ -352,6 +356,10 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
             'libexec/fenced-supervisor.cjs',
             'libexec/generated-filesystem.cjs',
             'libexec/install-filesystem.cjs',
+            'libexec/native-selftest-guard.d.mts',
+            'libexec/native-selftest-guard.mjs',
+            'libexec/native-selftest-input.d.mts',
+            'libexec/native-selftest-input.mjs',
             'libexec/rulesync-generator.cjs',
             'libexec/rulesync-generator.NOTICE.md',
             'libexec/surface-generator-worker.cjs',
@@ -738,7 +746,7 @@ it('keeps a verified local-archive pin through installed init, check and npm ci'
 
     expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))).toMatchObject({
         name: 'synthetic-cockpit-root', private: true,
-        scripts: { lint: 'node --check synthetic.mjs', 'cockpit:setup': 'cockpit setup --config cockpit.toml' },
+        scripts: { lint: 'node --check synthetic.mjs', 'cockpit:setup': './node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config cockpit.toml' },
         synthetic: { retained: true }, devDependencies: { '@b00dea/cockpit': installedPin },
     })
     expect(readFileSync(join(root, 'package-lock.json'), 'utf8')).toBe(installedLock)
@@ -811,9 +819,6 @@ it.each(initEstates)('runs installed init on $target for a $classification estat
             if (question.field === 'ports.bases') return '{}'
             if (question.field === 'guards') return JSON.stringify({ hosted_db_hosts: [], vendor_endpoint_hosts: [] })
             if (question.field === 'work.grading') return JSON.stringify('independent')
-            if (question.field === 'environment.install_policies') return JSON.stringify([{
-                toolchain: 'node', lockfile: 'package-lock.json', test: ['node', '--version'],
-            }])
             if (question.field === 'environment.test_data') return JSON.stringify({ seeded_data: false, signed_in_users: false })
             // The interview now continues past the local test-data decision, so the fifth question is
             // reached; declining it leaves the target unwritten and the answers resumable. A
@@ -856,8 +861,9 @@ it.each(initEstates)('runs installed init on $target for a $classification estat
     } else {
         expect(status, stderr).toBe(2)
         expect(stderr).toContain('GREENFIELD_ANSWER_REQUIRED')
+        // The siblings declare no toolchain, which is what an install policy names, so none is asked.
         expect(questions.map(question => question.field)).toEqual([
-            'cockpit.name', 'sibling', 'ports.bases', 'environment.install_policies', 'environment.test_data', 'environment.compose_files',
+            'cockpit.name', 'sibling', 'ports.bases', 'environment.test_data', 'environment.compose_files',
         ])
         const resumed = spawnSync(process.execPath, [launcher, 'init', root, '--target', target, '--json'], {
             cwd: root, env, encoding: 'utf8',
@@ -942,7 +948,7 @@ it('lists every outstanding headless init question with the values it proposes',
         expect.objectContaining({ target: 'library.container_ports', value: [4100], provenance: expect.objectContaining({ kind: 'inferred', source: 'library/Dockerfile' }) }),
     ])
     expect(listed.interview.outstanding.find((row: { field: string }) => row.field === 'testing').proposals).toEqual([
-        expect.objectContaining({ target: 'testing.library', provenance: expect.objectContaining({ kind: 'inferred', source: 'library/package.json' }) }),
+        expect.objectContaining({ target: 'library.testing', provenance: expect.objectContaining({ kind: 'inferred', source: 'library/package.json' }) }),
     ])
 }, 480_000)
 
@@ -1077,9 +1083,9 @@ it.each(['dedicated', 'in-repo'] as const)('finishes installed init for a produc
         ...productManifest,
         scripts: {
             ...productManifest.scripts,
-            'cockpit:setup': 'cockpit setup --config cockpit.toml',
-            'cockpit:sync': 'cockpit sync --config cockpit.toml',
-            'cockpit:check': 'cockpit check --config cockpit.toml',
+            'cockpit:setup': './node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config cockpit.toml',
+            'cockpit:sync': './node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml',
+            'cockpit:check': './node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml',
         },
         devDependencies: { '@b00dea/cockpit': cockpitPackageVersion },
     })

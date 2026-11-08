@@ -735,7 +735,9 @@ schema's text verbatim, including every resolver expression and comment (in huma
 character is shown escaped). A schema must hold no secret values: the guard treats this name as
 documentation and Git already reaches a committed copy. `--path` is the `reference` `env keys`
 prints: `<slug>:<relative directory>/.env.schema` in a sibling, or `.env.schema` in the cockpit
-root. It refuses with `ENV_SCHEMA_READ_REFUSED` any other file name (matched exactly, including
+root. The directory alone names the same file (`api:services/web`, `api:` for the sibling's root,
+`.` for the cockpit root), for agent tools whose secret guard refuses any command containing `.env`.
+It refuses with `ENV_SCHEMA_READ_REFUSED` any other file name (matched exactly, including
 case), a symbolic or hard link, a non-regular file, a directory the probe does not discover and an
 oversized file.
 
@@ -762,7 +764,7 @@ can still leave those metadata updates in place while the transaction reports it
 result.
 
 Removing a stale file needs a separate approval of the exact path, operation and current bytes the
-dry run showed. Plain `sync` refuses; `sync --interactive` asks you to type the exact digest. After
+dry run showed. Plain `sync` refuses; `sync --interactive` asks you to confirm the displayed removals. After
 approval and a final recheck, cockpit can remove an unchanged whole file, or its own region in a
 shared file. When every stale path is the MCP-only file of a tool still listed, removing it only
 narrows access, so `sync` applies it without that approval. Files cockpit did not write, and bytes

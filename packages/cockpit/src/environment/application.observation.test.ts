@@ -44,6 +44,7 @@ vi.mock('./git-observation.js', async (importOriginal) => {
 })
 import { loadCockpitConfig } from '../config/load.js'
 import { runDoctor, type DoctorSurfaceOverrideInspection } from './application/doctor.js'
+import { runtimeNotDeclared } from './declaration.js'
 import { runPreflight, type HealthObservationSource, type HealthObservationSourceInput } from './application/health.js'
 import { runLogs } from './application/logs.js'
 import {
@@ -188,6 +189,24 @@ describe('observation application runners', () => {
         } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 
+    it('reports a cockpit that declares no runtime as information, as init does, and as an error once one is declared', async () => {
+        const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-doctor-surfaces-')))
+        try {
+            const doctorFor = async (body: string) => {
+                const configPath = join(directory, 'cockpit.toml')
+                writeFileSync(configPath, ['[cockpit]', 'name = "synthetic"', 'siblings_root = "."', '',
+                    '[[sibling]]', 'slug = "app"', 'dir = "."', 'mount = "none"', 'acquire = "none"', 'var = "APP_DIR"',
+                    'purpose = "Synthetic app"', '', '[ports]', 'bases = {}', '', body, ''].join('\n'))
+                const result = await runDoctor({ configPath }, { execute: vi.fn(),
+                    load: async (_input, _issue, refuse) => refuse!([runtimeNotDeclared(configPath)]) })
+                return result.diagnostics.filter(row => row.code === 'ENVIRONMENT_NOT_DECLARED').map(row => row.severity)
+            }
+            // A surfaces-only cockpit chose to run nothing; doctor exits 0 and an error there read as a fault to fix.
+            expect(await doctorFor('')).toEqual(['info'])
+            expect(await doctorFor('[environment]\ncompose_files = ["compose.yml"]')).toEqual(['error'])
+        } finally { rmSync(directory, { recursive: true, force: true }) }
+    })
+
     it('warns that no work can be graded PASS while a product declares no test gate', async () => {
         const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-doctor-testing-')))
         try {
@@ -243,7 +262,7 @@ describe('observation application runners', () => {
                 message: 'environment.machine, guards in cockpit.toml were chosen by the setup agent or by no one named, not stated by a person, so they may not describe this product',
                 // The agent confirms what an observation verifies; a trust decision stays a person's.
                 fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs confirm environment.machine --config <your cockpit.toml>, which confirms environment.machine only if the container runtime measured on this machine meets the declared memory, CPU and free-disk floor; '
-                    + 'a person confirms guards with whoever owns the product, corrects cockpit.toml if a value is wrong, deletes its entry from unconfirmed, then runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal outside the agent' }])
+                    + 'a person confirms guards with whoever owns the product, corrects cockpit.toml if a value is wrong, deletes its entry from unconfirmed and its # Unconfirmed comment, then runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal outside the agent' }])
             // A trust answer that waits for a person is held at the stronger default meanwhile, and doctor says so.
             expect(await doctorFor('unconfirmed = ["work.grading"]\n[work]\ngrading = "off"\n')).toEqual([expect.objectContaining({
                 message: expect.stringMatching(/; awaiting confirmation, work\.grading is held at independent rather than the declared off$/),

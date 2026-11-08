@@ -136,7 +136,9 @@ export function isUnconfirmedAnswerName(value: string): value is UnconfirmedAnsw
 /** The confirmation a person makes, for the answers only a person may confirm. */
 export function personConfirmationFix(answers: readonly string[], configPath?: string): string {
     const delegable = answers.filter(answer => isUnconfirmedAnswerName(answer) && delegableAnswer(answer))
-    return `a person confirms ${answers.join(', ')} with whoever owns the product, corrects cockpit.toml if a value is wrong, deletes ${answers.length === 1 ? 'its entry' : 'each entry'} from unconfirmed, then runs ${cockpitCommand('sync', configPath === undefined ? {} : { config: configPath })} in a terminal outside the agent`
+    // --interactive because sync then asks the person to accept a policy the confirmation weakens
+    // instead of refusing; it said plain sync while the setup procedure said --interactive.
+    return `a person confirms ${answers.join(', ')} with whoever owns the product, corrects cockpit.toml if a value is wrong, deletes ${answers.length === 1 ? 'its entry' : 'each entry'} from unconfirmed and its # Unconfirmed comment, then runs ${cockpitCommand('sync', { ...configPath === undefined ? {} : { config: configPath }, args: '--interactive' })} in a terminal outside the agent`
         + (delegable.length === 0 ? '' : `; ${delegable.join(', ')} ${delegable.length === 1 ? 'is no trust decision' : 'are no trust decisions'}, so a person may instead set [autonomy] confirm_answers = "agent" and let the agent run ${delegable.map(answer => cockpitCommand('confirm', { operand: answer })).join(' and ')}`)
 }
 

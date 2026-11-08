@@ -4,6 +4,7 @@ import type { Diagnostic } from '../diagnostics.js'
 import { readinessReport, type ReadinessReport } from '../readiness.js'
 import { cockpitCommand, initCommand, formatShellCommand } from '../fix-catalogue.js'
 import {
+    asksInstallPolicies,
     isAnswerProvenance,
     plannedGreenfieldQuestions,
     type AnswerProvenance, type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult,
@@ -11,7 +12,7 @@ import {
     type EstateObservationInput,
 } from '../init/draft.js'
 export { isTrustDecision } from '../init/draft.js'
-import { SURFACE_TARGETS, type SurfaceTarget } from '../surfaces/contract.js'
+import { SURFACE_TARGETS, surfaceOutputRoots, type SurfaceTarget } from '../surfaces/contract.js'
 import { ENVIRONMENT_CODES, snapshotJson, errorCause } from './contract.js'
 import { bootstrapHolderId } from './identity.js'
 import {
@@ -255,6 +256,11 @@ export interface InitResult {
     readonly derived?: readonly DerivedAnswer[]
     /** This run's findings grouped under the prerequisites cockpit depends on: what to do next. */
     readonly readiness?: ReadinessReport
+    /**
+     * Until cockpit.toml is drafted: every path, relative to the cockpit root, that init may create or
+     * change after acceptance besides files, ending in "/" for a directory whose files it writes.
+     */
+    readonly writes?: readonly string[]
 }
 
 interface InitOutcomeBase {
@@ -361,11 +367,16 @@ async function interviewPlan(
     classification: EstateClassificationResult,
     answers: GreenfieldResult['answers'],
 ): Promise<InterviewPlan> {
-    const questions = plannedGreenfieldQuestions({ root: input.root, classification: classification.classification, gaps: classification.gaps })
-    const composeIndex = questions.findIndex(row => row.field === 'environment.compose_files')
+    // Each recorded answer can drop later questions, so a position is read in the list as it stands then.
+    let planned = plannedGreenfieldQuestions({ root: input.root, classification: classification.classification, gaps: classification.gaps })
+    const siblings = answers[planned.findIndex(row => row.field === 'sibling')]
+    // The document owner refuses an answer that is not JSON before it is recorded, so a recorded one parses.
+    if (siblings !== undefined && !asksInstallPolicies(JSON.parse(siblings.bytes))) {
+        planned = planned.filter(row => row.field !== 'environment.install_policies')
+    }
     // Only an accepted empty JSON array defers runtime adoption; the estate still has runnable code.
-    const runtimeDeferred = /^\[\s*\]$/.test(answers[composeIndex]?.bytes ?? '')
-    const planned = runtimeDeferred ? questions.filter(row => row.field !== 'environment.machine' && row.field !== 'environment.posture') : questions
+    const runtimeDeferred = /^\[\s*\]$/.test(answers[planned.findIndex(row => row.field === 'environment.compose_files')]?.bytes ?? '')
+    if (runtimeDeferred) planned = planned.filter(row => row.field !== 'environment.machine' && row.field !== 'environment.posture')
     const answered = answers.length
     const outstanding = planned.slice(answered)
     const observedRoot = estateInput(input).root
@@ -491,7 +502,23 @@ export async function runInitApplication(
     input: InitApplicationInput,
     adapters: InitApplicationAdapters,
 ): Promise<InitApplicationOutcome> {
-    return withReadiness(await runInitStages(input, adapters), input, adapters)
+    const outcome = await withReadiness(await runInitStages(input, adapters), input, adapters)
+    const stage = outcome.result?.stage
+    return stage === 'surface-previewed' || stage === 'surface-published'
+        ? { ...outcome, result: { ...outcome.result!, writes: plannedWrites(input.tools) } } as InitApplicationOutcome : outcome
+}
+
+/**
+ * What init writes after acceptance: cockpit.toml, then what its final sync generates: the shared
+ * agent guide, the team's package pin, scripts and ignore block, the guard and ownership records, the
+ * Compose ownership override, and each tool's surfaces. A preview that listed only the setup skill
+ * files was accepted, and init then edited the product's AGENTS.md, package.json and .gitignore. Some
+ * paths are written only when cockpit.toml declares what they serve, such as an MCP server or a
+ * Compose file; the in-repo end-to-end init test fails when sync writes outside this list.
+ */
+function plannedWrites(tools: readonly SurfaceTarget[]): readonly string[] {
+    return [...new Set(['cockpit.toml', 'AGENTS.md', 'package.json', '.gitignore', '.cockpit/', 'compose.cockpit.yml',
+        ...surfaceOutputRoots(tools)])].sort()
 }
 
 async function publicationGone(root: string, record: BootstrapStateRecord, adapters: InitApplicationAdapters): Promise<boolean> {
@@ -693,33 +720,43 @@ async function initStagesFrom(
         current = reset.record
         appliedReset = publicPreview
     }
-    if (rootQuestion) return { kind: 'pending', status: 0, artifact: null, destination: null,
-        diagnostics: [...(resumed?.diagnostics ?? prepared!.diagnostics)],
-        result: result(current?.value.stage ?? 'surface-previewed', projection, undefined, { cockpitRoot: rootQuestion }) }
-    if (!input.accepted && (current?.value.greenfield === undefined || current.value.stage !== 'surface-published')) {
-        const diagnostics = [...(resumed?.diagnostics ?? prepared!.diagnostics)]
-        let interview: InterviewPlan | undefined
-        let estate: GreenfieldResult | undefined
-        const stage = current?.value.stage ?? 'surface-previewed'
-        const recorded = current?.value.greenfield?.answers ?? []
-        // Questions are only asked after acceptance, but listing them now lets an unattended caller
-        // prepare every answer before it consents. The observation is read-only. Once cockpit.toml is
-        // prepared the interview is over, and it still lists the recorded answers: without them a
-        // resumed run reported every field of the same answers file as never asked.
-        if (boundInput.registry === undefined && adapters.classifyEstate
-            && (stage === 'surface-previewed' || stage === 'surface-published' || current?.value.greenfield !== undefined)) {
-            const classified = await adapters.classifyEstate(estateInput(boundInput))
-            if (classified.kind === 'complete') {
-                interview = await interviewPlan(boundInput, adapters, classified.result, recorded)
-                if (recorded.length > 0) estate = greenfieldResult(classified.result,
-                    (classified.result as IssuedEstateClassificationResult).sourceObservationSha256, recorded)
-            } else diagnostics.push({ severity: 'warning', code: 'INIT_INTERVIEW_PREVIEW_UNAVAILABLE',
+    // Questions are only asked after acceptance, but listing them now lets an unattended caller
+    // prepare every answer before it consents. The observation is read-only.
+    const previewInterview = async (bound: InitApplicationInput,
+        recorded: NonNullable<BootstrapStateRecord['value']['greenfield']>['answers'], diagnostics: Diagnostic[]) => {
+        if (bound.registry !== undefined || !adapters.classifyEstate) return undefined
+        const classified = await adapters.classifyEstate(estateInput(bound))
+        if (classified.kind !== 'complete') {
+            diagnostics.push({ severity: 'warning', code: 'INIT_INTERVIEW_PREVIEW_UNAVAILABLE',
                 message: `the interview could not be previewed (${classified.diagnostics.map(row => row.code).join(', ')}); each question is still reported when accepting reaches it`,
                 target: input.root })
+            return undefined
         }
+        return { interview: await interviewPlan(bound, adapters, classified.result, recorded),
+            ...(recorded.length === 0 ? {} : { estate: greenfieldResult(classified.result,
+                (classified.result as IssuedEstateClassificationResult).sourceObservationSha256, recorded) }) }
+    }
+    if (rootQuestion) {
+        const diagnostics = [...(resumed?.diagnostics ?? prepared!.diagnostics)]
+        // The person accepts this preview before any question is asked, so it lists the interview for
+        // the placement accepting without an answer takes; a dedicated answer changes the proposed name
+        // and sibling, and the accepted run reports them.
+        const inRepo = rootQuestion.options.find(option => option.answer === 'in-repo')?.unavailable === undefined
+            ? await previewInterview({ ...input, cockpitRoot: { kind: 'in-repo' } }, [], diagnostics) : undefined
+        const interview = inRepo && (({ cockpitRoot: _placement, ...plan }) => plan)(inRepo.interview)
         return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics,
-            result: result(stage, projection, undefined,
-                interview === undefined ? undefined : { interview, ...(estate === undefined ? {} : { estate }) }) }
+            result: result(current?.value.stage ?? 'surface-previewed', projection, undefined,
+                { cockpitRoot: rootQuestion, ...(interview === undefined ? {} : { interview }) }) }
+    }
+    if (!input.accepted && (current?.value.greenfield === undefined || current.value.stage !== 'surface-published')) {
+        const diagnostics = [...(resumed?.diagnostics ?? prepared!.diagnostics)]
+        const stage = current?.value.stage ?? 'surface-previewed'
+        // Once cockpit.toml is prepared the interview is over, and it still lists the recorded answers:
+        // without them a resumed run reported every field of the same answers file as never asked.
+        const previewed = stage === 'surface-previewed' || stage === 'surface-published' || current?.value.greenfield !== undefined
+            ? await previewInterview(boundInput, current?.value.greenfield?.answers ?? [], diagnostics) : undefined
+        return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics,
+            result: result(stage, projection, undefined, previewed) }
     }
     if (input.accepted && (!SHA256.test(input.acceptedPreviewSha256 ?? '') || input.acceptedPreviewSha256 !== projection.previewSha256)) {
         return refused('INIT_PREVIEW_CHANGED', 'selected bootstrap preview changed after acceptance', input.root)

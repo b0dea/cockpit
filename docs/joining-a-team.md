@@ -5,10 +5,13 @@ confirm the committed files did not change.
 
 ## Install the team's exact version
 
-From the cockpit root, install the lockfile without changing it:
+From the cockpit root, install the lockfile without changing it, with the package manager whose
+lockfile the cockpit committed:
 
 ```sh
-npm ci
+npm ci                          # package-lock.json
+pnpm install --frozen-lockfile  # pnpm-lock.yaml
+yarn install --immutable        # yarn.lock
 ```
 
 The root `package.json` pins `@b00dea/cockpit` exactly, because different versions can render
@@ -23,6 +26,8 @@ npm run cockpit:setup
 npm run cockpit:sync
 npm run cockpit:check
 ```
+
+With pnpm or yarn, run the same scripts with `pnpm run` or `yarn run`.
 
 - `setup` clones or verifies the declared sibling repositories.
 - `sync` checks this checkout, writes its machine identity under `.cockpit/local/`, and refreshes
@@ -54,8 +59,8 @@ because `.gitignore` cannot represent it.
 git status --short
 ```
 
-It should print nothing. If it shows generated drift, confirm `npm ci` installed the exact pinned
-version. If `sync` changed only the `.gitignore` block, a declared sibling differs on this machine:
+It should print nothing. If it shows generated drift, confirm the frozen install installed the exact
+pinned version. If `sync` changed only the `.gitignore` block, a declared sibling differs on this machine:
 a local repository with no remote is ignored only where it exists, because nothing can clone it
 here. Discard the change with `git restore .gitignore`; the block settles once whoever created that
 repository publishes it and records the remote with `sibling add <slug> --remote <url>`.

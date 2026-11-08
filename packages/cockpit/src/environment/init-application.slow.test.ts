@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { prepareSelectedBootstrapSurface, resumeSelectedBootstrapSurface, applySelectedBootstrapSurface, syncGeneratedEnvironment, checkGeneratedEnvironment } from '../generated-environment/command.js'
 import { loadCockpitConfig } from '../config/load.js'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { parse as parseToml } from 'smol-toml'
 import { runInitApplication, type InitApplicationAdapters, type InitApplicationInput } from './init-application.js'
@@ -196,6 +196,7 @@ it.each([
     // A plain sync finds init's state where this machine keeps it, so init records it there too.
     const input: InitApplicationInput = { root: f.root, target: f.input.target, tools: [f.input.target], accepted: false, sessionId: f.input.sessionId,
         platform: process.platform as 'darwin' | 'linux', home: f.input.home, xdgStateHome: f.input.xdgStateHome, cockpitRoot: { kind: 'in-repo' } }
+    const before = treeDigests(f.root)
     const preview = await runInitApplication(input, adapters)
     const accepted = { ...input, accepted: true, acceptedPreviewSha256: preview.result!.previewSha256 }
     let outcome = await runInitApplication(accepted, adapters)
@@ -266,7 +267,7 @@ it.each([
         result: { unconfirmed: [{ field: 'environment.machine' }, { field: 'guards' }],
             readiness: { state: 'runtime', gaps: [{ id: 'cockpit-git', level: 'required' }, { id: 'cockpit-installed', level: 'recommended' }] } } })
     expect(JSON.parse(await readFile(join(f.root, 'package.json'), 'utf8'))).toMatchObject({
-        ...productManifest, scripts: { ...productManifest?.scripts, 'cockpit:sync': 'cockpit sync --config cockpit.toml' },
+        ...productManifest, scripts: { ...productManifest?.scripts, 'cockpit:sync': './node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml' },
         devDependencies: { '@b00dea/cockpit': expect.any(String) } })
 
     // A product source changed after acceptance is still a different estate. Rerunning init alone
@@ -280,7 +281,20 @@ it.each([
     const resumed = await runInitApplication(accepted, adapters)
     expect(resumed, JSON.stringify(resumed.diagnostics)).toMatchObject({ kind: 'complete', result: { stage: 'environment-verified',
         unconfirmed: [{ field: 'environment.machine' }, { field: 'guards' }] } })
+    // The preview the person accepted names every path init went on to create or change in the product.
+    const after = treeDigests(f.root)
+    const changed = [...after.keys()].filter(path => after.get(path) !== before.get(path))
+    const writes = preview.result!.writes!
+    expect(changed.filter(path => !writes.some(write => write === path || write.endsWith('/') && path.startsWith(write)))).toEqual([])
+    expect(changed).toEqual(expect.arrayContaining(['package.json', 'AGENTS.md', 'cockpit.toml']))
 }, 120_000)
+
+/** Each regular file under root, relative to it, with the digest of its bytes. */
+function treeDigests(root: string): ReadonlyMap<string, string> {
+    return new Map((readdirSync(root, { recursive: true, withFileTypes: true }) as Dirent[]).filter(entry => entry.isFile())
+        .map(entry => { const path = join(entry.parentPath, entry.name)
+            return [relative(root, path), createHash('sha256').update(readFileSync(path)).digest('hex')] }))
+}
 
 
 it.each(['scalar', 'artifact'] as const)('refuses an unreviewable defaults draft before confirmation (%s bound)', async bound => {

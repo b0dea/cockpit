@@ -216,8 +216,12 @@ describe('closed ordinary invocation metadata', () => {
     it('admits env schema only for the exact file name, at a path that cannot climb', () => {
         const words = (path: string) => ['env', 'schema', '--config', authority.configPath, '--path', path]
         for (const path of ['.env.schema', 'api:.env.schema', 'api:services/web/.env.schema']) expect(ordinary(words(path)), path).toBeDefined()
+        // The directory alone names the same file, so an agent's secret guard that refuses any word
+        // containing `.env` does not refuse the documented route for writing a schema.
+        for (const path of ['.', 'api:', 'api:.', 'api:services/web', 'services']) expect(ordinary(words(path)), path).toBeDefined()
         for (const path of ['.env', '.env.local', '.env.schema.private', '.ENV.SCHEMA', 'api:.env', '../.env.schema', 'api:../.env.schema', 'services/../.env.schema',
-            '/workspace/product/.env.schema', 'api:/etc/.env.schema']) expect(ordinary(words(path)), path).toBeUndefined()
+            '/workspace/product/.env.schema', 'api:/etc/.env.schema', '..', 'api:..', 'services/', 'api:services/.secrets', 'api:.env-drafts', '',
+            '.secrets/.env.schema', 'api:.ENV/.env.schema', 'api:.env.production/.env.schema']) expect(ordinary(words(path)), path).toBeUndefined()
     })
 
     it('admits env schema --replace-from only with a draft the guard can prove, and marks it as the whole call', () => {
@@ -247,7 +251,7 @@ describe('closed ordinary invocation metadata', () => {
 
     // The install is exact and its sync child decides as sync does, so an agent with the sync grant may run the real upgrade.
     it('admits the real upgrade, with or without one exact version', () => {
-        for (const extra of [[], ['1.2.3'], ['--dry-run'], ['1.2.3', '--dry-run']]) {
+        for (const extra of [[], ['1.2.3'], ['--dry-run'], ['1.2.3', '--dry-run'], ['--dry-run', '--json']]) {
             expect(ordinary(['upgrade', ...extra, '--config', authority.configPath]), extra.join(' ')).toBeDefined()
         }
     })
@@ -275,7 +279,7 @@ describe('closed ordinary invocation metadata', () => {
             ['stacks', 'prune', '--interactive'], ['stacks', 'remove'], ['stacks', 'prune', 'extra'],
             ['check', 'extra'], ['check', '--unknown'], ['check', '--config', '/outside/cockpit.toml'], ['check', '--config', 'other.toml'],
             ['check', '--json=false'], ['check', '--'], ['check', '--config'], ['check', '-c', 'cockpit.toml'],
-            // A person types the displayed digest.
+            // A person confirms the displayed preview.
             ['work', 'accept', '--work-order', 'WO-1', '--interactive'], ['work', 'answer', '--work-order', 'WO-1', '--question', '1', '--text', 'yes', '--interactive'],
             ['work', 'signoff', '--work-order', 'WO-1', '--interactive'],
             ['test-run'], ['test-run', '--gate', 'undeclared'], ['test-run', '--gate', 'quick', '--mode', 'all'],
@@ -861,10 +865,10 @@ describe('generated environment process contract', () => {
                 changes: [{ operation: 'remove', path: 'compose.generated.yml' }], staleRemoval: { digest } } }),
         })).toBe(0)
         expect(human.output().stdout).toBe('remove "compose.generated.yml"\n'
-            + `Stale-removal digest ${digest}: to approve these removals, a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${resolve('cockpit.toml')} --interactive in a terminal and types it.\n`)
+            + `Stale-removal digest ${digest}: to approve these removals, a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${resolve('cockpit.toml')} --interactive in a terminal and confirms the displayed removals.\n`)
     })
 
-    it('previews interactive sync and applies only after the exact stale-removal digest is typed', async () => {
+    it('previews interactive sync and applies only after the exact stale-removal digest is approved', async () => {
         const staleRemoval = {
             format: 'cockpit-stale-removal-request/v1' as const,
             cockpitId: 'synthetic',
@@ -961,6 +965,20 @@ describe('generated environment process contract', () => {
         }, { env: {} })).toBe(0)
         expect(calls).toEqual([{ configPath: 'cockpit.toml', dryRun: true }, { configPath: 'cockpit.toml' }])
         expect(confirmations).toBe(0)
+        // A person confirming trust answers had nothing to approve, and sync printed nothing at all:
+        // they could not tell it ran, nor that it had recorded the policy as a new file to commit.
+        const applied = async (input: { dryRun?: boolean }) => ({ status: 0, diagnostics: [], result: input.dryRun === true
+            ? { action: 'sync', dryRun: true, changes: [] }
+            : { action: 'sync', dryRun: false, paths: ['AGENTS.md', 'CLAUDE.md'], changes: [{ operation: 'write', path: 'AGENTS.md' }] } })
+        const first = captureIo(undefined, async () => undefined)
+        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], first.io, { loadPolicy: personStalePolicy, sync: applied }, { env: {} })).toBe(0)
+        expect(first.output().stdout).toBe('write "AGENTS.md"\nwrite ".cockpit/policy.json"\n'
+            + 'Sync wrote 2 files; 1 generated file was already current. Review them with git status --short and commit them so teammates get the same files.\n')
+        const recordedPolicy = async () => ({ ...await personStalePolicy(), recorded: (await personStalePolicy()).current })
+        const unchanged = captureIo(undefined, async () => undefined)
+        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], unchanged.io, { loadPolicy: recordedPolicy,
+            sync: async (input) => ({ status: 0, diagnostics: [], result: { action: 'sync', dryRun: input.dryRun === true, paths: ['AGENTS.md', 'CLAUDE.md'], changes: [] } }) }, { env: {} })).toBe(0)
+        expect(unchanged.output().stdout).toBe('Nothing to sync: all 2 generated files were already current.\n')
     })
 
     it('binds interactive approval to the previewed digest when apply re-prepares stale entries', async () => {
@@ -987,6 +1005,15 @@ describe('generated environment process contract', () => {
         expect(calls).toBe(2)
     })
 
+    // Agents are told to pass --json to every command but session.
+    it('prints an upgrade outcome as JSON', async () => {
+        const json = captureIo()
+        expect(await runCli(['upgrade', '--config', 'cockpit.toml', '--dry-run', '--json'], json.io, {
+            upgrade: async () => ({ status: 0, diagnostics: [], result: { dryRun: true } }),
+        })).toBe(0)
+        expect(JSON.parse(json.output().stdout)).toMatchObject({ result: { dryRun: true } })
+    })
+
     it('requires a measured selftest artifact', async () => {
         const selftestCalls: unknown[] = []
         const selftest = captureIo()
@@ -1007,7 +1034,17 @@ describe('generated environment process contract', () => {
                 return { status: 0, diagnostics: [], result: null }
             },
         })).toBe(0)
-        for (const conflict of [['--interactive'], ['--json'], ['--probe-specifications=']]) {
+        // Agents add --json to every command; writing the file still happens and the envelope names it.
+        const draftDirectory = mkdtempSync(join(tmpdir(), 'cockpit-probe-draft-json-'))
+        const draft = join(draftDirectory, 'probe.json')
+        const json = captureIo()
+        expect(await runCli(['selftest', '--config', 'cockpit.toml', '--write-probe-specifications', draft, '--json'], json.io, {
+            selftest: async () => ({ status: 0, diagnostics: [], artifact: '{"schema":"synthetic"}\n', destination: draft, result: { probeSpecifications: draft } }),
+        })).toBe(0)
+        expect(readFileSync(draft, 'utf8')).toBe('{"schema":"synthetic"}\n')
+        expect(JSON.parse(json.output().stdout)).toMatchObject({ result: { probeSpecifications: draft } })
+        rmSync(draftDirectory, { recursive: true, force: true })
+        for (const conflict of [['--interactive'], ['--probe-specifications=']]) {
             expect(await runCli(['selftest', '--config', 'cockpit.toml', '--write-probe-specifications', 'probe.json', ...conflict],
                 captureIo().io, { selftest: async (input) => { selftestCalls.push(input); return { status: 0, diagnostics: [], result: null } } }),
             conflict.join(' ')).toBe(2)
@@ -1850,9 +1887,9 @@ describe('generated sync operator admission', () => {
             } }],
             digest: 'c'.repeat(64),
         }
-        const stdin = Readable.from([`${preview.digest}\n`]) as NodeJS.ReadStream
+        const stdin = Readable.from(['yes\n']) as NodeJS.ReadStream
         Object.defineProperty(stdin, 'isTTY', { value: true })
-        const stderr = new PassThrough()
+        const stderr = Object.assign(new PassThrough(), { isTTY: true })
         let shown = ''
         stderr.on('data', chunk => { shown += chunk.toString() })
 

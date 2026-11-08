@@ -42,12 +42,14 @@ ask when scope is missing or an exact preview still needs acceptance:
    optional, and `off` is reasonable when tracking matters but grading is not wanted.
 7. "Use sensible defaults" covers `init` answers only, never another change inside a product
    repository: an **AGENTS.md** pointer or a `package.json` change needs explicit product-change
-   authorization covering its reviewed scope, which can already have been given. Mark every answer you chose as `"agent-default"` in the answers file's
+   authorization covering its reviewed scope, which can already have been given. For the files
+   `init` writes, that scope is the `writes` list of the preview the human accepts. Mark every answer you chose as `"agent-default"` in the answers file's
    `[provenance]` table, and end your report with every default you chose, its field and value.
 8. Every trust answer the answers file supplies (`sibling`, `environment.install_policies`,
    `environment.posture`, `testing`, `guards`, `work.grading`) lands under `unconfirmed` whatever the
-   file says, and the stronger default holds until a person confirms it. End your report by telling
-   the human to confirm each: delete its entry from `unconfirmed`, then run
+   file says, and the stronger default holds until a person confirms it. Prepare one review of
+   the outstanding trust entries, their values and consequences. After accepting those values,
+   the human removes the reviewed entries from `unconfirmed` together, then runs
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a terminal outside the agent
    (the confirm command refuses these).
 
@@ -73,9 +75,10 @@ Done when the exact project-local executable lists the commands.
 Run every command from the cockpit root through `./node_modules/@b00dea/cockpit/bin/cockpit.mjs`; if that file is
 absent, stop and repair the project-local install. Read flags from
 `./node_modules/@b00dea/cockpit/bin/cockpit.mjs <command> --help`. In Codex's sandbox `check`, `sync --dry-run` and
-`--help` run as it stands, unless `[browser]` is declared; other cockpit commands also need write
-access to the state root, the Docker socket, or on macOS `/bin/ps`, so ask the person to approve
-running them outside the sandbox, or to run them in a terminal. Pass `--json` and read `result`,
+`--help` run as it stands, unless `[browser]` is declared; other cockpit commands can need access
+such as the state directory, Docker socket or macOS `/bin/ps`. Inspect the named failure and request
+only missing access through the native approval mechanism, with the concrete command and reason.
+Follow **Running cockpit** in the installed setup procedure for refusals. Pass `--json` and read `result`,
 `diagnostics[].code` and `invocation.exitCode`. A pending `init` also exits 0, so read its
 `result.stage` and `result.question`.
 
@@ -102,12 +105,13 @@ runtime is declared `./node_modules/@b00dea/cockpit/bin/cockpit.mjs preflight --
 and every gap in `result.readiness` of `./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml --json`
 has been cleared or reported to the human.
 
-- **Before the first `up`**, run
+- **Only where a runtime is declared, before the first `up`**, run
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config cockpit.toml --image <local-image> --json`.
   It measures the local daemon `up` will use, can run for minutes with no progress output, records
   the result for this machine only and leaves `cockpit.toml` unchanged, so go straight on to `up`.
+  A surfaces-only product finishes with `check` and `doctor`; add runtime declarations when runnable code exists.
   The guide's *Chapter 2* says which runtimes are recognised.
-- **Daily:** `./node_modules/@b00dea/cockpit/bin/cockpit.mjs session --config cockpit.toml -- <agent command>`.
+- **Daily, with a declared runtime:** `./node_modules/@b00dea/cockpit/bin/cockpit.mjs session --config cockpit.toml -- <agent command>`.
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config cockpit.toml` releases this checkout's hold.
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config cockpit.toml` removes its containers, keeping data
   volumes, from the local Docker daemon fixed at the start of the run.
@@ -117,13 +121,16 @@ has been cleared or reported to the human.
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --dry-run` and
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. The guard trusts only the cockpit, Node
   and `cockpit.toml` it was generated for, so after an upgrade, a Node switch or a `cockpit.toml`
-  edit it holds tool calls until the human runs
-  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` in a terminal. Guide: *Upgrade cockpit*.
+  edit can hold tool calls. Follow the refusal as **Running cockpit** describes: a restrictive
+  configuration edit can be synced under existing agent authority; a changed executable or widened
+  authority needs the person. Guide: *Upgrade cockpit*.
 
 ## Shipped procedure
 
 These sections are the procedure cockpit installs into every cockpit it bootstraps, copied here by
 its reference generator so this skill and the installed one cannot disagree.
+
+<!-- cockpit:procedure-section Continue authorized setup -->
 
 <!-- cockpit:procedure-section Bootstrap -->
 

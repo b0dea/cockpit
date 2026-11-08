@@ -65,6 +65,8 @@ export interface SelftestExpectation {
     schema: 'cockpit-harness-selftest-expectation/v1'
     generatedManifestSha256: string
     instructionSourceSha256?: string
+    nativeSourceSha256?: Readonly<Record<string, string>>
+    guardProbeHost?: string
     cells: readonly SelftestCellKey[]
     shippedSkills: readonly string[]
     reviewHarnesses: readonly [
@@ -102,7 +104,10 @@ export interface CustomExecutionAuthority {
 export type SelftestExecutionAuthority = BuiltinExecutionAuthority | CustomExecutionAuthority
 export interface SelftestSample { skill: string; features: readonly string[] }
 export interface SelftestEvidenceRecord {
-    protocol?: 'codex-prompt-input/v1'
+    protocol?: 'codex-prompt-input/v1' | 'claude-model-input/v1' | 'codex-skill-input/v1' | 'claude-guard-loopback/v1'
+    modelInputs?: { candidate: string; broken: string }
+    modelEndpoints?: { candidate: string; broken: string }
+    guardProbe?: { host: string; brokenCommand: string; receipts: { candidate: readonly string[]; broken: readonly string[] } }
     kind: 'evidence'
     harness: SelftestHarnessRef
     capability: SelftestCapability

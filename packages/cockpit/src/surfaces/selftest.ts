@@ -1,6 +1,8 @@
 import { isDeepStrictEqual } from 'node:util'
 
 import { sha256Hex } from '../sha256.js'
+import { nativeInputInvocation } from '../../libexec/native-selftest-input.mjs'
+import { nativeGuardInvocation } from '../../libexec/native-selftest-guard.mjs'
 
 import type { GeneratedCustomSurfaceSelftestInput, GeneratedSurfaceSelftestProjection } from '../environment/generated-application/shared.js'
 import { snapshotGeneratedJson } from '../environment/contract.js'
@@ -34,6 +36,8 @@ export interface SelftestExpectation {
     readonly schema: 'cockpit-harness-selftest-expectation/v1'
     readonly generatedManifestSha256: string
     readonly instructionSourceSha256?: string
+    readonly nativeSourceSha256?: Readonly<Record<string, string>>
+    readonly guardProbeHost?: string
     readonly cells: readonly SelftestCellKey[]
     readonly shippedSkills: readonly string[]
     readonly reviewHarnesses: readonly [
@@ -50,7 +54,8 @@ export interface SelftestExpectation {
  * human_needed, and a row written for one is refused rather than accepted and ignored.
  */
 export interface SelftestProbeSpecification {
-    readonly protocol?: 'codex-prompt-input/v1' | 'native-unsupported/v1'
+    readonly protocol?: 'codex-prompt-input/v1' | 'claude-model-input/v1' | 'codex-skill-input/v1' | 'claude-guard-loopback/v1' | 'native-unsupported/v1'
+    readonly guardHost?: string
     readonly harness: BuiltinHarnessRef
     readonly capability: SelftestCapability
     readonly invocation: readonly [string, ...string[]]
@@ -183,12 +188,15 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
     try {
     const captured = snapshotGeneratedJson(projection) as unknown as GeneratedSurfaceSelftestProjection | undefined
     if (!captured || captured.schema !== 'cockpit-generated-surface-selftest/v1' || !SHA256.test(captured.manifestSha256)) return undefined
+    if (captured.guardProbeHost !== undefined && (typeof captured.guardProbeHost !== 'string' || captured.guardProbeHost.length > 253
+        || !/^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(captured.guardProbeHost))) return undefined
     const payload = {
         schema: captured.schema,
         configuredHarnesses: captured.configuredHarnesses,
         declarations: captured.declarations,
         entries: captured.entries,
         custom: captured.custom,
+        ...(captured.guardProbeHost === undefined ? {} : { guardProbeHost: captured.guardProbeHost }),
     }
     if (sha256Hex(JSON.stringify(payload)) !== captured.manifestSha256) return undefined
     const ownership = classifySurfaceOwnership({ configuredHarnesses: captured.configuredHarnesses, entries: captured.entries })
@@ -254,6 +262,13 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
         : instructions?.region.format === 'markdown-delimited' ? instructions.region.bytes : undefined
     return {
         ...(instructionBytes === undefined ? {} : { instructionSourceSha256: sha256Hex(instructionBytes) }),
+        nativeSourceSha256: Object.fromEntries(captured.entries.flatMap(entry => {
+            if (!/^(?:AGENTS\.md|CLAUDE\.md|\.claude\/settings\.json|\.(?:agents|claude)\/skills\/[^/]+\/SKILL\.md)$/.test(entry.path)) return []
+            const bytes = entry.kind === 'file' ? entry.bytes : entry.region.format === 'markdown-delimited' ? entry.region.bytes
+                : `${JSON.stringify(Object.fromEntries(entry.region.members.map(member => [member.key, JSON.parse(member.valueBytes)])), null, 2)}\n`
+            return bytes === undefined ? [] : [[entry.path, sha256Hex(bytes)]]
+        })),
+        ...(captured.guardProbeHost === undefined ? {} : { guardProbeHost: captured.guardProbeHost }),
         schema: 'cockpit-harness-selftest-expectation/v1',
         generatedManifestSha256: captured.manifestSha256,
         cells: [...uniqueCells.values()].sort((left, right) => compareCodeUnits(cellKey(left), cellKey(right))),
@@ -288,14 +303,14 @@ function specificationCellKey(value: unknown): string | undefined {
     } catch { /* a guard over caller-supplied values; a throwing accessor or proxy trap is malformed input the caller refuses. */ return undefined }
 }
 
-function validProbe(probe: SelftestProbeSpecification, cell: SelftestCellKey): boolean {
+function validProbe(probe: SelftestProbeSpecification, cell: SelftestCellKey, guardHost?: string): boolean {
     try {
     if (Object.keys(probe).sort().join('\0') !== [
         'brokenCode', 'candidateCode', 'capability', 'harness', 'helpCommand', 'invocation',
-        'sample', 'unavailableCode', 'versionCommand', ...(probe.protocol === undefined ? [] : ['protocol']),
+        'sample', 'unavailableCode', 'versionCommand', ...(probe.protocol === undefined ? [] : ['protocol']), ...(probe.guardHost === undefined ? [] : ['guardHost']),
     ].sort().join('\0')) return false
     if (probe.harness.kind !== 'builtin' || Object.keys(probe.harness).sort().join('\0') !== 'kind\0name\0target') return false
-    if (probe.protocol !== undefined) return builtinCell(cell) && isDeepStrictEqual(probe, snapshotGeneratedJson(nativeSpecification(cell)))
+    if (probe.protocol !== undefined) return builtinCell(cell) && isDeepStrictEqual(probe, snapshotGeneratedJson(nativeSpecification(cell, guardHost)))
     const commands = [probe.invocation, probe.versionCommand, probe.helpCommand]
     const sample = probe.sample
     const validSample = sample !== null && Object.keys(sample).sort().join('\0') === 'features\0skill'
@@ -327,17 +342,23 @@ function builtinCell(cell: SelftestCellKey): cell is SelftestCellKey & Readonly<
     return cell.harness.kind === 'builtin'
 }
 
-function nativeSpecification(cell: SelftestCellKey & Readonly<{ harness: BuiltinHarnessRef }>): SelftestProbeSpecification {
+function nativeSpecification(cell: SelftestCellKey & Readonly<{ harness: BuiltinHarnessRef }>, guardHost?: string): SelftestProbeSpecification {
     const supported = cell.harness.target === 'codexcli' && cell.capability === 'instruction-loading'
+    const modelInput = cell.harness.target !== 'opencode' && cell.capability !== 'guard-firing' && !supported
+    const guard = cell.harness.target === 'claudecode' && cell.capability === 'guard-firing' && guardHost !== undefined
+    const skill = cell.capability === 'skill-parity' ? cell.skill : undefined
     return {
-        protocol: supported ? 'codex-prompt-input/v1' : 'native-unsupported/v1',
+        protocol: guard ? 'claude-guard-loopback/v1' : supported ? 'codex-prompt-input/v1' : modelInput
+            ? cell.harness.target === 'claudecode' ? 'claude-model-input/v1' : 'codex-skill-input/v1' : 'native-unsupported/v1',
         harness: cell.harness, capability: cell.capability,
-        invocation: supported ? ['{executable}', 'debug', 'prompt-input', 'Do not run tools.'] : ['{executable}', '--help'],
+        ...(guard ? { guardHost } : {}),
+        invocation: guard ? nativeGuardInvocation(guardHost) : supported ? ['{executable}', 'debug', 'prompt-input', 'Do not run tools.']
+            : modelInput ? nativeInputInvocation(cell.harness.target as 'claudecode' | 'codexcli', skill) : ['{executable}', '--help'],
         versionCommand: ['{executable}', '--version'], helpCommand: ['{executable}', '--help'],
-        candidateCode: supported ? 'NATIVE_INSTRUCTIONS_LOADED' : 'NATIVE_PROTOCOL_UNSUPPORTED',
-        brokenCode: supported ? 'NATIVE_INSTRUCTIONS_REPLACED' : 'NATIVE_PROTOCOL_UNSUPPORTED',
+        candidateCode: guard ? 'NATIVE_GUARD_FIRED' : supported || modelInput && !skill ? 'NATIVE_INSTRUCTIONS_LOADED' : modelInput ? 'NATIVE_SKILL_BODY_LOADED' : 'NATIVE_PROTOCOL_UNSUPPORTED',
+        brokenCode: guard ? 'NATIVE_GUARD_BROKEN' : supported || modelInput && !skill ? 'NATIVE_INSTRUCTIONS_REPLACED' : modelInput ? 'NATIVE_SKILL_CONTROL_REJECTED' : 'NATIVE_PROTOCOL_UNSUPPORTED',
         unavailableCode: `${cell.capability.replaceAll('-', '_').toUpperCase()}_UNAVAILABLE`,
-        sample: cell.capability === 'skill-parity' ? { skill: cell.skill, features: [] } : null,
+        sample: cell.capability === 'skill-parity' ? { skill: cell.skill, features: modelInput ? ['body-load'] : [] } : null,
     }
 }
 
@@ -364,11 +385,11 @@ export function draftSurfaceSelftestSpecifications(
     let carried = 0
     const specifications = expectation.cells.filter(builtinCell).map((cell) => {
         const kept = earlier.get(cellKey(cell))
-        if (kept && validProbe(kept, cell)) {
+        if (kept && validProbe(kept, cell, expectation.guardProbeHost)) {
             carried += 1
             return kept
         }
-        return nativeSpecification(cell)
+        return nativeSpecification(cell, expectation.guardProbeHost)
     })
     return {
         specifications,
@@ -427,7 +448,7 @@ export function planSurfaceSelftest(
     const probes: PlannedSelftestProbe[] = []
     for (const cell of probeCells) {
         const specification = byCell.get(cellKey(cell))
-        if (!specification || !validProbe(specification, cell)) {
+        if (!specification || !validProbe(specification, cell, expectation.guardProbeHost)) {
             return { kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'probe specification is malformed or does not match source authority' }
         }
         if (specification.sample && !expectation.shippedSkills.includes(specification.sample.skill)) {
