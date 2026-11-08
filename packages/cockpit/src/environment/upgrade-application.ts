@@ -150,7 +150,7 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
     // and exits 0, so an agent asked to upgrade does not treat a current install as broken.
     if (order === 0 || order < 0 && input.version === undefined) return { status: 0, result: { from: installed, to: installed, packageManager: lockfile.manager, dryRun: input.dryRun },
         diagnostics: [{ severity: 'info' as const, code: 'UPGRADE_ALREADY_CURRENT' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_ALREADY_CURRENT,
-            message: `already on ${installed}${order === 0 ? '' : `; the latest published is ${target}`}`,
+            message: order === 0 ? `already on ${installed}` : `installed ${installed} is newer than the latest published ${target}`,
             fix: 'nothing to upgrade; to move to another version name it: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version>' }] }
 
     const spec = `${name}@${target}`

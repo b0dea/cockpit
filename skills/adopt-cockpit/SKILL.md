@@ -308,8 +308,9 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
      person to run `codex -C <cockpit root>` in a terminal (not `codex exec`), trust the folder if
      asked, and choose **Trust all and continue** when Codex shows **Hooks need review**. `doctor`
      reports `CODEX_HOOK_UNTRUSTED` until it is done.
-   - `DECLARATION_UNCONFIRMED` lists the answers no person stated. Confirm `ports.bases` (with the
-     stack up), `environment.compose_files` and `environment.machine` by observation, one at a time:
+   - `DECLARATION_UNCONFIRMED` lists the answers no person stated. Of `ports.bases` (with the stack
+     up), `environment.compose_files` and `environment.machine`, confirm by observation, one at a
+     time, each that `unconfirmed` lists; a derived answer is never listed and needs no confirming:
      `./node_modules/@b00dea/cockpit/bin/cockpit.mjs confirm ports.bases --config cockpit.toml --json` runs the
      observation that verifies the answer and, when it passes, removes the entry and records what
      ran. Then run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` where `[autonomy] sync =
@@ -322,8 +323,8 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
      those exact values, the person removes those entries together with their `# Unconfirmed`
      comments, then runs
      `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a terminal outside the
-     agent. Sync lists the files it wrote, `.cockpit/policy.json` among them the first time; the
-     person commits them with `cockpit.toml`. Until then grading runs as `independent` and the guard admits no install policy's commands.
+     agent. Sync lists the files it wrote; the person commits them with `cockpit.toml`, together with
+     `.cockpit/policy.json` if an earlier sync wrote it and it is still uncommitted. Until then grading runs as `independent` and the guard admits no install policy's commands.
      Where `[autonomy] confirm_answers = "agent"`, confirm `cockpit.name`, `estate.runnable` and
      `environment.test_data` yourself instead, as in
      `./node_modules/@b00dea/cockpit/bin/cockpit.mjs confirm cockpit.name --config cockpit.toml --json`; the record says

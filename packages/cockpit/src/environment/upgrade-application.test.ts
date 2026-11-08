@@ -69,6 +69,10 @@ describe('cockpit upgrade', () => {
         expect(latest.diagnostics).toEqual([expect.objectContaining({ severity: 'info', code: 'UPGRADE_ALREADY_CURRENT', message: expect.stringContaining(`already on ${installedPackageMetadata.version}`) })])
         expect(await current.run({ version: installedPackageMetadata.version })).toMatchObject({ status: 0, diagnostics: [{ severity: 'info', code: 'UPGRADE_ALREADY_CURRENT' }] })
         expect(current.calls().filter(call => !call.startsWith('npm view'))).toEqual([])
+        // An unreleased or prerelease install sits above the registry's latest; that is not a fault.
+        const ahead = fixture('0.0.1')
+        expect(await ahead.run()).toMatchObject({ status: 0, diagnostics: [{ severity: 'info', code: 'UPGRADE_ALREADY_CURRENT',
+            message: `installed ${installedPackageMetadata.version} is newer than the latest published 0.0.1` }] })
     })
 
     // A wrapper around npm (such as a supply-chain scanner) may print notices beside the answer.
