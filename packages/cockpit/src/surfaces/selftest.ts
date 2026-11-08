@@ -71,6 +71,8 @@ export interface SelftestProbeSpecification {
 export interface PlannedSelftestProbe extends SelftestProbeSpecification {
     readonly cell: SelftestCellKey
     readonly entries: readonly SurfaceDesiredEntry[]
+    /** For Claude Code instruction loading: the team's CLAUDE.md cockpit left in place, as sync read it. */
+    readonly teamClaudeGuide?: string
 }
 
 export type SurfaceSelftestPlanResult =
@@ -194,6 +196,8 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
     if (captured.guardHookCommand !== undefined && !validNativeGuardHookCommand(captured.guardHookCommand)) return undefined
     if (captured.cockpitHookCommands !== undefined && (!Array.isArray(captured.cockpitHookCommands) || captured.cockpitHookCommands.length === 0
         || captured.cockpitHookCommands.length > 64 || !captured.cockpitHookCommands.every(validNativeGuardHookCommand))) return undefined
+    if (captured.teamClaudeGuide !== undefined && (typeof captured.teamClaudeGuide !== 'string'
+        || captured.entries.some(entry => entry.path === 'CLAUDE.md'))) return undefined
     const payload = {
         schema: captured.schema,
         configuredHarnesses: captured.configuredHarnesses,
@@ -203,6 +207,7 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
         ...(captured.guardProbeHost === undefined ? {} : { guardProbeHost: captured.guardProbeHost }),
         ...(captured.guardHookCommand === undefined ? {} : { guardHookCommand: captured.guardHookCommand }),
         ...(captured.cockpitHookCommands === undefined ? {} : { cockpitHookCommands: captured.cockpitHookCommands }),
+        ...(captured.teamClaudeGuide === undefined ? {} : { teamClaudeGuide: captured.teamClaudeGuide }),
     }
     if (sha256Hex(JSON.stringify(payload)) !== captured.manifestSha256) return undefined
     const ownership = classifySurfaceOwnership({ configuredHarnesses: captured.configuredHarnesses, entries: captured.entries })
@@ -273,7 +278,7 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
             const bytes = entry.kind === 'file' ? entry.bytes : entry.region.format === 'markdown-delimited' ? entry.region.bytes
                 : `${JSON.stringify(Object.fromEntries(entry.region.members.map(member => [member.key, JSON.parse(member.valueBytes)])), null, 2)}\n`
             return bytes === undefined ? [] : [[entry.path, sha256Hex(bytes)]]
-        })),
+        }).concat(captured.teamClaudeGuide === undefined ? [] : [['CLAUDE.md', sha256Hex(captured.teamClaudeGuide)]])),
         ...(captured.guardProbeHost === undefined ? {} : { guardProbeHost: captured.guardProbeHost }),
         ...(captured.guardHookCommand === undefined ? {} : { guardHookCommand: captured.guardHookCommand }),
         schema: 'cockpit-harness-selftest-expectation/v1',
@@ -465,6 +470,8 @@ export function planSurfaceSelftest(
             ...specification,
             cell,
             entries: capturedProjection!.entries.filter((entry) => entry.harnesses.includes(cell.harness.target)),
+            ...(capturedProjection!.teamClaudeGuide !== undefined && cell.harness.kind === 'builtin' && cell.harness.target === 'claudecode'
+                && cell.capability === 'instruction-loading' ? { teamClaudeGuide: capturedProjection!.teamClaudeGuide } : {}),
         })
     }
     return {

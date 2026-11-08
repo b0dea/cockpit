@@ -538,6 +538,7 @@ export async function prepareSurfaces(
     const adopted = await mergeAdoptedSurfaces(prepared, rendered.entries, configuredHarnesses, adapters)
     if ('status' in adopted) return adopted
     let adoptedEntries = adopted.entries
+    let teamClaudeGuide: string | undefined
     if (adopted.entries.some(entry => entry.path === 'CLAUDE.md')) {
         const existingClaude = await readAnchoredEntry(prepared.root, 'CLAUDE.md', MAX_SURFACE_FILE_BYTES, prepared.node, adapters)
         if (existingClaude.kind === 'invalid') return refuse('SURFACE_STATE_CONFLICT', 'the existing Claude guide could not be observed safely', 'CLAUDE.md')
@@ -563,6 +564,7 @@ export async function prepareSurfaces(
             }
             if (imports.length === 1) {
                 adoptedEntries = adopted.entries.filter(entry => entry.path !== 'CLAUDE.md')
+                teamClaudeGuide = bytes
             }
         }
     }
@@ -644,6 +646,7 @@ export async function prepareSurfaces(
         ...(guardProbeHost ? { guardProbeHost } : {}),
         ...(typeof guardHookCommand === 'string' ? { guardHookCommand } : {}),
         ...(cockpitHookCommands.length > 0 ? { cockpitHookCommands } : {}),
+        ...(teamClaudeGuide === undefined ? {} : { teamClaudeGuide }),
     }
     const captured = snapshotGeneratedJson(selftestPayload) as unknown as Omit<GeneratedSurfaceSelftestProjection, 'manifestSha256'> | undefined
     if (!captured) return refuse('SURFACE_BOUNDS', 'authenticated selftest inputs exceed the captured bounds', 'surfaces')
@@ -651,7 +654,8 @@ export async function prepareSurfaces(
         declarations: captured.declarations, entries: surfaceEntries, custom: captured.custom,
         ...(captured.guardProbeHost ? { guardProbeHost: captured.guardProbeHost } : {}),
         ...(captured.guardHookCommand ? { guardHookCommand: captured.guardHookCommand } : {}),
-        ...(captured.cockpitHookCommands ? { cockpitHookCommands: captured.cockpitHookCommands } : {}) }
+        ...(captured.cockpitHookCommands ? { cockpitHookCommands: captured.cockpitHookCommands } : {}),
+        ...(captured.teamClaudeGuide === undefined ? {} : { teamClaudeGuide: captured.teamClaudeGuide }) }
     const surfaceSelftest = { ...payload, manifestSha256: sha256(JSON.stringify(payload)) }
     const skillInventory = surfaceEntries.filter((entry): entry is Extract<SurfaceDesiredEntry, { kind: 'file' }> =>
         entry.kind === 'file').flatMap(entry => entry.harnesses.flatMap(target => {

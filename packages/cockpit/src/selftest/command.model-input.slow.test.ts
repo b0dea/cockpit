@@ -1,6 +1,9 @@
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { constants } from 'node:fs'
+import { chmod, copyFile, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { PassThrough, Writable } from 'node:stream'
+import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import { createSelftestFixture } from '../../test-support/selftest-fixture.js'
@@ -171,7 +174,7 @@ describe('native model input selftest', () => {
                 },
             })
             expect(drifted).toMatchObject({ kind: 'refusal', code: 'SELFTEST_EXECUTION_INVALID',
-                reason: expect.stringContaining('EXECUTION_PRECONDITION_CHANGED') })
+                reason: expect.stringContaining(`the candidate step was refused with EXECUTION_PRECONDITION_CHANGED: the generated Bash guard ${guardPath} changed after this run bound it`) })
         } finally { await writeFile(guardPath, originalGuard) }
         const forged = structuredClone(outcome.bundle)
         const record = forged.records.find(row => row.kind === 'evidence' && row.capability === 'skill-parity')!
@@ -274,6 +277,66 @@ provenance = { source = ".claude/settings.json", kind = "declared", reason = "Ke
         expect(result.evidence.errors).toEqual([])
         expect(result.evidence.evidence.some(row => row.capability === 'guard-firing' && row.harness.name === 'Claude Code')).toBe(false)
         expect(JSON.parse(await readFile(result.reportPath, 'utf8')).result).toEqual(result)
+    }, 180_000)
+
+    it('measures Claude instruction loading through a team CLAUDE.md that is only the AGENTS.md import, and says why one holding more is not measured', async () => {
+        const { issuedApplication } = createSelftestFixture(roots)
+        const claudeInstructions = <T extends { harness: { kind: string; target?: string }; capability: string }>(records: readonly T[]) =>
+            records.find(row => row.harness.target === 'claudecode' && row.capability === 'instruction-loading')
+        const measure = async (claudeGuide: string) => {
+            const { root, application } = await issuedApplication({ 'CLAUDE.md': claudeGuide })
+            // The team's file already imports AGENTS.md, so cockpit leaves it as written and owns no CLAUDE.md.
+            expect(application.surfaceSelftest.entries.some(entry => entry.path === 'CLAUDE.md')).toBe(false)
+            expect(await readFile(join(root, 'CLAUDE.md'), 'utf8')).toBe(claudeGuide)
+            const bin = await nativeHarnesses(root)
+            return runSurfaceSelftestApplication({ root, application, specifications: draftSurfaceSelftestSpecifications(application.surfaceSelftest)!.specifications,
+                env: { PATH: bin, HOME: '/synthetic-owner-home' } }, { execute: executeProbe, testOnlyExecutableIdentities: { 'Claude Code': [join(bin, 'claude')], Codex: [join(bin, 'codex')] } })
+        }
+
+        const importOnly = await measure('@AGENTS.md\n')
+        expect(importOnly, JSON.stringify(importOnly)).toMatchObject({ kind: 'complete' })
+        if (importOnly.kind !== 'complete') throw new Error('import-only team guide was not measured')
+        expect(importOnly.evidence.errors).toEqual([])
+        expect(claudeInstructions(importOnly.evidence.evidence)).toMatchObject({ verdict: 'instructed', protocol: 'claude-model-input/v1' })
+
+        const withNotes = await measure('# Team notes\n\n@AGENTS.md\n\nRun the synthetic formatter before committing.\n')
+        expect(withNotes, JSON.stringify(withNotes)).toMatchObject({ kind: 'complete' })
+        if (withNotes.kind !== 'complete') throw new Error('team guide with notes stopped the run')
+        expect(claudeInstructions(withNotes.evidence.evidence)).toBeUndefined()
+        const pending = claudeInstructions(withNotes.evidence.pending)
+        expect(pending).toMatchObject({ reason: 'native_protocol_unsupported',
+            operatorAction: expect.stringContaining('holds more than its @AGENTS.md import') })
+        expect(pending!.operatorAction).not.toMatch(/run sync, then rerun selftest|run sync to restore/)
+    }, 180_000)
+
+    it('refuses before asking for any approval when sync ran under a different Node, naming both and both ways forward', async () => {
+        const { root, configPath } = await createSelftestFixture(roots).issuedApplication()
+        // A Node version manager gives the shell that ran sync one Node and the shell running selftest another.
+        const syncNode = join(root, 'other-node/bin/node')
+        await mkdir(dirname(syncNode), { recursive: true })
+        await copyFile(process.execPath, syncNode, constants.COPYFILE_FICLONE)
+        const launcher = fileURLToPath(new URL('../../bin/cockpit.mjs', import.meta.url))
+        const synced = spawnSync(syncNode, [launcher, 'sync', '--config', configPath], { cwd: root, encoding: 'utf8' })
+        expect(synced.status, synced.stderr).toBe(0)
+        const bin = await nativeHarnesses(root)
+        const artifactPath = join(root, 'probe-specifications.json')
+        const quiet = { stdout: { write: () => true }, stderr: { write: () => true } }
+        expect(await runCli(['selftest', '--config', configPath, '--write-probe-specifications', artifactPath], quiet)).toBe(0)
+        const approvals: string[] = []
+        const outcome = await runSelftestOperatorCommand({ configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin, HOME: '/synthetic-owner-home' } },
+            { interactive: true, json: false, ci: undefined }, { stderr: quiet.stderr,
+                confirmSelftestProbeSpecifications: async candidate => { approvals.push(candidate.canonicalPath); return candidate.sha256 },
+                confirmSelftestExecutable: async candidate => { approvals.push(candidate.canonicalPath); return candidate.sha256 } },
+            runConfiguredSurfaceSelftestOutcome)
+
+        expect(approvals).toEqual([])
+        expect(outcome.status).toBe(2)
+        const selftestNode = await realpath(process.execPath)
+        expect(outcome.diagnostics).toEqual([expect.objectContaining({ severity: 'error', code: 'SELFTEST_GUARD_IDENTITY_MISMATCH',
+            message: expect.stringContaining(`sync installed the guard for the Node at ${syncNode}, but this selftest runs under the Node at ${selftestNode}`) })])
+        const { fix } = outcome.diagnostics[0]!
+        expect(fix).toContain(`${syncNode} ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config ${configPath} --interactive --probe-specifications ${artifactPath}`)
+        expect(fix).toContain(`./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${configPath}`)
     }, 180_000)
 
     it('records a cell whose measurement fails with its reason and still measures the other tools', async () => {

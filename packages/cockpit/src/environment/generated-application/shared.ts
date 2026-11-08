@@ -419,6 +419,11 @@ export interface GeneratedSurfaceSelftestProjection {
     readonly guardHookCommand?: string
     /** Every command cockpit generated in Claude Code's hook settings; the file's other hooks are the team's. */
     readonly cockpitHookCommands?: readonly string[]
+    /**
+     * The team's own CLAUDE.md as sync read it, when it already imports AGENTS.md once and cockpit
+     * therefore leaves it in place instead of owning one; the Claude instruction probe loads through it.
+     */
+    readonly teamClaudeGuide?: string
 }
 
 export interface GeneratedSurfaceHealthEvidence {
@@ -499,6 +504,8 @@ interface GeneratedApplicationRecord {
     readonly stackId: ReturnType<typeof stackId>
     readonly currentPublication: true | false
     readonly guardRuntime?: readonly Readonly<{ path: string; sha256: string; maxBytes: number }>[]
+    /** The guard identity this process's sync would write; selftest compares the installed one before any approval. */
+    readonly guardHandler?: GuardHandlerIdentity
     readonly siblingRoots: AuthenticatedSiblingRoots
     readonly node: ResolvedExecutable
     readonly workApplication?: WorkApplicationAuthorityRecord
@@ -640,7 +647,7 @@ export function complete(
         root: prepared.root, stackId: prepared.stackId, currentPublication: !dryRun,
         siblingRoots: prepared.siblingRoots,
         node: prepared.node, surfaceSelftest: prepared.surfaceSelftest, surfaceHealth: prepared.surfaceHealth,
-        ...(prepared.guardHandler ? { guardRuntime: Object.freeze([
+        ...(prepared.guardHandler ? { guardHandler: prepared.guardHandler, guardRuntime: Object.freeze([
             { path: join(prepared.root, GUARD_LOCAL_PATHS.identity), sha256: sha256(encodeGuardLocalIdentity(prepared.guardHandler)), maxBytes: 65_536 },
             { path: join(prepared.root, GUARD_LOCAL_PATHS.generatedConfig), sha256: prepared.sourceSha256, maxBytes: MAX_GENERATED_BYTES },
             { path: prepared.configPath, sha256: prepared.sourceSha256, maxBytes: MAX_GENERATED_BYTES },

@@ -31,6 +31,11 @@ export function generatedSelftestGuardRuntime(application: GeneratedApplicationP
     return record?.currentPublication && record.root === root ? record.guardRuntime : undefined
 }
 
+export function generatedSelftestGuardHandler(application: GeneratedApplicationProjection, root: string) {
+    const record = issuedApplicationProjections.get(application)
+    return record?.currentPublication && record.root === root ? record.guardHandler : undefined
+}
+
 export function projectWorkApplicationAuthorities(
     application: GeneratedApplicationProjection,
 ): WorkApplicationAuthoritiesProjection | undefined {

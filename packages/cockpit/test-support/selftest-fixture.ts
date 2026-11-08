@@ -19,9 +19,11 @@ async function syntheticSkillSources(names: readonly string[]): Promise<string> 
 }
 
 export function createSelftestFixture(roots: string[]) {
-    async function issuedApplication() {
+    /** `teamFiles` are files the team wrote in the cockpit root before its first sync. */
+    async function issuedApplication(teamFiles: Readonly<Record<string, string>> = {}) {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-selftest-')))
         roots.push(root)
+        for (const [path, bytes] of Object.entries(teamFiles)) await writeFile(join(root, path), bytes)
         await mkdir(join(root, 'app'), { recursive: true })
         await mkdir(join(root, 'fixtures'), { recursive: true })
         await writeFile(join(root, 'app/AGENTS.md'), 'Synthetic sibling instruction canary.\n')

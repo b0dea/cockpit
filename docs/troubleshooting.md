@@ -183,6 +183,17 @@ supported native scope and remaining operator work.
   other cells are still measured. Inspect the named harness and the retained output.
 - A reviewed input changed while the run used it, the probe directory was unusable, or the final
   result bundle failed validation. The whole run stops; rerun selftest once the named cause is fixed.
+  A changed input is named with its path: the approved executable, a probe control, the guard
+  identity, the configuration copy recorded for the guard, `cockpit.toml`, the Node executable or
+  cockpit module the guard runs, or the generated Bash guard. A step that could not start before its
+  dispatch window closed says so.
+
+`SELFTEST_GUARD_IDENTITY_MISMATCH` means the guard identity `sync` wrote under
+`.cockpit/local/guard-identity` differs from the one this selftest would write, so the Claude Code
+guard probe cannot run; selftest refuses before asking for any approval. Most often `sync` ran under
+another Node than this shell's, and the message names both. Run selftest with the Node the guard was
+installed for, as the fix prints it, or run `sync` under the current Node and then selftest. For any
+other difference, run `sync` with this cockpit, then selftest.
 
 A missing executable, a sign-in requirement, missing process isolation or a pending enforcement
 probe or unsupported native adapter stays `human_needed` until the manual action in the record is done. Run
@@ -333,6 +344,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SECRET_FILE_TRACKED` | a person decides with the repository owner: stop tracking each file with git rm --cached <file>, add it to .gitignore, commit, and rotate any credential it held; commit a .env.example with the variable names instead |
 | `SELFTEST_CUSTOM_PROBE_UNSUPPORTED` | measure the custom harness capability by hand with a candidate and a deliberately broken control, then record what you saw as its state and measured_on in cockpit.toml (enforced needs an evidence file); do not add a row for it |
 | `SELFTEST_EXECUTION_INVALID` | [see above](#selftest-and-override-inspection) |
+| `SELFTEST_GUARD_IDENTITY_MISMATCH` | [see above](#selftest-and-override-inspection) |
 | `SELFTEST_SOURCE_INVALID` | [see above](#selftest-and-override-inspection) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
 | `SESSION_STACK_RETAINED` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config <your cockpit.toml> to release this checkout's remaining hold |
