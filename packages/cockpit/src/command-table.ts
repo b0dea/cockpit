@@ -234,6 +234,21 @@ function unavailable(reason: string): OrdinaryCommandMetadata { return { availab
 // `<slug>:` and plain directories, ending in exactly this name: no `.` or `..` segment can climb out.
 const SCHEMA_REFERENCE = /^(?:[a-z0-9][a-z0-9-]{0,63}:)?(?:(?!\.\.?\/)[A-Za-z0-9._@+-]+\/)*\.env\.schema$/
 
+/**
+ * The `.env.schema` file an `env schema --path` names, given as the file or as its directory (`.` for
+ * the cockpit root, `<slug>:` for a sibling's): an agent's secret guard that refuses any word
+ * containing `.env` refused the file spelling, and with it the documented route for writing a schema.
+ * The file name is fixed, so a directory is unambiguous; one whose own name reads as a secret is not.
+ */
+export function schemaFileReference(text: string): string | undefined {
+    const slug = /^[a-z0-9][a-z0-9-]{0,63}:/.exec(text)?.[0] ?? ''
+    const path = text.slice(slug.length)
+    const directory = SCHEMA_REFERENCE.test(text) ? path.split('/').slice(0, -1).join('/') : path
+    if (directory.split('/').some(isSensitiveGuardName)) return undefined
+    const file = `${slug}${directory === '' || directory === '.' ? '' : `${directory}/`}.env.schema`
+    return SCHEMA_REFERENCE.test(file) ? file : undefined
+}
+
 const browserAdmission = Object.freeze({ requires: 'browser-preapproval' as const })
 // --interactive asks for a person at a terminal, so an agent invocation never carries it.
 const personFlag = Object.freeze({ forbidden: Object.freeze({ presence: Object.freeze(['interactive']) }) })
@@ -765,7 +780,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
             : option.role === 'identifier' ? WORK_ORDER_ID.test(text)
             : option.role === 'route' ? ROUTE_SELECTOR.test(text)
             : option.role === 'label' ? true
-            : option.role === 'schema-reference' ? SCHEMA_REFERENCE.test(text)
+            : option.role === 'schema-reference' ? schemaFileReference(text) !== undefined
             : option.role === 'schema-draft' ? !text.split('/').some(isSensitiveGuardName) && confined(text)
             : option.role === 'field' ? isRecordedAnswerField(text)
             : option.role === 'tail' ? /^[1-9]\d{0,4}$/.test(text) && Number(text) <= 10_000

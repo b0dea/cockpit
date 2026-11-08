@@ -237,6 +237,11 @@ describe('env schema', () => {
         expect((await schemaAt(space, `api:services/web/${SCHEMA}`)).stdout).toBe(`NESTED=\n${TEXT}`)
         expect((await schemaAt(space, SCHEMA)).stdout).toBe('COCKPIT=\n')
         expect(JSON.parse((await schemaAt(space, `api:${SCHEMA}`, '--json')).stdout).result).toEqual({ reference: `api:${SCHEMA}`, path: join(api, SCHEMA), text: TEXT })
+        // The directory alone names the same schema, and the result names the file.
+        expect(await schemaAt(space, 'api:')).toEqual(root)
+        expect((await schemaAt(space, 'api:services/web')).stdout).toBe(`NESTED=\n${TEXT}`)
+        expect((await schemaAt(space, '.')).stdout).toBe('COCKPIT=\n')
+        expect(JSON.parse((await schemaAt(space, 'api:', '--json')).stdout).result).toEqual({ reference: `api:${SCHEMA}`, path: join(api, SCHEMA), text: TEXT })
         expect(space.varlockRan()).toBe(false)
     })
 

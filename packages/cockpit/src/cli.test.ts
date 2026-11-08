@@ -216,8 +216,12 @@ describe('closed ordinary invocation metadata', () => {
     it('admits env schema only for the exact file name, at a path that cannot climb', () => {
         const words = (path: string) => ['env', 'schema', '--config', authority.configPath, '--path', path]
         for (const path of ['.env.schema', 'api:.env.schema', 'api:services/web/.env.schema']) expect(ordinary(words(path)), path).toBeDefined()
+        // The directory alone names the same file, so an agent's secret guard that refuses any word
+        // containing `.env` does not refuse the documented route for writing a schema.
+        for (const path of ['.', 'api:', 'api:.', 'api:services/web', 'services']) expect(ordinary(words(path)), path).toBeDefined()
         for (const path of ['.env', '.env.local', '.env.schema.private', '.ENV.SCHEMA', 'api:.env', '../.env.schema', 'api:../.env.schema', 'services/../.env.schema',
-            '/workspace/product/.env.schema', 'api:/etc/.env.schema']) expect(ordinary(words(path)), path).toBeUndefined()
+            '/workspace/product/.env.schema', 'api:/etc/.env.schema', '..', 'api:..', 'services/', 'api:services/.secrets', 'api:.env-drafts', '',
+            '.secrets/.env.schema', 'api:.ENV/.env.schema', 'api:.env.production/.env.schema']) expect(ordinary(words(path)), path).toBeUndefined()
     })
 
     it('admits env schema --replace-from only with a draft the guard can prove, and marks it as the whole call', () => {
@@ -961,6 +965,20 @@ describe('generated environment process contract', () => {
         }, { env: {} })).toBe(0)
         expect(calls).toEqual([{ configPath: 'cockpit.toml', dryRun: true }, { configPath: 'cockpit.toml' }])
         expect(confirmations).toBe(0)
+        // A person confirming trust answers had nothing to approve, and sync printed nothing at all:
+        // they could not tell it ran, nor that it had recorded the policy as a new file to commit.
+        const applied = async (input: { dryRun?: boolean }) => ({ status: 0, diagnostics: [], result: input.dryRun === true
+            ? { action: 'sync', dryRun: true, changes: [] }
+            : { action: 'sync', dryRun: false, paths: ['AGENTS.md', 'CLAUDE.md'], changes: [{ operation: 'write', path: 'AGENTS.md' }] } })
+        const first = captureIo(undefined, async () => undefined)
+        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], first.io, { loadPolicy: personStalePolicy, sync: applied }, { env: {} })).toBe(0)
+        expect(first.output().stdout).toBe('write "AGENTS.md"\nwrite ".cockpit/policy.json"\n'
+            + 'Sync wrote 2 files; 1 generated file was already current. Review them with git status --short and commit them so teammates get the same files.\n')
+        const recordedPolicy = async () => ({ ...await personStalePolicy(), recorded: (await personStalePolicy()).current })
+        const unchanged = captureIo(undefined, async () => undefined)
+        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], unchanged.io, { loadPolicy: recordedPolicy,
+            sync: async (input) => ({ status: 0, diagnostics: [], result: { action: 'sync', dryRun: input.dryRun === true, paths: ['AGENTS.md', 'CLAUDE.md'], changes: [] } }) }, { env: {} })).toBe(0)
+        expect(unchanged.output().stdout).toBe('Nothing to sync: all 2 generated files were already current.\n')
     })
 
     it('binds interactive approval to the previewed digest when apply re-prepares stale entries', async () => {

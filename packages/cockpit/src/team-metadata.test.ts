@@ -7,7 +7,10 @@ import { installedPackageMetadata } from './package-metadata.js'
 import { initializeTeamMetadata } from '../test-support/team-metadata.js'
 import { prepareTeamMetadata, applyTeamMetadata, validateTeamMetadata, inspectTeamReadiness } from './team-metadata.js'
 import { encodeGuardLocalIdentity, writeCockpitLocalFiles } from './guards/local-identity.js'
+import { guardLauncherEvidence } from './guards/protected-locations.js'
 
+const COCKPIT_SCRIPTS = Object.fromEntries(['setup', 'sync', 'check'].map(command =>
+    [`cockpit:${command}`, `./node_modules/@b00dea/cockpit/bin/cockpit.mjs ${command} --config cockpit.toml`]))
 const roots: string[] = []
 async function fixture(siblingsRoot = 'repositories', generatedHostPaths: readonly string[] = []): Promise<string> {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-team-metadata-'))); roots.push(root)
@@ -43,11 +46,20 @@ describe('team metadata', () => {
             { operation: 'write', path: 'package.json' }, { operation: 'write', path: '.gitignore' },
         ] })
         const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
-        expect(manifest).toEqual({ private: true, scripts: { test: 'vitest', 'cockpit:setup': 'cockpit setup --config cockpit.toml',
-            'cockpit:sync': 'cockpit sync --config cockpit.toml', 'cockpit:check': 'cockpit check --config cockpit.toml' },
-        devDependencies: { [installedPackageMetadata.name]: installedPackageMetadata.version } })
+        // The scripts run the installed entrypoint: pnpm writes .bin/cockpit as a shell shim the guard
+        // cannot prove, and a bare `cockpit` resolves through it.
+        const entrypoint = './node_modules/@b00dea/cockpit/bin/cockpit.mjs'
+        const scripts = { 'cockpit:setup': `${entrypoint} setup --config cockpit.toml`,
+            'cockpit:sync': `${entrypoint} sync --config cockpit.toml`, 'cockpit:check': `${entrypoint} check --config cockpit.toml` }
+        expect(manifest).toEqual({ private: true, scripts: { test: 'vitest', ...scripts },
+            devDependencies: { [installedPackageMetadata.name]: installedPackageMetadata.version } })
         expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('operator-owned\n# cockpit:ignore:start sha256=63feef9a9f96d7cc\n/node_modules/\n/.cockpit/local/\n/.claude/settings.local.json\n**/.secrets/*\n!/env/.secrets/.gitignore\n/repositories/\n# cockpit:ignore:end\n')
         expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toEqual({ kind: 'complete', changed: false, changes: [] })
+        // The bare spelling earlier releases wrote is cockpit's own, so sync replaces it rather than refusing it as the product's.
+        await writeFile(join(root, 'package.json'), JSON.stringify({ ...manifest, scripts: { ...manifest.scripts, 'cockpit:sync': 'cockpit sync --config cockpit.toml' } }))
+        expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'refusal', code: 'TEAM_METADATA_UNAVAILABLE' })
+        expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'complete', changed: true })
+        expect(JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).scripts).toEqual({ test: 'vitest', ...scripts })
     })
 
     it('ignores the declared generated host paths so run output such as screenshots cannot be committed', async () => {
@@ -170,13 +182,10 @@ purpose = "Synthetic local repository"
         await mkdir(join(installed, 'bin'))
         await writeFile(join(installed, 'bin/cockpit.mjs'), '#!/usr/bin/env node\n', { mode: 0o755 })
         await mkdir(join(root, 'node_modules/.bin'))
-        // pnpm writes .bin/cockpit as a shell shim, so its advice has to name the one route that proves.
+        // pnpm writes .bin/cockpit as a shell shim no one can turn into a provable link, and everything
+        // cockpit prints runs the package's own script, so a gap here was one the person could never close.
         await writeFile(join(root, 'node_modules/.bin/cockpit'), '#!/bin/sh\nexec node "$0"\n', { mode: 0o755 })
-        const packageScript = `./node_modules/${installedPackageMetadata.name}/bin/cockpit.mjs`
-        const [shimmed] = await inspectTeamReadiness(configPath)
-        expect(shimmed).toMatchObject({ code: 'COCKPIT_LAUNCHER_UNPROVEN', fix: `run cockpit as ${packageScript} <command> --config <your cockpit.toml> from the cockpit root`,
-            message: expect.stringContaining(`${packageScript} <command> --config cockpit.toml is proven by its path`) })
-        expect(shimmed!.fix).not.toContain('.bin/cockpit')
+        expect(await inspectTeamReadiness(configPath)).toEqual([])
         await rm(join(root, 'node_modules/.bin/cockpit'))
         await symlink('../@b00dea/cockpit/bin/cockpit.mjs'.replace('@b00dea/cockpit', installedPackageMetadata.name), join(root, 'node_modules/.bin/cockpit'))
         expect(await inspectTeamReadiness(configPath)).toEqual([])
@@ -203,12 +212,14 @@ purpose = "Synthetic local repository"
         await mkdir(join(root, 'node_modules/.bin'))
         const launcher = join(root, 'node_modules/.bin/cockpit')
         await writeFile(launcher, '#!/bin/sh\nexit 0\n', { mode: 0o755 })
-        expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({
-            code: 'COCKPIT_LAUNCHER_UNPROVEN', target: 'npx --no cockpit',
-        })])
+        const entrypoint = await realpath(join(installed, 'bin/cockpit.mjs'))
+        // The linked copy is the installed one; a shim beside it still proves nothing to the guard.
+        expect(await inspectTeamReadiness(configPath)).toEqual([])
+        expect(guardLauncherEvidence('npx', ['--no', 'cockpit'], root, root, entrypoint, '')).toBeUndefined()
         await rm(launcher)
         await symlink(join(installed, 'bin/cockpit.mjs'), launcher)
         expect(await inspectTeamReadiness(configPath)).toEqual([])
+        expect(guardLauncherEvidence('npx', ['--no', 'cockpit'], root, root, entrypoint, '')).toBeDefined()
 
         const unrelated = join(root, 'unrelated')
         await mkdir(unrelated)
@@ -334,6 +345,25 @@ purpose = "Synthetic local repository"
         },
     )
 
+    // Every one of these refused with "conflicts with cockpit's exact pin or cockpit:* scripts; resolve
+    // the conflict", which left an adopter guessing which entry was wrong and what to run.
+    it('names the package.json entry that conflicts and what to run instead', async () => {
+        const name = installedPackageMetadata.name
+        const refusalFor = async (manifest: Record<string, unknown>) => {
+            const root = await fixture()
+            await writeFile(join(root, 'package.json'), JSON.stringify(manifest))
+            return (await prepareTeamMetadata(join(root, 'cockpit.toml'))) as { message?: string }
+        }
+        const pinned = await refusalFor({ devDependencies: { [name]: '9.9.9' } })
+        expect(pinned.message).toContain(`package.json pins ${name} 9.9.9, but ${installedPackageMetadata.version} is running; `
+            + `run npm install --save-dev --save-exact ${name}@${installedPackageMetadata.version}`)
+        const archive = await refusalFor({ devDependencies: { [name]: 'file:../archives/cockpit.tgz' } })
+        expect(archive.message).toContain(`package.json pins ${name} to file:../archives/cockpit.tgz, but package-lock.json and node_modules do not resolve that archive to the running ${installedPackageMetadata.version}; run npm install`)
+        const script = await refusalFor({ scripts: { 'cockpit:sync': 'make sync' } })
+        expect(script.message).toContain('package.json already defines cockpit:sync as another command than the one sync writes')
+        expect(script.message).not.toContain('make sync')
+    })
+
     it('does not normalize an unauthenticated local package reference', async () => {
         const root = await fixture()
         const spec = 'file:../archives/cockpit.tgz'
@@ -359,10 +389,7 @@ purpose = "Synthetic local repository"
         const root = await fixture()
         const spec = 'file:/synthetic/archives/cockpit.tgz'
         const name = installedPackageMetadata.name
-        const manifest = `${JSON.stringify({ private: true, scripts: {
-            'cockpit:setup': 'cockpit setup --config cockpit.toml', 'cockpit:sync': 'cockpit sync --config cockpit.toml',
-            'cockpit:check': 'cockpit check --config cockpit.toml',
-        }, devDependencies: { [name]: spec } }, null, 2)}\n`
+        const manifest = `${JSON.stringify({ private: true, scripts: COCKPIT_SCRIPTS, devDependencies: { [name]: spec } }, null, 2)}\n`
         await writeFile(join(root, 'package.json'), manifest)
         const store = join(root, 'node_modules/.pnpm/cockpit-file/node_modules', name)
         await mkdir(store, { recursive: true })
@@ -401,10 +428,7 @@ purpose = "Synthetic local repository"
         // the cockpit root; a resumed init from the temporary install must accept that pin.
         const root = await fixture()
         const spec = 'file:../archives/cockpit.tgz'
-        const manifest = `${JSON.stringify({ private: true, scripts: {
-            'cockpit:setup': 'cockpit setup --config cockpit.toml', 'cockpit:sync': 'cockpit sync --config cockpit.toml',
-            'cockpit:check': 'cockpit check --config cockpit.toml',
-        }, devDependencies: { [installedPackageMetadata.name]: spec } }, null, 2)}\n`
+        const manifest = `${JSON.stringify({ private: true, scripts: COCKPIT_SCRIPTS, devDependencies: { [installedPackageMetadata.name]: spec } }, null, 2)}\n`
         await writeFile(join(root, 'package.json'), manifest)
         await writeFile(join(root, 'package-lock.json'), `${JSON.stringify({ lockfileVersion: 3, packages: {
             '': { devDependencies: { [installedPackageMetadata.name]: spec } },
