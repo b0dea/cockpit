@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { createSelftestFixture } from '../../test-support/selftest-fixture.js'
 import { runCli } from '../cli.js'
-import { renderHumanValue } from '../diagnostics.js'
+import { renderHumanValue, renderHumanDiagnostics } from '../diagnostics.js'
 import { syncGeneratedEnvironment } from '../generated-environment/command.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import {
@@ -109,12 +109,74 @@ else process.stdout.write(JSON.stringify([
         const shown = renderHumanValue(outcome.result)
         expect(shown).toContain('pendingCells')
         expect(shown).not.toContain('Result is not available')
+        const terminal = renderHumanDiagnostics([], { command: 'selftest', outcome })
+        expect(terminal).toMatch(/^Selftest incomplete: 1 measured, 26 pending, /)
+        expect(terminal).not.toContain('candidateControl')
+        expect(outcome.diagnostics.filter(row => row.message.includes('Maintainer:'))).toHaveLength(1)
+        expect(outcome.diagnostics).toHaveLength(1)
+        const reportPath = (outcome.result as { reportPath: string }).reportPath
+        expect(JSON.parse(await readFile(reportPath, 'utf8'))).toEqual({ result: outcome.result, diagnostics: outcome.diagnostics })
+        expect((await stat(reportPath)).mode & 0o777).toBe(0o600)
         // The run itself stays checkable: the private transcript still holds what was measured.
         const record = (outcome.result as { evidence: { evidence: { transcriptPath: string; events: { candidateControl: { stdoutSha256: string } } }[] } }).evidence.evidence[0]!
         expect(record.events.candidateControl.stdoutSha256).toMatch(/^[a-f0-9]{64}$/)
         const transcript = join(root, record.transcriptPath)
         expect(await readFile(transcript, 'utf8')).toContain('PRIVATE-INHERITED-CANARY')
         expect((await stat(transcript)).mode & 0o777).toBe(0o600)
+    }, 180_000)
+
+    it('keeps the structured report in the reviewed root when a config alias changes during approval', async () => {
+        const { root, configPath } = fixture()
+        const artifactPath = join(root, 'probe-specifications.json')
+        const alias = join(root, 'config-alias.toml')
+        const decoy = join(root, 'other-project')
+        await mkdir(decoy)
+        await writeFile(join(decoy, 'cockpit.toml'), '# A different project.\n')
+        await symlink(configPath, alias)
+        try {
+            const io = { stdout: { write: () => true }, stderr: { write: () => true } }
+            expect(await runCli(['selftest', '--config', alias, '--write-probe-specifications', artifactPath], io)).toBe(0)
+            const outcome = await runConfiguredSurfaceSelftestOutcome({ configPath: alias, probeSpecificationsPath: artifactPath, env: {},
+                requestProbeSpecificationsApproval: async candidate => {
+                    await rm(alias)
+                    await symlink(join(decoy, 'cockpit.toml'), alias)
+                    return candidate.sha256
+                } })
+            expect(outcome.status).toBe(0)
+            const reportPath = (outcome.result as { reportPath: string }).reportPath
+            expect(reportPath.startsWith(join(root, '.cockpit/local/probes/'))).toBe(true)
+            expect(JSON.parse(await readFile(reportPath, 'utf8')).result).toEqual(outcome.result)
+            await expect(stat(join(decoy, '.cockpit'))).rejects.toMatchObject({ code: 'ENOENT' })
+        } finally {
+            await rm(alias, { force: true })
+            await rm(decoy, { recursive: true, force: true })
+        }
+    }, 180_000)
+
+    it.each(['artifact', 'configuration', 'executable-review'] as const)('refuses a changed %s after review before execution', async subject => {
+        const { root, configPath, bin } = await prepareFixture()
+        const artifactPath = join(root, 'probe-specifications.json')
+        const io = { stdout: { write: () => true }, stderr: { write: () => true } }
+        expect(await runCli(['selftest', '--config', configPath, '--write-probe-specifications', artifactPath], io)).toBe(0)
+        let executions = 0
+        let approvals = 0
+        const outcome = await runConfiguredSurfaceSelftestApplication({ configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin } }, {
+            execute: async () => { executions++; throw new Error('changed review must not execute') },
+            requestExecutableApproval: async candidate => {
+                approvals++
+                await writeFile(configPath, `${await readFile(configPath, 'utf8')}\n`)
+                return candidate.sha256
+            },
+            requestProbeSpecificationsApproval: async candidate => {
+                if (subject === 'executable-review') return candidate.sha256
+                const path = subject === 'artifact' ? artifactPath : configPath
+                await writeFile(path, `${await readFile(path, 'utf8')}\n`)
+                return candidate.sha256
+            },
+        })
+        expect(outcome).toMatchObject({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: expect.stringContaining('changed after review') })
+        expect(executions).toBe(0)
+        expect(approvals).toBe(subject === 'executable-review' ? 1 : 0)
     }, 180_000)
 
     it('writes a probe specification file that selftest admits once filled, and carries the filled rows past a config change', async () => {

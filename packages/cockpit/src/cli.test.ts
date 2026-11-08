@@ -275,7 +275,7 @@ describe('closed ordinary invocation metadata', () => {
             ['stacks', 'prune', '--interactive'], ['stacks', 'remove'], ['stacks', 'prune', 'extra'],
             ['check', 'extra'], ['check', '--unknown'], ['check', '--config', '/outside/cockpit.toml'], ['check', '--config', 'other.toml'],
             ['check', '--json=false'], ['check', '--'], ['check', '--config'], ['check', '-c', 'cockpit.toml'],
-            // A person types the displayed digest.
+            // A person confirms the displayed preview.
             ['work', 'accept', '--work-order', 'WO-1', '--interactive'], ['work', 'answer', '--work-order', 'WO-1', '--question', '1', '--text', 'yes', '--interactive'],
             ['work', 'signoff', '--work-order', 'WO-1', '--interactive'],
             ['test-run'], ['test-run', '--gate', 'undeclared'], ['test-run', '--gate', 'quick', '--mode', 'all'],
@@ -861,10 +861,10 @@ describe('generated environment process contract', () => {
                 changes: [{ operation: 'remove', path: 'compose.generated.yml' }], staleRemoval: { digest } } }),
         })).toBe(0)
         expect(human.output().stdout).toBe('remove "compose.generated.yml"\n'
-            + `Stale-removal digest ${digest}: to approve these removals, a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${resolve('cockpit.toml')} --interactive in a terminal and types it.\n`)
+            + `Stale-removal digest ${digest}: to approve these removals, a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${resolve('cockpit.toml')} --interactive in a terminal and confirms the displayed removals.\n`)
     })
 
-    it('previews interactive sync and applies only after the exact stale-removal digest is typed', async () => {
+    it('previews interactive sync and applies only after the exact stale-removal digest is approved', async () => {
         const staleRemoval = {
             format: 'cockpit-stale-removal-request/v1' as const,
             cockpitId: 'synthetic',
@@ -1850,7 +1850,7 @@ describe('generated sync operator admission', () => {
             } }],
             digest: 'c'.repeat(64),
         }
-        const stdin = Readable.from([`${preview.digest}\n`]) as NodeJS.ReadStream
+        const stdin = Readable.from(['yes\n']) as NodeJS.ReadStream
         Object.defineProperty(stdin, 'isTTY', { value: true })
         const stderr = new PassThrough()
         let shown = ''

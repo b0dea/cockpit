@@ -31,9 +31,10 @@ budget: uncapped
   declared, which makes the first two read cockpit's state too. Other cockpit commands need what the
   sandbox withholds: write access to the state root, which `STATE_ROOT_UNAVAILABLE` names and a person
   can grant on that directory alone, or on its nearest existing parent before it exists; the Docker
-  socket; and on macOS `/bin/ps`. So a failure one reports there is not evidence. Ask the person to
-  approve running it outside the sandbox, or to run it in a terminal. Under `codex exec`, which cannot
-  ask, a person runs it.
+  socket; and on macOS `/bin/ps`. First inspect the named failure and request only the missing
+  access through the native approval mechanism. Prepare the concrete command and reason before
+  asking; preserve existing grants. Under `codex exec`, which cannot ask, hand that command to the
+  person. A sandbox refusal does not establish product failure.
 - Ask, never invent. A port, image, command, host, purpose, name, version, role or credential comes
   from a file you read or from the person; with neither, name the gap and ask.
 

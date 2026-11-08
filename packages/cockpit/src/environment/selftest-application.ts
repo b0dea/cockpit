@@ -4,7 +4,8 @@ import { sha256Hex } from '../sha256.js'
 import { constants } from 'node:fs'
 import { lstat, mkdir, open, realpath, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
-import { createInterface } from 'node:readline/promises'
+import { confirmDigest } from '../operator-confirmation.js'
+import { renderHumanValue } from '../diagnostics.js'
 import { types as utilTypes } from 'node:util'
 
 import {
@@ -93,6 +94,7 @@ export type SurfaceSelftestCommandOutcome =
     | Readonly<{
         kind: 'complete'
         status: 0
+        root: string
         bundle: SelftestEvidenceBundle
         evidence: ReturnType<typeof validateSelftestEvidenceBundle>
     }>
@@ -598,7 +600,7 @@ export async function runSurfaceSelftestApplication(
         testOnlyExecutableIdentities,
     })
     if (evidence.errors.length > 0) return refusal('SELFTEST_EXECUTION_INVALID', evidence.errors.join('; '))
-    return { kind: 'complete', status: 0, bundle, evidence }
+    return { kind: 'complete', status: 0, root, bundle, evidence }
 }
 
 export async function runConfiguredSurfaceSelftestApplication(
@@ -674,15 +676,38 @@ export async function runConfiguredSurfaceSelftestApplication(
         // SELFTEST_EXECUTION_INVALID, including probes that ran and failed.
         return refusal(
             'SELFTEST_EXECUTION_INVALID',
-            'probe specification artifact requires independent approval of its exact digest and command vectors; run selftest with --interactive at a terminal outside CI and type the file SHA-256 it displays',
+            'probe specification artifact requires independent approval of its exact digest and command vectors; run selftest with --interactive at a terminal outside CI and confirm the displayed artifact and runnable commands',
         )
     }
-    return runSurfaceSelftestApplication({
-        application: checked.result.application,
-        root: dirname(configPath),
-        specifications,
-        env: capturedInput.env,
-    }, adapters)
+    const changedReview = new Error('selftest artifact, configuration or generated manifest changed after review; prepare a fresh preview and review it before retrying')
+    const revalidate = async () => {
+        const reviewedBytes = await readProbeSpecificationsArtifact(artifactPath)
+        const reviewedSource = await checkGeneratedEnvironment({ configPath })
+        if (reviewedBytes !== bytes || reviewedSource.kind !== 'complete'
+            || reviewedSource.result.application.sourceSha256 !== checked.result.application.sourceSha256
+            || reviewedSource.result.application.surfaceSelftest.manifestSha256 !== checked.result.application.surfaceSelftest.manifestSha256) {
+            throw changedReview
+        }
+    }
+    try {
+        await revalidate()
+        return await runSurfaceSelftestApplication({
+            application: checked.result.application,
+            root: dirname(configPath),
+            specifications,
+            env: capturedInput.env,
+        }, { ...adapters, ...(adapters.requestExecutableApproval ? {
+            requestExecutableApproval: async (executable: SurfaceSelftestExecutableCandidate) => {
+                const approval = await adapters.requestExecutableApproval!(executable)
+                // The person's second review can outlive the inputs authenticated by the first.
+                await revalidate()
+                return approval
+            },
+        } : {}) })
+    } catch (error) {
+        if (error === changedReview) return refusal('SELFTEST_SOURCE_INVALID', changedReview.message)
+        throw error
+    }
 }
 
 export interface SurfaceSelftestHandlerInput extends ConfiguredSurfaceSelftestCommandInput {
@@ -804,15 +829,38 @@ export async function runConfiguredSurfaceSelftestOutcome(
     })
     if (outcome.kind !== 'complete') return { status: 2, diagnostics: [{ severity: 'error', code: outcome.code, message: outcome.reason,
         ...(outcome.fix ? { fix: outcome.fix } : {}) }], result: null }
-    return { status: 0, diagnostics: outcome.evidence.pending.map(row => ({ severity: 'warning' as const,
-        code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, message: `${surfaceSelftestCellLabel(row)} remains human_needed: ${row.operatorAction}`,
-        target: surfaceSelftestCellLabel(row),
-    })), result: {
+    const responsibilities = {
+        native_protocol_unsupported: 'Maintainer: implement and measure the missing native protocol; rerunning unchanged inputs cannot clear this gap',
+        enforcement_probe_required: 'Maintainer: supply paired native evidence for the custom harness',
+        executable_missing: 'Operator: install or locate the named tool before retrying',
+        authentication_required: 'Operator: review the executable or complete native authentication before retrying',
+        isolation_unavailable: 'Unavailable: the probe cannot establish its required isolation; inspect the report before retrying',
+    } as const
+    const counts = new Map<keyof typeof responsibilities, number>()
+    for (const row of outcome.evidence.pending) counts.set(row.reason, (counts.get(row.reason) ?? 0) + 1)
+    const diagnostics: Diagnostic[] = [...counts].map(([reason, count]) => ({ severity: 'warning',
+        code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, message: `${count} pending cell(s). ${responsibilities[reason]}`,
+        target: reason,
+    }))
+    const result = {
         bundle: { ...outcome.bundle, records: outcome.bundle.records.map(withholdNativeStreams) },
         evidence: { ...outcome.evidence, evidence: outcome.evidence.evidence.map(withholdNativeStreams) },
         summary: { measuredCells: outcome.evidence.evidence.length, pendingCells: outcome.evidence.pending.length,
+            unavailableCells: outcome.evidence.evidence.filter(row => row.verdict === 'unavailable').length,
             pendingSkillReviews: outcome.evidence.skillReviews.filter(row => row.status === 'human_needed').length,
-            complete: outcome.evidence.pending.length === 0 && outcome.evidence.skillReviews.every(row => row.status === 'evidenced') } } }
+            complete: outcome.evidence.pending.length === 0 && outcome.evidence.skillReviews.every(row => row.status === 'evidenced') },
+    }
+    try {
+        const directory = await ensureEvidenceDirectory(outcome.root)
+        if (typeof directory !== 'string') throw new Error(directory.reason)
+        const reportPath = join(directory, `selftest-${randomBytes(16).toString('hex')}.json`)
+        const report = { result: { ...result, reportPath }, diagnostics }
+        await writeFile(reportPath, `${JSON.stringify(report)}\n`, { flag: 'wx', mode: 0o600 })
+        return { status: 0, ...report }
+    } catch (error) {
+        return { status: 2, result, diagnostics: [...diagnostics, { severity: 'error', code: 'SELFTEST_EXECUTION_INVALID',
+            message: `selftest report could not be saved: ${errorCause(error)}` }] }
+    }
 }
 
 function selftestOperatorRefusal(message: string): SurfaceSelftestDispatchOutcome {
@@ -829,14 +877,8 @@ async function confirmSelftestExecutable(
 ): Promise<string | undefined> {
     if (io.confirmSelftestExecutable) return io.confirmSelftestExecutable(candidate)
     if (!io.stdin) return undefined
-    io.stderr.write(`${JSON.stringify(candidate)}\n`)
-    const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
-    try {
-        const answer = await prompt.question('Type the exact SHA-256 to approve this executable for this selftest run: ')
-        return answer.trim()
-    } finally {
-        prompt.close()
-    }
+    io.stderr.write(renderHumanValue({ executable: candidate.canonicalPath, harness: candidate.harness, sha256: candidate.sha256 }))
+    return confirmDigest(io, candidate.sha256, 'Approve this executable for this selftest run?')
 }
 
 async function confirmSelftestProbeSpecifications(
@@ -845,14 +887,12 @@ async function confirmSelftestProbeSpecifications(
 ): Promise<string | undefined> {
     if (io.confirmSelftestProbeSpecifications) return io.confirmSelftestProbeSpecifications(candidate)
     if (!io.stdin) return undefined
-    io.stderr.write(`${JSON.stringify(candidate)}\n`)
-    const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
-    try {
-        const answer = await prompt.question('Type the exact SHA-256 to approve this probe artifact and its command vectors: ')
-        return answer.trim()
-    } finally {
-        prompt.close()
-    }
+    const runnable = candidate.commandVectors.filter(row => row.executes !== false)
+    io.stderr.write(renderHumanValue({ artifact: candidate.canonicalPath, sha256: candidate.sha256,
+        sourceSha256: candidate.sourceSha256, generatedManifestSha256: candidate.generatedManifestSha256,
+        runnableCommands: runnable }))
+    io.stderr.write(`${candidate.commandVectors.length - runnable.length} unsupported cell(s) execute nothing and remain incomplete.\n`)
+    return confirmDigest(io, candidate.sha256, 'Approve this artifact and its runnable commands for this selftest run?')
 }
 
 export async function runSelftestOperatorCommand(

@@ -331,10 +331,14 @@ async function drive(
         const conflict = recordedAnswerConflict(input, preview, supplied.fields, marks, unattended)
         if (conflict) return conflict
     }
-    if (preview.result?.question === undefined && !unattended) {
+    // These stages are returned only after the application authenticates the recorded digest and
+    // sources. surface-published can instead present changed bootstrap bytes for fresh acceptance.
+    const acceptedDraft = preview.result?.stage === 'draft-prepared' || preview.result?.stage === 'draft-observed'
+        || preview.result?.stage === 'surfaces-verified' || preview.result?.stage === 'environment-verified'
+    if (preview.result?.question === undefined && !unattended && !acceptedDraft) {
         const answer = await io.confirm(preview.result!)
         if (answer !== preview.result!.previewSha256) {
-            return refusal('INIT_PREVIEW_NOT_ACCEPTED', 'type the exact preview digest to accept the selected bootstrap target')
+            return refusal('INIT_PREVIEW_NOT_ACCEPTED', 'explicitly confirm the displayed preview to accept the selected bootstrap target')
         }
         outcome = await application(accepted)
     } else if (preview.result?.question === undefined) outcome = await application(accepted)

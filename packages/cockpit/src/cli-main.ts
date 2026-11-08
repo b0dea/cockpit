@@ -1,3 +1,4 @@
+import { confirmDigest } from './operator-confirmation.js'
 import { randomUUID } from 'node:crypto'
 import { ComposeProfileName, EVALUATOR_COMMANDS, runningEvaluatorTool, UNCONFIRMABLE_ANSWERS, type EvaluatorTool } from './schema.js'
 import { installedPackageMetadata } from './package-metadata.js'
@@ -1478,8 +1479,7 @@ async function dispatchHandler(
             if (io.confirmInit) return io.confirmInit(preview)
             if (!io.stdin) return undefined
             io.stderr.write(renderHumanValue(preview))
-            const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
-            try { return await prompt.question('Type the exact bootstrap preview digest to accept: ') } finally { prompt.close() }
+            return confirmDigest(io, preview.previewSha256, 'Accept this bootstrap preview?')
         },
         writeArtifact: (destination, artifact) => writeFile(destination, artifact, { flag: 'wx', mode: 0o600 }),
         createCockpitRoot: path => createDedicatedCockpitRoot(path, options.env),
@@ -1493,6 +1493,10 @@ async function dispatchHandler(
             if (io.answerInitQuestion) return io.answerInitQuestion(question)
             if (!io.stdin) return undefined
             io.stderr.write(renderHumanValue(question))
+            if (question.field === 'configuration.defaults' && question.expectedSha256) {
+                const approved = await confirmDigest(io, question.expectedSha256, 'Accept these configuration defaults?')
+                return approved === undefined ? undefined : JSON.stringify({ confirmed: true, sha256: approved })
+            }
             const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
             try { return await prompt.question(`Enter a JSON value for ${question.field} (strings need quotes): `) } finally { prompt.close() }
         },

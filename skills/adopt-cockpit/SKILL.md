@@ -48,8 +48,9 @@ ask when scope is missing or an exact preview still needs acceptance:
    `[provenance]` table, and end your report with every default you chose, its field and value.
 8. Every trust answer the answers file supplies (`sibling`, `environment.install_policies`,
    `environment.posture`, `testing`, `guards`, `work.grading`) lands under `unconfirmed` whatever the
-   file says, and the stronger default holds until a person confirms it. End your report by telling
-   the human to confirm each: delete its entry from `unconfirmed`, then run
+   file says, and the stronger default holds until a person confirms it. Prepare one review of
+   the outstanding trust entries, their values and consequences. After accepting those values,
+   the human removes the reviewed entries from `unconfirmed` together, then runs
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a terminal outside the agent
    (the confirm command refuses these).
 
@@ -75,9 +76,10 @@ Done when the exact project-local executable lists the commands.
 Run every command from the cockpit root through `./node_modules/@b00dea/cockpit/bin/cockpit.mjs`; if that file is
 absent, stop and repair the project-local install. Read flags from
 `./node_modules/@b00dea/cockpit/bin/cockpit.mjs <command> --help`. In Codex's sandbox `check`, `sync --dry-run` and
-`--help` run as it stands, unless `[browser]` is declared; other cockpit commands also need write
-access to the state root, the Docker socket, or on macOS `/bin/ps`, so ask the person to approve
-running them outside the sandbox, or to run them in a terminal. Pass `--json` and read `result`,
+`--help` run as it stands, unless `[browser]` is declared; other cockpit commands can need access
+such as the state directory, Docker socket or macOS `/bin/ps`. Inspect the named failure and request
+only missing access through the native approval mechanism, with the concrete command and reason.
+Follow **Running cockpit** in the installed setup procedure for refusals. Pass `--json` and read `result`,
 `diagnostics[].code` and `invocation.exitCode`. A pending `init` also exits 0, so read its
 `result.stage` and `result.question`.
 
@@ -104,12 +106,13 @@ runtime is declared `./node_modules/@b00dea/cockpit/bin/cockpit.mjs preflight --
 and every gap in `result.readiness` of `./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml --json`
 has been cleared or reported to the human.
 
-- **Before the first `up`**, run
+- **Only where a runtime is declared, before the first `up`**, run
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config cockpit.toml --image <local-image> --json`.
   It measures the local daemon `up` will use, can run for minutes with no progress output, records
   the result for this machine only and leaves `cockpit.toml` unchanged, so go straight on to `up`.
+  A surfaces-only product finishes with `check` and `doctor`; add runtime declarations when runnable code exists.
   The guide's *Chapter 2* says which runtimes are recognised.
-- **Daily:** `./node_modules/@b00dea/cockpit/bin/cockpit.mjs session --config cockpit.toml -- <agent command>`.
+- **Daily, with a declared runtime:** `./node_modules/@b00dea/cockpit/bin/cockpit.mjs session --config cockpit.toml -- <agent command>`.
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config cockpit.toml` releases this checkout's hold.
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config cockpit.toml` removes its containers, keeping data
   volumes, from the local Docker daemon fixed at the start of the run.
@@ -119,13 +122,39 @@ has been cleared or reported to the human.
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --dry-run` and
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. The guard trusts only the cockpit, Node
   and `cockpit.toml` it was generated for, so after an upgrade, a Node switch or a `cockpit.toml`
-  edit it holds tool calls until the human runs
-  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` in a terminal. Guide: *Upgrade cockpit*.
+  edit can hold tool calls. Follow the refusal as **Running cockpit** describes: a restrictive
+  configuration edit can be synced under existing agent authority; a changed executable or widened
+  authority needs the person. Guide: *Upgrade cockpit*.
 
 ## Shipped procedure
 
 These sections are the procedure cockpit installs into every cockpit it bootstraps, copied here by
 its reference generator so this skill and the installed one cannot disagree.
+
+### Continue authorized setup
+
+An adoption request authorizes routine discovery, previews and checks within the agreed roots.
+Run those steps yourself and continue after each successful check. Before asking for a decision,
+prepare the file delta, proposed values with their sources, and the authority change they need.
+Group unresolved choices into one review; retain the person's earlier decisions when their exact
+subjects are unchanged. An answers file still cannot attest that a person made a trust decision.
+
+- **Existing configuration or a teammate's clone:** start with `check` and `doctor`, then use
+  `setup` for the declared checkouts. Reuse the repository's decisions; resolve only local paths,
+  credentials and native trust. Do not restart the architecture interview.
+- **Interrupted initialization:** inspect the current `init` preview and readiness, preserve
+  generated files and recorded answers, then resume the same root and targets. Verify effects on
+  disk before retrying a write. Reuse an already authorized current digest; review a changed preview
+  before accepting it. Later authenticated draft stages resume without a second preview approval.
+- **Existing instructions or guards:** inventory them before generating surfaces. Keep the team's text,
+  hooks and scripts; use the documented adoption or overlay flow for conflicts. Do not remove an
+  old guard until equivalent protection has been measured.
+- **Before activating hooks:** prepare the project-local launcher, required state-directory access
+  and the next verification commands. Show any missing grants together with the proposed file and
+  permission delta. A denied command follows **Running cockpit**; never disable the guard to finish.
+
+Done when routine work has run and the remaining list contains only concrete unresolved decisions,
+native trust/authentication steps, failed checks or maintainer gaps, each with its evidence.
 
 ### Bootstrap
 
@@ -135,8 +164,8 @@ the same root and `--target`, resumes where it stopped; a different target refus
 `INIT_TARGET_CHANGED`, and a repository or draft that changed underneath it refuses with a code
 such as `INIT_STATE_STALE` or `INIT_DRAFT_CHANGED` whose fix says what to restore or redo. Inside an
 installed cockpit the guard asks before any `init` that carries `--answers` or an `--accept-` flag.
-Until step 7 installs cockpit in the cockpit root, rerun `init` with the same executable that
-started it, even where it lives outside this root.
+If cockpit is not installed in the cockpit root yet, rerun `init` with the executable that started
+it until the `cockpit-installed` gap is cleared; use it only where existing permissions allow.
 
 1. **Choose the agent tools.** Ask the person which agent tools the team uses: `claudecode`
    (Claude Code), `codexcli` (Codex CLI), `opencode` (OpenCode), `cursor` (Cursor) or `grokcli`
@@ -225,7 +254,7 @@ started it, even where it lives outside this root.
    the person saw, so take it only from the latest pending run; any other is refused
    (`INIT_PREVIEW_NOT_ACCEPTED`, `INIT_DEFAULTS_NOT_ACCEPTED`). A different value for an answer
    already recorded refuses with `INIT_ANSWER_CONFLICT`; `--reset-answer <field>` previews clearing
-   it. A person at a terminal can run `--interactive` instead and type each digest; an agent session
+   it. A person at a terminal can run `--interactive` instead and confirm the displayed preview and defaults; an agent session
    has no terminal, so there it refuses with `INIT_TERMINAL_REQUIRED`. Done when the run has passed
    `configuration.defaults`.
 6. **Work through the expected stops**, rerunning the same accepted command after each:
@@ -248,17 +277,20 @@ started it, even where it lives outside this root.
    `gaps` lists each prerequisite a check reported missing, with its `level` (a `required` one is
    refused by the command that needs it), `needs` (why cockpit needs it) and `findings` (the
    diagnostic, its message and its fix); `noFinding` lists the ones no check reported, which is not
-   proof, because a check that could not run reports nothing. Take the gaps one at a time, required
-   first: say what is missing, why cockpit needs it, and the exact change you propose. A change to a
+   proof, because a check that could not run reports nothing. Prepare the required gaps first,
+   execute fixes covered by existing authority, and collect the remaining decisions in one review:
+   say what is missing, why cockpit needs it, and the exact change you propose. A change to a
    product repository follows step 8: committing, installing cockpit, recording a remote, untracking
    a file or adding a test changes it for everyone who works on it. Whether the existing tests prove
    anything is yours to judge, as step 3 describes; where a gap needs the person's judgement (which
    test runner to adopt, where characterization tests for untested code should live), propose with
    what you read and let them decide.
-   - The `cockpit-installed` gap clears first: `init` ran from a temporary copy, so run
-     `npm install` in the cockpit root, then ask the person to run
-     `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` in a terminal so the guard hook runs
-     the installed copy.
+   - If `cockpit-installed` is reported, clear it first using the repository's package manager
+     and reviewed manifest/lockfile delta within the authorized installation scope. An existing
+     project-local installation needs no reinstall. Then run
+     `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` where the current guard and policy
+     permit it; hand it to the person only when the refusal requires their terminal. Done when
+     `doctor` no longer reports the installation gap.
    - If anyone will run Codex in this cockpit, a person must trust its guard hook on each machine,
      and again whenever sync changes the hook: Codex silently skips a project hook nobody has
      trusted, so every tool call would run unguarded. An agent cannot give that trust. Ask the
@@ -275,7 +307,8 @@ started it, even where it lives outside this root.
      confirm again. Never delete an `unconfirmed` entry by hand: `CONFIRM_PERSON_REQUIRED` marks the
      answers only a person confirms (the trust decisions, `work.grading` among them, `cockpit.name`,
      `estate.runnable`, `environment.test_data`), so list them in your report with their values and
-     tell the person to confirm each: delete its entry, then run
+     prepare one review of the outstanding trust entries and their consequences. After accepting
+     those exact values, the person removes those entries together, then runs
      `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a terminal outside the
      agent. Until then grading runs as `independent` and the guard admits no install policy's commands.
      Where `[autonomy] confirm_answers = "agent"`, confirm `cockpit.name`, `estate.runnable` and
@@ -285,8 +318,8 @@ started it, even where it lives outside this root.
    Done when `doctor` reports no required gap and every other gap is cleared or reported. Report
    four things separately, because none implies another: **configuration generated** (`check`
    passes), **machine ready** (`doctor`, run where it can read this machine, has no required gap),
-   **hooks enforced** (a person trusted the hook from the checkout the tool loads it from, so
-   `CODEX_HOOK_UNTRUSTED` and `CODEX_HOOK_SOURCE_MISMATCH` are clear) and **integrations proven
+   **native trust ready** (`CODEX_HOOK_UNTRUSTED` and `CODEX_HOOK_SOURCE_MISMATCH` are clear;
+   enforcement still needs a paired native probe) and **integrations proven
    live** (the stack or provider was actually exercised, which no passing check shows).
 8. **Put product changes where the person reviews them.** A Dockerfile, Compose file or
    `.env.schema` the product needs goes on a new branch in that sibling's checkout: start the branch

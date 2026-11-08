@@ -235,7 +235,9 @@ Preview first, then accept in a terminal:
 ```
 
 The preview writes nothing. It returns the files it would install, a `previewSha256` digest and the
-next step; `--interactive` asks you to type that digest. Re-running resumes where it stopped, and a
+next step; `--interactive` asks you to confirm the displayed preview with `yes`, binding its digest
+internally. It also confirms the concrete configuration defaults without hash transcription. Later
+authenticated draft stages reuse the accepted preview. Re-running resumes where it stopped, and a
 changed repository invalidates earlier answers. What you get depends on what it finds:
 
 - **A product repository** (a Git checkout with a language manifest, Dockerfile or Compose file)
@@ -412,7 +414,7 @@ same checks.
 ### Bootstrap from the registry
 
 Preview for one harness, then accept. Replace `<tool>` with its [target](#install-cockpit); the
-first command writes nothing, and the second needs a terminal and the exact preview digest:
+first command writes nothing, and the second needs a terminal to confirm that exact preview:
 
 ```sh
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs init . --target <tool> --registry ./env/lib/instance.sh --json

@@ -326,7 +326,7 @@ export function renderHumanDiagnostics(
             const stale = 'staleRemoval' in outcome.result ? outcome.result.staleRemoval as { digest?: unknown } | undefined : undefined
             const approval = typeof stale?.digest === 'string' && /^[a-f0-9]{64}$/.test(stale.digest)
                 ? `${escapeForTerminal(`Stale-removal digest ${stale.digest}: to approve these removals, a person runs `
-                    + `${bindConfigPath(cockpitCommand('sync', { args: '--interactive' }), fixContext)} in a terminal and types it.`)}\n` : ''
+                    + `${bindConfigPath(cockpitCommand('sync', { args: '--interactive' }), fixContext)} in a terminal and confirms the displayed removals.`)}\n` : ''
             return (changes.length === 0 ? 'No generated changes.\n'
                 : `${changes.map((change) => `${change.operation} ${terminalSafeJson(change.path)}`).join('\n')}\n`) + approval
         }
@@ -337,6 +337,18 @@ export function renderHumanDiagnostics(
         }
         if (command === 'doctor') {
             return doctorSummary(outcome.result as Readonly<Record<string, unknown>>, outcome.diagnostics ?? [], fixContext)
+        }
+        if (command === 'selftest' && 'summary' in outcome.result) {
+            const result = outcome.result as { summary: { complete: boolean; measuredCells: number; pendingCells: number;
+                pendingSkillReviews: number; unavailableCells?: number }; reportPath?: string }
+            const { summary } = result
+            const lines = [
+                `Selftest ${summary.complete ? 'complete' : 'incomplete'}: ${summary.measuredCells} measured, ${summary.pendingCells} pending, ${summary.pendingSkillReviews} skill reviews pending.`,
+                `Unavailable capabilities measured: ${summary.unavailableCells ?? 0}.`,
+            ]
+            if (summary.pendingSkillReviews > 0) lines.push('Maintainer: complete the independent skill reviews; native measurement alone does not approve a skill.')
+            if (result.reportPath) lines.push(`Full structured report: ${result.reportPath}`)
+            return `${lines.map(escapeForTerminal).join('\n')}\n`
         }
         if (command === 'selftest' || command === 'upgrade' || command === 'init' || command === 'stacks') {
             return renderHumanValue(outcome.result)

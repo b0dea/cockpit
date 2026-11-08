@@ -88,6 +88,41 @@ describe('init operator command', () => {
         ])
     })
 
+    it.each(['draft-prepared', 'draft-observed', 'surfaces-verified', 'environment-verified'] as const)(
+        'resumes an authenticated %s preview without asking for the same approval again', async stage => {
+            const offered = { ...pending(), result: { ...pending().result!, stage } }
+            const calls: string[] = []
+            const complete: InitApplicationOutcome = { ...offered, kind: 'complete', status: 0 }
+            const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
+                { interactive: true, json: false }, {
+                    terminal: true,
+                    confirm: async () => { calls.push('confirm'); return undefined },
+                    writeArtifact: async () => { calls.push('write') },
+                }, async input => {
+                    calls.push(`application:${input.accepted}:${input.acceptedPreviewSha256 ?? 'none'}`)
+                    return input.accepted ? complete : offered
+                })
+
+            expect(outcome).toEqual(complete)
+            expect(calls).toEqual(['application:false:none', `application:true:${'a'.repeat(64)}`])
+        },
+    )
+
+    it('still asks for acceptance when a published bootstrap presents a refreshed preview', async () => {
+        const offered = { ...pending(), result: { ...pending().result!, stage: 'surface-published' as const,
+            previewSha256: 'c'.repeat(64) } }
+        const calls: string[] = []
+        const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
+            { interactive: true, json: false }, {
+                terminal: true,
+                confirm: async () => { calls.push('confirm'); return 'a'.repeat(64) },
+                writeArtifact: async () => { calls.push('write') },
+            }, async () => { calls.push('application'); return offered })
+
+        expect(outcome).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_PREVIEW_NOT_ACCEPTED' }] })
+        expect(calls).toEqual(['application', 'confirm'])
+    })
+
     it('presents one durable greenfield question and returns its operator-confirmed answer to the application', async () => {
         const question = { ...pending(), result: { ...pending().result!, question: {
             id: `question:${'c'.repeat(64)}`, field: 'api.runnable', source: 'api/package.json', why: 'unknown command',

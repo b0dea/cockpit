@@ -117,10 +117,10 @@ export function policyWeakeningDiagnostic(weakened: readonly PolicyWeakening[]):
     return { severity: 'error' as const, target: 'autonomy',
         code: 'POLICY_WEAKENING_UNCONFIRMED' as const satisfies typeof ENVIRONMENT_CODES.POLICY_WEAKENING_UNCONFIRMED,
         message: `cockpit.toml weakens the policy the last sync recorded (${shown})`,
-        fix: 'a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal outside CI, reads the weakening it shows and types its digest, or the change is reverted' }
+        fix: 'a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal outside CI, reads and explicitly confirms the weakening it shows, or the change is reverted' }
 }
 
-/** The digest a person types to accept exactly these weakenings of exactly this recorded policy. */
+/** Binds acceptance to exactly these weakenings of exactly this recorded policy. */
 export function weakeningDigest(recorded: EffectivePolicy, current: EffectivePolicy): string {
     return createHash('sha256').update(JSON.stringify({ recorded, current })).digest('hex')
 }

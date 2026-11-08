@@ -762,7 +762,7 @@ can still leave those metadata updates in place while the transaction reports it
 result.
 
 Removing a stale file needs a separate approval of the exact path, operation and current bytes the
-dry run showed. Plain `sync` refuses; `sync --interactive` asks you to type the exact digest. After
+dry run showed. Plain `sync` refuses; `sync --interactive` asks you to confirm the displayed removals. After
 approval and a final recheck, cockpit can remove an unchanged whole file, or its own region in a
 shared file. When every stale path is the MCP-only file of a tool still listed, removing it only
 narrows access, so `sync` applies it without that approval. Files cockpit did not write, and bytes

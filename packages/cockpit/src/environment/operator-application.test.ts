@@ -197,7 +197,7 @@ describe('operator application admission', () => {
         expect(approvals).toEqual([{ format: 'cockpit-stale-removal-approval/v1', digest: request.digest }, undefined])
     })
 
-    it('writes nothing for a policy weakened since the last sync until a person types its digest', async () => {
+    it('writes nothing for a policy weakened since the last sync until a person approves its exact digest', async () => {
         const recorded = policyOf({}, { gates: { accept: 'person' } })
         const weakened = policyOf({}, { gates: { accept: 'agent' } })
         const synchronize = vi.fn(async () => ({ status: 0, diagnostics: [], result: null }))
@@ -221,6 +221,33 @@ describe('operator application admission', () => {
         expect((await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, { interactive: false, json: false, ci: undefined, terminal: false },
             { synchronize, confirmStaleRemoval: vi.fn(), policy: strengthened.load, confirmPolicyWeakening: vi.fn() })).status).toBe(0)
         expect(strengthened.record).toHaveBeenCalledOnce()
+    })
+
+    it.each(['weakening', 'stale removal'])('refuses policy changes made while a %s approval is pending', async pause => {
+        const recorded = policyOf({ sync: 'person' })
+        let current = policyOf({ sync: 'agent', stale_delete: 'person' })
+        const record = vi.fn(async () => {})
+        const staleRemoval = { format: 'cockpit-stale-removal-request/v1', cockpitId: 'synthetic',
+            generation: 'generation-1', sourceSha256: 'a'.repeat(64), digest: 'b'.repeat(64),
+            entries: [{ path: 'old', operation: 'remove-file', current: { kind: 'file', sha256: 'c'.repeat(64), dev: 1, ino: 2 } }] }
+        const synchronize = vi.fn(async (input: GeneratedEnvironmentSyncHandlerInput) => ({ status: 0, diagnostics: [],
+            result: input.dryRun ? { dryRun: true, staleRemoval } : null }))
+        const outcome = await runSyncOperatorApplication({ configPath: 'cockpit.toml' },
+            { interactive: true, json: false, ci: undefined, terminal: true }, {
+                synchronize,
+                confirmStaleRemoval: async request => {
+                    current = policyOf({ sync: 'agent', reset: 'agent', stale_delete: 'person' })
+                    return request.digest
+                },
+                policy: async () => ({ current, recorded, record }),
+                confirmPolicyWeakening: async request => {
+                    if (pause === 'weakening') current = policyOf({ sync: 'agent', reset: 'agent', stale_delete: 'person' })
+                    return request.digest
+                },
+            })
+        expect(outcome).toMatchObject({ status: 2, diagnostics: [{ code: 'POLICY_WEAKENING_UNCONFIRMED' }] })
+        expect(synchronize.mock.calls.every(([input]) => input.dryRun === true)).toBe(true)
+        expect(record).not.toHaveBeenCalled()
     })
 
     it('refuses a writing sync outside CI under [autonomy] sync = "ci" and passes a dry run', async () => {

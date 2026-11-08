@@ -92,7 +92,7 @@ did not match its declared SHA-256. Inspect the module, the evidence file refere
 
 `GENERATED_STALE_APPROVAL_REQUIRED` means a dry run found stale entries but the apply has no
 approval for their exact digest. Run `sync --interactive` from a terminal outside CI, review the
-listed entries, and type the displayed digest only if every removal is intended.
+listed entries, and explicitly confirm only if every removal is intended.
 `GENERATED_STALE_APPROVAL_INVALID` means the request could not be bound safely; inspect the
 reported path and current ownership before retrying. Neither code permits deleting the path by
 hand.

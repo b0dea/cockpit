@@ -227,13 +227,24 @@ export async function runSyncOperatorApplication(
         const refused = autonomyRefusal('sync', 'ci', admission)
         if (refused) return refused
     }
+    const reviewedPolicy = JSON.stringify([policy.current, policy.recorded])
+    const revalidatePolicy = async (): Promise<OperatorCommandOutcome | undefined> => {
+        const latest = await adapters.policy(input.configPath)
+        if (!isPolicy(latest)) return latest
+        if (JSON.stringify([latest.current, latest.recorded]) !== reviewedPolicy) {
+            return refusal('POLICY_WEAKENING_UNCONFIRMED', 'policy changed during review; nothing was written; review a fresh sync preview', 'autonomy')
+        }
+        return undefined
+    }
     const weakened = policy.recorded ? policyWeakening(policy.recorded, policy.current) : []
     if (weakened.length) {
         const digest = weakeningDigest(policy.recorded!, policy.current)
         if (!admission.interactive) return weakeningRefusal(weakened, 'nothing was written', { weakened, digest })
         if (await adapters.confirmPolicyWeakening({ weakened, digest }) !== digest) {
-            return refusal('POLICY_WEAKENING_UNCONFIRMED', 'the typed digest did not match the policy weakening shown; nothing was written', 'autonomy')
+            return refusal('POLICY_WEAKENING_UNCONFIRMED', 'the displayed policy weakening was not approved; nothing was written', 'autonomy')
         }
+        const changed = await revalidatePolicy()
+        if (changed) return changed
     }
     // Stale removal an agent may take is approved for exactly the entries this sync computes.
     const staleByPolicy = decide(policy.current.autonomy.stale_delete, { CI: admission.ci }) === 'proceed'
@@ -252,8 +263,10 @@ export async function runSyncOperatorApplication(
         else {
             const typedDigest = await adapters.confirmStaleRemoval(inspected.request)
             if (typedDigest !== inspected.request.digest) {
-                return staleRemovalRefusal('the typed stale-removal digest did not match the exact preview')
+                return staleRemovalRefusal('the exact stale-removal preview was not approved')
             }
+            const changed = await revalidatePolicy()
+            if (changed) return changed
             const previewBytes = JSON.stringify(inspected.request)
             outcome = await adapters.synchronize({
                 ...input,

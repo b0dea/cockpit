@@ -480,11 +480,24 @@ invented. Protocol fields and command vectors must match the built-in protocol e
      --probe-specifications ./.cockpit/local/probe-specifications.json
    ```
 
-   Cockpit shows the file digest and command vectors, including which native rows will execute.
-   Approve that digest, then the digest of the executable found on `PATH`. Approval lasts only for
-   that run. Pending cells and the summary remain visible even when evidence validation succeeds;
-   command success is not a fully measured capability matrix. Without `--interactive`, or in CI
-   or JSON mode, no commands in the file run.
+   Cockpit shows canonical paths, fingerprints and runnable command vectors; unsupported rows are
+   counted separately and execute nothing. Answer `yes` to approve the displayed artifact, then
+   the executable found on `PATH`. Any other answer or closed input declines. Cockpit binds each
+   confirmation to the exact displayed digest internally and revalidates the artifact, configuration,
+   generated manifest and consumed executable; typing a hash is unnecessary. Approval lasts only
+   for that run. Without `--interactive`, or in CI or JSON mode, no commands in the file run.
+
+The terminal leads with measured cells, pending cells and outstanding skill reviews. Missing native
+protocols are grouped as maintainer work, installation and authentication need an operator, and
+isolation failures remain unavailable. A measured unavailable capability is reported separately.
+Unsupported protocols remain `human_needed` in the evidence contract for compatibility; they are
+not operator commands or successful measurements. Native probe failures still refuse the command.
+A successful command is not a fully measured capability matrix: check `summary.complete`.
+
+Each completed run prints a path to its private structured JSON report under `.cockpit/local/probes`.
+It retains the bundle, validation results, per-cell reasons, diagnostics and summary from that run;
+`--json` retains those fields too. Native instruction streams remain withheld from both and stay
+in their private transcripts. Read the saved report for detail without repeating probes or approvals.
 
 When the file goes stale, carry forward its unchanged rows into a new file:
 
@@ -527,7 +540,7 @@ An upgrade replaces the generated files that guard and instruct every agent, so 
 name it, detects the package manager from the one lockfile at the cockpit root, installs the exact
 version as a dev dependency, then runs `npx --no cockpit sync --config <path>` in a new process so
 the new version renders. Sync's output and exit code pass through: it removes stale generated files
-under `[autonomy] stale_delete = "agent"`, and otherwise asks for the digest a person types with
+under `[autonomy] stale_delete = "agent"`, and otherwise asks a person to confirm the displayed removals with
 `sync --interactive`. It ends by printing the `Upgrade:` lines from the installed `CHANGELOG.md`
 between the two versions (each names a step `sync` does not do), or the npm page when there is no
 changelog.
