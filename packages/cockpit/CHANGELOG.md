@@ -13,6 +13,40 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.7
+
+### Patch Changes
+
+- b32ed31: Make adoption review and continuation easier without widening authority. Terminal confirmations bind a yes to the displayed preview, defaults, sync policy change, stale-file removals, probe artifact or executable instead of requiring hash transcription. Authenticated init drafts resume without repeating the same preview approval.
+  
+  Selftest leads with a concise incomplete/complete summary, groups maintainer gaps separately from operator actions and unavailable capabilities, and saves a private structured report. Revalidate reviewed probe artifacts and generated sources before dispatch. Preserve pending measurement and skill-review status, private native transcripts and executable integrity checks.
+  
+  Setup guidance drives authorized preparation and verification, preserves existing instructions and guards, consolidates outstanding human decisions, and keeps surfaces-only products out of runtime bring-up.
+- b32ed31: Measure native Claude instructions and guard events plus Claude and Codex skill bodies with source-bound paired controls and a bounded local model transport.
+  
+  Native tool results and paired loopback receipts establish Claude guard enforcement even when the parent process exits successfully. Skill evidence covers explicit body loading only; skill reviews and unsupported protocols remain pending. Probes preserve persistent policy and trust settings and use no paid model service.
+  
+  Upgrade: after sync, write new selftest probe specifications without carrying forward the previous file, then review and approve the new native protocols in an interactive terminal.
+- b32ed31: The `init` preview a person approves now lists, under `writes`, every path init goes on to create or change, such as the product's AGENTS.md, package.json and .gitignore. In a product repository it also lists the interview for the default in-repo placement, so answers can be prepared before consent.
+  
+  The interview asks for install policies only when a sibling declares a toolchain other than "none". An unattended run that stops at a missing answer lists as outstanding only the fields the answers file still lacks. A Compose file that publishes a fixed host port, which `check` refuses, is no longer proposed as an answer the setup agent may accept as read. The draft's surfaces note names the chosen tools, and test-gate proposals are keyed `<slug>.testing`.
+- b32ed31: Adoption into a pnpm repository and later upgrades no longer stall:
+  
+  - A local-archive pin now verifies under pnpm 11 and later, which write the package manager's own lock as a first document in `pnpm-lock.yaml` when `package.json` names a `packageManager`. Before, init refused and a teammate's `check` asked for `pnpm install` in a loop.
+  - `upgrade` accepts `--json`, reads the latest version past notices that a wrapper around npm prints, names an unusable answer, and exits 0 with an `UPGRADE_ALREADY_CURRENT` info diagnostic when cockpit is already current or newer than the latest published version.
+  - `selftest --write-probe-specifications` accepts `--json`, writes the file and names it.
+  - A terminal `yes` is accepted only while the preview it approves is shown on the terminal: stdin and stderr must both be one.
+  - The README, the setup procedure, a fix and the harness guide no longer tell people to type a digest that the yes/no prompt does not accept.
+  - The teammate guide shows the frozen install for npm, pnpm and yarn.
+  - `env schema` on a schema that does not exist yet names how to create it with `--replace-from`.
+  - The setup procedure has agents confirm only the answers `unconfirmed` lists.
+  - `upgrade` runs and prints sync through the newly installed `./node_modules/@b00dea/cockpit/bin/cockpit.mjs` instead of `npx --no cockpit`, which the guard cannot prove under pnpm.
+- b32ed31: An applied `sync` now says what it did: each file written or removed, how many generated files were already current, and that the written files are to be committed. The first sync after init lists `.cockpit/policy.json`, the policy record it creates. Confirming a trust answer now tells the person to run `sync --interactive` and to delete the answer's `# Unconfirmed` comment with its entry.
+  
+  The `cockpit:*` package scripts run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs`, which the guard can prove under pnpm; `sync` replaces the bare `cockpit` scripts earlier releases wrote. `doctor` no longer reports `COCKPIT_LAUNCHER_UNPROVEN` for pnpm's `.bin` shell shim, which no one can make provable, and reports `ENVIRONMENT_NOT_DECLARED` as information for a cockpit that deliberately declares no runtime, as `init` does.
+  
+  `TEAM_METADATA_UNAVAILABLE` names the `package.json` entry that conflicts (a version pin, an unresolved archive pin or a `cockpit:*` script the product already uses) and the command to run. `env schema --path` also takes the schema's directory (`api:services/web`, `api:`, `.`), so an agent whose secret guard refuses any command containing `.env` can still write a schema.
+
 ## 0.1.6
 
 ### Patch Changes
