@@ -15,8 +15,9 @@ budget: uncapped
   `npx --no cockpit <command>` and the `.bin` launcher count only where the guard can prove they
   start that same package. If the entrypoint is missing, stop and ask the person to install cockpit;
   a runner that downloads a package is never a substitute.
-- Take flags from each command's `--help`. With `--json`, read `result`, `diagnostics[].code` and
-  `invocation.exitCode`. Every diagnostic names its fix, and
+- Take flags from each command's `--help`. With `--json`, read `result`, `diagnostics[].code`,
+  `guidance[]` and `invocation.exitCode`. A diagnostic's remedy is the `guidance` entry with its
+  `code` and `target`; `diagnostics[].fix` appears only for a command safe to run as printed, and
   `./node_modules/@b00dea/cockpit/docs/troubleshooting.md` covers the codes that need more; the
   other user-guide pages cited here sit beside it.
 - When the guard asks before a command, the person decides in Claude Code; Codex and OpenCode deny

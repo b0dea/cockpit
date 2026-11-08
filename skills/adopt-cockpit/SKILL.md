@@ -272,7 +272,9 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
      gap found without a running stack. Bring the stack up as step 7 of **Create a local setup**
      describes.
    - Preflight passes only once the cockpit repository is committed and clean, so a new one reports
-     `GIT_STATE_UNHEALTHY` with the commands that commit the generated files. A person approves or
+     `GIT_STATE_UNHEALTHY`, whose guidance is to review `git status --short` and commit; a cockpit
+     that declares no runtime reaches `surfaces-verified` without it, and `doctor` reports it as the
+     required `cockpit-committed` gap. A person approves or
      runs the staging and the commit, not you: the guard asks on `git add <paths>`, denies a broad
      `git add -A` that covers a secrets directory, and the first commit stages the guard's own
      files. Show them `git status --short` and hand them that fix to run in a terminal. To read
@@ -317,9 +319,11 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
      answers only a person confirms (the trust decisions, `work.grading` among them, `cockpit.name`,
      `estate.runnable`, `environment.test_data`), so list them in your report with their values and
      prepare one review of the outstanding trust entries and their consequences. After accepting
-     those exact values, the person removes those entries together, then runs
+     those exact values, the person removes those entries together with their `# Unconfirmed`
+     comments, then runs
      `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a terminal outside the
-     agent. Until then grading runs as `independent` and the guard admits no install policy's commands.
+     agent. Sync lists the files it wrote, `.cockpit/policy.json` among them the first time; the
+     person commits them with `cockpit.toml`. Until then grading runs as `independent` and the guard admits no install policy's commands.
      Where `[autonomy] confirm_answers = "agent"`, confirm `cockpit.name`, `estate.runnable` and
      `environment.test_data` yourself instead, as in
      `./node_modules/@b00dea/cockpit/bin/cockpit.mjs confirm cockpit.name --config cockpit.toml --json`; the record says
@@ -412,7 +416,9 @@ path. A missing `.env.schema` is a decision to resolve, not a reason to skip thi
 Varlock when plaintext dotenv files or templates exist; record adoption or the reason it is deferred.
 Read variable names with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs env keys --config cockpit.toml`, never resolve values into
 the agent's context. When you need a schema's text, use a reference printed by `env keys` and run
-`./node_modules/@b00dea/cockpit/bin/cockpit.mjs env schema --config cockpit.toml --path <reference>`; a schema must
+`./node_modules/@b00dea/cockpit/bin/cockpit.mjs env schema --config cockpit.toml --path <reference>` (or name the
+schema's directory: `<slug>:<dir>`, `<slug>:` or `.`, which agent secret guards that refuse any
+command containing `.env` let through); a schema must
 hold no secret values. Native rules may refuse direct reads of these files, so do not work around a
 refusal. To change a schema, write a draft with your normal tools, as a plain file away from
 environment files and secrets, then run
