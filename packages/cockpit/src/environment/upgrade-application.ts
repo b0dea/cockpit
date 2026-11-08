@@ -11,6 +11,7 @@ import { readFile, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import type { ExecuteProbeOutcome, ForegroundProcessInput, ForegroundProcessOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
+import { readLatestRelease, type ReleaseMetadataTransport } from '../freshness.js'
 import { formatShellCommand } from '../fix-catalogue.js'
 import { EXACT_DEV_INSTALL } from '../init/derive.js'
 import type { Diagnostic } from '../diagnostics.js'
@@ -28,6 +29,7 @@ export interface UpgradeInput {
 export interface UpgradeDependencies {
     readonly execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
     readonly executeForeground: (input: ForegroundProcessInput) => Promise<ForegroundProcessOutcome>
+    readonly releaseTransport?: () => ReleaseMetadataTransport
 }
 
 export interface UpgradeOutcome {
@@ -38,6 +40,9 @@ export interface UpgradeOutcome {
 
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/
 const LOCKFILES = ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'npm-shrinkwrap.json', 'bun.lock', 'bun.lockb'] as const
+// What a package manager's minimum-package-age filter (a supply-chain wrapper around npm) prints when it
+// hid releases; its answer is then an older version, not the registry's latest.
+const AGE_FILTER_NOTICE = /minimum package age/i
 const LOOKUP_TIMEOUT_MS = 60_000
 const INSTALL_TIMEOUT_MS = 600_000
 
@@ -150,6 +155,14 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
         if (published === undefined) return refused({ severity: 'error' as const, code: 'UPGRADE_REGISTRY_UNREACHABLE' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_REGISTRY_UNREACHABLE,
             message: `the registry did not give the latest ${name} version (${outcome?.kind === 'complete' ? `the answer was not one version: ${answer.trim().split('\n').slice(0, 3).join(' | ').slice(0, 256)}` : outcome ? `${outcome.code}: ${outcome.stderr.toString('utf8').trim().split('\n').slice(0, 2).join(' | ').slice(0, 256)}` : 'the lookup could not be authenticated'})`,
             fix: 'check the network, the registry login and that npm is on PATH, or name the version: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version>' })
+        if (AGE_FILTER_NOTICE.test(answer) && compareVersions(published, installed) <= 0) {
+            const real = await readLatestRelease(dependencies.releaseTransport)
+            const latest = real.kind === 'known' && VERSION.test(real.latestVersion) ? real.latestVersion : undefined
+            return refused({ severity: 'error' as const, code: 'UPGRADE_LATEST_FILTERED' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_LATEST_FILTERED,
+                message: `the package manager's minimum package age filter hid newer ${name} releases, so its latest answer (${published}) says nothing about whether installed ${installed} is current; `
+                    + (latest ? `the registry's latest is ${latest}, so run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade ${latest} --config <your cockpit.toml>` : `the registry's latest could not be read (${real.kind === 'unknown' ? real.reason : 'unexpected answer'})`),
+                fix: 'name the latest version the message gives (or look it up on the registry) instead of asking the package manager: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade <version> --config <your cockpit.toml>' })
+        }
         target = published
     } else if (!VERSION.test(target)) return refused({ severity: 'error' as const, code: 'UPGRADE_VERSION_INVALID' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_VERSION_INVALID, target: '<version>',
         message: `"${target}" is not an exact version`, fix: 'give a full version such as 1.2.3, not a range or tag' })
@@ -175,8 +188,10 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
 
     const install = step(manager.value, root, input.env, 'upgrade:install', installArgv.slice(1), INSTALL_TIMEOUT_MS)
     const installOutcome = authenticatedExecutionOutcome(await dependencies.execute(install), install)
+    const installStderr = installOutcome?.kind === 'complete' ? '' : installOutcome?.stderr.toString('utf8') ?? ''
     if (installOutcome?.kind !== 'complete') return refused({ severity: 'error' as const, code: 'UPGRADE_INSTALL_FAILED' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_INSTALL_FAILED,
-        message: `${result.install} failed (${installOutcome ? `${installOutcome.code}, exit ${installOutcome.execution.exitCode}: ${installOutcome.stderr.toString('utf8').trim().split('\n').slice(-3).join(' | ').slice(0, 512)}` : 'the outcome could not be authenticated'})`,
+        message: `${result.install} failed (${installOutcome ? `${installOutcome.code}, exit ${installOutcome.execution.exitCode}: ${installStderr.trim().split('\n').slice(-3).join(' | ').slice(0, 512)}` : 'the outcome could not be authenticated'})`
+            + (AGE_FILTER_NOTICE.test(installStderr) ? '; the package manager\'s package-age filter refused a release that is too new' : ''),
         fix: 'fix what the package manager reported (is the version published?), then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version>' })
 
     const node = await resolveExecutablePath(process.execPath)

@@ -67,6 +67,11 @@ async function query(factory: () => ReleaseMetadataTransport, now: number): Prom
     }
 }
 
+/** One uncached registry read of the latest release, for a caller the person asked to resolve it (no CI or verb admission). */
+export function readLatestRelease(factory: () => ReleaseMetadataTransport = createTransport, now: () => number = Date.now): Promise<ReleaseFreshness> {
+    return query(factory, now())
+}
+
 export function discoverReleaseFreshness(input: ReleaseDiscoveryInput): Promise<ReleaseFreshness> {
     // Admissions precede even cache access: an opted-out caller must not reuse online evidence.
     if (input.env.CI) return Promise.resolve({ kind: 'unknown', reason: 'release discovery disabled by CI' })

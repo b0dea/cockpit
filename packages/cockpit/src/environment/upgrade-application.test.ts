@@ -12,7 +12,7 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 // The registry and package manager are fake executables on PATH, so the real process seam runs.
 // The fake `npm` answers `view` with `latest`, and on an install writes the changelog the real
 // install would have put in node_modules.
-function fixture(latest: string, lockfiles: readonly string[] = ['package-lock.json'], view = `"${latest}"`) {
+function fixture(latest: string, lockfiles: readonly string[] = ['package-lock.json'], view = `"${latest}"`, installStderr?: string) {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-upgrade-')))
     roots.push(root)
     const bin = join(root, 'bin')
@@ -30,13 +30,16 @@ function fixture(latest: string, lockfiles: readonly string[] = ['package-lock.j
     const entry = join(project, 'node_modules', '@b00dea', 'cockpit', 'bin', 'cockpit.mjs')
     const entrypoint = `import { appendFileSync } from 'node:fs'\nappendFileSync('${log}', 'cockpit ' + process.argv.slice(2).join(' ') + '\\n')\n`
     const install = `cat > '${join(project, 'node_modules', '@b00dea', 'cockpit', 'CHANGELOG.md')}' <<'EOF'\n${changelog}EOF\nmkdir -p '${join(project, 'node_modules', '@b00dea', 'cockpit', 'bin')}'\ncat > '${entry}' <<'EOF'\n${entrypoint}EOF`
-    script('npm', `if [ "$1" = view ]; then cat <<'VIEW'\n${view}\nVIEW\nexit 0; fi\n${install}`)
+    const failing = installStderr === undefined ? install : `echo '${installStderr}' >&2\nexit 1`
+    script('npm', `if [ "$1" = view ]; then cat <<'VIEW'\n${view}\nVIEW\nexit 0; fi\n${failing}`)
     script('pnpm', install)
     const calls = () => existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []
-    const run = (options: { version?: string; dryRun?: boolean } = {}) => runUpgrade({
+    const run = (options: { version?: string; dryRun?: boolean; registryLatest?: string } = {}) => runUpgrade({
         configPath: join(project, 'cockpit.toml'), dryRun: options.dryRun === true,
         ...(options.version === undefined ? {} : { version: options.version }), env: { PATH: `${bin}:/usr/bin:/bin` },
-    }, { execute: executeProbe, executeForeground: executeForegroundProcess })
+    }, { execute: executeProbe, executeForeground: executeForegroundProcess, releaseTransport: () => async () => options.registryLatest === undefined
+        ? { status: 503, body: (async function* () {})() }
+        : { status: 200, body: (async function* () { yield Buffer.from(JSON.stringify({ name: '@b00dea/cockpit', version: options.registryLatest })) })() } })
     return { project, calls, run }
 }
 
@@ -100,5 +103,26 @@ describe('cockpit upgrade', () => {
             expect(outcome.diagnostics[0]).toMatchObject({ code: 'UPGRADE_PACKAGE_MANAGER_UNKNOWN', fix: expect.any(String) })
             expect(f.calls()).toEqual([])
         }
+    })
+
+    // A package-age filter in the package manager hides new releases and prints a notice beside an older
+    // version; reporting that as "already current" would tell the person a stale install is fine.
+    it('refuses a latest lookup that a package-age filter answered, names the real latest and the exact-version command', async () => {
+        const notice = 'Safe-chain: Some package versions were suppressed during package metadata resolution due to minimum package age.\n  To disable this check, use: --flag'
+        const filtered = fixture('9.9.9', ['package-lock.json'], `${notice}\n["0.0.1"]`)
+        const outcome = await filtered.run({ registryLatest: '9.9.9' })
+        expect(outcome.status).toBe(2)
+        expect(outcome.diagnostics).toEqual([expect.objectContaining({ severity: 'error', code: 'UPGRADE_LATEST_FILTERED',
+            message: expect.stringContaining('upgrade 9.9.9 --config <your cockpit.toml>'),
+            fix: expect.stringContaining('upgrade <version> --config <your cockpit.toml>') })])
+        expect(JSON.stringify(outcome.diagnostics)).not.toMatch(/skip|disable/i)
+        expect(filtered.calls().filter(call => !call.startsWith('npm view'))).toEqual([])
+        const unread = fixture('9.9.9', ['package-lock.json'], `${notice}\n["0.0.1"]`)
+        expect((await unread.run()).diagnostics).toEqual([expect.objectContaining({ code: 'UPGRADE_LATEST_FILTERED',
+            message: expect.stringContaining('could not be read') })])
+        // A failed install that carries the same notice says so, instead of only quoting its tail.
+        const refusedInstall = fixture('9.9.9', ['package-lock.json'], '"9.9.9"', 'blocked by minimum package age')
+        expect((await refusedInstall.run()).diagnostics).toEqual([expect.objectContaining({ code: 'UPGRADE_INSTALL_FAILED',
+            message: expect.stringContaining('package-age filter') })])
     })
 })
