@@ -83,6 +83,8 @@ export interface SurfaceSelftestProbeSpecificationsCandidate {
         versionCommand: readonly [string, ...string[]]
         helpCommand: readonly [string, ...string[]]
     }>[]
+    /** Hook registrations beside cockpit's own in the settings the Claude Code guard probe loads, one line each. */
+    readonly guardProbeTeamHooks?: readonly string[]
 }
 
 export interface SurfaceSelftestCommandAdapters {
@@ -98,6 +100,14 @@ export type SurfaceSelftestCommandOutcome =
     | Readonly<{
         kind: 'complete'
         status: 0
+        root: string
+        bundle: SelftestEvidenceBundle
+        evidence: ReturnType<typeof validateSelftestEvidenceBundle>
+    }>
+    // At least one cell's measurement failed; its record names why, and every other cell was still measured.
+    | Readonly<{
+        kind: 'incomplete'
+        status: 2
         root: string
         bundle: SelftestEvidenceBundle
         evidence: ReturnType<typeof validateSelftestEvidenceBundle>
@@ -297,12 +307,29 @@ async function run(
     adapters: SurfaceSelftestCommandAdapters,
     value: ExecutionStep | undefined,
     role: string,
-): Promise<{ outcome: ExecuteProbeOutcome; startedAt: string; finishedAt: string } | ProbeFailure> {
+): Promise<{ outcome: ExecuteProbeOutcome; startedAt: string; finishedAt: string } | ProbeFailure | RunFailure> {
     if (!value) return { probeFailure: `the ${role} step could not start within the probe's ${EVIDENCE_EXPIRY_MS / 60_000}-minute evidence window and step bounds; rerun selftest` }
     const startedAt = new Date().toISOString()
     const outcome = authenticatedExecutionOutcome(await adapters.execute(value), value)
     const finishedAt = new Date().toISOString()
-    return outcome ? { outcome, startedAt, finishedAt } : { probeFailure: `the ${role} step's result is not bound to the step cockpit ran; rerun selftest` }
+    return outcome ? { outcome, startedAt, finishedAt } : { runFailure: `the ${role} step's result is not bound to the step cockpit ran; rerun selftest` }
+}
+
+// Executor refusals that are not confined to one cell: a reviewed input changed, staging cannot be
+// trusted, a probe process may outlive its step, or the person aborted the run.
+const RUN_STOPPING_EXECUTIONS: Readonly<Partial<Record<string, string>>> = {
+    [ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED]: 'an input this reviewed run consumed changed while it ran (the approved executable, cockpit\'s guard runtime or a probe control); review what changed, then rerun selftest',
+    [ENVIRONMENT_CODES.EXECUTION_STAGING_FAILED]: 'the executor could not stage the step\'s inputs; check the probe directory, then rerun selftest',
+    [ENVIRONMENT_CODES.EXECUTION_STAGING_CLEANUP_FAILED]: 'the executor could not clean up the step\'s staged inputs; check the probe directory, then rerun selftest',
+    [ENVIRONMENT_CODES.EXECUTION_TERMINATION_UNCONFIRMED]: 'a probe process may still be running; stop it, then rerun selftest',
+    [ENVIRONMENT_CODES.EXECUTION_ABORTED]: 'the run was aborted',
+}
+
+function runStop(role: string, row: Awaited<ReturnType<typeof run>>): RunFailure | undefined {
+    if ('runFailure' in row) return row
+    if (!('outcome' in row) || row.outcome.kind !== 'refusal') return undefined
+    const reason = RUN_STOPPING_EXECUTIONS[row.outcome.code]
+    return reason === undefined ? undefined : { runFailure: `the ${role} step was refused with ${row.outcome.code}: ${reason}` }
 }
 
 function publicCommand(command: readonly string[], executable: string, control?: string): readonly [string, ...string[]] {
@@ -388,8 +415,12 @@ async function ensureEvidenceDirectory(root: string): Promise<string | Readonly<
     } catch (error) { return { reason: `${root} could not be resolved: ${errorCause(error)}` } }
 }
 
-// An evidence probe that could not run or could not be judged, with what failed and what to do.
+// A cell whose measurement could not run or could not be judged, with what failed and what to do.
+// The run records it for that cell and measures the rest.
 type ProbeFailure = Readonly<{ probeFailure: string }>
+// The reviewed inputs changed or cannot be trusted, or evidence cannot be kept apart from the
+// checkout: no further measurement means anything, so the run stops.
+type RunFailure = Readonly<{ runFailure: string }>
 
 async function writeControlPair(
     directory: string,
@@ -487,17 +518,17 @@ async function runEvidenceProbe(
     adapters: SurfaceSelftestCommandAdapters,
     approvedExecutables: OperatorExecutableIdentities,
     guardRuntime: ReturnType<typeof generatedSelftestGuardRuntime>,
-): Promise<SelftestEvidenceRecord | SelftestHumanNeededRecord | ProbeFailure> {
+): Promise<SelftestEvidenceRecord | SelftestHumanNeededRecord | ProbeFailure | RunFailure> {
     const harnessName = probe.harness.name
     const observedAt = new Date().toISOString()
-    const humanNeeded = (reason: SelftestHumanNeededRecord['reason'], operatorAction: string): SelftestHumanNeededRecord | ProbeFailure =>
+    const humanNeeded = (reason: SelftestHumanNeededRecord['reason'], operatorAction: string): SelftestHumanNeededRecord | RunFailure =>
         surfaceSelftestHumanNeeded(expectation, probe.cell, reason, observedAt, operatorAction)
-            ?? { probeFailure: `the ${reason} finding could not be recorded as human_needed: ${operatorAction}` }
+            ?? { runFailure: `the ${reason} finding could not be recorded as human_needed: ${operatorAction}` }
     if (probe.protocol === 'native-unsupported/v1') return humanNeeded('native_protocol_unsupported',
         `${harnessName} ${probe.capability} has no verified native selftest protocol. Measure the generated surface with its real loader and a deliberately broken control; preserve native tool events, not assistant claims. Claude print mode ignores malformed settings, and a native tool denial need not fail its parent process. Do not substitute diagnostic echo commands.`,
     )
     const guard = probe.protocol === 'claude-guard-loopback/v1'
-    if (guard && (!guardRuntime || !guardRuntime.some(file => file.path === join(root, '.cockpit/guards/bash-guard.sh')))) return { probeFailure: 'native guard runtime is not bound to this published cockpit root' }
+    if (guard && (!guardRuntime || !guardRuntime.some(file => file.path === join(root, '.cockpit/guards/bash-guard.sh')))) return { runFailure: 'native guard runtime is not bound to this published cockpit root; run sync, then rerun selftest' }
     const modelInput = MODEL_INPUT_PROTOCOLS.includes(probe.protocol ?? '') || guard
     const native = probe.protocol === 'codex-prompt-input/v1' || modelInput
     if (modelInput && probe.harness.target === 'claudecode' && probe.capability === 'instruction-loading'
@@ -526,13 +557,13 @@ async function runEvidenceProbe(
         directory = join(evidenceRoot, `selftest-${randomBytes(12).toString('hex')}`)
         await mkdir(directory, { mode: 0o700 })
         controls = await writeControlPair(directory, probe, expectation.guardHookCommand)
-    } catch (error) { return { probeFailure: `could not write probe controls: ${errorCause(error)}` } }
+    } catch (error) { return { runFailure: `could not write probe controls: ${errorCause(error)}` } }
     if ('probeFailure' in controls) return controls
     const candidatePath = relativeEvidencePath(root, controls.candidate)
     const brokenPath = relativeEvidencePath(root, controls.broken)
     const transcript = join(directory, 'transcript.json')
     const transcriptPath = relativeEvidencePath(root, transcript)
-    if (!candidatePath || !brokenPath || !transcriptPath) return { probeFailure: `the probe controls under ${directory} do not resolve inside ${root}; make ${PROBE_EVIDENCE_ROOT} a plain directory of this checkout, then rerun selftest` }
+    if (!candidatePath || !brokenPath || !transcriptPath) return { runFailure: `the probe controls under ${directory} do not resolve inside ${root}; make ${PROBE_EVIDENCE_ROOT} a plain directory of this checkout, then rerun selftest` }
 
     const deadline = Date.now() + EVIDENCE_EXPIRY_MS
     const invocation = publicCommand(probe.invocation, executable.canonicalPath)
@@ -577,6 +608,8 @@ async function runEvidenceProbe(
     }
     const version = await run(adapters, createStep('version', versionCommand), 'version')
     const help = await run(adapters, createStep('help', helpCommand), 'help')
+    const stopped = runStop('version', version) ?? runStop('help', help)
+    if (stopped) return stopped
     if (modelInput && 'outcome' in help && help.outcome.kind === 'complete'
         && !(guard ? /--settings\b/ : probe.harness.target === 'claudecode' ? /--print\b/ : /\bexec\b/).test(help.outcome.stdout.toString('utf8'))) {
         return humanNeeded('native_protocol_unsupported',
@@ -593,6 +626,8 @@ async function runEvidenceProbe(
         try {
             modelEndpoints[role] = model.endpoint
             const result = await run(adapters, createStep(role, command, control, model.endpoint), role)
+            const stop = runStop(role, result)
+            if (stop) return stop
             captureFailure ??= model.failure()
             if (captureFailure) return { probeFailure: captureFailure }
             const captured = boundedStream(Buffer.from(JSON.stringify(model.requests())), NATIVE_SELFTEST_STREAM_BYTES)
@@ -603,13 +638,19 @@ async function runEvidenceProbe(
         } finally { await model.close() }
     }
     let broken: Awaited<ReturnType<typeof run>>, candidate: Awaited<ReturnType<typeof run>>
-    try { broken = await runControl('broken'); candidate = await runControl('candidate') }
-    catch (error) { return { probeFailure: `native input capture failed: ${errorCause(error)}` } }
+    try {
+        broken = await runControl('broken')
+        const stop = runStop('broken', broken)
+        if (stop) return stop
+        candidate = await runControl('candidate')
+    } catch (error) { return { probeFailure: `native input capture failed: ${errorCause(error)}` } }
+    const stop = runStop('candidate', candidate)
+    if (stop) return stop
     if (captureFailure) return { probeFailure: captureFailure }
-    if ('probeFailure' in version) return version
-    if ('probeFailure' in help) return help
-    if ('probeFailure' in broken) return broken
-    if ('probeFailure' in candidate) return candidate
+    if (!('outcome' in version)) return version
+    if (!('outcome' in help)) return help
+    if (!('outcome' in broken)) return broken
+    if (!('outcome' in candidate)) return candidate
     if ([version, help, broken, candidate].some((row) => (!native || row.outcome.kind !== 'complete') && authenticationRequired(row.outcome))) {
         return humanNeeded('authentication_required',
             `Authenticate ${harnessName} and rerun its ${probe.capability} probe`,
@@ -695,6 +736,32 @@ async function runEvidenceProbe(
     return { ...record, transcriptSha256: sha256Hex(transcriptBytes) }
 }
 
+// A failure can quote several hooks' refusals; the record holds what fits its bound.
+function boundedOperatorAction(text: string): string {
+    const clean = text.replaceAll('\0', '')
+    if (Buffer.byteLength(clean) <= 4_096) return clean
+    return `${Buffer.from(clean).subarray(0, 4_088).toString('utf8').replace(/\uFFFD$/, '')}...`
+}
+
+const HOOK_LINE_CHARACTERS = 160
+
+// The guard probe hands Claude Code the generated settings whole, so every hook registered there can
+// run under it. The bytes are the generated manifest's, which the approved file's digest binds.
+function teamHookRegistrations(bytes: string | undefined, cockpitCommands: readonly string[]): readonly string[] {
+    let hooks: unknown
+    // Unparseable settings fail the guard probe before any step runs, so no hook of theirs runs either.
+    try { hooks = bytes === undefined ? undefined : JSON.parse(bytes)?.hooks } catch { return [] }
+    if (hooks === null || typeof hooks !== 'object' || Array.isArray(hooks)) return []
+    return Object.entries(hooks).flatMap(([event, groups]: [string, unknown]) => (Array.isArray(groups) ? groups : [])
+        .flatMap((group: { matcher?: unknown; hooks?: unknown }) => (Array.isArray(group?.hooks) ? group.hooks : [])
+            .flatMap((hook: { type?: unknown; command?: unknown }) => {
+                if (typeof hook?.command === 'string' && cockpitCommands.includes(hook.command)) return []
+                const runs = typeof hook?.command === 'string' ? hook.command.replace(/\s+/g, ' ').trim() : `a ${String(hook?.type)} hook`
+                const line = `${event}${group.matcher === undefined ? '' : ` matcher ${JSON.stringify(group.matcher)}`} runs ${runs}`
+                return [line.length > HOOK_LINE_CHARACTERS ? `${line.slice(0, HOOK_LINE_CHARACTERS - 3)}...` : line]
+            })))
+}
+
 export async function runSurfaceSelftestApplication(
     input: SurfaceSelftestCommandInput,
     adapters: SurfaceSelftestCommandAdapters = defaultAdapters,
@@ -714,7 +781,13 @@ export async function runSurfaceSelftestApplication(
         const record = await runEvidenceProbe(
             root, evidenceRoot, plan.expectation, probe, capturedInput.env, adapters, approvedExecutables, generatedSelftestGuardRuntime(application, root),
         )
-        if ('probeFailure' in record) return refusal('SELFTEST_EXECUTION_INVALID', `probe execution could not establish ${probe.capability} for ${probe.harness.name}: ${record.probeFailure}`)
+        if ('runFailure' in record) return refusal('SELFTEST_EXECUTION_INVALID', `probe execution could not establish ${probe.capability} for ${probe.harness.name}: ${record.runFailure}`)
+        if ('probeFailure' in record) {
+            const failed = surfaceSelftestHumanNeeded(plan.expectation, probe.cell, 'probe_failed', new Date().toISOString(), boundedOperatorAction(record.probeFailure))
+            if (!failed) return refusal('SELFTEST_EXECUTION_INVALID', `could not record ${surfaceSelftestCellLabel(probe.cell)} as failed: ${record.probeFailure}`)
+            records.push(failed)
+            continue
+        }
         records.push(record)
     }
     for (const cell of plan.unprobeable) {
@@ -736,7 +809,9 @@ export async function runSurfaceSelftestApplication(
         testOnlyExecutableIdentities,
     })
     if (evidence.errors.length > 0) return refusal('SELFTEST_EXECUTION_INVALID', evidence.errors.join('; '))
-    return { kind: 'complete', status: 0, root, bundle, evidence }
+    return records.some(row => row.kind === 'human_needed' && row.reason === 'probe_failed')
+        ? { kind: 'incomplete', status: 2, root, bundle, evidence }
+        : { kind: 'complete', status: 0, root, bundle, evidence }
 }
 
 export async function runConfiguredSurfaceSelftestApplication(
@@ -791,6 +866,9 @@ export async function runConfiguredSurfaceSelftestApplication(
     const plan = planSurfaceSelftest(checked.result.application.surfaceSelftest, specifications)
     if (plan.kind === 'refusal') return refusal(plan.code, plan.reason)
     const artifactSha256 = sha256Hex(bytes)
+    const guardProbe = plan.probes.find(probe => probe.protocol === 'claude-guard-loopback/v1')
+    const guardProbeTeamHooks = guardProbe ? teamHookRegistrations(selectedEntryBytes(guardProbe),
+        checked.result.application.surfaceSelftest.cockpitHookCommands ?? []) : []
     const candidate: SurfaceSelftestProbeSpecificationsCandidate = {
         canonicalPath: artifactPath,
         sha256: artifactSha256,
@@ -806,6 +884,7 @@ export async function runConfiguredSurfaceSelftestApplication(
             versionCommand: [...probe.versionCommand] as readonly [string, ...string[]],
             helpCommand: [...probe.helpCommand] as readonly [string, ...string[]],
         })),
+        ...guardProbeTeamHooks.length > 0 ? { guardProbeTeamHooks } : {},
     }
     const confirmation = await adapters.requestProbeSpecificationsApproval?.(candidate)
     if (confirmation !== artifactSha256) {
@@ -967,7 +1046,7 @@ export async function runConfiguredSurfaceSelftestOutcome(
         ...(requestExecutableApproval ? { requestExecutableApproval } : {}),
         ...(requestProbeSpecificationsApproval ? { requestProbeSpecificationsApproval } : {}),
     })
-    if (outcome.kind !== 'complete') return { status: 2, diagnostics: [{ severity: 'error', code: outcome.code, message: outcome.reason,
+    if (outcome.kind === 'refusal') return { status: 2, diagnostics: [{ severity: 'error', code: outcome.code, message: outcome.reason,
         ...(outcome.fix ? { fix: outcome.fix } : {}) }], result: null }
     const responsibilities = {
         native_protocol_unsupported: 'Maintainer: implement and measure the missing native protocol; rerunning unchanged inputs cannot clear this gap',
@@ -976,16 +1055,23 @@ export async function runConfiguredSurfaceSelftestOutcome(
         authentication_required: 'Operator: review the executable or complete native authentication before retrying',
         isolation_unavailable: 'Unavailable: the probe cannot establish its required isolation; inspect the report before retrying',
     } as const
+    const failed = outcome.evidence.pending.filter(row => row.reason === 'probe_failed')
+    const pending = outcome.evidence.pending.filter((row): row is typeof row & { reason: keyof typeof responsibilities } => row.reason !== 'probe_failed')
     const counts = new Map<keyof typeof responsibilities, number>()
-    for (const row of outcome.evidence.pending) counts.set(row.reason, (counts.get(row.reason) ?? 0) + 1)
-    const diagnostics: Diagnostic[] = [...counts].map(([reason, count]) => ({ severity: 'warning',
-        code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, message: `${count} pending cell(s). ${responsibilities[reason]}`,
-        target: reason,
-    }))
+    for (const row of pending) counts.set(row.reason, (counts.get(row.reason) ?? 0) + 1)
+    const diagnostics: Diagnostic[] = [
+        ...failed.length === 0 ? [] : [{ severity: 'error' as const, code: 'SELFTEST_EXECUTION_INVALID', target: 'probe_failed',
+            message: `${failed.length} cell(s) could not be measured; the summary leads with each one, what failed and what to do. Every other cell was still measured` }],
+        ...[...counts].map(([reason, count]) => ({ severity: 'warning' as const,
+            code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, message: `${count} pending cell(s). ${responsibilities[reason]}`,
+            target: reason,
+        })),
+    ]
     const result = {
         bundle: { ...outcome.bundle, records: outcome.bundle.records.map(withholdNativeStreams) },
         evidence: { ...outcome.evidence, evidence: outcome.evidence.evidence.map(withholdNativeStreams) },
-        summary: { measuredCells: outcome.evidence.evidence.length, pendingCells: outcome.evidence.pending.length,
+        summary: { failedCells: failed.map(row => ({ cell: surfaceSelftestCellLabel(row), failure: row.operatorAction })),
+            measuredCells: outcome.evidence.evidence.length, pendingCells: pending.length,
             unavailableCells: outcome.evidence.evidence.filter(row => row.verdict === 'unavailable').length,
             pendingSkillReviews: outcome.evidence.skillReviews.filter(row => row.status === 'human_needed').length,
             complete: outcome.evidence.pending.length === 0 && outcome.evidence.skillReviews.every(row => row.status === 'evidenced') },
@@ -996,7 +1082,7 @@ export async function runConfiguredSurfaceSelftestOutcome(
         const reportPath = join(directory, `selftest-${randomBytes(16).toString('hex')}.json`)
         const report = { result: { ...result, reportPath }, diagnostics }
         await writeFile(reportPath, `${JSON.stringify(report)}\n`, { flag: 'wx', mode: 0o600 })
-        return { status: 0, ...report }
+        return { status: outcome.status, ...report }
     } catch (error) {
         return { status: 2, result, diagnostics: [...diagnostics, { severity: 'error', code: 'SELFTEST_EXECUTION_INVALID',
             message: `selftest report could not be saved: ${errorCause(error)}` }] }
@@ -1031,6 +1117,10 @@ async function confirmSelftestProbeSpecifications(
     io.stderr.write(renderHumanValue({ artifact: candidate.canonicalPath, sha256: candidate.sha256,
         sourceSha256: candidate.sourceSha256, generatedManifestSha256: candidate.generatedManifestSha256,
         runnableCommands: runnable }))
+    if (candidate.guardProbeTeamHooks) {
+        io.stderr.write('Team hooks the Claude Code guard probe loads beside cockpit\'s guard; Claude Code runs each one its event and matcher select, with its script as it is on disk now:\n')
+        io.stderr.write(renderHumanValue(candidate.guardProbeTeamHooks))
+    }
     io.stderr.write(`${candidate.commandVectors.length - runnable.length} unsupported cell(s) execute nothing and remain incomplete.\n`)
     return confirmDigest(io, candidate.sha256, 'Approve this artifact and its runnable commands for this selftest run?')
 }

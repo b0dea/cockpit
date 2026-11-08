@@ -417,6 +417,8 @@ export interface GeneratedSurfaceSelftestProjection {
     readonly guardProbeHost?: string
     /** The exact command of cockpit's own Claude Code guard hook, the one the guard probe breaks. */
     readonly guardHookCommand?: string
+    /** Every command cockpit generated in Claude Code's hook settings; the file's other hooks are the team's. */
+    readonly cockpitHookCommands?: readonly string[]
 }
 
 export interface GeneratedSurfaceHealthEvidence {

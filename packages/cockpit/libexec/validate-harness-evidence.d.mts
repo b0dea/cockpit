@@ -140,7 +140,7 @@ export type SelftestHumanNeededRecord = {
     harness: SelftestHarnessRef
     generatedManifestSha256: string
     observedAt: string
-    reason: 'executable_missing' | 'authentication_required' | 'isolation_unavailable' | 'enforcement_probe_required' | 'native_protocol_unsupported'
+    reason: 'executable_missing' | 'authentication_required' | 'isolation_unavailable' | 'enforcement_probe_required' | 'native_protocol_unsupported' | 'probe_failed'
     operatorAction: string
 } & (
     | { capability: 'instruction-loading' | 'guard-firing' }

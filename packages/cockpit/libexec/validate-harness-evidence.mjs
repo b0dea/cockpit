@@ -558,7 +558,7 @@ export function validateEvidenceManifest(manifest, root = process.cwd(), options
 
 const SELFTEST_CAPABILITIES = ['instruction-loading', 'guard-firing', 'skill-parity']
 const SELFTEST_VERDICTS = ['enforced', 'instructed', 'unavailable']
-const SELFTEST_HUMAN_REASONS = ['executable_missing', 'authentication_required', 'isolation_unavailable', 'enforcement_probe_required', 'native_protocol_unsupported']
+const SELFTEST_HUMAN_REASONS = ['executable_missing', 'authentication_required', 'isolation_unavailable', 'enforcement_probe_required', 'native_protocol_unsupported', 'probe_failed']
 const SELFTEST_SAMPLE_FEATURES = ['name', 'trigger', 'body-load', 'tools', 'non-goals']
 const SELFTEST_EVENT_RESULTS = ['completed', 'rejected', 'accepted', 'refused', 'allowed', 'unavailable']
 const SELFTEST_ZERO_EXIT_RESULTS = ['completed', 'accepted', 'allowed']
