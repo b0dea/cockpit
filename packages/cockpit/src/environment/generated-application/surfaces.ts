@@ -624,17 +624,20 @@ export async function prepareSurfaces(
     if (prepared.owned.length + surfaceEntries.length > MAX_OWNED_FILES) {
         return refuse('SURFACE_BOUNDS', 'combined generated ownership exceeds the entry bound', 'surfaces')
     }
+    const guardProbeHost = config.guards.vendor_endpoint_hosts.find(host => host.length <= 253 && /^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(host))
     const selftestPayload = {
         schema: 'cockpit-generated-surface-selftest/v1' as const,
         configuredHarnesses,
         declarations: config.surfaces.harnesses,
         entries: surfaceEntries,
         custom: customSelftest.sort((left, right) => compareCodeUnits(`${left.harness}\0${left.feature}`, `${right.harness}\0${right.feature}`)),
+        ...(guardProbeHost ? { guardProbeHost } : {}),
     }
     const captured = snapshotGeneratedJson(selftestPayload) as unknown as Omit<GeneratedSurfaceSelftestProjection, 'manifestSha256'> | undefined
     if (!captured) return refuse('SURFACE_BOUNDS', 'authenticated selftest inputs exceed the captured bounds', 'surfaces')
     const payload = { schema: captured.schema, configuredHarnesses: selftestPayload.configuredHarnesses,
-        declarations: captured.declarations, entries: surfaceEntries, custom: captured.custom }
+        declarations: captured.declarations, entries: surfaceEntries, custom: captured.custom,
+        ...(captured.guardProbeHost ? { guardProbeHost: captured.guardProbeHost } : {}) }
     const surfaceSelftest = { ...payload, manifestSha256: sha256(JSON.stringify(payload)) }
     const skillInventory = surfaceEntries.filter((entry): entry is Extract<SurfaceDesiredEntry, { kind: 'file' }> =>
         entry.kind === 'file').flatMap(entry => entry.harnesses.flatMap(target => {

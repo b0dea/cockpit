@@ -1,3 +1,4 @@
+import { nativeGuardCommands } from '../../libexec/native-selftest-guard.mjs'
 import { randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 
@@ -96,12 +97,7 @@ export async function startSelftestModel(harness: 'claudecode' | 'codexcli', gua
         let size = 0
         const chunks: Buffer[] = []
         let finished = false
-        const timer = setTimeout(() => {
-            if (finished) return
-            finished = true
-            reject(408, 'selftest model request timed out')
-        }, REQUEST_TIMEOUT_MS)
-        const stop = () => { finished = true; clearTimeout(timer) }
+        const stop = () => { finished = true }
         request.on('data', (chunk: Buffer) => {
             if (finished) return
             size += chunk.length
@@ -144,9 +140,10 @@ export async function startSelftestModel(harness: 'claudecode' | 'codexcli', gua
         })
     })
     server.on('error', error => { failure ??= `selftest model listener failed: ${error.message}` })
-    server.on('clientError', (_error, socket) => {
-        if (!closing) failure ??= 'selftest model received an invalid HTTP request'
-        socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+    server.on('clientError', (error, socket) => {
+        const timedOut = 'code' in error && error.code === 'ERR_HTTP_REQUEST_TIMEOUT'
+        if (!closing) failure ??= timedOut ? 'selftest model request timed out' : 'selftest model received an invalid HTTP request'
+        socket.end(`HTTP/1.1 ${timedOut ? '408 Request Timeout' : '400 Bad Request'}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
     })
     await new Promise<void>((resolve, reject) => {
         server.once('error', reject)
@@ -156,14 +153,9 @@ export async function startSelftestModel(harness: 'claudecode' | 'codexcli', gua
     if (!address || typeof address === 'string') throw new Error('selftest model listener has no TCP address')
     if (guardHost !== undefined) {
         guardAuthority = `${guardHost}:${address.port}`
-        const receiptMarker = `COCKPIT_GUARD_RECEIPT_${route.slice(1)}`
-        const ordinaryMarker = `COCKPIT_GUARD_ORDINARY_${route.slice(1)}`
         guard = {
             host: guardHost,
-            forbiddenCommand: `curl --disable --silent --show-error --noproxy '*' --connect-timeout 2 --max-time 5 --resolve ${guardAuthority}:127.0.0.1 http://${guardAuthority}${receiptPath}`,
-            allowedCommand: `printf ${ordinaryMarker}`,
-            receiptMarker,
-            ordinaryMarker,
+            ...nativeGuardCommands(guardHost, String(address.port), route.slice(1)),
             receipts: () => receipts.slice(),
         }
     }

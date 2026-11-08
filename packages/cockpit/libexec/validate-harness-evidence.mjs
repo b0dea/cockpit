@@ -3,6 +3,8 @@ import { closeSync, constants, existsSync, fstatSync, openSync, readSync, realpa
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { isDeepStrictEqual, types as utilTypes } from 'node:util'
+import { nativeGuardInvocation, validateNativeGuardPair } from './native-selftest-guard.mjs'
+import { MODEL_INPUT_PROTOCOLS, nativeClaudeImport, nativeInputSettings, nativeInputInvocation, validateNativeModelInputPair } from './native-selftest-input.mjs'
 
 // Unlike the TypeScript helper this cannot import: system errors keep their first message line;
 // anything else gives only its class, because parse messages echo the evidence bytes.
@@ -143,7 +145,7 @@ function isRecord(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function validateCommand(value, name, errors, controlPlaceholder = false) {
+function validateCommand(value, name, errors, controlPlaceholder = false, native = false) {
     if (!Array.isArray(value) || value.length === 0) {
         errors.push(`${name} must be a non-empty argv array`)
         return null
@@ -154,7 +156,7 @@ function validateCommand(value, name, errors, controlPlaceholder = false) {
     }
     let bytes = 0
     for (const argument of value) {
-        if (!isText(argument)) {
+        if (!isText(argument) && !(native && argument === '')) {
             errors.push(`${name} must be a non-empty argv array`)
             return null
         }
@@ -849,7 +851,9 @@ function selftestCell(value, name, errors, exact = true) {
 
 function validateSelftestExpectation(expectation, errors) {
     if (!exactKeys(expectation, ['schema', 'generatedManifestSha256', 'cells', 'shippedSkills', 'reviewHarnesses',
-        ...(expectation?.instructionSourceSha256 === undefined ? [] : ['instructionSourceSha256'])])) {
+        ...(expectation?.instructionSourceSha256 === undefined ? [] : ['instructionSourceSha256']),
+        ...(expectation?.nativeSourceSha256 === undefined ? [] : ['nativeSourceSha256']),
+        ...(expectation?.guardProbeHost === undefined ? [] : ['guardProbeHost'])])) {
         errors.push('expectation must contain only the versioned authority fields')
         return { cells: [], cellKeys: [], skills: [], reviews: [] }
     }
@@ -860,6 +864,12 @@ function validateSelftestExpectation(expectation, errors) {
     if (expectation.instructionSourceSha256 !== undefined && !SELFTEST_DIGEST.test(expectation.instructionSourceSha256)) {
         errors.push('instructionSourceSha256 must be a lowercase SHA-256 digest')
     }
+    if (expectation.nativeSourceSha256 !== undefined && (!isRecord(expectation.nativeSourceSha256)
+        || Object.entries(expectation.nativeSourceSha256).some(([path, digest]) =>
+            !/^(?:AGENTS\.md|CLAUDE\.md|\.claude\/settings\.json|\.(?:agents|claude)\/skills\/[a-z0-9][a-z0-9-]{0,127}\/SKILL\.md)$/.test(path)
+            || typeof digest !== 'string' || !SELFTEST_DIGEST.test(digest)))) errors.push('native source authority must contain only bounded generated source paths and digests')
+    if (expectation.guardProbeHost !== undefined && (typeof expectation.guardProbeHost !== 'string' || expectation.guardProbeHost.length > 253
+        || !/^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(expectation.guardProbeHost))) errors.push('guard probe host must be a bounded DNS hostname')
     const cells = Array.isArray(expectation.cells) ? expectation.cells : []
     if (cells.length === 0 || cells.length > SELFTEST_MAX_ROWS) errors.push('expectation cells must contain between 1 and 256 rows')
     const cellKeys = cells.map((cell, index) => selftestCell(cell, `expectation cell ${index + 1}`, errors)).filter(Boolean)
@@ -881,13 +891,13 @@ function validateSelftestExpectation(expectation, errors) {
     return { cells, cellKeys, skills, reviews: Array.isArray(reviews) ? reviews : [] }
 }
 
-function validateSelftestEvent(value, name, errors, native = false) {
+function validateSelftestEvent(value, name, errors, native = false, guard = false) {
     const fields = ['cwd', 'command', 'exitCode', 'signal', 'result', 'code', 'stdout', 'stderr', 'stdoutSha256', 'stderrSha256']
     if (!exactKeys(value, fields)) {
         errors.push(`${name} must contain exactly the structured event fields`)
         return null
     }
-    const command = validateCommand(value.command, `${name}.command`, errors)
+    const command = validateCommand(value.command, `${name}.command`, errors, false, native)
     if (!isText(value.cwd)) errors.push(`${name}.cwd must be a non-empty string`)
     if (!Number.isInteger(value.exitCode) || value.exitCode < 0) errors.push(`${name}.exitCode must be a non-negative integer`)
     if (value.signal !== null && !SELFTEST_SIGNALS.has(value.signal)) errors.push(`${name}.signal must be a Node signal or null`)
@@ -912,7 +922,7 @@ function validateSelftestEvent(value, name, errors, native = false) {
     }
     if (SELFTEST_ZERO_EXIT_RESULTS.includes(value.result) && value.exitCode !== 0) errors.push(`${name} ${value.result} result requires exitCode=0`)
     if (SELFTEST_ZERO_EXIT_RESULTS.includes(value.result) && value.signal !== null) errors.push(`${name} ${value.result} result requires signal=null`)
-    if (SELFTEST_EVENT_RESULTS.includes(value.result) && !SELFTEST_ZERO_EXIT_RESULTS.includes(value.result) && value.exitCode === 0) {
+    if (SELFTEST_EVENT_RESULTS.includes(value.result) && !SELFTEST_ZERO_EXIT_RESULTS.includes(value.result) && value.exitCode === 0 && !(guard && name === 'candidateControl' && value.result === 'refused')) {
         errors.push(`${name} ${value.result} result requires a non-zero exitCode`)
     }
     return { ...value, command }
@@ -945,12 +955,14 @@ export function validateNativeInstructionPair(candidateOutput, brokenOutput, can
 }
 
 function validateSelftestEvidence(record, expectedHarness, root, options, errors, expectation) {
-    const native = record.protocol === 'codex-prompt-input/v1'
+    const guard = record.protocol === 'claude-guard-loopback/v1'
+    const modelInput = MODEL_INPUT_PROTOCOLS.includes(record.protocol)
+    const native = record.protocol === 'codex-prompt-input/v1' || modelInput || guard
     const fields = [
         'kind', 'harness', 'capability', 'generatedManifestSha256', 'verdict', 'version', 'measuredOn', 'runId',
         'startedAt', 'finishedAt', 'expiresAt', 'candidatePath', 'brokenPath', 'transcriptPath', 'candidateSha256',
         'brokenSha256', 'transcriptSha256', 'invocation', 'versionCommand', 'helpCommand', 'candidateCode',
-        'brokenCode', 'sample', 'authority', 'events', ...(native ? ['protocol'] : []),
+        'brokenCode', 'sample', 'authority', 'events', ...(native ? ['protocol'] : []), ...(modelInput || guard ? ['modelInputs', 'modelEndpoints'] : []), ...(guard ? ['guardProbe'] : []),
     ]
     if (!exactKeys(record, fields)) errors.push('evidence record contains unknown or missing fields')
     for (const field of ['version', 'runId', 'candidateCode', 'brokenCode']) {
@@ -975,7 +987,7 @@ function validateSelftestEvidence(record, expectedHarness, root, options, errors
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(record.measuredOn ?? '')) errors.push('measuredOn must use YYYY-MM-DD')
 
-    const invocation = validateCommand(record.invocation, 'invocation', errors, !native)
+    const invocation = validateCommand(record.invocation, 'invocation', errors, !native || guard, native)
     const versionCommand = validateCommand(record.versionCommand, 'versionCommand', errors)
     const helpCommand = validateCommand(record.helpCommand, 'helpCommand', errors)
     const candidatePath = resolveEvidencePath(root, record.candidatePath, 'candidatePath', errors)
@@ -1009,7 +1021,7 @@ function validateSelftestEvidence(record, expectedHarness, root, options, errors
     const events = isRecord(record.events) ? record.events : null
     if (!events || !exactKeys(events, ['version', 'help', 'brokenControl', 'candidateControl'])) errors.push('events must contain exactly four probe events')
     const checked = Object.fromEntries(['version', 'help', 'brokenControl', 'candidateControl'].map(name => [
-        name, validateSelftestEvent(events?.[name], name, errors, native),
+        name, validateSelftestEvent(events?.[name], name, errors, native, guard),
     ]))
     for (const name of ['version', 'help', 'brokenControl', 'candidateControl']) {
         resolveEventCwd(root, checked[name]?.cwd, name, errors)
@@ -1067,6 +1079,100 @@ function validateSelftestEvidence(record, expectedHarness, root, options, errors
         if (transcript && !isDeepStrictEqual(transcript, expected)) errors.push('transcript does not match the complete structured evidence record')
     }
 
+    if (guard) {
+        const probe = record.guardProbe
+        if (!exactKeys(probe, ['host', 'brokenCommand', 'receipts']) || probe.host !== expectation?.guardProbeHost
+            || !exactKeys(probe.receipts, ['candidate', 'broken'])) errors.push('native guard probe must match its generated host authority')
+        if (expectedHarness?.kind !== 'builtin' || expectedHarness.target !== 'claudecode' || record.capability !== 'guard-firing'
+            || record.verdict !== 'enforced' || record.sample !== null || record.candidateCode !== 'NATIVE_GUARD_FIRED'
+            || record.brokenCode !== 'NATIVE_GUARD_BROKEN') errors.push('native guard evidence establishes only Claude hook enforcement')
+        if (!expectation?.nativeSourceSha256?.['.claude/settings.json']
+            || record.candidateSha256 !== expectation.nativeSourceSha256['.claude/settings.json']) errors.push('native guard candidate does not match its generated settings source authority')
+        const expectedInvocation = nativeGuardInvocation(probe?.host).map(value => value === '{executable}' ? invocation?.[0] : value)
+        if (!isDeepStrictEqual(invocation, expectedInvocation) || !isDeepStrictEqual(versionCommand, [invocation?.[0], '--version'])
+            || !isDeepStrictEqual(helpCommand, [invocation?.[0], '--help'])) errors.push('native guard commands do not match the closed protocol')
+        if (record.version !== /^(\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?) \(Claude Code\)$/.exec(typeof checked.version?.stdout === 'string' ? checked.version.stdout.trim() : '')?.[1]) errors.push('native version does not match the harness version output')
+        const directory = transcriptPath ? dirname(transcriptPath) : undefined
+        if (!exactKeys(record.modelInputs, ['candidate', 'broken']) || Object.values(record.modelInputs).some(value =>
+            typeof value !== 'string' || Buffer.byteLength(value) > NATIVE_SELFTEST_STREAM_BYTES)
+            || !exactKeys(record.modelEndpoints, ['candidate', 'broken'])) errors.push('native guard inputs must be bounded captured request arrays')
+        for (const [role, path] of [['candidate', candidatePath], ['broken', brokenPath]]) {
+            const event = checked[`${role}Control`]
+            const endpoint = typeof record.modelEndpoints?.[role] === 'string'
+                ? /^http:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})\/([a-f0-9]{48})$/.exec(record.modelEndpoints[role]) : null
+            const command = invocation?.map(value => value.replace('{control}', record[`${role}Path`] ?? '')
+                .replaceAll('{loopback-port}', endpoint?.[1] ?? '').replaceAll('{nonce}', endpoint?.[2] ?? ''))
+            if (!directory || !path || path !== resolve(directory, `${role}.json`) || realpathSync(path) !== path
+                || !endpoint || Number(endpoint[1]) > 65535 || !event || event.cwd !== '.' || event.exitCode !== 0 || event.signal !== null
+                || event.result !== (role === 'candidate' ? 'refused' : 'allowed') || event.code !== record[`${role}Code`]
+                || !isDeepStrictEqual(event.command, command)) errors.push(`${role} must complete the bounded native guard protocol from the generated root`)
+        }
+        if (candidateBytes && brokenBytes && checked.candidateControl && checked.brokenControl) {
+            const problem = validateNativeGuardPair({ host: probe?.host, brokenCommand: probe?.brokenCommand,
+                candidateBytes: candidateBytes.toString('utf8'), brokenBytes: brokenBytes.toString('utf8'),
+                observations: Object.fromEntries(['candidate', 'broken'].map(role => [role, {
+                    endpoint: record.modelEndpoints?.[role], input: record.modelInputs?.[role], receipts: probe?.receipts?.[role],
+                }])), candidateStdout: checked.candidateControl.stdout, brokenStdout: checked.brokenControl.stdout })
+            if (problem) errors.push(problem)
+        }
+        return
+    }
+    if (modelInput) {
+        const target = record.protocol === 'claude-model-input/v1' ? 'claudecode' : 'codexcli'
+        const skill = record.capability === 'skill-parity' ? record.sample?.skill : undefined
+        const sourcePath = skill ? `.${target === 'claudecode' ? 'claude' : 'agents'}/skills/${skill}/SKILL.md` : 'AGENTS.md'
+        if (expectedHarness?.kind !== 'builtin' || expectedHarness.target !== target || record.verdict !== 'instructed'
+            || !['instruction-loading', 'skill-parity'].includes(record.capability) || target === 'codexcli' && !skill
+            || (skill ? !isDeepStrictEqual(record.sample, { skill, features: ['body-load'] }) : record.sample !== null)) errors.push('native model input establishes only its instruction or skill body loading capability')
+        const sourceDigest = expectation?.nativeSourceSha256?.[sourcePath]
+        if (!sourceDigest || sourceDigest !== record.candidateSha256) errors.push(skill
+            ? 'native candidate does not match the generated skill source authority'
+            : 'native candidate does not match the generated instruction source authority')
+        const expectedInvocation = nativeInputInvocation(target, skill).map(value => value === '{executable}' ? invocation?.[0] : value)
+        if (!isDeepStrictEqual(invocation, expectedInvocation) || !isDeepStrictEqual(versionCommand, [invocation?.[0], '--version'])
+            || !isDeepStrictEqual(helpCommand, [invocation?.[0], '--help'])) errors.push('native model input commands do not match the closed protocol')
+        const versionPattern = target === 'claudecode' ? /^(\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?) \(Claude Code\)$/
+            : /^codex-cli (\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/
+        if (record.version !== versionPattern.exec(typeof checked.version?.stdout === 'string' ? checked.version.stdout.trim() : '')?.[1]) errors.push('native version does not match the harness version output')
+        const directory = transcriptPath ? dirname(transcriptPath) : undefined
+        const expectedCode = skill ? 'NATIVE_SKILL_BODY_LOADED' : 'NATIVE_INSTRUCTIONS_LOADED'
+        const brokenCode = skill ? 'NATIVE_SKILL_CONTROL_REJECTED' : 'NATIVE_INSTRUCTIONS_REPLACED'
+        if (!exactKeys(record.modelEndpoints, ['candidate', 'broken']) || Object.values(record.modelEndpoints).some(value =>
+            typeof value !== 'string' || !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/[a-f0-9]{48}$/.test(value)
+            || Number(/^http:\/\/127\.0\.0\.1:([0-9]+)/.exec(value)?.[1]) > 65535)) errors.push('native model endpoints must be nonce-bound loopback listeners')
+        if (record.candidateCode !== expectedCode || record.brokenCode !== brokenCode) errors.push('native model input diagnostic classifications do not match the capability')
+        for (const [role, path, code] of [['candidate', candidatePath, expectedCode], ['broken', brokenPath, brokenCode]]) {
+            const event = checked[`${role}Control`]
+            const cwd = directory ? resolve(directory, role) : undefined
+            const command = cwd && invocation?.map(value => value.replace('{model-endpoint}', record.modelEndpoints?.[role] ?? '')
+                .replace('{native-settings}', resolve(cwd, 'native-settings.json')))
+            if (!directory || !path || path !== resolve(cwd, sourcePath) || realpathSync(path) !== path
+                || !event || event.exitCode !== 0 || event.signal !== null || event.result !== 'accepted' || event.code !== code
+                || typeof event.cwd !== 'string' || resolve(root, event.cwd) !== cwd || !isDeepStrictEqual(event.command, command)) {
+                errors.push(`${role} must complete native discovery from its confined control directory`)
+            }
+            if (target === 'claudecode' && cwd) {
+                const settingsPath = resolve(cwd, 'native-settings.json')
+                const settings = readBoundedSelftestFile(settingsPath, SELFTEST_MAX_STREAM_BYTES, 'native loader settings', errors)
+                if (!settings || realpathSync(settingsPath) !== settingsPath || settings.toString('utf8') !== nativeInputSettings(cwd)) errors.push('native loader settings do not match the bounded ancestor exclusions')
+            }
+            if (!skill && cwd) {
+                const wrapper = resolve(cwd, 'CLAUDE.md')
+                const bytes = readBoundedSelftestFile(wrapper, SELFTEST_MAX_STREAM_BYTES, 'Claude instruction import', errors)
+                if (!bytes || realpathSync(wrapper) !== wrapper || !nativeClaudeImport(bytes.toString('utf8'))
+                    || textSha256(bytes) !== expectation?.nativeSourceSha256?.['CLAUDE.md']) errors.push('native Claude import does not match its generated source authority')
+            }
+        }
+        if (!exactKeys(record.modelInputs, ['candidate', 'broken']) || Object.values(record.modelInputs).some(value =>
+            typeof value !== 'string' || Buffer.byteLength(value) > NATIVE_SELFTEST_STREAM_BYTES)) errors.push('native model inputs must be bounded captured request arrays')
+        else if (candidateBytes && brokenBytes && checked.candidateControl && checked.brokenControl) {
+            const problem = validateNativeModelInputPair({ target, skill, candidateInput: record.modelInputs.candidate, brokenInput: record.modelInputs.broken,
+                candidatePath, brokenPath, candidateBytes: candidateBytes.toString('utf8'), brokenBytes: brokenBytes.toString('utf8'),
+                brokenStdout: checked.brokenControl.stdout, brokenStderr: checked.brokenControl.stderr })
+            if (problem) errors.push(problem)
+        }
+        return
+    }
     if (native) {
         if (expectedHarness?.kind !== 'builtin' || expectedHarness.target !== 'codexcli'
             || record.capability !== 'instruction-loading' || record.verdict !== 'instructed' || record.sample !== null

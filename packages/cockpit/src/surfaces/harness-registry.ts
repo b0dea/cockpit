@@ -1,9 +1,9 @@
 // Guard firing and instruction loading for these harnesses are dated runs (the firing records below
 // and the projection's instruction capabilities). Each skills record below is a request to a loopback
-// model from an isolated home, beside broken twins: it shows the tool lists the skill, not that a
-// model chooses to use it or that the tool loads its body.
-const listedSkills = (measuredVersion: string, provenance: string) => Object.freeze({
-    state: 'instructed' as const, measuredOn: '2026-11-06', measuredVersion, provenance,
+// model from an isolated home, beside broken twins. Provenance distinguishes skill listing from
+// explicit body loading; neither establishes that a model chooses the right skill.
+const listedSkills = (measuredVersion: string, provenance: string, measuredOn = '2026-11-06') => Object.freeze({
+    state: 'instructed' as const, measuredOn, measuredVersion, provenance,
 })
 
 // Cockpit writes rules, skills, MCP and permission files for these harnesses through the
@@ -22,8 +22,8 @@ const noGuardAdapter = Object.freeze({
 // the capability matrix only while that adapter stays native; the adapter keeps recording the
 // transport shape it was written against.
 const claudeFiring = Object.freeze({
-    state: 'enforced' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-01', measuredVersion: '2.1.316',
-    provenance: 'with the exact push pre-allowed by permissions, the hook refused git push to a protected branch and the remote stayed empty while git status ran; the same checkout without the hook pushed',
+    state: 'enforced' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-08', measuredVersion: '2.1.319',
+    provenance: 'with exact generated settings supplied explicitly and only two fixed Bash commands pre-allowed, the native hook denied a declared vendor host forced to loopback while printf succeeded; its broken registration was named with exit 127 and the same loopback request succeeded. Both parent processes exited zero; linked native hook and tool results plus the listener receipt established the difference',
 })
 const codexFiring = Object.freeze({
     state: 'enforced' as const, evidence: 'human_needed' as const, measuredOn: '2026-11-01', measuredVersion: '0.165.0',
@@ -88,7 +88,7 @@ export const HARNESS_REGISTRY = Object.freeze([
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'CLAUDE.md', skills: '.claude/skills', mcp: '.mcp.json', permissions: Object.freeze(['.claude/settings.json']) }),
         guard: Object.freeze({ capability: 'instructed' as const, firing: claudeFiring }), sessionStart: claudeSessionStart,
-        native: listedSkills('2.1.319', 'claude -p listed all four generated skills to the model, trusted or not, but did not reject broken twins: one with no front-matter and one with malformed YAML were both listed with descriptions from their bodies, and only a directory with no SKILL.md was left out'),
+        native: listedSkills('2.1.319', 'explicit slash invocation with tools disabled sent the exact generated skill body, excluding front-matter, to an isolated loopback model; a same-name user-invocable:false twin made no model request and the native result named its refusal. This measures body loading only, not trigger selection or skill behavior', '2026-11-08'),
         subagentGrader: claudeSubagentGrader,
         mcpToolRestriction: mcpToolRestriction({ mechanism: 'hook', state: 'enforced', evidence: 'human_needed', measuredVersion: '2.1.318',
             provenance: 'claude -p with generated settings and a loopback synthetic model left the listed read tool denied by native permissions without a grant; with a grant it called only that tool, including with large arguments, and denied write, dispatcher and new tools despite readOnlyHint annotations. Unrestricted server tools ran even with a missing guard; restricted calls were held, an oversized envelope was refused, and a broken hook file was named. Project hooks still require workspace trust. Claude Code rewrites a dot in a tool name to an underscore before the hook sees it and keeps only the first of two tools that collide, so read.record and read_record are one name here' }),
@@ -102,7 +102,7 @@ export const HARNESS_REGISTRY = Object.freeze([
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.agents/skills', mcp: '.codex/config.toml', permissions: Object.freeze(['.codex/config.toml']) }),
         guard: Object.freeze({ capability: 'instructed' as const, firing: codexFiring }), sessionStart: codexSessionStart,
-        native: listedSkills('0.166.0', 'codex exec listed all four generated skills, trusted or not, and named and left out twins with missing front-matter and invalid YAML'),
+        native: listedSkills('0.167.0', 'codex exec with explicit dollar-name invocation sent the exact generated SKILL.md inside its native skill wrapper to an isolated loopback model; a same-name twin without front-matter was named in native stderr and its body was absent from the request. This measures body loading only, not trigger selection or skill behavior', '2026-11-08'),
         subagentGrader: subagentOffered('2026-11-05', '0.166.0', 'codex exec in a project a person had trusted listed the generated evaluator under the spawn_agent roles it sent to the model, and named and left out a malformed definition beside it'),
         mcpToolRestriction: mcpToolRestriction({ mechanism: 'enabled-tools', state: 'enforced', evidence: 'not_applicable', measuredVersion: '0.166.0',
             provenance: 'codex exec with generated project enabled_tools and a loopback synthetic model called the listed read tool and rejected forced write, dispatcher and new tool calls as unsupported. The unrestricted control called all four; an empty list made no server call; a string-valued enabled_tools twin was named and rejected before startup. enabled_tools matches the server\'s raw tool name, so read.record and read_record stay distinct. No hook trust was granted' }),
