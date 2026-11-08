@@ -27,7 +27,7 @@
     "@typescript/typescript6": "6.0.2",
     "ajv": "8.20.0",
     "ajv-draft-04": "1.0.0",
-    "dependency-cruiser": "18.7.1",
+    "dependency-cruiser": "18.7.2",
     "markdownlint-cli2": "0.24.0",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
