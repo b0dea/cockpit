@@ -521,7 +521,7 @@ export async function runGuardEvaluationApplication(
                     : { status: 'unavailable', path, symlink: false }
             }
             if (request.operation === 'manifest') {
-                const manifest = allowed(path) ? guardPackageManifest(path, allowed) : null
+                const manifest = allowed(path) ? guardPackageManifest(path, allowed, request.workspace === true) : null
                 return manifest ? { status: 'resolved', path, ...manifest } : { status: 'unavailable', path, symlink: false }
             }
             const managedRoot = policy.allowedRoots.filter(root => confinedPath(root, path)).sort((a, b) => b.length - a.length)[0]

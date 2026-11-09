@@ -6,6 +6,7 @@
 // policy and the evaluator turns them into hard denials.
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { readBoundedFile } from '../bounded-read.js'
+import { parse as parseYaml } from 'yaml'
 import { basename, dirname, join, posix, relative } from 'node:path'
 
 import { ENVIRONMENT_CODES, snapshotExecutionStep, type ExecutionStep, RefusalError } from '../environment/contract.js'
@@ -444,30 +445,113 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
 // A package manifest is a few kilobytes; a larger one is not read.
 const MANIFEST_BYTES = 1_048_576
 
+type Manifest = { readonly name: string | null; readonly scripts: readonly string[]; readonly workspaces: readonly string[] | undefined }
+const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
+
+/** A bounded plain file's text, undefined when it is absent, or null when it is a link, not a file or too large. */
+function boundedText(path: string, maxBytes: number): string | null | undefined {
+    let read
+    try { read = readBoundedFile(path, maxBytes) } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code ?? ''
+        if (missing(error) || code === 'ENOTDIR') return undefined
+        if (['ELOOP', 'EISDIR', 'ENXIO'].includes(code)) return null
+        throw error
+    }
+    return read.kind === 'too-large' ? null : read.bytes.toString('utf8')
+}
+
+/** The package.json in `directory`: undefined when there is none, null when it is not a readable JSON object. */
+function readManifest(directory: string): Manifest | null | undefined {
+    const text = boundedText(join(directory, 'package.json'), MANIFEST_BYTES)
+    if (typeof text !== 'string') return text
+    let manifest: unknown
+    try { manifest = JSON.parse(text) } catch (error) { if (error instanceof SyntaxError) return null; throw error }
+    if (!record(manifest)) return null
+    // npm and yarn list workspace globs as an array, or under `packages`.
+    const listed = Array.isArray(manifest.workspaces) ? manifest.workspaces : record(manifest.workspaces) ? manifest.workspaces.packages : undefined
+    return { name: typeof manifest.name === 'string' ? manifest.name : null, scripts: record(manifest.scripts) ? Object.keys(manifest.scripts) : [],
+        workspaces: Array.isArray(listed) && listed.every(item => typeof item === 'string') ? listed : undefined }
+}
+
+// A workspace's packages, and the directories walked to find them, past which its scripts are not proven.
+const WORKSPACE_PACKAGES = 512
+const WORKSPACE_DIRECTORIES = 4096
+
+/**
+ * The package directories a workspace's globs name below `root`: `*` and other single-segment globs, and
+ * `**` to a bounded depth, never into node_modules or a hidden directory. Null when a glob climbs out with
+ * `..`, or the walk passes its bound.
+ */
+function workspacePackages(root: string, globs: readonly string[]): readonly string[] | null {
+    const found = new Set<string>()
+    let walked = 0
+    const children = (directory: string): readonly string[] => {
+        let entries
+        try { entries = readdirSync(directory, { withFileTypes: true }) } catch (error) { if (missing(error) || (error as NodeJS.ErrnoException).code === 'ENOTDIR') return []; throw error }
+        return entries.filter(entry => entry.isDirectory() && entry.name !== 'node_modules' && !entry.name.startsWith('.')).map(entry => join(directory, entry.name))
+    }
+    const expand = (directory: string, segments: readonly string[], depth: number): boolean => {
+        if (++walked > WORKSPACE_DIRECTORIES) return false
+        const [segment, ...rest] = segments
+        if (segment === undefined) { found.add(directory); return found.size <= WORKSPACE_PACKAGES }
+        if (segment === '**') return expand(directory, rest, depth) && (depth >= 4 || children(directory).every(child => expand(child, segments, depth + 1)))
+        if (!/[*?[]/.test(segment)) return expand(join(directory, segment), rest, depth)
+        const pattern = new RegExp(`^${segment.split(/(\*+|\?|\[[^\]]*\])/).map((part, at) => at % 2
+            ? part.startsWith('*') ? '.*' : part === '?' ? '.' : part : part.replace(/[.+^${}()|\\]/g, '\\$&')).join('')}$`)
+        return children(directory).filter(child => pattern.test(basename(child))).every(child => expand(child, rest, depth))
+    }
+    for (const glob of globs) {
+        if (glob.startsWith('!')) continue
+        const segments = glob.replace(/^\.\//, '').split('/').filter(segment => segment && segment !== '.')
+        if (segments.includes('..') || !expand(root, segments, 0)) return null
+    }
+    return [...found]
+}
+
 /**
  * The nearest package.json at or above `path` while `inside` holds: its `name` and the names of its
- * `scripts`, or none when there is no manifest; null when one is not a plain readable JSON file.
+ * `scripts`, or none when there is no manifest; null when one is not a plain readable JSON file. With
+ * `workspace`, also every script name the enclosing workspace's root or any of its packages declares,
+ * from pnpm-workspace.yaml or a package.json `workspaces` list, or null when they could not all be read.
  */
-export function guardPackageManifest(path: string, inside: (path: string) => boolean): { readonly name: string | null; readonly scripts: readonly string[] } | null {
+export function guardPackageManifest(path: string, inside: (path: string) => boolean, workspace = false): { readonly name: string | null; readonly scripts: readonly string[]; readonly workspace?: readonly string[] | null } | null {
+    let nearest: Manifest | undefined
+    let start = path
     for (let directory = path; inside(directory); directory = dirname(directory)) {
-        let read
-        try { read = readBoundedFile(join(directory, 'package.json'), MANIFEST_BYTES) } catch (error) {
-            const code = (error as NodeJS.ErrnoException).code ?? ''
-            if (!missing(error) && code !== 'ENOTDIR') {
-                if (['ELOOP', 'EISDIR', 'ENXIO'].includes(code)) return null
-                throw error
-            }
-            if (dirname(directory) === directory) break
-            continue
-        }
-        if (read.kind === 'too-large') return null
-        let manifest: unknown
-        try { manifest = JSON.parse(read.bytes.toString('utf8')) } catch (error) { if (error instanceof SyntaxError) return null; throw error }
-        const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
-        if (!record(manifest)) return null
-        return { name: typeof manifest.name === 'string' ? manifest.name : null, scripts: record(manifest.scripts) ? Object.keys(manifest.scripts) : [] }
+        const manifest = readManifest(directory)
+        if (manifest === null) return null
+        if (manifest !== undefined) { nearest = manifest; start = directory; break }
+        if (dirname(directory) === directory) break
     }
-    return { name: null, scripts: [] }
+    const own = { name: nearest?.name ?? null, scripts: nearest?.scripts ?? [] }
+    if (!workspace) return own
+    const scripts = new Set(own.scripts)
+    for (let directory = start; inside(directory); directory = dirname(directory)) {
+        const yaml = boundedText(join(directory, 'pnpm-workspace.yaml'), MANIFEST_BYTES)
+        let globs: readonly string[] | undefined
+        if (yaml === null) return { ...own, workspace: null }
+        if (yaml !== undefined) {
+            let parsed: unknown
+            try { parsed = parseYaml(yaml) } catch { return { ...own, workspace: null } } // an unreadable workspace file proves no script
+            const packages = record(parsed) ? parsed.packages : undefined
+            if (!Array.isArray(packages) || !packages.every(item => typeof item === 'string')) return { ...own, workspace: null }
+            globs = packages
+        }
+        const manifest = readManifest(directory)
+        if (manifest === null) return { ...own, workspace: null }
+        globs ??= manifest?.workspaces
+        if (globs === undefined) { if (dirname(directory) === directory) break; continue }
+        for (const name of manifest?.scripts ?? []) scripts.add(name)
+        const packages = workspacePackages(directory, globs)
+        if (packages === null) return { ...own, workspace: null }
+        for (const item of packages) {
+            const member = readManifest(item)
+            if (member === null) return { ...own, workspace: null }
+            for (const name of member?.scripts ?? []) scripts.add(name)
+        }
+        break
+    }
+    return { ...own, workspace: [...scripts].sort() }
 }
 
 // A patch an agent applies is a few hundred kilobytes at most; a larger one is not read.

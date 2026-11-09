@@ -239,6 +239,25 @@ describe('guard protected locations', () => {
         expect(guardPackageManifest(join(root, 'copy/dist/cli.js'), inside)).toBeNull()
     })
 
+    it('reads every script a workspace declares, from pnpm-workspace.yaml or package.json, and none it cannot bound', () => {
+        const root = scratch()
+        const inside = (path: string) => path === root || path.startsWith(`${root}/`)
+        const write = (path: string, text: string) => { mkdirSync(join(root, path, '..'), { recursive: true }); writeFileSync(join(root, path), text) }
+        write('package.json', JSON.stringify({ name: 'monorepo', scripts: { lint: 'eslint .' } }))
+        write('pnpm-workspace.yaml', "packages:\n  - 'packages/*'\n  - 'tools/**'\n  - '!packages/skip'\n")
+        write('packages/web/package.json', JSON.stringify({ name: 'web', scripts: { build: 'vite build' } }))
+        write('packages/api/package.json', JSON.stringify({ name: 'api', scripts: { test: 'vitest' } }))
+        write('packages/web/node_modules/dep/package.json', JSON.stringify({ name: 'dep', scripts: { evil: 'x' } }))
+        write('tools/a/b/package.json', JSON.stringify({ name: 'b', scripts: { gen: 'node gen.js' } }))
+        expect(guardPackageManifest(join(root, 'packages/api'), inside, true)).toEqual({ name: 'api', scripts: ['test'], workspace: ['build', 'gen', 'lint', 'test'] })
+        // npm and yarn list their workspaces in package.json.
+        rmSync(join(root, 'pnpm-workspace.yaml'))
+        write('package.json', JSON.stringify({ name: 'monorepo', workspaces: { packages: ['packages/*'] } }))
+        expect(guardPackageManifest(join(root, 'packages/api'), inside, true)).toMatchObject({ workspace: ['build', 'test'] })
+        write('package.json', JSON.stringify({ name: 'monorepo', workspaces: ['../outside/*'] }))
+        expect(guardPackageManifest(join(root, 'packages/api'), inside, true)).toMatchObject({ workspace: null })
+    })
+
     it('names every path a patch file applies to, and none when a header is one it cannot read', () => {
         const root = scratch()
         const patch = (text: string) => { writeFileSync(join(root, 'p.diff'), text); return guardPatchTargets(join(root, 'p.diff')) }
