@@ -211,26 +211,32 @@ modes.
 - **Allows known tools by default.** A command runs when its executable is a development tool the
   guard knows (Git, `gh`, package managers, interpreters running project files, build and test tools,
   read and text utilities, file utilities inside the cockpit, archive and copy tools, `curl`, cockpit),
-  judged by that tool's own rules. A blocked list is refused in every mode and no rule overrides it:
-  secrets (`.env` and `.env.*` files other than documentation names such as `.env.example`, `.secrets`,
-  declared instances, credential stores such as `~/.ssh` and `~/.aws`, credential-printing commands
-  and environment dumps), writes outside the cockpit, force pushes, pushes to protected branches
-  (`main` and `master` by default) and rewriting them, commands that reach a declared host, changes to
-  the guard itself including an agent's own `sync`, and privilege escalation or downloaded code piped
-  to an interpreter. `[guards] default = "ask"` is the strict mode, which asks for every command the
-  guard cannot prove safe.
+  judged by that tool's own rules. A blocked list is refused and no rule overrides it: secrets (`.env`
+  and `.env.*` files other than documentation names such as `.env.example`, `.secrets`, declared
+  instances, credential stores such as `~/.ssh`, `~/.aws` and other tools' logins, credential-printing
+  commands and environment dumps), writes outside the cockpit, force pushes, pushes to protected
+  branches (`main` and `master` by default) and rewriting them, commands that reach a declared host,
+  Git verbs that would overwrite guard files, global tool configuration and installs, `gh` commands
+  that bypass or change branch protection, changes to the guard itself, and privilege escalation or
+  downloaded code piped to an interpreter. An agent may run `sync` where `[autonomy] sync = "agent"`,
+  except for an edit that widens what agents may do, which a person confirms at `sync --interactive`.
+  `[guards] default = "ask"` is the strict mode, which asks for every command the guard cannot prove
+  safe.
 - **Sees** shell commands in all three tools. In Claude Code also its Edit and Write tools, and its
   Read tool through generated deny rules. Those rules also refuse documentation names such as
   `.env.example`, to Read and to a recognized shell read such as `cat` (measured 2026-11-05), so an
   agent reaches them with `cockpit env keys` and `cockpit env schema`. In OpenCode the plugin
   restates its native read, grep and glob as the shell command that reads the same paths.
-- **Asks about what it does not know.** An unknown program and inline interpreter code (`python3 -c`,
-  `node -e`, `find -exec`) ask: a prompt in Claude Code, a refusal in Codex and OpenCode, which have no
-  prompt tier. A person approves or runs the command, or admits the program with a `[guards] allow`
-  rule, which never admits a blocked item. Input it cannot parse is refused.
+- **Asks about what it does not know.** An unknown program and inline code (`python3 -c`, `node -e`,
+  an interpreter reading a script from stdin, `find -exec`, `make --eval`, an `awk` that writes a file)
+  ask: a prompt in Claude Code, a refusal in Codex and OpenCode, which have no prompt tier. A person
+  approves or runs the command, or admits the program with a `[guards] allow` rule, which never
+  admits a blocked item. Input it cannot parse is refused.
 - **Judges what it can see.** It reads command text only. A program an allowed tool runs, such as
-  `node script.js` or a package script, can still read or write anything your account can, so the
-  guard is no sandbox: the boundaries are the tool's own sandbox and server-side branch protection.
+  `node script.js` or a package script, can still read or write anything your account can, and can
+  defeat the guard on purpose. It prevents mistakes, not determined circumvention, so the boundaries
+  are the tool's own sandbox and server-side branch protection, such as a GitHub ruleset on the
+  default branch.
 
 [Safety and autonomy](docs/safety-and-autonomy.md) has the full rules.
 
