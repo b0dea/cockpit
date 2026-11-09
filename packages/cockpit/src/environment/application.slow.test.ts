@@ -285,8 +285,8 @@ describe('guard policy construction', () => {
         expect(await decide(`cat '${inputs}/photo.jpg'`)).toMatchObject({ decision: 'ask' })
         config.guards.read_paths = [{ path: inputs, reason: 'Inputs a person drops in.' }]
         writeFileSync(configPath, stringify(config))
-        // Adding a read path widens what agents may read, so it waits for a person's sync.
-        expect(await decide(`cat '${inputs}/photo.jpg'`)).toMatchObject({ decision: 'unavailable' })
+        // Adding a read path widens what agents may read, so it is not in force until a person's sync.
+        expect(await decide(`cat '${inputs}/photo.jpg'`)).toEqual({ decision: 'ask', reason: expect.stringContaining('has an unapproved edit that widens what agents may do') })
         await sync()
         for (const command of [`cat '${inputs}/photo.jpg'`, `ls '${inputs}'`, `rg -n synthetic '${inputs}/photo.jpg'`]) {
             expect(await decide(command), command).toMatchObject({ decision: 'allow' })
@@ -813,12 +813,16 @@ describe('guard policy construction', () => {
         // An edit that widens it leaves every call judged under the configuration last synced: what that
         // admits still runs, the widened rule is not yet in force, the agent cannot sync it in, and each
         // refusal says a person must.
+        // Under the allow default a grant matters for what still asks, such as a named read outside the cockpit.
+        const outside = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-widened-input-')))
+        scratch.push(outside)
+        writeFileSync(join(outside, 'notes.md'), 'synthetic notes\n')
         const widened = parse(readFileSync(configPath, 'utf8')) as { guards: { allow: unknown[] } }
-        widened.guards.allow.push({ argv: ['make', 'release'], reason: 'Releases are routine.' })
+        widened.guards.allow.push({ argv: ['cat', join(outside, 'notes.md')], cwd: '.', reason: 'Read the selected input.' })
         writeFileSync(configPath, stringify(widened))
         const notice = ` ${canonicalConfig} has an unapproved edit that widens what agents may do (guards.allow); calls are judged under the configuration last synced until a person runs \`${root}/node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${canonicalConfig}\` in a terminal, outside the agent.`
         expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({ decision: { decision: 'allow' }, diagnostics: [] })
-        const release = await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin', payload: shellPayload('make release', root) }, adapters)
+        const release = await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin', payload: shellPayload(`cat ${join(outside, 'notes.md')}`, root) }, adapters)
         expect(release.decision.decision).not.toBe('allow')
         expect(release.decision.reason.endsWith(notice)).toBe(true)
         const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')
