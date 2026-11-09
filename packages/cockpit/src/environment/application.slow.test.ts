@@ -237,14 +237,14 @@ describe('guard policy construction', () => {
         expect(secretDecision, secretDecision.reason).toMatchObject({ decision: 'deny' })
         expect(await decide('git push origin HEAD:main')).toMatchObject({ decision: 'deny' })
         expect(await decide('curl https://db.example.test')).toMatchObject({ decision: 'deny' })
-        // A repository edit cannot activate another grant: it is held until a person syncs it.
+        // A repository edit cannot activate another grant: it is not in force until a person syncs it.
         const other = join(external, 'other.md')
         writeFileSync(other, 'other synthetic notes\n')
         config.guards.allow.push({ argv: ['cat', other], cwd: '.', reason: 'Another selected file.' })
         writeFileSync(configPath, stringify(config))
         const held = await decide(`cat '${other}'`)
-        expect(held.decision).toBe('unavailable')
-        expect(held.reason).toMatch(/cockpit\.toml|sync/)
+        expect(held.decision).not.toBe('allow')
+        expect(held.reason).toContain('has an unapproved edit that widens what agents may do (guards.allow)')
         expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
         const reloaded = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
         const decideSynced = async (command: string) => (await runGuardEvaluationApplication({ identity: reloaded, guardRoot: root, harness, cwd: root,
@@ -810,12 +810,23 @@ describe('guard policy construction', () => {
         expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({
             decision: { decision: 'unavailable' }, diagnostics: [{ code: 'GUARD_CONFIG_UNSYNCED' }],
         })
-        // An edit that widens it holds every call, that sync included, until a human regenerates, and the reason names what widened.
+        // An edit that widens it leaves every call judged under the configuration last synced: what that
+        // admits still runs, the widened rule is not yet in force, the agent cannot sync it in, and each
+        // refusal says a person must.
         const widened = parse(readFileSync(configPath, 'utf8')) as { guards: { allow: unknown[] } }
         widened.guards.allow.push({ argv: ['make', 'release'], reason: 'Releases are routine.' })
         writeFileSync(configPath, stringify(widened))
-        for (const call of [request, sync]) expect(await runGuardEvaluationApplication(call, adapters)).toMatchObject({ decision: { decision: 'unavailable', reason:
-            `${canonicalConfig} changed since the guards were generated and it widens what agents may do (guards.allow); guard policy comes from it and an edit that may widen it takes effect only once a human approves it, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are held, including a sync run through this agent, while file reads and unrestricted MCP tools continue. Fix: a human must run \`${root}/node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${canonicalConfig}\` in a terminal, outside the agent, then retry. If hook definitions changed, close and reopen the agent first.` } })
+        const notice = ` ${canonicalConfig} has an unapproved edit that widens what agents may do (guards.allow); calls are judged under the configuration last synced until a person runs \`${root}/node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${canonicalConfig}\` in a terminal, outside the agent.`
+        expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({ decision: { decision: 'allow' }, diagnostics: [] })
+        const release = await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin', payload: shellPayload('make release', root) }, adapters)
+        expect(release.decision.decision).not.toBe('allow')
+        expect(release.decision.reason.endsWith(notice)).toBe(true)
+        const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')
+        for (const command of [`${launcher} upgrade`, `${launcher} session --config ${canonicalConfig} -- ${launcher} sync --config ${canonicalConfig}`]) {
+            expect((await runGuardEvaluationApplication({ ...sync, payload: shellPayload(command, root) }, adapters)).decision.reason, command).toMatch(/^Refusing to run cockpit (sync|upgrade)/)
+        }
+        expect(await runGuardEvaluationApplication(sync, adapters)).toMatchObject({ decision: { decision: 'deny',
+            reason: `Refusing to run cockpit sync while ${canonicalConfig} has an unapproved edit that widens what agents may do: a person reviews it and syncs.${notice}` } })
     }, 120_000)
 
     it('admits only the exact restoration of the recorded configuration out of a hold sync cannot clear', async () => {
@@ -883,11 +894,11 @@ describe('guard policy construction', () => {
         expect(await decision(write(recorded))).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('machine-local record') })
         writeFileSync(localIdentity, localBytes)
 
-        // Restoring out of a widening edit is a person's, as every other call there is.
+        // Out of a widening edit, calls are judged under the recorded configuration, so restoring it is admitted too.
         const widened = parse(recorded) as { guards: { allow: unknown[] } }
         widened.guards.allow.push({ argv: ['make', 'release'], reason: 'Releases are routine.' })
         writeFileSync(configPath, stringify(widened))
-        expect(await decision(write(recorded))).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('widens what agents may do') })
+        expect(await decision(write(recorded))).toMatchObject({ decision: 'allow' })
     }, 120_000)
 
     it.each([

@@ -70,7 +70,7 @@ import {
     withSetupCheckoutProjection,
     type SetupCheckoutObservation,
 } from '../setup-observation.js'
-import { browserPreapprovalRequested, loadCockpitConfig, consumeLoadedConfigProjection, parseCockpitConfigBytes, STRUCTURED_INPUT_BYTE_LIMIT, type LoadedConfigProjection } from '../../config/load.js'
+import { browserPreapprovalRequested, loadCockpitConfig, consumeLoadedConfigProjection, parseCockpitConfigBytes, STRUCTURED_INPUT_BYTE_LIMIT, withRecordedDeclarations, type LoadedConfigProjection } from '../../config/load.js'
 import { deriveRegistry } from '../../registry-derivation.js'
 import { confinedPath, lifecycleRefusal, ownDataValues, sameSource } from './shared.js'
 import { readSiblingCheckouts, servedSiblings, type ServedSibling, type SiblingCheckoutRecordRead } from '../sibling-checkouts.js'
@@ -181,10 +181,17 @@ export async function runGuardEvaluationApplication(
     input: GuardEvaluationApplicationInput,
     adapters: GuardEvaluationApplicationAdapters,
 ): Promise<GuardEvaluationApplicationResult> {
-    const unavailable = (reason: string): GuardEvaluationApplicationResult => ({
-        decision: { decision: 'unavailable', reason },
-        diagnostics: [{ severity: 'error', code: 'GUARD_AUTHORITY_UNAVAILABLE', message: reason, target: 'guard' }],
-    })
+    // Set once the configuration on disk is known to carry a widening edit; every refusal after that ends with it.
+    let notice = ''
+    const unavailable = (stated: string): GuardEvaluationApplicationResult => {
+        const reason = stated + notice
+        return { decision: { decision: 'unavailable', reason }, diagnostics: [{ severity: 'error', code: 'GUARD_AUTHORITY_UNAVAILABLE', message: reason, target: 'guard' }] }
+    }
+    const refused = (decision: GuardDecision): GuardEvaluationApplicationResult => {
+        if (decision.decision === 'allow') return { decision, diagnostics: [] }
+        const reason = decision.reason + notice
+        return { decision: { ...decision, reason }, diagnostics: [{ severity: 'error', code: 'GUARD_REFUSED', message: reason, target: 'guard' }] }
+    }
     try {
         const data = ownDataValues(snapshotJson(input), ['cwd', 'guardRoot', 'harness', 'identity', 'payload'], ['askIsDeny', 'ripgrepConfigActive', 'searchPath'])
         if (!data
@@ -317,19 +324,29 @@ export async function runGuardEvaluationApplication(
             const authenticated = await authenticatePublication(settle(readPublication(publicationRequests.filter(request => request.path !== configName))), recordedConfig.cockpit.name)
             return authenticated.held ?? restored
         }
-        // Every check below runs against the configuration on disk; an edit since sync is admitted
-        // only when it does not widen the one the guards were generated from, and then only for sync.
+        // Every check below runs against the configuration on disk. An edit since sync that does not
+        // widen the one the guards were generated from is admitted only for sync. One that widens is not
+        // applied: calls are judged under the declarations last synced, which the recorded copy holds,
+        // and only a person may sync it in. Holding every call instead stopped the agent each time
+        // someone added an allow rule, though continuing under the approved policy grants nothing new.
         const configSha256 = loaded.result.source.sha256
         const unsynced = configSha256 !== identity.configSha256
+        let declared: LoadedConfigProjection = loaded.result
         if (unsynced) {
             const [recorded, confirmations] = await Promise.all([anchored(GUARD_LOCAL_PATHS.generatedConfig), anchored(ANSWER_CONFIRMATION_PATH)])
             const change = guardConfigChange(identity.configSha256, recorded.kind === 'complete' ? recorded.bytes : undefined,
                 { sha256: configSha256, config: loaded.result.config }, confirmations.kind === 'complete' ? confirmations.bytes : undefined)
-            if (change.kind === 'widening' || change.kind === 'unrecorded') return unavailable(guardHeld(identity,
+            const approved = change.kind === 'widening' && recorded.kind === 'complete' ? withRecordedDeclarations(loaded.result, recorded.bytes) : undefined
+            if (change.kind === 'unrecorded' || change.kind === 'widening' && !approved) return unavailable(guardHeld(identity,
                 `${identity.configPath} changed since the guards were generated and ${guardConfigHeldReason(change)}`,
                 'guard policy comes from it and an edit that may widen it takes effect only once a human approves it'))
+            if (change.kind === 'widening' && approved) {
+                declared = approved
+                notice = ` ${identity.configPath} has an unapproved edit that widens what agents may do (${change.fields.join(', ')}); calls are judged under the configuration last synced until a person runs \`${installedSyncCommand(identity.root, identity.configPath)}\` in a terminal, outside the agent.`
+            }
         }
-        const config = loaded.result.config
+        const widening = notice !== ''
+        const config = declared.config
         const authenticated = await authenticatePublication(publicationPending, config.cockpit.name)
         if (authenticated.held) return authenticated.held
         const { publication, manifestRead, published } = authenticated
@@ -347,10 +364,10 @@ export async function runGuardEvaluationApplication(
         if (configRead.sha256 !== configSha256) return unavailable('Guard configuration changed during evaluation.')
         const configText = configRead.bytes.toString('utf8')
         const restoring = unsynced && restoresRecordedConfiguration(parsed, configText, identity.configPath, identity.configSha256)
-        const prepared = await prepareGuardEvaluationPolicy({ configuration: loaded.result, checkout }, checkoutsPending.then(unwrap))
+        const prepared = await prepareGuardEvaluationPolicy({ configuration: declared, checkout }, checkoutsPending.then(unwrap))
         if (prepared.kind !== 'complete') {
             if (restoring) return restored
-            return unsynced
+            return unsynced && !widening
                 ? unsyncedHold(identity, `, but the guard cannot build its policy from it (${prepared.diagnostics[0]?.message ?? 'no reason given'})`)
                 : unavailable(checkout.state === 'available'
                     ? `Guard policy authority could not be authenticated: ${prepared.diagnostics[0]?.message ?? 'no reason given'}`
@@ -530,7 +547,10 @@ export async function runGuardEvaluationApplication(
             const inner = proven && ordinarySessionCommand(argv.slice(proven.prefix), cwd, configured)
             if (inner) prove(inner[0]!, cwd, inner.slice(1), false)
         }
-        if (unsynced && !restoring && !(parsed.tool === 'Bash' && parsed.invocations.length > 0 && parsed.invocations.every(invocation => launched.some(entry =>
+        // Sync or upgrade would apply a widening edit, and the person reviews that edit first.
+        const applying = widening ? launched.find(entry => ['sync', 'upgrade'].includes(commandSpelling(entry.argv.slice(entry.prefix)).name ?? '')) : undefined
+        if (applying) return refused({ decision: 'deny', reason: `Refusing to run cockpit ${commandSpelling(applying.argv.slice(applying.prefix)).name} while ${identity.configPath} has an unapproved edit that widens what agents may do: a person reviews it and syncs.` })
+        if (unsynced && !widening && !restoring && !(parsed.tool === 'Bash' && parsed.invocations.length > 0 && parsed.invocations.every(invocation => launched.some(entry =>
             entry.session && entry.executable === invocation.executable && entry.cwd === invocation.cwd
             && isDeepStrictEqual(entry.argv, invocation.argv) && UNSYNCED_ADMITTED_COMMANDS.some(name => name === commandSpelling(entry.argv.slice(entry.prefix)).name))))) return unsyncedHold(identity, '')
         let launcherSha256: string | undefined
@@ -570,7 +590,7 @@ export async function runGuardEvaluationApplication(
         }
         // Restoring removes whatever the edit added, including a restriction the pin would otherwise keep.
         const pinned = restoring ? undefined : pinnedPolicyDenial(parsed, configText, isConfig)
-        if (pinned) return { decision: pinned, diagnostics: [{ severity: 'error', code: 'GUARD_REFUSED', message: pinned.reason, target: 'guard' }] }
+        if (pinned) return refused(pinned)
         const decision = evaluateGuard(parsed, { ...prepared.result.policy, cockpitInvocations,
             mcpAllowedTools: config.mcp.allowed_tools,
             cockpitLaunchers: launched.map(({ executable, cwd, argv, prefix }) => ({ executable, cwd, argv: argv.slice(0, prefix) })),
@@ -592,7 +612,7 @@ export async function runGuardEvaluationApplication(
         }
         if ((await read(dirname(identity.module), basename(identity.module), 16_777_216)).sha256 !== identity.moduleSha256) return unavailable('Guard handler changed during evaluation.')
         if (launcherSha256 && (await read(dirname(launcher), basename(launcher), 65_536)).sha256 !== launcherSha256) return unavailable('Guard ordinary command executable changed during evaluation.')
-        return { decision, diagnostics: decision.decision === 'allow' ? [] : [{ severity: 'error', code: 'GUARD_REFUSED', message: decision.reason, target: 'guard' }] }
+        return refused(decision)
     } catch (error) {
         if (error instanceof CallPathUnreadable) return unavailable(error.message)
         return unavailable(`Guard authority could not be read or revalidated: ${errorCause(error)}`)

@@ -1,6 +1,7 @@
-// Owns whether an edit of cockpit.toml widens what agents may do. The guard holds every guarded call
-// once the configuration differs from the one it was generated from; this classification decides
-// whether that hold needs a person (the edit widens) or only a sync an agent may run (it does not).
+// Owns whether an edit of cockpit.toml widens what agents may do. Once the configuration differs from
+// the one the guards were generated from, this classification decides whether only a sync an agent may
+// run is needed (the edit does not widen, and the guard holds calls until it runs) or a person must
+// review and sync it (it widens, and the guard keeps judging calls under the configuration last synced).
 // It fails closed: a field with no rule here widens whenever it changes, so a field added to the
 // schema later is a person's decision until someone writes down why it is not. A rule exists only
 // for a field that cannot widen the guard's trust inputs (the commands agents run unprompted, the
@@ -224,6 +225,8 @@ export async function inspectGuardConfigChange(root: string, configPath: string,
         fix: `run ${cockpitCommand('sync', { config: configPath })}; an agent may run it where [autonomy] sync = "agent". If sync refuses the edit, undo it: the guard admits one edit of ${configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}; ${GUARD_RESTORE_LIMIT}` }]
     return [{ severity: 'error' as const, target: 'guard',
         code: 'GUARD_CONFIG_WIDENED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_WIDENED,
-        message: `cockpit.toml changed since the guards were generated and ${guardConfigHeldReason(change)}; the guard holds ${GUARD_HELD_CALLS} until a person syncs, while ${GUARD_UNHELD_CALLS} continue`,
+        message: `cockpit.toml changed since the guards were generated and ${guardConfigHeldReason(change)}; ${change.kind === 'widening'
+            ? 'the guard judges agent calls under the configuration last synced, and refuses an agent\'s sync or upgrade, until a person syncs'
+            : `the guard holds ${GUARD_HELD_CALLS} until a person syncs, while ${GUARD_UNHELD_CALLS} continue`}`,
         fix: `a person reads the change and runs ${cockpitCommand('sync', { config: configPath })} in a terminal outside the agent, or the change is reverted` }]
 }
