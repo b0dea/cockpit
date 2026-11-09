@@ -328,13 +328,14 @@ describe('reference pages', () => {
         // run of the real tool showed a refusal, and Codex's holds only once a person trusts the hook.
         // Every tool stays in the matrix; the unmeasured ones are written only when listed. The session-start
         // check is generated only where a dated run saw the hook fire and reach the agent. The evaluator
-        // subagent is instructed only where a dated run saw the tool offer the generated definition.
-        expect(matrix).toContain('| Tool | Written | Guard firing | Instruction loading | Skills | Session-start check | Evaluator subagent | Remote MCP servers | MCP tool restrictions | Worktree grants |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
-            + '| Claude Code (`claudecode`) | by default | enforced | instructed | instructed | instructed | enforced | instructed (needs a person) | enforced (needs a person) | enforced |\n'
-            + '| Codex (`codexcli`) | by default | enforced (needs a person) | instructed | instructed | instructed (needs a person) | instructed | instructed | enforced | unavailable |\n'
-            + '| OpenCode (`opencode`) | by default | enforced | instructed | instructed | unavailable | instructed | instructed | unavailable | enforced |\n'
-            + '| Cursor (`cursor`) | when listed | unavailable | generated | generated | unavailable | generated | unavailable | unavailable | unavailable |\n'
-            + '| Grok Build (`grokcli`) | when listed | unavailable | generated | generated | unavailable | generated | unavailable | unavailable | unavailable |\n')
+        // subagent is instructed only where a dated run saw the tool offer the generated definition. Guard
+        // files are protected from the shell only where the tool's own sandbox refused a program's write.
+        expect(matrix).toContain('| Tool | Written | Guard firing | Instruction loading | Skills | Session-start check | Evaluator subagent | Remote MCP servers | MCP tool restrictions | Worktree grants | Guard files: file tools | Guard files: shell |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
+            + '| Claude Code (`claudecode`) | by default | enforced | instructed | instructed | instructed | enforced | instructed (needs a person) | enforced (needs a person) | enforced | enforced | enforced (needs a person) |\n'
+            + '| Codex (`codexcli`) | by default | enforced (needs a person) | instructed | instructed | instructed (needs a person) | instructed | instructed | enforced | unavailable | unavailable | unavailable |\n'
+            + '| OpenCode (`opencode`) | by default | enforced | instructed | instructed | unavailable | instructed | instructed | unavailable | enforced | enforced | unavailable |\n'
+            + '| Cursor (`cursor`) | when listed | unavailable | generated | generated | unavailable | generated | unavailable | unavailable | unavailable | unavailable | unavailable |\n'
+            + '| Grok Build (`grokcli`) | when listed | unavailable | generated | generated | unavailable | generated | unavailable | unavailable | unavailable | unavailable | unavailable |\n')
         expect(section('Without a measurement')).toContain('- Remote MCP servers in Cursor and Grok Build: cockpit writes no remote MCP server for this tool')
         expect(section('Measurements')).toMatch(/^- Codex, guard firing \(\d{4}-\d{2}-\d{2}, version [^)]+\): only after a person trusts the hook: [^\n]+\.$/m)
         expect(section('Measurements')).toMatch(/^- Codex, MCP tool restrictions \(\d{4}-\d{2}-\d{2}, version [^)]+\): [^\n]+No hook trust was granted\.$/m)

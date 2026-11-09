@@ -8,6 +8,7 @@ import { hasTargetMcpServers, type McpCollectionOutcome, type McpHarnessServer }
 import { codexWritableRoot, shippedInstructionCapabilities } from '../../surfaces/projection.js'
 import { surfaceModelSha256, type NativeFragmentSet } from '../../surfaces/render.js'
 import { GUARD_LOCAL_PATHS } from '../../guards/local-identity.js'
+import { claudeGuardFileDenials, openCodeGuardFileDenials } from '../../surfaces/guard-file-protection.js'
 import { RefusalError, tryParseJson } from '../contract.js'
 import { compareCodeUnits, ownRecord, sha256 } from './shared.js'
 
@@ -297,6 +298,7 @@ export function nativeSources(
         claudecode: {
             permission: {
                 read: Object.fromEntries(claudeReadDenials(siblings, instances).map(rule => [rule, 'deny'])),
+                edit: Object.fromEntries(claudeGuardFileDenials().map(rule => [rule, 'deny'])),
                 bash: claudeCommandAllowances(),
             },
             permissions: { additionalDirectories: paths('claudecode') },
@@ -380,9 +382,10 @@ export function nativeGrantFragmentSet(
         }
         const externalDirectory = openCodeExternalDirectories(grants)
         const read = Object.fromEntries(openCodeReads.map(rule => [rule, 'deny']))
+        const edit = Object.fromEntries(openCodeGuardFileDenials().map(rule => [rule, 'deny']))
         // OpenCode writes `$schema` into a project config that lacks it at every start, which put an
         // unowned member before the owned region; supplying OpenCode's exact value leaves it untouched.
-        const bytes = `${JSON.stringify({ $schema: OPENCODE_CONFIG_SCHEMA, ...base, permission: { external_directory: externalDirectory, read } }, null, 2)}\n`
+        const bytes = `${JSON.stringify({ $schema: OPENCODE_CONFIG_SCHEMA, ...base, permission: { external_directory: externalDirectory, read, edit } }, null, 2)}\n`
         return { target: target as SurfaceTarget, path, baseSha256: row?.sha256 ?? sha256(''), bytes, sha256: sha256(bytes) }
     })
     if (fragments.some(fragment => fragment === undefined)) return undefined

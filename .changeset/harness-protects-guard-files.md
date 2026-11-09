@@ -1,0 +1,5 @@
+---
+"@b00dea/cockpit": patch
+---
+
+`sync` now writes each agent tool's own write denials for the files the guard depends on: the guard script, its machine-local identity, the accepted policy, every hook registration, plugin and native configuration file, and `.git/hooks` and `.git/config` in the cockpit and every sibling. Claude Code gets `Edit(...)` deny rules in `.claude/settings.json`, which its edit tools and shell redirects honour; OpenCode gets `edit` deny patterns in `opencode.jsonc`. `cockpit.toml` stays writable, and a person's `sync` and `upgrade` rewrite these files as before. A program run from the shell is refused only where the tool's sandbox covers the path: Codex's sandbox already keeps `.codex` and `.git` read-only, and Claude Code's sandbox, which a team turns on through its adopted settings, adds the same denials. The capability matrix records each tool's measured result, including what stays unprotected. OpenCode's permission block, including its secrets read denial, is now written even when no sibling is granted to OpenCode; before, a cockpit without one got neither.

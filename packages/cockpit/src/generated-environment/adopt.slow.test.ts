@@ -21,8 +21,10 @@ afterEach(async () => {
 })
 
 // A team's own Claude settings: a formatter hook and permission rules cockpit knows nothing about.
+// A team that turns on Claude Code's sandbox does so here; cockpit writes no sandbox key of its own.
 const TEAM_SETTINGS = `${JSON.stringify({
     permissions: { allow: ['Bash(npm run lint)'], deny: ['Read(./.env)'] },
+    sandbox: { enabled: true, allowUnsandboxedCommands: false },
     hooks: { PostToolUse: [{ matcher: 'Edit|Write', hooks: [{ type: 'command', command: 'npm run format' }] }] },
 }, null, 2)}\n`
 
@@ -77,7 +79,11 @@ describe('sync --adopt', () => {
         const merged = JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8'))
         // The team's rules are kept beside cockpit's command allowances and native read denials, not replaced by them.
         expect(merged.permissions).toMatchObject({ allow: expect.arrayContaining(['Bash(npm run lint)', 'Bash(npx --no cockpit test-run *)']),
-            deny: ['Read(//**/.env)', 'Read(//**/.env.*)', 'Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(./.env)'] })
+            deny: expect.arrayContaining(['Edit(/.cockpit/guards/bash-guard.sh)', 'Edit(//**/.git/hooks/**)']) })
+        expect(merged.permissions.deny.filter((rule: string) => rule.startsWith('Read('))).toEqual(['Read(//**/.env)', 'Read(//**/.env.*)', 'Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(./.env)'])
+        // The sandbox merges cockpit's Edit denials into its own write denials, which is what makes the
+        // guard files unwritable to the shell, so the team's sandbox key must survive the merge.
+        expect(merged.sandbox).toEqual(JSON.parse(TEAM_SETTINGS).sandbox)
         expect(merged.hooks.PostToolUse).toEqual(JSON.parse(TEAM_SETTINGS).hooks.PostToolUse)
         expect(JSON.stringify(merged.hooks.PreToolUse)).toContain('.cockpit/guards/bash-guard.sh')
         expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })

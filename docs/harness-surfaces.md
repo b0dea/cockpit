@@ -195,7 +195,9 @@ its `.bin` shell shim remains unproven by the guard. Commands that are
 always a person's, such as `init` and `sibling add`, have no rule. A command the policy decides,
 such as `sync`, has one: the guard hook still runs first, and its ask or deny wins. Claude Code
 ignores a project's allow rules until a person has trusted the workspace by starting Claude Code
-there once. Measured with Claude Code 2.1.316 on 2026-11-02 beside a command with no rule.
+there once. Measured with Claude Code 2.1.316 on 2026-11-02 beside a command with no rule. The same
+file denies `Edit(...)` on the [guard files](safety-and-autonomy.md#guard-files-and-the-agent-tool);
+deny rules apply in an untrusted workspace too.
 
 OpenCode allows shell commands unless configured otherwise, and Codex runs them inside its sandbox
 without asking, so cockpit writes no command rules for either.
@@ -206,7 +208,11 @@ OpenCode's native `read`, `grep` and `glob` tools never reach a shell, so the ge
 restates each as the shell command that reads at least the same paths (`cat`, a recursive `grep`,
 `ls`) and asks the guard about that. A refusal names the restated command, so an agent can narrow a
 search. The generated `opencode.jsonc` also denies OpenCode's `read` permission for every `.secrets`
-directory and each declared instance, which holds even if the plugin does not load. It carries the
+directory and each declared instance, which holds even if the plugin does not load, and its `edit`
+permission for the [guard files](safety-and-autonomy.md#guard-files-and-the-agent-tool). OpenCode
+merges these patterns into a person's own `read` or `edit` patterns, but they replace a single value:
+a personal `"edit": "ask"` is lost, while `"edit": { "*": "ask" }` keeps asking for every other path
+(OpenCode 1.19.5's resolved configuration, checked with `opencode debug config` on 2026-11-09). It carries the
 `$schema` member OpenCode would otherwise insert at every start, which made later checks report
 `SURFACE_STATE_CONFLICT`.
 

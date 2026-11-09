@@ -80,10 +80,11 @@ Limits, stated plainly:
   drive `sync --interactive` through a pseudo-terminal, which makes sync's refusal of a terminal
   confirmation inside an agent session advisory. The guard prevents mistakes; it does not stop a
   determined circumvention.
-- The boundaries that hold against that are the harness's own sandbox (Codex's workspace-write mode,
-  Claude Code's sandbox) and server-side branch protection, such as a GitHub ruleset on the default
-  branch. The guard is not a sandbox. `gh pr merge` asks because merging is a person's or CI's
-  decision; the ruleset is what enforces it.
+- The boundaries that hold against that are the agent tool's own permissions and sandbox, which
+  `sync` points at the files the guard depends on ([Guard files and the agent tool](#guard-files-and-the-agent-tool)),
+  and server-side branch protection, such as a GitHub ruleset on the default branch. The guard is not
+  a sandbox. `gh pr merge` asks because merging is a person's or CI's decision; the ruleset is what
+  enforces it.
 - `git pull --ff-only` is judged against the remote-tracking ref as last fetched. The pull fetches
   first, so what it merges can be newer than what the guard checked.
 - A Git command that needs repository facts, such as a push or a merge, asks when it runs after
@@ -91,8 +92,9 @@ Limits, stated plainly:
 - Sync binds the guard to the cockpit that runs it, which is why it refuses to run from a copy
   ([Cockpit commands an agent can run](#cockpit-commands-an-agent-can-run)).
 - Codex skips a `hooks.json` it no longer trusts. A script that rewrites `.codex/hooks.json` makes the
-  hook untrusted, and the guard stops running until a person trusts the hooks again; cockpit has not
-  measured a native protection for that file.
+  hook untrusted, and the guard stops running until a person trusts the hooks again. Codex's own
+  sandbox keeps `.codex` read-only to a Codex agent; an agent in another tool can still rewrite it
+  where that tool's protection does not cover the shell.
 - What a harness does when its hook timeout fires is not measured. The guard keeps its own 25-second
   deadline and refuses at it ([Native adapter behavior](#native-adapter-behavior)).
 
@@ -248,6 +250,47 @@ not establish that a harness runs its generated hooks or that an integration wor
 same protected-path checks. For a configuration in a repository subdirectory, these controls belong
 to that directory. Start Codex there: its generated hook resolves the guard from the canonical
 session directory, not from an enclosing Git repository.
+
+### Guard files and the agent tool
+
+The guard judges command text, so a program it does not understand, such as an inline script, can
+still rewrite the files it depends on. `sync` therefore also writes each agent tool's own write
+denials for them: every guard control above (the guard script, `.cockpit/local`, `.cockpit/policy.json`,
+the ownership manifest, every hook registration, plugin and native MCP or permission file, the MCP
+wrappers, the work-order records and the adopted copies), the root secrets directory, and
+`.git/hooks` and `.git/config` in the cockpit and in every sibling, which choose programs Git runs
+outside any agent tool. `cockpit.toml` is not one of them: agents edit it, and the guard judges
+whether an edit [widens what agents may do](#edits-the-guard-has-not-applied). These denials apply
+to the agent tool only; `sync` and `upgrade` run by a person in a terminal rewrite the files as
+before. What each tool enforced is dated in the [capability matrix](capability-matrix.md):
+
+| Tool | What `sync` writes | Edit and write tools | Shell |
+| --- | --- | --- | --- |
+| Claude Code | `Edit(...)` deny rules in `.claude/settings.json` | refused | a redirect or `cp` into a denied path is refused; any other program writes unless Claude Code's sandbox is on |
+| Codex | nothing more: the sandbox settings it writes have no read-only path | inside its `workspace-write` sandbox, `.codex` and every `.git` refused; `.cockpit` written | the same |
+| OpenCode | `edit` deny patterns in `opencode.jsonc` | refused | written: OpenCode has no sandbox, and its `bash` permission matches command text as the guard does |
+
+**Claude Code's sandbox** closes the shell gap: with `sandbox.enabled` and
+`allowUnsandboxedCommands: false`, Claude Code adds the `Edit(...)` denials to the sandbox's own
+write denials, and a program run from the shell was refused each protected write. cockpit does not
+turn the sandbox on, because it changes every shell command the agent runs, with limits of its own
+that Claude Code documents, and cockpit commands an agent runs that write these files, such as `sync`
+and the `work` commands, fail inside it. A team
+that wants the sandbox adds the `sandbox` key to its
+[adopted settings](getting-started.md#adopt-existing-agent-settings), which cockpit keeps beside its
+own, and runs those commands from a terminal:
+
+```json
+{ "sandbox": { "enabled": true, "allowUnsandboxedCommands": false } }
+```
+
+**Codex.** The `workspace-write` sandbox, which the generated `.codex/config.toml` selects once a
+sibling is granted to Codex, keeps `.codex` and `.git` read-only in the cockpit and every granted
+sibling, so a Codex agent cannot rewrite its hook registration or a Git hook, but it can rewrite the
+guard script and the rest of `.cockpit`. Without a grant, Codex runs in whichever sandbox the person
+configured. A Codex permission profile can name read-only
+paths, but cockpit has not yet shown a Codex session loading one from the project file, so it writes
+none.
 
 ### Destinations, sources and links
 
