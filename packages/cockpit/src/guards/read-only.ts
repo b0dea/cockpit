@@ -46,6 +46,8 @@ interface OptionTable {
     readonly exclusionValues?: ReadonlySet<string>
     /** Short flags that may be clustered, as in `-in`. */
     readonly cluster?: RegExp
+    /** A short option whose count is optional and only ever attached, as in `-C3`. */
+    readonly optionalCount?: RegExp
 }
 
 const set = (...values: string[]) => new Set(values)
@@ -72,6 +74,8 @@ function parseOptions(argv: readonly string[], table: OptionTable): Options | un
             if (table.fileValues?.has(name)) files.push(value)
             present.add(name)
         } else if (long && table.attachedOnly?.has(name)) present.add(name)
+        // BSD grep's `-C` takes an optional count, only ever attached, so a bare `-C` never takes the next word.
+        else if (table.optionalCount?.test(word)) present.add(word.slice(0, 2))
         else if (equals < 0 && table.flags.has(word)) present.add(word)
         else if (equals < 0 && table.cluster?.test(word)) for (const flag of word.slice(1)) present.add(`-${flag}`)
         else return undefined
@@ -103,6 +107,7 @@ const GREP: OptionTable = {
     // BSD grep, the macOS default, takes `-C` and `--context` values only attached, unlike GNU grep.
     attachedOnly: set('--color', '--colour', '--context'),
     cluster: /^-[iIvwxclLnhHoqsrRFEGPaZz]+$/,
+    optionalCount: /^-C\d*$/,
 }
 // Hidden, ignored, compressed and symlink-following searches widen what is read past what the
 // declared protections can see, and `--pre` and `--hostname-bin` run programs, so none is listed.
@@ -167,9 +172,12 @@ function search(argv: readonly string[], table: OptionTable, recursiveByDefault:
     return recursive ? { reads: parsed.files, trees: paths, listings: [] } : { reads: [...parsed.files, ...paths], trees: [], listings: [] }
 }
 
-// Only `p` commands on line-number or last-line addresses: any other sed command can write (`w`),
-// read another file (`r`), run a program (GNU `e`) or edit in place (`-i`).
-const SED_PRINT = /^(?:\d+|\$)(?:,(?:\d+|\$))?p(?:;(?:\d+|\$)(?:,(?:\d+|\$))?p)*$/
+// Only `p` and `d` commands on line-number, last-line or pattern addresses, and `s` substitutions whose
+// flags neither write (`w`) nor run the result (GNU `e`): any other sed command can write (`w`), read
+// another file (`r`), run a program (GNU `e`) or edit in place (`-i`).
+const SED_ADDRESS = String.raw`(?:\d+|\$|/(?:[^/\\]|\\.)*/I?)`
+const SED_COMMAND = String.raw`(?:${SED_ADDRESS}(?:,${SED_ADDRESS})?[pd]|s/(?:[^/\\]|\\.)*/(?:[^/\\]|\\.)*/[gpiI0-9]*)`
+const SED_PRINT = new RegExp(String.raw`^${SED_COMMAND}(?:;${SED_COMMAND})*$`)
 
 function sed(argv: readonly string[]): Classified {
     const scripts: string[] = []
@@ -204,6 +212,22 @@ function jq(argv: readonly string[]): Classified {
 }
 
 const GIT_READ_VERBS = set('status', 'diff', 'log', 'show')
+const GIT_GREP: OptionTable = {
+    flags: set('--line-number', '--ignore-case', '--word-regexp', '--invert-match', '--count', '--files-with-matches', '--name-only', '--files-without-match',
+        '--extended-regexp', '--fixed-strings', '--basic-regexp', '--perl-regexp', '--full-name', '--heading', '--break', '--show-function', '--column', '--only-matching',
+        '--quiet', '--null', '--all-match', '--and', '--or', '--not', '--cached', '-I', '--recursive'),
+    values: set('-e', '-f', '-A', '-B', '-C', '--after-context', '--before-context', '--context', '-m', '--max-count', '--max-depth'),
+    fileValues: set('-f'),
+    countValues: set('-A', '-B', '-C', '--after-context', '--before-context', '--context', '-m', '--max-count', '--max-depth'),
+    attachedOnly: set('--color', '--colour'),
+    cluster: /^-[nivwclLhHEFGPzqoW]+$/,
+}
+const GIT_BLAME: OptionTable = {
+    flags: set('-w', '-s', '-l', '-t', '-n', '-f', '-e', '-p', '-c', '-b', '--porcelain', '--line-porcelain', '--incremental', '--root', '--show-name', '--show-number',
+        '--show-email', '--show-stats', '--minimal', '-M', '-C'),
+    values: set('-L', '--date', '--since'),
+    attachedOnly: set('--abbrev', '--color-lines', '--color-by-age'),
+}
 const GIT_BRANCH_LIST = set('--list', '-l', '-a', '--all', '-r', '--remotes', '-v', '-vv', '--verbose', '--show-current')
 const GIT_CONFIG_SECTIONS = set('user', 'core', 'init', 'pull', 'push', 'merge', 'rebase', 'commit', 'tag', 'fetch', 'status', 'log', 'diff', 'color', 'advice', 'safe', 'gpg')
 // Scope and display only: `--file` and `--blob` read other input, and the rest write or list.
@@ -288,6 +312,29 @@ function git(argv: readonly string[], cwd: string): ReadOnlyAccess | undefined {
         const [mode, object, ...rest] = args
         if (!['-t', '-s', '-e', '-p'].includes(mode ?? '') || object === undefined || object.startsWith('-') || object.includes(':') || rest.length) return undefined
         return { cwd: directory, reads: [], trees: [], listings: [], requires, ...(mode === '-p' ? { trackedContent: { limitedTo: null } } : {}) }
+    }
+    // grep prints matching lines of tracked files, and blame one tracked file's lines: committed content,
+    // limited to the pathspecs after `--` or the blamed file. `--untracked` and `--no-index` read files
+    // the index does not hold, and `-O` and `--textconv` run programs, so neither table lists them.
+    if (verb === 'grep') {
+        const parsed = parseOptions(args, GIT_GREP)
+        const end = args.indexOf('--')
+        const pathspecs = end < 0 ? null : args.slice(end + 1)
+        if (!parsed || pathspecs?.some(spec => spec.startsWith(':') || /[*?[\\]/.test(spec))) return undefined
+        return { cwd: directory, reads: parsed.files, trees: [], listings: [], requires, trackedContent: { limitedTo: pathspecs?.length ? pathspecs : null } }
+    }
+    if (verb === 'blame') {
+        const parsed = parseOptions(args, GIT_BLAME)
+        const file = parsed?.positionals.at(-1)
+        if (!parsed || file === undefined || parsed.positionals.length > 2 || file.includes(':')) return undefined
+        return { cwd: directory, reads: [file], trees: [], listings: [], requires, revisionOperands: true, trackedContent: { limitedTo: [file] } }
+    }
+    // `git show REV:PATH` prints one committed file, judged by its path; the work tree's top is the
+    // working directory, which `requires` proves, so the path resolves from there.
+    if (verb === 'show' && args.length === 1 && /^[^-:][^:]*:[^:/]/.test(args[0]!) && !/(?:^|[^\w])stash(?:@|$|\^|~|:)/.test(args[0]!)) {
+        const file = args[0]!.slice(args[0]!.indexOf(':') + 1)
+        if (/^\.\.?(?:\/|$)/.test(file) || /[*?[\\]/.test(file)) return undefined
+        return { cwd: directory, reads: [file], trees: [], listings: [], requires, revisionOperands: true, trackedContent: { limitedTo: [file] } }
     }
     if (verb === undefined || !GIT_READ_VERBS.has(verb)) return undefined
     // --output writes a file, an external diff driver runs a program, and --no-index prints any file.

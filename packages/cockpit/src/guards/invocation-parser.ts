@@ -236,6 +236,7 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
         // unless it forms a brace expansion, which the word loop expands.
         const operator = /^(?:&&|\|\||<<-|<<|>>|>&|<&|<>|>\||[;&|<>()]|[{}](?=[ \t\n;&|<>()]|$))/.exec(command.slice(index))?.[0]
         if (operator) {
+            if (command.startsWith('<<<', index)) refuse('Here-strings (<<<) are unsupported. Pipe the text instead: `printf \'%s\\n\' "<text>" | <command>`.')
             if (awaitingDocument !== undefined) refuse('Missing heredoc delimiter.')
             index += operator.length
             if (nested && operator === ')' && !parens--) {
@@ -440,7 +441,7 @@ const launchers: Readonly<Record<string, Launcher>> = {
     npx: { plain: ['--no', '--yes', '-y'], values: ['-p', '--package'], fetches: true }, 'npm exec': npmExec, 'npm x': npmExec,
     'pnpm exec': {}, 'pnpm dlx': { values: ['--package'], fetches: true }, pnpx: { fetches: true },
     'yarn exec': { anywhere: true }, 'yarn dlx': { anywhere: true, fetches: true }, bunx, 'bun x': bunx, 'bun run': { plain: ['--bun', '-b', '--silent'] },
-    uvx: { values: ['--from'] }, 'uv tool run': { values: ['--from'] }, 'uv run': {}, 'poetry run': {}, 'pipenv run': {},
+    uvx: { values: ['--from'] }, 'uv tool run': { values: ['--from'] }, 'uv run': {}, 'poetry run': {}, 'pipenv run': {}, 'bundle exec': {},
 }
 // The subcommand words of each manager above that launch a program.
 const launcherVerbs = new Map<string, Set<string>>()
