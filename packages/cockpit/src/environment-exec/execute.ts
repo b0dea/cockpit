@@ -430,6 +430,20 @@ async function filesystemChecksPass(checks: readonly FilesystemCheck[]): Promise
     return true
 }
 
+/**
+ * Which bound input of a step refused as EXECUTION_PRECONDITION_CHANGED fails now, re-checked with
+ * the executor's own checks so a caller can name it: a filesystem check or consumed file by path, or
+ * the dispatch window. Undefined when every input matches again. It authorizes nothing; the refusal
+ * stands whatever it finds.
+ */
+export async function changedExecutionInput(step: ExecutionStep): Promise<Readonly<{ kind: 'changed'; path: string }> | Readonly<{ kind: 'expired' }> | undefined> {
+    for (const check of step.filesystemChecks) {
+        if (!await checkFilesystem(check) || !filesystemIdentitiesPass([check])) return { kind: 'changed', path: check.path }
+    }
+    for (const file of step.consumedFiles) if (!await consumedFileMatches(file)) return { kind: 'changed', path: file.path }
+    return step.spawnNotAfter !== undefined && Date.now() > Date.parse(step.spawnNotAfter) ? { kind: 'expired' } : undefined
+}
+
 function filesystemIdentitiesPass(checks: readonly FilesystemCheck[]): boolean {
     try {
         return checks.every((check) => {

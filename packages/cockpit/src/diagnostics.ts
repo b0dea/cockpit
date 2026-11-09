@@ -319,16 +319,16 @@ export function renderHumanDiagnostics(
         if (command !== undefined && /^(?:(?:work|browser|env) |test-run$|grade$)/.test(command)) return renderHumanValue(outcome.result)
         // A selftest whose cell failed exits non-zero with every other cell's measurement, which the person still needs.
         if (command === 'selftest' && 'summary' in outcome.result) {
-            const result = outcome.result as { summary: { complete: boolean; measuredCells: number; pendingCells: number;
+            const result = outcome.result as { summary: { measurementComplete: boolean; measuredCells: number; pendingCells: number;
                 pendingSkillReviews: number; unavailableCells?: number; failedCells?: readonly { cell: string; failure: string }[] }; reportPath?: string }
             const { summary } = result
             const failed = summary.failedCells ?? []
             const lines = [
                 ...failed.map(row => `FAILED ${row.cell}: ${row.failure}`),
-                `Selftest ${summary.complete ? 'complete' : 'incomplete'}: ${summary.measuredCells} measured, ${failed.length > 0 ? `${failed.length} failed, ` : ''}${summary.pendingCells} pending, ${summary.pendingSkillReviews} skill reviews pending.`,
+                `Selftest ${summary.measurementComplete ? 'measured every cell it can' : 'incomplete'}: ${summary.measuredCells} measured, ${failed.length > 0 ? `${failed.length} failed, ` : ''}${summary.pendingCells} pending.`,
                 `Unavailable capabilities measured: ${summary.unavailableCells ?? 0}.`,
             ]
-            if (summary.pendingSkillReviews > 0) lines.push('Maintainer: complete the independent skill reviews; native measurement alone does not approve a skill.')
+            if (summary.pendingSkillReviews > 0) lines.push(`Skill reviews: ${summary.pendingSkillReviews} need a person's judgement of each skill's trigger, silence, body loading, tools and non-goals. Native measurement does not approve a skill, and cockpit cannot perform or record these reviews, so they are listed on every run.`)
             if (result.reportPath) lines.push(`Full structured report: ${result.reportPath}`)
             return `${lines.map(escapeForTerminal).join('\n')}\n`
         }

@@ -11,6 +11,9 @@ import { installedPackageMetadata } from './package-metadata.js'
 import { cockpitCommand } from './fix-catalogue.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from './guards/local-identity.js'
 import { guardLauncherEvidence } from './guards/protected-locations.js'
+import { fileFingerprint } from './environment-exec/verified-digest.js'
+import { nodeAuthority } from './generated-environment/transaction.js'
+import { GUARD_HELD_CALLS } from './surfaces/harness-registry.js'
 import { EXACT_DEV_INSTALL, NODE_EXEC, nodeLockfile } from './init/derive.js'
 
 const PACKAGE = installedPackageMetadata.name
@@ -588,6 +591,29 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
                     : `reinstall cockpit with ${(await rootPackageManager(root)).manager} install in ${root}, then rerun doctor`,
             })
         }
+        // The guard hook runs the Node sync recorded, so it keeps working; only selftest, which binds the
+        // guard this process would install, cannot measure it from here.
+        const runningNode = await realpath(process.execPath)
+        // The same path with other bytes (an in-place upgrade) breaks the guard until sync. The fingerprint
+        // sync recorded spares the 100 MB hash unless the file moved or was rewritten.
+        const replacedInPlace = identity?.node === runningNode && fileFingerprint(runningNode, await lstat(runningNode)) !== identity.nodeFingerprint
+            && (await nodeAuthority())?.sha256 !== identity.nodeSha256
+        if (identity && replacedInPlace) findings.push({
+            severity: 'warning' as const,
+            // A literal, so the diagnostic inventory captures the fix beside the code.
+            code: 'GUARD_NODE_DIFFERS' satisfies typeof ENVIRONMENT_CODES.GUARD_NODE_DIFFERS,
+            message: `the Node at ${runningNode} changed since sync recorded it, so the guard hook holds ${GUARD_HELD_CALLS} until sync runs again`,
+            target: GUARD_LOCAL_PATHS.identity,
+            fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal',
+        })
+        if (identity && identity.node !== runningNode) findings.push({
+            severity: 'info' as const,
+            // A literal, so the diagnostic inventory captures the fix beside the code.
+            code: 'GUARD_NODE_DIFFERS' satisfies typeof ENVIRONMENT_CODES.GUARD_NODE_DIFFERS,
+            message: `the guard hook runs the Node at ${identity.node}; this command runs the Node at ${runningNode}. The guard is unaffected, but selftest cannot measure it under this Node`,
+            target: GUARD_LOCAL_PATHS.identity,
+            fix: 'run selftest with the Node the guard was installed for, or run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> under this Node first, which makes the guard hook run it',
+        })
     }
     const loaded = await loadCockpitConfig(configPath)
     if (loaded.kind !== 'complete') return findings

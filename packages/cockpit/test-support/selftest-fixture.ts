@@ -19,15 +19,19 @@ async function syntheticSkillSources(names: readonly string[]): Promise<string> 
 }
 
 export function createSelftestFixture(roots: string[]) {
-    async function issuedApplication() {
+    /** `teamFiles` are files the team wrote in the cockpit root before its first sync. */
+    async function issuedApplication(teamFiles: Readonly<Record<string, string>> = {}) {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-selftest-')))
         roots.push(root)
+        for (const [path, bytes] of Object.entries(teamFiles)) await writeFile(join(root, path), bytes)
         await mkdir(join(root, 'app'), { recursive: true })
         await mkdir(join(root, 'fixtures'), { recursive: true })
         await writeFile(join(root, 'app/AGENTS.md'), 'Synthetic sibling instruction canary.\n')
         await writeFile(join(root, 'fixtures/personas.json'), '[{"id":"first"}]\n')
+        // Any name but the registry's own: owner markers carry it, and a check that only ever saw one
+        // name once accepted that name alone.
         const declaration = (await readFile(fixture, 'utf8')).replace(
-            'name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."',
+            'name = "generated-environment"', 'name = "synthetic-product"\nsiblings_root = "."',
         ).replace(
             'purpose = "Synthetic application"', 'purpose = "Synthetic application"\nguides = ["AGENTS.md"]',
         ) + `

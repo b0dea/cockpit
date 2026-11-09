@@ -1,6 +1,10 @@
 export const MODEL_INPUT_PROTOCOLS: readonly string[]
+export function claudeActiveLines(bytes: string): { index: number; line: string }[]
+export function mapClaudeImports(bytes: string, replace: (path: string) => string | undefined | void): string
+export function claudeImportPaths(bytes: string): string[]
 export function nativeClaudeImport(bytes: string): boolean
 export function nativeClaudeContent(bytes: string): string
+export function foreignClaudeComment(bytes: string): boolean
 export function nativeInputSettings(cwd: string): string
 export function nativeInputInvocation(target: 'claudecode' | 'codexcli', skill?: string): [string, ...string[]]
 export function nativeSkillBody(bytes: string): string | undefined
