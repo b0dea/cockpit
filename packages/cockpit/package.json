@@ -1,6 +1,6 @@
 {
   "name": "@b00dea/cockpit",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "cockpitSourceRevision": "development",
   "type": "module",
   "description": "The local environment coding agents work from: every repository of your product in reach, its Compose stack running on the live checkouts, one guard and instruction set for Claude Code, Codex CLI and OpenCode, and work orders checked against criteria you set.",
