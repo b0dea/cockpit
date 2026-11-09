@@ -23,6 +23,29 @@ Every diagnostic message names what failed and how to fix it. The sections below
 | `SETUP_MANUAL_MISSING` | A manually managed sibling checkout is absent. | Create it at the declared path, then rerun `./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config cockpit.toml`. |
 | `SETUP_REMOTE_MISMATCH` | The checkout remote and declaration name different sources. | Correct the remote or declaration, then rerun `./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config cockpit.toml`. |
 
+## Guard refusals
+
+A guard refusal reaches the agent as its reason text; `GUARD_REFUSED` marks it in diagnostics. Under
+the allow default these are the blocked list ([Safety and autonomy](safety-and-autonomy.md)), and an
+agent hands the command to a person rather than rewording it.
+
+| Reason starts with | Why | Fix |
+| --- | --- | --- |
+| `Refusing to read, print or send a credential store` | The command names a file or directory that holds tokens or keys, or a directory above one. | Name the files the command needs; a person handles credentials. |
+| `Refusing … it prints a credential or a URL that can carry one` | `gh auth token`, `git credential`, `git remote -v`, `aws configure get` of a secret and similar print a credential. | Use `git remote` for remote names; a person runs the rest. |
+| `Refusing to print the environment or a variable named as a secret` | `env`, `printenv`, `export -p`, `set`, `ps e`, or echoing a variable named with TOKEN, KEY, PASS and the like. | Print one non-secret variable by name, or list names with `cockpit env keys`. |
+| `Refusing a force push` / `Refusing to delete remote branches` | Force pushes and remote branch deletion are refused for every branch. | Push new commits; a person runs a force push or deletion. |
+| `Refusing push to a declared protected branch` / `Refusing to rewrite history on a declared protected branch` | The push or rewrite reaches `protected_branches`, directly, through `@{push}` or as `heads/<branch>`. | Work on a branch and open a pull request. |
+| `The guard could not tell which remote branch this push updates` | The destination is implicit and Git could not resolve it. | Name it: `git push origin <branch>:<branch>`. |
+| `An earlier command in this call can change the current branch` | A push or rewrite rests on the current branch after a command that may move it. | Run the push or rewrite as its own call. |
+| `… sets <NAME>, which changes what Git, its hooks, the shell or the command search path runs` | A prefixed or exported `GIT_*`, `HOME`, `HUSKY`, `SKIP`, `LEFTHOOK` or relative `PATH` assignment. | Run the command without that assignment. |
+| `Refusing \`--no-verify\`` / `Refusing \`git -c <key>\`` | Skipping hooks, or a configuration key that chooses a program Git runs. | Run without it and fix what the hook reports. |
+| `… is a cockpit command an agent does not run unprompted` | `sync`, `upgrade` and other commands that change what agents may do, however spelled. | A person runs it in a terminal. |
+| `… names <path>, outside the configured roots` | Under the allow default any command naming a path outside the cockpit follows `[guards] external_reads`. | A person lists the location under `[guards] read_paths` or sets `external_reads = "native"`, then syncs. |
+| `… holds <word>, which names or can match an environment file …` / `… whose value the guard cannot see` | An assignment, loop item or glob names or can match a secret, or an unexpanded word decides a path. | Write the files out by name. |
+| `Guard path escapes configured roots` | The command writes outside the cockpit and its siblings. | Write inside the cockpit, or a person runs it. |
+| `… has an unapproved edit that widens what agents may do` (appended) | `cockpit.toml` widens the policy; calls are judged under the configuration last synced. | A person reviews the edit and runs `cockpit sync` in a terminal. |
+
 ## GENERATED_ARTIFACT_DRIFT
 
 **Cause.** An owned whole file, symlink target or shared region differs from what the declarations and

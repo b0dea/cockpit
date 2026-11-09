@@ -426,7 +426,7 @@ export const Guards = z
         hosted_db_hosts: GuardHosts.default([]).describe('Hosted database host names the guards keep agents away from.'),
         vendor_endpoint_hosts: GuardHosts.default([]).describe('Real vendor endpoint host names the guards keep agents away from.'),
         protected_branches: z.array(z.string()).default(['main', 'master']).describe('Branches the guards keep agents from pushing to or rewriting.'),
-        allow: z.array(GuardAllow).max(64).default([]).describe('Commands the guard admits that it would otherwise ask about.'),
+        allow: z.array(GuardAllow).max(64).default([]).describe('Commands the guard admits that it would otherwise ask about; an entry never admits a blocked command, such as a secret read, a write outside the cockpit, a protected-branch or force push, or a change to the guard.'),
         deny: z.array(GuardDeny).max(64).default([]).describe('Commands refused in addition to the built-in rules.'),
         read_paths: z.array(GuardReadPath).max(64).default([]).describe('Files and directories outside the cockpit whose named files agents may read, list and search; never written, searched recursively or used as a working directory.'),
         default: z.enum(['allow', 'ask']).default('allow').describe('What the guard does with a shell command outside its blocked list: allow runs it, so agents work freely inside the cockpit while secrets, writes outside it, protected branches and force pushes, declared hosts, the guard itself and privilege escalation stay refused; ask is the strict mode, which admits only the read-only commands the guard classifies, declared build and test commands and allow rules, and asks for the rest.'),

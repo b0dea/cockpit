@@ -505,7 +505,7 @@
         },
         "allow": {
           "default": [],
-          "description": "Commands the guard admits that it would otherwise ask about.",
+          "description": "Commands the guard admits that it would otherwise ask about; an entry never admits a blocked command, such as a secret read, a write outside the cockpit, a protected-branch or force push, or a change to the guard.",
           "maxItems": 64,
           "type": "array",
           "items": {

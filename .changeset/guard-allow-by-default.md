@@ -7,3 +7,5 @@ The guard now allows by default. Inside the cockpit and its siblings an agent ca
 Two fixes apply in both modes: a `[[guards.allow]]` rule such as `["git", "push"]` no longer admits a push whose destination is unknown or protected, and no allow rule admits a write option that leaves the cockpit or a transfer option that runs a program (`--upload-pack`, `--receive-pack`, `--exec`).
 
 The setup, fix, explain and work procedures now tell agents to report a refusal of a harmless command as a cockpit gap and carry on, and to hand only refusals in the blocked list to the person.
+
+Upgrade: the guard now allows by default. Most `[[guards.allow]]` entries added to work around refusals are no longer needed and can be removed; an allow entry can no longer override a blocked item. Set `[guards] default = "ask"` to keep the previous strict behaviour. A person runs `cockpit sync` after editing `cockpit.toml`.
