@@ -379,6 +379,19 @@ describe('guard policy construction', () => {
         expect((await decide('git commit -m done')).decision).toBe('ask')
     }, 120_000)
 
+    it('binds the guard only to the cockpit installed under the root, never to a copy that runs sync', async () => {
+        const { root, configPath } = await observedPolicy()
+        // The installed package is a copy holding its own cli.js, so the running cockpit is not it.
+        mkdirSync(join(root, 'node_modules/@b00dea/cockpit/dist'), { recursive: true })
+        writeFileSync(join(root, 'node_modules/@b00dea/cockpit/dist/cli.js'), '')
+        expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'refusal',
+            diagnostics: [expect.objectContaining({ code: 'GENERATED_EXECUTABLE_UNAVAILABLE', message: expect.stringContaining('not the installed cockpit') })] })
+        expect(existsSync(join(root, GUARD_LOCAL_PATHS.identity))).toBe(false)
+        rmSync(join(root, 'node_modules/@b00dea/cockpit'), { recursive: true })
+        symlinkSync(fileURLToPath(new URL('../../', import.meta.url)), join(root, 'node_modules/@b00dea/cockpit'))
+        expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+    })
+
     it('leaves read-only Git in another repository to native permissions, never its writes, helpers or secrets', async () => {
         const { root, configPath } = await observedPolicy()
         const repository = (name: string, files: Record<string, string>) => {

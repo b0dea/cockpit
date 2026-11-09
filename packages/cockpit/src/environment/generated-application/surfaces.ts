@@ -1,5 +1,5 @@
 import { isUtf8 } from 'node:buffer'
-import { lstat, realpath } from 'node:fs/promises'
+import { lstat, readFile, realpath } from 'node:fs/promises'
 import { openCodePatternUnsafe } from '../served-checkout-grants.js'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -38,11 +38,11 @@ import { renderSurfaceSet, type CustomSurfaceReceipt, type SurfaceInputEvidence 
 import { stripDevelopmentMarkers } from '../../surfaces/development-markers.js'
 import { renderConsumerInstructions } from '../../surfaces/consumer-instructions.js'
 import { expandRestrictions } from '../../surfaces/restrictions.js'
-import type { GuardHandlerIdentity } from '../../guards/local-identity.js'
+import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../../guards/local-identity.js'
 import { fileFingerprint, verifiedDigest } from '../../environment-exec/verified-digest.js'
 import { SHIPPED_SETUP_SKILL, extendInspectedSkillStandingCosts, inspectRenderedSkillSet } from '../../surfaces/skill-contract.js'
 import { readAnchoredFile, readAnchoredEntry, readAnchoredBatches } from '../../generated-environment/transaction.js'
-import { ENVIRONMENT_CODES, errorCause, snapshotGeneratedJson, RefusalError } from '../contract.js'
+import { ENVIRONMENT_CODES, errorCause, hasErrorCode, snapshotGeneratedJson, RefusalError } from '../contract.js'
 import { mounted, SIBLING_DEFAULT_GUIDES } from '../../schema.js'
 import { checkoutId, cockpitId, stackId } from '../identity.js'
 import { resolveLifecycleStage } from '../lifecycle-stage.js'
@@ -442,6 +442,26 @@ export async function prepareSurfaces(
     let modulePath: string
     try { modulePath = await realpath(fileURLToPath(new URL('../../../dist/cli.js', import.meta.url))) }
     catch (error) { return refuse('GENERATED_EXECUTABLE_UNAVAILABLE', `the installed guard handler is unavailable: ${errorCause(error)}`, 'guard') }
+    // The guard runs the module sync binds. A copy of cockpit, which an agent can edit, would become the
+    // guard if its sync bound it, so sync binds only the cockpit installed under the root; a root without
+    // one, such as cockpit's own development checkout, keeps the module it is already bound to.
+    const installedModule = join(prepared.root, 'node_modules/@b00dea/cockpit/dist/cli.js')
+    let installed: string | undefined
+    let boundModule: string | undefined
+    try {
+        installed = await realpath(installedModule)
+    } catch (error) {
+        if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return refuse('GENERATED_EXECUTABLE_UNAVAILABLE', `the installed cockpit could not be resolved: ${errorCause(error)}`, 'guard')
+    }
+    try {
+        boundModule = parseGuardLocalIdentity(await readFile(join(prepared.root, GUARD_LOCAL_PATHS.identity), 'utf8'))?.module
+    } catch (error) {
+        if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return refuse('GENERATED_EXECUTABLE_UNAVAILABLE', `the guard identity could not be read: ${errorCause(error)}`, 'guard')
+    }
+    if (installed !== undefined ? installed !== modulePath : boundModule !== undefined && boundModule !== modulePath) {
+        return refuse('GENERATED_EXECUTABLE_UNAVAILABLE', `this cockpit runs from ${modulePath}, not the ${installed !== undefined ? `installed cockpit at ${installed}` : `module the guard is bound to, ${boundModule}`}, `
+            + 'and the guard would run whichever copy sync binds', 'guard', 'run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` in a terminal, from the installed package')
+    }
     const moduleRead = await readAnchoredFile(dirname(modulePath), basename(modulePath), MAX_GENERATED_BYTES, prepared.node, adapters)
     if (moduleRead.kind !== 'complete') return refuse('GENERATED_EXECUTABLE_UNAVAILABLE', 'the installed guard handler is unavailable', 'guard')
     const rootStat = await lstat(prepared.root)
