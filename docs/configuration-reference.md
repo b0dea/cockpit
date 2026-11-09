@@ -38,6 +38,7 @@ The values cockpit uses for a key the configuration leaves out.
     "allow": [],
     "deny": [],
     "read_paths": [],
+    "default": "allow",
     "external_reads": "grant"
   },
   "mcp": {
@@ -165,9 +166,10 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `hosted_db_hosts` | Hosted database host names the guards keep agents away from. | array of string | `[]` | at most 128 items; each item: pattern [P3](#patterns) |
 | `vendor_endpoint_hosts` | Real vendor endpoint host names the guards keep agents away from. | array of string | `[]` | at most 128 items; each item: pattern [P3](#patterns) |
 | `protected_branches` | Branches the guards keep agents from pushing to or rewriting. | array of string | `["main","master"]` |  |
-| `allow` | Commands allowed in addition to the built-in rules. | array of table: [`[[guards.allow]]`](#guardsallow) | `[]` | at most 64 items |
+| `allow` | Commands the guard admits that it would otherwise ask about. | array of table: [`[[guards.allow]]`](#guardsallow) | `[]` | at most 64 items |
 | `deny` | Commands refused in addition to the built-in rules. | array of table, one of: [`[[guards.deny]]` form 1](#guardsdeny-form-1), [`[[guards.deny]]` form 2](#guardsdeny-form-2) | `[]` | at most 64 items |
 | `read_paths` | Files and directories outside the cockpit whose named files agents may read, list and search; never written, searched recursively or used as a working directory. | array of table: [`[[guards.read_paths]]`](#guardsread_paths) | `[]` | at most 64 items |
+| `default` | What the guard does with a shell command outside its blocked list: allow runs it, so agents work freely inside the cockpit while secrets, writes outside it, protected branches and force pushes, declared hosts, the guard itself and privilege escalation stay refused; ask is the strict mode, which admits only the read-only commands the guard classifies, declared build and test commands and allow rules, and asks for the rest. | string | `"allow"` | one of `"allow"`, `"ask"` |
 | `external_reads` | Who admits a shell read outside the cockpit, of a named file or by a read-only Git command run alone in another repository: grant needs its complete command under allow; native leaves it to the agent tool's own permissions. Secret names, recursive searches and writes stay guarded either way. | string | `"grant"` | one of `"grant"`, `"native"` |
 
 ### `[[guards.allow]]`
@@ -646,6 +648,6 @@ Agent tools load every skill's frontmatter into each session and its entry point
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 12 | `packages/cockpit/surfaces/skills/procedures/fix.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 9 | `packages/cockpit/surfaces/skills/procedures/work.md` |
 
-Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `30c4d8119d69a82ce147bc72a00ffd711a4ebf6ef0f29324d8b6d55b78cd5777`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `ac8cb6fdfdbf10d0c49b6646aabd8918b4cbff23a1a7efea22e573bf9154fe62`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `49537028a511610580f1f0817d1eaef8375ba8ca55c4331dff2e6389d336b064`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `612a5c52ebcba1dd8ffc7c904e2a3a8e69d8f1f65d4623401d21ad63edb00d7c`).
+Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `febf3c4221558772bfa64de586a91323aa6540ccac32a1dd76df7118721d89d8`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `b210cd483961dfcd6f2ff4784984c04e75bb409f8742f4167b3c84ed0fa3fba9`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `6c888af3988cb3da95830f3af8a754ba55987697651c41a1f1cdd22b76685a9f`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `5ad7f8e64472456a55bb759699ebd3262c34e13c7235c541e7e8942a7fb48e1b`).
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.

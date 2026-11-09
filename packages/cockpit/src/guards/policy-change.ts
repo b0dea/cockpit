@@ -127,6 +127,8 @@ const CHANGE_RULES: Rules = {
     'guards.read_paths': onlyRemoves,
     // Handing named external reads to the agent tool's own permissions widens; returning to grants narrows.
     'guards.external_reads': (before: string | undefined, after: string | undefined, at: string) => after === 'native' && before !== 'native' ? [at] : [],
+    // Allowing by default admits every command outside the blocked list; returning to ask narrows.
+    'guards.default': (before: string | undefined, after: string | undefined, at: string) => after === 'allow' && before !== 'allow' ? [at] : [],
     'guards.hosted_db_hosts': onlyAdds,
     'guards.vendor_endpoint_hosts': onlyAdds,
     'guards.protected_branches': onlyAdds,

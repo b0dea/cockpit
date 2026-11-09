@@ -26,8 +26,13 @@ budget: uncapped
   follows any edit to `cockpit.toml` or reinstall of cockpit or Node. `GUARD_CONFIG_UNSYNCED` means
   the edit does not widen what agents may do, so run
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself where `[autonomy] sync =
-  "agent"`; any other hold clears only when a person runs it in a terminal. A refused command is the
-  person's to run: never reword, wrap or re-spell it to get past the guard.
+  "agent"`; any other hold clears only when a person runs it in a terminal. When the guard refuses a
+  command, read the reason. To read a file, use your tool's own file reading instead of the shell. A
+  refusal for secrets, writes outside the cockpit, protected branches, declared hosts or the guard
+  itself is the person's: hand them the exact command and why. Do not reword, wrap or re-spell a
+  command to get past the guard. If the refused command could not touch any of those, report it as a
+  cockpit gap (the command, the reason text, why it is harmless) and continue with other work rather
+  than asking the person to run it.
 - In Codex's sandbox `check`, `sync --dry-run` and `--help` work as it stands, unless `[browser]` is
   declared, which makes the first two read cockpit's state too. Other cockpit commands need what the
   sandbox withholds: write access to the state root, which `STATE_ROOT_UNAVAILABLE` names and a person

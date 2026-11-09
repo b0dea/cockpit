@@ -505,7 +505,7 @@
         },
         "allow": {
           "default": [],
-          "description": "Commands allowed in addition to the built-in rules.",
+          "description": "Commands the guard admits that it would otherwise ask about.",
           "maxItems": 64,
           "type": "array",
           "items": {
@@ -712,6 +712,15 @@
             ],
             "additionalProperties": false
           }
+        },
+        "default": {
+          "default": "allow",
+          "description": "What the guard does with a shell command outside its blocked list: allow runs it, so agents work freely inside the cockpit while secrets, writes outside it, protected branches and force pushes, declared hosts, the guard itself and privilege escalation stay refused; ask is the strict mode, which admits only the read-only commands the guard classifies, declared build and test commands and allow rules, and asks for the rest.",
+          "type": "string",
+          "enum": [
+            "allow",
+            "ask"
+          ]
         },
         "external_reads": {
           "default": "grant",

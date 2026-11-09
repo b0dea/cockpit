@@ -22,6 +22,8 @@ import { GUARD_RESTORE_LIMIT, guardConfigChange, guardConfigHeldReason } from '.
 import {
     evaluateGuard,
     approvedReadOnlyInvocation,
+    gitInvocation,
+    GUARD_BRANCH_VERBS,
     foldGuardSpelling,
     GUARD_LOCATION_LIMITS,
     GUARD_ROOT_PROTECTIONS,
@@ -47,6 +49,7 @@ import {
     guardSearchPathRelativeEntry,
     guardSecretFiles,
     guardSensitivePathsBelow,
+    guardBranchFacts,
     guardTrackedSensitivePaths,
     guardUnignoredSensitivePaths,
 } from '../../guards/protected-locations.js'
@@ -383,6 +386,14 @@ export async function runGuardEvaluationApplication(
         const unignored = new Map<string, readonly string[] | null | undefined>()
         const tracked = new Map<string, readonly string[] | null>()
         const queries: Array<() => Promise<void>> = []
+        // Which branch a push or a history rewrite acts on is Git's to say, in a repository inside the roots.
+        const branches = new Map<string, { readonly head: string | null; readonly push: string | null } | null>()
+        for (const invocation of parsed.invocations) {
+            const command = gitInvocation(invocation)
+            if (!command || !GUARD_BRANCH_VERBS.has(command.verb) || command.uncertain || !allowed(command.cwd) || branches.has(command.cwd)) continue
+            branches.set(command.cwd, null)
+            queries.push(async () => { branches.set(command.cwd, await guardBranchFacts(command.cwd, git.value, adapters.execute ?? executeProbe)) })
+        }
         for (const invocation of parsed.invocations) {
             const access = classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: data.ripgrepConfigActive === true })
             if (access?.trackedContent && (allowed(access.cwd) || nativeGit && parsed.invocations.length === 1) && !tracked.has(access.cwd)) {
@@ -436,6 +447,10 @@ export async function runGuardEvaluationApplication(
         }
         const inspect: import('../../guards/evaluator.js').PathInspection = request => {
             const path = resolve(request.cwd, request.path)
+            if (request.operation === 'branch') {
+                const facts = branches.get(path)
+                return facts ? { status: 'resolved', path, ...facts } : { status: 'unavailable', path, symlink: false }
+            }
             const managedRoot = policy.allowedRoots.filter(root => confinedPath(root, path)).sort((a, b) => b.length - a.length)[0]
             // A person's read path admits this read, or with native external reads the agent tool's own permission decided it.
             const declaredRead = !managedRoot && ['read', 'list', 'search', 'unignored-search'].includes(request.operation)
@@ -754,7 +769,8 @@ export async function prepareGuardEvaluationPolicy(
                     argv: [...('prefix' in rule ? rule.prefix : rule.contains)], reason: rule.reason,
                     ...(rule.fix === undefined ? {} : { fix: rule.fix }),
                 })),
-                ripgrepConfigActive: false, externalReads: config.guards.external_reads,
+                ripgrepConfigActive: false, externalReads: config.guards.external_reads, defaultDecision: config.guards.default,
+                homeDirectory: realpathSync(homedir()),
                 readPaths: config.guards.read_paths.flatMap(({ path }) => {
                     const spelled = path.startsWith('~/') ? join(homedir(), path.slice(2)) : path
                     // A missing location grants nothing; a linked one is held to where it leads.

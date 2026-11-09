@@ -1,9 +1,41 @@
 # Safety and autonomy
 
-What the guard allows, asks about, denies or cannot evaluate, and why. A permission always applies
-to one exact command and declared resources, never a whole command family. The
+What the guard allows, asks about, denies or cannot evaluate, and why. The
 [command table](../packages/cockpit/src/command-table.ts) and
 [guard evaluator](../packages/cockpit/src/guards/evaluator.ts) own these decisions.
+
+## The default: allow, except the blocked list
+
+By default (`[guards] default = "allow"`) an agent may run any shell command inside the cockpit and
+its siblings: Git work such as `add`, `commit`, `merge`, `rebase`, `switch`, `stash`, `fetch`, `pull` and
+pushes to work branches, builds, tests, package scripts, interpreters, `gh` queries and pull requests.
+The guard refuses only this blocked list:
+
+| Blocked | What the guard checks |
+| --- | --- |
+| Secrets | Reading, printing, writing, staging, linking or uploading `.env*` files (other than documentation names and declared templates), `.secrets` directories, declared instances, and credential stores: `~/.ssh` private keys, `~/.aws/credentials`, `~/.config/gh/hosts.yml`, `~/.netrc`, `~/.npmrc`, `~/.docker/config.json`, `~/.kube/config`, `~/.codex/auth.json`, `~/.claude/.credentials.json` and other token files, and `.pem`, `.p12`, `.pfx` and `id_*` key files anywhere. A file named with `--body-file`, `-F`, `-T` or `@file` is judged as a read. Environment dumps such as a bare `env` are refused. |
+| Writes outside the cockpit | Redirects, writer destinations (`cp`, `mv`, `tee`, `touch`, `mkdir`, `ln`, `dd`, `tar -x`, removers), write options (`--output`, `curl -o`, `wget -O`, `sort -o`, `sed -i`, `perl -i`) and a working directory outside the cockpit and its siblings. |
+| Branches and history | Force pushes of any branch (`--force`, `--force-with-lease`, a `+` refspec), pushes to a protected branch, remote branch deletion (`--delete`, `:branch`, `--prune`, `--mirror`), and rewriting a protected branch's history (`commit --amend`, `rebase`, `reset` to another commit, `filter-branch`) or moving, resetting or deleting it. A push that names no destination is resolved from the repository's `@{push}`; one Git cannot resolve asks. |
+| Declared hosts | Any spelled use of a `hosted_db_hosts` or `vendor_endpoint_hosts` name. The match is lexical: a CLI with a built-in endpoint, such as `gh`, reaches its host without naming it. |
+| The guard itself | Writes to hook registrations, `.cockpit/guards`, `.cockpit/local`, the installed cockpit, `node_modules/.bin` and `.npmrc`; widening edits to `cockpit.toml`, which wait for a person's `sync`; agent-run `sync`, `upgrade` and other cockpit commands that publish policy; direct `.git` writes; `git config` keys that choose a program (hooks, fsmonitor, pagers, editors, helpers, aliases, filters, drivers, includes, remotes); `git -c` with such a key; `--no-verify`; and transfer options that name a program (`--upload-pack`, `--receive-pack`, `--exec`). |
+| Privilege and fetched code | `sudo`, `doas`, `su` and `pkexec`, and a download piped into a shell or interpreter, such as `curl … \| sh` or `bash <(curl …)`. |
+
+The guard can only block what it can see in the command. A program the command runs, such as
+`node script.js`, `make` or a package script, can still read, write or run anything the account can,
+the guard's own files included; nothing here constrains it. When that matters, keep the strict mode,
+or run agents in a sandbox. Under Codex, a script that rewrites `.codex/hooks.json` makes the hook
+untrusted, and Codex then skips it, so the guard stops running until a person trusts the hooks
+again; cockpit has not measured a native protection for that file.
+
+`[[guards.deny]]` adds commands to the blocked list. `[[guards.allow]]` admits a command the guard
+would otherwise ask about; it never overrides a hard denial or a hard boundary's ask, such as a push
+whose destination Git cannot resolve.
+
+`[guards] default = "ask"` keeps the strict mode: the guard then admits only the read-only commands
+it classifies, declared build and test commands, cockpit's own agent commands and `[[guards.allow]]`
+rules, each one exact command, and asks for everything else. The rest of this page describes the
+blocked list and the strict mode's prompts; where a rule applies only in one mode, it says so.
+Changing `ask` to `allow` widens what agents may do, so it waits for a person's sync.
 
 ## Outcome vocabulary
 
@@ -161,11 +193,13 @@ human run `cockpit sync --config cockpit.toml` in a terminal.
 ### Protected branches and prompts
 
 Pushes to declared protected branches are hard denials, including explicit protected destinations
-and `git push --all` or `git push --mirror`. Missing or unresolved destinations, including ambiguous
-source-only revisions, symbolic aliases and wildcards, need a human decision. An exact grant cannot
-override either boundary.
+and `git push --all` or `git push --mirror`, and so are force pushes and remote branch deletion of
+any branch. A push with no refspec goes where the repository's `@{push}` points, and `HEAD` or `@`
+names the current branch; the guard asks Git for both. A destination Git cannot resolve, and
+ambiguous source-only revisions, symbolic aliases and wildcards, ask and name the spelling that
+works, `git push origin <branch>:<branch>`. No grant overrides either boundary.
 
-These produce `ask`: unresolved Git execution context, destructive Git reset or clean forms, staging
+In the strict mode these produce `ask`: unresolved Git execution context, destructive Git reset or clean forms, staging
 by explicit path (a person approves or runs it), staging without explicit paths, wrapped or
 environment-modifying commands, unmatched invocation profiles, and any removal without a grant. An
 explicit removal outside configured roots stays at `ask` even when a declared allow matches, because
@@ -177,13 +211,17 @@ to find nested secrets directories; a tree past the walk's bound stays at `ask`,
 fails is `unavailable`. Unsupported staging options or unproven pathspec grammar produce
 `unavailable`.
 
-Any other refused command gets an `ask` that names the command and gives three ways forward: a
-person approves it, a person runs it in a terminal, or a person admits it under `[guards] allow`;
-for tests it points to `cockpit test-run`.
+In the strict mode, any other refused command gets an `ask` that names the command and gives three
+ways forward: a person approves it, a person runs it in a terminal, or a person admits it under
+`[guards] allow`; for tests it points to `cockpit test-run`. Under the allow default these commands
+run, except a reading command such as `cat`, `rg` or `grep` whose shape the read-only profile could
+not prove reads no secret, Git that prints committed content outside the profile, and a cockpit
+command its own table does not admit.
 
 ### Declared rules
 
-Declared rules refine the final prompt boundary. Each vector starts with the executable.
+Declared rules refine the final prompt boundary: under the allow default an allow rule matters only
+for what would still ask. Each vector starts with the executable.
 `[[guards.deny]]` matches a command-vector prefix or a contiguous sequence and may name a safe fix.
 `[[guards.allow]]` matches a prefix, optionally only at one checkout-relative working directory. An
 allow cannot bypass a hosted endpoint, protected branch, secret path, malformed capture or

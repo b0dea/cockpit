@@ -346,6 +346,20 @@ export async function guardTrackedSensitivePaths(repository: string, watched: re
 }
 
 /**
+ * The repository's current branch and where a bare `git push` goes from it, as full ref names; null
+ * where Git names none (a detached HEAD, a branch with no push destination) or could not answer.
+ */
+export async function guardBranchFacts(repository: string, git: ResolvedExecutable, execute: GuardExecute): Promise<{ readonly head: string | null; readonly push: string | null }> {
+    const ref = (lines: readonly string[] | null) => {
+        const value = lines?.join('').trim()
+        return value && /^refs\/\S+$/.test(value) ? value : null
+    }
+    const [head, push] = await Promise.all([gitPaths(git, repository, ['symbolic-ref', '-q', 'HEAD'], execute),
+        gitPaths(git, repository, ['rev-parse', '--symbolic-full-name', '@{push}'], execute)])
+    return { head: ref(head), push: ref(push) }
+}
+
+/**
  * Identities of every file in each case-folded spelling of `env/.secrets` below `root`, and whether
  * any has a second hard link; `identities` is null once more than the bound of entries was seen,
  * which leaves every read unproven rather than silently uncovered.

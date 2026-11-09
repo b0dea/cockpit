@@ -26,6 +26,7 @@ const declared: Declared = {
     ],
     ports: { bases: { WEB_PORT: 3000 } },
     guards: {
+        default: 'ask',
         hosted_db_hosts: ['db.example.test'], vendor_endpoint_hosts: ['api.vendor.example.test'],
         allow: [{ argv: ['make', 'verify'], reason: 'Verification is safe.' }],
         deny: [{ prefix: ['make', 'deploy'], reason: 'Deploys are a person\'s.' }],
@@ -60,6 +61,7 @@ describe('policyChange', () => {
         ['a removed deny rule', config => { config.guards.deny = [] }, ['guards.deny']],
         ['a new read path', config => { config.guards.read_paths = [{ path: '~/Downloads', reason: 'Inputs a person drops in.' }] }, ['guards.read_paths']],
         ['external reads handed to the agent tools', config => { config.guards.external_reads = 'native' }, ['guards.external_reads']],
+        ['strict mode turned into the allow default', config => { config.guards.default = 'allow' }, ['guards.default']],
         ['an autonomy decision moved toward agent', config => { config.autonomy = { reset: 'agent' } }, ['autonomy.reset']],
         ['a work gate moved toward agent', config => { config.work.gates.accept = 'agent' }, ['work.gates.accept']],
         ['weaker grading', config => { config.work.grading = 'self' }, ['work.grading']],

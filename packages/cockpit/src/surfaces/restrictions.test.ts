@@ -112,7 +112,8 @@ async function input(overrides: Partial<RestrictionExpansionInput> = {}): Promis
             return { slug: `repo-${index}`, dir: relative(dirname(canonical), path), mount: 'always', acquire: 'none', var: `REPO_${index}_DIR`, purpose: 'Synthetic checkout',
                 ...(files.length ? { environment_files: files } : {}) }
         }),
-        guards: { hosted_db_hosts: [...value.policy.hosted_db_hosts], protected_branches: [...value.policy.protected_branches] },
+        // These cases pin how a prompt reaches each harness, so they run the strict mode, where unclassified commands ask.
+        guards: { default: 'ask', hosted_db_hosts: [...value.policy.hosted_db_hosts], protected_branches: [...value.policy.protected_branches] },
         ports: { bases: { APP_PORT: 4100 } },
     })
     const configPath = join(canonical, 'cockpit.toml')

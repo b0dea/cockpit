@@ -72,7 +72,7 @@ describe('closed native guard representation', () => {
                 } })
             }
         }
-        expect(decision).toEqual({ decision: 'ask', reason: 'Push destination requires human approval.' })
+        expect(decision).toEqual({ decision: 'ask', reason: 'The guard could not tell which remote branch this push updates. Name it: `git push origin <branch>:<branch>`.' })
     })
 
     it('represents ask only on the measured prompt harness and refuses unavailable or malformed decisions', () => {

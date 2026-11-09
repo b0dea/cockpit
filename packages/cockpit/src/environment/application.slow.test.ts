@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, renameSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, type Stats } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse, stringify } from 'smol-toml'
@@ -312,6 +312,40 @@ describe('guard policy construction', () => {
         writeFileSync(configPath, stringify(config))
         await sync()
         expect(await decide(`cat '${elsewhere}/notes.md'`)).toEqual({ decision: 'ask', reason: expect.stringContaining('is outside the configured roots') })
+    }, 120_000)
+
+    it('allows development by default, resolves where a bare push goes, and asks again in strict mode', async () => {
+        const { root, configPath } = await observedPolicy()
+        const remote = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-push-remote-')))
+        scratch.push(remote)
+        const git = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args], { stdio: 'pipe' })
+        execFileSync('git', ['init', '-q', '--bare', remote])
+        git('commit', '-q', '--allow-empty', '-m', 'Synthetic history')
+        git('remote', 'add', 'origin', remote)
+        git('push', '-q', '-u', 'origin', 'HEAD:refs/heads/main')
+        const config = CockpitConfig.parse(parse(readFileSync(configPath, 'utf8')))
+        const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
+            resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }) }
+        const decide = async (command: string) => {
+            const identity = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
+            return (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'codexcli', cwd: root,
+                payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+        }
+        const configure = async (mode: 'allow' | 'ask') => {
+            config.guards.default = mode
+            writeFileSync(configPath, stringify(config))
+            expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        }
+        await configure('allow')
+        for (const command of ['git commit -m done', 'npm run build', 'git switch -c topic']) expect(await decide(command), command).toMatchObject({ decision: 'allow' })
+        // The checkout's branch pushes to the protected main, so a bare push is refused.
+        expect(await decide('git push')).toMatchObject({ decision: 'deny' })
+        git('switch', '-q', '-c', 'topic')
+        git('push', '-q', '-u', 'origin', 'topic')
+        expect(await decide('git push')).toMatchObject({ decision: 'allow' })
+        expect(await decide('git push --force')).toMatchObject({ decision: 'deny' })
+        await configure('ask')
+        expect((await decide('git commit -m done')).decision).toBe('ask')
     }, 120_000)
 
     it('leaves read-only Git in another repository to native permissions, never its writes, helpers or secrets', async () => {
@@ -876,7 +910,7 @@ describe('guard policy construction', () => {
             protectedBranches: ['main', 'master'], hostedDatabaseHosts: ['db.example.test'], vendorHosts: ['api.vendor.example.test'],
             declaredAllows: [{ argv: ['make', 'verify'], reason: 'Repository verification is safe.', cwd: root }],
             declaredDenies: [{ match: 'contains', argv: ['--environment', 'shared'], reason: 'Shared environments are human-operated.', fix: 'Use a local environment.' }],
-            ripgrepConfigActive: false, externalReads: 'grant', readPaths: [],
+            ripgrepConfigActive: false, externalReads: 'grant', readPaths: [], defaultDecision: 'allow', homeDirectory: realpathSync(homedir()),
             // The running package lives outside this checkout, so no installed directory is in reach.
             executionDirectories: [], searchDirectories: [], searchPathRelativeEntry: null, secretFileIdentities: [], protectedFilesLinked: false,
             cockpitLaunchers: [],
@@ -959,7 +993,8 @@ describe('guard policy construction', () => {
             const result = await prepareGuardEvaluationPolicy(input)
             expect(result.kind, JSON.stringify(result)).toBe('complete')
             if (result.kind !== 'complete') throw new Error(JSON.stringify(result))
-            const { policy } = result.result
+            // The strict mode, where only the exact tuple is admitted and every other spelling asks.
+            const policy = { ...result.result.policy, defaultDecision: 'ask' as const }
             expect(policy.projectCommands.map(command => [command.executable, ...command.argv])).toEqual([tuple, tuple])
             const rendered = renderGuardProjectCommand(tuple)
             if (rendered.kind !== 'complete') throw new Error(JSON.stringify(rendered))
