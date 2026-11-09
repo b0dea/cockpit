@@ -2214,7 +2214,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             if (!inspectReadOnly({ cwd: profile.cwd, reads: profile.reads, trees: [], listings: [] })) {
                 holdAsk(invocation, ask('This cockpit command reads a file the guard cannot prove safe to read: a symlink, an undeclared .env file or one outside the configured roots.'))
             }
-            if (profile.alone && (input.invocations.length !== 1 || invocation.redirects.length > 0)) {
+            // A command a session runs is not the call itself, whatever the call holds.
+            if (profile.alone && (input.invocations.length !== 1 || !input.invocations.includes(invocation) || invocation.redirects.length > 0)) {
                 holdAsk(invocation, ask('env schema --replace-from runs without a prompt only as the whole command: another command in this call could change the draft after the guard proved it safe. Run it on its own.'))
             }
         }
