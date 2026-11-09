@@ -126,6 +126,40 @@ function startsFetcher(tokens: readonly Token[]): boolean {
     return false
 }
 
+const ANSI_ESCAPES: Readonly<Record<string, string>> = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', '\\': '\\', "'": "'", '"': '"', '?': '?' }
+
+/** The text of a `$'…'` word part from `start`, just after its opening quote, as bash decodes it, and where it ends. */
+function ansiQuoted(command: string, start: number): { text: string; end: number } {
+    let text = ''
+    for (let index = start; index < command.length;) {
+        const c = command[index]!
+        if (c === "'") return { text, end: index + 1 }
+        if (c !== '\\') { text += c; index++; continue }
+        const next = command[index + 1]
+        if (next === undefined) break
+        const numeric = /^(?:x([0-9a-fA-F]{1,2})|u([0-9a-fA-F]{1,4})|U([0-9a-fA-F]{1,8})|([0-7]{1,3}))/.exec(command.slice(index + 1))
+        if (numeric) {
+            const code = numeric[4] !== undefined ? parseInt(numeric[4], 8) : parseInt(numeric[1] ?? numeric[2] ?? numeric[3]!, 16)
+            if (code === 0 || code > 0x10ffff || code >= 0xd800 && code <= 0xdfff) refuse(`Unsupported escape in ${shown(command.slice(start - 2, index + 1 + numeric[0].length))}. Write the text out.`)
+            text += String.fromCodePoint(code)
+            index += 1 + numeric[0].length
+        } else if (Object.hasOwn(ANSI_ESCAPES, next)) {
+            text += ANSI_ESCAPES[next]
+            index += 2
+        } else if (next === 'c') refuse(`Unsupported control escape in ${shown(command.slice(start - 2, index + 3))}. Write the text out.`)
+        else {
+            // bash keeps an unknown escape as written.
+            text += `\\${next}`
+            index += 2
+        }
+    }
+    refuse('Unterminated shell quote.')
+}
+
+/** The user name a tilde at the start of `rest` names, empty for the running user, or undefined when it names none. */
+const tildeUser = (rest: string) => /^[A-Za-z0-9._-]*(?=[/ \t\n;&|<>()]|$)/.exec(rest)?.[0]
+const tildeHome = (home: string, user: string) => user ? posix.join(posix.dirname(home), user) : home
+
 function evaluatingReference(command: string, at: number): boolean {
     const pattern = /[~=[]|[A-Za-z_][A-Za-z0-9_]*\[/y
     pattern.lastIndex = at
@@ -310,10 +344,21 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
                 index += 5
                 continue
             }
-            // Only `~` or `~/` where a word starts names HOME; `~name` is another user's home.
-            if (!quote && c === '~' && index === wordStart && home !== undefined && /^(?:[/ \t\n;&|<>()]|$)/.test(command[index + 1] ?? '')) {
-                value += home
-                index++
+            // `~` or `~/` where a word starts names HOME, and `~name` the home directory named `name` beside it:
+            // a user's own name reaches their credential stores as `~` does.
+            const user = !quote && c === '~' && index === wordStart && home !== undefined ? tildeUser(command.slice(index + 1)) : undefined
+            if (user !== undefined) {
+                value += tildeHome(home!, user)
+                index += 1 + user.length
+                continue
+            }
+            // `$'…'` is quoted text whose backslash escapes bash and zsh decode, so `$'\x2e'env` names `.env`.
+            if (!quote && c === '$' && command[index + 1] === "'") {
+                const decoded = ansiQuoted(command, index + 2)
+                quoted = true
+                for (const brace of braces) brace.quoted = true
+                value += decoded.text
+                index = decoded.end
                 continue
             }
             // Bash and zsh expand `{a,b}` and `{1..3}` only; `@{u}` and `HEAD@{1}` stay literal.
@@ -387,8 +432,9 @@ const dynamicExecutables = new Set(['eval', 'source', '.', 'dash', 'ksh', 'fish'
  * option anywhere on the line before `--`, so a command after them takes options only behind `--`. A launcher that fetches
  * resolves `owner/repo` from a Git host.
  */
-type Launcher = Readonly<{ plain?: readonly string[]; values?: readonly string[]; anywhere?: true; fetches?: true }>
-const npmExec: Launcher = { plain: ['--no', '--yes', '-y'], values: ['--package'], anywhere: true, fetches: true }
+type Launcher = Readonly<{ plain?: readonly string[]; values?: readonly string[]; anywhere?: true; fetches?: true; separatesAfter?: true }>
+// npm ends its own options at the first `--`, wherever it falls, and drops it, so the program gets every word after it.
+const npmExec: Launcher = { plain: ['--no', '--yes', '-y'], values: ['--package'], anywhere: true, fetches: true, separatesAfter: true }
 const bunx: Launcher = { plain: ['--bun'], values: ['-p', '--package'], fetches: true }
 const launchers: Readonly<Record<string, Launcher>> = {
     npx: { plain: ['--no', '--yes', '-y'], values: ['-p', '--package'], fetches: true }, 'npm exec': npmExec, 'npm x': npmExec,
@@ -422,7 +468,7 @@ const gitValueOptions = new Set(['-C', '-c', '--git-dir', '--work-tree', '--name
 const subscriptEvaluators = new Set(['unset', 'read', 'declare', 'typeset', 'local', 'export', 'readonly', 'printf', 'mapfile', 'readarray', 'test', '['])
 // A shell reads a script by path or a literal `-c` string, both of which the guard follows.
 const scriptShells = new Set(['sh', 'bash', 'zsh'])
-const privileged = new Set(['sudo', 'doas', 'su', 'pkexec'])
+const privileged = new Set(['sudo', 'sudoedit', 'doas', 'su', 'pkexec', 'run0', 'runuser'])
 // Builtins that move the shell as `cd` does, which only `cd` is judged as.
 const directoryChangers = new Set(['cd', 'pushd', 'popd', 'chdir'])
 const CD_REFUSAL = 'cd is judged only as `cd <dir> && <command>` (or `;`), alone in its command, with one literal directory that is absolute or starts '
@@ -451,25 +497,27 @@ const interprets = (item: ParsedInvocation) => item.executable !== null && INTER
  * Where the program a launcher at `at` runs starts, or undefined when the words there launch nothing the guard unwraps. A
  * cockpit launcher stays whole: the application proves which of its spellings start the installed cockpit.
  */
-function launchedCommand(args: readonly Token[], at: number): number | undefined {
+function launchedCommand(args: readonly Token[], at: number): { readonly index: number; readonly dropped?: number } | undefined {
     const words = args.map((token) => token.value)
     const manager = posix.basename(words[at]!)
     let index = at + 1
     let spelling = Object.hasOwn(launchers, manager) ? manager : undefined
     if (manager === 'pnpm') {
-        let selects = false
+        let directory = false
         while (index < words.length && (words[index]!.startsWith('-') || pnpmFlags.has(words[index]!))) {
             const [flag, attached] = words[index]!.split(/=(.*)/s)
             if (pnpmValueOptions.has(flag!)) index += attached === undefined ? 2 : 1
             else if (pnpmFlags.has(words[index]!)) index++
             else refuse(`Unsupported pnpm option ${shown(words[index]!)} before its command. Write it after the command, or run the program itself.`)
-            selects = true
+            if (['-C', '--dir'].includes(flag!)) directory = true
         }
         const verb = words[index]
         if (verb === undefined || pnpmCommands.has(verb)) return undefined
         if (verb === 'with') refuse('pnpm with runs another pnpm version on the rest of its line, which the guard does not read. Run the command with the installed pnpm.')
-        if (selects) {
-            refuse(`pnpm with options before ${shown(verb)} runs a program in the directory or workspace packages they select, which the guard does not follow. `
+        // `-r` and `--filter` run the program in workspace packages below the workspace root, so a path it names
+        // resolves below there too, except one that climbs with `..`; `-C` moves to a directory of its own.
+        if (directory || words.slice(index).some((word) => word.split('/').includes('..'))) {
+            refuse(`pnpm with ${directory ? '-C or --dir' : 'workspace selection and a path that climbs with ..'} before ${shown(verb)} runs a program in a directory or workspace packages where the guard cannot resolve its paths. `
                 + 'Use pnpm <options> run <script> for a script, or run the program from its own directory.')
         }
         if (verb === 'exec' || verb === 'dlx') spelling = `pnpm ${verb}`
@@ -506,15 +554,18 @@ function launchedCommand(args: readonly Token[], at: number): number | undefined
     const hidden = args.slice(at + 1, index).find((token) => token.dynamic)
     if (hidden) refuse(`${name} option ${shown(hidden.value)} holds an expansion the guard cannot see. Write it out.`)
     // A program named through an expansion is refused where the executable is read.
-    if (command.dynamic) return index
+    if (command.dynamic) return { index }
     if (posix.basename(command.value.replace(/(.)@[^/]*$/, '$1')) === 'cockpit') return undefined
     for (const source of [command.value, ...sources]) if (REMOTE_SOURCE.test(source) || launcher.fetches && /^[^@./][^/]*\/[^/]/.test(source)) fetchedSource(source)
     // yarn and pnpm's shell mode run the program's name as shell code.
     if (/[^\w@%+=:,./^~-]/.test(command.value)) refuse(`${name} runs ${shown(command.value)}, which holds shell syntax the guard does not read as a program name. Run the command itself.`)
-    if (launcher.anywhere && !separated && words.slice(index + 1).some((word) => word.startsWith('-'))) {
+    // npm takes an option anywhere before its `--`, so only one between the program and that `--` is ambiguous.
+    const after = words.slice(index + 1)
+    const separator = launcher.separatesAfter && !separated && after.includes('--') ? index + 1 + after.indexOf('--') : undefined
+    if (launcher.anywhere && !separated && words.slice(index + 1, separator).some((word) => word.startsWith('-'))) {
         refuse(`${name} reads an option anywhere before \`--\`, so the guard cannot tell its options from the program's. Write \`${name} -- ${command.value} …\`.`)
     }
-    return index
+    return separator === undefined ? { index } : { index, dropped: separator }
 }
 
 /** Why git refuses here: these run a shell command from the top of the working tree or in each submodule, not where git runs. */
@@ -584,9 +635,15 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
             const token = args[cursor++]
             // Bash and zsh do not brace-expand an assignment, so the expanded words misstate it.
             if (token.braced) refuse(`Unsupported brace expansion in the assignment ${shown(token.value)}. Write the value out.`)
-            assigned.push(token)
             const at = token.value.indexOf('=')
-            words.push({ ...word('environment-assignment-value', { ...token, value: token.value.slice(at + 1) }), name: token.value.slice(0, at) })
+            const raw = token.value.slice(at + 1)
+            // Bash and zsh expand a leading tilde in an assignment's value as at the start of a word.
+            const user = !token.quoted && token.dynamic && options.home !== undefined && raw.startsWith('~') ? tildeUser(raw.slice(1)) : undefined
+            const rest = user === undefined ? '' : raw.slice(1 + user.length)
+            const value = user !== undefined && !/[$`*?[~]/.test(rest) ? tildeHome(options.home!, user) + rest : undefined
+            const expanded = value === undefined ? token : { ...token, value: `${token.value.slice(0, at + 1)}${value}`, dynamic: false }
+            assigned.push(expanded)
+            words.push({ ...word('environment-assignment-value', { ...expanded, value: expanded.value.slice(at + 1) }), name: token.value.slice(0, at) })
         }
     }
     assignments()
@@ -656,8 +713,8 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
     // follows it as a wrapped invocation carrying the launcher's words, as a `sh -c` string's commands do.
     const launched = executableToken && !executableToken.dynamic ? launchedCommand(args, cursor) : undefined
     if (launched !== undefined) {
-        const [program, ...rest] = invocation([...assigned, ...args.slice(launched)], cwd, context)
-        const launcherWords = args.slice(cursor + 1, launched).map((token) => ({ role: 'wrapper-option-value' as const, value: token.value }))
+        const [program, ...rest] = invocation([...assigned, ...args.slice(launched.index).filter((_, at) => launched.index + at !== launched.dropped)], cwd, context)
+        const launcherWords = args.slice(cursor + 1, launched.index).map((token) => ({ role: 'wrapper-option-value' as const, value: token.value }))
         nested = [{ ...program!, wrapped: true, words: [...launcherWords, ...program!.words] }, ...rest]
     }
     if (executable !== null) {
@@ -665,7 +722,7 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
         if (!executable || executableToken!.status || definitions.has(executable)) refuse('Unsupported executable or defined command invocation.')
         if (directoryChangers.has(executable)) refuse(CD_REFUSAL)
         const name = posix.basename(executable)
-        if (privileged.has(name)) refuse(`${shown(executable)} runs a command with another user's privileges. Privilege escalation is a person's action: ask them to run it in their own terminal.`)
+        if (privileged.has(name) || name === 'osascript' && args.slice(cursor + 1).some((token) => /administrator\s+privileges/i.test(token.value))) refuse(`${shown(executable)} runs a command with another user's privileges. Privilege escalation is a person's action: ask them to run it in their own terminal.`)
         if (scriptShells.has(name)) {
             const [first, script, ...rest] = args.slice(cursor + 1)
             if (first?.value === '-c') {

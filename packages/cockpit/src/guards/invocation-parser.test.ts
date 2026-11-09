@@ -318,9 +318,13 @@ describe('guard invocation capture', () => {
             ['pnpm git push --force origin main', []], ['yarn exec -- git push --force origin main', ['exec', '--']], ['bunx --bun git push --force origin main', ['--bun']],
             ['bun run git push --force origin main', ['run']], ['uvx --from some-pkg git push --force origin main', ['--from', 'some-pkg']],
             ['uv run -- git push --force origin main', ['run', '--']], ['poetry run git push --force origin main', ['run']],
-            ['timeout 60 pnpm exec nice git push --force origin main', ['exec']]] as const) {
+            ['timeout 60 pnpm exec nice git push --force origin main', ['exec']],
+            // Workspace selection runs the program in packages below the workspace root, which is still the program.
+            ['pnpm --filter web exec git push --force origin main', ['--filter', 'web', 'exec']], ['pnpm -r git push --force origin main', ['-r']],
+            // npm drops its `--` wherever it falls and hands the program every word after it.
+            ['npm exec git push origin -- --force main', ['exec']]] as const) {
             expect(run(command), command).toEqual([[expect.any(String), expect.any(Array), command.startsWith('timeout'), command.startsWith('timeout') ? ['60'] : []],
-                ['git', ['push', '--force', 'origin', 'main'], true, launcher]])
+                ['git', command.startsWith('npm exec git') ? ['push', 'origin', '--force', 'main'] : ['push', '--force', 'origin', 'main'], true, launcher]])
         }
         // The application proves which cockpit launcher spellings start the installed cockpit, so each stays whole.
         for (const command of ['npx --no cockpit doctor', 'npx --no -- cockpit check', 'npx cockpit doctor', 'pnpm exec cockpit check --config cockpit.toml',
@@ -332,7 +336,7 @@ describe('guard invocation capture', () => {
             ['uv run --env-file .env python x.py', 'Unsupported uv run option'],
             // npm and yarn read an option anywhere before `--`, so the command's options are not told apart from theirs.
             ['npm exec git push --force origin main', 'npm exec -- git'], ['yarn exec git push --force origin main', 'yarn exec -- git'],
-            ['pnpm --filter web exec git push --force origin main', 'workspace packages'], ['pnpm -C ./web build', 'workspace packages'],
+            ['pnpm --filter web exec rm -rf ../.cockpit', 'workspace packages'], ['pnpm -C ./web build', 'workspace packages'],
             ['pnpm with 9 git push --force origin main', 'pnpm with'], ['npm --prefix ./x exec -- git push origin main', 'before its exec'],
             ['npx https://example.test/tool.tgz', 'fetched from a URL'], ['npx someone/tool', 'fetched from a URL'], ['uvx --from git+https://example.test/r tool', 'fetched from a URL'],
             ["pnpm exec 'git push -f; ls'", 'shell syntax']] as const) {

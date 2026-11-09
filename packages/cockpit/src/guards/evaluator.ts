@@ -1020,7 +1020,10 @@ function launchedBy(program: ParsedInvocation, launcher: ParsedInvocation): bool
     if (program.executable === null || launcher.executable === null || program.cwd !== launcher.cwd) return false
     const own = [program.executable, ...program.argv]
     const spelled = [launcher.executable, ...launcher.argv]
-    return own.length < spelled.length && own.every((word, at) => word === spelled[spelled.length - own.length + at])
+    const ends = (words: readonly string[]) => own.length < words.length && own.every((word, at) => word === words[words.length - own.length + at])
+    // npm drops the `--` that ends its options from the program's words.
+    const separator = spelled.indexOf('--', spelled.length - own.length)
+    return ends(spelled) || separator > 0 && ends(spelled.filter((_, at) => at !== separator))
 }
 
 /** Hard boundaries are independent of grants and are evaluated across the complete capture. */
