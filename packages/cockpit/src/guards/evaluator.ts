@@ -921,7 +921,9 @@ function dumpsEnvironment(invocation: ParsedInvocation): boolean {
     // Bare, or with only flags that print: `export -p`, `declare -x`, `typeset -p`, `readonly`.
     if (['export', 'declare', 'typeset', 'readonly', 'local'].includes(program)) return names.length === 0 && options.every(arg => /^-[xprgaAfFi]*$/.test(arg))
     // BSD `ps e` and macOS `ps -E` print each process's environment.
-    if (program === 'ps') return argv.some(arg => !arg.startsWith('-') && arg.includes('e') || /^-[A-Za-z]*E/.test(arg))
+    // A bare letter cluster is BSD syntax; a word after -o, -p and the like is that option's value.
+    if (program === 'ps') return argv.some((arg, at) => /^[A-Za-z]+$/.test(arg) && arg.includes('e') && !/^-[A-Za-z]*[oOpqUuGgtk]$/.test(argv[at - 1] ?? '')
+        || /^-[A-Za-z]*E/.test(arg))
     if (['echo', 'printf'].includes(program)) return invocation.words.some(word => word.role === 'argument' && referenced(word.value).some(secretVariable))
     return false
 }
@@ -959,6 +961,58 @@ function gitProgramOption(git: GitInvocation): boolean {
 function steers({ name, value }: { readonly name?: string; readonly value: string }): boolean {
     return name === undefined || /^(?:GIT_.*|HOME|XDG_CONFIG_HOME|BASH_ENV|ENV|HUSKY.*|SKIP|LEFTHOOK.*|OVERCOMMIT_DISABLE|PRE_COMMIT_ALLOW_NO_CONFIG)$/.test(name)
         || name === 'PATH' && value.split(':').some(entry => !entry.startsWith('/'))
+}
+
+// Development tool families the allow default admits, judged by the guard's rules for them. Anything
+// else asks; a person's [guards] allow rule can admit it.
+const KNOWN_TOOLS = new Set([
+    // Version control and its host.
+    'git', 'gh',
+    // Package managers and the runners that launch a program, which the parser then follows.
+    'npm', 'pnpm', 'yarn', 'bun', 'npx', 'pnpx', 'bunx', 'uv', 'uvx', 'pip', 'pip3', 'poetry', 'pipenv', 'corepack',
+    // Languages and build and test tools running project files.
+    'node', 'nodejs', 'python', 'python3', 'ruby', 'go', 'cargo', 'rustc', 'deno', 'make', 'tsc', 'tsx', 'ts-node', 'eslint', 'prettier', 'biome',
+    'vitest', 'jest', 'mocha', 'playwright', 'pytest', 'ruff', 'mypy', 'turbo', 'nx', 'java', 'javac', 'gradle', 'mvn',
+    // Shells running a script, or a `-c` string the parser judged command by command.
+    'bash', 'sh', 'zsh',
+    // Reading and text utilities.
+    'cat', 'head', 'tail', 'rg', 'grep', 'fd', 'find', 'ls', 'wc', 'sort', 'uniq', 'cut', 'tr', 'nl', 'diff', 'jq', 'yq', 'stat', 'file', 'tree',
+    'which', 'type', 'command', 'echo', 'printf', 'test', '[', 'true', 'false', 'date', 'basename', 'dirname', 'realpath', 'readlink', 'sleep',
+    'pwd', 'ps', 'shasum', 'sha256sum', 'md5', 'md5sum', 'du', 'df', 'uname', 'whoami', 'id', 'hostname', 'seq', 'xxd', 'od', 'awk', 'sed',
+    // Shell builtins that set or show shell state.
+    'export', 'declare', 'typeset', 'readonly', 'local', 'unset', 'set', 'setopt', 'printenv', 'env',
+    // File utilities, judged as writes inside the roots.
+    'mkdir', 'cp', 'mv', 'rm', 'rmdir', 'touch', 'ln', 'tee', 'chmod', 'truncate', 'install', 'dd',
+    // Archives and copies, judged by their operands.
+    'zip', 'tar', 'rsync', 'scp', 'unzip', 'gzip', 'gunzip',
+    // Downloads, judged by their hosts and output options.
+    'curl', 'wget',
+    // cockpit's own CLI, judged by its command table.
+    'cockpit', 'cockpit.mjs',
+])
+// Options that make an interpreter run code given on the command line instead of a file.
+const INLINE_CODE: Readonly<Record<string, RegExp>> = {
+    node: /^(?:-e|-p|--eval|--print)(?:=|$)|^-[a-zA-Z]*[ep]$/, nodejs: /^(?:-e|-p|--eval|--print)(?:=|$)|^-[a-zA-Z]*[ep]$/,
+    python: /^-[a-zA-Z]*c/, python3: /^-[a-zA-Z]*c/, ruby: /^-[a-zA-Z]*e/, deno: /^(?:eval)$/, bun: /^(?:-e|--eval|-p|--print)(?:=|$)/,
+    awk: /./, sed: /^-[a-zA-Z]*e$|^--expression/,
+}
+
+/** Whether an invocation is a development tool the allow default admits, or a program inside the roots. */
+function knownTool(invocation: ParsedInvocation, roots: readonly string[]): boolean {
+    if (invocation.executable === null) return true
+    const name = posix.basename(invocation.executable)
+    // A program spelled as a path inside the roots is the project's own, like a file node runs.
+    const project = invocation.executable.includes('/') && roots.some(root => within(posix.resolve(invocation.cwd, invocation.executable!), root))
+    if (!project && !KNOWN_TOOLS.has(name)) return false
+    // Inline code is a program the guard cannot read; awk programs and sed scripts run commands too.
+    const inline = INLINE_CODE[name]
+    if (name === 'awk') return !invocation.argv.some(arg => /system|getline|\||print\s*>/.test(arg))
+    if (name === 'sed') return !invocation.argv.some(arg => /(?:^|;|\s)\d*[ew]\b|\/e\b/.test(arg))
+    if (inline && invocation.argv.slice(0, invocation.argv.findIndex(arg => !arg.startsWith('-')) >>> 0).some(arg => inline.test(arg))) return false
+    if (name === 'deno' && invocation.argv[0] === 'eval') return false
+    // `find -exec` runs a program per match.
+    if (name === 'find' && invocation.argv.some(arg => /^-(?:exec|execdir|ok|okdir)$/.test(arg))) return false
+    return true
 }
 
 /** Whether `program` is the command the parser followed `launcher` with: its words end the launcher's. */
@@ -1705,6 +1759,16 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             // table does not admit (sync and upgrade publish policy), a reading command whose shape the
             // read-only profile could not prove reads no secret, and Git that prints committed content.
             const executable = posix.basename(invocation.executable)
+            // A blocked list over a shell is never complete: a program the guard does not know can do what
+            // the list forbids without naming it. So the allow default admits only the development tools
+            // it knows, judged by their own rules, and a program running inline code asks.
+            // `pnpm build`, `yarn lint` and `bun run test` run the package's script of that name when it has
+            // one, and package scripts are the project's own commands; only `exec`, `dlx` and `x` name a program.
+            const runner = invocations[invocations.indexOf(invocation) - 1]
+            const script = invocation.wrapped && runner !== undefined && launchedBy(invocation, runner) && ['pnpm', 'yarn', 'bun', 'npm'].includes(posix.basename(runner.executable ?? ''))
+                && !runner.argv.slice(0, runner.argv.length - invocation.argv.length - 1).some(word => ['exec', 'dlx', 'x', '--package', '-p'].includes(word))
+            const unknown = open && !script && !knownTool(invocation, resolved.allowedRoots)
+            if (unknown && !cockpitShaped(invocation)) return ask(`${named(invocation)} is not a development tool the guard knows, or runs inline code it cannot judge. A person approves it or runs it, or admits it under [guards] allow in ${posix.basename(resolved.configPath)}.`)
             if (open && !containerCommands.has(invocation) && !cockpitShaped(invocation) && !READING_EXECUTABLES.has(executable)
                 && !(executable === 'git' && gitPrintsContent(gitInvocation(invocation)))) continue
             if (open && cockpitShaped(invocation)) return ask(`${named(invocation)} is a cockpit command that publishes policy or is not one an agent runs: \`sync\`, \`upgrade\` and the other commands that change what agents may do are a person's. A person runs it in a terminal.`)

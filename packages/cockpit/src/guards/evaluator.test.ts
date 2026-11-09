@@ -1212,20 +1212,41 @@ describe('allow by default', () => {
             expect(decision, launcher).toMatchObject({ decision: 'allow' })
         }
         // A launcher's or wrapper's program outside the roots runs; it is not read as a file.
-        for (const command of ['npx /opt/tools/bin/lint src', 'timeout 60 /opt/tools/bin/lint src', 'nice -n 5 /opt/tools/bin/lint src']) {
+        for (const command of ['npx /opt/tools/bin/eslint src', 'timeout 60 /opt/tools/bin/eslint src', 'nice -n 5 /opt/tools/bin/eslint src']) {
             const decision = evaluateGuard(parseGuardInput(shellPayload(command), { dynamicWords: 'mark', home }), open(), onBranch('refs/heads/topic'))
             expect(decision, command).toMatchObject({ decision: 'allow' })
         }
     })
 
+    it('asks for a program it does not know, or inline code, unless a person admits it', () => {
+        const marked = (command: string, configured: object = open()) =>
+            evaluateGuard(parseGuardInput(shellPayload(command), { dynamicWords: 'mark', home }), configured, onBranch('refs/heads/topic'))
+        for (const command of ['xcrun simctl list', 'arch -x86_64 make', 'ssh host true', 'kubectl get pods', 'docker compose exec web sh', 'osascript notes.scpt',
+            'launchctl list', 'crontab -l', 'perl script.pl', 'python3 -c "print(1)"', "node -e 'console.log(1)'", "ruby -e 'puts 1'", 'deno eval "1"',
+            'find src -exec touch {} ;', "awk '{system($0)}' notes.md", "sed -e '1e date' notes.md", 'npx some-unknown-tool src']) {
+            expect(marked(command).decision, command).toBe('ask')
+        }
+        // A program the project ships, spelled by its path inside the roots, runs.
+        expect(marked('./scripts/build.sh')).toMatchObject({ decision: 'allow' })
+        // A person's rule admits an unknown program; it never admits a blocked item.
+        const granted = { ...open(), declaredAllows: [{ argv: ['xcrun'], cwd: root, reason: 'Run the simulator tools.' }] }
+        expect(marked('xcrun simctl list', granted)).toMatchObject({ decision: 'allow' })
+        expect(marked('xcrun simctl list < .env', granted).decision).not.toBe('allow')
+    })
+
     it('still allows the development those refusals sit beside', () => {
+        const refused: string[] = []
         for (const command of ['sort < src/a.ts', 'git commit -F notes.md', 'git push origin topic', 'git switch -c topic && git commit -m done', 'rsync -a src/ build/',
             'git worktree add worktrees/topic -b topic', 'git init worktrees/scratch', 'export NODE_ENV=test && npm test', 'git -c core.quotepath=false status',
-            `cat ${home}/.ssh/id_ed25519.pub`, 'zip -qr build/src.zip src', 'git restore --source=HEAD~1 -- src/a.ts', 'echo "$PATH"', 'npm run build']) {
+            `cat ${home}/.ssh/id_ed25519.pub`, 'zip -qr build/src.zip src', 'git restore --source=HEAD~1 -- src/a.ts', 'echo "$PATH"', 'npm run build',
+            'gh pr create --title Fix --body Done', 'gh pr edit 12 --title Fix', 'gh pr checks 12', 'gh run list', 'gh run view 1', 'pnpm build', 'pnpm test',
+            'pnpm lint', 'pnpm typecheck', 'make -C local doctor', 'jq .result.summary .cockpit/local/probes/report.json', 'ps -o pid,user,command',
+            "cat > notes.md <<'EOF'\nnotes\nEOF"]) {
             const marked = evaluateGuard(parseGuardInput(shellPayload(command), { dynamicWords: 'mark', home }), { ...open(), externalReads: 'native' as const },
                 (request) => ({ ...onBranch('refs/heads/topic')(request), identity: '8:2' }))
-            expect(marked, command).toMatchObject({ decision: 'allow' })
+            if (marked.decision !== 'allow') refused.push(`${command}: ${marked.decision}`)
         }
+        expect(refused).toEqual([])
         // In the strict mode a declared command spelled with a launcher still admits the program it runs.
         const strict = { ...open(), defaultDecision: 'ask' as const, projectCommands: [{ checkoutRoot: root, kind: 'test', executable: 'pnpm', argv: ['exec', 'vitest', 'run'] }] }
         expect(evaluateGuard(parseGuardInput(shellPayload('pnpm exec vitest run')), strict, onBranch('refs/heads/topic'))).toMatchObject({ decision: 'allow' })
