@@ -26,8 +26,9 @@ Every diagnostic message names what failed and how to fix it. The sections below
 ## Guard refusals
 
 A guard refusal reaches the agent as its reason text; `GUARD_REFUSED` marks it in diagnostics. Under
-the allow default these are the blocked list ([Safety and autonomy](safety-and-autonomy.md)), and an
-agent hands the command to a person rather than rewording it.
+the allow default these are the blocked list and the asks for an unknown program or inline code
+([Safety and autonomy](safety-and-autonomy.md)); an agent hands the command to a person, or proposes
+a `[[guards.allow]]` rule, rather than rewording it.
 
 | Reason starts with | Why | Fix |
 | --- | --- | --- |
@@ -40,6 +41,7 @@ agent hands the command to a person rather than rewording it.
 | `An earlier command in this call can change the current branch` | A push or rewrite rests on the current branch after a command that may move it. | Run the push or rewrite as its own call. |
 | `… sets <NAME>, which changes what Git, its hooks, the shell or the command search path runs` | A prefixed or exported `GIT_*`, `HOME`, `HUSKY`, `SKIP`, `LEFTHOOK` or relative `PATH` assignment. | Run the command without that assignment. |
 | `Refusing \`--no-verify\`` / `Refusing \`git -c <key>\`` | Skipping hooks, or a configuration key that chooses a program Git runs. | Run without it and fix what the hook reports. |
+| `… is not a development tool the guard knows, or runs inline code it cannot judge` | The executable is not a tool the guard knows, or the command runs inline code: `python3 -c`, `node -e`, `find -exec`, an `awk` program that calls `system`, a `sed` `e` command. In Codex and OpenCode the ask is a refusal. | A person approves or runs the command, or adds a `[[guards.allow]]` rule for the program to `cockpit.toml` and runs `sync`. Do not reword it. |
 | `… is a cockpit command an agent does not run unprompted` | `sync`, `upgrade` and other commands that change what agents may do, however spelled. | A person runs it in a terminal. |
 | `… names <path>, outside the configured roots` | Under the allow default any command naming a path outside the cockpit follows `[guards] external_reads`. | A person lists the location under `[guards] read_paths` or sets `external_reads = "native"`, then syncs. |
 | `… holds <word>, which names or can match an environment file …` / `… whose value the guard cannot see` | An assignment, loop item or glob names or can match a secret, or an unexpanded word decides a path. | Write the files out by name. |

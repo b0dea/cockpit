@@ -127,7 +127,7 @@ switches on when you declare Compose files (Docker), and agent-run grading when 
 | **[Every repository in reach](docs/harness-surfaces.md#sibling-projection-and-standing-cost)** | Declare each once; `setup` clones or finds it, its guides are copied into the root `AGENTS.md` (the one route that loaded in all three tools in dated runs), and every tool is granted its directory. A changed guide is drift until a person runs `sync`, so an agent cannot quietly change what later agents load. |
 | **[The product running, per checkout](docs/environment.md)** | `session` runs your own Compose files on the live checkouts and leases each checkout, worktrees included, a port family. `up`, `logs`, `down` and the rest drive the stack; it stops only when no checkout still holds it, and `reset` wipes only the volumes you declared resettable. |
 | **[Parallel work in worktrees](docs/environment.md#serve-a-sibling-from-a-worktree)** | `use` serves a repository from a worktree, so each agent runs the whole product on its own branch. `check` refuses a fixed `container_name` that would make two stacks collide, and `stacks prune` removes what a deleted worktree's stack left behind. |
-| **[One guard in every tool](docs/safety-and-autonomy.md)** | The same script lets agents work freely inside the cockpit and refuses a blocked list: secrets and credentials, writes outside it, force pushes and protected branches, production hosts you declare, and changes to the guard itself. |
+| **[One guard in every tool](docs/safety-and-autonomy.md)** | The same script lets agents run known development tools inside the cockpit, asks about unknown programs and inline code, and refuses a blocked list: secrets and credentials, writes outside it, force pushes and protected branches, production hosts you declare, and changes to the guard itself. |
 | **[Secrets kept out of the agent's context](docs/environment.md#secret-sources-and-environment-schemas)** | The guard refuses `.env` reads; `cockpit env keys` gives an agent the variable names instead, and [Varlock](https://varlock.dev) `.env.schema` files are validated without reading a value. |
 | **[Test gates that cannot fake a pass](docs/work-and-browser.md#choose-the-proving-test-tier)** | `test-run` runs your own gate (Vitest, Jest, pytest, Bazel and others) and reports PASS only for a complete, stable run whose checks all passed. A change that deletes, skips or loosens tests is flagged. |
 | **[Judged, not just gated](docs/work-and-browser.md#how-an-order-earns-done)** | Optional work orders hold a change to an objective, a scope and criteria. The grader is optional: another agent tool (the default), the same tool in a separate run, a subagent of the working agent, the checks alone, the agent's own report, or none ([how grading can run](docs/work-and-browser.md#how-grading-can-run)). The record always says which. |
@@ -208,22 +208,29 @@ modes.
 
 ## The guard
 
-- **Allows by default** every command inside the cockpit and its siblings except a blocked list:
+- **Allows known tools by default.** A command runs when its executable is a development tool the
+  guard knows (Git, `gh`, package managers, interpreters running project files, build and test tools,
+  read and text utilities, file utilities inside the cockpit, archive and copy tools, `curl`, cockpit),
+  judged by that tool's own rules. A blocked list is refused in every mode and no rule overrides it:
   secrets (`.env` and `.env.*` files other than documentation names such as `.env.example`, `.secrets`,
   declared instances, credential stores such as `~/.ssh` and `~/.aws`, credential-printing commands
   and environment dumps), writes outside the cockpit, force pushes, pushes to protected branches
   (`main` and `master` by default) and rewriting them, commands that reach a declared host, changes to
   the guard itself including an agent's own `sync`, and privilege escalation or downloaded code piped
-  to an interpreter. `[guards] default = "ask"` keeps the strict mode instead.
+  to an interpreter. `[guards] default = "ask"` is the strict mode, which asks for every command the
+  guard cannot prove safe.
 - **Sees** shell commands in all three tools. In Claude Code also its Edit and Write tools, and its
   Read tool through generated deny rules. Those rules also refuse documentation names such as
   `.env.example`, to Read and to a recognized shell read such as `cat` (measured 2026-11-05), so an
   agent reaches them with `cockpit env keys` and `cockpit env schema`. In OpenCode the plugin
   restates its native read, grep and glob as the shell command that reads the same paths.
-- **Judges what it can see.** A program a command runs can still read or write anything your account
-  can. What still needs a person asks in Claude Code and is refused in Codex and OpenCode, which have
-  no prompt tier. `[guards] allow` rules admit such a command but never a blocked one. Input it cannot
-  parse is refused.
+- **Asks about what it does not know.** An unknown program and inline interpreter code (`python3 -c`,
+  `node -e`, `find -exec`) ask: a prompt in Claude Code, a refusal in Codex and OpenCode, which have no
+  prompt tier. A person approves or runs the command, or admits the program with a `[guards] allow`
+  rule, which never admits a blocked item. Input it cannot parse is refused.
+- **Judges what it can see.** It reads command text only. A program an allowed tool runs, such as
+  `node script.js` or a package script, can still read or write anything your account can, so the
+  guard is no sandbox: the boundaries are the tool's own sandbox and server-side branch protection.
 
 [Safety and autonomy](docs/safety-and-autonomy.md) has the full rules.
 

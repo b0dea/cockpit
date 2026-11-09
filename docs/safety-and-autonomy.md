@@ -4,12 +4,34 @@ What the guard allows, asks about, denies or cannot evaluate, and why. The
 [command table](../packages/cockpit/src/command-table.ts) and
 [guard evaluator](../packages/cockpit/src/guards/evaluator.ts) own these decisions.
 
-## The default: allow, except the blocked list
+## The default: known tools, except the blocked list
 
-By default (`[guards] default = "allow"`) an agent may run any shell command inside the cockpit and
-its siblings: Git work such as `add`, `commit`, `merge`, `rebase`, `switch`, `stash`, `fetch`, `pull` and
-pushes to work branches, builds, tests, package scripts, interpreters, `gh` queries and pull requests.
-The guard refuses only this blocked list:
+By default (`[guards] default = "allow"`) the guard allows a command when its executable is a
+development tool it knows, and judges each one by that tool's own rules. The known tools are Git and
+`gh`; package managers and the programs they launch (`npm`, `pnpm`, `yarn`, `bun`, `npx`, `uv`, `pip`);
+interpreters running project files (`node`, `python3`, `ruby`) and build and test tools (`make`,
+`cargo`, `go`, `tsc`, `vitest`, `pytest`); shells; read and text utilities (`cat`, `rg`, `find`, `jq`,
+`awk`, `sed`); file utilities, judged as writes inside the roots (`mkdir`, `cp`, `mv`, `rm`, `tee`);
+archive and sync tools (`tar`, `zip`, `rsync`); `curl` and `wget`; and cockpit's own CLI. The
+`KNOWN_TOOLS` set in the [evaluator](../packages/cockpit/src/guards/evaluator.ts) is the list. Two
+more kinds run: a project program spelled as a path inside the roots (`./scripts/build.sh`), and a
+package script run by a bare package-manager command (`pnpm build`, `yarn lint`, `bun run test`),
+which is not `exec`, `dlx` or `x`, since those name a program. In practice an agent works freely inside
+the cockpit and its siblings: Git work such as `add`, `commit`, `merge`, `rebase`, `switch`, `stash`,
+`fetch`, `pull` and pushes to work branches, builds, tests, package scripts, `gh` queries and pull
+requests.
+
+Two kinds of command ask instead. A program the guard does not know (`kubectl`, `ssh`, `docker`,
+`perl`, an unlisted tool fetched by `npx`) asks, and so does inline interpreter code that the guard
+cannot read: `python3 -c`, `node -e`, `ruby -e`, `deno eval`, `find -exec`, an `awk` program that calls
+`system`, reads with `getline` or writes to a pipe or file, and a `sed` script with the `e` or `w`
+command. The reason begins "`<command>` is not a development tool the guard knows, or runs inline code it
+cannot judge". In Claude Code an ask is a permission prompt. Codex and OpenCode hooks cannot prompt,
+so there it is a refusal. A person approves the command or runs it in a terminal, or admits the
+program for good with a `[[guards.allow]]` rule and syncs; an agent proposes the rule rather than
+writing it.
+
+The blocked list below is refused in every mode, and no `[[guards.allow]]` rule overrides it:
 
 | Blocked | What the guard checks |
 | --- | --- |
@@ -20,24 +42,33 @@ The guard refuses only this blocked list:
 | The guard itself | Writes to hook registrations, `.cockpit/guards`, `.cockpit/local`, the installed cockpit, `node_modules/.bin` and `.npmrc`, including through glob or magic Git pathspecs and `--cacheinfo`; widening edits to `cockpit.toml`, which wait for a person's `sync`; any cockpit command its own table does not admit, such as `sync` or `upgrade`, however it is spelled (`npm run cockpit:sync`, `pnpm exec cockpit`, a path to `cockpit.mjs`); direct `.git` writes; `git config` keys that choose a program (hooks, fsmonitor, pagers, editors, helpers, aliases, filters, drivers, includes, remotes, templates, submodules); `git -c` with such a key; `--no-verify` and its abbreviations; `git init` and `clone` with `--template`; transfer options that name a program (`--upload-pack`, `--receive-pack`, `--exec`); and assignments, prefixed or exported, that steer Git, its hooks or the command search path (`GIT_*`, `HOME`, `XDG_CONFIG_HOME`, `HUSKY`, `SKIP`, `LEFTHOOK`, a relative `PATH` entry, `set -a`). |
 | Privilege and fetched code | `sudo`, `doas`, `su` and `pkexec`; a download piped into a shell or interpreter, such as `curl … \| sh`, `curl … \| awk` or `bash <(curl …)`; and a package launcher or `deno` given a URL or Git source. A program a launcher runs (`npx`, `pnpm exec`, `bun run`, `uvx`) is judged as if it ran on its own. Programs that run a command the guard cannot see (`script`, `flock`, `parallel`, `entr`, `xargs`, `eval`, `source`, `git rebase -x`, `git submodule foreach`, `git bisect run`) are refused. |
 
-The guard can only block what it can see in the command. A program the command runs, such as
-`node script.js`, `make` or a package script, can still read, write or run anything the account can,
-the guard's own files included; nothing here constrains it. When that matters, keep the strict mode,
-or run agents in a sandbox. Under Codex, a script that rewrites `.codex/hooks.json` makes the hook
-untrusted, and Codex then skips it, so the guard stops running until a person trusts the hooks
-again; cockpit has not measured a native protection for that file.
+Limits, stated plainly:
 
-`[[guards.deny]]` adds commands to the blocked list. `[[guards.allow]]` admits a command the guard
-would otherwise ask about; it never overrides a hard denial, nor these asks: a push whose destination
-Git cannot resolve, a push or rewrite after a command that may move the branch, a staging walk past
-its bound, a steering assignment, a cockpit command its table does not admit, an unproven cockpit
-launcher, and Git run with `--git-dir` or `--work-tree`.
+- The guard judges only the command text it sees. Inside an allowed tool, such as `node script.js`,
+  `make` or a package script, the code runs with the account's rights and can read, write or run
+  anything the account can, the guard's own files included.
+- The boundaries that hold against that are the harness's own sandbox (Codex's workspace-write mode,
+  Claude Code's sandbox) and server-side branch protection, such as a GitHub ruleset on the default
+  branch. The guard prevents mistakes; it is not a sandbox.
+- Codex skips a `hooks.json` it no longer trusts. A script that rewrites `.codex/hooks.json` makes the
+  hook untrusted, and the guard stops running until a person trusts the hooks again; cockpit has not
+  measured a native protection for that file.
+- What a harness does when its hook timeout fires is not measured. The guard keeps its own 25-second
+  deadline and refuses at it ([Native adapter behavior](#native-adapter-behavior)).
 
-`[guards] default = "ask"` keeps the strict mode: the guard then admits only the read-only commands
-it classifies, declared build and test commands, cockpit's own agent commands and `[[guards.allow]]`
-rules, each one exact command, and asks for everything else. The rest of this page describes the
-blocked list and the strict mode's prompts; where a rule applies only in one mode, it says so.
-Changing `ask` to `allow` widens what agents may do, so it waits for a person's sync.
+`[[guards.deny]]` adds commands to the blocked list. `[[guards.allow]]` is the exception mechanism: it
+admits a command the guard would otherwise ask about, such as an unknown program or inline code, and
+never overrides a hard denial, nor these asks: a push whose destination Git cannot resolve, a push or
+rewrite after a command that may move the branch, a staging walk past its bound, a steering
+assignment, a cockpit command its table does not admit, an unproven cockpit launcher, and Git run with
+`--git-dir` or `--work-tree`.
+
+`[guards] default = "ask"` is the strict mode: the guard admits only the read-only commands it
+classifies, declared build and test commands, cockpit's own agent commands and `[[guards.allow]]`
+rules, each one exact command, and asks for everything else, which is every command it cannot prove
+safe. The rest of this page describes the blocked list and the strict mode's prompts; where a rule
+applies only in one mode, it says so. Changing `ask` to `allow` widens what agents may do, so it
+waits for a person's sync.
 
 ## Outcome vocabulary
 
@@ -217,9 +248,9 @@ fails is `unavailable`. Unsupported staging options or unproven pathspec grammar
 In the strict mode, any other refused command gets an `ask` that names the command and gives three
 ways forward: a person approves it, a person runs it in a terminal, or a person admits it under
 `[guards] allow`; for tests it points to `cockpit test-run`. Under the allow default these commands
-run, except a reading command such as `cat`, `rg` or `grep` whose shape the read-only profile could
-not prove reads no secret, Git that prints committed content outside the profile, and a cockpit
-command its own table does not admit.
+run, except a program the guard does not know or inline interpreter code, a reading command such as
+`cat`, `rg` or `grep` whose shape the read-only profile could not prove reads no secret, Git that
+prints committed content outside the profile, and a cockpit command its own table does not admit.
 
 ### Declared rules
 
@@ -234,7 +265,7 @@ exception is the program a package launcher runs, which a rule or declared comma
 spelling admits, as `pnpm exec vitest run` is admitted by a rule for it. A rule that admits an interpreter,
 such as `["node"]`, `["python3"]` or `["perl"]`, admits whatever code it is given, inline or in a
 file, and the guard cannot see what that code writes, guard controls included; without such a rule
-those invocations ask.
+inline code asks under the allow default, and every interpreter run asks in the strict mode.
 
 Malformed or oversized input, incomplete policy, escaped or symlinked path evidence, inspection
 failure and exceeded limits produce `unavailable`. The
@@ -619,7 +650,7 @@ stricter setting and the most agentic one that keeps every guardrail.
 | `browser drive` and `screenshot` without a prompt | process on isolated data; on data that is not isolated, restored or reaches production, preapproval is refused | `[browser] request_preapproval` | on exactly where the data is isolated | `false` | as shipped |
 | Enabling a declared MCP server | guardrail: a harness starts an enabled server outside every guard boundary, and a sibling's MCP source is a file the agent can write. `agent` exists, and gives this guardrail up | `[autonomy] mcp_approve` | `person` | `person` | `person` |
 | Starting a profile that mounts an operator-gated sibling | guardrail: it touches live data or local hardware | `gate = "operator"` on the sibling | as declared | add the gate | keep the gate |
-| A command the guard asks about | guardrail: under the shipped allow default only a boundary the guard cannot resolve, such as a push whose destination Git cannot name; under `[guards] default = "ask"` every command it cannot prove safe. A person admits an exact command for good under `[[guards.allow]]`, which never overrides a blocked item | `[guards] default`, `[[guards.allow]]` | `allow`: a prompt in Claude Code, a refusal in Codex and OpenCode | `ask` | `allow` |
+| A command the guard asks about | guardrail: under the shipped allow default a program the guard does not know, inline interpreter code, or a boundary it cannot resolve, such as a push whose destination Git cannot name; under `[guards] default = "ask"` every command it cannot prove safe. A person admits a command for good under `[[guards.allow]]`, which never overrides a blocked item | `[guards] default`, `[[guards.allow]]` | `allow`: a prompt in Claude Code, a refusal in Codex and OpenCode | `ask` | `allow` |
 | An edit of `cockpit.toml` that widens what agents may do (`GUARD_CONFIG_WIDENED`) | guardrail: it widens what the agent may run, read or write; [Edits the guard has not applied](#edits-the-guard-has-not-applied) | none | a person, at `sync --interactive` | | |
 | An agent's edit of `[work]`, `[work.gates]`, `[autonomy]` or MCP tool access | guardrail: it is how an agent would delegate to itself; the edit is a hard denial | none | refused | | |
 | Accepting a weaker policy than the last sync recorded, grading mode included (`POLICY_WEAKENING_UNCONFIRMED`) | guardrail: it loosens the agent's own gates or grading; this covers moving grading off a grader that cannot run (`EVALUATOR_UNAVAILABLE`) | none | a person, at `sync --interactive` | | |

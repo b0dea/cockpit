@@ -31,10 +31,11 @@ budget: uncapped
   until a person runs that sync with `--interactive` in a terminal. When the guard refuses a
   command, read the reason. To read a file, use your tool's own file reading instead of the shell. A
   refusal for secrets, writes outside the cockpit, protected branches, declared hosts or the guard
-  itself is the person's: hand them the exact command and why. Do not reword, wrap or re-spell a
-  command to get past the guard. If the refused command could not touch any of those, report it as a
-  cockpit gap (the command, the reason text, why it is harmless) and continue with other work rather
-  than asking the person to run it.
+  itself is the person's: hand them the exact command and why. A command refused as an unknown
+  program or inline code is the person's too, or a reason to propose a `[[guards.allow]]` rule for
+  that program. Do not reword, wrap or re-spell a command to get past the guard. If a harmless
+  command of a known development tool is refused, report it as a cockpit gap (the command, the reason
+  text, why it is harmless) and continue with other work rather than asking the person to run it.
 - In Codex's sandbox `check`, `sync --dry-run` and `--help` work as it stands, unless `[browser]` is
   declared, which makes the first two read cockpit's state too. Other cockpit commands need what the
   sandbox withholds: write access to the state root, which `STATE_ROOT_UNAVAILABLE` names and a person
