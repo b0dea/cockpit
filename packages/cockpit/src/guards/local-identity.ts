@@ -1,6 +1,6 @@
 // Owns the machine-local guard identity file: its path, its bytes and how `sync` writes it.
 // Tracked guard bytes must be identical on every clone, so everything that names this machine
-// (Node, the installed cockpit module, root and configuration device and inode numbers) lives here,
+// (Node, the installed cockpit module, root and configuration inode numbers) lives here,
 // in a directory that ignores itself. It decides nothing: the guard application authenticates the
 // file against the running process and the published surfaces before any policy is resolved.
 import { exactKeys } from '../exact-keys.js'
@@ -13,11 +13,11 @@ import { errorCause, hasErrorCode } from '../environment/contract.js'
 
 export interface GuardHandlerIdentity {
     readonly root: string
-    readonly rootDevice: string
+    // No device number: macOS reassigns the APFS Data volume's on every boot, which held every agent
+    // until a person ran sync. The canonical path and inode still tell a replaced checkout apart.
     readonly rootInode: string
     readonly configPath: string
     readonly configSha256: string
-    readonly configDevice: string
     readonly configInode: string
     readonly node: string
     readonly nodeSha256: string
@@ -39,7 +39,7 @@ export const GUARD_LOCAL_PATHS = Object.freeze({
 // than JSON: a format line, the two executables it launches, then the identity the application checks.
 const FORMAT = 'cockpit-guard-local/v1'
 const LOCAL_FILE_MAX_BYTES = 65_536
-const KEYS = ['root', 'rootDevice', 'rootInode', 'configPath', 'configSha256', 'configDevice', 'configInode',
+const KEYS = ['root', 'rootInode', 'configPath', 'configSha256', 'configInode',
     'node', 'nodeSha256', 'nodeFingerprint', 'module', 'moduleSha256'] as const satisfies readonly (keyof GuardHandlerIdentity)[]
 const IGNORE_BYTES = '# cockpit-owned: machine-local files, written by `cockpit sync`, never committed\n*\n'
 

@@ -1,17 +1,18 @@
 import { createHash } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, renameSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, type Stats } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse, stringify } from 'smol-toml'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import * as generatedCurrentnessOwner from './generated-application/sync.js'
 import { executeProbe } from '../environment-exec/execute.js'
+import { fileFingerprint } from '../environment-exec/verified-digest.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolveDockerExecutable } from './executable.js'
 import { evaluateGuard, GUARD_ROOT_PROTECTIONS, guardIdentity } from '../guards/evaluator.js'
 import { parseGuardInput } from '../guards/invocation-parser.js'
-import { encodeGuardLocalIdentity, GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from '../guards/local-identity.js'
+import { encodeGuardLocalIdentity, GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
 import { shellPayload } from '../guards/fixtures/invocation-corpus.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import type { ExecutionStep } from './contract.js'
@@ -94,8 +95,8 @@ describe('guard policy construction', () => {
         writeFileSync(launcher, '#!/bin/sh\nprintf "<%s>\\n" "$@"\n', { mode: 0o755 })
         const digest = '0'.repeat(64)
         const identity = {
-            root, rootDevice: '0', rootInode: '0', configPath, configSha256: digest,
-            configDevice: '0', configInode: '0', node: process.execPath, nodeSha256: digest,
+            root, rootInode: '0', configPath, configSha256: digest,
+            configInode: '0', node: process.execPath, nodeSha256: digest,
             nodeFingerprint: 'synthetic', module: join(base, 'other-cli.js'), moduleSha256: digest,
         }
         const result = await runGuardEvaluationApplication({ identity, guardRoot: root, payload: {}, harness: 'claudecode', cwd: root }, {
@@ -119,8 +120,8 @@ describe('guard policy construction', () => {
         const configPath = join(root, configFile)
         const digest = '0'.repeat(64)
         const identity = {
-            root, rootDevice: String(rootStatus.dev), rootInode: String(rootStatus.ino), configPath, configSha256: digest,
-            configDevice: '0', configInode: '0', node: process.execPath, nodeSha256: digest,
+            root, rootInode: String(rootStatus.ino), configPath, configSha256: digest,
+            configInode: '0', node: process.execPath, nodeSha256: digest,
             nodeFingerprint: 'synthetic', module: realpathSync(fileURLToPath(new URL('../../dist/cli.js', import.meta.url))), moduleSha256: digest,
         }
         const result = await runGuardEvaluationApplication({ identity, guardRoot: root, payload: {}, harness: 'claudecode', cwd: root }, {
@@ -236,14 +237,14 @@ describe('guard policy construction', () => {
         expect(secretDecision, secretDecision.reason).toMatchObject({ decision: 'deny' })
         expect(await decide('git push origin HEAD:main')).toMatchObject({ decision: 'deny' })
         expect(await decide('curl https://db.example.test')).toMatchObject({ decision: 'deny' })
-        // A repository edit cannot activate another grant: it is held until a person syncs it.
+        // A repository edit cannot activate another grant: it is not in force until a person syncs it.
         const other = join(external, 'other.md')
         writeFileSync(other, 'other synthetic notes\n')
         config.guards.allow.push({ argv: ['cat', other], cwd: '.', reason: 'Another selected file.' })
         writeFileSync(configPath, stringify(config))
         const held = await decide(`cat '${other}'`)
-        expect(held.decision).toBe('unavailable')
-        expect(held.reason).toMatch(/cockpit\.toml|sync/)
+        expect(held.decision).not.toBe('allow')
+        expect(held.reason).toContain('has an unapproved edit that widens what agents may do (guards.allow)')
         expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
         const reloaded = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
         const decideSynced = async (command: string) => (await runGuardEvaluationApplication({ identity: reloaded, guardRoot: root, harness, cwd: root,
@@ -284,8 +285,8 @@ describe('guard policy construction', () => {
         expect(await decide(`cat '${inputs}/photo.jpg'`)).toMatchObject({ decision: 'ask' })
         config.guards.read_paths = [{ path: inputs, reason: 'Inputs a person drops in.' }]
         writeFileSync(configPath, stringify(config))
-        // Adding a read path widens what agents may read, so it waits for a person's sync.
-        expect(await decide(`cat '${inputs}/photo.jpg'`)).toMatchObject({ decision: 'unavailable' })
+        // Adding a read path widens what agents may read, so it is not in force until a person's sync.
+        expect(await decide(`cat '${inputs}/photo.jpg'`)).toEqual({ decision: 'ask', reason: expect.stringContaining('has an unapproved edit that widens what agents may do') })
         await sync()
         for (const command of [`cat '${inputs}/photo.jpg'`, `ls '${inputs}'`, `rg -n synthetic '${inputs}/photo.jpg'`]) {
             expect(await decide(command), command).toMatchObject({ decision: 'allow' })
@@ -313,7 +314,102 @@ describe('guard policy construction', () => {
         expect(await decide(`cat '${elsewhere}/notes.md'`)).toEqual({ decision: 'ask', reason: expect.stringContaining('is outside the configured roots') })
     }, 120_000)
 
-    it('reads an explicitly named package document through a confined package symlink', async () => {
+    it('allows development by default, resolves where a bare push goes, and asks again in strict mode', async () => {
+        const { root, configPath } = await observedPolicy()
+        const remote = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-push-remote-')))
+        scratch.push(remote)
+        const git = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args], { stdio: 'pipe' })
+        execFileSync('git', ['init', '-q', '--bare', remote])
+        git('commit', '-q', '--allow-empty', '-m', 'Synthetic history')
+        git('remote', 'add', 'origin', remote)
+        git('push', '-q', '-u', 'origin', 'HEAD:refs/heads/main')
+        const config = CockpitConfig.parse(parse(readFileSync(configPath, 'utf8')))
+        const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
+            resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }) }
+        const decide = async (command: string) => {
+            const identity = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
+            return (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'codexcli', cwd: root,
+                payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+        }
+        const configure = async (mode: 'allow' | 'ask') => {
+            config.guards.default = mode
+            writeFileSync(configPath, stringify(config))
+            expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        }
+        await configure('allow')
+        for (const command of ['git commit -m done', 'npm run build', 'git switch -c topic', 'git commit -m "$(cat <<\'EOF\'\nFix the parser\nEOF\n)"',
+            'NODE_ENV=test npm test', 'rg --files app -g package-lock.json']) {
+            expect(await decide(command), command).toMatchObject({ decision: 'allow' })
+        }
+        // The checkout's branch pushes to the protected main, so a bare push is refused.
+        expect(await decide('git push')).toMatchObject({ decision: 'deny' })
+        git('switch', '-q', '-c', 'topic')
+        git('push', '-q', '-u', 'origin', 'topic')
+        expect(await decide('git push')).toMatchObject({ decision: 'allow' })
+        expect(await decide('git push --force')).toMatchObject({ decision: 'deny' })
+        await configure('ask')
+        expect((await decide('git commit -m done')).decision).toBe('ask')
+    }, 120_000)
+
+    it('leaves read-only Git in another repository to native permissions, never its writes, helpers or secrets', async () => {
+        const { root, configPath } = await observedPolicy()
+        const repository = (name: string, files: Record<string, string>) => {
+            const path = realpathSync(mkdtempSync(join(tmpdir(), name)))
+            scratch.push(path)
+            const run = (...args: string[]) => execFileSync('git', ['-C', path, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args])
+            run('init', '-q', '-b', 'main')
+            for (const [file, text] of Object.entries(files)) writeFileSync(join(path, file), text)
+            run('add', '.')
+            run('commit', '-q', '-m', 'Synthetic history')
+            return path
+        }
+        const product = repository('cockpit-related-checkout-', { 'notes.md': 'synthetic notes\n' })
+        const leaky = repository('cockpit-related-secrets-', { 'notes.md': 'synthetic notes\n', '.env': 'SYNTHETIC_KEY=synthetic\n' })
+        const plain = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-not-a-repository-')))
+        scratch.push(plain)
+        const config = CockpitConfig.parse(parse(readFileSync(configPath, 'utf8')))
+        const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
+            resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }) }
+        const decide = async (command: string) => {
+            const identity = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
+            return (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'codexcli', cwd: root,
+                payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+        }
+        const configure = async (externalReads: 'grant' | 'native', allow: string[][] = []) => {
+            config.guards.external_reads = externalReads
+            config.guards.allow = allow.map(argv => ({ argv, cwd: '.', reason: 'Inspect the related checkout.' }))
+            writeFileSync(configPath, stringify(config))
+            expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        }
+        const inventory = `git -C ${product} worktree list --porcelain`
+        await configure('grant')
+        expect((await decide(inventory)).decision).not.toBe('allow')
+        await configure('grant', [inventory.split(' ')])
+        expect(await decide(inventory)).toMatchObject({ decision: 'allow' })
+        await configure('native')
+        for (const command of [inventory, `git -C ${product} status --short`, `git -C ${product} log --oneline -5`, `git -C ${product} show HEAD`,
+            `git -C ${product} diff main --stat`, `git -C ${product} branch -l`, `git -C ${product} ls-files -z`, `git -C ${product} cat-file -p HEAD`]) {
+            const decision = await decide(command)
+            expect(decision, `${command}: ${decision.reason}`).toMatchObject({ decision: 'allow' })
+        }
+        for (const command of [
+            // Writes and network access.
+            `git -C ${product} worktree add ../copy`, `git -C ${product} branch copy`, `git -C ${product} commit --allow-empty -m x`, `git -C ${product} fetch`,
+            // Ways to run a program the command line chooses.
+            `git -C ${product} -c core.pager=cat log`, `git -C ${product} diff --ext-diff`, `git -C ${product} lg`, `GIT_PAGER=cat git -C ${product} log`,
+            // Only the whole call: another command could read evidence a repository helper changed.
+            `${inventory} | head -n 1`,
+            // Content the guard cannot prove holds no secret, and a directory that is not a repository.
+            `git -C ${leaky} show HEAD`, `git -C ${leaky} cat-file -p HEAD:.env`, `git -C ${leaky} diff main`, `git -C ${leaky} log -p`, `git -C ${plain} status`,
+            // A path outside the work tree turns diff into a `--no-index` comparison that prints whole trees.
+            `git -C ${product} diff ${root}/app ${plain}`]) {
+            expect((await decide(command)).decision, command).not.toBe('allow')
+        }
+        // Inventories that print no file content stay readable beside a tracked secret.
+        expect(await decide(`git -C ${leaky} log --oneline`)).toMatchObject({ decision: 'allow' })
+    }, 120_000)
+
+    it('reads a named package document, and searches a package directory, through a confined package symlink', async () => {
         const { root, request, adapters } = await installedGuardRequest()
         const store = join(root, 'packages/docs-fixture')
         mkdirSync(store, { recursive: true })
@@ -325,7 +421,14 @@ describe('guard policy construction', () => {
         try {
             const result = await decide('package-docs/guide.md')
             expect(result, JSON.stringify(result)).toMatchObject({ decision: 'allow' })
+            // A search through the link reads where it leads, judged by the same secret walk as any search.
+            const search = async (command: string) => (await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin',
+                payload: shellPayload(command, root) }, adapters)).decision
+            for (const command of ['rg -n needle package-docs', 'grep -rn needle package-docs']) expect(await search(command), command).toMatchObject({ decision: 'allow' })
             writeFileSync(join(store, '.env'), 'SYNTHETIC_KEY=synthetic\n')
+            for (const command of ['rg -n needle package-docs', 'grep -rn needle package-docs']) {
+                expect(await search(command), command).toMatchObject({ decision: 'ask', reason: expect.stringContaining('.env') })
+            }
             symlinkSync(join(store, '.env'), join(store, 'secret-alias.md'))
             expect(await decide('package-docs/secret-alias.md')).toMatchObject({ decision: 'deny' })
             writeFileSync(join(store, '.envrc'), 'synthetic environment script\n')
@@ -338,10 +441,31 @@ describe('guard policy construction', () => {
             writeFileSync(join(outside, 'guide.md'), 'synthetic external guide\n')
             symlinkSync(join(outside, 'guide.md'), join(store, 'outside-alias.md'))
             expect(await decide('package-docs/outside-alias.md')).not.toMatchObject({ decision: 'allow' })
+            symlinkSync(outside, join(root, 'outside-docs'))
+            expect(await search('grep -rn needle outside-docs')).not.toMatchObject({ decision: 'allow' })
         } finally {
+            rmSync(join(root, 'outside-docs'), { force: true })
             rmSync(alias)
             rmSync(store, { recursive: true })
         }
+    }, 120_000)
+
+    it('keeps guarding after a reboot renumbers the volume, and holds for a replaced checkout', async () => {
+        const { root, request, adapters } = await installedGuardRequest()
+        const recorded = request.identity as GuardHandlerIdentity
+        const decide = async (changes: Partial<GuardHandlerIdentity>) => {
+            const identity = { ...recorded, ...changes }
+            writeFileSync(join(root, GUARD_LOCAL_PATHS.identity), encodeGuardLocalIdentity(identity))
+            return (await runGuardEvaluationApplication({ ...request, identity }, adapters)).decision
+        }
+        // A macOS reboot reassigns the APFS Data volume's device number while the path and inode stay, so
+        // nothing recorded across boots may carry one: not the identity, nor the Node fingerprint in it.
+        expect(Object.keys(recorded).filter(key => /device/i.test(key))).toEqual([])
+        const node = lstatSync(recorded.node)
+        expect(fileFingerprint(recorded.node, { ...node, dev: node.dev + 1 } as Stats)).toBe(fileFingerprint(recorded.node, node))
+        expect(await decide({})).toMatchObject({ decision: 'allow' })
+        expect(await decide({ rootInode: String(Number(recorded.rootInode) + 1) }))
+            .toEqual({ decision: 'unavailable', reason: expect.stringContaining('was moved or replaced') })
     }, 120_000)
 
     it('guards native notebook edits against the same authenticated control paths as text edits', async () => {
@@ -474,7 +598,19 @@ describe('guard policy construction', () => {
                 payload: { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: root, tool_input: { command } } }, adapters)).decision.decision
             expect(await read('cat app/link/../runtime.env')).toBe('ask')
             expect(await read('cat app/config/sub/../notes.md')).toBe('allow')
-        } finally { for (const path of created) rmSync(path, { recursive: true, force: true }) }
+            // A word longer than any file name the volume allows names nothing, so probing it is no failure.
+            const long = 'x'.repeat(300)
+            expect(await read(`echo '${long}'`)).toBe('allow')
+            expect(await read(`cat app/${long} app/${long}/../config/notes.md`)).toBe('allow')
+            expect(await read(`rg needle app/${long}`)).toBe(await read('rg needle app/missing'))
+            // A word the guard cannot inspect holds the call by naming that word, not the guard's own authority.
+            mkdirSync(join(root, 'app/locked'), { mode: 0o000 })
+            const locked = await runGuardEvaluationApplication({ ...request, payload: shellPayload('echo app/locked/entry', root) }, adapters)
+            expect(locked.decision).toEqual({ decision: 'unavailable', reason: expect.stringMatching(/^Guard could not inspect \S+\/app\/locked\/entry, which this call names/) })
+        } finally {
+            if (existsSync(join(root, 'app/locked'))) { chmodSync(join(root, 'app/locked'), 0o700); rmSync(join(root, 'app/locked'), { recursive: true }) }
+            for (const path of created) rmSync(path, { recursive: true, force: true })
+        }
     }, 120_000)
 
     it.each(['missing', 'symlink', 'changed'] as const)('refuses %s guard publication through authenticated reads', async change => {
@@ -674,12 +810,27 @@ describe('guard policy construction', () => {
         expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({
             decision: { decision: 'unavailable' }, diagnostics: [{ code: 'GUARD_CONFIG_UNSYNCED' }],
         })
-        // An edit that widens it holds every call, that sync included, until a human regenerates, and the reason names what widened.
+        // An edit that widens it leaves every call judged under the configuration last synced: what that
+        // admits still runs, the widened rule is not yet in force, the agent cannot sync it in, and each
+        // refusal says a person must.
+        // Under the allow default a grant matters for what still asks, such as a named read outside the cockpit.
+        const outside = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-widened-input-')))
+        scratch.push(outside)
+        writeFileSync(join(outside, 'notes.md'), 'synthetic notes\n')
         const widened = parse(readFileSync(configPath, 'utf8')) as { guards: { allow: unknown[] } }
-        widened.guards.allow.push({ argv: ['make', 'release'], reason: 'Releases are routine.' })
+        widened.guards.allow.push({ argv: ['cat', join(outside, 'notes.md')], cwd: '.', reason: 'Read the selected input.' })
         writeFileSync(configPath, stringify(widened))
-        for (const call of [request, sync]) expect(await runGuardEvaluationApplication(call, adapters)).toMatchObject({ decision: { decision: 'unavailable', reason:
-            `${canonicalConfig} changed since the guards were generated and it widens what agents may do (guards.allow); guard policy comes from it and an edit that may widen it takes effect only once a human approves it, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are held, including a sync run through this agent, while file reads and unrestricted MCP tools continue. Fix: a human must run \`${root}/node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${canonicalConfig}\` in a terminal, outside the agent, then retry. If hook definitions changed, close and reopen the agent first.` } })
+        const notice = ` ${canonicalConfig} has an unapproved edit that widens what agents may do (guards.allow); calls are judged under the configuration last synced until a person runs \`${root}/node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${canonicalConfig}\` in a terminal, outside the agent.`
+        expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({ decision: { decision: 'allow' }, diagnostics: [] })
+        const release = await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin', payload: shellPayload(`cat ${join(outside, 'notes.md')}`, root) }, adapters)
+        expect(release.decision.decision).not.toBe('allow')
+        expect(release.decision.reason.endsWith(notice)).toBe(true)
+        const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')
+        for (const command of [`${launcher} upgrade`, `${launcher} session --config ${canonicalConfig} -- ${launcher} sync --config ${canonicalConfig}`]) {
+            expect((await runGuardEvaluationApplication({ ...sync, payload: shellPayload(command, root) }, adapters)).decision.reason, command).toMatch(/^Refusing to run cockpit (sync|upgrade)/)
+        }
+        expect(await runGuardEvaluationApplication(sync, adapters)).toMatchObject({ decision: { decision: 'deny',
+            reason: `Refusing to run cockpit sync while ${canonicalConfig} has an unapproved edit that widens what agents may do: a person reviews it and syncs.${notice}` } })
     }, 120_000)
 
     it('admits only the exact restoration of the recorded configuration out of a hold sync cannot clear', async () => {
@@ -747,11 +898,11 @@ describe('guard policy construction', () => {
         expect(await decision(write(recorded))).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('machine-local record') })
         writeFileSync(localIdentity, localBytes)
 
-        // Restoring out of a widening edit is a person's, as every other call there is.
+        // Out of a widening edit, calls are judged under the recorded configuration, so restoring it is admitted too.
         const widened = parse(recorded) as { guards: { allow: unknown[] } }
         widened.guards.allow.push({ argv: ['make', 'release'], reason: 'Releases are routine.' })
         writeFileSync(configPath, stringify(widened))
-        expect(await decision(write(recorded))).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('widens what agents may do') })
+        expect(await decision(write(recorded))).toMatchObject({ decision: 'allow' })
     }, 120_000)
 
     it.each([
@@ -799,7 +950,7 @@ describe('guard policy construction', () => {
             protectedBranches: ['main', 'master'], hostedDatabaseHosts: ['db.example.test'], vendorHosts: ['api.vendor.example.test'],
             declaredAllows: [{ argv: ['make', 'verify'], reason: 'Repository verification is safe.', cwd: root }],
             declaredDenies: [{ match: 'contains', argv: ['--environment', 'shared'], reason: 'Shared environments are human-operated.', fix: 'Use a local environment.' }],
-            ripgrepConfigActive: false, externalReads: 'grant', readPaths: [],
+            ripgrepConfigActive: false, externalReads: 'grant', readPaths: [], defaultDecision: 'allow', homeDirectory: realpathSync(homedir()),
             // The running package lives outside this checkout, so no installed directory is in reach.
             executionDirectories: [], searchDirectories: [], searchPathRelativeEntry: null, secretFileIdentities: [], protectedFilesLinked: false,
             cockpitLaunchers: [],
@@ -882,7 +1033,8 @@ describe('guard policy construction', () => {
             const result = await prepareGuardEvaluationPolicy(input)
             expect(result.kind, JSON.stringify(result)).toBe('complete')
             if (result.kind !== 'complete') throw new Error(JSON.stringify(result))
-            const { policy } = result.result
+            // The strict mode, where only the exact tuple is admitted and every other spelling asks.
+            const policy = { ...result.result.policy, defaultDecision: 'ask' as const }
             expect(policy.projectCommands.map(command => [command.executable, ...command.argv])).toEqual([tuple, tuple])
             const rendered = renderGuardProjectCommand(tuple)
             if (rendered.kind !== 'complete') throw new Error(JSON.stringify(rendered))

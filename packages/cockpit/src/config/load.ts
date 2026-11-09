@@ -362,8 +362,7 @@ export async function loadAutonomyPolicy(configPath: string): Promise<Readonly<{
     return { root, current: effectivePolicy(loaded.result.config), ...recorded ? { recorded } : {} }
 }
 
-/** The configuration `bytes` declare, or undefined when they are not UTF-8 TOML the schema accepts. */
-export function parseCockpitConfigBytes(bytes: Uint8Array): CockpitConfig | undefined {
+function parseConfigBytes(bytes: Uint8Array): Readonly<{ parsed: unknown; config: CockpitConfig }> | undefined {
     let parsed: unknown
     try { parsed = parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) }
     catch (error) {
@@ -372,7 +371,47 @@ export function parseCockpitConfigBytes(bytes: Uint8Array): CockpitConfig | unde
         throw error
     }
     const validated = CockpitConfig.safeParse(parsed)
-    return validated.success ? validated.data : undefined
+    return validated.success ? { parsed, config: validated.data } : undefined
+}
+
+/** The configuration `bytes` declare, or undefined when they are not UTF-8 TOML the schema accepts. */
+export function parseCockpitConfigBytes(bytes: Uint8Array): CockpitConfig | undefined {
+    return parseConfigBytes(bytes)?.config
+}
+
+/**
+ * `current`'s file, declaring what `recorded` declares: the configuration the last sync recorded,
+ * which the caller has authenticated. The guard judges calls under it while an edit a person has not
+ * approved waits, and every check that the file on disk has not changed again still binds to
+ * `current.source`. Consumes `current`; undefined when it was not issued here or `recorded` does not
+ * parse.
+ */
+export function withRecordedDeclarations(current: LoadedConfigProjection, recorded: Uint8Array): LoadedConfigProjection | undefined {
+    const loaded = consumeLoadedConfigProjection(current)
+    const declared = loaded && parseConfigBytes(recorded)
+    return loaded && declared ? issueLoadedConfig(declared.parsed, declared.config, loaded.source) : undefined
+}
+
+function issueLoadedConfig(parsed: unknown, config: CockpitConfig, provenance: SourceProvenance): LoadedCockpitConfig | undefined {
+    const reconstructed = CockpitConfig.safeParse(snapshotJson(config))
+    if (!reconstructed.success) return undefined
+    const writtenGuards = (parsed as { guards?: unknown }).guards
+    const guardHostsStated = writtenGuards !== null && typeof writtenGuards === 'object'
+        && Object.hasOwn(writtenGuards, 'hosted_db_hosts') && Object.hasOwn(writtenGuards, 'vendor_endpoint_hosts')
+    const writtenWork = (parsed as { work?: unknown }).work
+    const gradingStated = writtenWork !== null && typeof writtenWork === 'object' && Object.hasOwn(writtenWork, 'grading')
+    const immutableConfig = snapshotJson(reconstructed.data) as unknown as CockpitConfig
+    const runtimeSha256 = runtimeDeclarationSha256(immutableConfig)
+    const bound = {
+        config: immutableConfig,
+        source: { ...provenance },
+        runtimeSha256,
+        guardHostsStated,
+        gradingStated,
+    }
+    const result = { config, source: provenance, runtimeSha256, guardHostsStated, gradingStated } as LoadedCockpitConfig
+    issuedConfigProjections.set(result, bound)
+    return result
 }
 
 export async function loadCockpitConfig(
@@ -437,27 +476,11 @@ export async function loadCockpitConfig(
             'add observed_on with the date the source was read, or name this configuration file as the source, then retry')
     }
 
-    const reconstructed = CockpitConfig.safeParse(snapshotJson(validated.data))
-    if (!reconstructed.success) {
+    const result = issueLoadedConfig(parsed, validated.data, provenance)
+    if (!result) {
         return refusal(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, 'cockpit configuration does not match the schema', path,
             'correct each named key to the shape and values ./node_modules/@b00dea/cockpit/docs/configuration-reference.md gives for it, then retry')
     }
-    const writtenGuards = (parsed as { guards?: unknown }).guards
-    const guardHostsStated = writtenGuards !== null && typeof writtenGuards === 'object'
-        && Object.hasOwn(writtenGuards, 'hosted_db_hosts') && Object.hasOwn(writtenGuards, 'vendor_endpoint_hosts')
-    const writtenWork = (parsed as { work?: unknown }).work
-    const gradingStated = writtenWork !== null && typeof writtenWork === 'object' && Object.hasOwn(writtenWork, 'grading')
-    const immutableConfig = snapshotJson(reconstructed.data) as unknown as CockpitConfig
-    const runtimeSha256 = runtimeDeclarationSha256(immutableConfig)
-    const bound = {
-        config: immutableConfig,
-        source: { ...provenance },
-        runtimeSha256,
-        guardHostsStated,
-        gradingStated,
-    }
-    const result = { config: validated.data, source: provenance, runtimeSha256, guardHostsStated, gradingStated } as LoadedCockpitConfig
-    issuedConfigProjections.set(result, bound)
     return {
         kind: 'complete',
         status: 0,

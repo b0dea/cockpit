@@ -451,9 +451,9 @@ export async function prepareSurfaces(
     if (verifiedDigest(nodeFingerprint) !== prepared.node.sha256) return refuse('GENERATED_EXECUTABLE_UNAVAILABLE',
         'the Node executable changed while sync was running', 'guard', 'run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` again in a terminal')
     const guardHandler: GuardHandlerIdentity = { root: prepared.root,
-        rootDevice: String(rootStat.dev), rootInode: String(rootStat.ino),
+        rootInode: String(rootStat.ino),
         configPath: prepared.configPath, configSha256: prepared.sourceSha256,
-        configDevice: String(configStat.dev), configInode: String(configStat.ino),
+        configInode: String(configStat.ino),
         node: prepared.node.canonicalPath, nodeSha256: prepared.node.sha256, nodeFingerprint,
         module: modulePath, moduleSha256: moduleRead.sha256 }
     const restrictions = expandRestrictions({

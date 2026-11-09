@@ -26,6 +26,7 @@ const declared: Declared = {
     ],
     ports: { bases: { WEB_PORT: 3000 } },
     guards: {
+        default: 'ask',
         hosted_db_hosts: ['db.example.test'], vendor_endpoint_hosts: ['api.vendor.example.test'],
         allow: [{ argv: ['make', 'verify'], reason: 'Verification is safe.' }],
         deny: [{ prefix: ['make', 'deploy'], reason: 'Deploys are a person\'s.' }],
@@ -60,6 +61,7 @@ describe('policyChange', () => {
         ['a removed deny rule', config => { config.guards.deny = [] }, ['guards.deny']],
         ['a new read path', config => { config.guards.read_paths = [{ path: '~/Downloads', reason: 'Inputs a person drops in.' }] }, ['guards.read_paths']],
         ['external reads handed to the agent tools', config => { config.guards.external_reads = 'native' }, ['guards.external_reads']],
+        ['strict mode turned into the allow default', config => { config.guards.default = 'allow' }, ['guards.default']],
         ['an autonomy decision moved toward agent', config => { config.autonomy = { reset: 'agent' } }, ['autonomy.reset']],
         ['a work gate moved toward agent', config => { config.work.gates.accept = 'agent' }, ['work.gates.accept']],
         ['weaker grading', config => { config.work.grading = 'self' }, ['work.grading']],
@@ -212,14 +214,15 @@ describe('guardConfigChange', () => {
         const root = mkdtempSync(join(tmpdir(), 'cockpit-policy-change-'))
         try {
             mkdirSync(join(root, GUARD_LOCAL_PATHS.directory), { recursive: true })
-            const identity = Object.fromEntries(['root', 'rootDevice', 'rootInode', 'configPath', 'configDevice', 'configInode', 'node', 'nodeSha256',
+            const identity = Object.fromEntries(['root', 'rootInode', 'configPath', 'configInode', 'node', 'nodeSha256',
                 'nodeFingerprint', 'module', 'moduleSha256'].map(key => [key, 'synthetic']))
             writeFileSync(join(root, GUARD_LOCAL_PATHS.identity), encodeGuardLocalIdentity({ ...identity, configSha256: sha256Hex(generated) } as never))
             writeFileSync(join(root, GUARD_LOCAL_PATHS.generatedConfig), generated)
             const reports = async () => inspectGuardConfigChange(root, join(root, 'cockpit.toml'), { sha256: 'f'.repeat(64), config: edited() })
-            // Each names what it holds: a hook cannot stop what its matcher leaves out.
+            // A hold names what it holds, as a hook cannot stop what its matcher leaves out; a widening edit holds nothing.
             const namesHeld = { message: expect.stringMatching(/holds shell commands, file edits and writes, and restricted MCP tools under Claude Code.*while file reads and unrestricted MCP tools continue$/) }
-            expect(await reports()).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED', ...namesHeld })])
+            expect(await reports()).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED',
+                message: expect.stringMatching(/the guard judges agent calls under the configuration last synced, and refuses an agent's sync or upgrade, until a person syncs$/) })])
             writeFileSync(join(root, ANSWER_CONFIRMATION_PATH), record('ports.bases'))
             expect(await reports()).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_UNSYNCED', ...namesHeld, fix: expect.stringContaining(GUARD_LOCAL_PATHS.generatedConfig) })])
         } finally { rmSync(root, { recursive: true, force: true }) }

@@ -22,6 +22,8 @@ import { GUARD_RESTORE_LIMIT, guardConfigChange, guardConfigHeldReason } from '.
 import {
     evaluateGuard,
     approvedReadOnlyInvocation,
+    gitInvocation,
+    GUARD_BRANCH_VERBS,
     foldGuardSpelling,
     GUARD_LOCATION_LIMITS,
     GUARD_ROOT_PROTECTIONS,
@@ -47,6 +49,7 @@ import {
     guardSearchPathRelativeEntry,
     guardSecretFiles,
     guardSensitivePathsBelow,
+    guardBranchFacts,
     guardTrackedSensitivePaths,
     guardUnignoredSensitivePaths,
 } from '../../guards/protected-locations.js'
@@ -67,7 +70,7 @@ import {
     withSetupCheckoutProjection,
     type SetupCheckoutObservation,
 } from '../setup-observation.js'
-import { browserPreapprovalRequested, loadCockpitConfig, consumeLoadedConfigProjection, parseCockpitConfigBytes, STRUCTURED_INPUT_BYTE_LIMIT, type LoadedConfigProjection } from '../../config/load.js'
+import { browserPreapprovalRequested, loadCockpitConfig, consumeLoadedConfigProjection, parseCockpitConfigBytes, STRUCTURED_INPUT_BYTE_LIMIT, withRecordedDeclarations, type LoadedConfigProjection } from '../../config/load.js'
 import { deriveRegistry } from '../../registry-derivation.js'
 import { confinedPath, lifecycleRefusal, ownDataValues, sameSource } from './shared.js'
 import { readSiblingCheckouts, servedSiblings, type ServedSibling, type SiblingCheckoutRecordRead } from '../sibling-checkouts.js'
@@ -178,10 +181,17 @@ export async function runGuardEvaluationApplication(
     input: GuardEvaluationApplicationInput,
     adapters: GuardEvaluationApplicationAdapters,
 ): Promise<GuardEvaluationApplicationResult> {
-    const unavailable = (reason: string): GuardEvaluationApplicationResult => ({
-        decision: { decision: 'unavailable', reason },
-        diagnostics: [{ severity: 'error', code: 'GUARD_AUTHORITY_UNAVAILABLE', message: reason, target: 'guard' }],
-    })
+    // Set once the configuration on disk is known to carry a widening edit; every refusal after that ends with it.
+    let notice = ''
+    const unavailable = (stated: string): GuardEvaluationApplicationResult => {
+        const reason = stated + notice
+        return { decision: { decision: 'unavailable', reason }, diagnostics: [{ severity: 'error', code: 'GUARD_AUTHORITY_UNAVAILABLE', message: reason, target: 'guard' }] }
+    }
+    const refused = (decision: GuardDecision): GuardEvaluationApplicationResult => {
+        if (decision.decision === 'allow') return { decision, diagnostics: [] }
+        const reason = decision.reason + notice
+        return { decision: { ...decision, reason }, diagnostics: [{ severity: 'error', code: 'GUARD_REFUSED', message: reason, target: 'guard' }] }
+    }
     try {
         const data = ownDataValues(snapshotJson(input), ['cwd', 'guardRoot', 'harness', 'identity', 'payload'], ['askIsDeny', 'ripgrepConfigActive', 'searchPath'])
         if (!data
@@ -190,7 +200,7 @@ export async function runGuardEvaluationApplication(
             || data.ripgrepConfigActive !== undefined && typeof data.ripgrepConfigActive !== 'boolean'
             || !isGuardSurfaceTarget(data.harness)) return unavailable('Guard request is malformed.')
         const harness = data.harness
-        const captured = ownDataValues(snapshotJson(data.identity), ['root', 'rootDevice', 'rootInode', 'configPath', 'configSha256', 'configDevice', 'configInode', 'node', 'nodeSha256', 'nodeFingerprint', 'module', 'moduleSha256'])
+        const captured = ownDataValues(snapshotJson(data.identity), ['root', 'rootInode', 'configPath', 'configSha256', 'configInode', 'node', 'nodeSha256', 'nodeFingerprint', 'module', 'moduleSha256'])
         if (!captured
             || !Object.values(captured).every(value => typeof value === 'string')
             || !['configSha256', 'nodeSha256', 'moduleSha256'].every(key => /^[a-f0-9]{64}$/.test(String(captured[key])))) return unavailable('Installed guard identity is missing or malformed.')
@@ -216,14 +226,14 @@ export async function runGuardEvaluationApplication(
             // as well refused the identical bytes that `git restore`, `sed -i` and editors that save
             // by rename leave in a new file, until a human ran sync for no change.
             if (status.isSymbolicLink() || (directory ? !status.isDirectory() : !status.isFile())
-                || directory && (String(status.dev) !== identity.rootDevice || String(status.ino) !== identity.rootInode)
+                || directory && String(status.ino) !== identity.rootInode
                 || realpathSync(path) !== path) {
                 return changed(directory ? `the cockpit checkout ${path} was moved or replaced` : `${path} was replaced by a link or a non-file`)
             }
             roots.set(path, status)
         }
         // Re-hashing a 100 MB Node binary in every guard process dominated each call. The local record
-        // carries the fingerprint sync hashed; an identical device, inode, size, mode and timestamps
+        // carries the fingerprint sync hashed; an identical path, inode, size, mode and timestamps
         // stand in for the re-hash, and the local record is checked against this identity below.
         const nodePath = realpathSync(process.execPath)
         if (nodePath === identity.node && fileFingerprint(nodePath, lstatSync(nodePath)) === identity.nodeFingerprint) {
@@ -314,19 +324,29 @@ export async function runGuardEvaluationApplication(
             const authenticated = await authenticatePublication(settle(readPublication(publicationRequests.filter(request => request.path !== configName))), recordedConfig.cockpit.name)
             return authenticated.held ?? restored
         }
-        // Every check below runs against the configuration on disk; an edit since sync is admitted
-        // only when it does not widen the one the guards were generated from, and then only for sync.
+        // Every check below runs against the configuration on disk. An edit since sync that does not
+        // widen the one the guards were generated from is admitted only for sync. One that widens is not
+        // applied: calls are judged under the declarations last synced, which the recorded copy holds,
+        // and only a person may sync it in. Holding every call instead stopped the agent each time
+        // someone added an allow rule, though continuing under the approved policy grants nothing new.
         const configSha256 = loaded.result.source.sha256
         const unsynced = configSha256 !== identity.configSha256
+        let declared: LoadedConfigProjection = loaded.result
         if (unsynced) {
             const [recorded, confirmations] = await Promise.all([anchored(GUARD_LOCAL_PATHS.generatedConfig), anchored(ANSWER_CONFIRMATION_PATH)])
             const change = guardConfigChange(identity.configSha256, recorded.kind === 'complete' ? recorded.bytes : undefined,
                 { sha256: configSha256, config: loaded.result.config }, confirmations.kind === 'complete' ? confirmations.bytes : undefined)
-            if (change.kind === 'widening' || change.kind === 'unrecorded') return unavailable(guardHeld(identity,
+            const approved = change.kind === 'widening' && recorded.kind === 'complete' ? withRecordedDeclarations(loaded.result, recorded.bytes) : undefined
+            if (change.kind === 'unrecorded' || change.kind === 'widening' && !approved) return unavailable(guardHeld(identity,
                 `${identity.configPath} changed since the guards were generated and ${guardConfigHeldReason(change)}`,
                 'guard policy comes from it and an edit that may widen it takes effect only once a human approves it'))
+            if (change.kind === 'widening' && approved) {
+                declared = approved
+                notice = ` ${identity.configPath} has an unapproved edit that widens what agents may do (${change.fields.join(', ')}); calls are judged under the configuration last synced until a person runs \`${installedSyncCommand(identity.root, identity.configPath)}\` in a terminal, outside the agent.`
+            }
         }
-        const config = loaded.result.config
+        const widening = notice !== ''
+        const config = declared.config
         const authenticated = await authenticatePublication(publicationPending, config.cockpit.name)
         if (authenticated.held) return authenticated.held
         const { publication, manifestRead, published } = authenticated
@@ -334,7 +354,9 @@ export async function runGuardEvaluationApplication(
         if (git.state !== 'available') return unavailable('Guard checkout observation requires an authenticated Git executable.')
         const checkout = await adapters.observeCheckout({ source: loaded.result.source, cockpitName: config.cockpit.name,
             observedAt: new Date().toISOString(), env: {}, gitExecutable: git.value })
-        const parsed = parseGuardInput(data.payload)
+        // Under the allow default a word the guard cannot expand is marked, not refused: the evaluator
+        // refuses it only where it decides what is read, written or pushed.
+        const parsed = parseGuardInput(data.payload, { dynamicWords: config.guards.default === 'allow' ? 'mark' : 'refuse', home: homedir() })
         if (parsed.status !== 'parsed') return unavailable(parsed.reason)
         if (parsed.cwd !== data.cwd) return unavailable('Guard request cwd does not match its invocation authority.')
         // The policy pin and the restoration both apply an edit to exactly these bytes, which must be the text the policy is built from.
@@ -342,10 +364,10 @@ export async function runGuardEvaluationApplication(
         if (configRead.sha256 !== configSha256) return unavailable('Guard configuration changed during evaluation.')
         const configText = configRead.bytes.toString('utf8')
         const restoring = unsynced && restoresRecordedConfiguration(parsed, configText, identity.configPath, identity.configSha256)
-        const prepared = await prepareGuardEvaluationPolicy({ configuration: loaded.result, checkout }, checkoutsPending.then(unwrap))
+        const prepared = await prepareGuardEvaluationPolicy({ configuration: declared, checkout }, checkoutsPending.then(unwrap))
         if (prepared.kind !== 'complete') {
             if (restoring) return restored
-            return unsynced
+            return unsynced && !widening
                 ? unsyncedHold(identity, `, but the guard cannot build its policy from it (${prepared.diagnostics[0]?.message ?? 'no reason given'})`)
                 : unavailable(checkout.state === 'available'
                     ? `Guard policy authority could not be authenticated: ${prepared.diagnostics[0]?.message ?? 'no reason given'}`
@@ -356,7 +378,7 @@ export async function runGuardEvaluationApplication(
         // that prints committed content. A request not asked here gets the walk, or no answer.
         const policy = prepared.result.policy
         const instancePaths = policy.instances.map(item => item.path)
-        const present = (path: string) => { try { lstatSync(path); return true } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error } }
+        const present = (path: string) => { try { lstatSync(path); return true } catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENAMETOOLONG')) return false; throw error } }
         const allowed = (path: string) => policy.allowedRoots.some(root => confinedPath(root, path))
         // These are exact observation requests, never roots for mutation or arbitrary execution.
         const approvedReads = new Set<string>()
@@ -370,13 +392,30 @@ export async function runGuardEvaluationApplication(
             for (const path of access.requires ?? []) approvedRequirements.add(resolve(access.cwd, path))
             if (access.cwd !== invocation.cwd) approvedDirectories.add(access.cwd)
         }
+        // Native external reads leave a read-only Git command to the agent tool, so its repository outside
+        // the roots is inspected as a granted one's is. The evaluator admits it only alone in the call.
+        const nativeGit = policy.externalReads === 'native'
+        for (const invocation of nativeGit ? parsed.invocations : []) {
+            const access = invocation.executable === 'git' ? classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: data.ripgrepConfigActive === true }) : undefined
+            if (!access || allowed(access.cwd)) continue
+            approvedDirectories.add(access.cwd)
+            for (const path of access.requires ?? []) approvedRequirements.add(resolve(access.cwd, path))
+        }
         // Each entry starts as the answer for Git not answering and is replaced by Git's.
         const unignored = new Map<string, readonly string[] | null | undefined>()
         const tracked = new Map<string, readonly string[] | null>()
         const queries: Array<() => Promise<void>> = []
+        // Which branch a push or a history rewrite acts on is Git's to say, in a repository inside the roots.
+        const branches = new Map<string, { readonly head: string | null; readonly push: string | null } | null>()
+        for (const invocation of parsed.invocations) {
+            const command = gitInvocation(invocation)
+            if (!command || !GUARD_BRANCH_VERBS.has(command.verb) || command.uncertain || !allowed(command.cwd) || branches.has(command.cwd)) continue
+            branches.set(command.cwd, null)
+            queries.push(async () => { branches.set(command.cwd, await guardBranchFacts(command.cwd, git.value, adapters.execute ?? executeProbe)) })
+        }
         for (const invocation of parsed.invocations) {
             const access = classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: data.ripgrepConfigActive === true })
-            if (access?.trackedContent && allowed(access.cwd) && !tracked.has(access.cwd)) {
+            if (access?.trackedContent && (allowed(access.cwd) || nativeGit && parsed.invocations.length === 1) && !tracked.has(access.cwd)) {
                 tracked.set(access.cwd, null)
                 queries.push(async () => { tracked.set(access.cwd, await guardTrackedSensitivePaths(access.cwd, instancePaths, git.value, adapters.execute ?? executeProbe)) })
             }
@@ -417,8 +456,8 @@ export async function runGuardEvaluationApplication(
                         if (status.isSymbolicLink()) return true
                         inspected.set(cursor, status)
                     } catch (error) {
-                        // A missing or non-directory component fails the system's lookup before `..` applies.
-                        if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+                        // A missing, non-directory or overlong component fails the system's lookup before `..` applies.
+                        if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'ENAMETOOLONG')) throw error
                     }
                     cursor = dirname(cursor)
                 } else if (component && component !== '.') cursor = join(cursor, component)
@@ -427,12 +466,16 @@ export async function runGuardEvaluationApplication(
         }
         const inspect: import('../../guards/evaluator.js').PathInspection = request => {
             const path = resolve(request.cwd, request.path)
+            if (request.operation === 'branch') {
+                const facts = branches.get(path)
+                return facts ? { status: 'resolved', path, ...facts } : { status: 'unavailable', path, symlink: false }
+            }
             const managedRoot = policy.allowedRoots.filter(root => confinedPath(root, path)).sort((a, b) => b.length - a.length)[0]
             // A person's read path admits this read, or with native external reads the agent tool's own permission decided it.
             const declaredRead = !managedRoot && ['read', 'list', 'search', 'unignored-search'].includes(request.operation)
                 && (policy.externalReads === 'native' || (policy.readPaths ?? []).some(root => confinedPath(root, path)))
             const externalRead = ['read', 'list', 'search', 'unignored-search'].includes(request.operation) && (approvedReads.has(path) || approvedRequirements.has(path)) || declaredRead
-                || request.operation === 'cwd' && approvedDirectories.has(path)
+                || request.operation === 'cwd' && approvedDirectories.has(path) || request.operation === 'repository' && tracked.has(path)
             const root = managedRoot ?? (externalRead ? '/' : undefined)
             if (!root) return { status: 'unavailable', path, symlink: false }
             if (leavesLink(request.cwd, request.path)) return { status: 'resolved', path, symlink: true }
@@ -448,16 +491,20 @@ export async function runGuardEvaluationApplication(
                 let status: Stats
                 try { status = lstatSync(cursor) }
                 catch (error) {
-                    if ((error as NodeJS.ErrnoException).code === 'ENOENT') { exists = false; break }
+                    // A component longer than the volume allows names nothing, as a missing one does.
+                    if (hasErrorCode(error, 'ENOENT', 'ENAMETOOLONG')) { exists = false; break }
                     throw error
                 }
                 if (status.isSymbolicLink()) {
-                    // Package managers link installed packages into a store inside the checkout.
-                    // Only a named file read may follow that link; directories and external grants cannot.
+                    // Package managers link installed packages into a store inside the checkout. A named
+                    // file read, or a search of a file or directory, follows that link to a target inside
+                    // the roots and is judged there, a search by the same secret walk as any other.
+                    // External grants never follow one.
                     if (managedRoot && ['read', 'search', 'unignored-search'].includes(request.operation)) {
                         inspected.set(cursor, status)
                         const target = realpathSync(path)
-                        if (allowed(target) && lstatSync(target).isFile()) {
+                        const leads = allowed(target) ? lstatSync(target) : undefined
+                        if (leads && (leads.isFile() || request.operation !== 'read' && leads.isDirectory())) {
                             readLinks.set(path, target)
                             const evidence = inspect({ ...request, path: target })
                             if (evidence && typeof evidence === 'object') return { ...evidence, path, canonicalPath: target }
@@ -470,7 +517,7 @@ export async function runGuardEvaluationApplication(
             }
             // Outside the managed roots the walk recognises only `.env*` and `.secrets` names, not other
             // credential files, so an approved external read or search names a regular file, never a tree.
-            if (!managedRoot && request.operation !== 'cwd' && !approvedRequirements.has(path) && exists && !inspected.get(path)!.isFile()
+            if (!managedRoot && !['cwd', 'repository'].includes(request.operation) && !approvedRequirements.has(path) && exists && !inspected.get(path)!.isFile()
                 && !(request.operation === 'list' && inspected.get(path)!.isDirectory())) return { status: 'unavailable', path, symlink: false }
             const search = request.operation === 'search' || request.operation === 'unignored-search'
             return { status: 'resolved', path, symlink: false, identity: exists ? chain.at(-1)! : null, ancestors: exists ? chain.slice(0, -1) : chain,
@@ -500,7 +547,10 @@ export async function runGuardEvaluationApplication(
             const inner = proven && ordinarySessionCommand(argv.slice(proven.prefix), cwd, configured)
             if (inner) prove(inner[0]!, cwd, inner.slice(1), false)
         }
-        if (unsynced && !restoring && !(parsed.tool === 'Bash' && parsed.invocations.length > 0 && parsed.invocations.every(invocation => launched.some(entry =>
+        // Sync or upgrade would apply a widening edit, and the person reviews that edit first.
+        const applying = widening ? launched.find(entry => ['sync', 'upgrade'].includes(commandSpelling(entry.argv.slice(entry.prefix)).name ?? '')) : undefined
+        if (applying) return refused({ decision: 'deny', reason: `Refusing to run cockpit ${commandSpelling(applying.argv.slice(applying.prefix)).name} while ${identity.configPath} has an unapproved edit that widens what agents may do: a person reviews it and syncs.` })
+        if (unsynced && !widening && !restoring && !(parsed.tool === 'Bash' && parsed.invocations.length > 0 && parsed.invocations.every(invocation => launched.some(entry =>
             entry.session && entry.executable === invocation.executable && entry.cwd === invocation.cwd
             && isDeepStrictEqual(entry.argv, invocation.argv) && UNSYNCED_ADMITTED_COMMANDS.some(name => name === commandSpelling(entry.argv.slice(entry.prefix)).name))))) return unsyncedHold(identity, '')
         let launcherSha256: string | undefined
@@ -534,12 +584,13 @@ export async function runGuardEvaluationApplication(
         // A hard link or another spelling of the configuration is the configuration.
         const isConfig = (path: string) => {
             if (foldGuardSpelling(path) === foldGuardSpelling(identity.configPath)) return true
-            const status = lstatIfPresentSync(path)
+            let status: Stats | undefined
+            try { status = lstatIfPresentSync(path) } catch (error) { throw new CallPathUnreadable(path, error) }
             return status !== undefined && status.dev === configStatus.dev && status.ino === configStatus.ino
         }
         // Restoring removes whatever the edit added, including a restriction the pin would otherwise keep.
         const pinned = restoring ? undefined : pinnedPolicyDenial(parsed, configText, isConfig)
-        if (pinned) return { decision: pinned, diagnostics: [{ severity: 'error', code: 'GUARD_REFUSED', message: pinned.reason, target: 'guard' }] }
+        if (pinned) return refused(pinned)
         const decision = evaluateGuard(parsed, { ...prepared.result.policy, cockpitInvocations,
             mcpAllowedTools: config.mcp.allowed_tools,
             cockpitLaunchers: launched.map(({ executable, cwd, argv, prefix }) => ({ executable, cwd, argv: argv.slice(0, prefix) })),
@@ -561,8 +612,9 @@ export async function runGuardEvaluationApplication(
         }
         if ((await read(dirname(identity.module), basename(identity.module), 16_777_216)).sha256 !== identity.moduleSha256) return unavailable('Guard handler changed during evaluation.')
         if (launcherSha256 && (await read(dirname(launcher), basename(launcher), 65_536)).sha256 !== launcherSha256) return unavailable('Guard ordinary command executable changed during evaluation.')
-        return { decision, diagnostics: decision.decision === 'allow' ? [] : [{ severity: 'error', code: 'GUARD_REFUSED', message: decision.reason, target: 'guard' }] }
+        return refused(decision)
     } catch (error) {
+        if (error instanceof CallPathUnreadable) return unavailable(error.message)
         return unavailable(`Guard authority could not be read or revalidated: ${errorCause(error)}`)
     }
 }
@@ -603,6 +655,14 @@ function siblingRoots(config: CockpitConfig, siblingsRoot: string, served: Reado
         return [{ sibling, index, root: entry.served }]
     })
     return [...declared, ...recorded]
+}
+
+// A path the call names that cannot be inspected says nothing about the installed guard, so the hold
+// names that path rather than the guard's own authority.
+class CallPathUnreadable extends RefusalError {
+    constructor(path: string, cause: unknown) {
+        super(`Guard could not inspect ${forwardedReason(path)}, which this call names, so the call is held: ${errorCause(cause)}. Name a path the agent can read, or run the command in a terminal.`)
+    }
 }
 
 class GuardFileMissing extends RefusalError {
@@ -745,7 +805,8 @@ export async function prepareGuardEvaluationPolicy(
                     argv: [...('prefix' in rule ? rule.prefix : rule.contains)], reason: rule.reason,
                     ...(rule.fix === undefined ? {} : { fix: rule.fix }),
                 })),
-                ripgrepConfigActive: false, externalReads: config.guards.external_reads,
+                ripgrepConfigActive: false, externalReads: config.guards.external_reads, defaultDecision: config.guards.default,
+                homeDirectory: realpathSync(homedir()),
                 readPaths: config.guards.read_paths.flatMap(({ path }) => {
                     const spelled = path.startsWith('~/') ? join(homedir(), path.slice(2)) : path
                     // A missing location grants nothing; a linked one is held to where it leads.

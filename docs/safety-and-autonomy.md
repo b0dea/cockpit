@@ -1,9 +1,41 @@
 # Safety and autonomy
 
-What the guard allows, asks about, denies or cannot evaluate, and why. A permission always applies
-to one exact command and declared resources, never a whole command family. The
+What the guard allows, asks about, denies or cannot evaluate, and why. The
 [command table](../packages/cockpit/src/command-table.ts) and
 [guard evaluator](../packages/cockpit/src/guards/evaluator.ts) own these decisions.
+
+## The default: allow, except the blocked list
+
+By default (`[guards] default = "allow"`) an agent may run any shell command inside the cockpit and
+its siblings: Git work such as `add`, `commit`, `merge`, `rebase`, `switch`, `stash`, `fetch`, `pull` and
+pushes to work branches, builds, tests, package scripts, interpreters, `gh` queries and pull requests.
+The guard refuses only this blocked list:
+
+| Blocked | What the guard checks |
+| --- | --- |
+| Secrets | Reading, printing, writing, staging, linking or uploading `.env*` files (other than documentation names and declared templates), `.secrets` directories, declared instances, and credential stores: `~/.ssh` private keys, `~/.aws/credentials`, `~/.config/gh/hosts.yml`, `~/.netrc`, `~/.npmrc`, `~/.docker/config.json`, `~/.kube/config`, `~/.codex/auth.json`, `~/.claude/.credentials.json` and other token files, and `.pem`, `.p12`, `.pfx` and `id_*` key files anywhere. A file named with `--body-file`, `-F`, `-T` or `@file` is judged as a read. Environment dumps such as a bare `env` are refused. |
+| Writes outside the cockpit | Redirects, writer destinations (`cp`, `mv`, `tee`, `touch`, `mkdir`, `ln`, `dd`, `tar -x`, removers), write options (`--output`, `curl -o`, `wget -O`, `sort -o`, `sed -i`, `perl -i`) and a working directory outside the cockpit and its siblings. |
+| Branches and history | Force pushes of any branch (`--force`, `--force-with-lease`, a `+` refspec), pushes to a protected branch, remote branch deletion (`--delete`, `:branch`, `--prune`, `--mirror`), and rewriting a protected branch's history (`commit --amend`, `rebase`, `reset` to another commit, `filter-branch`) or moving, resetting or deleting it. A push that names no destination is resolved from the repository's `@{push}`; one Git cannot resolve asks. |
+| Declared hosts | Any spelled use of a `hosted_db_hosts` or `vendor_endpoint_hosts` name. The match is lexical: a CLI with a built-in endpoint, such as `gh`, reaches its host without naming it. |
+| The guard itself | Writes to hook registrations, `.cockpit/guards`, `.cockpit/local`, the installed cockpit, `node_modules/.bin` and `.npmrc`; widening edits to `cockpit.toml`, which wait for a person's `sync`; agent-run `sync`, `upgrade` and other cockpit commands that publish policy; direct `.git` writes; `git config` keys that choose a program (hooks, fsmonitor, pagers, editors, helpers, aliases, filters, drivers, includes, remotes); `git -c` with such a key; `--no-verify`; and transfer options that name a program (`--upload-pack`, `--receive-pack`, `--exec`). |
+| Privilege and fetched code | `sudo`, `doas`, `su` and `pkexec`, and a download piped into a shell or interpreter, such as `curl … \| sh` or `bash <(curl …)`. |
+
+The guard can only block what it can see in the command. A program the command runs, such as
+`node script.js`, `make` or a package script, can still read, write or run anything the account can,
+the guard's own files included; nothing here constrains it. When that matters, keep the strict mode,
+or run agents in a sandbox. Under Codex, a script that rewrites `.codex/hooks.json` makes the hook
+untrusted, and Codex then skips it, so the guard stops running until a person trusts the hooks
+again; cockpit has not measured a native protection for that file.
+
+`[[guards.deny]]` adds commands to the blocked list. `[[guards.allow]]` admits a command the guard
+would otherwise ask about; it never overrides a hard denial or a hard boundary's ask, such as a push
+whose destination Git cannot resolve.
+
+`[guards] default = "ask"` keeps the strict mode: the guard then admits only the read-only commands
+it classifies, declared build and test commands, cockpit's own agent commands and `[[guards.allow]]`
+rules, each one exact command, and asks for everything else. The rest of this page describes the
+blocked list and the strict mode's prompts; where a rule applies only in one mode, it says so.
+Changing `ask` to `allow` widens what agents may do, so it waits for a person's sync.
 
 ## Outcome vocabulary
 
@@ -161,11 +193,13 @@ human run `cockpit sync --config cockpit.toml` in a terminal.
 ### Protected branches and prompts
 
 Pushes to declared protected branches are hard denials, including explicit protected destinations
-and `git push --all` or `git push --mirror`. Missing or unresolved destinations, including ambiguous
-source-only revisions, symbolic aliases and wildcards, need a human decision. An exact grant cannot
-override either boundary.
+and `git push --all` or `git push --mirror`, and so are force pushes and remote branch deletion of
+any branch. A push with no refspec goes where the repository's `@{push}` points, and `HEAD` or `@`
+names the current branch; the guard asks Git for both. A destination Git cannot resolve, and
+ambiguous source-only revisions, symbolic aliases and wildcards, ask and name the spelling that
+works, `git push origin <branch>:<branch>`. No grant overrides either boundary.
 
-These produce `ask`: unresolved Git execution context, destructive Git reset or clean forms, staging
+In the strict mode these produce `ask`: unresolved Git execution context, destructive Git reset or clean forms, staging
 by explicit path (a person approves or runs it), staging without explicit paths, wrapped or
 environment-modifying commands, unmatched invocation profiles, and any removal without a grant. An
 explicit removal outside configured roots stays at `ask` even when a declared allow matches, because
@@ -177,13 +211,17 @@ to find nested secrets directories; a tree past the walk's bound stays at `ask`,
 fails is `unavailable`. Unsupported staging options or unproven pathspec grammar produce
 `unavailable`.
 
-Any other refused command gets an `ask` that names the command and gives three ways forward: a
-person approves it, a person runs it in a terminal, or a person admits it under `[guards] allow`;
-for tests it points to `cockpit test-run`.
+In the strict mode, any other refused command gets an `ask` that names the command and gives three
+ways forward: a person approves it, a person runs it in a terminal, or a person admits it under
+`[guards] allow`; for tests it points to `cockpit test-run`. Under the allow default these commands
+run, except a reading command such as `cat`, `rg` or `grep` whose shape the read-only profile could
+not prove reads no secret, Git that prints committed content outside the profile, and a cockpit
+command its own table does not admit.
 
 ### Declared rules
 
-Declared rules refine the final prompt boundary. Each vector starts with the executable.
+Declared rules refine the final prompt boundary: under the allow default an allow rule matters only
+for what would still ask. Each vector starts with the executable.
 `[[guards.deny]]` matches a command-vector prefix or a contiguous sequence and may name a safe fix.
 `[[guards.allow]]` matches a prefix, optionally only at one checkout-relative working directory. An
 allow cannot bypass a hosted endpoint, protected branch, secret path, malformed capture or
@@ -204,7 +242,8 @@ A built-in read-only profile lets agents inspect the checkout without a prompt, 
 on Codex and OpenCode, where a prompt becomes a denial. It covers exact argument shapes of `ls`,
 `pwd`, `cat`, `head`, `tail`, `wc`, `shasum`, `rg`, `grep`, `fd`, `find`, `echo`, `printf`, `sed`,
 `git status`, `git diff`, `git log`, `git show`, `git rev-parse`, `git branch` listing flags,
-`git worktree list`, and the cockpit commands [below](#cockpit-commands-an-agent-can-run). The
+`git worktree list`, `git ls-files`, `git cat-file`, `git merge-base`, `git remote`, `git config --get`,
+and the cockpit commands [below](#cockpit-commands-an-agent-can-run). The
 [read-only profile](../packages/cockpit/src/guards/read-only.ts) lists each permitted option.
 
 - Any other option falls back to the ordinary rules, including options that run programs or write
@@ -217,7 +256,17 @@ on Codex and OpenCode, where a prompt becomes a denial. It covers exact argument
   `--resolve-git-dir`, `--parseopt` and `--sq-quote`. `git branch` is read-only with no argument or
   with `--list`, `-a`, `-r`, `-v`, `-vv` or `--show-current` (and their long forms), never with a
   branch name. `git worktree list` accepts its porcelain, NUL and verbose listing flags;
-  worktree creation, removal and pruning remain outside the read-only profile. `shasum` hashes
+  worktree creation, removal and pruning remain outside the read-only profile. `git ls-files` lists
+  names, modes and object names, never with `--eol`. `git cat-file` takes one of `-t`, `-s`, `-e` or
+  `-p` and one object, never a `rev:path` blob name; `-p` prints content, so it is judged as
+  `git show` is. `git remote` lists names only: `-v`, `show` and `get-url` print URLs, which can
+  carry a credential. `git config --get <key>`, `--get-all` and `git config get` read one key from
+  the `user`, `core`, `init`, `pull`, `push`, `merge`, `rebase`, `commit`, `tag`, `fetch`, `status`,
+  `log`, `diff`, `color`, `advice`, `safe` or `gpg` section, with scope and display flags; a listing,
+  a pattern, `--file` or a key in another section, such as `remote.origin.url`, `http.extraHeader`
+  or `credential.helper`, can print a credential, so it asks. Every configuration write is refused.
+  `git fetch` writes objects and refs under `.git`, which agents do not write, so it asks: read the
+  other repository in place with `git -C <repository> log`, or a person runs the fetch. `shasum` hashes
   named files, including guard controls, with algorithm and text/binary options. Check mode is
   excluded because a checksum manifest names additional files. Output redirects remain writes.
 - `$?` is allowed as an argument only to a read-only command, and never as the directory of
@@ -235,7 +284,17 @@ on Codex and OpenCode, where a prompt becomes a denial. It covers exact argument
   operands are inspected as files whose content may be printed.
 - `rg` is read-only only when `RIPGREP_CONFIG_PATH` is absent. Its `-g`, `--glob` and `--iglob` are
   read-only only as `!` exclusions: any other glob overrides the hidden and ignore filters, so
-  `rg -g '.env*'` would print a hidden environment file.
+  `rg -g '.env*'` would print a hidden environment file. Under the allow default `rg` also takes
+  positive globs, `--hidden`, `--no-ignore` and `-u`; the guard then walks the whole tree it reads,
+  hidden and ignored files included, and refuses the search if it finds an environment file or
+  secrets directory there.
+- Under the allow default a word whose value the guard cannot see, such as `$TARGET`, a glob or a
+  command substitution, is allowed in an argument the program decides about, as in
+  `node build.js "$TARGET"`. It is refused where the guard decides what is read, written, removed or
+  pushed (`cat "$FILE"`, `rm "$DIR"`, `git push origin "$BRANCH"`) and as the program name. `~` and
+  `$HOME` are expanded. `git commit -m "$(cat <<'EOF' … EOF)"` is read as the literal message it is.
+  Printing the environment (`env`, `printenv`) or a variable named as a secret (`echo "$API_TOKEN"`)
+  is refused. In the strict mode every such word is refused.
 - A pipeline or chain is permitted only when every segment is. Redirecting output to `/dev/null`,
   `/dev/stdout` or `/dev/stderr`, or input from `/dev/null`, does not change the decision.
 
@@ -251,7 +310,7 @@ how that guard treats a named file outside the managed roots:
 | --- | --- | --- |
 | default | asks, unless a `[guards] allow` rule names the complete command | external reads are rare and each is reviewed |
 | `read_paths` | allowed below each listed file or directory | a few known folders, such as `~/Downloads` or a memory directory, held by cockpit itself |
-| `external_reads = "native"` | left to the agent tool's own permission | the person already manages outside access in each tool's settings |
+| `external_reads = "native"` | left to the agent tool's own permission, as is a read-only Git command run alone in another repository | the person already manages outside access in each tool's settings |
 
 ```toml
 [guards]
@@ -263,7 +322,7 @@ read_paths = [{ path = "~/Downloads", reason = "Inputs the person drops in." }]
 `~/` means the home directory of whoever runs the agent. A listed path that does not exist grants
 nothing, and `/` or the home directory itself is never granted. In every mode the guard still
 refuses `.env*` and `.secrets` names and declared instances, writes outside the roots, an external
-working directory, and a recursive search or comparison of an external directory: outside the
+working directory (except, with native external reads, a read-only Git command's `-C` directory, below), and a recursive search or comparison of an external directory: outside the
 roots it recognises only those names, not other credential files, so a read or search must name a
 regular file, and only a listing, which reports names, may name a directory. A link outside the roots stays refused. Copying an input in, as
 `cp ~/Downloads/photo.jpg assets/`, is a write and is admitted as any write is, for example by a
@@ -297,11 +356,25 @@ approval is command execution consent**, including that repository's configured 
 run fsmonitor and clean filters. Review that configuration before approving the command; the
 approval is bound to the argv, so a later change to those helpers is not detected and needs another
 review. It runs only as the whole call, never as part of a pipeline or chain whose file evidence a
-helper could invalidate. Native read permission alone supplies none of this execution consent.
+helper could invalidate.
 
-A named file under a managed root may follow a package-manager link only to a regular file inside a
-managed root; both spellings and the target's identity are checked, and the link is revalidated
-before the decision is returned.
+With `external_reads = "native"`, a read-only Git command in a repository outside the roots, such as
+`git -C /workspace/related worktree list --porcelain`, is left to the agent tool's own permission
+without a grant, as a named file read is. The guard still requires the read-only profile's exact
+form, so no `-c`, alias, external diff, pager option, write or network access passes; the whole call,
+never a pipeline or chain; a `-C` directory holding its own `.git`, reached without a link; and
+operands that name regular files or revisions. A command that prints file content there, such as
+`diff`, `show`, `log -p` or `cat-file -p`, is admitted only when that repository's index tracks no
+`.env*` or `.secrets` file, as inside the cockpit. Running it runs that repository's configured
+helpers, such as fsmonitor, clean filters, textconv, signature verification and the pager, as
+running it yourself would. Agents cannot write outside the roots, so those helpers are what a person
+or their tools configured there, and choosing native external reads hands consent for that command
+to the agent tool, which asks or sandboxes it by its own rules.
+
+A named file, or a search or listing, under a managed root may follow a package-manager link to a
+target inside a managed root: a named read only to a regular file, a search also to a directory,
+which is then walked for secrets as any search is. Both spellings and the target's identity are
+checked, and the link is revalidated before the decision is returned.
 
 A `[guards] allow` rule admits a command the read-only profile cannot classify, but never past the
 secret names: each argument is checked whole, after `=`, after `:` and after an attached short
@@ -579,7 +652,9 @@ Removing unchanged MCP approvals and adding or narrowing exact tool allowlists i
 
 The guard applies the edit to the current text and compares the tables, so an edit elsewhere in the
 file stays permitted; an edit it cannot apply exactly, and a shell command that names the file and
-is not a proven read, a Git record or the `--config` operand of a cockpit command, are denied. The
+can visibly write it (a redirect onto it, a writer such as `cp`, `mv`, `tee` or `git checkout`, an
+in-place `sed -i` or `perl -i`, or a write option such as `-o` or `--output`), are denied. A command
+that only reads it, such as `diff`, `sort` or `cockpit check --config cockpit.toml`, is not. The
 pin holds only for the tool calls the guard inspects.
 
 Every writing `sync` records the policy it ran under in `.cockpit/policy.json`. A later sync that
@@ -602,8 +677,12 @@ reviewers must approve it, such as the
 from the configuration the guards were generated from, the guard compares it, with defaults applied,
 to the copy sync keeps in `.cockpit/local/guard-config`. An edit that does not widen what agents may
 do holds every guarded call except `cockpit sync` and `cockpit check`, and the hold says so
-(`GUARD_CONFIG_UNSYNCED`). Any other edit holds every guarded call, that sync included, until a
-person runs `sync` in a terminal, and the hold names each field that widens.
+(`GUARD_CONFIG_UNSYNCED`). An edit that widens is not applied: the guard keeps judging every call
+under the configuration last synced, as `.cockpit/local/guard-config` records it, so the agent keeps
+working and the widened rule is not yet in force. While it waits, an agent's `cockpit sync` or
+`cockpit upgrade` is refused, the policy pin still applies to the current text, and every refusal
+ends with a sentence naming the widened fields and the sync command a person runs in a terminal. A
+missing or mismatched recorded copy still holds every guarded call.
 
 A guarded call is one a generated hook fires on: shell commands, file edits and writes, and
 restricted MCP tools under Claude Code. A hold stops nothing else, so file reads and unrestricted
@@ -614,8 +693,8 @@ So the `GUARD_CONFIG_UNSYNCED` hold also admits one edit, write or patch of `coc
 that leaves it byte-identical to the recorded copy, and so does the hold on a file that does not
 load. An agent can restore only what was recorded, so authority never exceeds the recorded policy,
 and this may also discard a person's unsynced narrowing edit. An edit the guard cannot prove applies
-exactly once, or that also touches another file, stays held, and restoring out of a widening edit
-stays a person's.
+exactly once, or that also touches another file, stays held. The same restoration is admitted out of
+a widening edit, which leaves agents under the policy they already had.
 
 An edit does not widen only when every difference is one of these:
 
@@ -634,8 +713,8 @@ Every other difference widens. That includes any change, in either direction, to
 MCP approvals outside that delegation, removed or expanded MCP tool allowlists, new guard allows or
 removed guard restrictions; a new sibling; a sibling's changed `dir`, `guides`, environment files or
 derived MCP sources; and every command field, such as `environment.seed`. A field the classification
-has no rule for widens too. A missing or mismatched copy of the generated configuration holds as a
-widening edit does. `check` reports the same classification: `GUARD_CONFIG_UNSYNCED` as a warning,
+has no rule for widens too. A missing or mismatched copy of the generated configuration holds every
+guarded call. `check` reports the same classification: `GUARD_CONFIG_UNSYNCED` as a warning,
 `GUARD_CONFIG_WIDENED` as an error naming the fields.
 
 Whoever runs it, sync refuses a guide that is, or links to, a `.env` or `.env.*` file, a file below
@@ -654,7 +733,11 @@ decision without adding grants or weakening hard boundaries:
 | OpenCode | Ask becomes deny, for the same reason: its plugin hook can only throw or continue. Allow exits 0; every non-allow decision exits 2. |
 
 Unavailable or malformed decisions exit 2 on every target, so adapter exit 0 alone does not mean
-permission was granted. A timeout stops a stalled handler holding a guarded call indefinitely;
+permission was granted. The generated Claude Code and Codex registrations give the guard hook a
+`timeout` of 30 seconds; a guard call spawns several Node and Git processes and was seen to exceed
+Codex's 5-second default on a loaded machine. What either harness does with the call when that
+timeout fires, run it or refuse it, is not measured, so a guard slower than its timeout may fail
+open. A timeout stops a stalled handler holding a guarded call indefinitely;
 copied plans, failed transport, signals, oversized output, nonzero handler status and invalid JSON
 become `unavailable` with exit 2. Lexical path normalization in this adapter does not itself verify
 filesystem identity.
