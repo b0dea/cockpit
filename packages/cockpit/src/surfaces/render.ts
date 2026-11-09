@@ -439,11 +439,11 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         && captured.nativeMcp.modelSha256 === mcpModelDigest && Array.isArray(captured.nativeMcp.fragments) && captured.nativeMcp.fragments.length === 0
         ? [] : nativeFragments(captured.nativeMcp, mcpModelDigest, mcpTargets)
     if (!mcpNative) return refuse('SURFACE_INPUT_INVALID', 'nonempty MCP model requires exact native fragments bound to the same approvals')
-    const grantTargets = new Set<string>()
+    const grantTargets = new Set<string>(configuredSet.has('opencode') ? ['opencode'] : [])
     for (const grant of captured.projection.grants) if (object(grant) && typeof grant.target === 'string') grantTargets.add(grant.target)
     const grantsDigest = surfaceModelSha256(captured.projection.grants)
     if (!grantsDigest) return refuse('SURFACE_BOUNDS', 'directory grants cannot be captured for native binding')
-    const grantNative = captured.projection.grants.length === 0 && object(captured.nativeGrants)
+    const grantNative = grantTargets.size === 0 && object(captured.nativeGrants)
         && captured.nativeGrants.modelSha256 === grantsDigest && Array.isArray(captured.nativeGrants.fragments) && captured.nativeGrants.fragments.length === 0
         ? [] : nativeFragments(captured.nativeGrants, grantsDigest, grantTargets)
     if (!grantNative) return refuse('SURFACE_INPUT_INVALID', 'directory grants require exact native fragments bound to the same projection')

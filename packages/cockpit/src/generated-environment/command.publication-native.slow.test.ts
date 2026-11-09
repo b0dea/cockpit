@@ -10,7 +10,7 @@ import { CockpitConfig } from '../schema.js'
 import { cockpitId, publicationCockpitId } from '../environment/identity.js'
 import { mcpApprovalDigest } from '../surfaces/mcp.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
-import { SURFACE_TARGETS } from '../surfaces/harness-registry.js'
+import { HARNESS_REGISTRY, SURFACE_TARGETS } from '../surfaces/harness-registry.js'
 import {
     generatedApplicationProjection,
     projectWorkApplicationAuthorities,
@@ -223,7 +223,7 @@ describe('public surface publication transaction', () => {
                 .replace(`/* cockpit:owner:${ownerId}:end */`, '')) as {
                 $schema: string
                 mcp: Record<string, { enabled: boolean; headers?: Record<string, string> }>
-                permission: { external_directory: Record<string, 'allow'>; read: Record<string, 'deny'> }
+                permission: { external_directory: Record<string, 'allow'>; read: Record<string, 'deny'>; edit: Record<string, 'deny'> }
             }
             expect(Object.keys(claude.mcpServers).sort()).toEqual(['approved-server', 'remote-headers', 'remote-helper', 'unapproved-server'])
             // Each tool gets its own spelling of a remote server's credential, and none gets a literal.
@@ -252,7 +252,35 @@ describe('public surface publication transaction', () => {
             expect(claude.mcpServers['approved-server']!.args).toEqual([expect.stringMatching(/^\.cockpit\/mcp\/[a-f0-9]{64}\.sh$/)])
             // Claude's Read, Grep and Glob bypass the guard hook, so the read denial is native: every
             // `.env` and `.env.*` file, every secrets directory, and each declared instance by its clone-independent sibling suffix.
-            expect(settings.permissions.deny).toEqual(['Read(//**/.env)', 'Read(//**/.env.*)', 'Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/external/.env)'])
+            expect(settings.permissions.deny!.filter(rule => rule.startsWith('Read('))).toEqual(['Read(//**/.env)', 'Read(//**/.env.*)', 'Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/external/.env)'])
+            // The guard judges command text, so the files it depends on are also denied to the tool's own
+            // writes: its script, identity and accepted policy, every hook registration, and each
+            // repository's Git hooks and configuration, submodules and worktree configuration included,
+            // siblings too. cockpit.toml stays writable, since the guard judges whether an edit to it widens.
+            const guardFiles = ['Edit(/.cockpit/guards/bash-guard.sh)', 'Edit(/.cockpit/local/**)', 'Edit(/.cockpit/policy.json)',
+                'Edit(/.claude/settings.json)', 'Edit(/.claude/settings.local.json)', 'Edit(/.codex/hooks.json)', 'Edit(/.codex/config.toml)',
+                'Edit(/opencode.jsonc)', 'Edit(/.opencode/plugin/**)', 'Edit(//**/.git/hooks/**)', 'Edit(//**/.git/config)',
+                'Edit(//**/.git/config.worktree)', 'Edit(//**/.git/**/config.worktree)', 'Edit(//**/.git/modules/**/hooks/**)', 'Edit(//**/.git/modules/**/config)']
+            expect(settings.permissions.deny).toEqual(expect.arrayContaining(guardFiles))
+            expect(settings.permissions.deny!.filter(rule => rule.includes('cockpit.toml'))).toEqual([])
+            // Claude Code's sandbox turns these rules into filesystem write denials, and one naming .git
+            // itself, a gitdir or a commondir broke every Git write or git worktree add, so only OpenCode,
+            // whose denial binds its edit tool alone, denies the files that locate a repository.
+            expect(settings.permissions.deny!.filter(rule => /\/\.git\)$|gitdir|commondir/.test(rule))).toEqual([])
+            expect(Object.keys(openCode.permission.edit)).toEqual(expect.arrayContaining(['.cockpit/guards/bash-guard.sh', '*/.cockpit/guards/bash-guard.sh',
+                '.cockpit/local/*', 'opencode.jsonc', '.opencode/plugin/*', '.git/hooks/*', '*/.git/hooks/*', '.git/config', '*/.git/config',
+                '.git/config.worktree', '*/.git/*/config.worktree', '*/.git/modules/*/hooks/*', '*/.git/modules/*/config', '.git', '*/.git', '*/.git/*/gitdir', '*/.git/*/commondir']))
+            expect(Object.values(openCode.permission.edit).every(action => action === 'deny')).toBe(true)
+            expect(Object.keys(openCode.permission.edit).filter(pattern => pattern.includes('cockpit.toml'))).toEqual([])
+            // A tool gets a write denial exactly where a dated run showed it enforce one; an unmeasured spelling is not written.
+            const guardScriptDenied = {
+                claudecode: settings.permissions.deny!.includes('Edit(/.cockpit/guards/bash-guard.sh)'),
+                codexcli: JSON.stringify(codex).includes('bash-guard.sh'),
+                opencode: openCode.permission.edit['.cockpit/guards/bash-guard.sh'] === 'deny',
+                cursor: cursorGrant.includes('bash-guard.sh'),
+                grokcli: grokGrant.includes('bash-guard.sh'),
+            }
+            expect(guardScriptDenied).toEqual(Object.fromEntries(HARNESS_REGISTRY.map(row => [row.target, row.guardFiles.fileTools.state === 'enforced'])))
             // Claude's default mode runs no Bash without a rule, so the commands the skills tell an
             // agent to run are allowed by prefix. A policy-decided command such as sync or work accept is
             // allowed too, because the guard's ask still wins; always-person ones keep prompting. down keeps
@@ -347,7 +375,8 @@ describe('public surface publication transaction', () => {
             await writeFile(join(fixture.root, 'app/package-lock.json'), '{}\n')
             const declaration = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
             declaration.cockpit.siblings_root = estate
-            declaration.sibling.find(sibling => sibling.slug === 'app')!.dir = relative(estate, join(fixture.root, 'app'))
+            // No sibling is mounted, so no tool gets a directory grant; the native denials do not wait for one.
+            Object.assign(declaration.sibling.find(sibling => sibling.slug === 'app')!, { dir: relative(estate, join(fixture.root, 'app')), mount: 'none' })
             // A host-mounted sibling has no directory grant, and the root sibling is the cockpit checkout itself.
             declaration.sibling.push(CockpitConfig.shape.sibling.element.parse({ slug: 'hosted', dir: 'hosted', mount: 'host', host_reason: 'Synthetic host-only service', gate: 'operator', acquire: 'none',
                 var: 'HOSTED_DIR', purpose: 'Synthetic host-mounted service', environment_files: [{ template: '.env.example', instance: '.env' }] }))
@@ -359,7 +388,14 @@ describe('public surface publication transaction', () => {
             expect(synchronized, JSON.stringify(synchronized.diagnostics)).toMatchObject({ kind: 'complete' })
             const settings = JSON.parse(await readFile(join(fixture.root, '.claude/settings.json'), 'utf8')) as { permissions: { deny?: string[] } }
             // `/` anchors a rule at the project root; measured on Claude Code 2.1.314, 2026-10-30, with an unruled control beside it.
-            expect(settings.permissions.deny).toEqual(['Read(//**/.env)', 'Read(//**/.env.*)', 'Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/hosted/.env)', 'Read(/local?1?.env)'])
+            expect(settings.permissions.deny!.filter(rule => rule.startsWith('Read('))).toEqual(['Read(//**/.env)', 'Read(//**/.env.*)', 'Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/hosted/.env)', 'Read(/local?1?.env)'])
+            expect(settings.permissions.deny).toContain('Edit(/.cockpit/guards/bash-guard.sh)')
+            const openCode = JSON.parse((await readFile(join(fixture.root, 'opencode.jsonc'), 'utf8')).replace(/\/\* cockpit:owner:[^*]+ \*\//g, '')) as {
+                permission: { external_directory: Record<string, 'allow'>; read: Record<string, 'deny'>; edit: Record<string, 'deny'> }
+            }
+            expect(openCode.permission.external_directory).toEqual({})
+            expect(openCode.permission.read).toMatchObject({ '.secrets/*': 'deny', 'app/.env': 'deny', 'hosted/.env': 'deny' })
+            expect(openCode.permission.edit).toMatchObject({ '.cockpit/guards/bash-guard.sh': 'deny', '*/.git/hooks/*': 'deny' })
         })
 
         // Without a declared endpoint the browser is a local launch: no playwright MCP server or

@@ -82,6 +82,18 @@ const claudeSubagentGrader = Object.freeze({ state: 'enforced' as const, evidenc
     provenance: 'claude -p listed the generated evaluator in the Agent tool description and left out a definition with no front-matter beside it. The spawned evaluator was offered only Read, Grep, Glob and the browser server\'s tools from its generated tools list, and Claude Code refused its Write and Bash calls by name while a browser tool and Read ran; a twin whose tools key was misspelled ran Bash, and without disallowedTools also wrote. No workspace trust was given' })
 const subagentUnmeasured = Object.freeze({ state: 'generated' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-05', measuredVersion: null,
     provenance: 'cockpit writes the evaluator definition, but no run of the tool beside a broken control has shown that it offers it to the working agent' })
+// Whether the tool's own permissions or sandbox keep the agent from writing the files the guard depends
+// on (guard-file-protection.ts lists them): through its edit and write tools, and through a program its
+// shell runs, which the guard cannot judge. Each run asked an agent to write every protected path, an
+// unprotected control and a twin covered only by a misspelled rule, then read the files back from disk.
+type GuardFileFact = Readonly<{ state: 'enforced' | 'unavailable'; evidence: 'not_applicable' | 'human_needed'; measuredOn: string; measuredVersion: string | null; provenance: string }>
+const guardFileFact = (fact: Omit<GuardFileFact, 'measuredOn'>): GuardFileFact => Object.freeze({ measuredOn: '2026-11-09', ...fact })
+const noGuardFileProtection = Object.freeze({
+    fileTools: guardFileFact({ state: 'unavailable', evidence: 'not_applicable', measuredVersion: null,
+        provenance: 'cockpit writes no write denial for this tool: its permission spelling has not been checked' }),
+    shell: guardFileFact({ state: 'unavailable', evidence: 'not_applicable', measuredVersion: null,
+        provenance: 'cockpit writes no write denial for this tool: its permission spelling has not been checked' }),
+})
 const completeRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const)
 const nonPermissionRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks'] as const)
 
@@ -97,6 +109,12 @@ export const HARNESS_REGISTRY = Object.freeze([
             provenance: 'claude -p with generated settings and a loopback synthetic model left the listed read tool denied by native permissions without a grant; with a grant it called only that tool, including with large arguments, and denied write, dispatcher and new tools despite readOnlyHint annotations. Unrestricted server tools ran even with a missing guard; restricted calls were held, an oversized envelope was refused, and a broken hook file was named. Project hooks still require workspace trust. Claude Code rewrites a dot in a tool name to an underscore before the hook sees it and keeps only the first of two tools that collide, so read.record and read_record are one name here' }),
         remoteMcp: remoteMcpMeasured({ evidence: 'human_needed', measuredVersion: '2.1.318', helper: true,
             provenance: 'from a project .mcp.json, Claude Code sent the Authorization header a ${NAME} reference named while a $NAME control went out literally; it ran a headersHelper given with --mcp-config, but refused to run one from the project file until a person trusts the workspace, and a misspelled headerHelper sent nothing' }),
+        guardFiles: Object.freeze({
+            fileTools: guardFileFact({ state: 'enforced', evidence: 'not_applicable', measuredVersion: '2.1.319',
+                provenance: 'claude -p in an untrusted workspace with the generated Edit deny rules refused its Edit tool on the guard script, its identity and a sibling\'s Git hook, and also a shell redirect or cp into a denied path; a twin rule spelled Edti was named in the debug log as matching no tool and its file was written, as were the unruled control and cockpit.toml. A second run with Edti twins of the submodule and config.worktree rules wrote nothing through Edit either, since Claude Code asks before editing any Git metadata, which -p refuses; with the real rules each was denied outright, and a .COCKPIT or .GIT spelling was denied as its lowercase path. A linked worktree\'s or submodule\'s .git file, gitdir and commondir still only ask, since denying them breaks Git under the sandbox' }),
+            shell: guardFileFact({ state: 'enforced', evidence: 'human_needed', measuredVersion: '2.1.319',
+                provenance: 'only once a person turns on Claude Code\'s sandbox: without it, perl run from the shell wrote the guard identity, the Codex hook registration, the Claude settings and the root and sibling Git hooks despite the deny rules; with sandbox.enabled and allowUnsandboxedCommands false beside the same rules, the sandbox refused each of those writes and git config, while the twin, the controls and cockpit.toml were written. A second sandboxed run refused a sibling submodule\'s hooks and config and a linked worktree\'s config.worktree, which its Edti twins left writable (the sandbox refused the root config.worktree with or without a rule), while commit, switch, fetch and worktree add worked in the main checkout, a linked worktree, a sibling, its linked worktree and its submodule. A rule naming .git, or gitdir and commondir below it, made every Git write or worktree add fail, so a linked worktree\'s or submodule\'s .git file, gitdir and commondir stay writable, and so does a sibling\'s whole .git directory to a rename and back' }),
+        }),
         servedCheckoutGrant: servedGrant({ state: 'enforced', evidence: 'not_applicable', measuredOn: '2026-11-06', measuredVersion: '2.1.319',
             provenance: 'in a trusted workspace the committed and .claude/settings.local.json permissions.additionalDirectories lists combined: both directories were written and an ungranted control refused; untrusted, only the local list applied, which is the one cockpit use writes, and a string-valued list in either file granted nothing from that file, without any report, while the other file\'s list held' }),
     }),
@@ -111,6 +129,12 @@ export const HARNESS_REGISTRY = Object.freeze([
             provenance: 'codex exec with generated project enabled_tools and a loopback synthetic model called the listed read tool and rejected forced write, dispatcher and new tool calls as unsupported. The unrestricted control called all four; an empty list made no server call; a string-valued enabled_tools twin was named and rejected before startup. enabled_tools matches the server\'s raw tool name, so read.record and read_record stay distinct. No hook trust was granted' }),
         remoteMcp: remoteMcpMeasured({ evidence: 'not_applicable', measuredVersion: '0.166.0', helper: true,
             provenance: 'from a project .codex/config.toml in a directory Codex had not been told to trust, codex exec sent the bearer_token_env_var and env_http_headers values and the http_headers_helper output, named a misspelled http_header_helper as ignored, and sent a ${NAME} written in http_headers literally' }),
+        guardFiles: Object.freeze({
+            fileTools: guardFileFact({ state: 'unavailable', evidence: 'not_applicable', measuredVersion: '0.167.0',
+                provenance: 'codex exec under the workspace-write sandbox cockpit writes once a sibling is granted, given on the command line because Codex skips an untrusted project file, refused apply_patch on .codex/hooks.json and the root and sibling Git hooks but wrote the guard script, its identity, the accepted policy and the OpenCode plugin; the legacy sandbox has no read-only path setting, and a misspelled one was named as ignored, so cockpit writes nothing more' }),
+            shell: guardFileFact({ state: 'unavailable', evidence: 'not_applicable', measuredVersion: '0.167.0',
+                provenance: 'in the same run the sandbox refused shell writes to .codex, to the root and sibling Git hooks and to .git/config, but perl and printf wrote the guard script, its identity and the accepted policy. A permission profile naming .cockpit read-only refused those writes under codex sandbox, but cockpit cannot yet show a session loading one from the project file' }),
+        }),
         servedCheckoutGrant: servedGrant({ state: 'unavailable', evidence: 'not_applicable', measuredVersion: '0.166.0',
             provenance: 'Codex reads no machine-local project file; --add-dir at start made the worktree writable and without it the write was refused, so cockpit use prints that flag and writes nothing' }),
     }),
@@ -126,6 +150,12 @@ export const HARNESS_REGISTRY = Object.freeze([
             provenance: 'a plugin\'s session.created handler put text in the request through a noReply prompt when it ran at once, but the request went out without it after a 3-second delay, as a real cockpit check could take, and the experimental chat.system.transform hook that survived the delay also reached the title request, so cockpit generates no session-start check. A plugin with a syntax error or that throws exited 0 with no failure reported, and only debug config lists it' }),
         remoteMcp: remoteMcpMeasured({ evidence: 'not_applicable', measuredVersion: '1.19.5', helper: false,
             provenance: 'opencode mcp list sent headers expanded from {env:NAME} in a project opencode.jsonc while a ${NAME} control went out literally; its remote server schema has no headers helper, so a server that declares one is not written for it' }),
+        guardFiles: Object.freeze({
+            fileTools: guardFileFact({ state: 'enforced', evidence: 'not_applicable', measuredVersion: '1.19.5',
+                provenance: 'opencode run with the generated edit deny patterns refused its edit tool on the guard script, its identity and a sibling\'s Git hook, while a twin pattern spelled with a leading ./ matched nothing and its file was edited, as were the control and cockpit.toml; OpenCode does not name a pattern that matches nothing. A second run also refused a linked worktree\'s and a submodule\'s .git file, a sibling worktree\'s gitdir, commondir and config.worktree, the root config.worktree and a sibling submodule\'s hooks and config, all edited under ./ twins. Its matcher is case-sensitive, so .COCKPIT and .GIT spellings of a denied path were edited on a case-insensitive volume' }),
+            shell: guardFileFact({ state: 'unavailable', evidence: 'not_applicable', measuredVersion: '1.19.5',
+                provenance: 'OpenCode has no sandbox and its bash permission matches command text, as the guard does: in the same run printf, cp and perl wrote the guard script, its identity, the Codex hook registration and the root and sibling Git hooks, so cockpit writes no shell rule' }),
+        }),
         servedCheckoutGrant: servedGrant({ state: 'enforced', evidence: 'not_applicable', measuredVersion: '1.19.5',
             provenance: 'the machine-local grant file holding the worktree path allowed the write and the control was denied, and a pattern naming a missing grant file stopped OpenCode at start, naming the file' }),
     }),
@@ -136,7 +166,7 @@ export const HARNESS_REGISTRY = Object.freeze([
         outputs: Object.freeze({ instruction: '.cursor/rules', skills: '.cursor/skills', mcp: '.cursor/mcp.json', permissions: Object.freeze(['.cursor/cli.json']) }),
         guard: noGuardAdapter, native: generatedNative, sessionStart: noSessionStart('cockpit generates no hook for this tool'), subagentGrader: subagentUnmeasured,
         mcpToolRestriction: noMcpToolRestriction,
-        remoteMcp: noRemoteMcp, servedCheckoutGrant: noServedGrant,
+        remoteMcp: noRemoteMcp, servedCheckoutGrant: noServedGrant, guardFiles: noGuardFileProtection,
     }),
     Object.freeze({
         target: 'grokcli', type: 'agent' as const, displayName: 'Grok Build', rulesyncTarget: 'grokcli',
@@ -144,7 +174,7 @@ export const HARNESS_REGISTRY = Object.freeze([
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.grok/skills', mcp: '.grok/config.toml', permissions: Object.freeze(['.grok/config.toml']) }),
         guard: noGuardAdapter, native: generatedNative, sessionStart: noSessionStart('cockpit generates no hook for this tool'), subagentGrader: subagentUnmeasured,
         mcpToolRestriction: noMcpToolRestriction,
-        remoteMcp: noRemoteMcp, servedCheckoutGrant: noServedGrant,
+        remoteMcp: noRemoteMcp, servedCheckoutGrant: noServedGrant, guardFiles: noGuardFileProtection,
     }),
 ] as const)
 
