@@ -588,7 +588,19 @@ describe('guard policy construction', () => {
                 payload: { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: root, tool_input: { command } } }, adapters)).decision.decision
             expect(await read('cat app/link/../runtime.env')).toBe('ask')
             expect(await read('cat app/config/sub/../notes.md')).toBe('allow')
-        } finally { for (const path of created) rmSync(path, { recursive: true, force: true }) }
+            // A word longer than any file name the volume allows names nothing, so probing it is no failure.
+            const long = 'x'.repeat(300)
+            expect(await read(`echo '${long}'`)).toBe('allow')
+            expect(await read(`cat app/${long} app/${long}/../config/notes.md`)).toBe('allow')
+            expect(await read(`rg needle app/${long}`)).toBe(await read('rg needle app/missing'))
+            // A word the guard cannot inspect holds the call by naming that word, not the guard's own authority.
+            mkdirSync(join(root, 'app/locked'), { mode: 0o000 })
+            const locked = await runGuardEvaluationApplication({ ...request, payload: shellPayload('echo app/locked/entry', root) }, adapters)
+            expect(locked.decision).toEqual({ decision: 'unavailable', reason: expect.stringMatching(/^Guard could not inspect \S+\/app\/locked\/entry, which this call names/) })
+        } finally {
+            if (existsSync(join(root, 'app/locked'))) { chmodSync(join(root, 'app/locked'), 0o700); rmSync(join(root, 'app/locked'), { recursive: true }) }
+            for (const path of created) rmSync(path, { recursive: true, force: true })
+        }
     }, 120_000)
 
     it.each(['missing', 'symlink', 'changed'] as const)('refuses %s guard publication through authenticated reads', async change => {

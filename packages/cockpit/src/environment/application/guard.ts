@@ -361,7 +361,7 @@ export async function runGuardEvaluationApplication(
         // that prints committed content. A request not asked here gets the walk, or no answer.
         const policy = prepared.result.policy
         const instancePaths = policy.instances.map(item => item.path)
-        const present = (path: string) => { try { lstatSync(path); return true } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error } }
+        const present = (path: string) => { try { lstatSync(path); return true } catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENAMETOOLONG')) return false; throw error } }
         const allowed = (path: string) => policy.allowedRoots.some(root => confinedPath(root, path))
         // These are exact observation requests, never roots for mutation or arbitrary execution.
         const approvedReads = new Set<string>()
@@ -439,8 +439,8 @@ export async function runGuardEvaluationApplication(
                         if (status.isSymbolicLink()) return true
                         inspected.set(cursor, status)
                     } catch (error) {
-                        // A missing or non-directory component fails the system's lookup before `..` applies.
-                        if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+                        // A missing, non-directory or overlong component fails the system's lookup before `..` applies.
+                        if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'ENAMETOOLONG')) throw error
                     }
                     cursor = dirname(cursor)
                 } else if (component && component !== '.') cursor = join(cursor, component)
@@ -474,7 +474,8 @@ export async function runGuardEvaluationApplication(
                 let status: Stats
                 try { status = lstatSync(cursor) }
                 catch (error) {
-                    if ((error as NodeJS.ErrnoException).code === 'ENOENT') { exists = false; break }
+                    // A component longer than the volume allows names nothing, as a missing one does.
+                    if (hasErrorCode(error, 'ENOENT', 'ENAMETOOLONG')) { exists = false; break }
                     throw error
                 }
                 if (status.isSymbolicLink()) {
@@ -560,7 +561,8 @@ export async function runGuardEvaluationApplication(
         // A hard link or another spelling of the configuration is the configuration.
         const isConfig = (path: string) => {
             if (foldGuardSpelling(path) === foldGuardSpelling(identity.configPath)) return true
-            const status = lstatIfPresentSync(path)
+            let status: Stats | undefined
+            try { status = lstatIfPresentSync(path) } catch (error) { throw new CallPathUnreadable(path, error) }
             return status !== undefined && status.dev === configStatus.dev && status.ino === configStatus.ino
         }
         // Restoring removes whatever the edit added, including a restriction the pin would otherwise keep.
@@ -589,6 +591,7 @@ export async function runGuardEvaluationApplication(
         if (launcherSha256 && (await read(dirname(launcher), basename(launcher), 65_536)).sha256 !== launcherSha256) return unavailable('Guard ordinary command executable changed during evaluation.')
         return { decision, diagnostics: decision.decision === 'allow' ? [] : [{ severity: 'error', code: 'GUARD_REFUSED', message: decision.reason, target: 'guard' }] }
     } catch (error) {
+        if (error instanceof CallPathUnreadable) return unavailable(error.message)
         return unavailable(`Guard authority could not be read or revalidated: ${errorCause(error)}`)
     }
 }
@@ -629,6 +632,14 @@ function siblingRoots(config: CockpitConfig, siblingsRoot: string, served: Reado
         return [{ sibling, index, root: entry.served }]
     })
     return [...declared, ...recorded]
+}
+
+// A path the call names that cannot be inspected says nothing about the installed guard, so the hold
+// names that path rather than the guard's own authority.
+class CallPathUnreadable extends RefusalError {
+    constructor(path: string, cause: unknown) {
+        super(`Guard could not inspect ${forwardedReason(path)}, which this call names, so the call is held: ${errorCause(cause)}. Name a path the agent can read, or run the command in a terminal.`)
+    }
 }
 
 class GuardFileMissing extends RefusalError {
