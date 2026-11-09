@@ -344,7 +344,8 @@ describe('shipped skill contract', () => {
         expect(body).toContain('Show the human the proposed sibling declaration before invoking the command')
         expect(body).toContain('The command writes cockpit.toml immediately; `--json` changes only its output format')
         // A new repository is a new directory the agent may write, so its sync is a person's; an added tool is not, so the agent runs it.
-        expect(body).toContain('Adding or removing a repository widens what agents may do (a new repository is a new directory they may write), so the hold names the sibling and a person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` in a terminal')
+        expect(body).toContain('Adding or removing a repository widens what agents may do (a new repository is a new directory they may write), so until a person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a terminal and confirms it, calls are judged under the configuration last synced and every refusal names the sibling')
+        expect(body).not.toContain('the hold names')
         expect(body).toContain('Adding a tool does not widen what agents may do, so you may run `tool add`')
         expect(body).not.toContain('until a person runs `./node_modules/.bin/cockpit down')
         expect(body).not.toContain('until a person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs down')

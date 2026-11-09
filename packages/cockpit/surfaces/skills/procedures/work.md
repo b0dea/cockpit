@@ -23,10 +23,12 @@ budget: uncapped
 - When the guard asks before a command, the person decides in Claude Code; Codex and OpenCode deny
   instead, so hand the person the exact command to run in a terminal. A refusal that holds every
   guarded tool call (a guard message saying so, `GUARD_AUTHORITY_UNAVAILABLE` or `GUARD_CONFIG_UNSYNCED`)
-  follows any edit to `cockpit.toml` or reinstall of cockpit or Node. `GUARD_CONFIG_UNSYNCED` means
-  the edit does not widen what agents may do, so run
+  follows a reinstall of cockpit or Node, or an edit to `cockpit.toml` the guard cannot build a policy
+  from, and clears only when a person acts on its fix in a terminal. Any other edit to `cockpit.toml`
+  holds nothing. One that does not widen what agents may do is judged as written, so run
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself where `[autonomy] sync =
-  "agent"`; any other hold clears only when a person runs it in a terminal. When the guard refuses a
+  "agent"`; one that widens is judged under the configuration last synced, and each refusal says so,
+  until a person runs that sync with `--interactive` in a terminal. When the guard refuses a
   command, read the reason. To read a file, use your tool's own file reading instead of the shell. A
   refusal for secrets, writes outside the cockpit, protected branches, declared hosts or the guard
   itself is the person's: hand them the exact command and why. Do not reword, wrap or re-spell a

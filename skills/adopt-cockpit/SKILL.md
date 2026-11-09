@@ -402,11 +402,12 @@ guesses. So derive each value from what the repository shows, record it as infer
    A `compose.yml` at the cockpit root that reaches the checkout through its sibling variable leaves
    the product untouched. Done when each product file is on its branch with its diff in your report,
    or no product file was written.
-6. Finish the configuration with the init flow in **Bootstrap**. On an existing cockpit, an edit to
-   `cockpit.toml` makes the guard hold every guarded call until it is synced. When the hold says the
-   edit does not widen what agents may do, run
+6. Finish the configuration with the init flow in **Bootstrap**. On an existing cockpit, the guard
+   judges calls under an edit to `cockpit.toml` that does not widen what agents may do, so run
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself where `[autonomy] sync =
-   "agent"`; when it names fields that widen, a person runs it in a terminal. Then run
+   "agent"`. While an edit widens it, calls are judged under the configuration last synced, every
+   refusal names the widened fields, and a person runs that sync with `--interactive` in a terminal
+   and confirms the change. Then run
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml --json`. Done when the check exits 0.
 7. Where a runtime is declared, measure it with
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config cockpit.toml --image <local-image>`, using an
