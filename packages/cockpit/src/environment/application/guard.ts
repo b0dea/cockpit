@@ -190,7 +190,7 @@ export async function runGuardEvaluationApplication(
             || data.ripgrepConfigActive !== undefined && typeof data.ripgrepConfigActive !== 'boolean'
             || !isGuardSurfaceTarget(data.harness)) return unavailable('Guard request is malformed.')
         const harness = data.harness
-        const captured = ownDataValues(snapshotJson(data.identity), ['root', 'rootDevice', 'rootInode', 'configPath', 'configSha256', 'configDevice', 'configInode', 'node', 'nodeSha256', 'nodeFingerprint', 'module', 'moduleSha256'])
+        const captured = ownDataValues(snapshotJson(data.identity), ['root', 'rootInode', 'configPath', 'configSha256', 'configInode', 'node', 'nodeSha256', 'nodeFingerprint', 'module', 'moduleSha256'])
         if (!captured
             || !Object.values(captured).every(value => typeof value === 'string')
             || !['configSha256', 'nodeSha256', 'moduleSha256'].every(key => /^[a-f0-9]{64}$/.test(String(captured[key])))) return unavailable('Installed guard identity is missing or malformed.')
@@ -216,14 +216,14 @@ export async function runGuardEvaluationApplication(
             // as well refused the identical bytes that `git restore`, `sed -i` and editors that save
             // by rename leave in a new file, until a human ran sync for no change.
             if (status.isSymbolicLink() || (directory ? !status.isDirectory() : !status.isFile())
-                || directory && (String(status.dev) !== identity.rootDevice || String(status.ino) !== identity.rootInode)
+                || directory && String(status.ino) !== identity.rootInode
                 || realpathSync(path) !== path) {
                 return changed(directory ? `the cockpit checkout ${path} was moved or replaced` : `${path} was replaced by a link or a non-file`)
             }
             roots.set(path, status)
         }
         // Re-hashing a 100 MB Node binary in every guard process dominated each call. The local record
-        // carries the fingerprint sync hashed; an identical device, inode, size, mode and timestamps
+        // carries the fingerprint sync hashed; an identical path, inode, size, mode and timestamps
         // stand in for the re-hash, and the local record is checked against this identity below.
         const nodePath = realpathSync(process.execPath)
         if (nodePath === identity.node && fileFingerprint(nodePath, lstatSync(nodePath)) === identity.nodeFingerprint) {

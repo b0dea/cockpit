@@ -70,8 +70,8 @@ export async function inputSourcesCurrent(
             const root = await lstat(prepared.root)
             const config = await lstat(prepared.configPath)
             const module = await readAnchoredFile(dirname(handler.module), basename(handler.module), MAX_GENERATED_BYTES, prepared.node, adapters)
-            if (String(root.dev) !== handler.rootDevice || String(root.ino) !== handler.rootInode
-                || config.isSymbolicLink() || String(config.dev) !== handler.configDevice || String(config.ino) !== handler.configInode
+            if (String(root.ino) !== handler.rootInode
+                || config.isSymbolicLink() || String(config.ino) !== handler.configInode
                 || module.kind !== 'complete' || module.sha256 !== handler.moduleSha256) return false
         }
         const target = await safePath(prepared.root, prepared.configSource.path, false)

@@ -122,8 +122,8 @@ async function input(overrides: Partial<RestrictionExpansionInput> = {}): Promis
     const rootStat = lstatSync(canonical)
     const configStat = lstatSync(configPath)
     const hash = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex')
-    const handler = { root: canonical, rootDevice: String(rootStat.dev), rootInode: String(rootStat.ino), configPath,
-        configDevice: String(configStat.dev), configInode: String(configStat.ino), configSha256: hash(configPath),
+    const handler = { root: canonical, rootInode: String(rootStat.ino), configPath,
+        configInode: String(configStat.ino), configSha256: hash(configPath),
         node, nodeSha256: hash(node), nodeFingerprint: fileFingerprint(node, lstatSync(node)), module, moduleSha256: hash(module) }
     pendingContext = { root: canonical, alias, api, source, configPath, handler }
     return { ...value, canonicalProjectRoot: canonical, allowedProjectRoots: roots, instances }

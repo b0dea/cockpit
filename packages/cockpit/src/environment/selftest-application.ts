@@ -882,8 +882,8 @@ export async function runSurfaceSelftestApplication(
 const GUARD_IDENTITY_PARTS: readonly Readonly<[string, readonly (keyof GuardHandlerIdentity)[]]>[] = [
     ['the Node executable', ['node', 'nodeSha256', 'nodeFingerprint']],
     ['the cockpit module', ['module', 'moduleSha256']],
-    ['the cockpit directory', ['root', 'rootDevice', 'rootInode']],
-    ['cockpit.toml', ['configPath', 'configSha256', 'configDevice', 'configInode']],
+    ['the cockpit directory', ['root', 'rootInode']],
+    ['cockpit.toml', ['configPath', 'configSha256', 'configInode']],
 ]
 
 // sync records the Node it ran under, and the guard hook runs that Node by path. The guard probe binds

@@ -58,9 +58,9 @@ async function consumer() {
     if (!templateIdentity) throw new Error('Synthetic repair fixture has no guard identity')
     const configBytes = await readFile(configPath)
     const [rootStatus, configStatus] = await Promise.all([lstat(root), lstat(configPath)])
-    expect(await writeGuardLocalIdentity(root, { ...templateIdentity, root, rootDevice: String(rootStatus.dev), rootInode: String(rootStatus.ino),
+    expect(await writeGuardLocalIdentity(root, { ...templateIdentity, root, rootInode: String(rootStatus.ino),
         configPath, configSha256: createHash('sha256').update(configBytes).digest('hex'),
-        configDevice: String(configStatus.dev), configInode: String(configStatus.ino) }, configBytes.toString('utf8'))).toEqual({ kind: 'complete' })
+        configInode: String(configStatus.ino) }, configBytes.toString('utf8'))).toEqual({ kind: 'complete' })
     expect(parseGuardLocalIdentity(await readFile(identityPath, 'utf8'))).toMatchObject({ root, rootInode: String(rootStatus.ino), configPath })
     // What Compose reports for compose.yml, for a check run against stubComposeTopology.
     const services = { first: { image, volumes: [{ type: 'bind', source: join(root, 'app'), target: '/app' }] } }

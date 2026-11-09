@@ -212,7 +212,7 @@ describe('guardConfigChange', () => {
         const root = mkdtempSync(join(tmpdir(), 'cockpit-policy-change-'))
         try {
             mkdirSync(join(root, GUARD_LOCAL_PATHS.directory), { recursive: true })
-            const identity = Object.fromEntries(['root', 'rootDevice', 'rootInode', 'configPath', 'configDevice', 'configInode', 'node', 'nodeSha256',
+            const identity = Object.fromEntries(['root', 'rootInode', 'configPath', 'configInode', 'node', 'nodeSha256',
                 'nodeFingerprint', 'module', 'moduleSha256'].map(key => [key, 'synthetic']))
             writeFileSync(join(root, GUARD_LOCAL_PATHS.identity), encodeGuardLocalIdentity({ ...identity, configSha256: sha256Hex(generated) } as never))
             writeFileSync(join(root, GUARD_LOCAL_PATHS.generatedConfig), generated)

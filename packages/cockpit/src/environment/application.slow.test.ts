@@ -8,10 +8,11 @@ import { parse, stringify } from 'smol-toml'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import * as generatedCurrentnessOwner from './generated-application/sync.js'
 import { executeProbe } from '../environment-exec/execute.js'
+import { fileFingerprint } from '../environment-exec/verified-digest.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolveDockerExecutable } from './executable.js'
 import { evaluateGuard, GUARD_ROOT_PROTECTIONS, guardIdentity } from '../guards/evaluator.js'
 import { parseGuardInput } from '../guards/invocation-parser.js'
-import { encodeGuardLocalIdentity, GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from '../guards/local-identity.js'
+import { encodeGuardLocalIdentity, GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
 import { shellPayload } from '../guards/fixtures/invocation-corpus.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import type { ExecutionStep } from './contract.js'
@@ -94,8 +95,8 @@ describe('guard policy construction', () => {
         writeFileSync(launcher, '#!/bin/sh\nprintf "<%s>\\n" "$@"\n', { mode: 0o755 })
         const digest = '0'.repeat(64)
         const identity = {
-            root, rootDevice: '0', rootInode: '0', configPath, configSha256: digest,
-            configDevice: '0', configInode: '0', node: process.execPath, nodeSha256: digest,
+            root, rootInode: '0', configPath, configSha256: digest,
+            configInode: '0', node: process.execPath, nodeSha256: digest,
             nodeFingerprint: 'synthetic', module: join(base, 'other-cli.js'), moduleSha256: digest,
         }
         const result = await runGuardEvaluationApplication({ identity, guardRoot: root, payload: {}, harness: 'claudecode', cwd: root }, {
@@ -119,8 +120,8 @@ describe('guard policy construction', () => {
         const configPath = join(root, configFile)
         const digest = '0'.repeat(64)
         const identity = {
-            root, rootDevice: String(rootStatus.dev), rootInode: String(rootStatus.ino), configPath, configSha256: digest,
-            configDevice: '0', configInode: '0', node: process.execPath, nodeSha256: digest,
+            root, rootInode: String(rootStatus.ino), configPath, configSha256: digest,
+            configInode: '0', node: process.execPath, nodeSha256: digest,
             nodeFingerprint: 'synthetic', module: realpathSync(fileURLToPath(new URL('../../dist/cli.js', import.meta.url))), moduleSha256: digest,
         }
         const result = await runGuardEvaluationApplication({ identity, guardRoot: root, payload: {}, harness: 'claudecode', cwd: root }, {
@@ -400,6 +401,24 @@ describe('guard policy construction', () => {
             rmSync(alias)
             rmSync(store, { recursive: true })
         }
+    }, 120_000)
+
+    it('keeps guarding after a reboot renumbers the volume, and holds for a replaced checkout', async () => {
+        const { root, request, adapters } = await installedGuardRequest()
+        const recorded = request.identity as GuardHandlerIdentity
+        const decide = async (changes: Partial<GuardHandlerIdentity>) => {
+            const identity = { ...recorded, ...changes }
+            writeFileSync(join(root, GUARD_LOCAL_PATHS.identity), encodeGuardLocalIdentity(identity))
+            return (await runGuardEvaluationApplication({ ...request, identity }, adapters)).decision
+        }
+        // A macOS reboot reassigns the APFS Data volume's device number while the path and inode stay, so
+        // nothing recorded across boots may carry one: not the identity, nor the Node fingerprint in it.
+        expect(Object.keys(recorded).filter(key => /device/i.test(key))).toEqual([])
+        const node = lstatSync(recorded.node)
+        expect(fileFingerprint(recorded.node, { ...node, dev: node.dev + 1 } as Stats)).toBe(fileFingerprint(recorded.node, node))
+        expect(await decide({})).toMatchObject({ decision: 'allow' })
+        expect(await decide({ rootInode: String(Number(recorded.rootInode) + 1) }))
+            .toEqual({ decision: 'unavailable', reason: expect.stringContaining('was moved or replaced') })
     }, 120_000)
 
     it('guards native notebook edits against the same authenticated control paths as text edits', async () => {
