@@ -100,11 +100,33 @@ async function waitForProcessGone(pid: number, timeoutMs = 5_000): Promise<boole
     return false
 }
 
+// A fence's socket and settled marker live in a directory shared with every other process of this user, so
+// each is removed by the name its own attempt derived, never by listing the directory.
 afterEach(() => {
-    for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true })
+    const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+    for (const path of scratch.splice(0)) {
+        rmSync(path, { recursive: true, force: true })
+        const socket = join(socketRoot, `${sha256(path).slice(0, 24)}.sock`)
+        for (const residue of [socket, `${socket}.settled`]) rmSync(residue, { force: true })
+    }
 })
 
 describe('mechanical environment executor', () => {
+    // The shared socket directory outlives every step, so a finished step must not leave its own entries there.
+    it('leaves no socket or settled marker behind once a fenced step has finished', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-finished-'))
+        scratch.push(directory)
+        const attemptId = sha256(directory)
+        const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+        const fence = { attemptId, markerPath: join(directory, 'executor.json'), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
+
+        const outcome = await executeProbe(nodeStep('fenced-finished', '0', { executionFence: fence }))
+
+        expect(outcome).toMatchObject({ kind: 'complete' })
+        expect(existsSync(fence.socketPath)).toBe(false)
+        expect(existsSync(`${fence.socketPath}.settled`)).toBe(false)
+    })
+
     it('cancels a delayed fenced starter before any destructive effect can begin', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-cancel-race-'))
         scratch.push(directory)
