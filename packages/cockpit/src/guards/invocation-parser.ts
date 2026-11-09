@@ -371,11 +371,11 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
 
 const separators = new Set([';', '\n', '&&', '||', '|', '&'])
 const redirects = new Set(['<', '>', '>>', '<<', '<<-', '>&', '<&', '<>', '>|'])
-const wrappers = new Set(['timeout', 'nice', 'nohup', 'setsid', 'env', 'command', 'exec'])
+const wrappers = new Set(['timeout', 'nice', 'nohup', 'setsid', 'env', 'command', 'exec', 'time', 'caffeinate', 'stdbuf', 'ionice', 'noglob', 'nocorrect'])
 // Each runs a command or code from its arguments that the guard does not follow: an evaluating builtin, a shell it does
-// not read, or a program that runs the rest of its command line (`/usr/bin/time`, `caffeinate`, zsh `noglob`).
+// not read, or a program that runs the rest of its command line in a form the guard does not read as a wrapper.
 const dynamicExecutables = new Set(['eval', 'source', '.', 'dash', 'ksh', 'fish', 'csh', 'tcsh', 'mksh', 'yash', 'busybox', 'pwsh', 'xargs', 'builtin',
-    'trap', 'let', 'time', 'caffeinate', 'stdbuf', 'noglob', 'nocorrect', 'ionice', 'chrt', 'taskset', 'unbuffer', 'watch'])
+    'trap', 'let', 'chrt', 'taskset', 'unbuffer', 'watch'])
 // Builtins that take a variable name, whose array subscript bash evaluates as arithmetic, and arithmetic runs `$(…)`.
 const subscriptEvaluators = new Set(['unset', 'read', 'declare', 'typeset', 'local', 'export', 'readonly', 'printf', 'mapfile', 'readarray', 'test', '['])
 // A shell reads a script by path or a literal `-c` string, both of which the guard follows.
@@ -474,15 +474,23 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
             const optionToken = take()
             const option = optionToken.value
             if (option === '--') break
-            const [flag, attached] = option.split(/=(.*)/s)
+            let [flag, attached] = option.split(/=(.*)/s)
             const valueFlags = wrapper === 'timeout' ? ['-s', '--signal', '-k', '--kill-after']
                 : wrapper === 'nice' ? ['-n', '--adjustment']
                 : wrapper === 'env' ? ['-C', '--chdir', '-u', '--unset']
-                : wrapper === 'exec' ? ['-a'] : []
+                : wrapper === 'exec' ? ['-a']
+                : wrapper === 'caffeinate' ? ['-t', '-w']
+                : wrapper === 'stdbuf' ? ['-i', '-o', '-e', '--input', '--output', '--error']
+                : wrapper === 'ionice' ? ['-c', '-n', '--class', '--classdata'] : []
             const plainFlags = wrapper === 'timeout' ? ['--foreground', '--preserve-status', '-v', '--verbose']
                 : wrapper === 'env' ? ['-i', '--ignore-environment']
                 : wrapper === 'setsid' ? ['-f', '--fork', '-w', '--wait']
-                : wrapper === 'command' ? ['-p'] : wrapper === 'exec' ? ['-c', '-l'] : []
+                : wrapper === 'command' || wrapper === 'time' ? ['-p'] : wrapper === 'exec' ? ['-c', '-l']
+                : wrapper === 'caffeinate' ? ['-d', '-i', '-m', '-s', '-u']
+                : wrapper === 'ionice' ? ['-t', '--ignore'] : []
+            // As getopt reads them: a short option's value may be attached (`-oL`), and plain short flags may be grouped (`-dims`).
+            if (attached === undefined && /^-[^-]./.test(flag) && valueFlags.includes(flag.slice(0, 2))) [flag, attached] = [flag.slice(0, 2), flag.slice(2)]
+            const grouped = attached === undefined && /^-[^-]{2,}$/.test(flag) && [...flag.slice(1)].every((letter) => plainFlags.includes(`-${letter}`))
             if (valueFlags.includes(flag)) {
                 const valueToken = attached === undefined ? take() : optionToken
                 const value = attached === undefined ? valueToken.value : attached
@@ -494,7 +502,7 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
                     if (climbsOutOfName(value)) refuse(`env ${flag} ${shown(value)} climbs out of a named directory with .., which resolves from wherever a link there leads. Write the directory without it.`)
                     cwd = path(posix.resolve(cwd, value))
                 }
-            } else if (!(attached === undefined && (plainFlags.includes(flag) || wrapper === 'nice' && /^-\d+$/.test(flag)))) {
+            } else if (!(attached === undefined && (plainFlags.includes(flag) || grouped || wrapper === 'nice' && /^-\d+$/.test(flag)))) {
                 refuse(wrapper === 'command'
                     ? 'command is parsed only as `command -v NAME` or `command -V NAME`, which print where a command is, and as `command [-p] <command>`. Run the command itself.'
                     : `Unsupported ${wrapper} option.`)
