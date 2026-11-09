@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
-import { constants } from 'node:fs'
-import { chmod, copyFile, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { constants, existsSync, fstatSync } from 'node:fs'
+import { chmod, copyFile, mkdir, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { PassThrough, Writable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
@@ -379,7 +379,7 @@ provenance = { source = ".claude/settings.json", kind = "declared", reason = "Ke
         expect(guardCell('codexcli')!.operatorAction).not.toContain('Claude')
     }, 180_000)
 
-    it('refuses before asking for any approval when sync ran under a different Node, naming both and both ways forward', async () => {
+    it('reruns an interactive selftest under the Node sync ran under, and refuses before any approval when it cannot', async () => {
         const { root, configPath } = await createSelftestFixture(roots).issuedApplication()
         // A Node version manager gives the shell that ran sync one Node and the shell running selftest another.
         const syncNode = join(root, 'other-node/bin/node')
@@ -389,24 +389,61 @@ provenance = { source = ".claude/settings.json", kind = "declared", reason = "Ke
         const synced = spawnSync(syncNode, [launcher, 'sync', '--config', configPath], { cwd: root, encoding: 'utf8' })
         expect(synced.status, synced.stderr).toBe(0)
         const bin = await nativeHarnesses(root)
-        const artifactPath = join(root, 'probe-specifications.json')
-        const quiet = { stdout: { write: () => true }, stderr: { write: () => true } }
-        expect(await runCli(['selftest', '--config', configPath, '--write-probe-specifications', artifactPath], quiet)).toBe(0)
+        // The rerun records the Node, marker and arguments it started with, then ends before selftest runs:
+        // with status 130, which a cancelled selftest exits with, or killed when RERUN_KILL is set.
+        const recordPath = join(root, 'rerun.json')
+        const preload = join(root, 'record-rerun.cjs')
+        await writeFile(preload, `require('node:fs').writeFileSync(${JSON.stringify(recordPath)}, JSON.stringify({ execPath: process.execPath, `
+            + 'marker: process.env.COCKPIT_SELFTEST_RERUN, argv: process.argv.slice(2), stdin: require("node:fs").fstatSync(0).ino }))\n'
+            + 'if (process.env.RERUN_KILL) process.kill(process.pid, "SIGKILL"); else process.exit(130)\n')
+        const args = ['selftest', '--config', configPath, '--interactive']
+        const env = { PATH: bin, HOME: '/synthetic-owner-home', NODE_OPTIONS: `--require ${preload}` }
         const approvals: string[] = []
-        const outcome = await runSelftestOperatorCommand({ configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin, HOME: '/synthetic-owner-home' } },
-            { interactive: true, json: false, ci: undefined }, { stderr: quiet.stderr,
+        const run = async (runEnv: Readonly<Record<string, string>>) => {
+            const output: string[] = []
+            const status = await runCli(args, { stdout: { write: (chunk: string) => output.push(chunk) > 0 }, stderr: { write: (chunk: string) => output.push(chunk) > 0 },
                 confirmSelftestProbeSpecifications: async candidate => { approvals.push(candidate.canonicalPath); return candidate.sha256 },
-                confirmSelftestExecutable: async candidate => { approvals.push(candidate.canonicalPath); return candidate.sha256 } },
-            runConfiguredSurfaceSelftestOutcome)
+                confirmSelftestExecutable: async candidate => { approvals.push(candidate.canonicalPath); return candidate.sha256 } }, {}, { env: runEnv })
+            return { status, output: output.join('') }
+        }
 
+        const rerun = await run(env)
+        // The rerun's own exit status is this run's.
+        expect(rerun.status, rerun.output).toBe(130)
         expect(approvals).toEqual([])
-        expect(outcome.status).toBe(2)
+        expect(rerun.output).toContain(`the guard runs the Node at ${syncNode}; rerunning selftest under it`)
+        // Same arguments, the recorded Node, the loop marker, and this process's own stdin for the prompts.
+        expect(JSON.parse(await readFile(recordPath, 'utf8'))).toEqual({ execPath: syncNode, marker: '1', argv: args, stdin: fstatSync(0).ino })
+        await rm(recordPath)
+        // A rerun killed by a signal leaves no exit code; that is a failure, never success.
+        const killed = await run({ ...env, RERUN_KILL: '1' })
+        expect(killed.status).toBe(2)
+        expect(killed.output).toContain('terminated by SIGKILL')
+        await rm(recordPath)
+        // Neither run kept the fresh probe specifications it never asked anyone to approve.
+        expect(existsSync(join(root, '.cockpit/local/probes')) ? (await readdir(join(root, '.cockpit/local/probes'))).filter(name => name.startsWith('probe-specifications-')) : []).toEqual([])
+
+        // A rerun that meets the mismatch again refuses instead of rerunning once more, with both ways forward.
+        const looped = await run({ ...env, COCKPIT_SELFTEST_RERUN: '1' })
+        expect(looped.status).toBe(2)
+        expect(existsSync(recordPath)).toBe(false)
+        expect(approvals).toEqual([])
         const selftestNode = await realpath(process.execPath)
-        expect(outcome.diagnostics).toEqual([expect.objectContaining({ severity: 'error', code: 'SELFTEST_GUARD_IDENTITY_MISMATCH',
-            message: expect.stringContaining(`sync installed the guard for the Node at ${syncNode}, but this selftest runs under the Node at ${selftestNode}`) })])
-        const { fix } = outcome.diagnostics[0]!
-        expect(fix).toContain(`${syncNode} ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config ${configPath} --interactive --probe-specifications ${artifactPath}`)
-        expect(fix).toContain(`./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${configPath}`)
+        expect(looped.output).toContain('SELFTEST_GUARD_IDENTITY_MISMATCH')
+        expect(looped.output).toContain(`sync installed the guard for the Node at ${syncNode}, but this selftest runs under the Node at ${selftestNode}`)
+        expect(looped.output).toContain(`${syncNode} ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config ${configPath} --interactive`)
+        expect(looped.output).toContain(`./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${configPath}`)
+
+        // A recorded Node whose bytes no longer match what sync hashed is never run.
+        await writeFile(syncNode, '#!/bin/sh\nexit 0\n')
+        const replaced = await run(env)
+        expect(replaced.status).toBe(2)
+        expect(existsSync(recordPath)).toBe(false)
+        expect(approvals).toEqual([])
+        expect(replaced.output).toContain('SELFTEST_GUARD_IDENTITY_MISMATCH')
+        expect(replaced.output).toContain(`selftest did not rerun under the Node at ${syncNode}`)
+        expect(replaced.output).toContain(`./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${configPath}`)
+        expect(replaced.output).not.toContain(`${syncNode} ./node_modules`)
     }, 180_000)
 
     it('names a Node changed in place since sync and gives only the remedy that can work', async () => {

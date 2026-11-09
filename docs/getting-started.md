@@ -70,6 +70,12 @@ still missing and why. If anyone uses Codex, a person must trust its guard hook 
 `doctor` says so until then. Add `npx --no cockpit check --config cockpit.toml` to CI, or use the
 [`cockpit-check` action](harness-surfaces.md#publish-and-verify).
 
+Cockpit is usable once `check` passes. `selftest` is an optional extra: it gathers native evidence
+of what the tools on this machine load and enforce, and a person runs it, when they want that
+evidence, with `npx --no cockpit selftest --config ./cockpit.toml --interactive`
+([Skills and selftest evidence](harness-surfaces.md#skills-and-selftest-evidence)). It is not an
+adoption step, so an agent never waits for it.
+
 Run every command from the cockpit directory with a path that fails when the dependency is missing
 and never downloads a package: `./node_modules/@b00dea/cockpit/bin/cockpit.mjs`,
 `./node_modules/.bin/cockpit`, `npx --no`, or the `cockpit:*` package scripts `init` writes. The package ships these guides under `./node_modules/@b00dea/cockpit/docs/`,

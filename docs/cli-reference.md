@@ -233,6 +233,7 @@ Reads `cockpit.toml` from `--config`.
 | `--config` | string | unset |
 | `--probe-specifications` | string | unset |
 | `--write-probe-specifications` | string | unset |
+| `--replace` | boolean | `false` |
 | `--interactive` | boolean | `false` |
 | `--json` | boolean | `false` |
 

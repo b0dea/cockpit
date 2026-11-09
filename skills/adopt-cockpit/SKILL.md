@@ -105,7 +105,10 @@ Look at the directory before asking. Several cases can apply; bootstrap first.
 Done when `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml --json` exits 0, where a
 runtime is declared `./node_modules/@b00dea/cockpit/bin/cockpit.mjs preflight --config cockpit.toml --json` passes,
 and every gap in `result.readiness` of `./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml --json`
-has been cleared or reported to the human.
+has been cleared or reported to the human. Cockpit is usable once `check` passes; `selftest` is not
+an adoption step. It is optional native evidence a person runs with one command at their own
+terminal, `./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config cockpit.toml --interactive`, so never
+wait for it, and do not ask the person to run it unless they ask for native evidence.
 
 - **Only where a runtime is declared, before the first `up`**, run
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config cockpit.toml --image <local-image> --json`.
@@ -335,6 +338,11 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
    **native trust ready** (`CODEX_HOOK_UNTRUSTED` and `CODEX_HOOK_SOURCE_MISMATCH` are clear;
    enforcement still needs a paired native probe) and **integrations proven
    live** (the stack or provider was actually exercised, which no passing check shows).
+   Cockpit is usable once `check` passes. `selftest` is an optional native-evidence step a person
+   runs at their terminal with one command,
+   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config cockpit.toml --interactive`,
+   which only they can approve. Never hold adoption for it, and do not ask the person to run it
+   unless they ask for native evidence.
 8. **Put product changes where the person reviews them.** A Dockerfile, Compose file or
    `.env.schema` the product needs goes on a new branch in that sibling's checkout: start the branch
    only when `git -C <sibling> status --short` prints nothing, write the files there, and put their

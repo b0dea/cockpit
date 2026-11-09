@@ -139,6 +139,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     'reset-answer': 'Preview clearing one recorded init answer field',
     remote: 'Repository remote URL recorded for the sibling',
     'replace-from': 'With env schema: replace that schema with this draft file, or create it, instead of printing it',
+    replace: 'With --write-probe-specifications: write over the file at that path when it exists',
     role: 'Declared browser role',
     'from-subagent': 'Under [work] grading = "subagent": states that --verdict and --note came from the evaluator subagent you spawned; cockpit cannot verify it',
     'fail-on-findings': 'Exit 2 when a route has console errors, uncaught errors or failed requests, for a criterion that wants a clean route',
@@ -400,8 +401,9 @@ const sources = [
         handler: 'selftest',
         visibility: 'public',
         ordinary: ordinary('selftest', { forbidden: Object.freeze({ presence: Object.freeze(['interactive']) }) }),
+        // --write-probe-specifications and --replace write a file a person reviews, so no agent passes them.
         flags: { config: configFlag, 'probe-specifications': str(value('confined-path', true)), 'write-probe-specifications': str(),
-            interactive: bool(), json: jsonFlag },
+            replace: bool(), interactive: bool(), json: jsonFlag },
     },
     {
         name: 'runtime',

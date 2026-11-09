@@ -2,7 +2,8 @@ import { exactKeys } from '../exact-keys.js'
 import { randomBytes } from 'node:crypto'
 import { sha256Hex } from '../sha256.js'
 import { constants, existsSync } from 'node:fs'
-import { lstat, mkdir, open, realpath, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, open, realpath, rm, writeFile } from 'node:fs/promises'
+import { constants as osConstants } from 'node:os'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { confirmDigest } from '../operator-confirmation.js'
 import { renderHumanValue } from '../diagnostics.js'
@@ -18,7 +19,7 @@ import {
     type SelftestEvidenceRecord,
     type SelftestProbeEvent,
 } from '../../libexec/validate-harness-evidence.mjs'
-import { authenticatedExecutionOutcome, changedExecutionInput, executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import { authenticatedExecutionOutcome, changedExecutionInput, executeProbe, type ExecuteProbeOutcome, type ForegroundProcessOutcome } from '../environment-exec/execute.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { generatedApplicationProjection, generatedSelftestGuardHandler, generatedSelftestGuardRuntime } from './generated-application/authorities.js'
 import { readBoundedInput } from '../config/load.js'
@@ -30,7 +31,7 @@ import { redactSensitiveMessage } from './sensitive.js'
 import {
     snapshotExecutionStep, snapshotGeneratedJson, ENVIRONMENT_CODES, errorCause, hasErrorCode, INHERITED_TOOL_ENVIRONMENT, type ConsumedFile, type ExecutionStep, type FilesystemCheck,
 } from './contract.js'
-import { resolveExecutable, type ResolvedExecutable } from './executable.js'
+import { resolveExecutable, resolveExecutablePath, type ResolvedExecutable } from './executable.js'
 import { cockpitCommand, formatShellCommand } from '../fix-catalogue.js'
 import {
     draftSurfaceSelftestSpecifications,
@@ -56,6 +57,8 @@ export interface SurfaceSelftestDraftInput {
     readonly writeProbeSpecificationsPath: string
     /** An earlier probe-specification file whose filled rows for unchanged cells carry into the new one. */
     readonly previousProbeSpecificationsPath?: string
+    /** Write over an existing file at the path: the person asked for their own file to be replaced. */
+    readonly replace?: boolean
 }
 
 export interface SurfaceSelftestCommandInput {
@@ -97,6 +100,12 @@ export interface SurfaceSelftestCommandAdapters {
         candidate: SurfaceSelftestProbeSpecificationsCandidate,
     ) => Promise<string | undefined>
     readonly testOnlyExecutableIdentities?: Partial<Record<'Claude Code' | 'Codex' | 'OpenCode', readonly string[]>>
+    /**
+     * Runs this same selftest again under `node`, whose path and digest match what sync recorded for
+     * the guard, with the terminal attached. Bound only for a person's interactive run that is not
+     * itself such a rerun, so a rerun that meets a mismatch refuses instead of looping.
+     */
+    readonly rerunUnderNode?: (node: ResolvedExecutable) => Promise<ForegroundProcessOutcome>
 }
 
 export type SurfaceSelftestCommandOutcome =
@@ -120,6 +129,9 @@ export type SurfaceSelftestCommandOutcome =
         measurementComplete: boolean
     }>
     | Readonly<{ kind: 'refusal'; status: 2; code: 'SELFTEST_SOURCE_INVALID' | 'SELFTEST_EXECUTION_INVALID' | 'SELFTEST_GUARD_IDENTITY_MISMATCH'; reason: string; fix?: string }>
+    // The run continued under the Node the guard runs, which printed its own outcome; this is its exit
+    // status, and the signal that ended it when one did.
+    | Readonly<{ kind: 'rerun'; status: number; signal?: NodeJS.Signals }>
 
 const defaultAdapters: SurfaceSelftestCommandAdapters = Object.freeze({ execute: executeProbe })
 const MAX_EXECUTABLE_BYTES = 536_870_912
@@ -232,7 +244,7 @@ function causeSuffix(cause: string | undefined): string {
 function probeSpecificationsRefusal(reason: string): SurfaceSelftestCommandOutcome {
     return {
         kind: 'refusal', status: 2, code: 'SELFTEST_SOURCE_INVALID', reason,
-        fix: 'write a new file with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --write-probe-specifications <new file>, review it, then pass that file to --probe-specifications',
+        fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --interactive, which writes fresh probe specifications itself; to keep a file under review instead, write one with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --write-probe-specifications <new file>, review it, then pass that file to --probe-specifications',
     }
 }
 
@@ -894,7 +906,7 @@ async function guardIdentityMismatch(
     application: GeneratedApplicationProjection,
     root: string,
     configPath: string,
-    artifactPath: string,
+    rerunUnderNode: SurfaceSelftestCommandAdapters['rerunUnderNode'],
 ): Promise<SurfaceSelftestCommandOutcome | undefined> {
     const current = generatedSelftestGuardHandler(application, root)
     const identityPath = join(root, GUARD_LOCAL_PATHS.identity)
@@ -911,17 +923,35 @@ async function guardIdentityMismatch(
     if (bytes !== undefined && sha256Hex(bytes) === bound.sha256) return undefined
     const installed = bytes === undefined ? undefined : parseGuardLocalIdentity(bytes.toString('utf8'))
     const sync = cockpitCommand('sync', { config: configPath })
-    const selftest = cockpitCommand('selftest', { config: configPath, args: `--interactive --probe-specifications ${formatShellCommand([artifactPath])}` })
+    const selftest = cockpitCommand('selftest', { config: configPath, args: '--interactive' })
     // The same path with other bytes is an in-place upgrade: no Node runs what sync recorded any more.
     if (installed && installed.node === current.node && installed.nodeSha256 !== current.nodeSha256) return {
         kind: 'refusal', status: 2, code: 'SELFTEST_GUARD_IDENTITY_MISMATCH',
         reason: `the Node at ${current.node} changed since sync recorded it (sha256 ${installed.nodeSha256}, now ${current.nodeSha256}); until sync runs again the guard hook holds ${GUARD_HELD_CALLS}, and the guard-firing probe cannot run, so nothing was run or approved`,
         fix: `run ${sync} under this Node, then rerun ${selftest}`,
     }
-    if (installed && installed.node !== current.node) return {
-        kind: 'refusal', status: 2, code: 'SELFTEST_GUARD_IDENTITY_MISMATCH',
-        reason: `sync installed the guard for the Node at ${installed.node}, but this selftest runs under the Node at ${current.node}; the guard hook keeps running the Node sync recorded, and the guard-firing probe can measure only the guard this process would install, so nothing was run or approved`,
-        fix: `run selftest with the Node the guard was installed for: ${formatShellCommand([installed.node])} ${selftest}; or run ${sync} under this Node first, which makes the guard hook run it, then rerun ${selftest}`,
+    if (installed && installed.node !== current.node) {
+        const reason = `sync installed the guard for the Node at ${installed.node}, but this selftest runs under the Node at ${current.node}; the guard hook keeps running the Node sync recorded, and the guard-firing probe can measure only the guard this process would install, so nothing was run or approved`
+        if (!rerunUnderNode) return {
+            kind: 'refusal', status: 2, code: 'SELFTEST_GUARD_IDENTITY_MISMATCH', reason,
+            fix: `run selftest with the Node the guard was installed for: ${formatShellCommand([installed.node])} ${selftest}; or run ${sync} under this Node first, which makes the guard hook run it, then rerun ${selftest}`,
+        }
+        // Run only the exact Node sync hashed: a path that now holds other bytes, or none, is not the guard's Node.
+        const node = await resolveExecutablePath(installed.node)
+        const unverified = node.state !== 'available' ? node.reason
+            : node.value.canonicalPath !== installed.node ? `it now resolves to ${node.value.canonicalPath}`
+            : node.value.sha256 !== installed.nodeSha256 ? `its sha256 is ${node.value.sha256}, not the ${installed.nodeSha256} sync recorded` : undefined
+        if (unverified !== undefined || node.state !== 'available') return {
+            kind: 'refusal', status: 2, code: 'SELFTEST_GUARD_IDENTITY_MISMATCH',
+            reason: `${reason}; selftest did not rerun under the Node at ${installed.node} because ${unverified}`,
+            fix: `run ${sync} under this Node, which makes the guard hook run it, then rerun ${selftest}`,
+        }
+        const rerun = await rerunUnderNode(node.value)
+        if (rerun.kind === 'refusal') return rerun.code === ENVIRONMENT_CODES.EXECUTION_ABORTED ? { kind: 'rerun', status: 130 }
+            : refusal('SELFTEST_EXECUTION_INVALID', `selftest could not rerun under the Node at ${installed.node}: ${rerun.code}`)
+        // A signal leaves no exit code, which must not read as success.
+        const signalNumber = rerun.signal ? osConstants.signals[rerun.signal] : undefined
+        return signalNumber === undefined ? { kind: 'rerun', status: rerun.exitCode } : { kind: 'rerun', status: 128 + signalNumber, signal: rerun.signal! }
     }
     const differing = installed ? GUARD_IDENTITY_PARTS.filter(([, keys]) => keys.some(key => installed[key] !== current[key])).map(([name]) => name) : []
     return {
@@ -970,7 +1000,7 @@ export async function runConfiguredSurfaceSelftestApplication(
         return {
             kind: 'refusal', status: 2, code: 'SELFTEST_SOURCE_INVALID',
             reason: `probe specification file ${artifactPath} was written for a different cockpit.toml or generated manifest`,
-            fix: 'write a new file that keeps the rows you filled for unchanged cells with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --write-probe-specifications <new file> --probe-specifications <this file>, review it, then pass the new file to --probe-specifications',
+            fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --interactive, which writes fresh probe specifications itself; to keep a file under review instead, write one that keeps the rows you filled for unchanged cells with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --write-probe-specifications <new file> --probe-specifications <this file> (add --replace to write over an existing file), review it, then pass the new file to --probe-specifications',
         }
     }
     const unfilled = unfilledSurfaceSelftestSpecifications(artifact.specifications)
@@ -978,7 +1008,7 @@ export async function runConfiguredSurfaceSelftestApplication(
         return {
             kind: 'refusal', status: 2, code: 'SELFTEST_SOURCE_INVALID',
             reason: `probe specification file ${artifactPath} still has ${unfilled.length} row(s) with fields only a person can supply: ${unfilled.slice(0, 5).join('; ')}${unfilled.length > 5 ? `; and ${unfilled.length - 5} more` : ''}`,
-            fix: 'write a new file with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --write-probe-specifications <new file>, whose rows need no filling, or replace each null in the listed rows with the probe for that tool',
+            fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --interactive, which writes fresh probe specifications whose rows need no filling, or replace each null in the listed rows with the probe for that tool',
         }
     }
     const specifications = artifact.specifications as readonly SelftestProbeSpecification[]
@@ -987,7 +1017,7 @@ export async function runConfiguredSurfaceSelftestApplication(
     const artifactSha256 = sha256Hex(bytes)
     const guardProbe = plan.probes.find(probe => probe.protocol === 'claude-guard-loopback/v1')
     if (guardProbe) {
-        const mismatch = await guardIdentityMismatch(checked.result.application, dirname(configPath), configPath, artifactPath)
+        const mismatch = await guardIdentityMismatch(checked.result.application, dirname(configPath), configPath, adapters.rerunUnderNode)
         if (mismatch) return mismatch
     }
     const guardProbeTeamHooks = guardProbe ? teamHookRegistrations(selectedEntryBytes(guardProbe),
@@ -1049,14 +1079,19 @@ export async function runConfiguredSurfaceSelftestApplication(
     }
 }
 
-export interface SurfaceSelftestHandlerInput extends ConfiguredSurfaceSelftestCommandInput {
+export interface SurfaceSelftestHandlerInput extends Omit<ConfiguredSurfaceSelftestCommandInput, 'probeSpecificationsPath'> {
+    /** Absent for the one-command run, which writes fresh specifications itself for the person to approve. */
+    readonly probeSpecificationsPath?: string
     readonly requestExecutableApproval?: SurfaceSelftestCommandAdapters['requestExecutableApproval']
     readonly requestProbeSpecificationsApproval?: SurfaceSelftestCommandAdapters['requestProbeSpecificationsApproval']
+    readonly rerunUnderNode?: SurfaceSelftestCommandAdapters['rerunUnderNode']
 }
 
 export interface SurfaceSelftestDispatchOutcome {
     readonly artifact?: string | null
     readonly destination?: string | null
+    /** The CLI may write `artifact` over an existing `destination`. */
+    readonly replace?: boolean
     readonly status: number
     readonly diagnostics: readonly Diagnostic[]
     readonly result: unknown
@@ -1073,11 +1108,13 @@ export interface SelftestOperatorOptions {
     readonly interactive: boolean
     readonly json: boolean
     readonly ci: string | undefined
+    readonly rerunUnderNode?: SurfaceSelftestCommandAdapters['rerunUnderNode']
 }
 
 /**
  * Writes the probe-specification file for the current cockpit.toml and generated manifest. The CLI
- * creates `destination` and refuses an existing path, so a filled-in file is never overwritten.
+ * creates `destination` and refuses an existing path unless the person passed --replace, so a
+ * filled-in file is never overwritten by accident.
  */
 async function writeConfiguredSurfaceSelftestSpecifications(
     input: SurfaceSelftestDraftInput,
@@ -1123,6 +1160,7 @@ async function writeConfiguredSurfaceSelftestSpecifications(
             target: surfaceSelftestCellLabel(cell),
             fix: 'measure the custom harness capability by hand with a candidate and a deliberately broken control, then record what you saw as its state and measured_on in cockpit.toml (enforced needs an evidence file); do not add a row for it',
         })),
+        ...input.replace ? { replace: true } : {},
         artifact: `${JSON.stringify({
             schema: PROBE_SPECIFICATIONS_SCHEMA,
             sourceSha256: checked.result.application.sourceSha256,
@@ -1159,18 +1197,62 @@ function withholdNativeStreams<T extends SelftestEvidenceBundle['records'][numbe
         brokenControl: withheld(record.events.brokenControl), candidateControl: withheld(record.events.candidateControl) } }
 }
 
+function selftestRefused(code: Extract<SurfaceSelftestCommandOutcome, { kind: 'refusal' }>['code'], message: string): SurfaceSelftestDispatchOutcome {
+    return { status: 2, diagnostics: [{ severity: 'error', code, message }], result: null }
+}
+
+// One run, one file: specifications drafted for the cockpit.toml and generated manifest as they are
+// now, written beside the run's evidence in the directory sync makes ignore itself. A file kept from
+// an earlier run goes stale with the next edit or upgrade, so none is ever reused.
+async function writeFreshProbeSpecifications(configPath: string): Promise<string | SurfaceSelftestDispatchOutcome> {
+    let root: string
+    try { root = dirname(await realpath(resolve(configPath))) } catch (error) {
+        return selftestRefused('SELFTEST_SOURCE_INVALID', `configured selftest source could not be resolved: ${errorCause(error)}`)
+    }
+    const destination = join(root, PROBE_EVIDENCE_ROOT, `probe-specifications-${randomBytes(8).toString('hex')}.json`)
+    const drafted = await writeConfiguredSurfaceSelftestSpecifications({ configPath, writeProbeSpecificationsPath: destination })
+    // The draft's warnings name custom cells it wrote no row for; the run records each of those as pending.
+    if (drafted.status !== 0 || typeof drafted.artifact !== 'string') return drafted
+    const directory = await ensureEvidenceDirectory(root)
+    if (typeof directory !== 'string') return selftestRefused('SELFTEST_EXECUTION_INVALID', `fresh probe specifications could not be written: ${directory.reason}`)
+    try { await writeFile(destination, drafted.artifact, { flag: 'wx', mode: 0o600 }) } catch (error) {
+        return selftestRefused('SELFTEST_EXECUTION_INVALID', `fresh probe specifications could not be written to ${destination}: ${errorCause(error)}`)
+    }
+    return destination
+}
+
 export async function runConfiguredSurfaceSelftestOutcome(
     input: SurfaceSelftestHandlerInput | SurfaceSelftestDraftInput,
 ): Promise<SurfaceSelftestDispatchOutcome> {
     if ('writeProbeSpecificationsPath' in input) return writeConfiguredSurfaceSelftestSpecifications(input)
-    const { requestExecutableApproval, requestProbeSpecificationsApproval, ...commandInput } = input
-    const outcome = await runConfiguredSurfaceSelftestApplication(commandInput, {
-        execute: executeProbe,
-        ...(requestExecutableApproval ? { requestExecutableApproval } : {}),
-        ...(requestProbeSpecificationsApproval ? { requestProbeSpecificationsApproval } : {}),
-    })
+    const { requestExecutableApproval, requestProbeSpecificationsApproval, rerunUnderNode, probeSpecificationsPath, ...commandInput } = input
+    // Fresh specifications exist only to be approved, and only a person at a terminal can approve them.
+    if (probeSpecificationsPath === undefined && !requestProbeSpecificationsApproval) return selftestRefused('SELFTEST_EXECUTION_INVALID',
+        'probe specifications are written for the run only when a person approves them; run selftest with --interactive at a terminal outside CI, or pass --probe-specifications <file>')
+    const artifactPath = probeSpecificationsPath ?? await writeFreshProbeSpecifications(commandInput.configPath)
+    if (typeof artifactPath !== 'string') return artifactPath
+    // A fresh file is kept only as the record of a run the person approved; one refused, declined or
+    // handed to a rerun before approval would only pile up.
+    let approved = false
+    let outcome: SurfaceSelftestCommandOutcome
+    try {
+        outcome = await runConfiguredSurfaceSelftestApplication({ ...commandInput, probeSpecificationsPath: artifactPath }, {
+            execute: executeProbe,
+            ...(requestExecutableApproval ? { requestExecutableApproval } : {}),
+            ...(requestProbeSpecificationsApproval ? { requestProbeSpecificationsApproval: async candidate => {
+                const confirmation = await requestProbeSpecificationsApproval(candidate)
+                approved = confirmation === candidate.sha256
+                return confirmation
+            } } : {}),
+            ...(rerunUnderNode ? { rerunUnderNode } : {}),
+        })
+    } finally {
+        if (probeSpecificationsPath === undefined && !approved) await rm(artifactPath, { force: true })
+    }
     if (outcome.kind === 'refusal') return { status: 2, diagnostics: [{ severity: 'error', code: outcome.code, message: outcome.reason,
         ...(outcome.fix ? { fix: outcome.fix } : {}) }], result: null }
+    if (outcome.kind === 'rerun') return { status: outcome.status, result: null, diagnostics: outcome.signal === undefined ? []
+        : [{ severity: 'error', code: 'SELFTEST_EXECUTION_INVALID', message: `the selftest rerun under the guard's Node was terminated by ${outcome.signal}` }] }
     const responsibilities = {
         native_protocol_unsupported: 'Unmeasurable by selftest as the files stand: each record says whether a change of yours lets selftest measure it; otherwise rerunning does not clear it',
         enforcement_probe_required: 'Maintainer: supply paired native evidence for the custom harness',
@@ -1298,5 +1380,6 @@ export async function runSelftestOperatorCommand(
         ...input,
         requestExecutableApproval: (candidate) => confirmSelftestExecutable(io, candidate),
         requestProbeSpecificationsApproval: (candidate) => confirmSelftestProbeSpecifications(io, candidate),
+        ...options.rerunUnderNode ? { rerunUnderNode: options.rerunUnderNode } : {},
     })
 }

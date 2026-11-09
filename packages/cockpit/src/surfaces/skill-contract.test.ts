@@ -512,7 +512,9 @@ describe('shipped procedure commands', () => {
             let output = ''
             const sink = { write: (text: string) => { output += text; return true } }
             const status = await runCli(argv, { stdout: sink, stderr: sink, confirmInit: async preview => preview.previewSha256,
-                confirmWorkOrder: async candidate => candidate.digest, confirmStaleRemoval: async () => undefined }, {
+                confirmWorkOrder: async candidate => candidate.digest, confirmStaleRemoval: async () => undefined,
+                // The person's selftest asks them to approve its probe specifications and executables at the terminal.
+                confirmSelftestProbeSpecifications: async candidate => candidate.sha256, confirmSelftestExecutable: async candidate => candidate.sha256 }, {
                 init: async input => { invoked = true; return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: [], result: { stage: 'surface-previewed', root: input.root, target: input.target, previewSha256: 'a'.repeat(64), files: [] } } },
                 // The documented work commands are the agent's; a gate the policy gives an agent needs no binding.
                 beginOperatorWorkApplication: async () => { invoked = true; return { status: 0, result: null, diagnostics: [] } },
