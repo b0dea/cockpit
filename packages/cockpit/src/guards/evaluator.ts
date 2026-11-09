@@ -961,6 +961,14 @@ function steers({ name, value }: { readonly name?: string; readonly value: strin
         || name === 'PATH' && value.split(':').some(entry => !entry.startsWith('/'))
 }
 
+/** Whether `program` is the command the parser followed `launcher` with: its words end the launcher's. */
+function launchedBy(program: ParsedInvocation, launcher: ParsedInvocation): boolean {
+    if (program.executable === null || launcher.executable === null || program.cwd !== launcher.cwd) return false
+    const own = [program.executable, ...program.argv]
+    const spelled = [launcher.executable, ...launcher.argv]
+    return own.length < spelled.length && own.every((word, at) => word === spelled[spelled.length - own.length + at])
+}
+
 /** Hard boundaries are independent of grants and are evaluated across the complete capture. */
 export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInspection): GuardDecision {
     if (!isParsedGuardInput(input)) return unavailable('Guard input is unavailable or was not captured by the invocation parser.')
@@ -1661,6 +1669,12 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const boundary = boundaryAsks.get(invocation)
         if (boundary) return boundary
         if (declared) { declaredReasons.push(declared.reason); continue }
+        // The parser follows a launcher (`npx`, `pnpm exec`, `bun run`) with the program it runs. A grant
+        // or declared command for the launcher spelling admits that program as it always has.
+        const launcher = invocations[invocations.indexOf(invocation) - 1]
+        if (invocation.wrapped && launcher && launchedBy(invocation, launcher) && (resolved.declaredAllows.some(rule => ruleMatches(launcher, rule))
+            || resolved.projectCommands.some((profile) => profile.executable === launcher.executable && profile.checkoutRoot === launcher.cwd
+                && profile.argv.length === launcher.argv.length && profile.argv.every((word, at) => word === launcher.argv[at])))) continue
         const pending = askDecisions.get(invocation)
         if (pending) return pending
         const assignments = invocation.words.filter((word) => word.role === 'environment-assignment-value') as ReadonlyArray<{ readonly value: string; readonly name?: string }>
