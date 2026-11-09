@@ -168,7 +168,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `allow` | Commands allowed in addition to the built-in rules. | array of table: [`[[guards.allow]]`](#guardsallow) | `[]` | at most 64 items |
 | `deny` | Commands refused in addition to the built-in rules. | array of table, one of: [`[[guards.deny]]` form 1](#guardsdeny-form-1), [`[[guards.deny]]` form 2](#guardsdeny-form-2) | `[]` | at most 64 items |
 | `read_paths` | Files and directories outside the cockpit whose named files agents may read, list and search; never written, searched recursively or used as a working directory. | array of table: [`[[guards.read_paths]]`](#guardsread_paths) | `[]` | at most 64 items |
-| `external_reads` | Who admits a shell read of a named file outside the cockpit: grant needs its complete command under allow; native leaves it to the agent tool's own permissions. Secret names, recursive searches and writes stay guarded either way. | string | `"grant"` | one of `"grant"`, `"native"` |
+| `external_reads` | Who admits a shell read outside the cockpit, of a named file or by a read-only Git command run alone in another repository: grant needs its complete command under allow; native leaves it to the agent tool's own permissions. Secret names, recursive searches and writes stay guarded either way. | string | `"grant"` | one of `"grant"`, `"native"` |
 
 ### `[[guards.allow]]`
 

@@ -429,7 +429,7 @@ export const Guards = z
         allow: z.array(GuardAllow).max(64).default([]).describe('Commands allowed in addition to the built-in rules.'),
         deny: z.array(GuardDeny).max(64).default([]).describe('Commands refused in addition to the built-in rules.'),
         read_paths: z.array(GuardReadPath).max(64).default([]).describe('Files and directories outside the cockpit whose named files agents may read, list and search; never written, searched recursively or used as a working directory.'),
-        external_reads: z.enum(['grant', 'native']).default('grant').describe('Who admits a shell read of a named file outside the cockpit: grant needs its complete command under allow; native leaves it to the agent tool\'s own permissions. Secret names, recursive searches and writes stay guarded either way.'),
+        external_reads: z.enum(['grant', 'native']).default('grant').describe('Who admits a shell read outside the cockpit, of a named file or by a read-only Git command run alone in another repository: grant needs its complete command under allow; native leaves it to the agent tool\'s own permissions. Secret names, recursive searches and writes stay guarded either way.'),
     })
     .strict()
 

@@ -370,13 +370,22 @@ export async function runGuardEvaluationApplication(
             for (const path of access.requires ?? []) approvedRequirements.add(resolve(access.cwd, path))
             if (access.cwd !== invocation.cwd) approvedDirectories.add(access.cwd)
         }
+        // Native external reads leave a read-only Git command to the agent tool, so its repository outside
+        // the roots is inspected as a granted one's is. The evaluator admits it only alone in the call.
+        const nativeGit = policy.externalReads === 'native'
+        for (const invocation of nativeGit ? parsed.invocations : []) {
+            const access = invocation.executable === 'git' ? classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: data.ripgrepConfigActive === true }) : undefined
+            if (!access || allowed(access.cwd)) continue
+            approvedDirectories.add(access.cwd)
+            for (const path of access.requires ?? []) approvedRequirements.add(resolve(access.cwd, path))
+        }
         // Each entry starts as the answer for Git not answering and is replaced by Git's.
         const unignored = new Map<string, readonly string[] | null | undefined>()
         const tracked = new Map<string, readonly string[] | null>()
         const queries: Array<() => Promise<void>> = []
         for (const invocation of parsed.invocations) {
             const access = classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: data.ripgrepConfigActive === true })
-            if (access?.trackedContent && allowed(access.cwd) && !tracked.has(access.cwd)) {
+            if (access?.trackedContent && (allowed(access.cwd) || nativeGit && parsed.invocations.length === 1) && !tracked.has(access.cwd)) {
                 tracked.set(access.cwd, null)
                 queries.push(async () => { tracked.set(access.cwd, await guardTrackedSensitivePaths(access.cwd, instancePaths, git.value, adapters.execute ?? executeProbe)) })
             }
@@ -432,7 +441,7 @@ export async function runGuardEvaluationApplication(
             const declaredRead = !managedRoot && ['read', 'list', 'search', 'unignored-search'].includes(request.operation)
                 && (policy.externalReads === 'native' || (policy.readPaths ?? []).some(root => confinedPath(root, path)))
             const externalRead = ['read', 'list', 'search', 'unignored-search'].includes(request.operation) && (approvedReads.has(path) || approvedRequirements.has(path)) || declaredRead
-                || request.operation === 'cwd' && approvedDirectories.has(path)
+                || request.operation === 'cwd' && approvedDirectories.has(path) || request.operation === 'repository' && tracked.has(path)
             const root = managedRoot ?? (externalRead ? '/' : undefined)
             if (!root) return { status: 'unavailable', path, symlink: false }
             if (leavesLink(request.cwd, request.path)) return { status: 'resolved', path, symlink: true }
@@ -470,7 +479,7 @@ export async function runGuardEvaluationApplication(
             }
             // Outside the managed roots the walk recognises only `.env*` and `.secrets` names, not other
             // credential files, so an approved external read or search names a regular file, never a tree.
-            if (!managedRoot && request.operation !== 'cwd' && !approvedRequirements.has(path) && exists && !inspected.get(path)!.isFile()
+            if (!managedRoot && !['cwd', 'repository'].includes(request.operation) && !approvedRequirements.has(path) && exists && !inspected.get(path)!.isFile()
                 && !(request.operation === 'list' && inspected.get(path)!.isDirectory())) return { status: 'unavailable', path, symlink: false }
             const search = request.operation === 'search' || request.operation === 'unignored-search'
             return { status: 'resolved', path, symlink: false, identity: exists ? chain.at(-1)! : null, ancestors: exists ? chain.slice(0, -1) : chain,

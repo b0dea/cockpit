@@ -24,6 +24,8 @@ export interface ReadOnlyAccess {
      * below these paths, relative to `cwd`, or anywhere when null.
      */
     readonly trackedContent?: { readonly limitedTo: readonly string[] | null }
+    /** A `reads` operand may name a revision instead, so one that names no existing path reads nothing. */
+    readonly revisionOperands?: boolean
 }
 
 type Classified = Omit<ReadOnlyAccess, 'cwd'> | undefined
@@ -194,7 +196,15 @@ function jq(argv: readonly string[]): Classified {
 }
 
 const GIT_READ_VERBS = set('status', 'diff', 'log', 'show')
-const GIT_BRANCH_LIST = set('--list', '-a', '--all', '-r', '--remotes', '-v', '-vv', '--verbose', '--show-current')
+const GIT_BRANCH_LIST = set('--list', '-l', '-a', '--all', '-r', '--remotes', '-v', '-vv', '--verbose', '--show-current')
+const GIT_CONFIG_SECTIONS = set('user', 'core', 'init', 'pull', 'push', 'merge', 'rebase', 'commit', 'tag', 'fetch', 'status', 'log', 'diff', 'color', 'advice', 'safe', 'gpg')
+// Scope and display only: `--file` and `--blob` read other input, and the rest write or list.
+const GIT_CONFIG_READ = set('--global', '--system', '--local', '--worktree', '--includes', '--no-includes', '--show-origin', '--show-scope', '-z', '--null',
+    '--bool', '--int', '--bool-or-int', '--path')
+const GIT_MERGE_BASE = set('--all', '-a', '--is-ancestor', '--independent', '--octopus', '--fork-point')
+// Names, modes and object names only: `--eol` reads file content, `--with-tree` and `--exclude-from` name more input.
+const GIT_LS_FILES = set('-z', '-c', '--cached', '-d', '--deleted', '-m', '--modified', '-o', '--others', '-s', '--stage', '-u', '--unmerged',
+    '--exclude-standard', '--directory', '--no-empty-directory', '--full-name', '--error-unmatch')
 // Diff output that names files or counts lines; any other diff output prints file content.
 const GIT_NAME_ONLY = set('--stat', '--numstat', '--shortstat', '--name-only', '--name-status', '--summary', '--raw', '--dirstat', '-s', '--no-patch', '--quiet')
 // Options that print changed lines: patch output, and `--check`, which quotes each line it flags. Git
@@ -241,16 +251,48 @@ function git(argv: readonly string[], cwd: string): ReadOnlyAccess | undefined {
     if (verb === 'branch') return args.every(arg => GIT_BRANCH_LIST.has(arg)) ? { cwd: directory, reads: [], trees: [], listings: [], requires } : undefined
     // rev-parse prints object names, refs and repository paths, never file content.
     if (verb === 'rev-parse') return args.some(arg => /^--(?:git-path|resolve-git-dir|parseopt|sq-quote)(?:=|$)/.test(arg)) ? undefined : { cwd: directory, reads: [], trees: [], listings: [], requires }
+    // One key, from a section whose values name no remote, URL, header or credential helper, any of
+    // which can hold a credential; listings and patterns print them all. Reading runs no helper.
+    if (verb === 'config') {
+        const modern = args[0] === 'get'
+        const rest = modern ? args.slice(1) : args
+        const actions: string[] = rest.filter(arg => arg === '--get' || arg === '--get-all')
+        const [key, ...more] = rest.filter(arg => !arg.startsWith('-'))
+        return (modern ? actions.length === 0 : actions.length === 1) && key !== undefined && more.length === 0 && /^[a-z][a-z0-9-]*\..*[a-z0-9-]$/i.test(key)
+            && GIT_CONFIG_SECTIONS.has(key.slice(0, key.indexOf('.')).toLowerCase())
+            && rest.every(arg => !arg.startsWith('-') || actions.includes(arg) || GIT_CONFIG_READ.has(arg) || modern && arg === '--all')
+            ? { cwd: directory, reads: [], trees: [], listings: [], requires } : undefined
+    }
+    // Remote names only: `-v`, `show` and `get-url` print URLs, which can carry a credential.
+    if (verb === 'remote') return args.length === 0 ? { cwd: directory, reads: [], trees: [], listings: [], requires } : undefined
+    // merge-base prints commit names; its operands are always revisions.
+    if (verb === 'merge-base') return args.every(arg => !arg.startsWith('-') || GIT_MERGE_BASE.has(arg)) ? { cwd: directory, reads: [], trees: [], listings: [], requires } : undefined
+    // ls-files prints index names, modes and object names; its operands are pathspecs it lists.
+    if (verb === 'ls-files') {
+        const end = args.indexOf('--')
+        const options = end < 0 ? args : args.slice(0, end)
+        const listings = [...options.filter(arg => !arg.startsWith('-')), ...end < 0 ? [] : args.slice(end + 1)]
+        return options.every(arg => !arg.startsWith('-') || GIT_LS_FILES.has(arg)) ? { cwd: directory, reads: [], trees: [], listings, requires } : undefined
+    }
+    // One object, by type, size, existence or pretty-printed content. A `rev:path` blob name prints a
+    // path the inspection cannot see, and `--batch`, `--filters` and `--textconv` are absent.
+    if (verb === 'cat-file') {
+        const [mode, object, ...rest] = args
+        if (!['-t', '-s', '-e', '-p'].includes(mode ?? '') || object === undefined || object.startsWith('-') || object.includes(':') || rest.length) return undefined
+        return { cwd: directory, reads: [], trees: [], listings: [], requires, ...(mode === '-p' ? { trackedContent: { limitedTo: null } } : {}) }
+    }
     if (verb === undefined || !GIT_READ_VERBS.has(verb)) return undefined
     // --output writes a file, an external diff driver runs a program, and --no-index prints any file.
     if (args.some(arg => /^--(?:output|ext-diff|textconv|no-index)(?:=|$)/.test(arg))) return undefined
     // Revision operands that name a blob (`HEAD:path`) print content the path inspection cannot see, and
     // so does `git log -L<range>:<path>`, whose path is attached to the option.
     if (args.some(arg => !arg.startsWith('-') && arg.includes(':') || /^-L/.test(arg))) return undefined
-    // Operands may be pathspecs whose content is printed, and a path outside the repository turns
-    // `git diff` into a file comparison, so every operand is inspected as a read.
+    // A path outside the repository turns `git diff` into a `--no-index` comparison that prints whole
+    // trees, and `requires` makes the directory the repository's top, so no operand may leave it.
+    if (args.some(arg => !arg.startsWith('-') && /^\.\.(?:\/|$)/.test(posix.relative(directory, posix.resolve(directory, arg))))) return undefined
+    // Operands may be pathspecs whose content is printed, so every operand is inspected as a read.
     const trackedContent = verb === 'status' ? undefined : gitTrackedContent(verb, args)
-    return { cwd: directory, reads: args.filter(arg => !arg.startsWith('-')), trees: [], listings: [], requires, ...(trackedContent ? { trackedContent } : {}) }
+    return { cwd: directory, reads: args.filter(arg => !arg.startsWith('-')), trees: [], listings: [], requires, revisionOperands: true, ...(trackedContent ? { trackedContent } : {}) }
 }
 
 /**

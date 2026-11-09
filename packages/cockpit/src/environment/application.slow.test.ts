@@ -313,6 +313,64 @@ describe('guard policy construction', () => {
         expect(await decide(`cat '${elsewhere}/notes.md'`)).toEqual({ decision: 'ask', reason: expect.stringContaining('is outside the configured roots') })
     }, 120_000)
 
+    it('leaves read-only Git in another repository to native permissions, never its writes, helpers or secrets', async () => {
+        const { root, configPath } = await observedPolicy()
+        const repository = (name: string, files: Record<string, string>) => {
+            const path = realpathSync(mkdtempSync(join(tmpdir(), name)))
+            scratch.push(path)
+            const run = (...args: string[]) => execFileSync('git', ['-C', path, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args])
+            run('init', '-q', '-b', 'main')
+            for (const [file, text] of Object.entries(files)) writeFileSync(join(path, file), text)
+            run('add', '.')
+            run('commit', '-q', '-m', 'Synthetic history')
+            return path
+        }
+        const product = repository('cockpit-related-checkout-', { 'notes.md': 'synthetic notes\n' })
+        const leaky = repository('cockpit-related-secrets-', { 'notes.md': 'synthetic notes\n', '.env': 'SYNTHETIC_KEY=synthetic\n' })
+        const plain = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-not-a-repository-')))
+        scratch.push(plain)
+        const config = CockpitConfig.parse(parse(readFileSync(configPath, 'utf8')))
+        const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
+            resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }) }
+        const decide = async (command: string) => {
+            const identity = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
+            return (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'codexcli', cwd: root,
+                payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+        }
+        const configure = async (externalReads: 'grant' | 'native', allow: string[][] = []) => {
+            config.guards.external_reads = externalReads
+            config.guards.allow = allow.map(argv => ({ argv, cwd: '.', reason: 'Inspect the related checkout.' }))
+            writeFileSync(configPath, stringify(config))
+            expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        }
+        const inventory = `git -C ${product} worktree list --porcelain`
+        await configure('grant')
+        expect((await decide(inventory)).decision).not.toBe('allow')
+        await configure('grant', [inventory.split(' ')])
+        expect(await decide(inventory)).toMatchObject({ decision: 'allow' })
+        await configure('native')
+        for (const command of [inventory, `git -C ${product} status --short`, `git -C ${product} log --oneline -5`, `git -C ${product} show HEAD`,
+            `git -C ${product} diff main --stat`, `git -C ${product} branch -l`, `git -C ${product} ls-files -z`, `git -C ${product} cat-file -p HEAD`]) {
+            const decision = await decide(command)
+            expect(decision, `${command}: ${decision.reason}`).toMatchObject({ decision: 'allow' })
+        }
+        for (const command of [
+            // Writes and network access.
+            `git -C ${product} worktree add ../copy`, `git -C ${product} branch copy`, `git -C ${product} commit --allow-empty -m x`, `git -C ${product} fetch`,
+            // Ways to run a program the command line chooses.
+            `git -C ${product} -c core.pager=cat log`, `git -C ${product} diff --ext-diff`, `git -C ${product} lg`, `GIT_PAGER=cat git -C ${product} log`,
+            // Only the whole call: another command could read evidence a repository helper changed.
+            `${inventory} | head -n 1`,
+            // Content the guard cannot prove holds no secret, and a directory that is not a repository.
+            `git -C ${leaky} show HEAD`, `git -C ${leaky} cat-file -p HEAD:.env`, `git -C ${leaky} diff main`, `git -C ${leaky} log -p`, `git -C ${plain} status`,
+            // A path outside the work tree turns diff into a `--no-index` comparison that prints whole trees.
+            `git -C ${product} diff ${root}/app ${plain}`]) {
+            expect((await decide(command)).decision, command).not.toBe('allow')
+        }
+        // Inventories that print no file content stay readable beside a tracked secret.
+        expect(await decide(`git -C ${leaky} log --oneline`)).toMatchObject({ decision: 'allow' })
+    }, 120_000)
+
     it('reads an explicitly named package document through a confined package symlink', async () => {
         const { root, request, adapters } = await installedGuardRequest()
         const store = join(root, 'packages/docs-fixture')

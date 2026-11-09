@@ -977,7 +977,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             // protected file leaves every recursive search unproven: either may reach it unnamed.
             if (kind !== 'listing' && !secretFiles || kind === 'tree' && resolved.protectedFilesLinked) safe = false
             const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: kind === 'tree' ? access.skipsIgnored ? 'unignored-search' : 'search' : kind === 'listing' && external ? 'list' : 'read' })
-            if (!evidence || external && evidence.identity === null) {
+            if (!evidence || external && evidence.identity === null && !(kind === 'read' && access.revisionOperands)) {
                 if (external && kind === 'tree' && evidence) searchBlocker ??= ask(`${shownGuardWord(path)} does not exist outside the configured roots. Name an existing regular file.`)
                 else if (external && kind === 'tree') searchBlocker ??= ask(`A search of ${shownGuardWord(path)} outside the configured roots must name a regular file: there the guard recognises only .env and .secrets names, not other credential files, so it does not search a directory or follow a link. Search the named files instead.`)
                 safe = false
@@ -1170,16 +1170,22 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const external = outsideRoots(externalAccess) || externalGrant
         const exactGrant = resolved.declaredAllows.some(rule => rule.cwd === invocation.cwd && rule.argv.length === invocation.argv.length + 1
             && rule.argv[0] === invocation.executable && invocation.argv.every((word, index) => word === rule.argv[index + 1]))
-        const approvedExternalRead = !!approvedReadOnlyInvocation(invocation, resolved)
-            && (chainReadOnly || externalGit(invocation, access) && invocations.length === 1)
-        if (access && inspectReadOnly(access, chainReadOnly, approvedExternalRead)) readOnly.add(invocation)
+        // Native external reads leave a read-only Git command in a repository outside the roots to the
+        // agent tool, as they do a named file. Its repository's configured helpers run with it, so as with
+        // a grant it runs only as the whole call, and nothing else in the call can change what it prints.
+        const nativeGit = resolved.externalReads === 'native' && externalGit(invocation, access)
+        const alone = invocations.length === 1
+        const approvedExternalRead = nativeGit && alone || !!approvedReadOnlyInvocation(invocation, resolved) && (chainReadOnly || externalGit(invocation, access) && alone)
+        if (access && inspectReadOnly(access, chainReadOnly || nativeGit && alone, approvedExternalRead)) readOnly.add(invocation)
         else if (searchBlocker) searchRefusals.set(invocation, searchBlocker)
         if (external && (!approvedExternalRead || !readOnly.has(invocation))) approvalBarriers.set(invocation, searchBlocker
-            ?? ask(!exactGrant
-                ? `${named(invocation)} reads outside the configured roots. A person can list the location under [guards] read_paths, set [guards] external_reads = "native", or admit this complete command with an explicit managed cwd under [guards] allow, then sync; native permission still applies.`
-                : invocation.executable === 'git'
-                    ? `${named(invocation)} is admitted in another checkout only as the whole command, since its repository can configure helpers that run; Git commands that print file content there, such as diff or show, stay refused.`
-                    : `${named(invocation)} matches a [guards] allow rule, but the guard cannot prove this read now: it must run without writes or other commands, name existing regular files rather than directories or links, and run without ambient search configuration such as RIPGREP_CONFIG_PATH.`))
+            ?? ask(nativeGit
+                ? `${named(invocation)} runs Git in a directory outside the configured roots. With native external reads the guard leaves a read-only Git command there to the agent tool only as the whole call, from a directory holding its own .git, with operands that name regular files or revisions rather than directories or links: run it on its own from the repository's top directory.`
+                : !exactGrant
+                    ? `${named(invocation)} reads outside the configured roots. A person can list the location under [guards] read_paths, set [guards] external_reads = "native", or admit this complete command with an explicit managed cwd under [guards] allow, then sync; native permission still applies.`
+                    : invocation.executable === 'git'
+                        ? `${named(invocation)} is admitted in another checkout only as the whole command, since its repository can configure helpers that run; Git commands that print file content there, such as diff or show, stay refused.`
+                        : `${named(invocation)} matches a [guards] allow rule, but the guard cannot prove this read now: it must run without writes or other commands, name existing regular files rather than directories or links, and run without ambient search configuration such as RIPGREP_CONFIG_PATH.`))
         // A cockpit command that parses a named file can quote it in a refusal, so the file is read
         // into the agent context as surely as `cat` would read it.
         for (const profile of resolved.cockpitInvocations) {
@@ -1195,7 +1201,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (!git) continue
         // Git changes directory as the system does, resolving `..` from where a link leads, so each
         // directory is inspected as spelled rather than by the path `cwd` names.
-        for (const directory of git.directories) inspectPath({ ...directory, operation: 'cwd' }, false, approvedExternalRead && readOnly.has(invocation))
+        for (const directory of git.directories) inspectPath({ ...directory, operation: 'cwd' }, false, nativeGit || approvedExternalRead && readOnly.has(invocation))
         if (git.uncertain) holdAsk(invocation, ask('Git execution context is not an exact resolved profile.'))
         if (git.verb === 'push') {
             const decision = pushDecision(git.args, resolved.protectedBranches)
@@ -1203,6 +1209,9 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             else if (decision) holdAsk(invocation, decision)
         }
         if (git.verb === 'config' && !gitConfigReads(git.args)) hold(gitMetadataDenial)
+        else if (git.verb === 'config' && !access) holdAsk(invocation, ask(`${named(invocation)} prints configuration the guard cannot bound: a listing, a pattern, another file or a key outside a few sections can print a remote URL, an http header or a credential helper that holds a credential. Read one key with \`git config --get <key>\` from a section such as user, core or init, or a person runs it.`))
+        // Git metadata decides what read-only Git commands show and run, so agents do not write it.
+        if (git.verb === 'fetch') holdAsk(invocation, ask(`${named(invocation)} requires human approval: fetching writes objects and refs under .git, which agents do not write. To compare with another repository, read it in place with \`git -C <repository> log --oneline <branch>\`, which outside the configured roots needs [guards] external_reads = "native" or a grant; otherwise a person runs the fetch, or admits its complete argv under [guards] allow in ${posix.basename(resolved.configPath)}.`))
         if (git.verb === 'reset' && git.args.includes('--hard') || git.verb === 'clean' && git.args.some((arg) => /^-[^-]*[fdxX]/.test(arg) || arg === '--force')) holdAsk(invocation, ask('Destructive Git operation requires human approval.'))
         if (git.verb === 'add') {
             let options = true

@@ -715,7 +715,7 @@
         },
         "external_reads": {
           "default": "grant",
-          "description": "Who admits a shell read of a named file outside the cockpit: grant needs its complete command under allow; native leaves it to the agent tool's own permissions. Secret names, recursive searches and writes stay guarded either way.",
+          "description": "Who admits a shell read outside the cockpit, of a named file or by a read-only Git command run alone in another repository: grant needs its complete command under allow; native leaves it to the agent tool's own permissions. Secret names, recursive searches and writes stay guarded either way.",
           "type": "string",
           "enum": [
             "grant",

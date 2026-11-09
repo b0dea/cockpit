@@ -577,9 +577,29 @@ describe('built-in read-only profile', () => {
             'rg needle src | head -n 5', 'ls && pwd', 'grep --context=2 needle src/a.ts', 'git diff main -- src/a.ts',
             'echo "exit=$?"', "printf '%s\\n' done", 'sed -n 1,20p src/a.ts', "sed -n -e '1p;$p' src/a.ts", 'git diff HEAD~1 --stat',
             'git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>&1 | head -1', 'git branch -vv', 'git -C ../other branch --show-current',
-            'cd ./src && cat a.ts | wc -l', 'cd ./src && grep -rn needle .', 'cd ../other; git status', 'grep -rn needle src 2>/dev/null | head -30']) {
+            'cd ./src && cat a.ts | wc -l', 'cd ./src && grep -rn needle .', 'cd ../other; git status', 'grep -rn needle src 2>/dev/null | head -30',
+            'git branch -l', 'git remote', 'git merge-base --is-ancestor main HEAD', 'git ls-files -z --others --exclude-standard -- src', 'git cat-file -t HEAD', 'git cat-file -p HEAD']) {
             expect(decideInRepositories(command), command).toEqual({ decision: 'allow', reason: expect.any(String) })
         }
+    })
+
+    it('reads one credential-free Git configuration key, and names the safe route for listings and fetches', () => {
+        for (const command of ['git config --get user.name', 'git config --get-all user.email', 'git config get user.email',
+            'git config --show-origin --get core.editor', 'git config --global --get init.defaultBranch', 'git -C ../other config --get user.name']) {
+            expect(decideInRepositories(command), command).toMatchObject({ decision: 'allow' })
+        }
+        // Remote URLs, http headers and credential helpers can hold a credential, and a listing prints them all.
+        for (const command of ['git config --list --show-origin', 'git config --get-regexp user', 'git config --get remote.origin.url',
+            'git config --get http.extraHeader', 'git config --get credential.helper', 'git config --file notes.txt --get user.name']) {
+            expect(decideInRepositories(command), command).toEqual({ decision: 'ask', reason: expect.stringContaining('git config --get <key>') })
+        }
+        for (const command of ['git config user.name Synthetic', 'git config --unset user.name', 'git config --add user.name Synthetic',
+            'git config --global user.name Synthetic', 'git config --replace-all user.name Synthetic', 'git config --edit', 'git config --get user.name > out.txt']) {
+            expect(decideInRepositories(command).decision, command).not.toBe('allow')
+        }
+        // Fetching writes objects and refs under .git, so it stays a person's; the refusal names the read that answers most questions.
+        expect(decideInRepositories('git fetch /workspace/product refs/heads/main:refs/remotes/source/main'))
+            .toEqual({ decision: 'ask', reason: expect.stringContaining('git -C <repository> log') })
     })
 
     it('keeps a Node verifier on its original runner when explaining execution approval', () => {
@@ -598,6 +618,10 @@ describe('built-in read-only profile', () => {
             expect(decideInRepositories(command), command).toMatchObject({ decision: 'allow' })
         }
         for (const command of ['git worktree add ../copy', 'git worktree prune', 'git worktree list --unknown',
+            // Remote URLs can carry a credential, and a `rev:path` blob or a filter prints what the inspection cannot see.
+            'git remote -v', 'git remote show origin', 'git cat-file -p HEAD:.env', 'git cat-file --textconv HEAD:src/a.ts', 'git cat-file --batch', 'git ls-files --eol',
+            // A path outside the work tree turns diff into a `--no-index` comparison that prints whole trees.
+            'git -C ../other diff ../project/config src', 'git diff /workspace/other/src src',
             'shasum -c checksums.txt', 'shasum --check checksums.txt', 'shasum --tag README.md',
             'shasum -a 256 .env', 'shasum -a 256 README.md > .codex/hooks.json',
             // Perl's option parser takes `+` as a prefix too, so these check a manifest as -c does.

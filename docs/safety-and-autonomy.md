@@ -204,7 +204,8 @@ A built-in read-only profile lets agents inspect the checkout without a prompt, 
 on Codex and OpenCode, where a prompt becomes a denial. It covers exact argument shapes of `ls`,
 `pwd`, `cat`, `head`, `tail`, `wc`, `shasum`, `rg`, `grep`, `fd`, `find`, `echo`, `printf`, `sed`,
 `git status`, `git diff`, `git log`, `git show`, `git rev-parse`, `git branch` listing flags,
-`git worktree list`, and the cockpit commands [below](#cockpit-commands-an-agent-can-run). The
+`git worktree list`, `git ls-files`, `git cat-file`, `git merge-base`, `git remote`, `git config --get`,
+and the cockpit commands [below](#cockpit-commands-an-agent-can-run). The
 [read-only profile](../packages/cockpit/src/guards/read-only.ts) lists each permitted option.
 
 - Any other option falls back to the ordinary rules, including options that run programs or write
@@ -217,7 +218,17 @@ on Codex and OpenCode, where a prompt becomes a denial. It covers exact argument
   `--resolve-git-dir`, `--parseopt` and `--sq-quote`. `git branch` is read-only with no argument or
   with `--list`, `-a`, `-r`, `-v`, `-vv` or `--show-current` (and their long forms), never with a
   branch name. `git worktree list` accepts its porcelain, NUL and verbose listing flags;
-  worktree creation, removal and pruning remain outside the read-only profile. `shasum` hashes
+  worktree creation, removal and pruning remain outside the read-only profile. `git ls-files` lists
+  names, modes and object names, never with `--eol`. `git cat-file` takes one of `-t`, `-s`, `-e` or
+  `-p` and one object, never a `rev:path` blob name; `-p` prints content, so it is judged as
+  `git show` is. `git remote` lists names only: `-v`, `show` and `get-url` print URLs, which can
+  carry a credential. `git config --get <key>`, `--get-all` and `git config get` read one key from
+  the `user`, `core`, `init`, `pull`, `push`, `merge`, `rebase`, `commit`, `tag`, `fetch`, `status`,
+  `log`, `diff`, `color`, `advice`, `safe` or `gpg` section, with scope and display flags; a listing,
+  a pattern, `--file` or a key in another section, such as `remote.origin.url`, `http.extraHeader`
+  or `credential.helper`, can print a credential, so it asks. Every configuration write is refused.
+  `git fetch` writes objects and refs under `.git`, which agents do not write, so it asks: read the
+  other repository in place with `git -C <repository> log`, or a person runs the fetch. `shasum` hashes
   named files, including guard controls, with algorithm and text/binary options. Check mode is
   excluded because a checksum manifest names additional files. Output redirects remain writes.
 - `$?` is allowed as an argument only to a read-only command, and never as the directory of
@@ -251,7 +262,7 @@ how that guard treats a named file outside the managed roots:
 | --- | --- | --- |
 | default | asks, unless a `[guards] allow` rule names the complete command | external reads are rare and each is reviewed |
 | `read_paths` | allowed below each listed file or directory | a few known folders, such as `~/Downloads` or a memory directory, held by cockpit itself |
-| `external_reads = "native"` | left to the agent tool's own permission | the person already manages outside access in each tool's settings |
+| `external_reads = "native"` | left to the agent tool's own permission, as is a read-only Git command run alone in another repository | the person already manages outside access in each tool's settings |
 
 ```toml
 [guards]
@@ -263,7 +274,7 @@ read_paths = [{ path = "~/Downloads", reason = "Inputs the person drops in." }]
 `~/` means the home directory of whoever runs the agent. A listed path that does not exist grants
 nothing, and `/` or the home directory itself is never granted. In every mode the guard still
 refuses `.env*` and `.secrets` names and declared instances, writes outside the roots, an external
-working directory, and a recursive search or comparison of an external directory: outside the
+working directory (except, with native external reads, a read-only Git command's `-C` directory, below), and a recursive search or comparison of an external directory: outside the
 roots it recognises only those names, not other credential files, so a read or search must name a
 regular file, and only a listing, which reports names, may name a directory. A link outside the roots stays refused. Copying an input in, as
 `cp ~/Downloads/photo.jpg assets/`, is a write and is admitted as any write is, for example by a
@@ -297,7 +308,20 @@ approval is command execution consent**, including that repository's configured 
 run fsmonitor and clean filters. Review that configuration before approving the command; the
 approval is bound to the argv, so a later change to those helpers is not detected and needs another
 review. It runs only as the whole call, never as part of a pipeline or chain whose file evidence a
-helper could invalidate. Native read permission alone supplies none of this execution consent.
+helper could invalidate.
+
+With `external_reads = "native"`, a read-only Git command in a repository outside the roots, such as
+`git -C /workspace/related worktree list --porcelain`, is left to the agent tool's own permission
+without a grant, as a named file read is. The guard still requires the read-only profile's exact
+form, so no `-c`, alias, external diff, pager option, write or network access passes; the whole call,
+never a pipeline or chain; a `-C` directory holding its own `.git`, reached without a link; and
+operands that name regular files or revisions. A command that prints file content there, such as
+`diff`, `show`, `log -p` or `cat-file -p`, is admitted only when that repository's index tracks no
+`.env*` or `.secrets` file, as inside the cockpit. Running it runs that repository's configured
+helpers, such as fsmonitor, clean filters, textconv, signature verification and the pager, as
+running it yourself would. Agents cannot write outside the roots, so those helpers are what a person
+or their tools configured there, and choosing native external reads hands consent for that command
+to the agent tool, which asks or sandboxes it by its own rules.
 
 A named file under a managed root may follow a package-manager link only to a regular file inside a
 managed root; both spellings and the target's identity are checked, and the link is revalidated
