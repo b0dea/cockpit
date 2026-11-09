@@ -1073,13 +1073,31 @@ describe('allow by default', () => {
             'git worktree add worktrees/topic -b topic', 'git fetch origin', 'git pull --ff-only', 'git push origin topic',
             'git push', 'git push origin HEAD', 'git push -u origin topic', 'git config user.name Synthetic', 'git -c core.quotepath=false status',
             'npm test', 'npm run build', 'node --test verify.mjs', 'make verify', 'python3 scripts/generate.py', 'gh pr list', 'gh pr view 12',
-            'timeout 60 npm test', 'mkdir -p build', 'touch src/new.ts', 'rm src/old.ts', 'cp src/a.ts src/b.ts',
+            'NODE_ENV=test npm test', 'timeout 60 npm test', 'mkdir -p build', 'touch src/new.ts', 'rm src/old.ts', 'cp src/a.ts src/b.ts',
             'sort src/a.ts', 'git remote -v', 'git rev-list --count HEAD']
         for (const command of development) expect(run(command), command).toMatchObject({ decision: 'allow' })
         const strict = { ...open(), defaultDecision: 'ask' as const }
         for (const command of ['git commit -m done', 'npm run build', 'node --test verify.mjs', 'mkdir -p build', 'gh pr list']) {
             expect(run(command, strict).decision, command).toBe('ask')
         }
+    })
+
+    it('judges words it cannot expand only where they decide what is read, written or pushed', () => {
+        const marked = (command: string, evidence: PathInspection = onBranch('refs/heads/topic')) =>
+            evaluateGuard(parseGuardInput(shellPayload(command), { dynamicWords: 'mark', home }), open(), evidence)
+        for (const command of ['NODE_ENV=test npm test', 'git commit -m "$(cat <<\'EOF\'\nFix the parser\nEOF\n)"', 'echo "$PATH"',
+            'node scripts/build.js "$TARGET"', "rg --files workorders -g README.md -g '*.md'", 'rg --hidden needle src', 'rg -uu needle src',
+            'grep -rn needle src', 'for file in src/a.ts src/b.ts; do node scripts/check.js "$file"; done']) {
+            expect(marked(command), command).toMatchObject({ decision: 'allow' })
+        }
+        for (const command of ['cat "$FILE"', 'rm -rf "$DIR"', 'cp src/a.ts "$OUT"', 'git push origin "$BRANCH"', 'echo "$GITHUB_TOKEN"', 'printenv',
+            'printenv NPM_TOKEN', 'GIT_DIR=/tmp/x git status', 'PATH=./bin:$PATH make', 'for file in .env src/a.ts; do cat "$file"; done']) {
+            expect(marked(command).decision, command).not.toBe('allow')
+        }
+        // A wide search is judged by the whole tree it reads, hidden and ignored files included.
+        const holdsSecret: PathInspection = request => request.operation === 'search'
+            ? { ...withGit(request), sensitive: [posix.join(root, 'src/.env')] } : onBranch('refs/heads/topic')(request)
+        expect(marked('rg --hidden needle src', holdsSecret).decision).not.toBe('allow')
     })
 
     it('keeps refusing secrets, credential stores and their upload in every mode', () => {

@@ -120,6 +120,14 @@ const RG: OptionTable = {
     exclusionValues: set('-g', '--glob', '--iglob'),
     cluster: /^-[iSswxvnNlcFHIoqp]+$/,
 }
+// Under the allow default a search may also read hidden and ignored files and take any glob: the
+// evaluator then walks the whole tree for secrets instead of only what Git leaves unignored.
+const RG_WIDE: OptionTable = {
+    ...RG,
+    flags: new Set([...RG.flags, '--hidden', '--no-ignore', '--no-ignore-vcs', '--no-ignore-dot', '--no-ignore-parent', '--no-ignore-global', '--multiline', '--pcre2']),
+    exclusionValues: set(),
+    cluster: /^-[iSswxvnNlcFHIoqpuU.P]+$/,
+}
 const FD: OptionTable = {
     flags: set('--hidden', '--no-ignore', '--case-sensitive', '--ignore-case', '--glob', '--regex', '--fixed-strings', '--absolute-path', '--print0', '--full-path'),
     values: set('-t', '--type', '-e', '--extension', '-d', '--max-depth', '--min-depth', '-E', '--exclude', '--max-results', '--color'),
@@ -332,9 +340,11 @@ function cockpit(argv: readonly string[]): Classified {
  * The paths an exact read-only invocation touches, or undefined when it is not one. `cockpit` holds
  * the cockpit arguments only when the application proved the invocation starts the installed cockpit.
  */
-export function classifyReadOnlyInvocation(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean; readonly cockpit?: readonly string[] } = { ripgrepConfigActive: false }): ReadOnlyAccess | undefined {
+export function classifyReadOnlyInvocation(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean; readonly cockpit?: readonly string[]; readonly wideSearch?: boolean } = { ripgrepConfigActive: false }): ReadOnlyAccess | undefined {
     if (invocation.executable === null || invocation.wrapped || invocation.redirects.some(redirect => redirect.write)
-        || invocation.words.some(word => word.role === 'environment-assignment-value')) return undefined
+        || invocation.words.some(word => word.role === 'environment-assignment-value')
+        // A word whose expansion the guard cannot see names no path it can inspect; echo and printf name none.
+        || invocation.dynamic && !['echo', 'printf'].includes(invocation.executable)) return undefined
     const argv = invocation.argv
     const inputs = invocation.redirects.map(redirect => redirect.target)
     const shape = (classified: Classified): ReadOnlyAccess | undefined =>
@@ -345,7 +355,7 @@ export function classifyReadOnlyInvocation(invocation: ParsedInvocation, environ
         ? undefined : access
 }
 
-function classify(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean; readonly cockpit?: readonly string[] },
+function classify(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean; readonly cockpit?: readonly string[]; readonly wideSearch?: boolean },
     shape: (classified: Classified) => ReadOnlyAccess | undefined, inputs: readonly string[]): ReadOnlyAccess | undefined {
     const argv = invocation.argv
     if (environment.cockpit) return shape(cockpit(environment.cockpit))
@@ -375,8 +385,10 @@ function classify(invocation: ParsedInvocation, environment: { readonly ripgrepC
         case 'grep': return shape(search(argv, GREP, false))
         // Every option ripgrep is admitted with keeps its ignore filters, which the trees are then judged by.
         case 'rg': {
-            const access = environment.ripgrepConfigActive ? undefined : shape(search(argv, RG, true))
-            return access && { ...access, skipsIgnored: true }
+            if (environment.ripgrepConfigActive) return undefined
+            const narrow = shape(search(argv, RG, true))
+            if (narrow) return { ...narrow, skipsIgnored: true }
+            return environment.wideSearch ? shape(search(argv, RG_WIDE, true)) : undefined
         }
         case 'fd': {
             const parsed = parseOptions(argv, FD)

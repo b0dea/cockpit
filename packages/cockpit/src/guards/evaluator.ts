@@ -1243,7 +1243,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     })
     const accesses = new Map(invocations.map((invocation) => {
         const cockpit = provenCockpit(invocation)
-        return [invocation, classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive, ...(cockpit ? { cockpit } : {}) })]
+        return [invocation, classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive, wideSearch: open, ...(cockpit ? { cockpit } : {}) })]
     }))
     // A definition or a `cd` runs nothing, so it cannot create a path before a search reads it; a bare redirect writes one.
     const externalGit = (invocation: ParsedInvocation, access: ReadOnlyAccess | undefined) => invocation.executable === 'git' && access !== undefined
@@ -1310,6 +1310,19 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         for (const path of optioned?.paths ?? []) {
             pathCount++
             inspectPath({ path, cwd: optioned!.cwd, operation: 'write' }, true)
+        }
+        // A word whose expansion the guard cannot see decides nothing it inspects: a path read, written,
+        // removed or pushed, or a cockpit command. Elsewhere it is the program's own business.
+        if (invocation.dynamic && (writes || removed?.paths.length || optioned || git || READING_EXECUTABLES.has(posix.basename(invocation.executable ?? '')) || cockpitShaped(invocation))) {
+            const word = invocation.words.find(item => item.dynamic)?.value ?? ''
+            holdBoundary(invocation, ask(`${named(invocation)} holds ${shownGuardWord(word)}, whose value the guard cannot see, where it decides which file is read or written or which branch is pushed. Write the value out.`))
+        }
+        // Printing the environment, or a variable whose name marks it as a secret, prints credentials.
+        if (['echo', 'printf', 'printenv'].includes(posix.basename(invocation.executable ?? ''))
+            && (invocation.executable === 'printenv' && invocation.argv.length === 0 || invocation.words.some(item => item.role === 'argument'
+                && /(?:^|\$\{?|\b)[A-Za-z_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE_KEY|DATABASE_URL)\w*/i.test(item.value)
+                && (item.dynamic || invocation.executable === 'printenv')))) {
+            hold(deny('Refusing to print the environment or a variable named as a secret: its value is a credential. Print a non-secret variable by name, or list names with `cockpit env keys`.'))
         }
         // A declared rule admits a command the profile cannot classify, but never past the secret names
         // or the roots: macOS `cat a .env -x` prints .env before it rejects -x, and `git show HEAD:.env`

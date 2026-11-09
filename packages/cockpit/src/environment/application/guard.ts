@@ -337,7 +337,9 @@ export async function runGuardEvaluationApplication(
         if (git.state !== 'available') return unavailable('Guard checkout observation requires an authenticated Git executable.')
         const checkout = await adapters.observeCheckout({ source: loaded.result.source, cockpitName: config.cockpit.name,
             observedAt: new Date().toISOString(), env: {}, gitExecutable: git.value })
-        const parsed = parseGuardInput(data.payload)
+        // Under the allow default a word the guard cannot expand is marked, not refused: the evaluator
+        // refuses it only where it decides what is read, written or pushed.
+        const parsed = parseGuardInput(data.payload, { dynamicWords: config.guards.default === 'allow' ? 'mark' : 'refuse', home: homedir() })
         if (parsed.status !== 'parsed') return unavailable(parsed.reason)
         if (parsed.cwd !== data.cwd) return unavailable('Guard request cwd does not match its invocation authority.')
         // The policy pin and the restoration both apply an edit to exactly these bytes, which must be the text the policy is built from.

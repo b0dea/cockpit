@@ -337,7 +337,10 @@ describe('guard policy construction', () => {
             expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
         }
         await configure('allow')
-        for (const command of ['git commit -m done', 'npm run build', 'git switch -c topic']) expect(await decide(command), command).toMatchObject({ decision: 'allow' })
+        for (const command of ['git commit -m done', 'npm run build', 'git switch -c topic', 'git commit -m "$(cat <<\'EOF\'\nFix the parser\nEOF\n)"',
+            'NODE_ENV=test npm test', 'rg --files app -g package-lock.json']) {
+            expect(await decide(command), command).toMatchObject({ decision: 'allow' })
+        }
         // The checkout's branch pushes to the protected main, so a bare push is refused.
         expect(await decide('git push')).toMatchObject({ decision: 'deny' })
         git('switch', '-q', '-c', 'topic')

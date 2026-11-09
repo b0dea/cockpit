@@ -284,7 +284,17 @@ and the cockpit commands [below](#cockpit-commands-an-agent-can-run). The
   operands are inspected as files whose content may be printed.
 - `rg` is read-only only when `RIPGREP_CONFIG_PATH` is absent. Its `-g`, `--glob` and `--iglob` are
   read-only only as `!` exclusions: any other glob overrides the hidden and ignore filters, so
-  `rg -g '.env*'` would print a hidden environment file.
+  `rg -g '.env*'` would print a hidden environment file. Under the allow default `rg` also takes
+  positive globs, `--hidden`, `--no-ignore` and `-u`; the guard then walks the whole tree it reads,
+  hidden and ignored files included, and refuses the search if it finds an environment file or
+  secrets directory there.
+- Under the allow default a word whose value the guard cannot see, such as `$TARGET`, a glob or a
+  command substitution, is allowed in an argument the program decides about, as in
+  `node build.js "$TARGET"`. It is refused where the guard decides what is read, written, removed or
+  pushed (`cat "$FILE"`, `rm "$DIR"`, `git push origin "$BRANCH"`) and as the program name. `~` and
+  `$HOME` are expanded. `git commit -m "$(cat <<'EOF' … EOF)"` is read as the literal message it is.
+  Printing the environment (`env`, `printenv`) or a variable named as a secret (`echo "$API_TOKEN"`)
+  is refused. In the strict mode every such word is refused.
 - A pipeline or chain is permitted only when every segment is. Redirecting output to `/dev/null`,
   `/dev/stdout` or `/dev/stderr`, or input from `/dev/null`, does not change the decision.
 
