@@ -409,7 +409,7 @@ describe('guard policy construction', () => {
         expect(await decide(`git -C ${leaky} log --oneline`)).toMatchObject({ decision: 'allow' })
     }, 120_000)
 
-    it('reads an explicitly named package document through a confined package symlink', async () => {
+    it('reads a named package document, and searches a package directory, through a confined package symlink', async () => {
         const { root, request, adapters } = await installedGuardRequest()
         const store = join(root, 'packages/docs-fixture')
         mkdirSync(store, { recursive: true })
@@ -421,7 +421,14 @@ describe('guard policy construction', () => {
         try {
             const result = await decide('package-docs/guide.md')
             expect(result, JSON.stringify(result)).toMatchObject({ decision: 'allow' })
+            // A search through the link reads where it leads, judged by the same secret walk as any search.
+            const search = async (command: string) => (await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin',
+                payload: shellPayload(command, root) }, adapters)).decision
+            for (const command of ['rg -n needle package-docs', 'grep -rn needle package-docs']) expect(await search(command), command).toMatchObject({ decision: 'allow' })
             writeFileSync(join(store, '.env'), 'SYNTHETIC_KEY=synthetic\n')
+            for (const command of ['rg -n needle package-docs', 'grep -rn needle package-docs']) {
+                expect(await search(command), command).toMatchObject({ decision: 'ask', reason: expect.stringContaining('.env') })
+            }
             symlinkSync(join(store, '.env'), join(store, 'secret-alias.md'))
             expect(await decide('package-docs/secret-alias.md')).toMatchObject({ decision: 'deny' })
             writeFileSync(join(store, '.envrc'), 'synthetic environment script\n')
@@ -434,7 +441,10 @@ describe('guard policy construction', () => {
             writeFileSync(join(outside, 'guide.md'), 'synthetic external guide\n')
             symlinkSync(join(outside, 'guide.md'), join(store, 'outside-alias.md'))
             expect(await decide('package-docs/outside-alias.md')).not.toMatchObject({ decision: 'allow' })
+            symlinkSync(outside, join(root, 'outside-docs'))
+            expect(await search('grep -rn needle outside-docs')).not.toMatchObject({ decision: 'allow' })
         } finally {
+            rmSync(join(root, 'outside-docs'), { force: true })
             rmSync(alias)
             rmSync(store, { recursive: true })
         }

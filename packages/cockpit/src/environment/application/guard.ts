@@ -479,12 +479,15 @@ export async function runGuardEvaluationApplication(
                     throw error
                 }
                 if (status.isSymbolicLink()) {
-                    // Package managers link installed packages into a store inside the checkout.
-                    // Only a named file read may follow that link; directories and external grants cannot.
+                    // Package managers link installed packages into a store inside the checkout. A named
+                    // file read, or a search of a file or directory, follows that link to a target inside
+                    // the roots and is judged there, a search by the same secret walk as any other.
+                    // External grants never follow one.
                     if (managedRoot && ['read', 'search', 'unignored-search'].includes(request.operation)) {
                         inspected.set(cursor, status)
                         const target = realpathSync(path)
-                        if (allowed(target) && lstatSync(target).isFile()) {
+                        const leads = allowed(target) ? lstatSync(target) : undefined
+                        if (leads && (leads.isFile() || request.operation !== 'read' && leads.isDirectory())) {
                             readLinks.set(path, target)
                             const evidence = inspect({ ...request, path: target })
                             if (evidence && typeof evidence === 'object') return { ...evidence, path, canonicalPath: target }
