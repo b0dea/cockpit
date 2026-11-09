@@ -578,6 +578,11 @@ under `[autonomy] stale_delete = "agent"`, and otherwise asks a person to confir
 between the two versions (each names a step `sync` does not do), or the npm page when there is no
 changelog.
 
+Some machines wrap npm with a supply-chain filter that enforces a minimum package age and answers the
+latest lookup with an older version. `upgrade` then refuses with `UPGRADE_LATEST_FILTERED` (exit 2)
+instead of calling the install current, names the registry's real latest when it can read it, and
+asks you to name that version.
+
 An agent may run `upgrade` exactly where it may run a writing `sync`. Under `person` or `ci` the
 guard asks, and the sync child refuses outside CI under `ci`. `--dry-run` is never gated. Until
 `sync` finishes, the guard holds every guarded agent tool call, because it trusts only the cockpit,
