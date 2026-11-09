@@ -43,6 +43,10 @@ const LOCKFILES = ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'npm-shri
 // What a package manager's minimum-package-age filter (a supply-chain wrapper around npm) prints when it
 // hid releases; its answer is then an older version, not the registry's latest.
 const AGE_FILTER_NOTICE = /minimum package age/i
+// Lines of package-manager output that say why an install failed. Runtime warnings are noise, and a
+// wrapper's "to disable this check" hint is a bypass cockpit never repeats.
+const INSTALL_CAUSE = /ERR_PNPM_|npm error|npm ERR!|\b404\b|E404|No matching version|minimum package age|\berror\b/i
+const INSTALL_NOISE = /\(node:\d+\)|DeprecationWarning|--trace-deprecation|disable this check|--[a-z-]*skip[a-z-]*/i
 const LOOKUP_TIMEOUT_MS = 60_000
 const INSTALL_TIMEOUT_MS = 600_000
 
@@ -188,10 +192,12 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
 
     const install = step(manager.value, root, input.env, 'upgrade:install', installArgv.slice(1), INSTALL_TIMEOUT_MS)
     const installOutcome = authenticatedExecutionOutcome(await dependencies.execute(install), install)
-    const installStderr = installOutcome?.kind === 'complete' ? '' : installOutcome?.stderr.toString('utf8') ?? ''
+    const installOutput = installOutcome?.kind === 'complete' ? '' : installOutcome ? `${installOutcome.stdout.toString('utf8')}\n${installOutcome.stderr.toString('utf8')}` : ''
+    const installLines = installOutput.split('\n').map(line => line.trim()).filter(line => line !== '' && !INSTALL_NOISE.test(line))
+    const installCause = (installLines.some(line => INSTALL_CAUSE.test(line)) ? installLines.filter(line => INSTALL_CAUSE.test(line)) : installLines).slice(-4)
     if (installOutcome?.kind !== 'complete') return refused({ severity: 'error' as const, code: 'UPGRADE_INSTALL_FAILED' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_INSTALL_FAILED,
-        message: `${result.install} failed (${installOutcome ? `${installOutcome.code}, exit ${installOutcome.execution.exitCode}: ${installStderr.trim().split('\n').slice(-3).join(' | ').slice(0, 512)}` : 'the outcome could not be authenticated'})`
-            + (AGE_FILTER_NOTICE.test(installStderr) ? '; the package manager\'s package-age filter refused a release that is too new' : ''),
+        message: `${result.install} failed (${installOutcome ? `${installOutcome.code}, exit ${installOutcome.execution.exitCode}: ${installCause.join(' | ').slice(0, 512)}` : 'the outcome could not be authenticated'})`
+            + (AGE_FILTER_NOTICE.test(installOutput) ? `; the package manager's package-age filter refused ${spec}, a release that is too new: wait until it is older than the filter's minimum age, or exempt ${name} in your package manager's age-filter settings` : ''),
         fix: 'fix what the package manager reported (is the version published?), then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version>' })
 
     const node = await resolveExecutablePath(process.execPath)

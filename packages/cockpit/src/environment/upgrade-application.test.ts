@@ -12,7 +12,7 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 // The registry and package manager are fake executables on PATH, so the real process seam runs.
 // The fake `npm` answers `view` with `latest`, and on an install writes the changelog the real
 // install would have put in node_modules.
-function fixture(latest: string, lockfiles: readonly string[] = ['package-lock.json'], view = `"${latest}"`, installStderr?: string) {
+function fixture(latest: string, lockfiles: readonly string[] = ['package-lock.json'], view = `"${latest}"`, installStderr?: string, installStdout?: string) {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-upgrade-')))
     roots.push(root)
     const bin = join(root, 'bin')
@@ -30,9 +30,10 @@ function fixture(latest: string, lockfiles: readonly string[] = ['package-lock.j
     const entry = join(project, 'node_modules', '@b00dea', 'cockpit', 'bin', 'cockpit.mjs')
     const entrypoint = `import { appendFileSync } from 'node:fs'\nappendFileSync('${log}', 'cockpit ' + process.argv.slice(2).join(' ') + '\\n')\n`
     const install = `cat > '${join(project, 'node_modules', '@b00dea', 'cockpit', 'CHANGELOG.md')}' <<'EOF'\n${changelog}EOF\nmkdir -p '${join(project, 'node_modules', '@b00dea', 'cockpit', 'bin')}'\ncat > '${entry}' <<'EOF'\n${entrypoint}EOF`
-    const failing = installStderr === undefined ? install : `echo '${installStderr}' >&2\nexit 1`
+    const failing = installStderr === undefined && installStdout === undefined ? install
+        : `${installStdout === undefined ? '' : `cat <<'OUT'\n${installStdout}\nOUT\n`}${installStderr === undefined ? '' : `echo '${installStderr}' >&2\n`}exit 1`
     script('npm', `if [ "$1" = view ]; then cat <<'VIEW'\n${view}\nVIEW\nexit 0; fi\n${failing}`)
-    script('pnpm', install)
+    script('pnpm', failing)
     const calls = () => existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []
     const run = (options: { version?: string; dryRun?: boolean; registryLatest?: string } = {}) => runUpgrade({
         configPath: join(project, 'cockpit.toml'), dryRun: options.dryRun === true,
@@ -124,5 +125,24 @@ describe('cockpit upgrade', () => {
         const refusedInstall = fixture('9.9.9', ['package-lock.json'], '"9.9.9"', 'blocked by minimum package age')
         expect((await refusedInstall.run()).diagnostics).toEqual([expect.objectContaining({ code: 'UPGRADE_INSTALL_FAILED',
             message: expect.stringContaining('package-age filter') })])
+    })
+
+    // Under a wrapped pnpm the 404 and the age notice go to stdout, after a runtime deprecation warning on
+    // stderr; quoting only the stderr tail named the warning and hid the cause.
+    it('quotes the lines that explain a failed install from both streams, not runtime noise, and offers no bypass', async () => {
+        const stdout = [
+            ' ERR_PNPM_FETCH_404  GET https://registry.example/@b00dea%2Fcockpit: Not Found - 404',
+            'Safe-chain: Some package versions were suppressed during package metadata resolution due to minimum package age.',
+            '  To disable this check, use: --safe-chain-skip-minimum-package-age',
+        ].join('\n')
+        const stderr = '(node:95139) [DEP0169] DeprecationWarning: url.parse() behavior is not standardized\n(Use node --trace-deprecation ... to show where the warning was created)'
+        const f = fixture('9.9.9', ['pnpm-lock.yaml'], '"9.9.9"', stderr, stdout)
+        const [diagnostic] = (await f.run({ version: '9.9.9' })).diagnostics
+        expect(diagnostic).toMatchObject({ code: 'UPGRADE_INSTALL_FAILED' })
+        expect(diagnostic!.message).toContain('ERR_PNPM_FETCH_404')
+        expect(diagnostic!.message).toContain('package-age filter')
+        expect(diagnostic!.message).toMatch(/wait|exempt/)
+        expect(diagnostic!.message).not.toMatch(/DEP0169|trace-deprecation|skip|disable/i)
+        expect(diagnostic!.fix).not.toMatch(/skip|disable/i)
     })
 })
