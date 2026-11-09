@@ -321,6 +321,9 @@ describe('guard policy construction', () => {
         const git = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args], { stdio: 'pipe' })
         execFileSync('git', ['init', '-q', '--bare', remote])
         git('commit', '-q', '--allow-empty', '-m', 'Synthetic history')
+        // Git's default first branch differs by install (some ship `main`, others `master`); a bare push
+        // resolves only when the local name matches the upstream it tracks.
+        git('branch', '-M', 'main')
         git('remote', 'add', 'origin', remote)
         git('push', '-q', '-u', 'origin', 'HEAD:refs/heads/main')
         const config = CockpitConfig.parse(parse(readFileSync(configPath, 'utf8')))
