@@ -1395,6 +1395,8 @@ const KNOWN_TOOLS = new Set([
     'lsof', 'kill', 'pkill', 'base64',
     // Formatters, linters and runners of project code in other languages; `bundle exec` is followed to the program it runs.
     'gofmt', 'golangci-lint', 'rustup', 'bundle', 'rspec', 'rake', 'pre-commit',
+    // A static checker that only reads the scripts it is given.
+    'shellcheck',
     // Downloads, judged by their hosts and output options.
     'curl', 'wget',
     // cockpit's own CLI, judged by its command table.
@@ -1455,6 +1457,106 @@ function runsUnreadCode(invocation: ParsedInvocation): boolean {
     // scp runs the program -S names, and ssh options or a configuration file can name a command to run.
     if (name === 'scp') return argv.some((arg, at) => /^-[a-zA-Z]*[SF]/.test(arg) || /(?:Proxy|Local|KnownHosts)Command|PermitLocalCommand/i.test(arg) && (argv[at - 1] === '-o' || arg.startsWith('-o')))
     if (name === 'zip') return argv.some(arg => /^-TT|^--unzip-command(?:=|$)/.test(arg))
+    if (name === 'shellcheck') return !shellcheckReads(argv)
+    return false
+}
+
+/**
+ * Whether `argv` is a shellcheck run that only reads and reports. Every option shellcheck lists is a flag or takes a
+ * value; none writes a file or runs a program, but a word it does not list is not assumed to be harmless. File and
+ * path values (`--rcfile`, `-P`) are judged as reads by the operand rules, like the scripts themselves. What a script
+ * sources under `-x` is read by shellcheck as the script's own `source` lines direct, like a shell reading the script.
+ */
+function shellcheckReads(argv: readonly string[]): boolean {
+    const flags = 'axV'
+    const valued = 'iefoPsSW'
+    const longFlags = /^--(?:check-sourced|external-sources|norc|list-optional|version|help|color(?:=\w+)?|extended-analysis=(?:true|false))$/
+    const longValued = new Set(['--include', '--exclude', '--format', '--enable', '--source-path', '--shell', '--severity', '--wiki-link-count', '--rcfile'])
+    for (let index = 0; index < argv.length; index++) {
+        const word = argv[index]!
+        if (word === '--') return true
+        if (word === '-' || !word.startsWith('-')) continue
+        if (word.startsWith('--')) {
+            const [name, attached] = word.split(/=(.*)/s)
+            if (longFlags.test(word)) continue
+            if (!longValued.has(name!)) return false
+            if (attached === undefined && argv[++index] === undefined) return false
+            continue
+        }
+        // A short cluster such as `-xe SC1091`: flags, then at most one value option that takes the rest or the next word.
+        for (let at = 1; at < word.length; at++) {
+            const letter = word[at]!
+            if (flags.includes(letter)) continue
+            // `-C[WHEN]` only ever attaches its value.
+            if (letter === 'C') break
+            if (!valued.includes(letter)) return false
+            if (at === word.length - 1 && argv[++index] === undefined) return false
+            break
+        }
+    }
+    return true
+}
+
+// Docker listings and reports that only read what the daemon holds about images and containers. Anything absent asks: a
+// global option (-H, --host, --context, -c) or DOCKER_* variable points at another daemon the guard cannot see, `exec`
+// and `run` execute, `pull`, `build` and `login` reach the network or the credential store, and `compose` can mount any
+// host path. `docker inspect` and `container inspect` ask because a container's configuration carries the runtime
+// environment, which can hold the secrets of an env file. `docker ps` without --no-trunc shows the shortened command only.
+const DOCKER_LIST_OPTIONS = {
+    flags: new Set(['-a', '--all', '-q', '--quiet', '-s', '--size', '-l', '--latest']),
+    values: new Set(['-f', '--filter', '--format', '-n', '--last']),
+}
+const DOCKER_IMAGE_LIST_OPTIONS = { flags: new Set(['-a', '--all', '-q', '--quiet', '--digests', '--no-trunc']), values: new Set(['-f', '--filter', '--format']) }
+// `-f` is --format here and --filter on the listings.
+const DOCKER_REPORT_OPTIONS = { flags: new Set<string>(), values: new Set(['-f', '--format']), shortFormat: true as const }
+// The top-level fields of `docker image inspect` that are the image's published identity: where it came from, what it is
+// and how big. Config, ContainerConfig and the default output carry Env, which a local build can bake from ARG and ENV.
+const DOCKER_IMAGE_IDENTITY = new Set(['Id', 'RepoTags', 'RepoDigests', 'Created', 'Size', 'Architecture', 'Os', 'Variant', 'Parent'])
+
+/** Whether a `docker image inspect` template reads only identity fields: no root value, no variable, no other field. */
+function dockerIdentityTemplate(template: string): boolean {
+    const actions = [...template.matchAll(/\{\{(.*?)\}\}/gs)].map(match => match[1]!)
+    if (actions.length === 0 || actions.join('{{').includes('}}')) return false
+    return actions.every(action => {
+        const fields = [...action.matchAll(/(?<![\w"$])\.([A-Za-z_]\w*)((?:\.\w+)*)/g)]
+        // A bare `.` or `$` is the whole image, and a quoted name can be indexed into it.
+        return fields.length > 0 && !/(?:^|[\s(|])\.(?![A-Za-z_])|\$|"|'|`/.test(action) && fields.every(field => DOCKER_IMAGE_IDENTITY.has(field[1]!) && field[2] === '')
+    })
+}
+
+function dockerArguments(argv: readonly string[], table: { readonly flags: ReadonlySet<string>; readonly values: ReadonlySet<string>; readonly shortFormat?: true }): { operands: string[]; format: string | undefined } | undefined {
+    const operands: string[] = []
+    let format: string | undefined
+    for (let index = 0; index < argv.length; index++) {
+        const word = argv[index]!
+        if (!word.startsWith('-') || word === '-') { operands.push(word); continue }
+        const [name, attached] = word.split(/=(.*)/s)
+        if (table.flags.has(word)) continue
+        if (!table.values.has(name!)) return undefined
+        const value = attached ?? argv[++index]
+        if (value === undefined) return undefined
+        if (name === '--format' || name === '-f' && table.shortFormat) format = value
+    }
+    return { operands, format }
+}
+
+/** Whether a docker invocation is one of the read-only queries above. */
+function dockerReads(invocation: ParsedInvocation): boolean {
+    // DOCKER_HOST, DOCKER_CONTEXT, DOCKER_CONFIG and the TLS variables redirect the client; an unnamed assignment could be any.
+    if (invocation.words.some(word => word.role === 'environment-assignment-value' && (word.name === undefined || /^DOCKER_/i.test(word.name)))) return false
+    const [first, second, ...rest] = invocation.argv
+    if (first === undefined || first.startsWith('-')) return false
+    if (first === 'ps' || first === 'container' && (second === 'ls' || second === 'list' || second === 'ps')) {
+        return dockerArguments(first === 'ps' ? invocation.argv.slice(1) : rest, DOCKER_LIST_OPTIONS) !== undefined
+    }
+    if (first === 'images' || first === 'image' && (second === 'ls' || second === 'list')) {
+        return dockerArguments(first === 'images' ? invocation.argv.slice(1) : rest, DOCKER_IMAGE_LIST_OPTIONS) !== undefined
+    }
+    if (first === 'version' || first === 'info') return dockerArguments(invocation.argv.slice(1), DOCKER_REPORT_OPTIONS)?.operands.length === 0
+    if (first === 'image' && second === 'inspect') {
+        const parsed = dockerArguments(rest, DOCKER_REPORT_OPTIONS)
+        return parsed !== undefined && parsed.operands.length > 0 && parsed.format !== undefined && dockerIdentityTemplate(parsed.format)
+    }
     return false
 }
 
@@ -1464,6 +1566,7 @@ function knownTool(invocation: ParsedInvocation, roots: readonly string[]): bool
     const name = posix.basename(invocation.executable)
     // A program spelled as a path inside the roots is the project's own, like a file node runs.
     const project = invocation.executable.includes('/') && roots.some(root => within(posix.resolve(invocation.cwd, invocation.executable!), root))
+    if (!project && name === 'docker') return dockerReads(invocation)
     if (!project && !KNOWN_TOOLS.has(name)) return false
     const [first, second] = invocation.argv
     // rustup changes the person's toolchains outside the roots unless it only reports.

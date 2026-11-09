@@ -11,8 +11,10 @@ development tool it knows, and judges each one by that tool's own rules. The kno
 `gh`; package managers and the programs they launch (`npm`, `pnpm`, `yarn`, `bun`, `npx`, `uv`, `pip`);
 interpreters running project files (`node`, `python3`, `ruby`) and build and test tools (`make`,
 `cargo`, `go`, `tsc`, `vitest`, `pytest`); formatters, linters and runners for other languages
-(`gofmt`, `golangci-lint`, `rspec`, `rake`, `pre-commit`, and `bundle exec`, which is followed to the
-program it runs); `rustup`, for its read verbs only; `lsof`, `pkill` and `kill`, which signals a
+(`gofmt`, `golangci-lint`, `shellcheck`, `rspec`, `rake`, `pre-commit`, and `bundle exec`, which is followed to the
+program it runs); `docker` for its read-only queries only (`image ls`, `images`, `ps`, `container ls`, `version`, `info`, and
+`image inspect` with a `--format` template that reads only the image's identity, never `.Config` or `Env`; a global option such as `-H` or
+`--context`, a `DOCKER_*` variable, `container inspect`, `exec`, `run`, `compose` and every other subcommand ask); `rustup`, for its read verbs only; `lsof`, `pkill` and `kill`, which signals a
 process id of 2 or more or a `%job`, never every process or a process group; shells; read and text
 utilities (`cat`, `rg`, `find`, `jq`, `awk`, `sed`); file utilities, judged as writes inside the roots
 (`mkdir`, `cp`, `mv`, `rm`, `tee`); archive and sync tools (`tar`, `zip`, `rsync`); `curl` and `wget`;
