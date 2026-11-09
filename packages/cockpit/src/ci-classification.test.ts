@@ -373,7 +373,6 @@ describe('the signature audit', () => {
         const calls = join(bin, 'calls')
         const cases = replies.map(([code, text], index) => `  ${index + 1}) echo '${text.replace('<log>', join(bin, 'debug.log'))}'; exit ${code} ;;`).join('\n')
         writeFileSync(join(bin, 'npm'), `#!/bin/sh\necho "$*" >> '${calls}'\ncase $(wc -l < '${calls}' | tr -d ' ') in\n${cases}\nesac\n`, { mode: 0o755 })
-        writeFileSync(join(bin, 'sleep'), '#!/bin/sh\n', { mode: 0o755 })
         writeFileSync(join(bin, 'debug.log'), 'http fetch GET 200 synthetic/attestations/@scope%2fpad@1.3.0 40ms (cache hit)\n')
         const result = spawnSync('bash', [join(REPOSITORY, '.github/scripts/audit-signatures.sh')],
             { encoding: 'utf8', env: { PATH: `${bin}:${process.env.PATH}` } })
@@ -381,19 +380,21 @@ describe('the signature audit', () => {
     }
     const MISSING_KEY = [1, 'npm error code EMISSINGSIGNATUREKEY\nnpm error @scope/pad@1.3.0 has attestations but no corresponding public key(s) can be found\nnpm error A complete log of this run can be found in: <log>'] as const
 
-    it('passes when a missing-key report does not recur, and says it retried', () => {
-        const { code, output, attempts } = audit([MISSING_KEY, [0, 'all verified']])
+    it('audits with a pinned npm whose pacote accepts a provenance-only attestation response', () => {
+        const { code, attempts } = audit([[0, 'all verified']])
         expect(code).toBe(0)
-        expect(attempts).toEqual(['audit signatures --prefer-online', 'audit signatures --prefer-online'])
-        expect(output).toContain('::warning title=npm audit signatures::EMISSINGSIGNATUREKEY on attempt 1')
-        // The cause on a runner is unproven, so each occurrence records how that fetch was answered.
-        expect(output).toContain('attestations/@scope%2fpad@1.3.0 40ms (cache hit)')
+        // Before 11.11.0, npm reported EMISSINGSIGNATUREKEY on every attempt when a registry edge served
+        // only a package's provenance bundle, so the runner's bundled npm cannot run this audit.
+        const pinned = /^exec --yes --package=npm@(?<major>\d+)\.(?<minor>\d+)\.\d+ -- npm audit signatures --prefer-online$/.exec(attempts[0] ?? '')?.groups
+        expect(pinned).toBeDefined()
+        expect(Number(pinned!.major) * 1000 + Number(pinned!.minor)).toBeGreaterThanOrEqual(11_011)
+        expect(attempts).toHaveLength(1)
     })
 
-    it('fails when the key stays missing', () => {
-        const { code, attempts } = audit([MISSING_KEY, MISSING_KEY, MISSING_KEY, [0, 'never reached']])
+    it('fails at once when a keyed attestation has no registry key', () => {
+        const { code, attempts } = audit([MISSING_KEY, [0, 'never reached']])
         expect(code).toBe(1)
-        expect(attempts).toHaveLength(3)
+        expect(attempts).toHaveLength(1)
     })
 
     it('fails at once on an invalid signature, without another attempt', () => {
