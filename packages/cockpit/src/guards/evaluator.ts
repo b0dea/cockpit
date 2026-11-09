@@ -1552,7 +1552,8 @@ function dockerReads(invocation: ParsedInvocation): boolean {
     if (first === 'images' || first === 'image' && (second === 'ls' || second === 'list')) {
         return dockerArguments(first === 'images' ? invocation.argv.slice(1) : rest, DOCKER_IMAGE_LIST_OPTIONS) !== undefined
     }
-    if (first === 'version' || first === 'info') return dockerArguments(invocation.argv.slice(1), DOCKER_REPORT_OPTIONS)?.operands.length === 0
+    // `info` stays out: it reports the daemon's proxy settings, whose URLs can carry credentials.
+    if (first === 'version') return dockerArguments(invocation.argv.slice(1), DOCKER_REPORT_OPTIONS)?.operands.length === 0
     if (first === 'image' && second === 'inspect') {
         const parsed = dockerArguments(rest, DOCKER_REPORT_OPTIONS)
         return parsed !== undefined && parsed.operands.length > 0 && parsed.format !== undefined && dockerIdentityTemplate(parsed.format)

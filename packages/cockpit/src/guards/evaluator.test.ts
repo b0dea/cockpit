@@ -1284,8 +1284,8 @@ describe('allow by default', () => {
             .map(command => ['shellcheck names a secret', command, undefined, { decision: 'deny' }] as const),
         ...['shellcheck --frobnicate script.sh', 'shellcheck -Z script.sh', 'shellcheck script.sh -f']
             .map(command => ['shellcheck option it does not list', command, undefined, { decision: 'ask' }] as const),
-        // Docker answers only for the image and container listings, and the version and info reports; the rest can run, pull, publish or reach another daemon.
-        ...['docker inspect web', 'docker container inspect web', 'docker exec web sh', 'docker run alpine true', 'docker pull alpine', 'docker build .', 'docker login',
+        // Docker answers only for the image and container listings, and the version report; the rest can run, pull, publish or reach another daemon.
+        ...['docker inspect web', 'docker container inspect web', 'docker exec web sh', 'docker run alpine true', 'docker pull alpine', 'docker build .', 'docker login', 'docker info',
             'docker context ls', 'docker -H tcp://host.example.test ps', 'docker --host=tcp://host.example.test ps', 'docker --context other image ls', 'docker -c other ps',
             'DOCKER_HOST=tcp://host.example.test docker ps', 'env DOCKER_CONTEXT=other docker image ls', 'docker ps --no-trunc', 'docker image ls --unknown', 'docker compose ps',
             // An image's default and `.Config`-reaching output carries the Env a build baked in.
@@ -1441,7 +1441,7 @@ describe('allow by default', () => {
             // The queries a project's scripts run to check its shell scripts and pinned images.
             'shellcheck -x local/scripts/schema.sh', 'shellcheck -S warning -e SC1091 -s bash -f gcc -P SCRIPTDIR scripts/a.sh scripts/b.sh', 'shellcheck --external-sources --format=json scripts/a.sh',
             "docker image ls --digests --format '{{.Repository}}:{{.Tag}} {{.Digest}}'", "docker image inspect app:latest --format '{{json .RepoDigests}}'",
-            'docker images -q', 'docker ps -a --filter status=running', "docker ps --format '{{.Names}}'", 'docker container ls', 'docker version --format {{.Server.Version}}', 'docker info',
+            'docker images -q', 'docker ps -a --filter status=running', "docker ps --format '{{.Names}}'", 'docker container ls', 'docker version --format {{.Server.Version}}',
             "jq --arg v 1 '.a' package.json", "jq --argjson n 1 --indent 4 '.a' package.json", "jq --rawfile t notes.md '.a' package.json", 'tail -f src/a.ts', 'tail -F -n 20 src/a.ts',
             'wc -l src/*.ts', "find src -name '*.ts' -print -quit", 'base64 -d build/a.b64 > build/a.bin', 'base64 -d -i build/a.b64 -o build/a.bin',
             "gh release download v1 -p '*.tgz' -D build/x", "gh release download v1 -p '*.tgz'", 'gh run download 1 -D build/art', 'gh repo clone o/r build/r']) {

@@ -12,7 +12,7 @@ development tool it knows, and judges each one by that tool's own rules. The kno
 interpreters running project files (`node`, `python3`, `ruby`) and build and test tools (`make`,
 `cargo`, `go`, `tsc`, `vitest`, `pytest`); formatters, linters and runners for other languages
 (`gofmt`, `golangci-lint`, `shellcheck`, `rspec`, `rake`, `pre-commit`, and `bundle exec`, which is followed to the
-program it runs); `docker` for its read-only queries only (`image ls`, `images`, `ps`, `container ls`, `version`, `info`, and
+program it runs); `docker` for its read-only queries only (`image ls`, `images`, `ps`, `container ls`, `version`, and
 `image inspect` with a `--format` template that reads only the image's identity, never `.Config` or `Env`; a global option such as `-H` or
 `--context`, a `DOCKER_*` variable, `container inspect`, `exec`, `run`, `compose` and every other subcommand ask); `rustup`, for its read verbs only; `lsof`, `pkill` and `kill`, which signals a
 process id of 2 or more or a `%job`, never every process or a process group; shells; read and text
