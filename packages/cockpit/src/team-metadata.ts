@@ -610,9 +610,9 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
             severity: 'info' as const,
             // A literal, so the diagnostic inventory captures the fix beside the code.
             code: 'GUARD_NODE_DIFFERS' satisfies typeof ENVIRONMENT_CODES.GUARD_NODE_DIFFERS,
-            message: `the guard hook runs the Node at ${identity.node}; this command runs the Node at ${runningNode}. The guard is unaffected, but selftest cannot measure it under this Node`,
+            message: `the guard hook runs the Node at ${identity.node}; this command runs the Node at ${runningNode}. The guard is unaffected, and an interactive selftest reruns itself under the guard's Node`,
             target: GUARD_LOCAL_PATHS.identity,
-            fix: 'run selftest with the Node the guard was installed for, or run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> under this Node first, which makes the guard hook run it',
+            fix: 'nothing is needed; to have the guard hook run this Node instead, run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> under it',
         })
     }
     const loaded = await loadCockpitConfig(configPath)

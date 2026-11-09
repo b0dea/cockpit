@@ -245,6 +245,8 @@ settings, and the FAQ says [when not to use cockpit](docs/faq.md#when-should-i-n
   warns until then.
 - **Measured, per tool.** The [capability matrix](docs/capability-matrix.md) says what each tool
   enforces, measured on which date and version. Cursor and Grok Build get files but no guard.
+  Cockpit is usable once `check` passes; to gather the same native evidence for the tools on your
+  machine, a person can optionally run `npx --no cockpit selftest --config cockpit.toml --interactive`.
 - Enabling an MCP server and `reset` (it wipes data) need a person by default. Process gates can be
   handed to the agent; guardrails cannot
   ([Fully agentic setup](docs/safety-and-autonomy.md#fully-agentic-setup)).

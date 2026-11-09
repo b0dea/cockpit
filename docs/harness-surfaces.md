@@ -437,6 +437,17 @@ run, what it changes, what it must not do, its review requirements and a line ca
 refuses embedded decision logic, undeclared commands, missing tool equivalents, missing procedures,
 duplicate names, and skills over the always-loaded size limit.
 
+`selftest` is optional. Cockpit is usable once `check` passes; selftest gathers native evidence
+of what the tools on your machine actually load and enforce, and a person runs it, when they want
+that evidence, with one command:
+
+```sh
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config ./cockpit.toml --interactive
+```
+
+An agent never blocks adoption on selftest and does not ask the person to run it unless they ask
+about native evidence; it cannot approve a run itself.
+
 `selftest` measures native instruction loading for Claude Code and Codex, explicit skill body
 loading for both, and Claude guard firing where the registry declares a vendor endpoint hostname.
 The [capability matrix](capability-matrix.md) records the native versions and measurement dates.
@@ -499,38 +510,47 @@ The probe-specification file has one row per built-in cell, bound to the current
 generated manifest. New files contain closed native protocol rows; no diagnostic codes need to be
 invented. Protocol fields and command vectors must match the built-in protocol exactly.
 
-1. After `sync`, write the file to a new path:
+Run `selftest --interactive` without a file, as above, in a terminal outside CI and outside an
+agent session, and it writes fresh specifications for that run to a new file under the ignored
+`.cockpit/local/probes`, then shows them for approval. Each run writes its own, so a file from
+before an upgrade or a `cockpit.toml` edit is never reused. To keep the specifications under review
+in your tree instead, use two steps:
+
+1. After `sync`, write the file (`--replace` writes over an existing one):
 
    ```sh
    ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config ./cockpit.toml \
-     --write-probe-specifications ./.cockpit/local/probe-specifications.json
+     --write-probe-specifications ./probe-specifications.json
    ```
 
 2. Review the file, then run in a terminal outside CI and outside an agent session:
 
    ```sh
    ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --interactive --config ./cockpit.toml \
-     --probe-specifications ./.cockpit/local/probe-specifications.json
+     --probe-specifications ./probe-specifications.json
    ```
 
-   When the Claude Code guard probe would run, cockpit first compares the guard identity `sync`
-   installed with the one this process would install, before asking for any approval. `sync` records
-   the Node it ran under and the guard hook runs that Node, so a shell whose `node` differs (a Node
-   version manager, say) is refused with `SELFTEST_GUARD_IDENTITY_MISMATCH`, naming both Nodes. Run
-   selftest with the recorded Node, or run `sync` under the current one first.
+When the Claude Code guard probe would run, cockpit first compares the guard identity `sync`
+installed with the one this process would install, before asking for any approval. `sync` records
+the Node it ran under and the guard hook runs that Node, so in a shell whose `node` differs (a
+Node version manager, say) an interactive selftest prints that it is rerunning under the recorded
+Node and runs again under it, with the same arguments and terminal, once that Node's SHA-256
+matches the record. When that Node is gone or changed, or the run is not interactive, selftest
+refuses with `SELFTEST_GUARD_IDENTITY_MISMATCH`, naming both Nodes; run `sync` under the current
+Node first.
 
-   Cockpit shows canonical paths, fingerprints and runnable command vectors; rows that differ only in
-   their skill are shown once, with `{skill}` in its place and the skills it runs for, and any row
-   that template does not reproduce exactly is shown whole. Unsupported rows are counted separately
-   and execute nothing. When the Claude Code guard probe runs, it also lists each
-   hook registration in the generated `.claude/settings.json` that cockpit did not generate, with its
-   event, matcher and command: Claude Code can run every one of them during the probe, with the
-   script as it is on disk. The list comes from the generated manifest that the approved file's
-   digest binds, so a changed registration makes the file stale. Answer `yes` to approve the displayed artifact, then
-   the executable found on `PATH`. Any other answer or closed input declines. Cockpit binds each
-   confirmation to the exact displayed digest internally and revalidates the artifact, configuration,
-   generated manifest and consumed executable; typing a hash is unnecessary. Approval lasts only
-   for that run. Without `--interactive`, or in CI or JSON mode, no commands in the file run.
+Cockpit shows canonical paths, fingerprints and runnable command vectors; rows that differ only in
+their skill are shown once, with `{skill}` in its place and the skills it runs for, and any row
+that template does not reproduce exactly is shown whole. Unsupported rows are counted separately
+and execute nothing. When the Claude Code guard probe runs, it also lists each
+hook registration in the generated `.claude/settings.json` that cockpit did not generate, with its
+event, matcher and command: Claude Code can run every one of them during the probe, with the
+script as it is on disk. The list comes from the generated manifest that the approved file's
+digest binds, so a changed registration makes the file stale. Answer `yes` to approve the displayed artifact, then
+the executable found on `PATH`. Any other answer or closed input declines. Cockpit binds each
+confirmation to the exact displayed digest internally and revalidates the artifact, configuration,
+generated manifest and consumed executable; typing a hash is unnecessary. Approval lasts only
+for that run. Without `--interactive`, or in CI or JSON mode, no commands in the file run.
 
 The terminal leads with each cell whose measurement failed, what failed and what to do, then
 measured and pending cells, then the skill reviews. Those reviews are a person's judgement of each
@@ -552,12 +572,12 @@ It retains the bundle, validation results, per-cell reasons, diagnostics and sum
 `--json` retains those fields too. Native instruction streams remain withheld from both and stay
 in their private transcripts. Read the saved report for detail without repeating probes or approvals.
 
-When the file goes stale, carry forward its unchanged rows into a new file:
+When a file you keep goes stale, carry forward its unchanged rows, writing over it in place:
 
 ```sh
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config ./cockpit.toml \
-  --write-probe-specifications ./.cockpit/local/probe-specifications-2.json \
-  --probe-specifications ./.cockpit/local/probe-specifications.json
+  --write-probe-specifications ./probe-specifications.json \
+  --probe-specifications ./probe-specifications.json --replace
 ```
 
 Previously completed legacy rows without `protocol` remain supported unchanged. They require an

@@ -1049,6 +1049,11 @@ describe('generated environment process contract', () => {
                 captureIo().io, { selftest: async (input) => { selftestCalls.push(input); return { status: 0, diagnostics: [], result: null } } }),
             conflict.join(' ')).toBe(2)
         }
+        // --replace overwrites only the file --write-probe-specifications names.
+        const replaceAlone = captureIo()
+        expect(await runCli(['selftest', '--config', 'cockpit.toml', '--probe-specifications', 'probe.json', '--replace'], replaceAlone.io,
+            { selftest: async (input) => { selftestCalls.push(input); return { status: 0, diagnostics: [], result: null } } })).toBe(2)
+        expect(replaceAlone.output().stderr).toContain('--replace only applies with --write-probe-specifications')
         expect(await runCli(['selftest', '--config', 'cockpit.toml', '--write-probe-specifications', 'probe.json', '--probe-specifications', 'earlier.json'],
             captureIo().io, { selftest: async (input) => { selftestCalls.push(input); return { status: 0, diagnostics: [], result: null } } })).toBe(0)
         expect(selftestCalls).toEqual([

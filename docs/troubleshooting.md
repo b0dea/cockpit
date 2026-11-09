@@ -165,11 +165,13 @@ file is not a repair.
 ### Selftest and override inspection
 
 `SELFTEST_SOURCE_INVALID` means the generated check, resolved probe-specification path, source
-digest, generated-manifest digest or specification shape failed its check. Write a fresh file with
-`./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <path> --write-probe-specifications <new file>`.
-New files contain supported native protocols and explicit pending rows; they need no invented
-markers. For a stale file, add `--probe-specifications <stale file>` to preserve unchanged filled
-legacy rows. Do not edit stored digests. Legacy rows still containing `null` must be completed with
+digest, generated-manifest digest or specification shape failed its check. Run
+`./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <path> --interactive`, which writes
+fresh specifications for that run itself. To keep a file under review instead, write one with
+`--write-probe-specifications <file>` (add `--replace` to write over your own file). New files
+contain supported native protocols and explicit pending rows; they need no invented markers. For a
+stale file, add `--probe-specifications <stale file>` to preserve unchanged filled legacy rows. Do
+not edit stored digests. Legacy rows still containing `null` must be completed with
 a demonstrably compatible native diagnostic contract or replaced with a fresh file.
 [Skills and selftest evidence](harness-surfaces.md#skills-and-selftest-evidence) describes the
 supported native scope and remaining operator work.
@@ -191,8 +193,11 @@ supported native scope and remaining operator work.
 `SELFTEST_GUARD_IDENTITY_MISMATCH` means the guard identity `sync` wrote under
 `.cockpit/local/guard-identity` differs from the one this selftest would write, so the Claude Code
 guard probe cannot run; selftest refuses before asking for any approval. Most often `sync` ran under
-another Node than this shell's, and the message names both. Run selftest with the Node the guard was
-installed for, as the fix prints it, or run `sync` under the current Node and then selftest. When the
+another Node than this shell's. An interactive selftest then reruns itself under the Node `sync`
+recorded, once it has checked that Node's SHA-256 against the record, so this refusal names both
+Nodes only when that Node is gone or changed, or the run was not interactive. Run `sync` under the
+current Node and then selftest, or, when the recorded Node is still there, rerun selftest with
+`--interactive` at a terminal. When the
 Node at the recorded path was upgraded in place, no Node runs what `sync` recorded and the guard holds
 its calls until `sync` runs again, so run `sync`, then selftest. For any other difference, run `sync`
 with this cockpit, then selftest. `doctor` reports `GUARD_NODE_DIFFERS` for both Node cases.
@@ -322,7 +327,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `MCP_INPUT_INVALID` | [see above](#mcp-and-restrictions) |
 | `MCP_NOT_APPROVED` | [see above](#mcp-and-restrictions) |
 | `MCP_TRANSPORT_UNAVAILABLE` | [see above](#mcp-and-restrictions) |
-| `OUTPUT_EXISTS` | choose a new path; replacement requires a future explicit option |
+| `OUTPUT_EXISTS` | choose a new path, or write over your own file with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --write-probe-specifications <file> --replace |
 | `PORT_FAMILY_COLLISION` | [see above](#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [see above](#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [see above](#sibling-projection-and-skills) |
