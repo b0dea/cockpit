@@ -13,6 +13,30 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.9
+
+### Patch Changes
+
+- d0254e9: `selftest` no longer asks you to approve a run whose Claude Code guard probe cannot run. `sync` records the Node it ran under and the guard hook keeps running that Node, so when `selftest` ran under a different `node` (a Node version manager in another shell, say), the probe was refused only after every approval, as an unnamed changed input. `selftest` now compares the installed guard identity first and refuses with `SELFTEST_GUARD_IDENTITY_MISMATCH`, naming both Nodes and the two ways forward: run selftest with the recorded Node, or run `sync` under the current one and then selftest. When the Node at the recorded path was upgraded in place, it says so and gives the one remedy that works: run `sync`.
+  
+  When a reviewed input does change during a run, the message now names it and its path: the approved executable, a probe control, the guard identity, the configuration recorded for the guard, `cockpit.toml`, the Node or cockpit module the guard runs, or the generated Bash guard, or says the step's dispatch window closed.
+- d0254e9: `selftest` reports what it measured more truthfully:
+  
+  - Instruction loading is measured on the whole root `AGENTS.md` the tools load, your own text included, not only cockpit's region, so a team guide that pushes cockpit's text past Codex's size limit now fails that cell instead of passing.
+  - With no `[guards] vendor_endpoint_hosts`, the Claude Code guard-firing cell is pending as the new `guard_host_undeclared`, telling you to declare a host, instead of being blamed on a missing protocol. Cells cockpit cannot measure, such as Codex guard firing, say plainly that they stay pending.
+  - `summary.complete`, which could never be true, is replaced by `summary.measurementComplete`: true only when every cell with a supported protocol produced evidence. Skill reviews are listed beside it as a person's judgement that cockpit cannot perform or record.
+  - The interactive approval shows each command once per skill template with the skills it runs for, and shows any row that template does not reproduce exactly in full; you still approve the same file digest.
+  
+  `sync` now copies a sibling guide's `@` import of a file the sibling holds as a plain path from the cockpit root, since in the cockpit root it named the wrong file or none; package names and handles are copied as written. `doctor` reports `GUARD_NODE_DIFFERS`: as information when the guard hook runs a different Node than the command, and as a warning when the Node at the recorded path changed in place, which holds the guard's calls until `sync` runs again.
+  
+  In a cockpit whose probe-specification file was written before this release, write a fresh one as `selftest` asks.
+- d0254e9: `selftest` now measures Claude Code instruction loading in every cockpit, whatever its `cockpit.name`, and when your own `CLAUDE.md` already imports `AGENTS.md`. The check that the generated `CLAUDE.md` imports `AGENTS.md` accepted only one cockpit name, and a team `CLAUDE.md` that cockpit leaves in place was not found at all, so the cell failed with a "run sync" remedy that changed nothing. The probe now loads the guide through your file as `sync` read it, notes beside the `@AGENTS.md` line included. Package names and handles such as `@acme/ui` are not imports. A `CLAUDE.md` or `AGENTS.md` whose `@` token can reach a file, or an `AGENTS.md` with an HTML comment spanning several lines, is recorded `native_protocol_unsupported` with what to change to make the cell measurable; one-line comments are measured.
+- d95ae63: `upgrade` no longer reports "already current" when the package manager's minimum-package-age filter
+  hid newer releases from the latest lookup. It now refuses with `UPGRADE_LATEST_FILTERED`, names the
+  registry's real latest the way `doctor` reads it, and gives the exact-version command to run. A failed
+  install that carries the same filter notice says so. If you ran `upgrade` on such a machine and saw
+  "already current", run `upgrade <version>` with the latest version from `doctor`.
+
 ## 0.1.8
 
 ### Patch Changes
