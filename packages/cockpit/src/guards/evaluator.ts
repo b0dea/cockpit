@@ -375,7 +375,7 @@ const REMOVERS = new Set(['rm', 'unlink', 'rmdir', 'shred', 'trash', 'rimraf', '
 const GIT_VERBS = new Set(['add', 'am', 'annotate', 'apply', 'archive', 'backfill', 'bisect', 'blame', 'branch', 'bundle', 'cat-file', 'check-attr', 'check-ignore',
     'check-mailmap', 'check-ref-format', 'checkout', 'checkout-index', 'cherry', 'cherry-pick', 'clean', 'clone', 'column', 'commit', 'commit-graph', 'commit-tree',
     'config', 'count-objects', 'describe', 'diff', 'diff-files', 'diff-index', 'diff-tree', 'fetch', 'filter-branch', 'filter-repo', 'fmt-merge-msg', 'for-each-ref',
-    'format-patch', 'fsck', 'gc', 'grep', 'hash-object', 'help', 'init', 'interpret-trailers', 'log', 'ls-files', 'ls-remote', 'ls-tree', 'maintenance', 'merge',
+    'format-patch', 'fsck', 'gc', 'grep', 'hash-object', 'help', 'init', 'interpret-trailers', 'lfs', 'log', 'ls-files', 'ls-remote', 'ls-tree', 'maintenance', 'merge',
     'merge-base', 'merge-file', 'merge-tree', 'mktag', 'mktree', 'mv', 'name-rev', 'notes', 'pack-refs', 'patch-id', 'prune', 'pull', 'push', 'range-diff', 'read-tree',
     'rebase', 'reflog', 'refs', 'remote', 'repack', 'replace', 'rerere', 'reset', 'restore', 'rev-list', 'rev-parse', 'revert', 'rm', 'send-pack', 'shortlog', 'show',
     'show-branch', 'show-ref', 'sparse-checkout', 'stash', 'status', 'stripspace', 'submodule', 'switch', 'symbolic-ref', 'tag', 'update-index', 'update-ref', 'var',
@@ -1074,7 +1074,7 @@ function sourceTrees(invocation: ParsedInvocation): readonly string[] | undefine
     const name = posix.basename(invocation.executable ?? '')
     const local = (word: string) => !/^[a-z][a-z0-9+.-]*:\/\//i.test(word) && !/^[^/]*:/.test(word)
     const operands: string[] = []
-    const valued = name === 'zip' ? ['-b', '-n', '-t', '-tt', '-P', '-O'] : name === 'rsync' ? ['-e', '--rsh', '--exclude', '--include', '--filter', '-f'] : name === 'scp' ? ['-i', '-o', '-P', '-F', '-c', '-l', '-J', '-S'] : []
+    const valued = name === 'zip' ? ['-b', '-n', '-t', '-tt', '-P', '-O'] : name === 'diff' ? ['-x', '-X', '-I', '-F', '-L', '-S', '-C', '-U', '-D'] : name === 'rsync' ? ['-e', '--rsh', '--exclude', '--include', '--filter', '-f'] : name === 'scp' ? ['-i', '-o', '-P', '-F', '-c', '-l', '-J', '-S'] : []
     let options = true
     for (let index = 0; index < invocation.argv.length; index++) {
         const arg = invocation.argv[index]!

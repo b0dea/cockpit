@@ -955,8 +955,9 @@ describe('guard policy construction', () => {
             declaredAllows: [{ argv: ['make', 'verify'], reason: 'Repository verification is safe.', cwd: root }],
             declaredDenies: [{ match: 'contains', argv: ['--environment', 'shared'], reason: 'Shared environments are human-operated.', fix: 'Use a local environment.' }],
             ripgrepConfigActive: false, externalReads: 'grant', readPaths: [], defaultDecision: 'allow', homeDirectory: realpathSync(homedir()),
-            // The running package lives outside this checkout, so no installed directory is in reach.
-            executionDirectories: [], searchDirectories: [], searchPathRelativeEntry: null, secretFileIdentities: [], protectedFilesLinked: false,
+            // The running package lives outside this checkout, so no installed directory is in reach; the
+            // package itself is carried wherever it is, since a path into it runs cockpit.
+            executionDirectories: [], cockpitPackageDirectories: [realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), '../..'))], searchDirectories: [], searchPathRelativeEntry: null, secretFileIdentities: [], protectedFilesLinked: false,
             cockpitLaunchers: [],
             cockpitInvocations: [], projectCommands: [
                 { executable: 'npm', checkoutRoot: join(root, 'app'), kind: 'build', argv: ['run', 'build'] },

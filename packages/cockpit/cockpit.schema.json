@@ -505,7 +505,7 @@
         },
         "allow": {
           "default": [],
-          "description": "Commands the guard admits that it would otherwise ask about; an entry never admits a blocked command, such as a secret read, a write outside the cockpit, a protected-branch or force push, or a change to the guard.",
+          "description": "Exceptions that admit a command the guard would otherwise ask about, such as a program it does not know or inline interpreter code; an entry never admits a blocked command, such as a secret read, a write outside the cockpit, a protected-branch or force push, or a change to the guard.",
           "maxItems": 64,
           "type": "array",
           "items": {
@@ -715,7 +715,7 @@
         },
         "default": {
           "default": "allow",
-          "description": "What the guard does with a shell command outside its blocked list: allow runs it, so agents work freely inside the cockpit while secrets, writes outside it, protected branches and force pushes, declared hosts, the guard itself and privilege escalation stay refused; ask is the strict mode, which admits only the read-only commands the guard classifies, declared build and test commands and allow rules, and asks for the rest.",
+          "description": "What the guard does with a shell command outside its blocked list: allow runs a command whose executable is a development tool it knows, a project program inside the roots and package scripts, and asks about an unknown program or inline interpreter code, which a person approves or admits with an allow entry; ask is the strict mode, which admits only the read-only commands the guard classifies, declared build and test commands and allow entries, and asks for every other command. Secrets, writes outside the cockpit, protected branches and force pushes, declared hosts, the guard itself and privilege escalation are refused in both modes.",
           "type": "string",
           "enum": [
             "allow",
