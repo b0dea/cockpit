@@ -363,11 +363,46 @@ and retry. A process ID can be reused, so a hold standing on one alone may name 
 
 The wrapper passes this identity to its command in `COCKPIT_SESSION_PROCESS`, so a hold that a
 `sleep` and then an `up` inside the session re-add stays tied to the wrapper. `up` refuses with
-`CLI_USAGE_INVALID` when the wrapper has ended or the value is malformed.
+`CLI_USAGE_INVALID` when the wrapper has ended, the value is malformed, or it names a process that
+is not `up` itself or one of its ancestors.
 
 Docker sends SIGTERM and waits ten seconds before killing. A service whose PID 1 ignores SIGTERM, as
 `node` does unless the program handles it, pays the whole grace at every stop: add `init: true` to
 it in your Compose file, or handle SIGTERM.
+
+### Host processes on leased ports
+
+A product can keep some processes on the host, such as a dev server or a fixture server, and give
+them leased ports that no Compose service publishes. Start them through the session's command, as in
+`npx --no cockpit session --config cockpit.toml -- npm run dev`, and read the port from its
+`[ports.bases]` name. `preflight` and `doctor` then accept a listener on such a port only when
+cockpit can prove the session started it:
+
+- a session holding this checkout's stack is recorded with its process ID and start identity, and a
+  process with that ID and identity still runs;
+- every process listening on the port, as `lsof` lists it on macOS and `ss -ltnp` on Linux, has
+  that session's wrapper among its ancestors, and keeps the same parent and start time across the
+  `ps` reads before and after the listing;
+- every loopback address that answered the probe is covered by one of those sockets, either the
+  address itself or a wildcard, and no socket on the port belongs to a process the listing cannot
+  name: `lsof` leaves out other users' processes, and `ss` lists their sockets without the process;
+- the same proof, read again after the stack's containers and lease are rechecked, is unchanged.
+
+Anything else fails with `PORT_FAMILY_COLLISION`, which names the port and why: a server started
+from another terminal or after a plain `up`, one another session or checkout started, one another
+user runs, and one that outlived its session. While a session holds the stack, a session or listener
+whose process cannot be read, because `lsof`, `ss` (from iproute2) or `ps` is missing or a sandbox
+refuses it, leaves the check unavailable; it never passes. A declared address, sibling placement or `mount = "host"` grants
+nothing here, and a leased port nothing listens on passes.
+
+Three cases are not told apart. On macOS the start identity is read to the second, so a process ID
+reused within the same second as the session started looks like the session. On macOS, where `lsof`
+does not show other users' sockets, a wildcard socket is taken as dual-stack, so another user's
+listener on a specific loopback address beside the session's wildcard socket, or beside an IPv6-only
+one, looks like the session's. And these checks catch mistakes, not a deliberate forger: a process
+that sets `COCKPIT_SESSION_ID` and `COCKPIT_SESSION_PROCESS` to name one of its own ancestors, such
+as its shell, before running `up` is recorded as a session, and that ancestor's other children then
+count as the session's, much as editing cockpit's state records directly would.
 
 ### Remove the stack and its data
 
@@ -916,7 +951,8 @@ What the checks compare:
   identities, mounts and published listeners without reserving sockets. Compose reports a `::`
   publication beside each `0.0.0.0` one, and some runtimes forward only IPv4 loopback, so the `::`
   row need not listen while its `0.0.0.0` twin does; a leased port nothing publishes must stay free
-  on both families.
+  on both families unless the session holding the stack started its listener
+  ([Host processes on leased ports](#host-processes-on-leased-ports)).
 - **Capacity.** Cold-start timing applies only to services `up` actually started. The disk floor
   compares current free space with an explicitly declared machine floor; without that declaration,
   host-floor checks do not apply.

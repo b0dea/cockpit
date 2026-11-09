@@ -57,7 +57,7 @@ import { createDestructiveCommandAdapters, selectDestructiveDaemon } from './env
 import { createHealthCommandAdapters } from './environment/health-composition.js'
 import { inspectInitReadiness, measureInitMachine, proposeInitGrading } from './environment/readiness-composition.js'
 import { createLifecycleCommandAdapters } from './environment/lifecycle-composition.js'
-import { isProcessStart, observeProcessStart, processHost, type HolderProcess } from './environment/claims.js'
+import { isProcessStart, listenerHost, observeProcessAncestry, observeProcessStart, processHost, type HolderProcess } from './environment/claims.js'
 import { createReadCommandAdapters } from './environment/read-composition.js'
 import { probeInstalledRuntime, runRuntimeMeasure } from './environment/runtime-measurement.js'
 import { initializeLocalGitRepository, runSiblingAdd, runSiblingRemove, type SiblingAddInput, type SiblingRemoveInput } from './environment/sibling-registration.js'
@@ -579,9 +579,12 @@ const SESSION_PROCESS = /^([1-9][0-9]{0,9})@(\S+)$/
 // not to itself. The variable only names a process: the child reads that process's start identity
 // again and records the hold only when it matches, so a stale or invented value cannot tie a hold
 // to a process the wrapper is not. A hold carries only its own holder's process, and dead-holder
-// release removes only the holder whose recorded process is gone, so the most a forged value can
-// do is end the forger's own hold early; reaching another session's hold needs its session ID,
-// which already allows `sleep` on it.
+// release removes only the holder whose recorded process is gone, so a forged value cannot end
+// another session's hold; reaching that needs its session ID, which already allows `sleep` on it.
+// A recorded session also vouches for listeners its descendants hold on the stack's leased ports,
+// so the named process must be an ancestor of this command. A forged value naming one of the
+// caller's own ancestors, such as its shell, still passes: nothing here tells a wrapper from such
+// a process, and the caller could equally write the coordination record.
 async function sessionChildHolderProcess(
     env: Readonly<Record<string, string | undefined>>,
 ): Promise<{ readonly refusal: CommandOutcome } | { readonly refusal?: never; readonly holderProcess?: HolderProcess }> {
@@ -593,13 +596,21 @@ async function sessionChildHolderProcess(
     const pid = Number(match?.[1])
     if (!match || pid > 2_147_483_647 || !isProcessStart(match[2])) return { refusal: usageOutcome('CLI_USAGE_INVALID',
         'COCKPIT_SESSION_PROCESS must be <pid>@<start identity> as a cockpit session wrapper sets it', 'COCKPIT_SESSION_PROCESS') }
-    const observed = await observeProcessStart(pid, processHost(executeProbe))
+    const host = listenerHost(executeProbe)
+    const observed = await observeProcessStart(pid, host.process)
     // As for the wrapper's own hold, a start that cannot be confirmed leaves a pid-only hold, which
-    // is released only once that pid is gone.
+    // is released only once that pid is gone and never vouches for a listener.
     if (observed.state === 'unknown') return { holderProcess: { pid } }
     if (observed.state === 'absent' || observed.start !== match[2]) return { refusal: usageOutcome('CLI_USAGE_INVALID',
         `the cockpit session that set COCKPIT_SESSION_ID has ended (its process ${pid} is gone); start a new cockpit session or run this outside it`,
         'COCKPIT_SESSION_PROCESS') }
+    // A recorded session vouches for its descendants' listeners, so the named process must be one
+    // this command runs under. Unreadable ancestry keeps the pid-only hold, which vouches for nothing.
+    const ancestry = await observeProcessAncestry({ pid: process.pid, ancestor: { pid, processStart: match[2] }, host })
+    if (ancestry === 'unrelated') return { refusal: usageOutcome('CLI_USAGE_INVALID',
+        `COCKPIT_SESSION_PROCESS names process ${pid}, which this command does not run under; only a cockpit session wrapper sets it, for the commands it starts`,
+        'COCKPIT_SESSION_PROCESS') }
+    if (ancestry !== 'ancestor') return { holderProcess: { pid } }
     return { holderProcess: { pid, processStart: match[2] } }
 }
 

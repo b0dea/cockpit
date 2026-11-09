@@ -22,6 +22,9 @@ import {
     decodeCoordinationRecord,
     observeProcessStart,
     liveHolderMessage,
+    listenerHost,
+    observeProcessAncestry,
+    observeSessionListeners,
     processHost,
     commitDrainOutcome,
     releaseDeadSessionHolders,
@@ -34,6 +37,7 @@ import {
     settleInterruptedDrainRepair,
     readActiveStackInventory,
     readRootPortInventory,
+    type ListenerHost,
     type ProcessHost,
     type DrainReservationRequest,
     type DrainReservation,
@@ -1322,6 +1326,103 @@ describe('dead session holders', () => {
 
         processes.set(4242, 123_456)
         expect(await release()).toMatchObject({ kind: 'complete', released: [{ holderId: holderB, pid: 4242 }] })
+    })
+    // A listener on a leased port counts as a session's only through its process. Every read that
+    // could not be made, or that saw a process change between the reads around the socket listing,
+    // leaves ownership unproven, never owned. macOS lists sockets with lsof and Linux with ss; both
+    // listings of the same sockets must reach the same verdicts.
+    const listings = {
+        lsof: { owned: 'p302\nf12\nn127.0.0.1:4100\nf13\nn*:4300\np400\nf9\nn[::1]:4200\n', malformed: 'n127.0.0.1:4100\n' },
+        ss: {
+            owned: [
+                'LISTEN 0      511        127.0.0.1:4100       0.0.0.0:* users:(("node",pid=302,fd=12))',
+                'LISTEN 0      511                *:4300             *:* users:(("node",pid=302,fd=13))',
+                // A process name may spell `pid=`; the real owner's pid is still read.
+                'LISTEN 0      511            [::1]:4200          [::]:* users:(("x\\",pid=302,fd=1",pid=400,fd=9))',
+                'LISTEN 0      128          0.0.0.0:22         0.0.0.0:*',
+            ].join('\n') + '\n',
+            malformed: 'ESTAB 0 0 127.0.0.1:4100 127.0.0.1:5000\n',
+        },
+    } as const
+    it.each(['lsof', 'ss'] as const)('proves a listener a session\'s only from consistent reads of the session, the socket and its process chain (%s)', async (format) => {
+        const session = { pid: 300, processStart: 'lstart:2026-09-07T11:00:00.000Z' }
+        const table = '    1     0 Mon Sep  7 09:00:00 2026\n  300     1 Mon Sep  7 11:00:00 2026\n  301   300 Mon Sep  7 11:01:00 2026\n  302   301 Mon Sep  7 11:02:00 2026\n  400     1 Mon Sep  7 11:03:00 2026\n'
+        const listing = (text: string) => async () => ({ kind: 'complete' as const, format, text })
+        const host = (overrides: Partial<ListenerHost> = {}, starts: string[] = ['Mon Sep  7 11:00:00 2026']): ListenerHost => ({
+            process: { platform: 'darwin', presence: async () => 'live', readFile: async () => '',
+                psStart: async () => ({ kind: 'complete', text: starts.length > 1 ? starts.shift()! : starts[0]! }) },
+            listeners: listing(listings[format].owned),
+            processTable: async () => ({ kind: 'complete', text: table }),
+            ...overrides,
+        })
+        const probed = [{ port: 4100, address: '127.0.0.1' }, { port: 4200, address: '::1' }, { port: 4300, address: '127.0.0.1' },
+            { port: 4300, address: '::1' }, { port: 4400, address: '127.0.0.1' }] as const
+        const observe = (listenerHost: ListenerHost) => observeSessionListeners({ listeners: probed, holders: [session], host: listenerHost })
+
+        expect(await observe(host())).toMatchObject({ kind: 'complete', ports: [
+            { port: 4100, owned: true },
+            { port: 4200, owned: false, reason: 'process 400 was not started by a live cockpit session holding this stack' },
+            { port: 4300, owned: true },
+            { port: 4400, owned: false, reason: 'its listener on 127.0.0.1 belongs to a process this user cannot see' },
+        ] })
+        // The session's socket on one address does not vouch for an answer on another: the ::1
+        // listener may be another user's, which lsof leaves out and ss lists without its process.
+        const otherUser = format === 'ss'
+            ? listing(`${listings.ss.owned}LISTEN 0      511            [::1]:4100          [::]:*\n`) : undefined
+        expect(await observeSessionListeners({ listeners: [{ port: 4100, address: '127.0.0.1' }, { port: 4100, address: '::1' }],
+            holders: [session], host: host(otherUser ? { listeners: otherUser } : {}) }))
+            .toMatchObject({ kind: 'complete', ports: [{ port: 4100, owned: false, reason: 'its listener on [::1] belongs to a process this user cannot see' }] })
+        // A pid alone, or a pid whose start differs from the recorded one, is not the session.
+        for (const [holder, starts] of [[{ pid: 300 }, undefined], [session, ['Mon Sep  7 11:30:00 2026']]] as const) {
+            expect(await observeSessionListeners({ listeners: [{ port: 4100, address: '127.0.0.1' }], holders: [holder],
+                host: host({}, starts ? [...starts] : undefined) }))
+                .toMatchObject({ kind: 'complete', ports: [{ port: 4100, owned: false, reason: 'no live cockpit session holds this stack' }] })
+        }
+
+        let reads = 0
+        const reused = table.replace('  301   300 Mon Sep  7 11:01:00 2026', '  301   300 Mon Sep  7 11:05:00 2026')
+        for (const unproven of [
+            host({ listeners: async () => ({ kind: 'failed', reason: 'the socket listing is not installed' }) }),
+            host({ processTable: async () => ({ kind: 'failed', reason: 'ps is not installed' }) }),
+            host({ listeners: listing(listings[format].malformed) }),
+            host({ processTable: async () => ({ kind: 'complete', text: reads++ === 0 ? table : reused }) }),
+            host({}, ['Mon Sep  7 11:00:00 2026', 'Mon Sep  7 11:30:00 2026']),
+            // A session whose start cannot be read may be running its own listener.
+            { ...host(), process: { ...host().process, psStart: async () => ({ kind: 'failed' as const, reason: 'ps was refused' }) } },
+        ]) expect(await observe(unproven)).toMatchObject({ kind: 'unavailable' })
+    })
+
+    // lsof exits 1 when it lists nothing, which the executor reports as a failed step; Linux has ss
+    // rather than lsof in common images.
+    it('reads this platform\'s socket listing when nothing listens on the port, not as a failure', async () => {
+        const server = (await import('node:net')).createServer()
+        await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+        const port = (server.address() as { port: number }).port
+        await new Promise<void>(resolve => server.close(() => resolve()))
+        const listed = await listenerHost(executeProbe).listeners([port])
+        expect(listed).toMatchObject({ kind: 'complete', format: process.platform === 'linux' ? 'ss' : 'lsof' })
+        expect(listed.kind === 'complete' && listed.text).not.toContain(`:${port} `)
+    })
+
+    // Recording a hold against a process the command does not run under would let that process's
+    // children count as a session's listeners.
+    it('confirms a session process only as the process itself or one of its ancestors', async () => {
+        const host = listenerHost(executeProbe)
+        const self = await observeProcessStart(process.pid, host.process)
+        if (self.state !== 'present') throw new Error(JSON.stringify(self))
+        const stranger = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], { stdio: 'ignore' })
+        try {
+            await new Promise<void>((resolve, reject) => { stranger.once('error', reject); stranger.once('spawn', () => resolve()) })
+            const started = await observeProcessStart(stranger.pid!, host.process)
+            if (started.state !== 'present') throw new Error(JSON.stringify(started))
+            expect(await observeProcessAncestry({ pid: process.pid, ancestor: { pid: process.pid, processStart: self.start }, host })).toBe('ancestor')
+            expect(await observeProcessAncestry({ pid: stranger.pid!, ancestor: { pid: process.pid, processStart: self.start }, host })).toBe('ancestor')
+            expect(await observeProcessAncestry({ pid: process.pid, ancestor: { pid: stranger.pid!, processStart: started.start }, host })).toBe('unrelated')
+            expect(await observeProcessAncestry({ pid: process.pid, ancestor: { pid: process.pid, processStart: 'lstart:2000-01-01T00:00:00.000Z' }, host }))
+                .toBe('unrelated')
+        } finally {
+            stranger.kill('SIGKILL')
+        }
     })
 })
 

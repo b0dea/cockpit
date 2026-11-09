@@ -10,7 +10,7 @@ import { type DoctorCommandAdapters, type WorkGradingInspection } from './applic
 import { ObservationProducerRefusal, type HealthObservationProducers, type LoadedCockpitConfigResult, type PreflightCommandAdapters } from './application/health.js'
 import { decodeLifecycleRecord, revalidateService } from './application/lifecycle.js'
 import { type RuntimeReadiness } from './application/lifecycle-context.js'
-import { decodeCoordinationRecord, observeClaimState, readRootPortInventory } from './claims.js'
+import { decodeCoordinationRecord, listenerHost, observeClaimState, readRootPortInventory } from './claims.js'
 import { inspectCodexHookTrust } from './codex-hook-trust.js'
 import { observeEnvSchemas } from './env-schema-observation.js'
 import {
@@ -355,6 +355,7 @@ function producers(input: {
             const observation = await observeRuntimePortFamily({ topology: session.readiness.topology,
                 services: [...services.values()], namespace: session.context.namespace,
                 listenerTimeoutMs: input.timeoutMs,
+                sessionListeners: listenerHost(input.execute),
                 revalidate: async () => {
                     const fresh = await inspectCurrentServices()
                     if (!fresh) throw new RefusalError('runtime services or lifecycle changed during port observation')

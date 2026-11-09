@@ -211,6 +211,27 @@ describe('lifecycle CLI composition', () => {
         }
     })
 
+    // A recorded session vouches for listeners its descendants hold on leased ports, so naming a
+    // live process the command does not run under would hand that authority to a stranger's tree.
+    it('refuses a session process the command does not run under', async () => {
+        const factory = vi.spyOn(lifecycleComposition, 'createLifecycleCommandAdapters')
+        const stranger = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], { stdio: 'ignore' })
+        try {
+            await new Promise<void>((resolve, reject) => { stranger.once('error', reject); stranger.once('spawn', () => resolve()) })
+            const started = await observeProcessStart(stranger.pid!, processHost(executeProbe))
+            if (started.state !== 'present') throw new Error(JSON.stringify(started))
+            factory.mockClear()
+            const capture = captureIo()
+            expect(await runCli(['up', '--config', '/synthetic/missing-cockpit.toml', '--json'], capture.io, {},
+                { env: { COCKPIT_SESSION_ID: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', COCKPIT_SESSION_PROCESS: `${stranger.pid}@${started.start}` } })).toBe(2)
+            expect(JSON.parse(capture.output().stdout)).toMatchObject({ diagnostics: [{ code: 'CLI_USAGE_INVALID', target: 'COCKPIT_SESSION_PROCESS',
+                message: expect.stringContaining('does not run under') }] })
+            expect(factory).not.toHaveBeenCalled()
+        } finally {
+            stranger.kill('SIGKILL')
+        }
+    })
+
     it('refuses a malformed inherited lifecycle session instead of leaking a default holder', async () => {
         const capture = captureIo()
         expect(await runCli(['up', '--config', '/synthetic/cockpit.toml'], capture.io, {}, {
