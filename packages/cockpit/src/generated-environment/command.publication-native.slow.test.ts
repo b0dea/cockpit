@@ -255,15 +255,21 @@ describe('public surface publication transaction', () => {
             expect(settings.permissions.deny!.filter(rule => rule.startsWith('Read('))).toEqual(['Read(//**/.env)', 'Read(//**/.env.*)', 'Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/external/.env)'])
             // The guard judges command text, so the files it depends on are also denied to the tool's own
             // writes: its script, identity and accepted policy, every hook registration, and each
-            // repository's Git hooks and configuration, siblings included. cockpit.toml stays writable,
-            // since the guard judges whether an edit to it widens.
+            // repository's Git hooks and configuration, submodules and worktree configuration included,
+            // siblings too. cockpit.toml stays writable, since the guard judges whether an edit to it widens.
             const guardFiles = ['Edit(/.cockpit/guards/bash-guard.sh)', 'Edit(/.cockpit/local/**)', 'Edit(/.cockpit/policy.json)',
                 'Edit(/.claude/settings.json)', 'Edit(/.claude/settings.local.json)', 'Edit(/.codex/hooks.json)', 'Edit(/.codex/config.toml)',
-                'Edit(/opencode.jsonc)', 'Edit(/.opencode/plugin/**)', 'Edit(//**/.git/hooks/**)', 'Edit(//**/.git/config)']
+                'Edit(/opencode.jsonc)', 'Edit(/.opencode/plugin/**)', 'Edit(//**/.git/hooks/**)', 'Edit(//**/.git/config)',
+                'Edit(//**/.git/config.worktree)', 'Edit(//**/.git/**/config.worktree)', 'Edit(//**/.git/modules/**/hooks/**)', 'Edit(//**/.git/modules/**/config)']
             expect(settings.permissions.deny).toEqual(expect.arrayContaining(guardFiles))
             expect(settings.permissions.deny!.filter(rule => rule.includes('cockpit.toml'))).toEqual([])
+            // Claude Code's sandbox turns these rules into filesystem write denials, and one naming .git
+            // itself, a gitdir or a commondir broke every Git write or git worktree add, so only OpenCode,
+            // whose denial binds its edit tool alone, denies the files that locate a repository.
+            expect(settings.permissions.deny!.filter(rule => /\/\.git\)$|gitdir|commondir/.test(rule))).toEqual([])
             expect(Object.keys(openCode.permission.edit)).toEqual(expect.arrayContaining(['.cockpit/guards/bash-guard.sh', '*/.cockpit/guards/bash-guard.sh',
-                '.cockpit/local/*', 'opencode.jsonc', '.opencode/plugin/*', '.git/hooks/*', '*/.git/hooks/*', '.git/config', '*/.git/config']))
+                '.cockpit/local/*', 'opencode.jsonc', '.opencode/plugin/*', '.git/hooks/*', '*/.git/hooks/*', '.git/config', '*/.git/config',
+                '.git/config.worktree', '*/.git/*/config.worktree', '*/.git/modules/*/hooks/*', '*/.git/modules/*/config', '.git', '*/.git', '*/.git/*/gitdir', '*/.git/*/commondir']))
             expect(Object.values(openCode.permission.edit).every(action => action === 'deny')).toBe(true)
             expect(Object.keys(openCode.permission.edit).filter(pattern => pattern.includes('cockpit.toml'))).toEqual([])
             // A tool gets a write denial exactly where a dated run showed it enforce one; an unmeasured spelling is not written.

@@ -260,17 +260,19 @@ The guard judges command text, so a program it does not understand, such as an i
 still rewrite the files it depends on. `sync` therefore also writes each agent tool's own write
 denials for them: every guard control above (the guard script, `.cockpit/local`, `.cockpit/policy.json`,
 the ownership manifest, every hook registration, plugin and native MCP or permission file, the MCP
-wrappers, the work-order records and the adopted copies), the root secrets directory, and
-`.git/hooks` and `.git/config` in the cockpit and in every sibling, which choose programs Git runs
-outside any agent tool. `cockpit.toml` is not one of them: agents edit it, and the guard judges
+wrappers, the work-order records and the adopted copies), the root secrets directory, and the Git
+state in the cockpit and every sibling that chooses programs Git runs outside any agent tool: the
+hooks and configuration in `.git`, every `config.worktree` below it, and each submodule's hooks and
+configuration under `.git/modules`. `cockpit.toml` is not one of them: agents edit it, and the guard judges
 whether an edit [widens what agents may do](#edits-the-guard-has-not-applied). These denials apply
 to the agent tool only; `sync` and `upgrade` run by a person in a terminal rewrite the files as
-before. What each tool enforced is dated in the [capability matrix](capability-matrix.md):
+before. They are narrower than the guard's own rule, which refuses any write below a `.git` directory.
+What each tool enforced is dated in the [capability matrix](capability-matrix.md):
 
 | Tool | What `sync` writes | Edit and write tools | Shell |
 | --- | --- | --- | --- |
 | Claude Code | `Edit(...)` deny rules in `.claude/settings.json` | refused | a redirect or `cp` into a denied path is refused; any other program writes unless Claude Code's sandbox is on |
-| Codex | nothing more: the sandbox settings it writes have no read-only path | inside its `workspace-write` sandbox, `.codex` and every `.git` refused; `.cockpit` written | the same |
+| Codex | nothing more: the sandbox settings it writes have no read-only path | inside its `workspace-write` sandbox, `.codex` and every `.git` directory refused; `.cockpit` written | the same |
 | OpenCode | `edit` deny patterns in `opencode.jsonc` | refused | written: OpenCode has no sandbox, and its `bash` permission matches command text as the guard does |
 
 **Claude Code's sandbox** closes the shell gap: with `sandbox.enabled` and
@@ -279,13 +281,31 @@ write denials, and a program run from the shell was refused each protected write
 turn the sandbox on, because it changes every shell command the agent runs, with limits of its own
 that Claude Code documents, and cockpit commands an agent runs that write these files, such as `sync`
 and the `work` commands, fail inside it. So does a Git command that writes `.git/config`, such as
-`git config` or a push that sets an upstream. A team that wants the sandbox adds the `sandbox` key to its
-[adopted settings](getting-started.md#adopt-existing-agent-settings), which cockpit keeps beside its
+`git config` or a push that sets an upstream. Commits, branch switches, fetches and `git worktree add`
+kept working in the cockpit, its linked worktrees, siblings and their submodules. A team that wants
+the sandbox adds the `sandbox` key to its [adopted settings](getting-started.md#adopt-existing-agent-settings), which cockpit keeps beside its
 own, and runs those commands from a terminal:
 
 ```json
 { "sandbox": { "enabled": true, "allowUnsandboxedCommands": false } }
 ```
+
+**Git state left unprotected.** The files that tell Git where a repository lives are a linked
+worktree's or a submodule checkout's `.git` file, and the `gitdir` and `commondir` files in
+`.git/worktrees/<name>`. Rewriting one points Git at a directory whose configuration chooses the
+programs Git runs. Only OpenCode's denial covers them, since it binds only its edit tool. Claude Code's
+cannot: its sandbox turns a denial into a filesystem write denial, and a rule naming `.git` made every
+Git write fail, while one naming `gitdir`, `commondir` or a worktree's `.git` file made `git worktree add` fail. Claude
+Code asks before its edit tools touch them, and its sandbox leaves them writable to the shell. Codex's
+sandbox refuses the `gitdir` and `commondir` files with the rest of `.git`, but leaves a linked
+worktree's and a submodule's `.git` file writable. Two more gaps were measured:
+
+- With Claude Code's sandbox on, a shell command could rename a sibling's whole `.git` directory, edit
+  its hooks and configuration, and rename it back. The sandbox refused the same rename in the cockpit
+  root.
+- OpenCode matches its patterns case-sensitively. On a case-insensitive volume, the macOS default, its
+  edit tool wrote a denied path spelled `.COCKPIT` or `.GIT`. The guard folds case and judges the same
+  edit when the plugin loads; that run had no plugin, so this is not measured.
 
 **Codex.** The `workspace-write` sandbox, which the generated `.codex/config.toml` selects once a
 sibling is granted to Codex, keeps `.codex` and `.git` read-only in the cockpit and every granted
