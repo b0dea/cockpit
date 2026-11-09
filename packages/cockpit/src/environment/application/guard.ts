@@ -34,7 +34,7 @@ import {
     type GuardInvocationProfile,
     type GuardProjectCommand,
 } from '../../guards/evaluator.js'
-import { commandSpelling, ordinarySessionCommand, resolveOrdinaryInvocation, UNSYNCED_ADMITTED_COMMANDS, UNSYNCED_ADMITTED_PROSE, type OrdinaryGrant } from '../../command-table.js'
+import { commandSpelling, ordinarySessionCommand, resolveOrdinaryInvocation, type OrdinaryGrant } from '../../command-table.js'
 import { effectivePolicy, trustInForce } from '../../autonomy.js'
 import { GUARD_INPUT_LIMITS, parseGuardInput } from '../../guards/invocation-parser.js'
 import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../../generated-environment/transaction.js'
@@ -153,19 +153,15 @@ function guardHeld(identity: GuardHandlerIdentity, what: string, why: string): s
     return `${what}; ${why}, so ${GUARD_HELD_CALLS} are held, including a sync run through this agent, while ${GUARD_UNHELD_CALLS} continue. ${fix}`
 }
 
-// An edit that does not widen what agents may do needs only a sync, which the agent may run itself;
-// every other call waits for it, so no call is judged under a policy sync has not published. Sync can
-// still refuse such an edit, so undoing it exactly stays open or the agent could never recover.
-function unsyncedHold(identity: GuardHandlerIdentity, detail: string): GuardEvaluationApplicationResult {
-    const available = recoveryState(identity)
-    const sync = installedSyncCommand(identity.root, identity.configPath)
-    const ready = available.config && available.package
-    const fix = ready ? `run \`${sync}\` (this agent may run it where [autonomy] sync = "agent"), then commit any regenerated files`
-        : guardRecovery(identity.root, identity.configPath, available)
-    const reason = `${identity.configPath} changed since the guards were generated without widening what agents may do${detail}; ${GUARD_HELD_CALLS} are held, except ${UNSYNCED_ADMITTED_PROSE}, until it is synced, while ${GUARD_UNHELD_CALLS} continue. ${ready ? `Fix: ${fix}.` : fix} If sync refuses the edit, undo it: one edit or write of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig} is admitted; ${GUARD_RESTORE_LIMIT}.`
+// An edit that does not widen what agents may do is judged as written, so a policy it cannot build
+// leaves nothing to judge a call by. Sync can refuse such an edit too, so undoing it exactly stays open
+// or the agent could never recover.
+function unbuildableEdit(identity: GuardHandlerIdentity, detail: string): GuardEvaluationApplicationResult {
+    const reason = `${guardHeld(identity, `${identity.configPath} changed since the guards were generated without widening what agents may do, but the guard cannot build its policy from it (${detail})`,
+        'calls are judged under the configuration on disk')} If sync refuses the edit, undo it: one edit or write of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig} is admitted; ${GUARD_RESTORE_LIMIT}.`
     return { decision: { decision: 'unavailable', reason }, diagnostics: [{ severity: 'error', target: 'guard', message: reason,
         code: 'GUARD_CONFIG_UNSYNCED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_UNSYNCED,
-        fix: `${fix}. If sync refuses the edit, undo it: the guard admits one edit of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}; ${GUARD_RESTORE_LIMIT}` }] }
+        fix: `correct ${identity.configPath} and have a person run ${installedSyncCommand(identity.root, identity.configPath)} in a terminal, or undo the edit: the guard admits one edit of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}; ${GUARD_RESTORE_LIMIT}` }] }
 }
 
 // A guard message reaches the agent and the harness's log: text it forwards from a failure stays one
@@ -325,10 +321,12 @@ export async function runGuardEvaluationApplication(
             return authenticated.held ?? restored
         }
         // Every check below runs against the configuration on disk. An edit since sync that does not
-        // widen the one the guards were generated from is admitted only for sync. One that widens is not
-        // applied: calls are judged under the declarations last synced, which the recorded copy holds,
-        // and only a person may sync it in. Holding every call instead stopped the agent each time
-        // someone added an allow rule, though continuing under the approved policy grants nothing new.
+        // widen the one the guards were generated from grants nothing the last sync did not, so calls are
+        // judged under it; holding every call but sync until it ran was stricter than a widening edit.
+        // One that widens is not applied: calls are judged under the declarations last synced, which the
+        // recorded copy holds, and only a person may sync it in. Holding every call instead stopped the
+        // agent each time someone added an allow rule, though continuing under the approved policy grants
+        // nothing new.
         const configSha256 = loaded.result.source.sha256
         const unsynced = configSha256 !== identity.configSha256
         let declared: LoadedConfigProjection = loaded.result
@@ -368,7 +366,7 @@ export async function runGuardEvaluationApplication(
         if (prepared.kind !== 'complete') {
             if (restoring) return restored
             return unsynced && !widening
-                ? unsyncedHold(identity, `, but the guard cannot build its policy from it (${prepared.diagnostics[0]?.message ?? 'no reason given'})`)
+                ? unbuildableEdit(identity, prepared.diagnostics[0]?.message ?? 'no reason given')
                 : unavailable(checkout.state === 'available'
                     ? `Guard policy authority could not be authenticated: ${prepared.diagnostics[0]?.message ?? 'no reason given'}`
                     : prepared.diagnostics[0]?.message ?? 'Guard checkout observation failed without a reason.')
@@ -550,9 +548,6 @@ export async function runGuardEvaluationApplication(
         // Sync or upgrade would apply a widening edit, and the person reviews that edit first.
         const applying = widening ? launched.find(entry => ['sync', 'upgrade'].includes(commandSpelling(entry.argv.slice(entry.prefix)).name ?? '')) : undefined
         if (applying) return refused({ decision: 'deny', reason: `Refusing to run cockpit ${commandSpelling(applying.argv.slice(applying.prefix)).name} while ${identity.configPath} has an unapproved edit that widens what agents may do: a person reviews it and syncs.` })
-        if (unsynced && !widening && !restoring && !(parsed.tool === 'Bash' && parsed.invocations.length > 0 && parsed.invocations.every(invocation => launched.some(entry =>
-            entry.session && entry.executable === invocation.executable && entry.cwd === invocation.cwd
-            && isDeepStrictEqual(entry.argv, invocation.argv) && UNSYNCED_ADMITTED_COMMANDS.some(name => name === commandSpelling(entry.argv.slice(entry.prefix)).name))))) return unsyncedHold(identity, '')
         let launcherSha256: string | undefined
         if (launched.length) {
             const status = lstatSync(launcher)
@@ -619,8 +614,8 @@ export async function runGuardEvaluationApplication(
     }
 }
 
-// The guard runs against the configuration sync generated it from, or one that does not widen it and
-// admits only sync and check, so the policy read here grants nothing the last sync did not.
+// The guard runs against the configuration sync generated it from, or one that does not widen it, so
+// the policy read here grants nothing the last sync did not.
 function ordinaryGrants(config: CockpitConfig): readonly OrdinaryGrant[] {
     const policy = effectivePolicy(config)
     return [...config.browser && browserPreapprovalRequested(config.browser) ? ['browser-preapproval' as const] : [],

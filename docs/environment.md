@@ -471,9 +471,10 @@ new identity, and `up` refuses with `LIFECYCLE_PROGRESS_INVALID` rather than rep
 stack in place. To apply one, for example a `[ports.bases]` edit:
 
 1. Edit `cockpit.toml`. This can happen while the stack runs.
-2. Run `cockpit sync --config cockpit.toml`. Until then, the guard holds every
-   [guarded tool call](safety-and-autonomy.md#edits-the-guard-has-not-applied) except that sync, and
-   `sleep` and `down` refuse because they read the Compose files `sync` publishes. An agent may run
+2. Run `cockpit sync --config cockpit.toml`. Until then, `sleep` and `down` refuse because they
+   read the Compose files `sync` publishes, and the guard judges
+   [agent calls](safety-and-autonomy.md#edits-the-guard-has-not-applied) under the edited file, or
+   under the one last synced while the edit widens what agents may do. An agent may run
    it where `[autonomy] sync = "agent"` and the edit does not widen what agents may do, as a
    `[ports.bases]` edit does not; otherwise a person runs it in a terminal with `--interactive` and
    confirms the change by the digest it shows.
@@ -482,7 +483,7 @@ stack in place. To apply one, for example a `[ports.bases]` edit:
 4. Run `cockpit up --config cockpit.toml --json` and use the newly returned ports and entrypoints.
 
 Restoring `cockpit.toml` to the exact bytes `sync` last saw, for example with
-`git restore cockpit.toml`, clears the guard's hold without a `sync`.
+`git restore cockpit.toml`, needs no `sync`.
 
 ### When a sibling changes under a running stack
 
