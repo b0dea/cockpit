@@ -225,7 +225,7 @@ export function guardWideningUnconfirmedDiagnostic(fields: readonly string[], co
     return { severity: 'error' as const, target: 'guard',
         code: 'GUARD_CONFIG_WIDENED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_WIDENED,
         message: `cockpit.toml changed since the guards were generated and widens what agents may do (${fields.join(', ')}); nothing was written, as sync applies it only once a person confirms it`,
-        fix: `a person runs ${cockpitCommand('sync', { config: configPath, args: '--interactive' })} in a terminal outside the agent and CI, reads the change and types the digest it shows, or the change is reverted` }
+        fix: `a person runs ${cockpitCommand('sync', { config: configPath, args: '--interactive' })} in a terminal outside the agent and CI, reads the change it shows and answers yes, or the change is reverted` }
 }
 
 /** What `check` reports about an edit the guards were not regenerated for, or nothing. */
@@ -243,6 +243,6 @@ export async function inspectGuardConfigChange(root: string, configPath: string,
             ? 'the guard judges agent calls under the configuration last synced, and refuses an agent\'s sync or upgrade, until a person syncs'
             : `the guard holds ${GUARD_HELD_CALLS} until a person syncs, while ${GUARD_UNHELD_CALLS} continue`}`,
         fix: change.kind === 'widening'
-            ? `a person reads the change and runs ${cockpitCommand('sync', { config: configPath, args: '--interactive' })} in a terminal outside the agent and CI, typing the digest it shows, or the change is reverted`
+            ? `a person reads the change and runs ${cockpitCommand('sync', { config: configPath, args: '--interactive' })} in a terminal outside the agent and CI, answering yes to the change it shows, or the change is reverted`
             : `a person reads the change and runs ${cockpitCommand('sync', { config: configPath })} in a terminal outside the agent, or the change is reverted` }]
 }

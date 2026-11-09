@@ -12,6 +12,7 @@ import { applyGeneratedEnvironmentRepair, syncGeneratedEnvironment } from './env
 import * as transaction from './generated-environment/transaction.js'
 import { proposeGeneratedEnvironmentRepair } from './repair.js'
 import { runCli, type CliIo } from './cli.js'
+import { loadOperatorPolicy } from './environment/operator-application.js'
 import { initializeTeamMetadata } from '../test-support/team-metadata.js'
 import { stubComposeTopology } from '../test-support/compose-topology-docker.js'
 
@@ -139,6 +140,17 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
         await writeFile(configPath, original)
         expect((await sync(['--json'])).status).toBe(0)
         expect(await generatedFrom()).toBe(await digestOf())
+        // A widening that lands after sync classified the file is judged on the bytes it would publish.
+        const narrowed = await generatedFrom()
+        let stdout = ''
+        const io = { stdout: { write: (text: string) => { stdout += text; return true } }, stderr: { write: () => true } } as CliIo
+        expect(await runCli(['sync', '--config', configPath, '--json'], io, { loadPolicy: async path => {
+            const classified = await loadOperatorPolicy(path)
+            await writeFile(configPath, `${original}\n[[guards.allow]]\nargv = ["cat", "late.md"]\ncwd = "."\nreason = "Read the selected input."\n`)
+            return classified
+        } }, { env: {} })).toBe(2)
+        expect(JSON.parse(stdout).diagnostics).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED', message: expect.stringContaining('(guards.allow)') })])
+        expect(await generatedFrom()).toBe(narrowed)
     })
 
     it('uses one admission and the same plan for catalogue repair with single consumption', async () => {

@@ -220,7 +220,8 @@ function previewedStaleRemoval(outcome: OperatorCommandOutcome):
 // accepted, and whether stale generated files go without a person. A dry run writes nothing and passes
 // untouched. The guard refuses an agent's sync while an edit widens it only where it proves the call
 // starts cockpit; a package script, a package manager's exec or node with flags start it too, so the
-// widening waits for a person here, whatever started sync.
+// widening waits for a yes at a terminal here, whatever started sync. That is a bar, not a proof of a
+// person: an agent that allocates a pseudo-terminal can answer the prompt as it can any --interactive one.
 export async function runSyncOperatorApplication(
     input: GeneratedEnvironmentCommandInput & Readonly<{ dryRun?: boolean }>,
     admission: OperatorAdmission,
@@ -263,12 +264,14 @@ export async function runSyncOperatorApplication(
         const changed = await revalidatePolicy()
         if (changed) return changed
     }
+    // The team sync publishes a widening only as exactly the bytes the person confirmed.
+    const applied = widened ? { ...input, guardWidening: { configSha256: widened.configSha256 } } : input
     // Stale removal an agent may take is approved for exactly the entries this sync computes.
     const staleByPolicy = decide(policy.current.autonomy.stale_delete, { CI: admission.ci }) === 'proceed'
     const approveAll = async (request: GeneratedStaleRemovalApprovalRequest) => ({ format: 'cockpit-stale-removal-approval/v1' as const, digest: request.digest })
     let outcome: OperatorCommandOutcome
     if (!admission.interactive || staleByPolicy) {
-        outcome = await adapters.synchronize({ ...input, ...staleByPolicy ? { authorizeStaleRemoval: approveAll } : {} })
+        outcome = await adapters.synchronize({ ...applied, ...staleByPolicy ? { authorizeStaleRemoval: approveAll } : {} })
     } else {
         const preview = await adapters.synchronize({ ...input, dryRun: true })
         if (preview.status !== 0) return preview
@@ -276,7 +279,7 @@ export async function runSyncOperatorApplication(
         if (inspected.state === 'invalid') {
             return refusal('CLI_INTERNAL_ERROR', 'interactive sync received an invalid dry-run result', 'sync')
         }
-        if (inspected.state === 'none') outcome = await adapters.synchronize(input)
+        if (inspected.state === 'none') outcome = await adapters.synchronize(applied)
         else {
             const typedDigest = await adapters.confirmStaleRemoval(inspected.request)
             if (typedDigest !== inspected.request.digest) {
@@ -286,7 +289,7 @@ export async function runSyncOperatorApplication(
             if (changed) return changed
             const previewBytes = JSON.stringify(inspected.request)
             outcome = await adapters.synchronize({
-                ...input,
+                ...applied,
                 authorizeStaleRemoval: async (request) => request.digest === inspected.request.digest
                     && JSON.stringify(request) === previewBytes
                     ? { format: 'cockpit-stale-removal-approval/v1', digest: request.digest }

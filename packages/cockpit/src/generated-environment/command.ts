@@ -99,7 +99,8 @@ export function syncTeamGeneratedEnvironment(
 
 /** `sync --adopt`: record the adoption, then run the ordinary sync that renders the merge. */
 export function adoptAndSyncGeneratedEnvironment(input: SyncAdoptionInput): Promise<SyncAdoptionOutcome> {
-    return runSyncAdoption(input, request => synchronizeTeam(request))
+    // The adoption writes its own rows; anything else that widens the guards waits for a person.
+    return runSyncAdoption(input, request => synchronizeTeam({ ...request, guardWidening: { fields: ['surfaces.adopted'] } }))
 }
 
 export function checkGeneratedEnvironment(
