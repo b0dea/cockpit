@@ -94,9 +94,10 @@ Limits, stated plainly:
 - Sync binds the guard to the cockpit that runs it, which is why it refuses to run from a copy
   ([Cockpit commands an agent can run](#cockpit-commands-an-agent-can-run)).
 - Codex skips a `hooks.json` it no longer trusts. A script that rewrites `.codex/hooks.json` makes the
-  hook untrusted, and the guard stops running until a person trusts the hooks again. Codex's own
-  sandbox keeps `.codex` read-only to a Codex agent; an agent in another tool can still rewrite it
-  where that tool's protection does not cover the shell.
+  hook untrusted, and the guard stops running until a person trusts the hooks again. Codex's
+  `workspace-write` sandbox, which cockpit selects once a sibling is granted to Codex, keeps `.codex`
+  read-only to a Codex agent; an agent in another tool can still rewrite it where that tool's
+  protection does not cover the shell.
 - What a harness does when its hook timeout fires is not measured. The guard keeps its own 25-second
   deadline and refuses at it ([Native adapter behavior](#native-adapter-behavior)).
 
@@ -277,8 +278,8 @@ before. What each tool enforced is dated in the [capability matrix](capability-m
 write denials, and a program run from the shell was refused each protected write. cockpit does not
 turn the sandbox on, because it changes every shell command the agent runs, with limits of its own
 that Claude Code documents, and cockpit commands an agent runs that write these files, such as `sync`
-and the `work` commands, fail inside it. A team
-that wants the sandbox adds the `sandbox` key to its
+and the `work` commands, fail inside it. So does a Git command that writes `.git/config`, such as
+`git config` or a push that sets an upstream. A team that wants the sandbox adds the `sandbox` key to its
 [adopted settings](getting-started.md#adopt-existing-agent-settings), which cockpit keeps beside its
 own, and runs those commands from a terminal:
 
