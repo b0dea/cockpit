@@ -13,12 +13,12 @@ The guard refuses only this blocked list:
 
 | Blocked | What the guard checks |
 | --- | --- |
-| Secrets | Reading, printing, writing, staging, linking or uploading `.env*` files (other than documentation names and declared templates), `.secrets` directories, declared instances, and credential stores: `~/.ssh` private keys, `~/.aws/credentials`, `~/.config/gh/hosts.yml`, `~/.netrc`, `~/.npmrc`, `~/.docker/config.json`, `~/.kube/config`, `~/.codex/auth.json`, `~/.claude/.credentials.json` and other token files, and `.pem`, `.p12`, `.pfx` and `id_*` key files anywhere. A file named with `--body-file`, `-F`, `-T` or `@file` is judged as a read. Environment dumps such as a bare `env` are refused. |
-| Writes outside the cockpit | Redirects, writer destinations (`cp`, `mv`, `tee`, `touch`, `mkdir`, `ln`, `dd`, `tar -x`, removers), write options (`--output`, `curl -o`, `wget -O`, `sort -o`, `sed -i`, `perl -i`) and a working directory outside the cockpit and its siblings. |
-| Branches and history | Force pushes of any branch (`--force`, `--force-with-lease`, a `+` refspec), pushes to a protected branch, remote branch deletion (`--delete`, `:branch`, `--prune`, `--mirror`), and rewriting a protected branch's history (`commit --amend`, `rebase`, `reset` to another commit, `filter-branch`) or moving, resetting or deleting it. A push that names no destination is resolved from the repository's `@{push}`; one Git cannot resolve asks. |
+| Secrets | A command that names an `.env*` file (other than documentation names and declared templates), a `.secrets` directory, a declared instance or a credential store: in its arguments (including `--body-file`, `-T` and `@file` values), an input or output redirect, a link source, an assignment value, a loop item, an unexpanded glob that can match one, or a file tool's path. Credential stores are the files and directories below the home directory that hold tokens and keys, such as `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh/hosts.yml`, `~/.netrc`, `~/.npmrc`, `~/.pgpass`, `~/.docker/config.json`, `~/.kube/config` and `~/.codex/auth.json`, any directory above them, and `.pem`, `.p12`, `.pfx`, `.key` and `id_*` key files anywhere; the [evaluator](../packages/cockpit/src/guards/evaluator.ts) holds the full list. Also refused: commands that print a credential without naming a file (`gh auth token`, `git credential`, `git remote -v` and `get-url`, `aws configure get` of a secret, `gcloud auth print-access-token`, `az account get-access-token`, `security find-generic-password -w`, `op read`), environment dumps (`env`, `printenv`, `export -p`, `declare -x`, `set`, `ps e`) and printing a variable whose name holds TOKEN, SECRET, KEY, PASS, PASSWORD, PAT or CREDENTIAL. |
+| Writes outside the cockpit | Redirects, writer destinations (`cp`, `mv`, `tee`, `touch`, `mkdir`, `ln`, `dd`, `tar -x`, removers), write options (`--output`, `curl -o`, `wget -O`, `sort -o`, `sed -i`, `perl -i`), any operand outside the cockpit of `rsync`, `ditto`, `scp`, `unzip`, `patch`, `uniq`, `split` and similar writers, the new repository, worktree or bundle of `git clone`, `init`, `worktree add` and `bundle create`, and a working directory outside the cockpit and its siblings. Under the allow default any command that names a path outside the cockpit follows `[guards] external_reads`. |
+| Branches and history | Force pushes of any branch (`--force`, `--force-with-lease`, a `+` refspec), pushes to a protected branch, remote branch deletion (`--delete`, `:branch`, `--prune`, `--mirror`), and rewriting a protected branch's history (`commit --amend`, `rebase`, `reset` to another commit, `update-ref HEAD`, `filter-branch`, `rebase <upstream> <protected>`) or moving, resetting or deleting it, including `heads/<branch>` destinations, `git send-pack` and GitHub API writes to a protected branch's ref. A push that names no destination is resolved from the repository's `@{push}`; one Git cannot resolve asks, and so does a push or rewrite that rests on the current branch after an earlier command in the same call that could move it. |
 | Declared hosts | Any spelled use of a `hosted_db_hosts` or `vendor_endpoint_hosts` name. The match is lexical: a CLI with a built-in endpoint, such as `gh`, reaches its host without naming it. |
-| The guard itself | Writes to hook registrations, `.cockpit/guards`, `.cockpit/local`, the installed cockpit, `node_modules/.bin` and `.npmrc`; widening edits to `cockpit.toml`, which wait for a person's `sync`; agent-run `sync`, `upgrade` and other cockpit commands that publish policy; direct `.git` writes; `git config` keys that choose a program (hooks, fsmonitor, pagers, editors, helpers, aliases, filters, drivers, includes, remotes); `git -c` with such a key; `--no-verify`; and transfer options that name a program (`--upload-pack`, `--receive-pack`, `--exec`). |
-| Privilege and fetched code | `sudo`, `doas`, `su` and `pkexec`, and a download piped into a shell or interpreter, such as `curl … \| sh` or `bash <(curl …)`. |
+| The guard itself | Writes to hook registrations, `.cockpit/guards`, `.cockpit/local`, the installed cockpit, `node_modules/.bin` and `.npmrc`, including through glob or magic Git pathspecs and `--cacheinfo`; widening edits to `cockpit.toml`, which wait for a person's `sync`; any cockpit command its own table does not admit, such as `sync` or `upgrade`, however it is spelled (`npm run cockpit:sync`, `pnpm exec cockpit`, a path to `cockpit.mjs`); direct `.git` writes; `git config` keys that choose a program (hooks, fsmonitor, pagers, editors, helpers, aliases, filters, drivers, includes, remotes, templates, submodules); `git -c` with such a key; `--no-verify` and its abbreviations; `git init` and `clone` with `--template`; transfer options that name a program (`--upload-pack`, `--receive-pack`, `--exec`); and assignments, prefixed or exported, that steer Git, its hooks or the command search path (`GIT_*`, `HOME`, `XDG_CONFIG_HOME`, `HUSKY`, `SKIP`, `LEFTHOOK`, a relative `PATH` entry, `set -a`). |
+| Privilege and fetched code | `sudo`, `doas`, `su` and `pkexec`; a download piped into a shell or interpreter, such as `curl … \| sh`, `curl … \| awk` or `bash <(curl …)`; and a package launcher or `deno` given a URL or Git source. A program a launcher runs (`npx`, `pnpm exec`, `bun run`, `uvx`) is judged as if it ran on its own. Programs that run a command the guard cannot see (`script`, `flock`, `parallel`, `entr`, `xargs`, `eval`, `source`, `git rebase -x`, `git submodule foreach`, `git bisect run`) are refused. |
 
 The guard can only block what it can see in the command. A program the command runs, such as
 `node script.js`, `make` or a package script, can still read, write or run anything the account can,
@@ -28,8 +28,10 @@ untrusted, and Codex then skips it, so the guard stops running until a person tr
 again; cockpit has not measured a native protection for that file.
 
 `[[guards.deny]]` adds commands to the blocked list. `[[guards.allow]]` admits a command the guard
-would otherwise ask about; it never overrides a hard denial or a hard boundary's ask, such as a push
-whose destination Git cannot resolve.
+would otherwise ask about; it never overrides a hard denial, nor these asks: a push whose destination
+Git cannot resolve, a push or rewrite after a command that may move the branch, a staging walk past
+its bound, a steering assignment, a cockpit command its table does not admit, an unproven cockpit
+launcher, and Git run with `--git-dir` or `--work-tree`.
 
 `[guards] default = "ask"` keeps the strict mode: the guard then admits only the read-only commands
 it classifies, declared build and test commands, cockpit's own agent commands and `[[guards.allow]]`
@@ -78,8 +80,9 @@ The guard denies mutation or staging of a declared environment instance, and mut
 secrets directory. That covers command and patch removals as well as writes, removing a directory
 that contains either, and staging a containing directory that could include either.
 
-Every `.env` and `.env.*` file at any depth is treated as holding secrets, declared or not: reading,
-writing, removing, staging or linking one is a hard denial through every guarded tool. The
+Every `.env` and `.env.*` file at any depth is treated as holding secrets, declared or not: a guarded
+tool call that names one to read, write, remove, stage or link it is a hard denial. The guard judges
+the names it can see; a program that opens the file itself is not seen. The
 documentation names `.env.example`, `.env.sample`, `.env.template` and `.env.schema` are exempt from
 the guard, and so is every declared environment `template`; native permissions may still refuse them
 ([Reading secrets and instances](#reading-secrets-and-instances)), and `cockpit env keys` and
@@ -225,8 +228,10 @@ for what would still ask. Each vector starts with the executable.
 `[[guards.deny]]` matches a command-vector prefix or a contiguous sequence and may name a safe fix.
 `[[guards.allow]]` matches a prefix, optionally only at one checkout-relative working directory. An
 allow cannot bypass a hosted endpoint, protected branch, secret path, malformed capture or
-unavailable filesystem evidence. Wrapped and environment-modifying invocations are never allowed by
-a declared rule, because wrappers can change which program runs. A rule that admits an interpreter,
+unavailable filesystem evidence. In the strict mode wrapped and environment-modifying invocations
+are never allowed by a declared rule, because wrappers can change which program runs; the one
+exception is the program a package launcher runs, which a rule or declared command for the launcher
+spelling admits, as `pnpm exec vitest run` is admitted by a rule for it. A rule that admits an interpreter,
 such as `["node"]`, `["python3"]` or `["perl"]`, admits whatever code it is given, inline or in a
 file, and the guard cannot see what that code writes, guard controls included; without such a rule
 those invocations ask.
@@ -291,10 +296,15 @@ and the cockpit commands [below](#cockpit-commands-an-agent-can-run). The
 - Under the allow default a word whose value the guard cannot see, such as `$TARGET`, a glob or a
   command substitution, is allowed in an argument the program decides about, as in
   `node build.js "$TARGET"`. It is refused where the guard decides what is read, written, removed or
-  pushed (`cat "$FILE"`, `rm "$DIR"`, `git push origin "$BRANCH"`) and as the program name. `~` and
-  `$HOME` are expanded. `git commit -m "$(cat <<'EOF' … EOF)"` is read as the literal message it is.
-  Printing the environment (`env`, `printenv`) or a variable named as a secret (`echo "$API_TOKEN"`)
-  is refused. In the strict mode every such word is refused.
+  pushed (`cat "$FILE"`, `rm "$DIR"`, `git push origin "$BRANCH"`) and as the program name, and it
+  asks when it is an unexpanded glob that can match a secret or credential name (`nl .en?`). An
+  assignment value or loop item that names one asks too, since the word that uses it is not visible
+  (`f=.env; nl "$f"`). `~` and `$HOME` are expanded unless the call changes HOME.
+  `git commit -m "$(cat <<'EOF' … EOF)"` is read as the literal message it is. Printing the
+  environment or a variable named as a secret (`echo "$API_TOKEN"`) is refused. In the strict mode
+  every such word is refused.
+- A push or history rewrite that rests on the current branch asks when an earlier command in the
+  same call is not read-only, since it could move the branch.
 - A pipeline or chain is permitted only when every segment is. Redirecting output to `/dev/null`,
   `/dev/stdout` or `/dev/stderr`, or input from `/dev/null`, does not change the decision.
 
