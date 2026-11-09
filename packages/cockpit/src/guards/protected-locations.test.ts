@@ -172,6 +172,19 @@ describe('guard protected locations', () => {
         config('--remove-section', 'url.https://synthetic-user:synthetic-password@example.test/')
         config('http.https://example.test/.extraHeader', 'AUTHORIZATION: synthetic')
         expect(await guardRemoteCredentials(root, git, executeProbe)).toBe(true)
+        // Settings only in the person's global configuration count, below HOME and below XDG_CONFIG_HOME.
+        const other = scratch()
+        execFileSync('git', ['init', '-q', '-b', 'main', other])
+        const home = scratch()
+        mkdirSync(join(home, '.config/git'), { recursive: true })
+        writeFileSync(join(home, '.config/git/config'), '[push]\n\tdefault = matching\n[url "https://synthetic-user:synthetic-password@example.test/"]\n\tinsteadOf = https://example.test/\n')
+        mkdirSync(join(home, 'xdg/git'), { recursive: true })
+        writeFileSync(join(home, 'xdg/git/config'), '[pull]\n\trebase = true\n')
+        expect(await guardBranchFacts(other, git, executeProbe)).toMatchObject({ pushDefault: null, pullRebase: false })
+        expect(await guardBranchFacts(other, git, executeProbe, { HOME: home })).toMatchObject({ pushDefault: 'matching', pullRebase: false })
+        expect(await guardBranchFacts(other, git, executeProbe, { HOME: home, XDG_CONFIG_HOME: join(home, 'xdg') })).toMatchObject({ pullRebase: true })
+        expect(await guardRemoteCredentials(other, git, executeProbe)).toBe(false)
+        expect(await guardRemoteCredentials(other, git, executeProbe, { HOME: home })).toBe(true)
     })
 
     it('names every path a patch file applies to, and none when a header is one it cannot read', () => {

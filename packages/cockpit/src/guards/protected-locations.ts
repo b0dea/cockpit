@@ -172,11 +172,17 @@ const GUARD_IGNORED_ENTRY_LIMIT = GUARD_SEARCH_ENTRY_LIMIT
  * null when Git did not answer. The configuration overrides keep Git from running the fsmonitor
  * program or trusting its untracked cache, and match ignore rules case-sensitively, as ripgrep does.
  */
-async function gitPaths(git: ResolvedExecutable, repository: string, args: readonly string[], execute: GuardExecute): Promise<readonly string[] | null> {
+/**
+ * Where Git finds the person's global configuration: HOME and XDG_CONFIG_HOME from the environment the
+ * hook runs in. Both lie outside the roots, which agents do not write, so the configuration is the person's.
+ */
+export type GuardGitEnvironment = Readonly<{ HOME?: string; XDG_CONFIG_HOME?: string }>
+
+async function gitPaths(git: ResolvedExecutable, repository: string, args: readonly string[], execute: GuardExecute, env: GuardGitEnvironment = {}): Promise<readonly string[] | null> {
     const step = snapshotExecutionStep({
         id: 'guard-git-paths',
         argv: [git.canonicalPath, '-C', repository, `--work-tree=${repository}`, ...GIT_CHILD_CONFIG, '-c', 'core.untrackedCache=false', '-c', 'core.ignoreCase=false', ...args],
-        argv0: git.invocationPath, cwd: repository, env: {}, timeoutMs: 10_000,
+        argv0: git.invocationPath, cwd: repository, env: { ...env }, timeoutMs: 10_000,
         stdoutLimitBytes: GIT_LIST_BYTES, stderrLimitBytes: 65_536, paths: [repository], ports: [], labels: { action: 'guard-git-paths' },
         expected: [{ kind: 'path', target: repository, state: 'repository' }],
         consumedFiles: [{ path: git.canonicalPath, sha256: git.sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: git.executionMode }],
@@ -361,19 +367,19 @@ export interface GuardBranchFacts {
 }
 
 /** Git configuration entries matching `pattern`, as `[key, value]`, or null when Git could not say. */
-async function gitConfigEntries(git: ResolvedExecutable, repository: string, pattern: string, execute: GuardExecute): Promise<readonly (readonly [string, string])[] | null> {
-    const entries = await gitPaths(git, repository, ['config', '-z', '--get-regexp', pattern], execute)
+async function gitConfigEntries(git: ResolvedExecutable, repository: string, pattern: string, execute: GuardExecute, env: GuardGitEnvironment): Promise<readonly (readonly [string, string])[] | null> {
+    const entries = await gitPaths(git, repository, ['config', '-z', '--get-regexp', pattern], execute, env)
     return entries && entries.map(entry => { const cut = entry.indexOf('\n'); return cut < 0 ? [entry, ''] as const : [entry.slice(0, cut), entry.slice(cut + 1)] as const })
 }
 
-export async function guardBranchFacts(repository: string, git: ResolvedExecutable, execute: GuardExecute): Promise<GuardBranchFacts | null> {
+export async function guardBranchFacts(repository: string, git: ResolvedExecutable, execute: GuardExecute, env: GuardGitEnvironment = {}): Promise<GuardBranchFacts | null> {
     const ref = (lines: readonly string[] | null) => {
         const value = lines?.join('').trim()
         return value && /^refs\/\S+$/.test(value) ? value : null
     }
-    const [head, push, config] = await Promise.all([gitPaths(git, repository, ['symbolic-ref', '-q', 'HEAD'], execute),
-        gitPaths(git, repository, ['rev-parse', '--symbolic-full-name', '@{push}'], execute),
-        gitConfigEntries(git, repository, '^(push\\.default|pull\\.rebase|branch\\..*\\.rebase|remote\\..*\\.push)$', execute)])
+    const [head, push, config] = await Promise.all([gitPaths(git, repository, ['symbolic-ref', '-q', 'HEAD'], execute, env),
+        gitPaths(git, repository, ['rev-parse', '--symbolic-full-name', '@{push}'], execute, env),
+        gitConfigEntries(git, repository, '^(push\\.default|pull\\.rebase|branch\\..*\\.rebase|remote\\..*\\.push)$', execute, env)])
     if (config === null) return null
     const current = ref(head)
     const last = (key: string) => config.filter(([name]) => name === key).at(-1)?.[1]
@@ -395,8 +401,8 @@ function credentialUrl(url: string): boolean {
  * the base an `insteadOf` rewrite substitutes, or an `http.extraHeader`, which holds a token. Null when
  * Git could not say.
  */
-export async function guardRemoteCredentials(repository: string, git: ResolvedExecutable, execute: GuardExecute): Promise<boolean | null> {
-    const config = await gitConfigEntries(git, repository, '^(remote\\..*\\.(url|pushurl)|url\\..*\\.(insteadof|pushinsteadof)|http\\..*extraheader)$', execute)
+export async function guardRemoteCredentials(repository: string, git: ResolvedExecutable, execute: GuardExecute, env: GuardGitEnvironment = {}): Promise<boolean | null> {
+    const config = await gitConfigEntries(git, repository, '^(remote\\..*\\.(url|pushurl)|url\\..*\\.(insteadof|pushinsteadof)|http\\..*extraheader)$', execute, env)
     return config && config.some(([name, value]) => /extraheader$/.test(name)
         || /^url\./.test(name) && credentialUrl(name.slice(4, name.lastIndexOf('.')))
         || /^remote\./.test(name) && credentialUrl(value))

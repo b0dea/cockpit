@@ -89,6 +89,9 @@ export interface GuardEvaluationApplicationInput {
     readonly ripgrepConfigActive?: boolean
     /** The harness's command search path, whose directories inside the allowed roots the guard protects. */
     readonly searchPath?: string
+    /** HOME and XDG_CONFIG_HOME of the harness, where Git reads the person's global configuration. */
+    readonly home?: string
+    readonly xdgConfigHome?: string
 }
 
 interface GuardEvaluationApplicationAdapters {
@@ -192,8 +195,10 @@ export async function runGuardEvaluationApplication(
         return { decision: { ...decision, reason }, diagnostics: [{ severity: 'error', code: 'GUARD_REFUSED', message: reason, target: 'guard' }] }
     }
     try {
-        const data = ownDataValues(snapshotJson(input), ['cwd', 'guardRoot', 'harness', 'identity', 'payload'], ['askIsDeny', 'ripgrepConfigActive', 'searchPath'])
-        if (!data
+        const data = ownDataValues(snapshotJson(input), ['cwd', 'guardRoot', 'harness', 'identity', 'payload'], ['askIsDeny', 'ripgrepConfigActive', 'searchPath', 'home', 'xdgConfigHome'])
+        const directory = (value: unknown) => value === undefined || typeof value === 'string' && isAbsolute(value) && !/[\x00-\x1f\x7f]/.test(value)
+            && Buffer.byteLength(value) <= GUARD_INPUT_LIMITS.pathBytes
+        if (!data || !directory(data.home) || !directory(data.xdgConfigHome)
             || data.searchPath !== undefined && (typeof data.searchPath !== 'string' || /[\x00-\x1f\x7f]/.test(data.searchPath) || Buffer.byteLength(data.searchPath) > GUARD_INPUT_LIMITS.inputBytes)
             || data.askIsDeny !== undefined && typeof data.askIsDeny !== 'boolean'
             || data.ripgrepConfigActive !== undefined && typeof data.ripgrepConfigActive !== 'boolean'
@@ -407,13 +412,15 @@ export async function runGuardEvaluationApplication(
         const tracked = new Map<string, readonly string[] | null>()
         const queries: Array<() => Promise<void>> = []
         // Which branch a push or a history rewrite acts on is Git's to say, in a repository inside the roots.
+        // Git's answers rest on the person's global configuration too, as the agent's own Git commands do.
+        const gitEnvironment = { ...typeof data.home === 'string' ? { HOME: data.home } : {}, ...typeof data.xdgConfigHome === 'string' ? { XDG_CONFIG_HOME: data.xdgConfigHome } : {} }
         const branches = new Map<string, Awaited<ReturnType<typeof guardBranchFacts>>>()
         // Whether a remote URL Git prints carries a credential, for `git remote -v` and a read of `.git/config`.
         const remotes = new Map<string, boolean | null>()
         const askRemotes = (repository: string) => {
             if (!allowed(repository) || remotes.has(repository)) return
             remotes.set(repository, null)
-            queries.push(async () => { remotes.set(repository, await guardRemoteCredentials(repository, git.value, adapters.execute ?? executeProbe)) })
+            queries.push(async () => { remotes.set(repository, await guardRemoteCredentials(repository, git.value, adapters.execute ?? executeProbe, gitEnvironment)) })
         }
         for (const invocation of parsed.invocations) {
             const command = gitInvocation(invocation)
@@ -424,7 +431,7 @@ export async function runGuardEvaluationApplication(
             }
             if (!command || !GUARD_BRANCH_VERBS.has(command.verb) || command.uncertain || !allowed(command.cwd) || branches.has(command.cwd)) continue
             branches.set(command.cwd, null)
-            queries.push(async () => { branches.set(command.cwd, await guardBranchFacts(command.cwd, git.value, adapters.execute ?? executeProbe)) })
+            queries.push(async () => { branches.set(command.cwd, await guardBranchFacts(command.cwd, git.value, adapters.execute ?? executeProbe, gitEnvironment)) })
         }
         for (const invocation of parsed.invocations) {
             const access = classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: data.ripgrepConfigActive === true })

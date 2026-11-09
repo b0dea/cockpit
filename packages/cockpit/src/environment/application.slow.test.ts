@@ -326,10 +326,10 @@ describe('guard policy construction', () => {
         const config = CockpitConfig.parse(parse(readFileSync(configPath, 'utf8')))
         const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
             resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }) }
-        const decide = async (command: string) => {
+        const decide = async (command: string, environment: { home?: string; xdgConfigHome?: string } = {}) => {
             const identity = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
             return (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'codexcli', cwd: root,
-                payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+                payload: shellPayload(command, root), searchPath: '/usr/bin:/bin', ...environment }, adapters)).decision
         }
         const configure = async (mode: 'allow' | 'ask') => {
             config.guards.default = mode
@@ -347,6 +347,19 @@ describe('guard policy construction', () => {
         git('push', '-q', '-u', 'origin', 'topic')
         expect(await decide('git push')).toMatchObject({ decision: 'allow' })
         expect(await decide('git push --force')).toMatchObject({ decision: 'deny' })
+        // Git reads the person's global configuration below HOME and XDG_CONFIG_HOME, and so does the guard:
+        // a matching push sends main too, and a pull that rebases rewrites main.
+        const home = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-global-home-')))
+        scratch.push(home)
+        mkdirSync(join(home, '.config/git'), { recursive: true })
+        writeFileSync(join(home, '.config/git/config'), '[push]\n\tdefault = matching\n')
+        mkdirSync(join(home, 'xdg/git'), { recursive: true })
+        writeFileSync(join(home, 'xdg/git/config'), '[pull]\n\trebase = true\n')
+        expect(await decide('git push', { home })).toMatchObject({ decision: 'deny', reason: expect.stringContaining('push.default=matching') })
+        git('switch', '-q', 'main')
+        expect(await decide('git pull')).toMatchObject({ decision: 'allow' })
+        expect(await decide('git pull', { home, xdgConfigHome: join(home, 'xdg') })).toMatchObject({ decision: 'deny', reason: expect.stringContaining('protected branch') })
+        git('switch', '-q', 'topic')
         await configure('ask')
         expect((await decide('git commit -m done')).decision).toBe('ask')
     }, 120_000)
