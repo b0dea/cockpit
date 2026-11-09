@@ -13,13 +13,16 @@ function input() {
     const mcpResult = { servers: [], wrappers: [], harnesses: [] }
     const grants: unknown[] = []
     const guard = { path: '.cockpit/guards/bash-guard.sh', bytes: '# guard\n', sha256: digest('# guard\n') }
+    // A listed OpenCode always gets its permission block, granted siblings or not.
+    const openCodeBase = '{"$schema":"schema.json","instructions":[]}\n'
+    const openCodePermissions = `${JSON.stringify({ ...JSON.parse(openCodeBase), permission: { external_directory: {}, read: {}, edit: {} } })}\n`
     return {
         configuredHarnesses: ['claudecode', 'codexcli', 'cursor', 'grokcli', 'opencode'],
         merge: { kind: 'complete', surfaces: [], overrides: [], findings: [] },
         generated: { kind: 'complete', status: 0, diagnostics: [], mechanism: { package: 'rulesync', version: RULESYNC_VERSION, role: 'spelling' }, files: [
             file('codexcli', 'AGENTS.md', 'base instructions\n'),
             file('opencode', 'AGENTS.md', 'base instructions\n'),
-            file('opencode', 'opencode.jsonc', '{"$schema":"schema.json","instructions":[]}\n'),
+            file('opencode', 'opencode.jsonc', openCodeBase),
             file('cursor', '.cursor/rules/base.mdc', 'base instructions\n'),
             file('grokcli', 'AGENTS.md', 'base instructions\n'),
         ] },
@@ -29,7 +32,8 @@ function input() {
             { target: 'claudecode', capability: 'instructed', files: [], readonly: { fragment: null } },
         ] },
         nativeMcp: { modelSha256: surfaceModelSha256(mcpResult)!, fragments: [] },
-        nativeGrants: { modelSha256: surfaceModelSha256(grants)!, fragments: [] },
+        nativeGrants: { modelSha256: surfaceModelSha256(grants)!, fragments: [{ target: 'opencode', path: 'opencode.jsonc',
+            baseSha256: digest(openCodeBase), bytes: openCodePermissions, sha256: digest(openCodePermissions) }] },
         browser: null,
         browserReference: null,
         skillReferences: [],
@@ -146,6 +150,7 @@ describe('surface rendering', () => {
             region: { format: 'opencode-json-root-properties', members: [
                 { key: '$schema', valueBytes: '"schema.json"' },
                 { key: 'instructions', valueBytes: '[]' },
+                { key: 'permission', valueBytes: '{"external_directory":{},"read":{},"edit":{}}' },
             ] },
         })
     })

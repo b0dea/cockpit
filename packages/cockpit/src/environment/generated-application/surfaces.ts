@@ -509,7 +509,9 @@ export async function prepareSurfaces(
             ...(result.evidence ? { evidence: result.evidence } : {}) })
     }
     const mcpTargets = mcp.result.harnesses.filter(row => row.servers.length > 0).map(row => row.target)
-    const grantTargets = [...new Set(projection.grants.map(row => row.target))]
+    // OpenCode's permission block carries its read and guard-file denials as well as directory grants,
+    // so it is written for a listed OpenCode whether or not any sibling is granted.
+    const grantTargets = [...new Set([...projection.grants.map(row => row.target), ...tools.filter(target => target === 'opencode')])]
     const generatedNativeMcp = nativeFragmentSet(generated, mcp.result, nativeMcpPaths(mcpTargets))
     const nativeGrants = nativeGrantFragmentSet(generated, projection.grants, nativeGrantPaths(grantTargets),
         openCodeReadDenials(siblingDirectories, prepared.registry.secretPaths))

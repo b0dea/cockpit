@@ -128,7 +128,7 @@ function replaceRegion(document: string, bytes: string): string {
 
 // --- Capability matrix ------------------------------------------------------------------------
 
-const CAPABILITY_COLUMNS = [['guard-firing', 'Guard firing'], ['instruction-loading', 'Instruction loading'], ['skill-parity', 'Skills'], ['session-start', 'Session-start check'], ['subagent-grader', 'Evaluator subagent'], ['remote-mcp', 'Remote MCP servers'], ['mcp-tool-restrictions', 'MCP tool restrictions'], ['served-checkout-grant', 'Worktree grants']] as const
+const CAPABILITY_COLUMNS = [['guard-firing', 'Guard firing'], ['instruction-loading', 'Instruction loading'], ['skill-parity', 'Skills'], ['session-start', 'Session-start check'], ['subagent-grader', 'Evaluator subagent'], ['remote-mcp', 'Remote MCP servers'], ['mcp-tool-restrictions', 'MCP tool restrictions'], ['served-checkout-grant', 'Worktree grants'], ['guard-files-edit', 'Guard files: file tools'], ['guard-files-shell', 'Guard files: shell']] as const
 interface CapabilityCell {
     readonly target: SurfaceTarget
     readonly capability: typeof CAPABILITY_COLUMNS[number][0]
@@ -215,6 +215,13 @@ async function capabilityCells(sources: ReferenceSources) {
             measuredOn: grant.measuredVersion === null ? NEVER_PROBED : grant.measuredOn, measuredVersion: grant.measuredVersion, location: null })
     }
     for (const target of SURFACE_TARGETS) {
+        const { fileTools, shell } = harnessFact(target).guardFiles
+        for (const [capability, fact] of [['guard-files-edit', fileTools], ['guard-files-shell', shell]] as const) {
+            cells.push({ target, capability, state: fact.state, evidence: fact.evidence, provenance: fact.provenance,
+                measuredOn: fact.measuredVersion === null ? NEVER_PROBED : fact.measuredOn, measuredVersion: fact.measuredVersion, location: null })
+        }
+    }
+    for (const target of SURFACE_TARGETS) {
         const restriction = harnessFact(target).mcpToolRestriction
         cells.push({ target, capability: 'mcp-tool-restrictions', state: restriction.state, evidence: restriction.evidence,
             provenance: restriction.provenance, measuredOn: restriction.measuredVersion === null ? NEVER_PROBED : restriction.measuredOn,
@@ -262,7 +269,7 @@ function renderCapabilityMatrix(cells: readonly CapabilityCell[], manifestSha256
         + `<!-- Source manifest: ${manifestSha256} -->\n\n`
         + 'This generated page is for users checking what cockpit actually enforces in each agent tool. ' + MATRIX_STATES
         + `Written says whether \`sync\` writes the tool's files for a cockpit.toml that lists no tools: the tools whose guard firing is measured are the default \`[surfaces] tools\`, and any other tool is written only once listed (\`npx --no cockpit tool add <tool> --config <your cockpit.toml>\`).\n\n`
-        + `Guard firing is the generated hook refusing a protected operation. Instruction loading is the tool reading the guidance cockpit writes for it, including the guides of sibling repositories. Evaluator subagent is the tool offering the generated evaluator definition to the working agent for \`[work] grading = "subagent"\`: \`instructed\` there means offered, with no subagent run and read-only never claimed, and \`enforced\` means a spawned evaluator was refused the file writes and shell commands its generated tool list leaves out; the verdict the working agent relays is its word either way. Skills records native listing or explicit body loading, as each measurement states; neither proves trigger selection or correct behavior: ${listed(skills.map(code))}. The session-start check is the tool running \`cockpit check\` as a session starts and showing its drift report to the agent. Remote MCP servers are the tool connecting to an approved streamable HTTP server with the credential cockpit spells for it: an environment reference or a headers helper. MCP tool restrictions deny calls outside a server's exact \`[mcp.allowed_tools]\` list; they do not inspect allowed tools' arguments or implementation. Worktree grants are the tool letting the agent write a checkout \`cockpit use\` serves from outside the declared one, through a machine-local file cockpit writes.\n\n`
+        + `Guard firing is the generated hook refusing a protected operation. Instruction loading is the tool reading the guidance cockpit writes for it, including the guides of sibling repositories. Evaluator subagent is the tool offering the generated evaluator definition to the working agent for \`[work] grading = "subagent"\`: \`instructed\` there means offered, with no subagent run and read-only never claimed, and \`enforced\` means a spawned evaluator was refused the file writes and shell commands its generated tool list leaves out; the verdict the working agent relays is its word either way. Skills records native listing or explicit body loading, as each measurement states; neither proves trigger selection or correct behavior: ${listed(skills.map(code))}. The session-start check is the tool running \`cockpit check\` as a session starts and showing its drift report to the agent. Remote MCP servers are the tool connecting to an approved streamable HTTP server with the credential cockpit spells for it: an environment reference or a headers helper. MCP tool restrictions deny calls outside a server's exact \`[mcp.allowed_tools]\` list; they do not inspect allowed tools' arguments or implementation. Worktree grants are the tool letting the agent write a checkout \`cockpit use\` serves from outside the declared one, through a machine-local file cockpit writes. Guard files are the files the guard depends on: its script, its machine-local identity, the policy sync accepted and every hook registration and native configuration it authenticates, plus each repository's \`.git/hooks\` and \`.git/config\`; \`cockpit.toml\` is not one, since the guard judges each edit to it. File tools is the tool refusing its own edit and write tools there, and shell is the tool refusing a program run from its shell there, which the guard cannot judge.\n\n`
         + grid
         + '\n## Measurements\n\nEach line gives the date and tool version of the run and what it showed.\n\n' + measured.join('')
         + '\n## Without a measurement\n\n' + unmeasured.join('')

@@ -514,7 +514,9 @@ cockpit's merge of the adopted copy and its own version:
 - **Claude permissions:** `allow`, `ask` and `deny` rules are combined. A rule cockpit denies is
   never kept as a team `allow` or `ask`.
 - **Every other key** is the team's, unless cockpit writes the same key; then the two values must
-  match.
+  match. Claude Code's `sandbox` is one such key: cockpit writes none, and turning it on is how a
+  team protects the [guard files](safety-and-autonomy.md#guard-files-and-the-agent-tool) from
+  programs run in the shell.
 
 Commit `cockpit/adopted/` with cockpit.toml. To change the settings, edit the adopted copy, delete
 the merged file and run `sync`; `check` reports a hand-edited merged file, or an adopted copy

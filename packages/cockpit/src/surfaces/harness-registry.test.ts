@@ -63,7 +63,8 @@ describe('shipped harness registry', () => {
         expect(['2026-11-04', '2026-02-30', '2026-9-26', '2026-11-03T00:00:00Z', '', 20261103].map(date => isMeasurementDate(date, today)))
             .toEqual([false, false, false, false, false, false])
         // Every recorded date holds against the real clock, so a typo in the future fails here and not at a user's machine.
-        const recorded = HARNESS_REGISTRY.flatMap(row => [...('measuredOn' in row.native ? [row.native.measuredOn] : []), ...('firing' in row.guard ? [row.guard.firing.measuredOn] : [])])
+        const recorded = HARNESS_REGISTRY.flatMap(row => [...('measuredOn' in row.native ? [row.native.measuredOn] : []), ...('firing' in row.guard ? [row.guard.firing.measuredOn] : []),
+            row.guardFiles.fileTools.measuredOn, row.guardFiles.shell.measuredOn])
         expect(recorded.every(date => isMeasurementDate(date))).toBe(true)
     })
 
