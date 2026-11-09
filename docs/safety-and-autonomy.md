@@ -371,9 +371,10 @@ running it yourself would. Agents cannot write outside the roots, so those helpe
 or their tools configured there, and choosing native external reads hands consent for that command
 to the agent tool, which asks or sandboxes it by its own rules.
 
-A named file under a managed root may follow a package-manager link only to a regular file inside a
-managed root; both spellings and the target's identity are checked, and the link is revalidated
-before the decision is returned.
+A named file, or a search or listing, under a managed root may follow a package-manager link to a
+target inside a managed root: a named read only to a regular file, a search also to a directory,
+which is then walked for secrets as any search is. Both spellings and the target's identity are
+checked, and the link is revalidated before the decision is returned.
 
 A `[guards] allow` rule admits a command the read-only profile cannot classify, but never past the
 secret names: each argument is checked whole, after `=`, after `:` and after an attached short
@@ -651,7 +652,9 @@ Removing unchanged MCP approvals and adding or narrowing exact tool allowlists i
 
 The guard applies the edit to the current text and compares the tables, so an edit elsewhere in the
 file stays permitted; an edit it cannot apply exactly, and a shell command that names the file and
-is not a proven read, a Git record or the `--config` operand of a cockpit command, are denied. The
+can visibly write it (a redirect onto it, a writer such as `cp`, `mv`, `tee` or `git checkout`, an
+in-place `sed -i` or `perl -i`, or a write option such as `-o` or `--output`), are denied. A command
+that only reads it, such as `diff`, `sort` or `cockpit check --config cockpit.toml`, is not. The
 pin holds only for the tool calls the guard inspects.
 
 Every writing `sync` records the policy it ran under in `.cockpit/policy.json`. A later sync that
@@ -674,8 +677,12 @@ reviewers must approve it, such as the
 from the configuration the guards were generated from, the guard compares it, with defaults applied,
 to the copy sync keeps in `.cockpit/local/guard-config`. An edit that does not widen what agents may
 do holds every guarded call except `cockpit sync` and `cockpit check`, and the hold says so
-(`GUARD_CONFIG_UNSYNCED`). Any other edit holds every guarded call, that sync included, until a
-person runs `sync` in a terminal, and the hold names each field that widens.
+(`GUARD_CONFIG_UNSYNCED`). An edit that widens is not applied: the guard keeps judging every call
+under the configuration last synced, as `.cockpit/local/guard-config` records it, so the agent keeps
+working and the widened rule is not yet in force. While it waits, an agent's `cockpit sync` or
+`cockpit upgrade` is refused, the policy pin still applies to the current text, and every refusal
+ends with a sentence naming the widened fields and the sync command a person runs in a terminal. A
+missing or mismatched recorded copy still holds every guarded call.
 
 A guarded call is one a generated hook fires on: shell commands, file edits and writes, and
 restricted MCP tools under Claude Code. A hold stops nothing else, so file reads and unrestricted
@@ -686,8 +693,8 @@ So the `GUARD_CONFIG_UNSYNCED` hold also admits one edit, write or patch of `coc
 that leaves it byte-identical to the recorded copy, and so does the hold on a file that does not
 load. An agent can restore only what was recorded, so authority never exceeds the recorded policy,
 and this may also discard a person's unsynced narrowing edit. An edit the guard cannot prove applies
-exactly once, or that also touches another file, stays held, and restoring out of a widening edit
-stays a person's.
+exactly once, or that also touches another file, stays held. The same restoration is admitted out of
+a widening edit, which leaves agents under the policy they already had.
 
 An edit does not widen only when every difference is one of these:
 
@@ -706,8 +713,8 @@ Every other difference widens. That includes any change, in either direction, to
 MCP approvals outside that delegation, removed or expanded MCP tool allowlists, new guard allows or
 removed guard restrictions; a new sibling; a sibling's changed `dir`, `guides`, environment files or
 derived MCP sources; and every command field, such as `environment.seed`. A field the classification
-has no rule for widens too. A missing or mismatched copy of the generated configuration holds as a
-widening edit does. `check` reports the same classification: `GUARD_CONFIG_UNSYNCED` as a warning,
+has no rule for widens too. A missing or mismatched copy of the generated configuration holds every
+guarded call. `check` reports the same classification: `GUARD_CONFIG_UNSYNCED` as a warning,
 `GUARD_CONFIG_WIDENED` as an error naming the fields.
 
 Whoever runs it, sync refuses a guide that is, or links to, a `.env` or `.env.*` file, a file below
@@ -726,7 +733,11 @@ decision without adding grants or weakening hard boundaries:
 | OpenCode | Ask becomes deny, for the same reason: its plugin hook can only throw or continue. Allow exits 0; every non-allow decision exits 2. |
 
 Unavailable or malformed decisions exit 2 on every target, so adapter exit 0 alone does not mean
-permission was granted. A timeout stops a stalled handler holding a guarded call indefinitely;
+permission was granted. The generated Claude Code and Codex registrations give the guard hook a
+`timeout` of 30 seconds; a guard call spawns several Node and Git processes and was seen to exceed
+Codex's 5-second default on a loaded machine. What either harness does with the call when that
+timeout fires, run it or refuse it, is not measured, so a guard slower than its timeout may fail
+open. A timeout stops a stalled handler holding a guarded call indefinitely;
 copied plans, failed transport, signals, oversized output, nonzero handler status and invalid JSON
 become `unavailable` with exit 2. Lexical path normalization in this adapter does not itself verify
 filesystem identity.
