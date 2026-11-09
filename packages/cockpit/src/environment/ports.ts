@@ -479,29 +479,40 @@ export async function revalidatePortLeaseProjection(input: {
     readonly projection: PortLeaseProjection
     readonly namespace: StateNamespace
 }): Promise<boolean> {
+    return await readPortLeaseHolders(input) !== undefined
+}
+
+/**
+ * The holders recorded with the lease, read only while the coordination record is still the exact
+ * revision, lease and holder set the projection was issued from; undefined otherwise.
+ */
+export async function readPortLeaseHolders(input: {
+    readonly projection: PortLeaseProjection
+    readonly namespace: StateNamespace
+}): Promise<CoordinationRecord['holders'] | undefined> {
     try {
-        if (!input || typeof input !== 'object' || Array.isArray(input)) return false
+        if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined
         const descriptors = Object.getOwnPropertyDescriptors(input)
         if (Reflect.ownKeys(descriptors).length !== 2
-            || !('value' in (descriptors.projection ?? {})) || !('value' in (descriptors.namespace ?? {}))) return false
+            || !('value' in (descriptors.projection ?? {})) || !('value' in (descriptors.namespace ?? {}))) return undefined
         const projection = descriptors.projection!.value as PortLeaseProjection
         const issued = projection && typeof projection === 'object' ? issuedLeaseProjections.get(projection) : undefined
         const namespace = authenticateStateNamespace(snapshotStateNamespace(descriptors.namespace!.value as StateNamespace))
-        if (!issued || !namespace) return false
+        if (!issued || !namespace) return undefined
         const address = namespace.paths.coordination(projection.lease.stackId)
-        if (!sameCoordinationAddress(address, issued.address)) return false
+        if (!sameCoordinationAddress(address, issued.address)) return undefined
         const current = await readState(address)
-        if (current.kind !== 'complete' || current.value.revision !== projection.ownership.recordRevision) return false
+        if (current.kind !== 'complete' || current.value.revision !== projection.ownership.recordRevision) return undefined
         const value = decodeCoordinationRecord(current.value, projection.lease.stackId)
         if (!value?.lease || value.lease.released || value.lease.offset !== projection.lease.offset
-            || !sameValues(value.lease.ports, projection.lease.ports)) return false
+            || !sameValues(value.lease.ports, projection.lease.ports)) return undefined
         const holderIds = value.holders.map(({ holderId }) => holderId).sort()
         return holderIds.includes(projection.ownership.holderId)
             && projection.ownership.holderCount === holderIds.length
-            && JSON.stringify(projection.ownership.holderIds) === JSON.stringify(holderIds)
+            && JSON.stringify(projection.ownership.holderIds) === JSON.stringify(holderIds) ? value.holders : undefined
     } catch {
         // Reading the supplied projection can only fail on a throwing accessor or proxy trap, which is not revalidated evidence.
-        return false
+        return undefined
     }
 }
 

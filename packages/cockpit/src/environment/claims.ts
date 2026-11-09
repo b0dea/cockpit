@@ -527,11 +527,7 @@ export function processHost(execute: (step: ExecutionStep) => Promise<ExecutePro
             return answer === 'live' || answer === 'absent' ? answer : 'unavailable' as const
         },
         psStart: async (pid: number) => {
-            let ps: ResolvedExecutable | undefined
-            for (const candidate of ['/bin/ps', '/usr/bin/ps']) {
-                const resolved = await resolveExecutablePath(candidate)
-                if (resolved.state === 'available') { ps = resolved.value; break }
-            }
+            const ps = await firstExecutable(PS_PATHS)
             if (!ps) return { kind: 'failed' as const, reason: 'ps is not installed at /bin/ps or /usr/bin/ps' }
             const text = await runBoundedProbe(ps, `process:start:${pid}`, ['-o', 'lstart=', '-p', String(pid)], { LC_ALL: 'C', TZ: 'UTC0' }, execute)
             return text === undefined
@@ -545,18 +541,37 @@ export function processHost(execute: (step: ExecutionStep) => Promise<ExecutePro
 // Reports `live` or `absent` for a pid; twice, so a transient answer reads as `unavailable`.
 const PROCESS_PRESENCE_PROBE = "const p=Number(process.argv[1]);const c=()=>{try{process.kill(p,0);return'live'}catch(e){return e&&e.code==='ESRCH'?'absent':'unavailable'}};const a=c(),b=c();process.stdout.write(a===b?a:'unavailable')"
 
-// One short read-only step through the executor; its stdout when it exits 0, otherwise undefined.
+const PS_PATHS = ['/bin/ps', '/usr/bin/ps'] as const
+const LSOF_PATHS = ['/usr/sbin/lsof', '/usr/bin/lsof', '/sbin/lsof', '/bin/lsof'] as const
+const SS_PATHS = ['/usr/bin/ss', '/bin/ss', '/usr/sbin/ss', '/sbin/ss'] as const
+
+async function firstExecutable(candidates: readonly string[]): Promise<ResolvedExecutable | undefined> {
+    for (const candidate of candidates) {
+        const resolved = await resolveExecutablePath(candidate)
+        if (resolved.state === 'available') return resolved.value
+    }
+    return undefined
+}
+
+interface ProbeBounds {
+    readonly timeoutMs: number
+    readonly stdoutLimitBytes: number
+    readonly exitCodes: readonly number[]
+}
+
+// One short read-only step through the executor; its stdout when it exits with an accepted code, otherwise undefined.
 async function runBoundedProbe(
     executable: ResolvedExecutable,
     id: string,
     args: readonly string[],
     env: Readonly<Record<string, string>>,
     execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
+    bounds: ProbeBounds = { timeoutMs: 5_000, stdoutLimitBytes: 256, exitCodes: [0] },
 ): Promise<string | undefined> {
     const step = snapshotExecutionPlan({ steps: [{
         id, argv: [executable.canonicalPath, ...args] as const,
-        argv0: executable.invocationPath, cwd: '/', env: { ...env }, timeoutMs: 5_000,
-        stdoutLimitBytes: 256, stderrLimitBytes: 1_024, paths: [], ports: [],
+        argv0: executable.invocationPath, cwd: '/', env: { ...env }, timeoutMs: bounds.timeoutMs,
+        stdoutLimitBytes: bounds.stdoutLimitBytes, stderrLimitBytes: 1_024, paths: [], ports: [],
         labels: { probe: id }, expected: [],
         consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912,
             argvIndexes: [0], executable: true, executionMode: executable.executionMode }],
@@ -564,7 +579,292 @@ async function runBoundedProbe(
     }] })?.steps[0]
     if (!step) return undefined
     const outcome = authenticatedExecutionOutcome(await execute(step), step)
-    return outcome?.kind === 'complete' && outcome.execution.exitCode === 0 ? Buffer.from(outcome.stdout).toString('utf8') : undefined
+    if (outcome?.kind === 'complete') return outcome.execution.exitCode === 0 ? Buffer.from(outcome.stdout).toString('utf8') : undefined
+    // The executor reports a nonzero exit as a failed step. Only a process that exited by itself with
+    // an accepted code counts; a timeout, an output limit or a signal carries another code or a signal.
+    return outcome?.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED && outcome.receipt !== undefined
+        && outcome.execution.signal === null && bounds.exitCodes.includes(outcome.execution.exitCode)
+        ? Buffer.from(outcome.stdout).toString('utf8') : undefined
+}
+
+type HostRead = { readonly kind: 'complete'; readonly text: string } | { readonly kind: 'failed'; readonly reason: string }
+type ListenerRead =
+    | { readonly kind: 'complete'; readonly format: 'lsof' | 'ss'; readonly text: string }
+    | { readonly kind: 'failed'; readonly reason: string }
+
+/** What observing which process listens on a port reads from this machine; production binds it with `listenerHost`. */
+export interface ListenerHost {
+    readonly process: ProcessHost
+    /**
+     * The TCP sockets listening on any of the ports: `lsof -F pn` on macOS, which lists only this
+     * user's processes, and `ss -Hltnp` on Linux, which lists every socket but names only this
+     * user's processes.
+     */
+    readonly listeners: (ports: readonly number[]) => Promise<ListenerRead>
+    /** `ps -A -o pid=,ppid=,lstart=` under a fixed locale and zone. */
+    readonly processTable: () => Promise<HostRead>
+}
+
+const issuedListenerHosts = new WeakSet<object>()
+
+/** Whether `listenerHost` made this host, so its reads accept only the executor's own outcomes. */
+export function isIssuedListenerHost(value: unknown): value is ListenerHost {
+    return value !== null && typeof value === 'object' && issuedListenerHosts.has(value)
+}
+
+/** The production `ListenerHost`: ss or lsof, and ps, cross the executor. */
+export function listenerHost(execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): ListenerHost {
+    const host: ListenerHost = Object.freeze({
+        process: processHost(execute),
+        listeners: async (ports) => {
+            // lsof is absent from common Linux images while iproute2's ss is present, and ss also
+            // shows sockets whose owner this user cannot see, which lsof leaves out.
+            if (process.platform === 'linux') {
+                const ss = await firstExecutable(SS_PATHS)
+                if (!ss) return { kind: 'failed', reason: `ss (iproute2) is not installed at ${SS_PATHS.join(', ')}` }
+                const text = await runBoundedProbe(ss, `process:listeners:${ports.join(',')}`, ['-Hltnp'], { LC_ALL: 'C' }, execute,
+                    { timeoutMs: 15_000, stdoutLimitBytes: 4_194_304, exitCodes: [0] })
+                return text === undefined
+                    ? { kind: 'failed', reason: 'ss did not report which processes listen on the leased ports; a sandbox can refuse to run it, so if one is in use, run this command outside it' }
+                    : { kind: 'complete', format: 'ss', text }
+            }
+            const lsof = await firstExecutable(LSOF_PATHS)
+            if (!lsof) return { kind: 'failed', reason: `lsof is not installed at ${LSOF_PATHS.join(', ')}` }
+            // lsof exits 1 when it finds nothing to list; an empty listing then names no owner, which
+            // never proves a listener is a session's.
+            const text = await runBoundedProbe(lsof, `process:listeners:${ports.join(',')}`,
+                ['-nP', '-w', `-iTCP:${ports.join(',')}`, '-sTCP:LISTEN', '-Fpn'], { LC_ALL: 'C' }, execute,
+                { timeoutMs: 15_000, stdoutLimitBytes: 1_048_576, exitCodes: [0, 1] })
+            return text === undefined
+                ? { kind: 'failed', reason: 'lsof did not report which processes listen on the leased ports; a sandbox can refuse to run it, so if one is in use, run this command outside it' }
+                : { kind: 'complete', format: 'lsof', text }
+        },
+        processTable: async () => {
+            const ps = await firstExecutable(PS_PATHS)
+            if (!ps) return { kind: 'failed', reason: 'ps is not installed at /bin/ps or /usr/bin/ps' }
+            const text = await runBoundedProbe(ps, 'process:table', ['-A', '-o', 'pid=,ppid=,lstart='], { LC_ALL: 'C', TZ: 'UTC0' }, execute,
+                { timeoutMs: 15_000, stdoutLimitBytes: 16_777_216, exitCodes: [0] })
+            return text === undefined
+                ? { kind: 'failed', reason: 'ps did not list the running processes; a sandbox can refuse to run it, so if one is in use, run this command outside it' }
+                : { kind: 'complete', text }
+        },
+    } satisfies ListenerHost)
+    issuedListenerHosts.add(host)
+    return host
+}
+
+export interface SessionListenerPort {
+    readonly port: number
+    /**
+     * Whether every process listening on the port descends from a live session holding the stack,
+     * and every probed address that answered is covered by one of their sockets.
+     */
+    readonly owned: boolean
+    readonly reason: string
+}
+
+/** A loopback address the bind probe found listening on a leased port. */
+export interface ProbedListener {
+    readonly port: number
+    readonly address: '127.0.0.1' | '::1'
+}
+
+export type SessionListenerObservation =
+    | Readonly<{ kind: 'complete'; ports: readonly SessionListenerPort[]; identity: string }>
+    | Readonly<{ kind: 'unavailable'; reason: string }>
+
+type ProcessEntry = Readonly<{ ppid: number; start: string }>
+
+function parseProcessTable(read: HostRead): ReadonlyMap<number, ProcessEntry> | undefined {
+    if (read.kind !== 'complete') return undefined
+    const table = new Map<number, ProcessEntry>()
+    for (const line of read.text.split('\n')) {
+        if (line.trim() === '') continue
+        const match = /^\s*([0-9]{1,10})\s+([0-9]{1,10})\s+(\S.*?)\s*$/.exec(line)
+        if (!match || table.has(Number(match[1]))) return undefined
+        table.set(Number(match[1]), { ppid: Number(match[2]), start: match[3]!.replace(/\s+/g, ' ') })
+    }
+    return table.size > 0 ? table : undefined
+}
+
+// A listening socket and the process holding it; `pid` is absent when the socket's owner is
+// another user's process.
+type VisibleSocket = Readonly<{ pid?: number; address: string }>
+
+function parseListeners(read: ListenerRead, ports: readonly number[]): ReadonlyMap<number, readonly VisibleSocket[]> | undefined {
+    if (read.kind !== 'complete') return undefined
+    const sockets = new Map<number, VisibleSocket[]>(ports.map((port) => [port, []]))
+    if (read.format === 'ss') {
+        for (const line of read.text.split('\n')) {
+            if (line.trim() === '') continue
+            const [state, , , local, , ...rest] = line.trim().split(/\s+/)
+            const match = /^(\*|[0-9.]+(?:%\S+)?|\[[^\]]+\](?:%\S+)?):([0-9]{1,5})$/.exec(local ?? '')
+            if (state !== 'LISTEN' || !match) return undefined
+            const port = sockets.get(Number(match[2]))
+            if (!port) continue
+            const address = match[1]!.replace(/%\S+$/, '').replace(/^\[(.*)\]$/, '$1')
+            // A process name is quoted and may itself spell `pid=`; every pid found must descend from
+            // the session, so a spelled one can add a pid but never hide the real owner's.
+            const pids = [...rest.join(' ').matchAll(/pid=([1-9][0-9]{0,9}),fd=/g)].map((found) => Number(found[1]))
+            if (pids.length === 0) port.push({ address })
+            for (const pid of pids) port.push({ pid, address })
+        }
+        return sockets
+    }
+    let pid: number | undefined
+    for (const line of read.text.split('\n')) {
+        if (line === '') continue
+        if (line.startsWith('p')) {
+            if (!/^p[1-9][0-9]{0,9}$/.test(line)) return undefined
+            pid = Number(line.slice(1))
+        } else if (line.startsWith('n')) {
+            const match = /^n(\*|[0-9.]+|\[[^\]]+\]):([0-9]{1,5})$/.exec(line)
+            if (pid === undefined || !match) return undefined
+            sockets.get(Number(match[2]))?.push({ pid, address: match[1]!.replace(/^\[(.*)\]$/, '$1') })
+        } else if (!line.startsWith('f')) return undefined
+    }
+    return sockets
+}
+
+// Which socket addresses accept a connection to a loopback probe. A wildcard socket is read as
+// dual-stack, as Node and most servers bind it; an IPv6-only wildcard beside an invisible IPv4
+// listener is a limit of this reading.
+const COVERS: Readonly<Record<ProbedListener['address'], readonly string[]>> = {
+    '127.0.0.1': ['127.0.0.1', '0.0.0.0', '*', '::'],
+    '::1': ['::1', '*', '::'],
+}
+
+const MAX_ANCESTRY = 512
+
+type AncestryWalk =
+    | Readonly<{ kind: 'reached'; chain: readonly string[] }>
+    | Readonly<{ kind: 'unreached' }>
+    | Readonly<{ kind: 'changed'; pid: number }>
+
+// Follows `pid`'s parents to one of `roots`. Every process on the way must be the same process, by
+// parent and start, in both reads of the process table.
+function walkAncestry(
+    pid: number,
+    roots: ReadonlySet<number>,
+    before: ReadonlyMap<number, ProcessEntry>,
+    after: ReadonlyMap<number, ProcessEntry>,
+): AncestryWalk {
+    const chain: string[] = []
+    let current = pid
+    for (let depth = 0; depth < MAX_ANCESTRY && current > 1; depth += 1) {
+        const first = before.get(current)
+        const second = after.get(current)
+        if (!first || !second || first.ppid !== second.ppid || first.start !== second.start) return { kind: 'changed', pid: current }
+        chain.push(`${current}:${second.start}`)
+        if (roots.has(current)) return { kind: 'reached', chain }
+        current = second.ppid
+    }
+    return { kind: 'unreached' }
+}
+
+/**
+ * Whether `ancestor`, still running with its recorded start identity, is `pid` itself or one of its
+ * ancestors. Anything that cannot be read is unknown.
+ */
+export async function observeProcessAncestry(input: {
+    readonly pid: number
+    readonly ancestor: Required<HolderProcess>
+    readonly host: ListenerHost
+}): Promise<'ancestor' | 'unrelated' | Readonly<{ unknown: string }>> {
+    const confirmed = async () => {
+        const observed = await observeProcessStart(input.ancestor.pid, input.host.process)
+        return observed.state === 'unknown' ? { unknown: observed.reason }
+            : observed.state === 'present' && observed.start === input.ancestor.processStart
+    }
+    const first = await confirmed()
+    if (first !== true) return first === false ? 'unrelated' : first
+    const before = parseProcessTable(await input.host.processTable())
+    const after = parseProcessTable(await input.host.processTable())
+    if (!before || !after) return { unknown: 'the running processes could not be listed' }
+    const walk = walkAncestry(input.pid, new Set([input.ancestor.pid]), before, after)
+    if (walk.kind === 'changed') return { unknown: `process ${walk.pid} changed while its ancestry was read` }
+    const second = await confirmed()
+    if (second !== true) return second === false ? 'unrelated' : second
+    return walk.kind === 'reached' ? 'ancestor' : 'unrelated'
+}
+
+/**
+ * Which of the ports only processes a live `cockpit session` holding the stack started listen on.
+ * An address, a port or a sibling's directory says nothing about who serves it; the proof is the
+ * process. A session holder counts only when its recorded pid still runs with its recorded start
+ * identity, and a listener only when its parent chain reaches that pid and one of the session's
+ * sockets covers every loopback address the probe found answering. The process table is read
+ * on both sides of the socket listing, and every process on the chain must be the same process in
+ * both reads, so a pid that exits and is reused between the listing and the chain is not read as
+ * the session's. Anything that cannot be read is unavailable, never owned.
+ */
+export async function observeSessionListeners(input: {
+    readonly listeners: readonly ProbedListener[]
+    readonly holders: readonly HolderProcess[]
+    readonly host: ListenerHost
+}): Promise<SessionListenerObservation> {
+    const unavailable = (reason: string) => ({ kind: 'unavailable' as const, reason })
+    const probedPorts = [...new Set(input.listeners.map(({ port }) => port))].sort((left, right) => left - right)
+    const sessions = input.holders.filter((holder): holder is Required<HolderProcess> =>
+        holder.pid !== undefined && holder.processStart !== undefined)
+    // A session whose start cannot be read may be running; reading it as gone would blame its own
+    // listener on a stranger, so that leaves ownership unavailable.
+    const liveSessions = async (): Promise<ReadonlySet<number> | string> => {
+        const live = new Set<number>()
+        for (const holder of sessions) {
+            const observed = await observeProcessStart(holder.pid, input.host.process)
+            if (observed.state === 'unknown') return `cockpit session process ${holder.pid} could not be confirmed running (${observed.reason})`
+            if (observed.state === 'present' && observed.start === holder.processStart) live.add(holder.pid)
+        }
+        return live
+    }
+    const live = await liveSessions()
+    if (typeof live === 'string') return unavailable(live)
+    if (live.size === 0) {
+        return { kind: 'complete', identity: '', ports: probedPorts.map((port) => ({ port, owned: false,
+            reason: 'no live cockpit session holds this stack' })) }
+    }
+    const before = parseProcessTable(await input.host.processTable())
+    const listening = parseListeners(await input.host.listeners(probedPorts), probedPorts)
+    const after = parseProcessTable(await input.host.processTable())
+    if (!before || !after) return unavailable('the running processes could not be listed')
+    if (!listening) return unavailable('the processes listening on the leased ports could not be identified')
+    const stillLive = await liveSessions()
+    if (typeof stillLive === 'string') return unavailable(stillLive)
+    if (stillLive.size !== live.size || [...live].some((pid) => !stillLive.has(pid))) {
+        return unavailable('a cockpit session holding this stack changed while its listeners were identified')
+    }
+    const ports: SessionListenerPort[] = []
+    const identity: string[] = []
+    for (const port of probedPorts) {
+        const sockets = listening.get(port)!
+        // lsof lists only this user's processes, so a probed address no visible socket covers is
+        // served by a process it cannot see.
+        const hidden = input.listeners.find((probed) => probed.port === port
+            && !sockets.some(({ address }) => COVERS[probed.address].includes(address)))
+        if (hidden) {
+            ports.push({ port, owned: false, reason: `its listener on ${hidden.address === '::1' ? '[::1]' : hidden.address} belongs to a process this user cannot see` })
+            continue
+        }
+        const unseen = sockets.find(({ pid }) => pid === undefined)
+        if (unseen) {
+            ports.push({ port, owned: false, reason: `its listener on ${unseen.address.includes(':') ? `[${unseen.address}]` : unseen.address} belongs to a process this user cannot see` })
+            continue
+        }
+        const pids = [...new Set(sockets.map(({ pid }) => pid!))].sort((left, right) => left - right)
+        identity.push(`${port}:${sockets.map(({ pid, address }) => `${pid}@${address}`).sort().join(',')}`)
+        let foreign: number | undefined
+        for (const pid of pids) {
+            const walk = walkAncestry(pid, live, before, after)
+            if (walk.kind === 'changed') return unavailable(`process ${walk.pid} changed while the listeners on port ${port} were identified`)
+            if (walk.kind === 'unreached') { foreign = pid; break }
+            identity.push(...walk.chain.map((link) => `${port}:${link}`))
+        }
+        ports.push(foreign === undefined
+            ? { port, owned: true, reason: 'a live cockpit session holding this stack started its listener' }
+            : { port, owned: false, reason: `process ${foreign} was not started by a live cockpit session holding this stack` })
+    }
+    return { kind: 'complete', ports, identity: identity.join('\n') }
 }
 
 function describeHolder(holder: ClaimHolder): string {

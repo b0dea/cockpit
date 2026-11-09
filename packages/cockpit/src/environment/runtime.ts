@@ -32,15 +32,20 @@ import {
 import { compareBindSources, composeProjectDirectory } from './compose-topology.js'
 import { isResolvedDockerExecutable, resolvedDockerExecutable, resolvedExecutable, type ResolvedExecutable } from './executable.js'
 import {
+    isIssuedListenerHost,
+    observeSessionListeners,
     type DrainOutcome,
     type DrainReservation,
+    type ListenerHost,
     type ReservedDrainAttempt,
     type RuntimeStopped,
+    type SessionListenerObservation,
 } from './claims.js'
 import { stackId as deriveStackId } from './identity.js'
 import {
     inspectPortLeaseProjection,
     observePortListeners,
+    readPortLeaseHolders,
     revalidatePortLeaseProjection,
     type PortLeaseProjection,
     type PortListenerBinding,
@@ -2598,8 +2603,12 @@ export async function observeRuntimePortFamily(input: {
     readonly namespace: StateNamespace
     readonly listenerTimeoutMs: number
     readonly revalidate: () => Promise<readonly RuntimeServiceEvidence[]>
+    // Without it, every leased port Compose does not publish must be free.
+    readonly sessionListeners?: ListenerHost
 }): Promise<EnvironmentObservation> {
-    const captured = captureOwnValues(input, ['topology', 'services', 'namespace', 'listenerTimeoutMs', 'revalidate'])
+    const keys = ['topology', 'services', 'namespace', 'listenerTimeoutMs', 'revalidate']
+    const captured = captureOwnValues(input, input && typeof input === 'object' && Object.hasOwn(input, 'sessionListeners')
+        ? [...keys, 'sessionListeners'] : keys)
     const topologyValue = captured?.topology as RuntimeTopologyEvidence | undefined
     const topology = topologyValue && typeof topologyValue === 'object' ? issuedTopologyEvidence.get(topologyValue) : undefined
     if (!topology) throw new RefusalError('runtime port evidence is not authentic')
@@ -2659,10 +2668,24 @@ export async function observeRuntimePortFamily(input: {
         if (listeners.length === 0) return unavailable('retained port lease contains no observable ports')
         const observed = await observePortListeners({ bindings: listeners, timeoutMs: timeoutMs as number })
         if (observed.kind !== 'complete') return unavailable(observed.reason)
-        const mismatched = observed.rows.filter((row, index) => row.listening !== (listeners[index]?.expected === 'listening'))
+        let mismatched = observed.rows.filter((row, index) => row.listening !== (listeners[index]?.expected === 'listening'))
+        // A listener on an unpublished leased port is the stack's own only when the session holding
+        // the stack started it; the same proof is read again before the verdict is issued.
+        const hostListener = captured?.sessionListeners as ListenerHost | undefined
+        if (hostListener !== undefined && !isIssuedListenerHost(hostListener)) return unavailable('session listener observation is not authentic')
+        const hosted = mismatched.filter(({ listening }) => listening).map(({ port, probeHost }) => ({ port, address: probeHost }))
+        const observeOwners = async (): Promise<SessionListenerObservation> => {
+            const holders = await readPortLeaseHolders({ projection: lease, namespace })
+            if (!holders) return { kind: 'unavailable', reason: 'retained port lease changed during listener ownership observation' }
+            return observeSessionListeners({ listeners: hosted, holders, host: hostListener! })
+        }
+        const owners = hosted.length > 0 && hostListener ? await observeOwners() : undefined
+        if (owners?.kind === 'unavailable') return unavailable(owners.reason, observed.observedAt)
+        const foreign = new Map(owners?.ports.filter(({ owned }) => !owned).map(({ port, reason }) => [port, reason]) ?? [])
+        if (owners) mismatched = mismatched.filter(({ port, listening }) => !listening || foreign.has(port))
         if (mismatched.length > 0) {
             const named = mismatched.slice(0, 8).map(({ probeHost, port, listening }) => listening
-                ? `${probeHost === '::1' ? `[${probeHost}]` : probeHost}:${port} has a listener outside the stack`
+                ? `${probeHost === '::1' ? `[${probeHost}]` : probeHost}:${port} has a listener outside the stack${foreign.has(port) ? ` (${foreign.get(port)})` : ''}`
                 : `${probeHost === '::1' ? `[${probeHost}]` : probeHost}:${port} has no stack listener`)
             return issueObservation({
                 code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, owner: OWNER, stackId: topology.stackId,
@@ -2688,6 +2711,12 @@ export async function observeRuntimePortFamily(input: {
                 || JSON.stringify(current.contract.inspection.bindMounts) !== JSON.stringify(before.contract.inspection.bindMounts)
                 || JSON.stringify(current.contract.inspection.publishedPorts) !== JSON.stringify(before.contract.inspection.publishedPorts)) {
                 return unavailable('runtime service identity changed during listener observation', observed.observedAt)
+            }
+        }
+        if (owners) {
+            const current = await observeOwners()
+            if (current.kind !== 'complete' || current.identity !== owners.identity || current.ports.some(({ owned }) => !owned)) {
+                return unavailable('a session listener on a leased port changed during observation', observed.observedAt)
             }
         }
         if (!await revalidatePortLeaseProjection({ projection: lease, namespace })) {
