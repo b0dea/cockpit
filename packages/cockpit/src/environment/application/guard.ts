@@ -25,6 +25,7 @@ import {
     cockpitShaped,
     gitInvocation,
     GUARD_BRANCH_VERBS,
+    gitTreeTargets,
     foldGuardSpelling,
     GUARD_LOCATION_LIMITS,
     GUARD_ROOT_PROTECTIONS,
@@ -51,8 +52,10 @@ import {
     guardSecretFiles,
     guardSensitivePathsBelow,
     guardBranchFacts,
+    guardPackageManifest,
     guardPatchTargets,
     guardRemoteCredentials,
+    guardWorktreeChanges,
     guardTrackedSensitivePaths,
     guardUnignoredSensitivePaths,
 } from '../../guards/protected-locations.js'
@@ -422,6 +425,20 @@ export async function runGuardEvaluationApplication(
             remotes.set(repository, null)
             queries.push(async () => { remotes.set(repository, await guardRemoteCredentials(repository, git.value, adapters.execute ?? executeProbe, gitEnvironment)) })
         }
+        // What a merge, checkout, reset, pick, rebase, stash or pull writes into a work tree holding a
+        // guard control: Git compares the revisions before the command runs.
+        const protectedPaths = [...GUARD_ROOT_PROTECTIONS.map(item => join(policy.canonicalRoot, item.path)), ...instancePaths]
+        const trees = new Map<string, Awaited<ReturnType<typeof guardWorktreeChanges>>>()
+        const treeKey = (cwd: string, revision: string, from: string | undefined) => `${cwd}\0${revision}\0${from ?? ''}`
+        for (const invocation of parsed.invocations) {
+            const command = gitInvocation(invocation)
+            for (const target of command && !command.uncertain && allowed(command.cwd) ? gitTreeTargets(command)?.targets ?? [] : []) {
+                const key = treeKey(command!.cwd, target.revision, target.from)
+                if (trees.has(key)) continue
+                trees.set(key, null)
+                queries.push(async () => { trees.set(key, await guardWorktreeChanges(command!.cwd, target, protectedPaths, git.value, adapters.execute ?? executeProbe, gitEnvironment)) })
+            }
+        }
         for (const invocation of parsed.invocations) {
             const command = gitInvocation(invocation)
             if (command?.verb === 'remote' && !command.uncertain) askRemotes(command.cwd)
@@ -497,6 +514,15 @@ export async function runGuardEvaluationApplication(
             if (request.operation === 'patch') {
                 const targets = allowed(path) ? guardPatchTargets(path) : null
                 return targets ? { status: 'resolved', path, targets } : { status: 'unavailable', path, symlink: false }
+            }
+            if (request.operation === 'tree') {
+                const facts = request.revision === undefined ? null : trees.get(treeKey(path, request.revision, request.from))
+                return facts ? { status: 'resolved', path, revision: request.revision, ...request.from === undefined ? {} : { from: request.from }, ...facts }
+                    : { status: 'unavailable', path, symlink: false }
+            }
+            if (request.operation === 'manifest') {
+                const manifest = allowed(path) ? guardPackageManifest(path, allowed) : null
+                return manifest ? { status: 'resolved', path, ...manifest } : { status: 'unavailable', path, symlink: false }
             }
             const managedRoot = policy.allowedRoots.filter(root => confinedPath(root, path)).sort((a, b) => b.length - a.length)[0]
             // A person's read path admits this read, or with native external reads the agent tool's own permission decided it.

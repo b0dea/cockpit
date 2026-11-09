@@ -7,8 +7,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolveGitExecutable } from '../environment/executable.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { GUARD_SECRET_FILE_LIMIT } from './evaluator.js'
-import { guardBranchFacts, guardInstalledDirectories, guardPatchTargets, guardRemoteCredentials, guardSearchDirectories, guardSearchPathRelativeEntry, guardSecretFiles,
-    guardSensitivePathsBelow, guardTrackedSensitivePaths, guardUnignoredSensitivePaths } from './protected-locations.js'
+import { guardBranchFacts, guardInstalledDirectories, guardPackageManifest, guardPatchTargets, guardRemoteCredentials, guardSearchDirectories, guardSearchPathRelativeEntry,
+    guardSecretFiles, guardSensitivePathsBelow, guardTrackedSensitivePaths, guardUnignoredSensitivePaths, guardWorktreeChanges } from './protected-locations.js'
 
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -187,6 +187,58 @@ describe('guard protected locations', () => {
         expect(await guardRemoteCredentials(other, git, executeProbe, { HOME: home })).toBe(true)
     })
 
+    it('reports which guard controls a revision would write into the work tree, as each Git verb compares them', async () => {
+        const resolution = await resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+        if (resolution.state !== 'available') throw new Error(resolution.reason)
+        const git = resolution.value
+        const root = scratch()
+        const run = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args], { encoding: 'utf8' })
+        const guard = join(root, '.cockpit/guards/bash-guard.sh')
+        mkdirSync(join(root, '.cockpit/guards'), { recursive: true })
+        writeFileSync(guard, 'guard\n')
+        writeFileSync(join(root, 'notes.md'), 'notes\n')
+        run('init', '-q', '-b', 'work')
+        run('add', '.')
+        run('commit', '-qm', 'base')
+        // A second branch replaces the guard, as a commit made in a second worktree does.
+        run('switch', '-qc', 'evil')
+        writeFileSync(guard, 'exit 0\n')
+        run('commit', '-qam', 'replace')
+        run('switch', '-q', 'work')
+        writeFileSync(join(root, 'notes.md'), 'more notes\n')
+        run('commit', '-qam', 'notes')
+        const changes = (revision: string, from?: string) => guardWorktreeChanges(root, { revision, ...from === undefined ? {} : { from } }, [guard, join(root, '.cockpit/mcp')], git, executeProbe)
+        expect(await changes('evil')).toEqual({ guarded: true, changed: [guard] })
+        expect(await changes('work~1')).toEqual({ guarded: true, changed: [] })
+        // A pick applies only what the commit changed, and a word that names no commit writes nothing.
+        expect(await changes('evil', 'evil^')).toEqual({ guarded: true, changed: [guard] })
+        expect(await changes('work', 'work^')).toEqual({ guarded: true, changed: [] })
+        expect(await changes('notes.md')).toEqual({ guarded: true, changed: [] })
+        // A reset overwrites the work tree itself, local edits included.
+        writeFileSync(guard, 'edited\n')
+        expect(await changes('HEAD', 'worktree')).toEqual({ guarded: true, changed: [guard] })
+        // A from that names no commit lists what the revision holds, as a stash's untracked files are restored.
+        expect(await changes('evil', 'evil~5')).toEqual({ guarded: true, changed: [guard] })
+        // A repository whose work tree holds no protected path is not asked.
+        const sibling = scratch()
+        execFileSync('git', ['init', '-q', sibling])
+        expect(await guardWorktreeChanges(sibling, { revision: 'HEAD' }, [guard], git, executeProbe)).toEqual({ guarded: false, changed: [] })
+    })
+
+    it('reads the nearest package manifest inside the roots, and none past them or from an unreadable one', () => {
+        const root = scratch()
+        writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'synthetic-app', scripts: { build: 'tsc', test: 'vitest' } }))
+        mkdirSync(join(root, 'copy/dist'), { recursive: true })
+        writeFileSync(join(root, 'copy/package.json'), JSON.stringify({ name: '@b00dea/cockpit' }))
+        writeFileSync(join(root, 'copy/dist/cli.js'), '')
+        const inside = (path: string) => path === root || path.startsWith(`${root}/`)
+        expect(guardPackageManifest(join(root, 'src'), inside)).toEqual({ name: 'synthetic-app', scripts: ['build', 'test'] })
+        expect(guardPackageManifest(join(root, 'copy/dist/cli.js'), inside)).toEqual({ name: '@b00dea/cockpit', scripts: [] })
+        expect(guardPackageManifest(join(root, 'src'), (path: string) => path.startsWith(`${root}/src`))).toEqual({ name: null, scripts: [] })
+        writeFileSync(join(root, 'copy/package.json'), '{')
+        expect(guardPackageManifest(join(root, 'copy/dist/cli.js'), inside)).toBeNull()
+    })
+
     it('names every path a patch file applies to, and none when a header is one it cannot read', () => {
         const root = scratch()
         const patch = (text: string) => { writeFileSync(join(root, 'p.diff'), text); return guardPatchTargets(join(root, 'p.diff')) }
@@ -194,6 +246,10 @@ describe('guard protected locations', () => {
             + 'diff --git a/old.ts b/.cockpit/guards/bash-guard.sh\nrename from old.ts\nrename to .cockpit/guards/bash-guard.sh\n')).toEqual(['src/a.ts', 'old.ts', '.cockpit/guards/bash-guard.sh'])
         expect(patch('--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1 @@\n+x\n')).toEqual(['new.ts'])
         expect(patch('diff --git "a/x y" "b/x y"\n')).toBeNull()
+        // `git am` decodes an encoded mail body, so the raw lines name nothing it applies.
+        expect(patch('From: synthetic@example.test\nSubject: [PATCH] x\nContent-Transfer-Encoding: base64\n\nZGlmZiAtLWdpdA==\n')).toBeNull()
+        expect(patch('Subject: x\ncontent-transfer-encoding: quoted-printable\n\n--- a/src/a.ts\n+++ b/=2Ecockpit/guards/bash-guard.sh\n')).toBeNull()
+        expect(patch('Subject: x\nContent-Transfer-Encoding: 8bit\n\n--- a/src/a.ts\n+++ b/src/a.ts\n')).toEqual(['src/a.ts'])
         symlinkSync(join(root, 'p.diff'), join(root, 'link.diff'))
         expect(guardPatchTargets(join(root, 'link.diff'))).toBeNull()
         expect(guardPatchTargets(join(root, 'absent.diff'))).toBeNull()

@@ -11,7 +11,7 @@ import { basename, dirname, join, posix, relative } from 'node:path'
 import { ENVIRONMENT_CODES, snapshotExecutionStep, type ExecutionStep, RefusalError } from '../environment/contract.js'
 import { GIT_CHILD_CONFIG, type ResolvedExecutable } from '../environment/executable.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import { foldGuardSpelling, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity, isSensitiveGuardName } from './evaluator.js'
+import { foldGuardSpelling, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity, isSensitiveGuardName, type GitTreeTarget } from './evaluator.js'
 
 function missing(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
 
@@ -408,13 +408,75 @@ export async function guardRemoteCredentials(repository: string, git: ResolvedEx
         || /^remote\./.test(name) && credentialUrl(value))
 }
 
+/**
+ * Which of `protectedPaths` the work tree holding `cwd` contains (`guarded`), and which of them differ
+ * between the target's `from` and `revision` (`changed`), or null when Git could not answer. A revision
+ * that names no commit writes nothing, since Git refuses it or reads the word as a pathspec, and a
+ * `from` that names none compares with nothing, listing every protected path the revision holds.
+ */
+export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, protectedPaths: readonly string[], git: ResolvedExecutable, execute: GuardExecute,
+    env: GuardGitEnvironment = {}): Promise<{ readonly guarded: boolean; readonly changed: readonly string[] } | null> {
+    const top = repositoryAbove(cwd)
+    if (top === undefined) return null
+    const inside = protectedPaths.filter(path => path === top || path.startsWith(`${top}/`)).map(path => relative(top, path)).filter(Boolean)
+    if (!inside.length) return { guarded: false, changed: [] }
+    // A diff against the work tree may refresh the index; this query takes no lock.
+    const run = (args: readonly string[]) => gitPaths(git, top, ['--no-optional-locks', ...args], execute, env)
+    const commit = async (revision: string) => {
+        const lines = await run(['rev-parse', '--verify', '--quiet', '--end-of-options', `${revision}^{commit}`])
+        return lines === null ? null : lines.join('').trim() || undefined
+    }
+    const to = await commit(target.revision)
+    if (to === null) return null
+    if (to === undefined) return { guarded: true, changed: [] }
+    const pathspecs = inside.map(path => `:(literal)${path}`)
+    const diff = ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z']
+    let names: readonly string[] | null
+    if (target.from === 'worktree') names = await run([...diff, to, '--', ...pathspecs])
+    else {
+        const from = await commit(target.from ?? 'HEAD')
+        if (from === null) return null
+        names = await run(from === undefined ? ['ls-tree', '-r', '--name-only', '-z', to, '--', ...inside] : [...diff, from, to, '--', ...pathspecs])
+    }
+    return names && names.length <= GUARD_LOCATION_LIMITS.sensitivePaths ? { guarded: true, changed: names.map(name => join(top, name)).sort() } : null
+}
+
+// A package manifest is a few kilobytes; a larger one is not read.
+const MANIFEST_BYTES = 1_048_576
+
+/**
+ * The nearest package.json at or above `path` while `inside` holds: its `name` and the names of its
+ * `scripts`, or none when there is no manifest; null when one is not a plain readable JSON file.
+ */
+export function guardPackageManifest(path: string, inside: (path: string) => boolean): { readonly name: string | null; readonly scripts: readonly string[] } | null {
+    for (let directory = path; inside(directory); directory = dirname(directory)) {
+        let read
+        try { read = readBoundedFile(join(directory, 'package.json'), MANIFEST_BYTES) } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code ?? ''
+            if (!missing(error) && code !== 'ENOTDIR') {
+                if (['ELOOP', 'EISDIR', 'ENXIO'].includes(code)) return null
+                throw error
+            }
+            if (dirname(directory) === directory) break
+            continue
+        }
+        if (read.kind === 'too-large') return null
+        let manifest: unknown
+        try { manifest = JSON.parse(read.bytes.toString('utf8')) } catch (error) { if (error instanceof SyntaxError) return null; throw error }
+        const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
+        if (!record(manifest)) return null
+        return { name: typeof manifest.name === 'string' ? manifest.name : null, scripts: record(manifest.scripts) ? Object.keys(manifest.scripts) : [] }
+    }
+    return { name: null, scripts: [] }
+}
+
 // A patch an agent applies is a few hundred kilobytes at most; a larger one is not read.
 const PATCH_BYTES = 4_194_304
 
 /**
  * Every path a patch file's headers name, relative to the tree it applies to and with Git's `a/` and
- * `b/` prefixes removed, or null when the file is not a regular file inside `root`, is too large, or
- * names a path the guard cannot read, such as a quoted one.
+ * `b/` prefixes removed, or null when the file is not a regular file inside `root`, is too large,
+ * names a path the guard cannot read, such as a quoted one, or is a mail whose body is encoded.
  */
 export function guardPatchTargets(path: string): readonly string[] | null {
     let read
@@ -423,8 +485,12 @@ export function guardPatchTargets(path: string): readonly string[] | null {
         throw error
     }
     if (read.kind === 'too-large') return null
+    const text = read.bytes.toString('utf8')
+    // `git am` decodes a base64 or quoted-printable mail body before it applies the patch inside, whose
+    // headers the raw lines then do not show.
+    if (/^content-transfer-encoding:(?![ \t]*(?:7bit|8bit)[ \t]*\r?$)/im.test(text)) return null
     const targets = new Set<string>()
-    for (const line of read.bytes.toString('utf8').split('\n')) {
+    for (const line of text.split('\n')) {
         if (!/^(?:diff --git |--- |\+\+\+ |(?:rename|copy) (?:from|to) )/.test(line)) continue
         // A header the guard cannot read, such as a quoted name or one with spaces, may name any path.
         const header = /^(?:diff --git (\S+) (\S+)|(?:---|\+\+\+) (\S+)(?:\t.*)?|(?:rename|copy) (?:from|to) (\S+))\r?$/.exec(line)
