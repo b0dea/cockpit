@@ -619,8 +619,8 @@ stricter setting and the most agentic one that keeps every guardrail.
 | `browser drive` and `screenshot` without a prompt | process on isolated data; on data that is not isolated, restored or reaches production, preapproval is refused | `[browser] request_preapproval` | on exactly where the data is isolated | `false` | as shipped |
 | Enabling a declared MCP server | guardrail: a harness starts an enabled server outside every guard boundary, and a sibling's MCP source is a file the agent can write. `agent` exists, and gives this guardrail up | `[autonomy] mcp_approve` | `person` | `person` | `person` |
 | Starting a profile that mounts an operator-gated sibling | guardrail: it touches live data or local hardware | `gate = "operator"` on the sibling | as declared | add the gate | keep the gate |
-| A command the guard cannot prove safe | guardrail: it widens what the agent may run; a person admits an exact command for good under `[[guards.allow]]` | `[[guards.allow]]` | a prompt | no rule | rules for the commands the team trusts |
-| An edit of `cockpit.toml` that widens what agents may do (`GUARD_CONFIG_WIDENED`) | guardrail: it widens what the agent may run, read or write; [Edits the guard has not applied](#edits-the-guard-has-not-applied) | none | a person syncs | | |
+| A command the guard asks about | guardrail: under the shipped allow default only a boundary the guard cannot resolve, such as a push whose destination Git cannot name; under `[guards] default = "ask"` every command it cannot prove safe. A person admits an exact command for good under `[[guards.allow]]`, which never overrides a blocked item | `[guards] default`, `[[guards.allow]]` | `allow`: a prompt in Claude Code, a refusal in Codex and OpenCode | `ask` | `allow` |
+| An edit of `cockpit.toml` that widens what agents may do (`GUARD_CONFIG_WIDENED`) | guardrail: it widens what the agent may run, read or write; [Edits the guard has not applied](#edits-the-guard-has-not-applied) | none | a person, at `sync --interactive` | | |
 | An agent's edit of `[work]`, `[work.gates]`, `[autonomy]` or MCP tool access | guardrail: it is how an agent would delegate to itself; the edit is a hard denial | none | refused | | |
 | Accepting a weaker policy than the last sync recorded, grading mode included (`POLICY_WEAKENING_UNCONFIRMED`) | guardrail: it loosens the agent's own gates or grading; this covers moving grading off a grader that cannot run (`EVALUATOR_UNAVAILABLE`) | none | a person, at `sync --interactive` | | |
 | Confirming a trust answer: `guards`, `testing`, `environment.install_policies`, `sibling`, `work.grading`, `environment.posture` | guardrail: an agent confirming one would hide that no person reviewed what constrains it | none | a person | | |
@@ -686,25 +686,33 @@ reviewers must approve it, such as the
 <!-- cockpit:ref path=packages/cockpit/src/guards/policy-change.ts --> Once `cockpit.toml` differs
 from the configuration the guards were generated from, the guard compares it, with defaults applied,
 to the copy sync keeps in `.cockpit/local/guard-config`. An edit that does not widen what agents may
-do holds every guarded call except `cockpit sync` and `cockpit check`, and the hold says so
-(`GUARD_CONFIG_UNSYNCED`). An edit that widens is not applied: the guard keeps judging every call
-under the configuration last synced, as `.cockpit/local/guard-config` records it, so the agent keeps
-working and the widened rule is not yet in force. While it waits, an agent's `cockpit sync` or
-`cockpit upgrade` is refused, the policy pin still applies to the current text, and every refusal
-ends with a sentence naming the widened fields and the sync command a person runs in a terminal. A
-missing or mismatched recorded copy still holds every guarded call.
+do is judged as written: the guard applies the current configuration at once, so a new deny rule or
+protected branch takes effect on the next call, and `check` reports the edit as
+`GUARD_CONFIG_UNSYNCED` until sync records it. An edit that widens is not applied: the guard keeps
+judging every call under the configuration last synced, as `.cockpit/local/guard-config` records
+it, so the agent keeps working and the widened rule is not yet in force. While it waits, an agent's
+`cockpit sync` or `cockpit upgrade` is refused, the policy pin still applies to the current text,
+and every refusal ends with a sentence naming the widened fields and `sync --interactive`.
 
-A guarded call is one a generated hook fires on: shell commands, file edits and writes, and
-restricted MCP tools under Claude Code. A hold stops nothing else, so file reads and unrestricted
-MCP tools continue.
+Sync itself refuses to publish a widening that nobody confirmed (`GUARD_CONFIG_WIDENED`), whoever
+runs it: a person runs `sync --interactive`, reads the widened fields and answers `yes`. Sync judges
+the exact bytes it publishes, so an edit made while it runs is judged too. An `init` rerun is gated
+the same way, and `sync --adopt` may add only adopted-surface rows. The first sync on a machine,
+before any guard is recorded, runs unattended. As with every local `person` gate, cockpit cannot
+tell a person from a program driving a terminal.
+
+An edit whose configuration does not load, and a missing or mismatched recorded copy, hold every
+guarded call until a person syncs. A guarded call is one a generated hook fires on: shell commands,
+file edits and writes, and restricted MCP tools under Claude Code. A hold stops nothing else, so
+file reads and unrestricted MCP tools continue.
 
 Sync can refuse an edit the guard admitted, such as a tool restriction naming an undeclared server.
-So the `GUARD_CONFIG_UNSYNCED` hold also admits one edit, write or patch of `cockpit.toml` itself
-that leaves it byte-identical to the recorded copy, and so does the hold on a file that does not
-load. An agent can restore only what was recorded, so authority never exceeds the recorded policy,
-and this may also discard a person's unsynced narrowing edit. An edit the guard cannot prove applies
-exactly once, or that also touches another file, stays held. The same restoration is admitted out of
-a widening edit, which leaves agents under the policy they already had.
+So the hold on a file that does not load admits one edit, write or patch of `cockpit.toml` itself
+that leaves it byte-identical to the recorded copy. An agent can restore only what was recorded, so
+authority never exceeds the recorded policy, and this may also discard a person's unsynced narrowing
+edit. An edit the guard cannot prove applies exactly once, or that also touches another file, stays
+held. The same restoration is admitted out of a widening edit, which leaves agents under the policy
+they already had.
 
 An edit does not widen only when every difference is one of these:
 
@@ -746,8 +754,10 @@ Unavailable or malformed decisions exit 2 on every target, so adapter exit 0 alo
 permission was granted. The generated Claude Code and Codex registrations give the guard hook a
 `timeout` of 30 seconds; a guard call spawns several Node and Git processes and was seen to exceed
 Codex's 5-second default on a loaded machine. What either harness does with the call when that
-timeout fires, run it or refuse it, is not measured, so a guard slower than its timeout may fail
-open. A timeout stops a stalled handler holding a guarded call indefinitely;
+timeout fires, run it or refuse it, is not measured. So the guard keeps its own deadline of 25
+seconds: a call still undecided then is refused (`GUARD_TIMED_OUT`, exit 2), the guard stops every
+process it started, and it starts nothing after. A synchronous stall inside the guard's own process
+can still reach the harness timeout, which may then fail open;
 copied plans, failed transport, signals, oversized output, nonzero handler status and invalid JSON
 become `unavailable` with exit 2. Lexical path normalization in this adapter does not itself verify
 filesystem identity.

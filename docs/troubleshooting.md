@@ -44,7 +44,12 @@ agent hands the command to a person rather than rewording it.
 | `… names <path>, outside the configured roots` | Under the allow default any command naming a path outside the cockpit follows `[guards] external_reads`. | A person lists the location under `[guards] read_paths` or sets `external_reads = "native"`, then syncs. |
 | `… holds <word>, which names or can match an environment file …` / `… whose value the guard cannot see` | An assignment, loop item or glob names or can match a secret, or an unexpanded word decides a path. | Write the files out by name. |
 | `Guard path escapes configured roots` | The command writes outside the cockpit and its siblings. | Write inside the cockpit, or a person runs it. |
-| `… has an unapproved edit that widens what agents may do` (appended) | `cockpit.toml` widens the policy; calls are judged under the configuration last synced. | A person reviews the edit and runs `cockpit sync` in a terminal. |
+| `… has an unapproved edit that widens what agents may do` (appended) | `cockpit.toml` widens the policy; calls are judged under the configuration last synced. | A person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a terminal, reads the widened fields and answers yes, or reverts the edit. |
+| `The guard ran out of time` | The guard did not decide within its own 25-second deadline, so it refused the call rather than leave it to the harness's hook timeout. | Retry; a call that searches or lists a very large tree is slow, so name a narrower path. On a heavily loaded machine, wait for other work to finish. |
+
+`sync` itself reports `GUARD_CONFIG_WIDENED` and writes nothing when `cockpit.toml` widens what
+agents may do and nobody confirmed it: a person runs `sync --interactive`, reads the widened fields
+and answers yes, or the edit is reverted. A narrowing or neutral edit syncs unattended.
 
 ## GENERATED_ARTIFACT_DRIFT
 
@@ -337,6 +342,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `GENERATED_STALE_APPROVAL_REQUIRED` | [see above](#merge-ownership-and-generation) |
 | `GENERATED_STALE_ARTIFACT` | a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal and confirms the stale-file removals it shows with yes |
 | `GUARD_AUTHORITY_UNAVAILABLE` | [see above](#common-refusal-guidance) |
+| `GUARD_CONFIG_WIDENED` | [see above](#guard-refusals) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_NODE_DIFFERS` | [see above](#selftest-and-override-inspection) |
 | `GUARD_REFUSED` | [see above](#common-refusal-guidance) |
