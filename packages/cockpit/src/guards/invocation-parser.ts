@@ -103,9 +103,13 @@ const NESTING_LIMIT = 8
 // The most words one numeric brace range may produce.
 const BRACE_RANGE_LIMIT = 256
 const FETCHERS = new Set(['curl', 'wget', 'fetch', 'http', 'aria2c'])
-const INTERPRETERS = /^(?:sh|bash|zsh|dash|ksh|fish|csh|tcsh|python[\d.]*|node|perl|ruby|php|osascript)$/
+// awk runs what it reads through system(), and each of the others runs a script read from standard input.
+const INTERPRETERS = /^(?:sh|bash|zsh|dash|ksh|fish|csh|tcsh|python[\d.]*|node|nodejs|bun|deno|perl|ruby|php|osascript|[gmn]?awk|tclsh[\d.]*|lua[\d.]*|Rscript)$/
 const FETCHED_CODE = 'Refusing to run downloaded text as code: a download feeds a shell or interpreter, so what runs is whatever the server sends. '
     + 'Download the file into the cockpit, read it, then run it by path.'
+// A URL, or a package spelled as a Git source, runs code no registry name or path the guard can read stands for.
+const REMOTE_SOURCE = /:\/\/|^(?:git\+|github:|gitlab:|bitbucket:|gist:)/i
+const fetchedSource = (word: string): never => refuse(`${shown(word)} runs code fetched from a URL or a Git host, which the guard cannot read. Download it into the cockpit, read it, then run it by path.`)
 
 /** Whether a command list starts a fetcher anywhere a command starts, judged from its words alone. */
 function startsFetcher(tokens: readonly Token[]): boolean {
@@ -371,11 +375,49 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
 
 const separators = new Set([';', '\n', '&&', '||', '|', '&'])
 const redirects = new Set(['<', '>', '>>', '<<', '<<-', '>&', '<&', '<>', '>|'])
-const wrappers = new Set(['timeout', 'nice', 'nohup', 'setsid', 'env', 'command', 'exec', 'time', 'caffeinate', 'stdbuf', 'ionice', 'noglob', 'nocorrect'])
+// `-` is zsh's precommand modifier that runs the command as a login shell would name it.
+const wrappers = new Set(['timeout', 'nice', 'nohup', 'setsid', 'env', 'command', 'exec', 'time', 'caffeinate', 'stdbuf', 'ionice', 'noglob', 'nocorrect', '-'])
 // Each runs a command or code from its arguments that the guard does not follow: an evaluating builtin, a shell it does
 // not read, or a program that runs the rest of its command line in a form the guard does not read as a wrapper.
 const dynamicExecutables = new Set(['eval', 'source', '.', 'dash', 'ksh', 'fish', 'csh', 'tcsh', 'mksh', 'yash', 'busybox', 'pwsh', 'xargs', 'builtin',
-    'trap', 'let', 'chrt', 'taskset', 'unbuffer', 'watch'])
+    'trap', 'let', 'chrt', 'taskset', 'unbuffer', 'watch', 'script', 'flock', 'parallel', 'entr'])
+/**
+ * Package and environment managers that run a program named on their line, by their words before it. Only the options
+ * listed are read: any other may pick a shell, a directory, an environment file or another package. npm and yarn read an
+ * option anywhere on the line before `--`, so a command after them takes options only behind `--`. A launcher that fetches
+ * resolves `owner/repo` from a Git host.
+ */
+type Launcher = Readonly<{ plain?: readonly string[]; values?: readonly string[]; anywhere?: true; fetches?: true }>
+const npmExec: Launcher = { plain: ['--no', '--yes', '-y'], values: ['--package'], anywhere: true, fetches: true }
+const bunx: Launcher = { plain: ['--bun'], values: ['-p', '--package'], fetches: true }
+const launchers: Readonly<Record<string, Launcher>> = {
+    npx: { plain: ['--no', '--yes', '-y'], values: ['-p', '--package'], fetches: true }, 'npm exec': npmExec, 'npm x': npmExec,
+    'pnpm exec': {}, 'pnpm dlx': { values: ['--package'], fetches: true }, pnpx: { fetches: true },
+    'yarn exec': { anywhere: true }, 'yarn dlx': { anywhere: true, fetches: true }, bunx, 'bun x': bunx, 'bun run': { plain: ['--bun', '-b', '--silent'] },
+    uvx: { values: ['--from'] }, 'uv tool run': { values: ['--from'] }, 'uv run': {}, 'poetry run': {}, 'pipenv run': {},
+}
+// The subcommand words of each manager above that launch a program.
+const launcherVerbs = new Map<string, Set<string>>()
+for (const spelling of Object.keys(launchers)) {
+    const [manager, verb] = spelling.split(' ')
+    if (verb) launcherVerbs.set(manager!, new Set([...launcherVerbs.get(manager!) ?? [], verb]))
+}
+// pnpm runs a word that names none of its own commands as `pnpm exec` would. Only long-standing commands count, so a
+// pnpm older than one of its newer commands never has that word read as its own while it runs the program of that name.
+const pnpmCommands = new Set(['add', 'audit', 'bin', 'config', 'c', 'create', 'dedupe', 'deploy', 'doctor', 'env', 'fetch', 'help', 'import', 'init',
+    'install', 'i', 'install-test', 'it', 'licenses', 'link', 'ln', 'list', 'ls', 'outdated', 'pack', 'patch', 'patch-commit', 'prune', 'publish',
+    'rebuild', 'rb', 'remove', 'rm', 'uninstall', 'un', 'root', 'run', 'server', 'setup', 'start', 'stop', 'restart', 'store', 'test', 't', 'tst',
+    'unlink', 'update', 'up', 'upgrade', 'why', 'access', 'adduser', 'bugs', 'deprecate', 'dist-tag', 'docs', 'edit', 'info', 'login', 'logout',
+    'owner', 'ping', 'prefix', 'profile', 'pkg', 'repo', 's', 'search', 'set-script', 'star', 'stars', 'team', 'token', 'unpublish', 'unstar', 'v',
+    'view', 'whoami', 'xmas'])
+// pnpm's options before its command, as its help lists them, and the older -s and --silent; recursive, multi and m run the
+// command in every package as -r does.
+const pnpmValueOptions = new Set(['-C', '--dir', '-F', '--filter', '--filter-prod', '--reporter', '--loglevel', '--workspace-concurrency'])
+const pnpmFlags = new Set(['-r', '--recursive', 'recursive', 'multi', 'm', '-w', '--workspace-root', '--stream', '--parallel', '--aggregate-output',
+    '--sort', '--no-sort', '--reverse', '--fail-if-no-match', '--include-workspace-root', '--ignore-workspace', '-y', '--yes', '--color',
+    '-s', '--silent', '-v', '--version', '-h', '--help'])
+// Options of git itself, ahead of its subcommand, that take the next word.
+const gitValueOptions = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env', '--attr-source'])
 // Builtins that take a variable name, whose array subscript bash evaluates as arithmetic, and arithmetic runs `$(…)`.
 const subscriptEvaluators = new Set(['unset', 'read', 'declare', 'typeset', 'local', 'export', 'readonly', 'printf', 'mapfile', 'readarray', 'test', '['])
 // A shell reads a script by path or a literal `-c` string, both of which the guard follows.
@@ -405,9 +447,98 @@ const fetches = (item: ParsedInvocation) => item.executable !== null && (FETCHER
     || posix.basename(item.executable) === 'gh' && item.argv.find((value) => !value.startsWith('-')) === 'api')
 const interprets = (item: ParsedInvocation) => item.executable !== null && INTERPRETERS.test(posix.basename(item.executable))
 
+/**
+ * Where the program a launcher at `at` runs starts, or undefined when the words there launch nothing the guard unwraps. A
+ * cockpit launcher stays whole: the application proves which of its spellings start the installed cockpit.
+ */
+function launchedCommand(args: readonly Token[], at: number): number | undefined {
+    const words = args.map((token) => token.value)
+    const manager = posix.basename(words[at]!)
+    let index = at + 1
+    let spelling = Object.hasOwn(launchers, manager) ? manager : undefined
+    if (manager === 'pnpm') {
+        let selects = false
+        while (index < words.length && (words[index]!.startsWith('-') || pnpmFlags.has(words[index]!))) {
+            const [flag, attached] = words[index]!.split(/=(.*)/s)
+            if (pnpmValueOptions.has(flag!)) index += attached === undefined ? 2 : 1
+            else if (pnpmFlags.has(words[index]!)) index++
+            else refuse(`Unsupported pnpm option ${shown(words[index]!)} before its command. Write it after the command, or run the program itself.`)
+            selects = true
+        }
+        const verb = words[index]
+        if (verb === undefined || pnpmCommands.has(verb)) return undefined
+        if (verb === 'with') refuse('pnpm with runs another pnpm version on the rest of its line, which the guard does not read. Run the command with the installed pnpm.')
+        if (selects) {
+            refuse(`pnpm with options before ${shown(verb)} runs a program in the directory or workspace packages they select, which the guard does not follow. `
+                + 'Use pnpm <options> run <script> for a script, or run the program from its own directory.')
+        }
+        if (verb === 'exec' || verb === 'dlx') spelling = `pnpm ${verb}`
+        // Any other word is the program itself.
+        if (spelling) index++
+    } else if (spelling === undefined) {
+        const verbs = launcherVerbs.get(manager)
+        if (!verbs) return undefined
+        const verb = words.slice(index).find((word) => verbs.has(word))
+        if (words[index]?.startsWith('-') && verb) refuse(`${manager} options before its ${verb} subcommand can change the directory or the program it runs. Write \`${manager} ${verb}\` first, or run the program itself.`)
+        spelling = [`${manager} ${words[index]} ${words[index + 1]}`, `${manager} ${words[index]}`].find((candidate) => Object.hasOwn(launchers, candidate))
+        if (spelling === undefined) return undefined
+        index += spelling.split(' ').length - 1
+    }
+    const name = spelling ?? manager
+    const launcher: Launcher = spelling === undefined ? {} : launchers[spelling]!
+    const sources: string[] = []
+    let separated = false
+    while (words[index]?.startsWith('-')) {
+        const option = words[index++]!
+        if (option === '--') { separated = true; break }
+        const [flag, attached] = option.split(/=(.*)/s)
+        if (launcher.values?.includes(flag!)) {
+            const value = attached ?? words[index++]
+            if (value === undefined) refuse(`Missing ${name} ${flag} value.`)
+            sources.push(value)
+        } else if (!launcher.plain?.includes(option)) {
+            const known = [...launcher.plain ?? [], ...launcher.values ?? []]
+            refuse(`Unsupported ${name} option ${shown(option)}: the guard reads ${name} only with ${known.length ? known.join(', ') : 'no options'} before the program it runs. Run the program itself.`)
+        }
+    }
+    const command = args[index]
+    if (command === undefined) return undefined
+    const hidden = args.slice(at + 1, index).find((token) => token.dynamic)
+    if (hidden) refuse(`${name} option ${shown(hidden.value)} holds an expansion the guard cannot see. Write it out.`)
+    // A program named through an expansion is refused where the executable is read.
+    if (command.dynamic) return index
+    if (posix.basename(command.value.replace(/(.)@[^/]*$/, '$1')) === 'cockpit') return undefined
+    for (const source of [command.value, ...sources]) if (REMOTE_SOURCE.test(source) || launcher.fetches && /^[^@./][^/]*\/[^/]/.test(source)) fetchedSource(source)
+    // yarn and pnpm's shell mode run the program's name as shell code.
+    if (/[^\w@%+=:,./^~-]/.test(command.value)) refuse(`${name} runs ${shown(command.value)}, which holds shell syntax the guard does not read as a program name. Run the command itself.`)
+    if (launcher.anywhere && !separated && words.slice(index + 1).some((word) => word.startsWith('-'))) {
+        refuse(`${name} reads an option anywhere before \`--\`, so the guard cannot tell its options from the program's. Write \`${name} -- ${command.value} …\`.`)
+    }
+    return index
+}
+
+/** Why git refuses here: these run a shell command from the top of the working tree or in each submodule, not where git runs. */
+function gitShellRefusal(argv: readonly string[]): string | undefined {
+    let at = 0
+    while (argv[at]?.startsWith('-')) at += gitValueOptions.has(argv[at]!) ? 2 : 1
+    const [verb, ...rest] = argv.slice(at)
+    const options = rest.includes('--') ? rest.slice(0, rest.indexOf('--')) : rest
+    // git accepts a long option by any unique prefix, and a short one bundled after others.
+    if (verb === 'rebase' && options.some((word) => /^--ex(?:ec?)?(?:=|$)/.test(word) || /^-[^-]*x/.test(word))) {
+        return 'git rebase --exec runs its command with a shell from the top of the working tree after each commit, which the guard does not follow. Rebase without --exec, then run the command yourself.'
+    }
+    if (verb === 'bisect' && rest[0] === 'run') {
+        return 'git bisect run runs its command from the top of the working tree at each step, which the guard does not follow. Run the command yourself, then mark the step with git bisect good or git bisect bad.'
+    }
+    if (verb === 'submodule' && rest.includes('foreach')) {
+        return 'git submodule foreach runs its command with a shell inside each submodule, which the guard does not follow. Run it in each submodule with git -C <path>, or cd ./<path> && <command>.'
+    }
+    return undefined
+}
+
 interface Context { readonly options: GuardParseOptions; readonly definitions: Set<string>; readonly depth: number }
 
-/** The invocation the tokens spell, followed by the commands a `sh -c` string in it runs. */
+/** The invocation the tokens spell, followed by the commands a `sh -c` string or a launcher in it runs. */
 function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvocation[] {
     const { definitions, options } = context
     const words: InvocationWord[] = []
@@ -446,11 +577,14 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
     const evaluating = args.find((token) => token.evaluates)
     if (evaluating) evaluationRefusal(evaluating)
     let cursor = 0
+    // The program a launcher runs inherits these.
+    const assigned: Token[] = []
     const assignments = () => {
         while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(args[cursor]?.value ?? '')) {
             const token = args[cursor++]
             // Bash and zsh do not brace-expand an assignment, so the expanded words misstate it.
             if (token.braced) refuse(`Unsupported brace expansion in the assignment ${shown(token.value)}. Write the value out.`)
+            assigned.push(token)
             const at = token.value.indexOf('=')
             words.push({ ...word('environment-assignment-value', { ...token, value: token.value.slice(at + 1) }), name: token.value.slice(0, at) })
         }
@@ -518,6 +652,14 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
     const executableToken = args[cursor]
     const executable = executableToken?.value ?? null
     let nested: ParsedInvocation[] = []
+    // The launcher stays an invocation of its own, so a rule naming its spelling still applies, and the program it runs
+    // follows it as a wrapped invocation carrying the launcher's words, as a `sh -c` string's commands do.
+    const launched = executableToken && !executableToken.dynamic ? launchedCommand(args, cursor) : undefined
+    if (launched !== undefined) {
+        const [program, ...rest] = invocation([...assigned, ...args.slice(launched)], cwd, context)
+        const launcherWords = args.slice(cursor + 1, launched).map((token) => ({ role: 'wrapper-option-value' as const, value: token.value }))
+        nested = [{ ...program!, wrapped: true, words: [...launcherWords, ...program!.words] }, ...rest]
+    }
     if (executable !== null) {
         if (executableToken!.dynamic) refuse(`${shown(executable)} chooses the program to run through an expansion the guard cannot see. Write the program name out.`)
         if (!executable || executableToken!.status || definitions.has(executable)) refuse('Unsupported executable or defined command invocation.')
@@ -534,6 +676,10 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
                 refuse(`${shown(executable)} is parsed only as \`${name} SCRIPT [ARGUMENTS]\` or \`${name} -c '<command>'\` with a literal command string: with no script it runs whatever it reads. Run the command itself.`)
             }
         }
+        const gitRefusal = name === 'git' ? gitShellRefusal(args.slice(cursor + 1).map((token) => token.value)) : undefined
+        if (gitRefusal) refuse(gitRefusal)
+        const remote = name === 'deno' ? args.slice(cursor + 1).find((token) => !token.value.startsWith('-') && REMOTE_SOURCE.test(token.value)) : undefined
+        if (remote) fetchedSource(remote.value)
         if (subscriptEvaluators.has(name) && args.slice(cursor + 1).some((token) => /\[.*[$`]/s.test(token.value))) {
             refuse(`${shown(executable)} evaluates an array subscript as arithmetic, which runs any command substitution in it. Write the index as a number.`)
         }
@@ -597,8 +743,35 @@ function readLoop(tokens: readonly Token[], at: number): { loop: Loop; end: numb
     refuse('Unterminated for loop.')
 }
 
+// Builtins that set a variable they are handed by name, which may be HOME or CDPATH when the guard cannot see the name.
+const variableSetters = new Set(['export', 'declare', 'typeset', 'readonly', 'local', 'read', 'unset', 'getopts', 'mapfile', 'readarray', 'printf'])
+const NAMES_HOME = /(?<!\$\{?)\bHOME\b/
+const CHANGES_CD = /cdpath|cdable|shopt|setopt/i
+
+/** Whether a command in the list hands a variable-setting builtin a word the guard cannot see. */
+function setsHiddenName(tokens: readonly Token[]): boolean {
+    let command: Token[] = []
+    for (const token of [...tokens, undefined]) {
+        if (token?.kind === 'word') command.push(token)
+        else if (!token || token.kind === 'op' && !redirects.has(token.value)) {
+            if (command.some((item) => variableSetters.has(item.value)) && command.some((item) => item.dynamic)) return true
+            command = []
+        }
+    }
+    return false
+}
+
 function parseShell(command: string, cwd: string, context: Context): ParsedInvocation[] {
-    return parseTokens(lex(command, context.options).tokens, cwd, context, true)
+    let { options } = context
+    if (options.home !== undefined || options.cdpath !== undefined) {
+        // A command that sets or names HOME or CDPATH, or a shell option that changes cd, makes the hook's values wrong for it.
+        // The shell reads a name after quote removal, so `export HO''ME=x` sets HOME too, as may a setter handed a variable.
+        const tokens = lex(command, { ...options, home: undefined }).tokens
+        const hidden = setsHiddenName(tokens)
+        const names = (pattern: RegExp) => hidden || pattern.test(command) || tokens.some((token) => token.kind === 'word' && pattern.test(token.value))
+        options = { ...options, ...names(NAMES_HOME) ? { home: undefined } : {}, ...names(CHANGES_CD) ? { cdpath: undefined } : {} }
+    }
+    return parseTokens(lex(command, options).tokens, cwd, { ...context, options }, true)
 }
 
 function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cdAllowed: boolean): ParsedInvocation[] {
@@ -828,13 +1001,7 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
             } : {}
             if (!exactKeys(fields, ['command'], Object.keys(fieldChecks)) || !text(fields.command) || !fields.command
                 || Object.entries(fieldChecks).some(([key, valid]) => Object.hasOwn(fields, key) && !valid(fields[key]))) refuse('Malformed command payload.')
-            if (tool === 'Bash') {
-                // A command that sets or names HOME or CDPATH, or a shell option that changes cd, makes the hook's values wrong for it.
-                const effective = { ...options,
-                    ...options.home !== undefined && /(?<!\$\{?)\bHOME\b/.test(fields.command) ? { home: undefined } : {},
-                    ...options.cdpath !== undefined && /cdpath|cdable|shopt|setopt/i.test(fields.command) ? { cdpath: undefined } : {} }
-                invocations = parseShell(fields.command, cwd, { options: effective, definitions: new Set(), depth: 0 })
-            }
+            if (tool === 'Bash') invocations = parseShell(fields.command, cwd, { options, definitions: new Set(), depth: 0 })
             else {
                 ({ paths, removed } = patchPaths(fields.command))
                 content = { kind: 'patch', text: fields.command }
