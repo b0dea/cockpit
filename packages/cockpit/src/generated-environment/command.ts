@@ -126,7 +126,7 @@ export interface GeneratedEnvironmentOperatorIo {
     readonly stderr: Pick<NodeJS.WriteStream, 'write'>
     readonly stdin?: NodeJS.ReadStream
     readonly confirmStaleRemoval?: (request: GeneratedStaleRemovalApprovalRequest) => Promise<string | undefined>
-    readonly confirmPolicyWeakening?: (request: Readonly<{ weakened: readonly Readonly<{ field: string; from: string; to: string }>[]; digest: string }>) => Promise<string | undefined>
+    readonly confirmPolicyWeakening?: (request: Readonly<{ weakened: readonly Readonly<{ field: string; from: string; to: string }>[]; widened: readonly string[]; digest: string }>) => Promise<string | undefined>
 }
 
 export interface GeneratedEnvironmentOperatorOptions {
@@ -154,7 +154,7 @@ export async function runSyncOperatorCommand(
 ): Promise<GeneratedEnvironmentDispatchOutcome> {
     return runSyncOperatorApplication(input, {
         ...options,
-        terminal: io.confirmStaleRemoval !== undefined || io.stdin?.isTTY === true,
+        terminal: io.confirmStaleRemoval !== undefined || io.confirmPolicyWeakening !== undefined || io.stdin?.isTTY === true,
     }, {
         synchronize: handler,
         confirmStaleRemoval: (request) => confirmStaleRemoval(io, request),
@@ -162,8 +162,9 @@ export async function runSyncOperatorCommand(
         confirmPolicyWeakening: async (request) => {
             if (io.confirmPolicyWeakening) return io.confirmPolicyWeakening(request)
             if (!io.stdin) return undefined
-            io.stderr.write(renderHumanValue({ weakens: request.weakened.map(row => `${row.field}: ${row.from} -> ${row.to}`), digest: request.digest }))
-            return confirmDigest(io, request.digest, 'Accept this exact policy weakening?')
+            io.stderr.write(renderHumanValue({ ...request.weakened.length ? { weakens: request.weakened.map(row => `${row.field}: ${row.from} -> ${row.to}`) } : {},
+                ...request.widened.length ? { widensGuard: request.widened } : {}, digest: request.digest }))
+            return confirmDigest(io, request.digest, request.widened.length ? 'Accept this exact change to what agents may do?' : 'Accept this exact policy weakening?')
         },
     })
 }

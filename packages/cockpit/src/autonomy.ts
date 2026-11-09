@@ -120,9 +120,13 @@ export function policyWeakeningDiagnostic(weakened: readonly PolicyWeakening[]):
         fix: 'a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal outside CI, reads and explicitly confirms the weakening it shows, or the change is reverted' }
 }
 
-/** Binds acceptance to exactly these weakenings of exactly this recorded policy. */
-export function weakeningDigest(recorded: EffectivePolicy, current: EffectivePolicy): string {
-    return createHash('sha256').update(JSON.stringify({ recorded, current })).digest('hex')
+/**
+ * Binds acceptance to exactly these weakenings of exactly this recorded policy and, where cockpit.toml
+ * widens the guards, to exactly the configuration bytes that widen them.
+ */
+export function weakeningDigest(recorded: EffectivePolicy | undefined, current: EffectivePolicy,
+    widened?: Readonly<{ fields: readonly string[]; configSha256: string }>): string {
+    return createHash('sha256').update(JSON.stringify({ recorded, current, widened })).digest('hex')
 }
 
 // Written only by cockpit: the guard protects `.cockpit/policy.json` as a control, so the policy an

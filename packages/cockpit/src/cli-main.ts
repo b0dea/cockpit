@@ -108,6 +108,7 @@ import {
     runSyncOperatorCommand,
     type GeneratedEnvironmentCommandInput,
     type GeneratedEnvironmentCommandOutcome,
+    type GeneratedEnvironmentOperatorIo,
 } from './generated-environment/command.js'
 import type { GeneratedStaleRemovalApproval, GeneratedStaleRemovalApprovalRequest } from './environment/generated-application/shared.js'
 import { runUpgrade } from './environment/upgrade-application.js'
@@ -139,6 +140,7 @@ export interface CliIo {
         candidate: SurfaceSelftestProbeSpecificationsCandidate,
     ) => Promise<string | undefined>
     confirmStaleRemoval?: (request: GeneratedStaleRemovalApprovalRequest) => Promise<string | undefined>
+    confirmPolicyWeakening?: GeneratedEnvironmentOperatorIo['confirmPolicyWeakening']
     confirmStacksPrune?: (preview: CommandOutcome) => Promise<string | undefined>
 }
 

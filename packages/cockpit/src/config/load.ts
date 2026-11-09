@@ -353,13 +353,14 @@ async function syncedConfigName(directory: string): Promise<string | undefined> 
 }
 
 /** The policy cockpit.toml declares now and the one the last sync recorded, for a command that gates a decision. */
-export async function loadAutonomyPolicy(configPath: string): Promise<Readonly<{ root: string; current: EffectivePolicy; recorded?: EffectivePolicy }>
-    | Readonly<{ refusal: EnvironmentDiagnostic }>> {
+export async function loadAutonomyPolicy(configPath: string): Promise<Readonly<{ root: string; current: EffectivePolicy; recorded?: EffectivePolicy
+    source: Readonly<{ sha256: string; config: CockpitConfig }> }> | Readonly<{ refusal: EnvironmentDiagnostic }>> {
     const loaded = await loadCockpitConfig(configPath)
     if (loaded.kind !== 'complete') return { refusal: loaded.diagnostics[0]! }
     const root = dirname(loaded.result.source.path)
     const recorded = await readRecordedPolicy(root)
-    return { root, current: effectivePolicy(loaded.result.config), ...recorded ? { recorded } : {} }
+    return { root, current: effectivePolicy(loaded.result.config), ...recorded ? { recorded } : {},
+        source: { sha256: loaded.result.source.sha256, config: loaded.result.config } }
 }
 
 function parseConfigBytes(bytes: Uint8Array): Readonly<{ parsed: unknown; config: CockpitConfig }> | undefined {

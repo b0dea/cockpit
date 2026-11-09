@@ -342,7 +342,7 @@ export async function runGuardEvaluationApplication(
                 'guard policy comes from it and an edit that may widen it takes effect only once a human approves it'))
             if (change.kind === 'widening' && approved) {
                 declared = approved
-                notice = ` ${identity.configPath} has an unapproved edit that widens what agents may do (${change.fields.join(', ')}); calls are judged under the configuration last synced until a person runs \`${installedSyncCommand(identity.root, identity.configPath)}\` in a terminal, outside the agent.`
+                notice = ` ${identity.configPath} has an unapproved edit that widens what agents may do (${change.fields.join(', ')}); calls are judged under the configuration last synced until a person runs \`${installedSyncCommand(identity.root, identity.configPath)} --interactive\` in a terminal, outside the agent, and confirms it.`
             }
         }
         const widening = notice !== ''

@@ -199,9 +199,12 @@ export function guardConfigHeldReason(change: Exclude<GuardConfigChange, Readonl
 /** What restoring the recorded configuration costs, for every message that offers it. */
 export const GUARD_RESTORE_LIMIT = 'an agent can restore only what was recorded, so authority never exceeds the recorded policy, and this may also discard a person\'s unsynced narrowing edit'
 
-/** What `check` reports about an edit the guards were not regenerated for, or nothing. */
-export async function inspectGuardConfigChange(root: string, configPath: string,
-    current: Readonly<{ sha256: string; config: CockpitConfig }>): Promise<readonly EnvironmentDiagnostic[]> {
+/**
+ * How the configuration on disk differs from the one the guards on this machine were generated from,
+ * or undefined where no guard was generated here: nothing holds an agent there, as on a first sync.
+ */
+export async function observeGuardConfigChange(root: string,
+    current: Readonly<{ sha256: string; config: CockpitConfig }>): Promise<GuardConfigChange | undefined> {
     const local = async (path: string) => {
         try {
             const read = await readBoundedInput(join(root, path))
@@ -212,13 +215,25 @@ export async function inspectGuardConfigChange(root: string, configPath: string,
         }
     }
     const identityBytes = await local(GUARD_LOCAL_PATHS.identity)
-    // No guard was generated on this machine, so nothing holds the agent.
-    if (!identityBytes) return []
-    const identity = parseGuardLocalIdentity(identityBytes.toString('utf8'))
-    if (!identity) return []
-    const change = guardConfigChange(identity.configSha256, await local(GUARD_LOCAL_PATHS.generatedConfig), current,
+    const identity = identityBytes && parseGuardLocalIdentity(identityBytes.toString('utf8'))
+    if (!identity) return undefined
+    return guardConfigChange(identity.configSha256, await local(GUARD_LOCAL_PATHS.generatedConfig), current,
         await local(ANSWER_CONFIRMATION_PATH))
-    if (change.kind === 'unchanged') return []
+}
+
+/** Sync's refusal of an edit that widens the guard, until a person confirms it. */
+export function guardWideningUnconfirmedDiagnostic(fields: readonly string[], configPath: string): EnvironmentDiagnostic {
+    return { severity: 'error' as const, target: 'guard',
+        code: 'GUARD_CONFIG_WIDENED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_WIDENED,
+        message: `cockpit.toml changed since the guards were generated and widens what agents may do (${fields.join(', ')}); nothing was written, as sync applies it only once a person confirms it`,
+        fix: `a person runs ${cockpitCommand('sync', { config: configPath, args: '--interactive' })} in a terminal outside the agent and CI, reads the change and types the digest it shows, or the change is reverted` }
+}
+
+/** What `check` reports about an edit the guards were not regenerated for, or nothing. */
+export async function inspectGuardConfigChange(root: string, configPath: string,
+    current: Readonly<{ sha256: string; config: CockpitConfig }>): Promise<readonly EnvironmentDiagnostic[]> {
+    const change = await observeGuardConfigChange(root, current)
+    if (!change || change.kind === 'unchanged') return []
     if (change.kind === 'non-widening') return [{ severity: 'warning' as const, target: 'guard',
         code: 'GUARD_CONFIG_UNSYNCED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_UNSYNCED,
         message: `cockpit.toml changed since the guards were generated without widening what agents may do; the guard holds ${GUARD_HELD_CALLS}, except ${UNSYNCED_ADMITTED_PROSE}, until it is synced, while ${GUARD_UNHELD_CALLS} continue`,
@@ -228,5 +243,7 @@ export async function inspectGuardConfigChange(root: string, configPath: string,
         message: `cockpit.toml changed since the guards were generated and ${guardConfigHeldReason(change)}; ${change.kind === 'widening'
             ? 'the guard judges agent calls under the configuration last synced, and refuses an agent\'s sync or upgrade, until a person syncs'
             : `the guard holds ${GUARD_HELD_CALLS} until a person syncs, while ${GUARD_UNHELD_CALLS} continue`}`,
-        fix: `a person reads the change and runs ${cockpitCommand('sync', { config: configPath })} in a terminal outside the agent, or the change is reverted` }]
+        fix: change.kind === 'widening'
+            ? `a person reads the change and runs ${cockpitCommand('sync', { config: configPath, args: '--interactive' })} in a terminal outside the agent and CI, typing the digest it shows, or the change is reverted`
+            : `a person reads the change and runs ${cockpitCommand('sync', { config: configPath })} in a terminal outside the agent, or the change is reverted` }]
 }

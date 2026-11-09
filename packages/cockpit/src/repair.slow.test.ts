@@ -105,6 +105,42 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
         expect(reverted).not.toContain('GUARD_CONFIG_UNSYNCED')
     })
 
+    // An agent reaches sync by spellings the guard cannot prove are cockpit (package scripts, package
+    // manager exec, node with flags), so sync itself refuses an edit that widens the guard until a
+    // person confirms it.
+    it('applies a cockpit.toml edit that widens the guard only once a person confirms it at sync, and a narrowing one unattended', async () => {
+        const { root, configPath } = await consumer()
+        expect(await initializeTeamMetadata(configPath)).toMatchObject({ kind: 'complete' })
+        const original = await readFile(configPath, 'utf8')
+        const generatedFrom = async () => parseGuardLocalIdentity(await readFile(join(root, GUARD_LOCAL_PATHS.identity), 'utf8'))!.configSha256
+        const digestOf = async () => createHash('sha256').update(await readFile(configPath)).digest('hex')
+        const sync = async (args: readonly string[], confirm?: (request: { digest: string }) => Promise<string | undefined>) => {
+            let stdout = ''
+            const io = { stdout: { write: (text: string) => { stdout += text; return true } }, stderr: { write: () => true },
+                ...confirm ? { confirmPolicyWeakening: confirm } : {} } as CliIo
+            const status = await runCli(['sync', '--config', configPath, ...args], io, {}, { env: {} })
+            return { status, stdout }
+        }
+        const synced = await generatedFrom()
+        await writeFile(configPath, `${original}\n[[guards.allow]]\nargv = ["cat", "notes.md"]\ncwd = "."\nreason = "Read the selected input."\n`)
+        const refused = await sync(['--json'])
+        expect(refused.status).toBe(2)
+        const envelope = JSON.parse(refused.stdout)
+        expect(envelope.diagnostics).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED', message: expect.stringContaining('(guards.allow)') })])
+        expect(envelope.guidance).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED', text: expect.stringContaining('--interactive') })])
+        expect(await generatedFrom()).toBe(synced)
+        // A wrong digest is no confirmation; the displayed one applies exactly this edit.
+        expect((await sync(['--interactive'], async () => 'd'.repeat(64))).status).toBe(2)
+        expect(await generatedFrom()).toBe(synced)
+        const shown: string[] = []
+        expect((await sync(['--interactive'], async request => { shown.push(request.digest); return request.digest })).status).toBe(0)
+        expect(shown).toHaveLength(1)
+        expect(await generatedFrom()).toBe(await digestOf())
+        await writeFile(configPath, original)
+        expect((await sync(['--json'])).status).toBe(0)
+        expect(await generatedFrom()).toBe(await digestOf())
+    })
+
     it('uses one admission and the same plan for catalogue repair with single consumption', async () => {
         const { root, configPath } = await consumer()
         expect(await initializeTeamMetadata(configPath)).toMatchObject({ kind: 'complete' })

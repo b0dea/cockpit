@@ -475,7 +475,8 @@ stack in place. To apply one, for example a `[ports.bases]` edit:
    [guarded tool call](safety-and-autonomy.md#edits-the-guard-has-not-applied) except that sync, and
    `sleep` and `down` refuse because they read the Compose files `sync` publishes. An agent may run
    it where `[autonomy] sync = "agent"` and the edit does not widen what agents may do, as a
-   `[ports.bases]` edit does not; otherwise a person runs it in a terminal.
+   `[ports.bases]` edit does not; otherwise a person runs it in a terminal with `--interactive` and
+   confirms the change by the digest it shows.
 3. Run `cockpit down --config cockpit.toml`. It finds the stack and its lease by the stack, not by
    the edited declaration, and refuses with `CLAIM_CO_TENANT` while another holder remains.
 4. Run `cockpit up --config cockpit.toml --json` and use the newly returned ports and entrypoints.
