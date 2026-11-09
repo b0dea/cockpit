@@ -2517,7 +2517,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             const unknown = open && !script && !knownTool(invocation, resolved.allowedRoots)
             // Compose starts containers that can mount any host path; cockpit's own commands run the declared stack.
             if (unknown && ['docker', 'docker-compose'].includes(executable) && (executable === 'docker-compose' || invocation.argv.includes('compose'))) {
-                return ask(`${named(invocation)} runs Docker Compose, whose services can mount any host path, which the guard cannot judge. For the cockpit's own stack, run \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs up\`, \`logs <service>\` or \`ps\` with \`--config ${posix.basename(resolved.configPath)}\`; otherwise a person approves it or runs it.`)
+                return ask(`${named(invocation)} runs Docker Compose, whose services can mount any host path, which the guard cannot judge. For the cockpit's own stack, run \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config ${posix.basename(resolved.configPath)}\`, or \`logs <service>\` or \`ps\` the same way; otherwise a person approves it or runs it.`)
             }
             if (unknown && !cockpitCommand(invocation)) return ask(`${named(invocation)} is not a development tool the guard knows, or runs inline code it cannot judge. A person approves it or runs it, or admits it under [guards] allow in ${posix.basename(resolved.configPath)}.`)
             // `cat > file <<'EOF'` writes the heredoc to the file the redirect names, which was judged as a write.
