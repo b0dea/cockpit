@@ -387,6 +387,8 @@ const HOOK_ROOT = Object.freeze({
     codexcli: { expression: '$(pwd -P 2>/dev/null)', source: 'the canonical Codex session directory' },
 } as const)
 
+const GUARD_HOOK_TIMEOUT_SECONDS = 30
+
 function hooksBytes(target: keyof typeof HOOK_ROOT, matcher: string, guardPath: string, askIsDeny: boolean, configFile: string): string {
     const root = HOOK_ROOT[target]
     // Both hook runners block only on exit 2; any other failure (a handler that cannot load, a killed
@@ -396,7 +398,11 @@ function hooksBytes(target: keyof typeof HOOK_ROOT, matcher: string, guardPath: 
     // stdout in the agent's context, measured 2026-11-03 beside a misspelled event that never ran. A
     // drift report there tells the agent what to re-sync before it works; the hook never blocks.
     const sessionStart = `${GUARD_RECOVERY_SHELL}\nR="${root.expression}"; C="$R/"'${shellLiteral(configFile)}'; P="$R/node_modules/@b00dea/cockpit"; if test -n "$R" && test -f "$C" && test -r "$C" && cockpit_package_ready "$P"; then cd "$R" && "$P/bin/cockpit.mjs" check --config "$C" 2>&1 | tail -n 40; else cockpit_guard_recovery "$R" '${shellLiteral(configFile)}' 2>&1; fi; exit 0`
-    const hooks = { PreToolUse: [{ matcher, hooks: [{ type: 'command', command: guard }] }], SessionStart: [{ hooks: [{ type: 'command', command: sessionStart }] }] }
+    // Claude Code and Codex both read a hook's `timeout` in seconds (Claude Code's hook reference;
+    // Codex 0.167.0's hook configuration, read from its binary). Left unset, Codex reported a guard call
+    // on a loaded machine as timed out after 5 s. What either harness does when it fires is unmeasured.
+    const hooks = { PreToolUse: [{ matcher, hooks: [{ type: 'command', command: guard, timeout: GUARD_HOOK_TIMEOUT_SECONDS }] }],
+        SessionStart: [{ hooks: [{ type: 'command', command: sessionStart }] }] }
     const value = target === 'codexcli' ? { description: 'Generated authenticated restriction transport and session-start drift check.', hooks } : { hooks }
     return `${JSON.stringify(value, null, 2)}\n`
 }
