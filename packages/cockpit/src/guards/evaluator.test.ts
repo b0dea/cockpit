@@ -1250,6 +1250,8 @@ describe('allow by default', () => {
         ['protected reset', 'git reset --hard origin/main', 'refs/heads/main'], ['protected reset', 'git reset --soft origin/main', 'refs/heads/main'],
         ['protected reset', 'git reset --keep v1.0', 'refs/heads/main'], ['protected reset', 'git pull --rebase', 'refs/heads/main'],
         ['protected reset', 'git pull', 'refs/heads/main', { facts: { pullRebase: true } }],
+        ...['unset CLAUDECODE', 'env -u CODEX_THREAD_ID npm test', 'OPENCODE= npm test', 'export CLAUDECODE=', 'env -i npm test']
+            .map(command => ['agent session marker', command] as const),
         ['hook removal', 'pre-commit uninstall'], ['hook removal', 'husky uninstall'], ['hook removal', 'npx husky uninstall'], ['hook removal', 'lefthook uninstall'],
         ['allowed inline code over a blocked item', "python3 -c 'import sys; print(sys.stdin.read())' < .env", undefined,
             { declaredAllows: [{ argv: ['python3', '-c'], cwd: root, reason: 'Run inline Python.' }] }],

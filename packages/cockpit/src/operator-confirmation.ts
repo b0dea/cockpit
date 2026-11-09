@@ -21,3 +21,13 @@ export async function confirmDigest(
         prompt.close()
     }
 }
+
+// Agent tools mark the commands they run: Claude Code sets CLAUDECODE, Codex CODEX_THREAD_ID and
+// OpenCode OPENCODE. A pseudo-terminal an agent opens satisfies the terminal check above, so a
+// confirmation that approves what agents may do also refuses inside a session marked by one of these.
+const AGENT_SESSION_VARIABLES = ['CLAUDECODE', 'CODEX_THREAD_ID', 'OPENCODE'] as const
+
+/** The variable that marks `env` as an agent tool's session, or undefined outside one. */
+export function agentSessionVariable(env: Readonly<Record<string, string | undefined>>): string | undefined {
+    return AGENT_SESSION_VARIABLES.find(name => env[name] !== undefined && env[name] !== '')
+}

@@ -826,7 +826,11 @@ describe('guard policy construction', () => {
         expect(release.decision.decision).not.toBe('allow')
         expect(release.decision.reason.endsWith(notice)).toBe(true)
         const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')
-        for (const command of [`${launcher} upgrade`, `${launcher} session --config ${canonicalConfig} -- ${launcher} sync --config ${canonicalConfig}`]) {
+        // A spelling the guard cannot prove starts the installed cockpit is held as surely: `/./`, another case, or a path from inside the package's scope.
+        const scope = dirname(dirname(dirname(launcher)))
+        for (const command of [`${launcher} upgrade`, `${launcher} session --config ${canonicalConfig} -- ${launcher} sync --config ${canonicalConfig}`,
+            `node ${scope}/./cockpit/dist/cli.js sync --config ${canonicalConfig} --interactive`, `node ${scope.toUpperCase()}/COCKPIT/dist/cli.js upgrade`,
+            `cd ${scope} && node cockpit/dist/cli.js sync --config ${canonicalConfig}`]) {
             expect((await runGuardEvaluationApplication({ ...sync, payload: shellPayload(command, root) }, adapters)).decision.reason, command).toMatch(/^Refusing to run cockpit (sync|upgrade)/)
         }
         expect(await runGuardEvaluationApplication(sync, adapters)).toMatchObject({ decision: { decision: 'deny',

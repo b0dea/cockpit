@@ -108,6 +108,8 @@ export interface GuardEvaluationPolicy {
     readonly defaultDecision?: 'allow' | 'ask'
     /** The home directory of whoever runs the agent, where the credential stores below it live. */
     readonly homeDirectory?: string
+    /** The installed cockpit package's own directory under every spelling, wherever it is installed. */
+    readonly cockpitPackageDirectories?: readonly string[]
 }
 interface PathInspectionRequest {
     readonly path: string
@@ -250,11 +252,13 @@ function projectTuple(value: JsonSnapshotObject): boolean {
 }
 function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     const p = snapshotJson(value)
-    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'searchPathRelativeEntry', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands', ...p.mcpAllowedTools === undefined ? [] : ['mcpAllowedTools'], ...p.externalReads === undefined ? [] : ['externalReads'], ...p.readPaths === undefined ? [] : ['readPaths'], ...p.defaultDecision === undefined ? [] : ['defaultDecision'], ...p.homeDirectory === undefined ? [] : ['homeDirectory']])
+    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'searchPathRelativeEntry', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands', ...p.mcpAllowedTools === undefined ? [] : ['mcpAllowedTools'], ...p.externalReads === undefined ? [] : ['externalReads'], ...p.readPaths === undefined ? [] : ['readPaths'], ...p.defaultDecision === undefined ? [] : ['defaultDecision'], ...p.homeDirectory === undefined ? [] : ['homeDirectory'], ...p.cockpitPackageDirectories === undefined ? [] : ['cockpitPackageDirectories']])
         || p.readPaths !== undefined && (!strings(p.readPaths) || p.readPaths.length > 64 || !p.readPaths.every(canonical))
         || p.externalReads !== undefined && p.externalReads !== 'grant' && p.externalReads !== 'native'
         || p.defaultDecision !== undefined && p.defaultDecision !== 'allow' && p.defaultDecision !== 'ask'
         || p.homeDirectory !== undefined && (!canonical(p.homeDirectory) || p.homeDirectory === '/')
+        || p.cockpitPackageDirectories !== undefined && (!strings(p.cockpitPackageDirectories) || p.cockpitPackageDirectories.length > GUARD_LOCATION_LIMITS.packageDirectories
+            || !p.cockpitPackageDirectories.every(canonical))
         || p.mcpAllowedTools !== undefined && !McpAllowedTools.safeParse(p.mcpAllowedTools).success
         || !canonical(p.canonicalRoot) || !canonical(p.configPath) || posix.dirname(p.configPath) !== p.canonicalRoot || !strings(p.allowedRoots) || !p.allowedRoots.includes(p.canonicalRoot) || !p.allowedRoots.every(canonical)
         || !strings(p.protectedBranches) || !strings(p.hostedDatabaseHosts) || !strings(p.vendorHosts)
@@ -930,12 +934,18 @@ function gitGlobalOptions(argv: readonly string[]): { readonly keys: readonly st
     return { keys, other }
 }
 
-/** Whether an invocation names the cockpit CLI, however it is launched. */
-function cockpitShaped(invocation: ParsedInvocation): boolean {
+/**
+ * Whether an invocation names the cockpit CLI, however it is launched: by name, or by any path that
+ * leads into one of `packages`, the installed package's directories, however it is spelled.
+ */
+export function cockpitShaped(invocation: ParsedInvocation, packages: readonly string[]): boolean {
+    const installed = packages.map(fold)
     // Any word: launchers take options before the program (`pnpm --silent exec cockpit`, `node --no-warnings
-    // …/cockpit.mjs`), and sync writes `cockpit:*` package scripts that run it by name.
+    // …/cockpit.mjs`), and sync writes `cockpit:*` package scripts that run it by name. A path is resolved and
+    // folded, so `@b00dea/./cockpit`, `@B00DEA/cockpit` and `cockpit/dist/cli.js` from `node_modules/@b00dea` count.
     return [invocation.executable ?? '', ...invocation.argv].some(word => ['cockpit', 'cockpit.mjs'].includes(posix.basename(word))
-        || word.includes('@b00dea/cockpit') || word.startsWith('cockpit:'))
+        || word.includes('@b00dea/cockpit') || word.startsWith('cockpit:')
+        || [word, word.slice(word.indexOf('=') + 1)].some(path => path.includes('/') && installed.some(directory => within(fold(posix.resolve(invocation.cwd, path)), directory))))
 }
 
 // Commands that print a credential without naming a file. Matched by their leading words, after
@@ -1028,9 +1038,10 @@ function gitProgramOption(git: GitInvocation): boolean {
 
 // Git's location and configuration variables point it at state or programs the guard does not inspect,
 // HOME and XDG_CONFIG_HOME choose the configuration that names hooks, hook managers' switches skip the
-// hooks, and a relative PATH entry runs a file the agent wrote.
+// hooks, a relative PATH entry runs a file the agent wrote, and the agent tools' session markers are
+// how a person's terminal confirmation tells itself apart from an agent's.
 function steers({ name, value }: { readonly name?: string; readonly value: string }): boolean {
-    return name === undefined || /^(?:GIT_.*|HOME|XDG_CONFIG_HOME|BASH_ENV|ENV|HUSKY.*|SKIP|LEFTHOOK.*|OVERCOMMIT_DISABLE|PRE_COMMIT_ALLOW_NO_CONFIG)$/.test(name)
+    return name === undefined || /^(?:GIT_.*|HOME|XDG_CONFIG_HOME|BASH_ENV|ENV|HUSKY.*|SKIP|LEFTHOOK.*|OVERCOMMIT_DISABLE|PRE_COMMIT_ALLOW_NO_CONFIG|CLAUDECODE|CODEX_THREAD_ID|OPENCODE)$/.test(name)
         || name === 'PATH' && value.split(':').some(entry => !entry.startsWith('/'))
 }
 
@@ -1182,6 +1193,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         return { decision: 'allow', reason: 'MCP tool satisfies the declared tool restrictions.' }
     }
     const absolute = (path: string) => `${resolved.canonicalRoot}/${path}`
+    // A word leading into the installed package or a package it loads runs cockpit's own code.
+    const cockpitCommand = (invocation: ParsedInvocation) => cockpitShaped(invocation, [...resolved.cockpitPackageDirectories ?? [], ...resolved.executionDirectories])
     const inRoots = (lexical: string) => resolved.allowedRoots.some(root => within(lexical, root))
     const secretRoot = absolute(SECRETS_ROOT)
     const controlFiles = GUARD_CONTROL_FILES.map(absolute)
@@ -1696,10 +1709,10 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         // removed or pushed, or a cockpit command. Elsewhere it is the program's own business.
         const executableName = posix.basename(invocation.executable ?? '')
         // A reader over a loop's visible items reads names the loop was judged by.
-        const loopRead = READING_EXECUTABLES.has(executableName) && !writes && !removed?.paths.length && !optioned && !git && !cockpitShaped(invocation)
+        const loopRead = READING_EXECUTABLES.has(executableName) && !writes && !removed?.paths.length && !optioned && !git && !cockpitCommand(invocation)
             && invocation.words.every(word => !word.dynamic || /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/.test(word.value) && visibleLoops.has(references(word.value)[0]!))
             && new Set(invocation.words.filter(word => word.dynamic).map(word => word.value)).size <= 1
-        if (invocation.dynamic && !loopRead && (writes || removed?.paths.length || optioned || git || READING_EXECUTABLES.has(executableName) || cockpitShaped(invocation)
+        if (invocation.dynamic && !loopRead && (writes || removed?.paths.length || optioned || git || READING_EXECUTABLES.has(executableName) || cockpitCommand(invocation)
             || ['curl', 'wget'].includes(executableName))) {
             const word = invocation.words.find(item => item.dynamic)?.value ?? ''
             holdBoundary(invocation, ask(`${named(invocation)} holds ${shownGuardWord(word)}, whose value the guard cannot see, where it decides which file is read or written or which branch is pushed. Write the value out.`))
@@ -1740,6 +1753,12 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             const exported = invocation.argv.filter(arg => /^[A-Za-z_][A-Za-z0-9_]*=/.test(arg)).map(arg => ({ name: arg.slice(0, arg.indexOf('=')), value: arg.slice(arg.indexOf('=') + 1) }))
             const steered = exported.find(steers)
             if (steered) holdBoundary(invocation, ask(`${named(invocation)} sets ${steered.name}, which changes what Git, its hooks, the shell or the command search path runs for the rest of the call. Run it without that assignment.`))
+        }
+        // Removing a session marker, or every variable with `env -i`, hides that an agent runs what follows.
+        const marker = (word: string) => /^(?:CLAUDECODE|CODEX_THREAD_ID|OPENCODE)$/.test(word)
+        if (program === 'unset' && invocation.argv.some(marker)
+            || invocation.words.some(word => word.role === 'wrapper-option-value' && (/^(?:-i|--ignore-environment)$/.test(word.value) || marker(word.value)))) {
+            holdBoundary(invocation, ask(`${named(invocation)} removes the variable that marks the agent's session, or the whole environment. Run it without removing it.`))
         }
         if (program === 'set' && invocation.argv.some(arg => /^-[a-zA-Z]*a/.test(arg) || arg === 'allexport') || program === 'setopt' && invocation.argv.some(arg => /^(?:allexport|all_export)$/i.test(arg))) {
             holdBoundary(invocation, ask('Exporting every assignment hides which variables steer later commands. Set the variables a command needs as a prefix of that command.'))
@@ -1829,7 +1848,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         else if (searchBlocker) searchRefusals.set(invocation, searchBlocker)
         // A cockpit command its own table does not admit (sync and upgrade publish policy) is a person's,
         // however it is spelled and whatever a grant says.
-        if (cockpitShaped(invocation) && !readOnly.has(invocation) && !resolved.cockpitInvocations.some((profile) => profile.executable === invocation.executable
+        if (cockpitCommand(invocation) && !readOnly.has(invocation) && !resolved.cockpitInvocations.some((profile) => profile.executable === invocation.executable
             && profile.cwd === invocation.cwd && profile.argv.length === invocation.argv.length && profile.argv.every((word, at) => word === invocation.argv[at]))) {
             holdBoundary(invocation, ask(`${named(invocation)} is a cockpit command an agent does not run unprompted: \`sync\`, \`upgrade\` and the other commands that change what agents may do are a person's. A person runs it in a terminal.`))
         }
@@ -2056,10 +2075,10 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             const script = invocation.wrapped && runner !== undefined && launchedBy(invocation, runner) && ['pnpm', 'yarn', 'bun', 'npm'].includes(posix.basename(runner.executable ?? ''))
                 && !runner.argv.slice(0, runner.argv.length - invocation.argv.length - 1).some(word => ['exec', 'dlx', 'x', '--package', '-p'].includes(word))
             const unknown = open && !script && !knownTool(invocation, resolved.allowedRoots)
-            if (unknown && !cockpitShaped(invocation)) return ask(`${named(invocation)} is not a development tool the guard knows, or runs inline code it cannot judge. A person approves it or runs it, or admits it under [guards] allow in ${posix.basename(resolved.configPath)}.`)
-            if (open && !containerCommands.has(invocation) && !cockpitShaped(invocation) && !READING_EXECUTABLES.has(executable)
+            if (unknown && !cockpitCommand(invocation)) return ask(`${named(invocation)} is not a development tool the guard knows, or runs inline code it cannot judge. A person approves it or runs it, or admits it under [guards] allow in ${posix.basename(resolved.configPath)}.`)
+            if (open && !containerCommands.has(invocation) && !cockpitCommand(invocation) && !READING_EXECUTABLES.has(executable)
                 && !(executable === 'git' && gitPrintsContent(gitInvocation(invocation)))) continue
-            if (open && cockpitShaped(invocation)) return ask(`${named(invocation)} is a cockpit command that publishes policy or is not one an agent runs: \`sync\`, \`upgrade\` and the other commands that change what agents may do are a person's. A person runs it in a terminal.`)
+            if (open && cockpitCommand(invocation)) return ask(`${named(invocation)} is a cockpit command that publishes policy or is not one an agent runs: \`sync\`, \`upgrade\` and the other commands that change what agents may do are a person's. A person runs it in a terminal.`)
             const config = /^[\w./@%+=:,-]+$/.test(resolved.configPath) ? resolved.configPath : `'${resolved.configPath.replaceAll("'", "'\\''")}'`
             if (invocation.executable === 'node' && invocation.argv[0] === '--test') return ask(`${named(invocation)} requires human approval: Node tests execute code. Keep this Node argv: a person admits it under [guards] allow in ${posix.basename(resolved.configPath)}, `
                 + `or declares it as a [[testing.stages]] command in a gate that agents run with \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run --config ${config} --gate <gate>\`; a gate whose stages use another runner does not run this verifier.`)

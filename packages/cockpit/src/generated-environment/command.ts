@@ -1,4 +1,4 @@
-import { confirmDigest } from '../operator-confirmation.js'
+import { agentSessionVariable, confirmDigest } from '../operator-confirmation.js'
 import { renderHumanValue } from '../diagnostics.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { loadOperatorPolicy, runSyncOperatorApplication } from '../environment/operator-application.js'
@@ -125,6 +125,8 @@ type GeneratedEnvironmentSyncHandler = (input: GeneratedEnvironmentSyncHandlerIn
 
 export interface GeneratedEnvironmentOperatorIo {
     readonly stderr: Pick<NodeJS.WriteStream, 'write'>
+    /** The environment the command runs with, which says whether an agent tool started it. */
+    readonly env: Readonly<Record<string, string | undefined>>
     readonly stdin?: NodeJS.ReadStream
     readonly confirmStaleRemoval?: (request: GeneratedStaleRemovalApprovalRequest) => Promise<string | undefined>
     readonly confirmPolicyWeakening?: (request: Readonly<{ weakened: readonly Readonly<{ field: string; from: string; to: string }>[]; widened: readonly string[]; digest: string }>) => Promise<string | undefined>
@@ -136,12 +138,19 @@ export interface GeneratedEnvironmentOperatorOptions {
     readonly ci: string | undefined
 }
 
+/** Writes why a terminal confirmation is refused inside an agent tool's session, and says whether it was. */
+function agentRefusal(io: GeneratedEnvironmentOperatorIo): boolean {
+    const variable = agentSessionVariable(io.env)
+    if (variable) io.stderr.write(`Refusing a terminal confirmation inside an agent session (${variable} is set): a person confirms it in a terminal of their own, outside the agent.\n`)
+    return variable !== undefined
+}
+
 async function confirmStaleRemoval(
     io: GeneratedEnvironmentOperatorIo,
     request: GeneratedStaleRemovalApprovalRequest,
 ): Promise<string | undefined> {
     if (io.confirmStaleRemoval) return io.confirmStaleRemoval(request)
-    if (!io.stdin) return undefined
+    if (!io.stdin || agentRefusal(io)) return undefined
     io.stderr.write(renderHumanValue(request))
     return confirmDigest(io, request.digest, 'Approve these exact stale-file removals for this sync?')
 }
@@ -162,7 +171,7 @@ export async function runSyncOperatorCommand(
         policy,
         confirmPolicyWeakening: async (request) => {
             if (io.confirmPolicyWeakening) return io.confirmPolicyWeakening(request)
-            if (!io.stdin) return undefined
+            if (!io.stdin || agentRefusal(io)) return undefined
             io.stderr.write(renderHumanValue({ ...request.weakened.length ? { weakens: request.weakened.map(row => `${row.field}: ${row.from} -> ${row.to}`) } : {},
                 ...request.widened.length ? { widensGuard: request.widened } : {}, digest: request.digest }))
             return confirmDigest(io, request.digest, request.widened.length ? 'Accept this exact change to what agents may do?' : 'Accept this exact policy weakening?')

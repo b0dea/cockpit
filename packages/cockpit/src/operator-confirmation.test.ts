@@ -50,7 +50,7 @@ it('binds terminal confirmations to the displayed sync policy and removal previe
     const shown: string[] = []
     const outcome = await runSyncOperatorCommand({ configPath: 'cockpit.toml' },
         { interactive: true, json: false, ci: undefined }, {
-            stdin: stdin as unknown as NodeJS.ReadStream,
+            stdin: stdin as unknown as NodeJS.ReadStream, env: {},
             stderr: Object.assign(new Writable({ write: (bytes, _encoding, done) => {
                 const text = String(bytes)
                 shown.push(text)
@@ -81,11 +81,37 @@ it('refuses a yes when the preview it approves is not shown on a terminal', asyn
     const stderr = new Writable({ write: (_bytes, _encoding, done) => { setImmediate(() => stdin.write('yes\n')); done() } })
     let applied = false
     const outcome = await runSyncOperatorCommand({ configPath: 'cockpit.toml' },
-        { interactive: true, json: false, ci: undefined }, { stdin: stdin as unknown as NodeJS.ReadStream, stderr },
+        { interactive: true, json: false, ci: undefined }, { stdin: stdin as unknown as NodeJS.ReadStream, stderr, env: {} },
         async () => { applied = true; return { status: 0, diagnostics: [], result: null } },
         async () => ({ current: effectivePolicy({ work: Work.parse({}), autonomy: Autonomy.parse({ sync: 'agent' }) }),
             recorded: effectivePolicy({ work: Work.parse({}), autonomy: Autonomy.parse({ sync: 'person' }) }), record: async () => {} }))
     expect(applied).toBe(false)
     expect(outcome.status).not.toBe(0)
     stdin.destroy()
+})
+
+it('refuses a yes typed into a terminal an agent tool opened', async () => {
+    const { runSyncOperatorCommand } = await import('./generated-environment/command.js')
+    const { effectivePolicy } = await import('./autonomy.js')
+    const { Autonomy, Work } = await import('./schema.js')
+    for (const env of [{ CLAUDECODE: '1' }, { CODEX_THREAD_ID: 'synthetic' }, { OPENCODE: '1' }]) {
+        // A pseudo-terminal passes for a person's: both streams are terminals and a yes arrives.
+        const stdin = Object.assign(new PassThrough(), { isTTY: true })
+        const shown: string[] = []
+        const stderr = Object.assign(new Writable({ write: (bytes, _encoding, done) => {
+            shown.push(String(bytes))
+            setImmediate(() => stdin.write('yes\n'))
+            done()
+        } }), { isTTY: true })
+        let applied = false
+        const outcome = await runSyncOperatorCommand({ configPath: 'cockpit.toml' },
+            { interactive: true, json: false, ci: undefined }, { stdin: stdin as unknown as NodeJS.ReadStream, stderr, env },
+            async () => { applied = true; return { status: 0, diagnostics: [], result: null } },
+            async () => ({ current: effectivePolicy({ work: Work.parse({}), autonomy: Autonomy.parse({ sync: 'agent' }) }),
+                recorded: effectivePolicy({ work: Work.parse({}), autonomy: Autonomy.parse({ sync: 'person' }) }), record: async () => {} }))
+        expect(applied, Object.keys(env)[0]).toBe(false)
+        expect(outcome.status).not.toBe(0)
+        expect(shown.join('')).toContain(`(${Object.keys(env)[0]} is set)`)
+        stdin.destroy()
+    }
 })

@@ -22,6 +22,7 @@ import { GUARD_RESTORE_LIMIT, guardConfigChange, guardConfigHeldReason } from '.
 import {
     evaluateGuard,
     approvedReadOnlyInvocation,
+    cockpitShaped,
     gitInvocation,
     GUARD_BRANCH_VERBS,
     foldGuardSpelling,
@@ -570,6 +571,12 @@ export async function runGuardEvaluationApplication(
         // Sync or upgrade would apply a widening edit, and the person reviews that edit first.
         const applying = widening ? launched.find(entry => ['sync', 'upgrade'].includes(commandSpelling(entry.argv.slice(entry.prefix)).name ?? '')) : undefined
         if (applying) return refused({ decision: 'deny', reason: `Refusing to run cockpit ${commandSpelling(applying.argv.slice(applying.prefix)).name} while ${identity.configPath} has an unapproved edit that widens what agents may do: a person reviews it and syncs.` })
+        // A spelling the guard cannot prove starts the installed cockpit, such as a path into the package
+        // through `/./` or another case, still runs it: any cockpit command naming sync or upgrade is held too.
+        const packages = [...policy.cockpitPackageDirectories ?? [], ...policy.executionDirectories]
+        const unproven = widening ? parsed.invocations.find(invocation => cockpitShaped(invocation, packages)
+            && [invocation.executable ?? '', ...invocation.argv].some(word => /(?:^|:)(?:sync|upgrade)$/.test(word))) : undefined
+        if (unproven) return refused({ decision: 'deny', reason: `Refusing to run cockpit ${[unproven.executable ?? '', ...unproven.argv].find(word => /(?:^|:)upgrade$/.test(word)) ? 'upgrade' : 'sync'} while ${identity.configPath} has an unapproved edit that widens what agents may do: a person reviews it and syncs.` })
         let launcherSha256: string | undefined
         if (launched.length) {
             const status = lstatSync(launcher)
@@ -798,8 +805,11 @@ export async function prepareGuardEvaluationPolicy(
             const configPath = loaded.source.path
             protect(canonicalRoot, configPath, 'file', 'configuration')
             // This module runs from dist/environment, so two levels up is the running cockpit package.
-            const executionDirectories = guardInstalledDirectories(resolve(fileURLToPath(new URL('../../..', import.meta.url))), canonicalRoot)
-                .filter(path => [...allowedRoots].some(root => confinedPath(root, path)))
+            const packageRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
+            const installed = guardInstalledDirectories(packageRoot, canonicalRoot)
+            const executionDirectories = installed.filter(path => [...allowedRoots].some(root => confinedPath(root, path)))
+            // Every spelling of the package itself, inside the roots or not, is how a command reaches cockpit's own code.
+            const cockpitPackageDirectories = installed.filter(path => realpathSync(path) === realpathSync(packageRoot))
             const secretFiles = guardSecretFiles(canonicalRoot)
             const protectedFilesLinked = secretFiles.linked || instances.some(item => (identities.get(item.path)?.nlink ?? 1) > 1)
             for (const [path, before] of identities) {
@@ -829,7 +839,7 @@ export async function prepareGuardEvaluationPolicy(
                     // A missing location grants nothing; a linked one is held to where it leads.
                     try { return [realpathSync(spelled)] } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error }
                 }).filter(path => path !== '/' && path !== realpathSync(homedir())),
-                executionDirectories, searchDirectories: [], searchPathRelativeEntry: null,
+                executionDirectories, cockpitPackageDirectories, searchDirectories: [], searchPathRelativeEntry: null,
                 secretFileIdentities: secretFiles.identities && [...secretFiles.identities], protectedFilesLinked,
                 cockpitInvocations: [], cockpitLaunchers: [], projectCommands: [],
             }

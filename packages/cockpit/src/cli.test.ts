@@ -1914,7 +1914,7 @@ describe('generated sync operator admission', () => {
 
         const outcome = await runSyncOperatorCommand({ configPath: 'cockpit.toml' }, {
             interactive: true, json: false, ci: undefined,
-        }, { stderr, stdin }, async (input) => input.dryRun
+        }, { stderr, stdin, env: {} }, async (input) => input.dryRun
             ? { status: 0, diagnostics: [], result: { dryRun: true, staleRemoval: preview } }
             : { status: 0, diagnostics: [], result: { dryRun: false } }, personStalePolicy)
 
@@ -1938,7 +1938,7 @@ describe('generated sync operator admission', () => {
         const outcome = await runSyncOperatorCommand({ configPath: 'cockpit.toml' }, {
             interactive: true, json: false, ci: undefined,
         }, {
-            stderr: { write: () => true },
+            stderr: { write: () => true }, env: {},
             confirmStaleRemoval: async () => preview.digest,
         }, async (input) => {
             calls += 1
