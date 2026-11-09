@@ -7,8 +7,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolveGitExecutable } from '../environment/executable.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { GUARD_SECRET_FILE_LIMIT } from './evaluator.js'
-import { guardInstalledDirectories, guardSearchDirectories, guardSearchPathRelativeEntry, guardSecretFiles, guardSensitivePathsBelow,
-    guardTrackedSensitivePaths, guardUnignoredSensitivePaths } from './protected-locations.js'
+import { guardBranchFacts, guardInstalledDirectories, guardPatchTargets, guardRemoteCredentials, guardSearchDirectories, guardSearchPathRelativeEntry, guardSecretFiles,
+    guardSensitivePathsBelow, guardTrackedSensitivePaths, guardUnignoredSensitivePaths } from './protected-locations.js'
 
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -146,6 +146,44 @@ describe('guard protected locations', () => {
         expect(await guardTrackedSensitivePaths(root, [instance], git, executeProbe)).toEqual([])
         execFileSync('git', ['-C', root, 'add', '--force', '.env', 'config/runtime.env', 'src/a.ts'])
         expect(await guardTrackedSensitivePaths(root, [instance], git, executeProbe)).toEqual([join(root, '.env'), instance])
+    })
+
+    it('reports what a push or pull acts on, and whether a remote URL Git prints carries a credential', async () => {
+        const resolution = await resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+        if (resolution.state !== 'available') throw new Error(resolution.reason)
+        const git = resolution.value
+        const root = scratch()
+        const config = (...args: string[]) => execFileSync('git', ['-C', root, 'config', ...args])
+        execFileSync('git', ['init', '-q', '-b', 'main', root])
+        config('remote.origin.url', 'https://example.test/r.git')
+        expect(await guardBranchFacts(root, git, executeProbe)).toEqual({ head: 'refs/heads/main', push: null, pushDefault: null, pushRefspecs: false, pullRebase: false })
+        expect(await guardRemoteCredentials(root, git, executeProbe)).toBe(false)
+        config('push.default', 'matching')
+        config('pull.rebase', 'true')
+        config('remote.origin.push', 'refs/heads/*:refs/heads/*')
+        expect(await guardBranchFacts(root, git, executeProbe)).toMatchObject({ pushDefault: 'matching', pushRefspecs: true, pullRebase: true })
+        config('branch.main.rebase', 'false')
+        expect(await guardBranchFacts(root, git, executeProbe)).toMatchObject({ pullRebase: false })
+        config('remote.origin.pushurl', 'https://synthetic-user:synthetic-password@example.test/r.git')
+        expect(await guardRemoteCredentials(root, git, executeProbe)).toBe(true)
+        config('--unset', 'remote.origin.pushurl')
+        config('url.https://synthetic-user:synthetic-password@example.test/.insteadOf', 'https://example.test/')
+        expect(await guardRemoteCredentials(root, git, executeProbe)).toBe(true)
+        config('--remove-section', 'url.https://synthetic-user:synthetic-password@example.test/')
+        config('http.https://example.test/.extraHeader', 'AUTHORIZATION: synthetic')
+        expect(await guardRemoteCredentials(root, git, executeProbe)).toBe(true)
+    })
+
+    it('names every path a patch file applies to, and none when a header is one it cannot read', () => {
+        const root = scratch()
+        const patch = (text: string) => { writeFileSync(join(root, 'p.diff'), text); return guardPatchTargets(join(root, 'p.diff')) }
+        expect(patch('diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\t2026-01-01\n+++ b/src/a.ts\n@@ -1 +1 @@\n-a\n+b\n'
+            + 'diff --git a/old.ts b/.cockpit/guards/bash-guard.sh\nrename from old.ts\nrename to .cockpit/guards/bash-guard.sh\n')).toEqual(['src/a.ts', 'old.ts', '.cockpit/guards/bash-guard.sh'])
+        expect(patch('--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1 @@\n+x\n')).toEqual(['new.ts'])
+        expect(patch('diff --git "a/x y" "b/x y"\n')).toBeNull()
+        symlinkSync(join(root, 'p.diff'), join(root, 'link.diff'))
+        expect(guardPatchTargets(join(root, 'link.diff'))).toBeNull()
+        expect(guardPatchTargets(join(root, 'absent.diff'))).toBeNull()
     })
 
     it('enumerates every secrets file identity under any folded spelling and reports a second hard link or an exceeded bound', () => {

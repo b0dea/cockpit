@@ -349,14 +349,87 @@ export async function guardTrackedSensitivePaths(repository: string, watched: re
  * The repository's current branch and where a bare `git push` goes from it, as full ref names; null
  * where Git names none (a detached HEAD, a branch with no push destination) or could not answer.
  */
-export async function guardBranchFacts(repository: string, git: ResolvedExecutable, execute: GuardExecute): Promise<{ readonly head: string | null; readonly push: string | null }> {
+export interface GuardBranchFacts {
+    readonly head: string | null
+    readonly push: string | null
+    /** `push.default`, which decides what a push without a refspec sends; `matching` sends every branch of the same name. */
+    readonly pushDefault: string | null
+    /** A remote has configured push refspecs, which a push without a refspec sends instead. */
+    readonly pushRefspecs: boolean
+    /** A plain `git pull` on the current branch rebases it. */
+    readonly pullRebase: boolean
+}
+
+/** Git configuration entries matching `pattern`, as `[key, value]`, or null when Git could not say. */
+async function gitConfigEntries(git: ResolvedExecutable, repository: string, pattern: string, execute: GuardExecute): Promise<readonly (readonly [string, string])[] | null> {
+    const entries = await gitPaths(git, repository, ['config', '-z', '--get-regexp', pattern], execute)
+    return entries && entries.map(entry => { const cut = entry.indexOf('\n'); return cut < 0 ? [entry, ''] as const : [entry.slice(0, cut), entry.slice(cut + 1)] as const })
+}
+
+export async function guardBranchFacts(repository: string, git: ResolvedExecutable, execute: GuardExecute): Promise<GuardBranchFacts | null> {
     const ref = (lines: readonly string[] | null) => {
         const value = lines?.join('').trim()
         return value && /^refs\/\S+$/.test(value) ? value : null
     }
-    const [head, push] = await Promise.all([gitPaths(git, repository, ['symbolic-ref', '-q', 'HEAD'], execute),
-        gitPaths(git, repository, ['rev-parse', '--symbolic-full-name', '@{push}'], execute)])
-    return { head: ref(head), push: ref(push) }
+    const [head, push, config] = await Promise.all([gitPaths(git, repository, ['symbolic-ref', '-q', 'HEAD'], execute),
+        gitPaths(git, repository, ['rev-parse', '--symbolic-full-name', '@{push}'], execute),
+        gitConfigEntries(git, repository, '^(push\\.default|pull\\.rebase|branch\\..*\\.rebase|remote\\..*\\.push)$', execute)])
+    if (config === null) return null
+    const current = ref(head)
+    const last = (key: string) => config.filter(([name]) => name === key).at(-1)?.[1]
+    const rebase = (current && last(`branch.${current.slice('refs/heads/'.length)}.rebase`)) ?? last('pull.rebase')
+    return { head: current, push: ref(push), pushDefault: last('push.default') ?? null,
+        pushRefspecs: config.some(([name]) => /^remote\..*\.push$/.test(name)),
+        pullRebase: rebase !== undefined && !/^(?:false|no|off|0)$/i.test(rebase) }
+}
+
+/** Whether a URL's user information carries a password or a token rather than only a user name. */
+function credentialUrl(url: string): boolean {
+    const userinfo = /^[a-z][a-z0-9+.-]*:\/\/([^/?#@]*)@/i.exec(url.trim())?.[1]
+    return userinfo !== undefined && (userinfo.includes(':') || userinfo.length >= 32
+        || /^(?:gh[opsur]_|github_pat_|glpat-|x-access-token|x-token-auth|oauth2?)/i.test(userinfo))
+}
+
+/**
+ * Whether a remote URL Git prints for `repository` carries a credential: a remote's URL or push URL,
+ * the base an `insteadOf` rewrite substitutes, or an `http.extraHeader`, which holds a token. Null when
+ * Git could not say.
+ */
+export async function guardRemoteCredentials(repository: string, git: ResolvedExecutable, execute: GuardExecute): Promise<boolean | null> {
+    const config = await gitConfigEntries(git, repository, '^(remote\\..*\\.(url|pushurl)|url\\..*\\.(insteadof|pushinsteadof)|http\\..*extraheader)$', execute)
+    return config && config.some(([name, value]) => /extraheader$/.test(name)
+        || /^url\./.test(name) && credentialUrl(name.slice(4, name.lastIndexOf('.')))
+        || /^remote\./.test(name) && credentialUrl(value))
+}
+
+// A patch an agent applies is a few hundred kilobytes at most; a larger one is not read.
+const PATCH_BYTES = 4_194_304
+
+/**
+ * Every path a patch file's headers name, relative to the tree it applies to and with Git's `a/` and
+ * `b/` prefixes removed, or null when the file is not a regular file inside `root`, is too large, or
+ * names a path the guard cannot read, such as a quoted one.
+ */
+export function guardPatchTargets(path: string): readonly string[] | null {
+    let read
+    try { read = readBoundedFile(path, PATCH_BYTES) } catch (error) {
+        if (missing(error) || ['ELOOP', 'EISDIR', 'ENXIO'].includes((error as NodeJS.ErrnoException).code ?? '')) return null
+        throw error
+    }
+    if (read.kind === 'too-large') return null
+    const targets = new Set<string>()
+    for (const line of read.bytes.toString('utf8').split('\n')) {
+        if (!/^(?:diff --git |--- |\+\+\+ |(?:rename|copy) (?:from|to) )/.test(line)) continue
+        // A header the guard cannot read, such as a quoted name or one with spaces, may name any path.
+        const header = /^(?:diff --git (\S+) (\S+)|(?:---|\+\+\+) (\S+)(?:\t.*)?|(?:rename|copy) (?:from|to) (\S+))\r?$/.exec(line)
+        if (!header || line.includes('"')) return null
+        for (const named of [header[1], header[2], header[3]].filter((item): item is string => item !== undefined)) {
+            if (named !== '/dev/null') targets.add(named.replace(/^[^/]*\//, ''))
+        }
+        if (header[4] !== undefined) targets.add(header[4])
+        if (targets.size > GUARD_LOCATION_LIMITS.sensitivePaths) return null
+    }
+    return [...targets]
 }
 
 /**

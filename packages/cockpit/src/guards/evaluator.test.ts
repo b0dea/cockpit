@@ -1312,7 +1312,7 @@ describe('allow by default', () => {
             'pnpm lint', 'pnpm typecheck', 'make -C local doctor', 'jq .result.summary .cockpit/local/probes/report.json', 'ps -o pid,user,command',
             "cat > notes.md <<'EOF'\nnotes\nEOF", 'npm exec vitest -- --run', 'pnpm -r build', 'pnpm --filter web build', 'pnpm --filter web exec vitest',
             'for f in src/*.ts; do wc -l "$f"; done', 'git remote -v', 'cat .git/config', "python3 -c 'print(1)'", 'git apply build/p.diff',
-            'git am build/p.diff', 'unzip -o build/a.zip -d build/x', 'git stash push -u', 'gh api repos/o/r/pulls', "gh api graphql -f query='query{viewer{login}}'",
+            'git am build/p.diff', 'unzip -o build/a.zip -d build/x', 'git -C app stash push -u', 'gh api repos/o/r/pulls', "gh api graphql -f query='query{viewer{login}}'",
             'git reset --hard origin/topic', 'git pull --rebase', 'go run ./cmd/tool', 'rimraf dist', 'ln -s ../src build/src-link',
             'curl -fsSo build/i.json https://example.test/i.json && jq . build/i.json', 'diff -r src build/src', 'echo "$PWD"']) {
             const allowsInline = { ...open(), externalReads: 'native' as const, declaredAllows: [{ argv: ['python3', '-c'], cwd: root, reason: 'Run inline Python.' }] }

@@ -50,6 +50,8 @@ import {
     guardSecretFiles,
     guardSensitivePathsBelow,
     guardBranchFacts,
+    guardPatchTargets,
+    guardRemoteCredentials,
     guardTrackedSensitivePaths,
     guardUnignoredSensitivePaths,
 } from '../../guards/protected-locations.js'
@@ -404,9 +406,21 @@ export async function runGuardEvaluationApplication(
         const tracked = new Map<string, readonly string[] | null>()
         const queries: Array<() => Promise<void>> = []
         // Which branch a push or a history rewrite acts on is Git's to say, in a repository inside the roots.
-        const branches = new Map<string, { readonly head: string | null; readonly push: string | null } | null>()
+        const branches = new Map<string, Awaited<ReturnType<typeof guardBranchFacts>>>()
+        // Whether a remote URL Git prints carries a credential, for `git remote -v` and a read of `.git/config`.
+        const remotes = new Map<string, boolean | null>()
+        const askRemotes = (repository: string) => {
+            if (!allowed(repository) || remotes.has(repository)) return
+            remotes.set(repository, null)
+            queries.push(async () => { remotes.set(repository, await guardRemoteCredentials(repository, git.value, adapters.execute ?? executeProbe)) })
+        }
         for (const invocation of parsed.invocations) {
             const command = gitInvocation(invocation)
+            if (command?.verb === 'remote' && !command.uncertain) askRemotes(command.cwd)
+            for (const path of classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: data.ripgrepConfigActive === true })?.reads ?? []) {
+                const read = resolve(invocation.cwd, path)
+                if (foldGuardSpelling(basename(read)) === 'config' && foldGuardSpelling(basename(dirname(read))) === '.git') askRemotes(dirname(dirname(read)))
+            }
             if (!command || !GUARD_BRANCH_VERBS.has(command.verb) || command.uncertain || !allowed(command.cwd) || branches.has(command.cwd)) continue
             branches.set(command.cwd, null)
             queries.push(async () => { branches.set(command.cwd, await guardBranchFacts(command.cwd, git.value, adapters.execute ?? executeProbe)) })
@@ -467,6 +481,14 @@ export async function runGuardEvaluationApplication(
             if (request.operation === 'branch') {
                 const facts = branches.get(path)
                 return facts ? { status: 'resolved', path, ...facts } : { status: 'unavailable', path, symlink: false }
+            }
+            if (request.operation === 'remote') {
+                const credentials = remotes.get(path)
+                return typeof credentials === 'boolean' ? { status: 'resolved', path, credentials } : { status: 'unavailable', path, symlink: false }
+            }
+            if (request.operation === 'patch') {
+                const targets = allowed(path) ? guardPatchTargets(path) : null
+                return targets ? { status: 'resolved', path, targets } : { status: 'unavailable', path, symlink: false }
             }
             const managedRoot = policy.allowedRoots.filter(root => confinedPath(root, path)).sort((a, b) => b.length - a.length)[0]
             // A person's read path admits this read, or with native external reads the agent tool's own permission decided it.
