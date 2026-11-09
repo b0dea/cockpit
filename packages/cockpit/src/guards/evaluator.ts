@@ -1495,7 +1495,14 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             const prints = READING_EXECUTABLES.has(invocation.executable!) || invocation.executable === 'git'
             const secretName = (decision: GuardDecision) => prints ? hold(decision)
                 : !approvalBarriers.has(invocation) && approvalBarriers.set(invocation, ask(`${named(invocation)} names an environment file, secrets directory or declared instance, so a [guards] allow rule does not admit it. A person approves it or runs it, or declares it as a project command.`))
-            for (const word of invocation.argv) {
+            // Words of a nested command, after a proven cockpit's `--` or the program a launcher runs, are
+            // judged as that command, so they are not paths this one reads; nor is a proven cockpit launcher.
+            const followed = invocations[invocations.indexOf(invocation) + 1]
+            const nestedFrom = provenCockpit(invocation) ? (invocation.argv.indexOf('--') < 0 ? invocation.argv.length : invocation.argv.indexOf('--'))
+                : followed?.wrapped && launchedBy(followed, invocation) ? invocation.argv.length - followed.argv.length - 1 : invocation.argv.length
+            const launcherPath = (lexical: string) => resolved.cockpitLaunchers.some((item) => [item.executable, ...item.argv]
+                .some((spelled) => spelled.includes('/') && posix.resolve(item.cwd, spelled) === lexical))
+            for (const [position, word] of invocation.argv.entries()) {
                 // An attached short option value, as in `sed -f.env`, is a candidate too.
                 const attached = /^-[^-]/.test(word) && word.length > 2 ? [word.slice(2)] : []
                 // `@file` is how curl and gh name a file whose content they send.
@@ -1507,7 +1514,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
                     if (credential(folded)) hold(credentialDenial)
                     // In the allow default any command may read what it names, so a path outside the roots
                     // follows external_reads for every command, not only the reading ones.
-                    if (open && (candidate === word || candidate === word.slice(word.indexOf('=') + 1)) && (posix.isAbsolute(candidate) || candidate.startsWith('..'))
+                    if (open && position < nestedFrom && !launcherPath(lexical) && (candidate === word || candidate === word.slice(word.indexOf('=') + 1)) && (posix.isAbsolute(candidate) || candidate.startsWith('..'))
                         && !lexical.startsWith('/dev/') && !resolved.allowedRoots.some(root => within(lexical, root)) && !readableOutside(lexical) && !approvalBarriers.has(invocation)) {
                         approvalBarriers.set(invocation, ask(`${named(invocation)} names ${shownGuardWord(candidate)}, outside the configured roots. A person can list the location under [guards] read_paths or set [guards] external_reads = "native", then sync; or a person runs it.`))
                     }

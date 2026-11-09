@@ -1202,6 +1202,22 @@ describe('allow by default', () => {
         expect(marked.decision, marked.reason).not.toBe('allow')
     })
 
+    it('judges a nested or launched command as that command, not as a path the outer one reads', () => {
+        const config = `${root}/cockpit.toml`
+        for (const launcher of ['/opt/cockpit/bin/cockpit.mjs', './node_modules/.bin/cockpit']) {
+            const outer = ['session', '--config', config, '--', launcher, 'check', '--config', config]
+            const configured = { ...open(), cockpitLaunchers: [{ executable: launcher, argv: [], cwd: root }],
+                cockpitInvocations: [{ executable: launcher, argv: outer, cwd: root }, { executable: launcher, argv: ['check', '--config', config], cwd: root }] }
+            const decision = evaluateGuard(parseGuardInput(shellPayload([launcher, ...outer].join(' ')), { dynamicWords: 'mark', home }), configured, onBranch('refs/heads/topic'))
+            expect(decision, launcher).toMatchObject({ decision: 'allow' })
+        }
+        // A launcher's or wrapper's program outside the roots runs; it is not read as a file.
+        for (const command of ['npx /opt/tools/bin/lint src', 'timeout 60 /opt/tools/bin/lint src', 'nice -n 5 /opt/tools/bin/lint src']) {
+            const decision = evaluateGuard(parseGuardInput(shellPayload(command), { dynamicWords: 'mark', home }), open(), onBranch('refs/heads/topic'))
+            expect(decision, command).toMatchObject({ decision: 'allow' })
+        }
+    })
+
     it('still allows the development those refusals sit beside', () => {
         for (const command of ['sort < src/a.ts', 'git commit -F notes.md', 'git push origin topic', 'git switch -c topic && git commit -m done', 'rsync -a src/ build/',
             'git worktree add worktrees/topic -b topic', 'git init worktrees/scratch', 'export NODE_ENV=test && npm test', 'git -c core.quotepath=false status',
