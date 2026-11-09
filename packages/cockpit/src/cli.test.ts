@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PassThrough, Readable } from 'node:stream'
 import * as fixCatalogue from './fix-catalogue.js'
 import { runCli, type CliIo } from './cli.js'
+import { runGuardCommand } from './cli-guard.js'
 import { createInvocationRecord } from './invocation.js'
 import { runSyncOperatorCommand } from './generated-environment/command.js'
 import { loadCockpitConfig } from './config/load.js'
@@ -1859,6 +1860,19 @@ describe('terminal-safe diagnostics', () => {
                 expect(projector).toHaveBeenCalledTimes(1)
             } finally { projector.mockRestore() }
         }
+    })
+
+    // The hook registrations give a guard call 30 seconds, and what a harness does when that fires is
+    // unmeasured, so the guard refuses on its own before then.
+    it('refuses a guard call still undecided at its deadline, and stops reading its input', async () => {
+        const stdin = new PassThrough()
+        let stdout = '', stderr = ''
+        const io = { stdin, stdout: { write: (text: string) => { stdout += text; return true } },
+            stderr: { write: (text: string) => { stderr += text; return true } } } as unknown as CliIo
+        expect(await runGuardCommand(['--harness', 'claudecode'], io, {}, performance.now() + 50)).toBe(2)
+        expect(stdout).toBe('')
+        expect(stderr).toMatch(/^cockpit guard: The guard ran out of time/)
+        expect(stdin.destroyed).toBe(true)
     })
 
     it('visibly escapes C1 and Unicode bidi controls in every human diagnostic field', () => {
