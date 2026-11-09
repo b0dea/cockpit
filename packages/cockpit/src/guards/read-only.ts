@@ -85,11 +85,13 @@ function parseOptions(argv: readonly string[], table: OptionTable): Options | un
 
 const LS: OptionTable = { flags: set('--all', '--almost-all', '--classify', '--human-readable', '--recursive', '--reverse'), values: set(), attachedOnly: set('--color'), cluster: /^-[1aAbBcCdFfghiklLmnopqrRsStTuUvwxX@]+$/ }
 const CAT: OptionTable = { flags: set('--number', '--number-nonblank', '--show-all', '--show-ends', '--show-tabs', '--squeeze-blank'), values: set(), cluster: /^-[AbeEnstTuv]+$/ }
-// `tail -f` never exits, so following is absent; `head -5` is the legacy count spelling.
+// `head -5` is the legacy count spelling.
 const HEAD_TAIL: OptionTable = { flags: set('-q', '-v', '--quiet', '--silent', '--verbose'), values: set('-n', '-c', '--lines', '--bytes'),
     countValues: set('-n', '-c', '--lines', '--bytes'), cluster: /^-\d+$/ }
-// Only output-shaping flags: `-f`/`--from-file`, `--rawfile`, `--slurpfile` and `-L` read other files and
-// `--arg`-style options take values, so none is listed.
+// `tail -f` keeps reading the files it names, and nothing else.
+const TAIL: OptionTable = { ...HEAD_TAIL, flags: new Set([...HEAD_TAIL.flags, '-f', '-F', '--follow', '--retry']), attachedOnly: set('--follow') }
+// Only output-shaping flags: `-f`/`--from-file` and `-L` read programs and modules, so neither is listed;
+// `--arg`-style pairs are read before this table, with `--rawfile` and `--slurpfile` files inspected as reads.
 const JQ: OptionTable = { flags: set('--raw-output', '--compact-output', '--sort-keys', '--slurp', '--exit-status', '--tab', '--join-output', '--ascii-output', '--monochrome-output'),
     values: set(), cluster: /^-[rcSseCMjan]+$/ }
 // `env`, `$ENV` and `$__prog_args` expose the environment, and `import`/`include` read module files.
@@ -140,7 +142,7 @@ const FD: OptionTable = {
 }
 const FIND_VALUE = set('-name', '-iname', '-path', '-ipath', '-wholename', '-iwholename', '-regex', '-iregex', '-type', '-maxdepth', '-mindepth',
     '-mtime', '-mmin', '-atime', '-amin', '-ctime', '-cmin', '-size', '-user', '-group', '-perm', '-newer')
-const FIND_FLAG = set('-print', '-print0', '-prune', '-empty', '-not', '!', '-a', '-and', '-o', '-or', '(', ')', '-depth', '-xdev', '-mount', '-true', '-false')
+const FIND_FLAG = set('-print', '-print0', '-prune', '-empty', '-not', '!', '-a', '-and', '-o', '-or', '(', ')', '-depth', '-xdev', '-mount', '-true', '-false', '-quit')
 
 function find(argv: readonly string[]): Classified {
     let index = 0
@@ -204,7 +206,29 @@ function files(argv: readonly string[], table: OptionTable): Classified {
     return parsed && { reads: parsed.positionals, trees: [], listings: [] }
 }
 
+// `--arg` and `--argjson` bind a name to a value, `--rawfile` and `--slurpfile` to a file's content.
+const JQ_PAIRS = set('--arg', '--argjson', '--rawfile', '--slurpfile')
+
 function jq(argv: readonly string[]): Classified {
+    const words: string[] = []
+    const files: string[] = []
+    for (let index = 0; index < argv.length; index++) {
+        const word = argv[index]!
+        if (word === '--') { words.push(...argv.slice(index)); break }
+        if (JQ_PAIRS.has(word)) {
+            const value = argv[index + 2]
+            if (argv[index + 1] === undefined || value === undefined) return undefined
+            if (word === '--rawfile' || word === '--slurpfile') files.push(value)
+            index += 2
+        } else if (word === '--indent') {
+            if (!/^\d$/.test(argv[++index] ?? '')) return undefined
+        } else words.push(word)
+    }
+    const classified = jqWords(words)
+    return classified && { ...classified, reads: [...files, ...classified.reads] }
+}
+
+function jqWords(argv: readonly string[]): Classified {
     const parsed = parseOptions(argv, JQ)
     const [filter, ...operands] = parsed?.positionals ?? []
     // `-n` reads no input, so a file operand with it is still just a read; the filter alone must be inert.
@@ -418,7 +442,8 @@ function classify(invocation: ParsedInvocation, environment: { readonly ripgrepC
             return parsed && shape({ reads: [], trees: [], listings: parsed.positionals.length ? parsed.positionals : ['.'] })
         }
         case 'cat': return shape(files(argv, CAT))
-        case 'head': case 'tail': return shape(files(argv, HEAD_TAIL))
+        case 'head': return shape(files(argv, HEAD_TAIL))
+        case 'tail': return shape(files(argv, TAIL))
         case 'jq': return shape(jq(argv))
         case 'wc': return shape(files(argv, WC))
         case 'shasum': {

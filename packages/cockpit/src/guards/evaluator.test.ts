@@ -830,7 +830,7 @@ describe('built-in read-only profile', () => {
             'rg --hidden needle src', 'rg -uu needle src', 'grep -R needle src', "rg -g '.env*' KEY src", "rg --glob='*.ts' needle src", "rg --iglob '*' needle src",
             // Options that run programs or write files.
             'rg --pre cat needle src', 'rg --pre=cat needle src', 'rg --hostname-bin cat needle src', 'rg -z needle src',
-            'find src -exec cat src/a.ts ;', 'find src -delete', 'fd -x cat name src', 'fd --exec cat name src', 'tail -f src/a.ts',
+            'find src -exec cat src/a.ts ;', 'find src -delete', 'fd -x cat name src', 'fd --exec cat name src',
             'git --git-dir=other log', 'git log --output=out.txt', 'git diff --output out.txt', 'git diff --ext-diff',
             'git branch topic', 'cockpit sync', 'cockpit check --unknown',
             'git diff --no-index src/a.ts README.md', 'grep -A x needle src/a.ts',
@@ -847,9 +847,12 @@ describe('built-in read-only profile', () => {
         // rather than asked; `grep -C 5`, `sed 's/a/b/'` moved to the allowed shapes, since a bare `-C` is
         // read as a flag and its count as the pattern, which reads every word that could be a file.
         expect(decideInRepositories('git show HEAD:config/active.instance').decision).toBe('deny')
+        // ACK: `tail -f` left the ask list: following a file inside the roots reads only that file.
+        expect(decideInRepositories('tail -f src/a.ts').decision).toBe('allow')
         // jq reads files like cat, but its filter language can also read the environment, modules and other files;
         // an unclassified shape that names a path is held back, not asked about.
-        for (const command of ["jq -n env", "jq -n '$ENV'", "jq 'include \"m\"; .' src/a.ts", 'jq -f prog.jq src/a.ts', 'jq --arg a b . src/a.ts', 'jq . src/a.ts > copy.txt', 'jq']) {
+        // ACK: `jq --arg NAME VALUE` binds a value and is read-only; a pair missing its value is not.
+        for (const command of ["jq -n env", "jq -n '$ENV'", "jq 'include \"m\"; .' src/a.ts", 'jq -f prog.jq src/a.ts', 'jq --arg a', 'jq . src/a.ts > copy.txt', 'jq']) {
             expect(decideInRepositories(command).decision, command).not.toBe('allow')
         }
         // Each refusal names the command and what to do instead.
@@ -1075,14 +1078,15 @@ describe('allow by default', () => {
         // What a Git verb would change in the working tree, relative to the root, and whether its work tree holds any protected path.
         readonly treeChanges?: readonly string[]; readonly guarded?: boolean; readonly treeUnresolved?: boolean
         // The nearest package.json: its name and script names.
-        readonly packageName?: string; readonly scripts?: readonly string[] }
+        readonly packageName?: string; readonly scripts?: readonly string[]; readonly workspaceScripts?: readonly string[] | null }
     // The current branch and where a bare `git push` goes, as the application asks Git for them.
     const onBranch = (head: string | null, push: string | null = head && `refs/remotes/origin/${head.slice('refs/heads/'.length)}`, facts: Facts = {}) =>
         (request: { path: string; cwd: string; operation?: string; revision?: string; from?: string }) => {
             const path = posix.resolve(request.cwd, request.path)
             if (request.operation === 'tree') return facts.treeUnresolved ? { status: 'unavailable', path } : { status: 'resolved', path, revision: request.revision, ...request.from === undefined ? {} : { from: request.from },
                 guarded: facts.guarded ?? facts.treeChanges !== undefined, changed: (facts.treeChanges ?? []).map(changed => posix.join(root, changed)) }
-            if (request.operation === 'manifest') return { status: 'resolved', path, name: facts.packageName ?? 'synthetic-app', scripts: facts.scripts ?? ['build', 'test', 'lint', 'typecheck', 'dev'] }
+            if (request.operation === 'manifest') return { status: 'resolved', path, name: facts.packageName ?? 'synthetic-app', scripts: facts.scripts ?? ['build', 'test', 'lint', 'typecheck', 'dev'],
+                workspace: facts.workspaceScripts === undefined ? facts.scripts ?? ['build', 'test', 'lint', 'typecheck', 'dev'] : facts.workspaceScripts }
             if (request.operation === 'branch') return { status: 'resolved', path, head, push, pushDefault: facts.pushDefault ?? null,
                 pushRefspecs: facts.pushRefspecs ?? false, pullRebase: facts.pullRebase ?? false }
             if (request.operation === 'remote') return { status: 'resolved', path, credentials: facts.remoteCredentials ?? false }
@@ -1339,6 +1343,17 @@ describe('allow by default', () => {
         ...['pip install git+https://example.test/a/b.git', 'pip3 install https://example.test/x.tar.gz', 'uv pip install git+https://example.test/a/b.git',
             'npm install github:a/b', 'npm install git+https://example.test/a/b.git', 'npm install https://example.test/x.tgz', 'npm i a/b', 'pnpm add a/b',
             'pnpm add github:a/b', 'yarn add https://example.test/x.tgz', 'bun add a/b'].map(command => ['install from a URL or Git source', command, undefined, { decision: 'ask' }] as const),
+        ...['gh release download v1 -p bash-guard.sh -D .cockpit/guards --clobber', "gh release download v1 -p '*.sh' --dir .cockpit/guards", 'gh run download 1 -D .cockpit/mcp',
+            'gh repo clone o/r .cockpit/mcp/x', 'gh gist clone abc123 .opencode/plugin/x']
+            .map(command => ['gh download into a control', command, undefined, { decision: 'deny' }] as const),
+        ...['gh release download v1 -D .cockpit/guards', 'gh run download 1 -n art -D .', 'gh run download 1']
+            .map(command => ['gh download into a control', command, undefined, { decision: 'ask' }] as const),
+        ...['.config/github-copilot/apps.json', '.config/github-copilot/hosts.json', '.vercel/auth.json', '.netlify/config.json', '.heroku/credentials']
+            .map(name => ['legacy credential store', `xxd '${home}/${name}'`, undefined, { decision: 'deny', externalReads: 'native' }] as const),
+        ['workspace script', 'pnpm -r build', undefined, { decision: 'ask', facts: { scripts: [], workspaceScripts: null } }],
+        ['workspace script', 'pnpm --filter web osascript -e x', undefined, { decision: 'ask', facts: { scripts: [], workspaceScripts: ['build'] } }],
+        ...['git pull . evil', 'git restore --source=FETCH_HEAD .', 'git clone . build/c']
+            .map(command => ['covering Git operand asks', command, undefined, { decision: 'ask', facts: { guarded: true } }] as const),
     ]
     it.each(bypasses)('refuses the reviewed bypass %s: %s', (...row) => {
         const [, command, head = 'refs/heads/topic', { facts, decision, ...change } = {}] = row as unknown as readonly [string, string, string?, { facts?: Facts; decision?: string }?]
@@ -1409,7 +1424,10 @@ describe('allow by default', () => {
             'tar -czf build/out.tgz src', 'tar -xzf build/a.tgz -C build/x', 'tar -tzf build/a.tgz', 'tar xzf build/a.tgz -C build/x',
             "curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/health", 'npx eslint .', 'npx prettier --write .', 'ruff check .', 'uv pip install -e .',
             'lsof -i :3000', 'kill 12345', 'kill -9 12345', 'pkill -f vite', 'gofmt -l .', 'golangci-lint run', 'rustup show', 'bundle exec rspec', 'pre-commit run --all-files',
-            'wget https://example.test/x', 'pnpm tsc --noEmit', 'pnpm vitest run']) {
+            'wget https://example.test/x', 'pnpm tsc --noEmit', 'pnpm vitest run',
+            "jq --arg v 1 '.a' package.json", "jq --argjson n 1 --indent 4 '.a' package.json", "jq --rawfile t notes.md '.a' package.json", 'tail -f src/a.ts', 'tail -F -n 20 src/a.ts',
+            'wc -l src/*.ts', "find src -name '*.ts' -print -quit", 'base64 -d build/a.b64 > build/a.bin', 'base64 -d -i build/a.b64 -o build/a.bin',
+            "gh release download v1 -p '*.tgz' -D build/x", "gh release download v1 -p '*.tgz'", 'gh run download 1 -D build/art', 'gh repo clone o/r build/r']) {
             const allowsInline = { ...open(), externalReads: 'native' as const, declaredAllows: [{ argv: ['python3', '-c'], cwd: root, reason: 'Run inline Python.' }] }
             const marked = evaluateGuard(parseGuardInput(shellPayload(command), { dynamicWords: 'mark', home }), allowsInline,
                 (request) => ({ ...onBranch('refs/heads/topic')(request), identity: '8:2' }))
@@ -1419,6 +1437,9 @@ describe('allow by default', () => {
         // A repository holding guard controls takes what a Git verb brings only when no control changes.
         const guarded = (command: string, treeChanges: readonly string[]) => evaluateGuard(parseGuardInput(shellPayload(command), { dynamicWords: 'mark', home }), open(),
             onBranch('refs/heads/topic', undefined, { treeChanges })).decision
+        // With -r or --filter, a script any workspace package declares is a script.
+        expect(evaluateGuard(parseGuardInput(shellPayload('pnpm -r build'), { dynamicWords: 'mark', home }), open(),
+            onBranch('refs/heads/topic', undefined, { scripts: [], workspaceScripts: ['build'] })).decision).toBe('allow')
         expect(['git merge topic', 'git pull --ff-only', 'git stash pop', 'git checkout -b next'].map(command => `${command}: ${guarded(command, [])}`))
             .toEqual(['git merge topic: allow', 'git pull --ff-only: allow', 'git stash pop: allow', 'git checkout -b next: allow'])
         // In the strict mode a declared command spelled with a launcher still admits the program it runs.
@@ -1430,8 +1451,9 @@ describe('allow by default', () => {
         const reason = (command: string, change: object = {}) =>
             evaluateGuard(parseGuardInput(shellPayload(command), { dynamicWords: 'mark', home }), { ...open(), ...change }, onBranch('refs/heads/topic')).reason
         // The strict mode's text names a test runner and grants; the allow default names the spelling it does read.
-        expect(reason('tail -f src/a.ts')).not.toContain('admits only the read-only commands')
-        expect(reason('tail -f src/a.ts')).toContain('tail -n')
+        // ACK: `tail -f` is now read-only, so a reading form the profile still does not read stands in for it.
+        expect(reason('cat --unknown src/a.ts')).not.toContain('admits only the read-only commands')
+        expect(reason('cat --unknown src/a.ts')).toContain('tail -n')
         // A script operand is not a path.
         expect(reason("sed -n '/export/{p;q}' src/a.ts")).not.toContain('outside the configured roots')
         expect(reason('npx prettier --write .codex/hooks.json')).toContain('a person runs it')

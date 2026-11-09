@@ -132,6 +132,8 @@ interface PathInspectionRequest {
     readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'list' | 'remove' | 'search' | 'unignored-search' | 'repository' | 'branch' | 'remote' | 'patch' | 'tree' | 'manifest'
     readonly revision?: string
     readonly from?: string
+    /** For a `manifest`, also the scripts any package of the enclosing workspace declares, as `workspace`. */
+    readonly workspace?: true
 }
 /** The application supplies current, symlink-aware facts; the evaluator performs no I/O. */
 export type PathInspection = (request: PathInspectionRequest) => unknown
@@ -981,12 +983,17 @@ const HOME_CREDENTIALS = [/^\.ssh\/(?!.*\.pub$|known_hosts$|config$|authorized_k
     /^\.supabase\/access-token$/, /^\.fly\/config\.yml$/, /^\.config\/configstore\/firebase-tools\.json$/, /^\.sentryclirc$/, /^\.config\/hub$/,
     /^(?:\.config|library\/preferences)\/netlify\/config\.json$/, /^(?:\.config|library\/application support)\/doctl\/config\.yaml$/,
     /^(?:\.config|library\/application support)\/sentry\/sentrycli\.ini$/, /^(?:\.local\/share|library\/application support)\/com\.vercel\.cli\//,
-    /^(?:\.config\/|library\/preferences\/)?\.wrangler\//, /^\.config\/stripe\//]
+    /^(?:\.config\/|library\/preferences\/)?\.wrangler\//, /^\.config\/stripe\//,
+    // Older or alternative locations a tool may no longer write; refusing a path nothing uses costs nothing.
+    // GitHub Copilot's editor plugins (apps.json, hosts.json before it), Vercel's `~/.vercel`, Netlify's
+    // `~/.netlify` and a Heroku credentials file.
+    /^\.config\/github-copilot\//, /^\.vercel\//, /^\.netlify\//, /^\.heroku\//]
 // The directories that hold those stores: naming one, or a directory above it, hands a recursive
 // tool (`zip -r`, `rsync -a`, `scp -r`) every file below.
 const HOME_CREDENTIAL_DIRECTORIES = ['.ssh', '.aws', '.config/gh', '.docker', '.kube', '.codex', '.claude', '.config/gcloud', '.azure', 'library/keychains',
     '.config/git', '.gnupg', '.terraform.d', '.cargo', '.gem', '.m2', '.gradle', '.config/op', '.local/share/opencode', '.local/share/com.vercel.cli',
-    'library/application support/com.vercel.cli', '.wrangler', '.config/.wrangler', 'library/preferences/.wrangler', '.config/stripe', '.supabase', '.fly']
+    'library/application support/com.vercel.cli', '.wrangler', '.config/.wrangler', 'library/preferences/.wrangler', '.config/stripe', '.supabase', '.fly',
+    '.config/github-copilot', '.vercel', '.netlify', '.heroku']
 const KEY_FILE = /^(?:.*\.(?:pem|p12|pfx|key)|id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?(?!.*\.pub$).*)$/
 
 // macOS reaches the home directory also through the Data volume's firmlink, and through the startup
@@ -1049,6 +1056,7 @@ function optionWrites(invocation: ParsedInvocation, git: GitInvocation | undefin
         for (const [at, path] of paths.entries()) if (globbed && /#\d/.test(path)) { covered.push(posix.dirname(path.slice(0, path.search(/#\d/)) + 'x')); paths[at] = '' }
     } else if (name === 'wget') valued(['-O', '-o', '-a'], ['--output-document', '--output-file', '--append-output'], 'ABDeiIlPQRtTUwX')
     else if (name === 'sort') valued(['-o'], ['--output'], 'kStT')
+    else if (name === 'base64') valued(['-o'], ['--output'], 'biw')
     else if (name === 'sed' || name === 'perl') {
         const inPlace = args.some(arg => /^-[a-zA-Z]*i/.test(arg) && !arg.startsWith('--') || arg.startsWith('--in-place'))
         if (!inPlace) return undefined
@@ -1108,6 +1116,34 @@ function downloadWrites(invocation: ParsedInvocation): { readonly paths: readonl
     const names = urls.map(url => named(url, 'index.html'))
     return recursive || !urls.length || names.some(item => item === undefined) ? { paths: [], directories: [directory] }
         : { paths: names.map(item => posix.join(directory, item!)), directories: [] }
+}
+
+/** A shell glob as a regular expression over one name: `*` and `?` stay within it, and `[…]` is a class. */
+function globExpression(pattern: string): RegExp {
+    return new RegExp(`^${pattern.split(/(\*+|\?|\[[^\]]*\])/).map((part, at) => at % 2
+        ? part.startsWith('*') ? '.*' : part === '?' ? '.' : part : part.replace(/[.+^${}()|\\]/g, '\\$&')).join('')}$`)
+}
+
+/**
+ * Where gh writes what it downloads or clones: `gh release download` writes each asset under its own
+ * name, or the `-p` patterns', into `-D` (the working directory by default); `gh run download` extracts
+ * artifacts anywhere below `-D`; `gh repo clone` and `gh gist clone` create their directory.
+ */
+function ghDownloads(invocation: ParsedInvocation): { readonly clones: readonly string[]; readonly directory?: { readonly path: string; readonly patterns: readonly string[] | null; readonly recursive: boolean } } | undefined {
+    if (posix.basename(invocation.executable ?? '') !== 'gh') return undefined
+    const args = invocation.argv
+    const valued = ['-R', '--repo', '-D', '--dir', '-p', '--pattern', '-O', '--output', '-n', '--name', '-A', '--archive', '-u', '--upstream-remote-name']
+    const values = (options: readonly string[]) => args.flatMap((arg, at) => options.includes(arg) ? [args[at + 1] ?? ''] : options.flatMap(option => arg.startsWith(`${option}=`) ? [arg.slice(option.length + 1)] : []))
+    const end = args.indexOf('--')
+    const operands = (end < 0 ? args : args.slice(0, end)).filter((arg, at, list) => !arg.startsWith('-') && !valued.includes(list[at - 1] ?? ''))
+    const [group, verb, ...rest] = operands
+    if ((group === 'repo' || group === 'gist') && verb === 'clone' && rest[0] !== undefined) {
+        return { clones: [rest[1] ?? posix.basename(rest[0]).replace(/\.git$/, '')] }
+    }
+    if (!['release', 'run'].includes(group ?? '') || verb !== 'download') return undefined
+    const path = values(['-D', '--dir']).at(-1) ?? '.'
+    const patterns = group === 'release' && !values(['-A', '--archive']).length ? values(['-p', '--pattern']) : []
+    return { clones: [], directory: { path, patterns: patterns.length ? patterns : null, recursive: group === 'run' } }
 }
 
 /** The file `gunzip`, `gzip -d`, `unxz`, `xz -d` or `bunzip2` writes for each compressed operand: its name without the suffix. */
@@ -1356,7 +1392,7 @@ const KNOWN_TOOLS = new Set([
     // Archives and copies, judged by their operands.
     'zip', 'tar', 'rsync', 'scp', 'unzip', 'gzip', 'gunzip',
     // Process and port inspection, and signals to processes the agent started.
-    'lsof', 'kill', 'pkill',
+    'lsof', 'kill', 'pkill', 'base64',
     // Formatters, linters and runners of project code in other languages; `bundle exec` is followed to the program it runs.
     'gofmt', 'golangci-lint', 'rustup', 'bundle', 'rspec', 'rake', 'pre-commit',
     // Downloads, judged by their hosts and output options.
@@ -1550,13 +1586,16 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             && evidence.changed.every(canonical) ? { guarded: evidence.guarded, changed: evidence.changed as readonly string[] } : undefined
     }
     // The nearest package.json at or above a path: its name and its script names.
-    const manifestFacts = (path: string, cwd: string): { readonly name: string | null; readonly scripts: readonly string[] } | undefined => {
+    // The nearest package.json at or above a path: its name and its script names, and with `workspace` the
+    // scripts any package of the enclosing workspace declares, or null when they could not all be read.
+    const manifestFacts = (path: string, cwd: string, workspace = false): { readonly name: string | null; readonly scripts: readonly string[]; readonly workspace: readonly string[] | null } | undefined => {
         let evidence: JsonSnapshot | undefined
-        try { evidence = snapshotJson(inspect({ path, cwd, operation: 'manifest' })) }
+        try { evidence = snapshotJson(inspect({ path, cwd, operation: 'manifest', ...workspace ? { workspace: true as const } : {} })) }
         catch { return undefined } // no answer names no package and no script, which only ever asks
+        const names = (value: JsonSnapshot | undefined): value is readonly string[] => Array.isArray(value) && value.length <= GUARD_INPUT_LIMITS.words && value.every(scalar)
         return record(evidence) && evidence.status === 'resolved' && evidence.path === posix.resolve(cwd, path) && (evidence.name === null || scalar(evidence.name))
-            && Array.isArray(evidence.scripts) && evidence.scripts.length <= GUARD_INPUT_LIMITS.words && evidence.scripts.every(scalar)
-            ? { name: evidence.name, scripts: evidence.scripts as readonly string[] } : undefined
+            && names(evidence.scripts) && (!workspace || evidence.workspace === null || names(evidence.workspace))
+            ? { name: evidence.name, scripts: evidence.scripts, workspace: workspace && names(evidence.workspace) ? evidence.workspace : null } : undefined
     }
     // Whether a remote URL Git would print for the repository at `cwd` carries a credential; no answer counts as yes.
     const remoteCredentials = (cwd: string): boolean => {
@@ -1690,21 +1729,22 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     // pathspecs, which write the index's or a revision's copy of every file below them, still stops.
     const unclassifiedControl = unavailable('Invocation names a guard control, and the guard does not know whether it writes there. '
         + 'Name the files it needs that are not guard controls, or run it from a subdirectory; otherwise a person runs it.')
-    const inspectPossibleControlOperand = (path: string, cwd: string, covering: boolean) => {
+    // A directory that only holds a control asks, so a person can approve `git restore --source=<rev> .`;
+    // naming a control itself stays a hard stop.
+    const inspectPossibleControlOperand = (invocation: ParsedInvocation, path: string, cwd: string, covering: boolean) => {
         if (!scalar(path) || Buffer.byteLength(path) > GUARD_INPUT_LIMITS.pathBytes) return
         const lexical = posix.resolve(cwd, path)
         if (!resolved.allowedRoots.some((root) => within(lexical, root))) return
         const folded = fold(lexical)
-        if (controlFiles.some((target) => folded === fold(target) || covering && within(fold(target), folded))
-            || controlDirectories.some((target) => within(folded, fold(target)) || covering && within(fold(target), folded))) {
-            hold(unclassifiedControl)
-            return
-        }
+        const holdsControl = () => holdBoundary(invocation, ask(`${named(invocation)} names ${shownGuardWord(path)}, which holds guard files, and the guard does not know whether it writes them. `
+            + 'Name the files it needs that are not guard controls, or run it from a subdirectory; otherwise a person approves it or runs it.'))
+        if (controlFiles.some((target) => folded === fold(target)) || controlDirectories.some((target) => within(folded, fold(target)))) { hold(unclassifiedControl); return }
+        if (covering && [...controlFiles, ...controlDirectories].some((target) => within(fold(target), folded))) { holdsControl(); return }
         const evidence = resolvedEvidence({ path, cwd, operation: 'write' })
         if (!evidence) return
         const { is, below, covers } = evidenceFacts(evidence)
-        if (controlFiles.some((target) => is(target) || covering && covers(target))
-            || controlDirectories.some((target) => below(target) || covering && covers(target))) hold(unclassifiedControl)
+        if (controlFiles.some(is) || controlDirectories.some(below)) hold(unclassifiedControl)
+        else if (covering && [...controlFiles, ...controlDirectories].some(covers)) holdsControl()
     }
     // A symbolic link's text resolves from the link's own directory and a hard link's from the
     // working directory, so a source is checked from both.
@@ -1973,7 +2013,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             // Staging writes the index, never the named file, and its operands are inspected as staged below.
             for (const arg of git?.args ?? operands) {
                 if (++possibleControlCount <= GUARD_INPUT_LIMITS.paths) {
-                    inspectPossibleControlOperand(arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg, git?.cwd ?? invocation.cwd,
+                    inspectPossibleControlOperand(invocation, arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg, git?.cwd ?? invocation.cwd,
                         git !== undefined || OUTSIDE_WRITERS.has(executableName) || !knownTool(invocation, resolved.allowedRoots))
                 }
             }
@@ -1995,6 +2035,26 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         for (const path of [...optioned?.covered ?? [], ...downloads?.directories ?? []]) {
             pathCount++
             inspectPath({ path, cwd: invocation.cwd, operation: 'write' }, true)
+        }
+        // gh writes downloads into a directory and clones into a new one: a clone is judged as a write
+        // with what it would hold, and a download by the guard files its names could reach there.
+        const ghWrites = ghDownloads(invocation)
+        for (const path of ghWrites?.clones ?? []) {
+            pathCount++
+            inspectPath({ path, cwd: invocation.cwd, operation: 'write' }, true)
+        }
+        if (ghWrites?.directory) {
+            const { path, patterns, recursive } = ghWrites.directory
+            pathCount++
+            inspectPath({ path, cwd: invocation.cwd, operation: 'write' })
+            const folded = fold(posix.resolve(invocation.cwd, path))
+            const reached = recursive ? [...controlFiles, ...controlDirectories].filter(target => within(fold(target), folded))
+                : controlFiles.filter(target => posix.dirname(fold(target)) === folded)
+            if (reached.length && patterns && !recursive) {
+                if (reached.some(target => patterns.some(pattern => globExpression(fold(pattern)).test(posix.basename(fold(target)))))) hold(controlDenial)
+            } else if (reached.length) {
+                holdBoundary(invocation, ask(`${named(invocation)} downloads files whose names the guard cannot see into ${shownGuardWord(path)}, which holds guard files. Download into another directory, such as build/, or name the release assets with -p; otherwise a person runs it.`))
+            }
         }
         // A writer the guard does not model writes some operand: one outside the roots is judged as a
         // write there, and a Git verb's new repository, worktree or bundle is a write wherever it is.
@@ -2022,7 +2082,10 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const loopRead = READING_EXECUTABLES.has(executableName) && !writes && !removed?.paths.length && !optioned && !git && !cockpitCommand(invocation)
             && invocation.words.every(word => !word.dynamic || /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/.test(word.value) && visibleLoops.has(references(word.value)[0]!))
             && new Set(invocation.words.filter(word => word.dynamic).map(word => word.value)).size <= 1
-        if (invocation.dynamic && !loopRead && (writes || removed?.paths.length || optioned || git || READING_EXECUTABLES.has(executableName) || cockpitCommand(invocation)
+        // A reader given a glob in its last component inside the roots reads what it matches, judged by the glob's own words.
+        const globRead = READING_EXECUTABLES.has(executableName) && invocation.dynamic === true && !writes && !removed?.paths.length && !optioned && !git && !cockpitCommand(invocation)
+            && invocation.words.every(word => !word.dynamic || word.role === 'argument' && plainGlob(word) && inRoots(posix.resolve(invocation.cwd, word.value)))
+        if (invocation.dynamic && !loopRead && !globRead && (writes || removed?.paths.length || optioned || git || READING_EXECUTABLES.has(executableName) || cockpitCommand(invocation)
             || NAME_READERS.has(executableName) || executableName === 'gh' && /^(?:gist (?:create|edit)|release (?:create|upload)|(?:secret|variable) set)$/.test(invocation.argv.slice(0, 2).join(' ')))) {
             const word = invocation.words.find(item => item.dynamic)?.value ?? ''
             holdBoundary(invocation, ask(`${named(invocation)} holds ${shownGuardWord(word)}, whose value the guard cannot see, where it decides which file is read or written or which branch is pushed. Write the value out.`))
@@ -2184,7 +2247,10 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
                 words: invocation.words.map(word => word.dynamic ? { role: word.role, value: item } : word) },
                 { ripgrepConfigActive: resolved.ripgrepConfigActive, wideSearch: open }))
         })() : undefined
+        const globAccess = globRead ? (() => { const { dynamic: _, ...literal } = invocation
+            return classifyReadOnlyInvocation({ ...literal, words: invocation.words.map(({ dynamic: __, ...word }) => word) }, { ripgrepConfigActive: resolved.ripgrepConfigActive, wideSearch: open }) })() : undefined
         if (loopAccesses?.length && loopAccesses.every(item => item !== undefined && inspectReadOnly(item, chainReadOnly))) readOnly.add(invocation)
+        else if (globAccess && inspectReadOnly(globAccess, chainReadOnly)) readOnly.add(invocation)
         else if (access && inspectReadOnly(access, chainReadOnly || nativeGit && alone, approvedExternalRead)) readOnly.add(invocation)
         else if (searchBlocker) searchRefusals.set(invocation, searchBlocker)
         // A cockpit command its own table does not admit (sync and upgrade publish policy) is a person's,
@@ -2435,11 +2501,18 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             // `pnpm build`, `yarn lint` and `bun run test` run the package's script of that name when it has
             // one, and package scripts are the project's own commands; only `exec`, `dlx` and `x` name a program.
             const runner = invocations[invocations.indexOf(invocation) - 1]
+            // With -r or --filter pnpm runs the script in workspace packages, so one any of them declares counts.
+            const packageScript = (launcher: ParsedInvocation, word: string) => {
+                const selects = launcher.argv.slice(0, launcher.argv.length - invocation.argv.length - 1)
+                    .some(arg => ['-r', '--recursive', 'recursive', 'multi', 'm', '-F', '--filter', '--filter-prod'].includes(arg) || /^--filter(?:-prod)?=/.test(arg))
+                const manifest = manifestFacts('.', launcher.cwd, selects)
+                return manifest !== undefined && (manifest.scripts.includes(word) || manifest.workspace?.includes(word) === true)
+            }
             // pnpm runs any other word as a program, and `bun run` a file, so a word counts as a script only
             // where the nearest package.json declares it; any other is judged as the program it is.
             const script = invocation.wrapped && runner !== undefined && launchedBy(invocation, runner) && ['pnpm', 'yarn', 'bun', 'npm'].includes(posix.basename(runner.executable ?? ''))
                 && !runner.argv.slice(0, runner.argv.length - invocation.argv.length - 1).some(word => ['exec', 'dlx', 'x', '--package', '-p'].includes(word))
-                && (manifestFacts('.', runner.cwd)?.scripts.includes(invocation.executable) === true
+                && (packageScript(runner, invocation.executable)
                     || posix.basename(runner.executable ?? '') === 'bun' && /\.[cm]?[jt]sx?$/.test(invocation.executable) && inRoots(posix.resolve(invocation.cwd, invocation.executable)))
             const unknown = open && !script && !knownTool(invocation, resolved.allowedRoots)
             // Compose starts containers that can mount any host path; cockpit's own commands run the declared stack.
