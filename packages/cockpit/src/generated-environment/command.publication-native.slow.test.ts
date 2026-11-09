@@ -62,8 +62,11 @@ describe('public surface publication transaction', () => {
                 cwd: fixture.root, encoding: 'utf8', input: JSON.stringify({ hook_event_name: 'PreToolUse',
                     tool_name: 'mcp__approved-server__write_record', cwd: fixture.root, tool_input: {} }),
             })
-            expect(stale.status).toBe(2)
-            expect(stale.stderr).toContain('widens what agents may do')
+            // The widened allowlist is not in force before a person syncs: the call is judged under the
+            // synced one, and the refusal says why.
+            expect(stale.status, stale.stderr).toBe(0)
+            expect(JSON.parse(stale.stdout).hookSpecificOutput).toMatchObject({ permissionDecision: 'deny',
+                permissionDecisionReason: expect.stringContaining('has an unapproved edit that widens what agents may do') })
         })
 
         it('applies a tool restriction under stale_delete = person, removing only the unchanged MCP file of a tool still listed', async () => {

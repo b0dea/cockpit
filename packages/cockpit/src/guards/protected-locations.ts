@@ -6,12 +6,13 @@
 // policy and the evaluator turns them into hard denials.
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { readBoundedFile } from '../bounded-read.js'
+import { parse as parseYaml } from 'yaml'
 import { basename, dirname, join, posix, relative } from 'node:path'
 
 import { ENVIRONMENT_CODES, snapshotExecutionStep, type ExecutionStep, RefusalError } from '../environment/contract.js'
 import { GIT_CHILD_CONFIG, type ResolvedExecutable } from '../environment/executable.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import { foldGuardSpelling, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity, isSensitiveGuardName } from './evaluator.js'
+import { foldGuardSpelling, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity, isSensitiveGuardName, type GitTreeTarget } from './evaluator.js'
 
 function missing(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
 
@@ -172,11 +173,17 @@ const GUARD_IGNORED_ENTRY_LIMIT = GUARD_SEARCH_ENTRY_LIMIT
  * null when Git did not answer. The configuration overrides keep Git from running the fsmonitor
  * program or trusting its untracked cache, and match ignore rules case-sensitively, as ripgrep does.
  */
-async function gitPaths(git: ResolvedExecutable, repository: string, args: readonly string[], execute: GuardExecute): Promise<readonly string[] | null> {
+/**
+ * Where Git finds the person's global configuration: HOME and XDG_CONFIG_HOME from the environment the
+ * hook runs in. Both lie outside the roots, which agents do not write, so the configuration is the person's.
+ */
+export type GuardGitEnvironment = Readonly<{ HOME?: string; XDG_CONFIG_HOME?: string }>
+
+async function gitPaths(git: ResolvedExecutable, repository: string, args: readonly string[], execute: GuardExecute, env: GuardGitEnvironment = {}): Promise<readonly string[] | null> {
     const step = snapshotExecutionStep({
         id: 'guard-git-paths',
         argv: [git.canonicalPath, '-C', repository, `--work-tree=${repository}`, ...GIT_CHILD_CONFIG, '-c', 'core.untrackedCache=false', '-c', 'core.ignoreCase=false', ...args],
-        argv0: git.invocationPath, cwd: repository, env: {}, timeoutMs: 10_000,
+        argv0: git.invocationPath, cwd: repository, env: { ...env }, timeoutMs: 10_000,
         stdoutLimitBytes: GIT_LIST_BYTES, stderrLimitBytes: 65_536, paths: [repository], ports: [], labels: { action: 'guard-git-paths' },
         expected: [{ kind: 'path', target: repository, state: 'repository' }],
         consumedFiles: [{ path: git.canonicalPath, sha256: git.sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: git.executionMode }],
@@ -343,6 +350,242 @@ export async function guardTrackedSensitivePaths(repository: string, watched: re
     const tracked = await gitPaths(git, repository, ['ls-files', '-z', '--', ':(icase,glob)**/.env*', ':(icase,glob)**/.env*/**', ':(icase,glob)**/.secrets/**',
         ...inside.map(path => `:(icase,literal)${path}`)], execute)
     return tracked === null || tracked.length > GUARD_LOCATION_LIMITS.sensitivePaths ? null : tracked.map(path => join(repository, path)).sort()
+}
+
+/**
+ * The repository's current branch and where a bare `git push` goes from it, as full ref names; null
+ * where Git names none (a detached HEAD, a branch with no push destination) or could not answer.
+ */
+export interface GuardBranchFacts {
+    readonly head: string | null
+    readonly push: string | null
+    /** `push.default`, which decides what a push without a refspec sends; `matching` sends every branch of the same name. */
+    readonly pushDefault: string | null
+    /** A remote has configured push refspecs, which a push without a refspec sends instead. */
+    readonly pushRefspecs: boolean
+    /** A plain `git pull` on the current branch rebases it. */
+    readonly pullRebase: boolean
+}
+
+/** Git configuration entries matching `pattern`, as `[key, value]`, or null when Git could not say. */
+async function gitConfigEntries(git: ResolvedExecutable, repository: string, pattern: string, execute: GuardExecute, env: GuardGitEnvironment): Promise<readonly (readonly [string, string])[] | null> {
+    const entries = await gitPaths(git, repository, ['config', '-z', '--get-regexp', pattern], execute, env)
+    return entries && entries.map(entry => { const cut = entry.indexOf('\n'); return cut < 0 ? [entry, ''] as const : [entry.slice(0, cut), entry.slice(cut + 1)] as const })
+}
+
+export async function guardBranchFacts(repository: string, git: ResolvedExecutable, execute: GuardExecute, env: GuardGitEnvironment = {}): Promise<GuardBranchFacts | null> {
+    const ref = (lines: readonly string[] | null) => {
+        const value = lines?.join('').trim()
+        return value && /^refs\/\S+$/.test(value) ? value : null
+    }
+    const [head, push, config] = await Promise.all([gitPaths(git, repository, ['symbolic-ref', '-q', 'HEAD'], execute, env),
+        gitPaths(git, repository, ['rev-parse', '--symbolic-full-name', '@{push}'], execute, env),
+        gitConfigEntries(git, repository, '^(push\\.default|pull\\.rebase|branch\\..*\\.rebase|remote\\..*\\.push)$', execute, env)])
+    if (config === null) return null
+    const current = ref(head)
+    const last = (key: string) => config.filter(([name]) => name === key).at(-1)?.[1]
+    const rebase = (current && last(`branch.${current.slice('refs/heads/'.length)}.rebase`)) ?? last('pull.rebase')
+    return { head: current, push: ref(push), pushDefault: last('push.default') ?? null,
+        pushRefspecs: config.some(([name]) => /^remote\..*\.push$/.test(name)),
+        pullRebase: rebase !== undefined && !/^(?:false|no|off|0)$/i.test(rebase) }
+}
+
+/** Whether a URL's user information carries a password or a token rather than only a user name. */
+function credentialUrl(url: string): boolean {
+    const userinfo = /^[a-z][a-z0-9+.-]*:\/\/([^/?#@]*)@/i.exec(url.trim())?.[1]
+    return userinfo !== undefined && (userinfo.includes(':') || userinfo.length >= 32
+        || /^(?:gh[opsur]_|github_pat_|glpat-|x-access-token|x-token-auth|oauth2?)/i.test(userinfo))
+}
+
+/**
+ * Whether a remote URL Git prints for `repository` carries a credential: a remote's URL or push URL,
+ * the base an `insteadOf` rewrite substitutes, or an `http.extraHeader`, which holds a token. Null when
+ * Git could not say.
+ */
+export async function guardRemoteCredentials(repository: string, git: ResolvedExecutable, execute: GuardExecute, env: GuardGitEnvironment = {}): Promise<boolean | null> {
+    const config = await gitConfigEntries(git, repository, '^(remote\\..*\\.(url|pushurl)|url\\..*\\.(insteadof|pushinsteadof)|http\\..*extraheader)$', execute, env)
+    return config && config.some(([name, value]) => /extraheader$/.test(name)
+        || /^url\./.test(name) && credentialUrl(name.slice(4, name.lastIndexOf('.')))
+        || /^remote\./.test(name) && credentialUrl(value))
+}
+
+/**
+ * Which of `protectedPaths` the work tree holding `cwd` contains (`guarded`), and which of them differ
+ * between the target's `from` and `revision` (`changed`), or null when Git could not answer. A revision
+ * that names no commit writes nothing, since Git refuses it or reads the word as a pathspec, and a
+ * `from` that names none compares with nothing, listing every protected path the revision holds.
+ */
+export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, protectedPaths: readonly string[], git: ResolvedExecutable, execute: GuardExecute,
+    env: GuardGitEnvironment = {}): Promise<{ readonly guarded: boolean; readonly changed: readonly string[] } | null> {
+    const top = repositoryAbove(cwd)
+    if (top === undefined) return null
+    const inside = protectedPaths.filter(path => path === top || path.startsWith(`${top}/`)).map(path => relative(top, path)).filter(Boolean)
+    if (!inside.length) return { guarded: false, changed: [] }
+    // A diff against the work tree may refresh the index; this query takes no lock.
+    const run = (args: readonly string[]) => gitPaths(git, top, ['--no-optional-locks', ...args], execute, env)
+    const commit = async (revision: string) => {
+        const lines = await run(['rev-parse', '--verify', '--quiet', '--end-of-options', `${revision}^{commit}`])
+        return lines === null ? null : lines.join('').trim() || undefined
+    }
+    const to = await commit(target.revision)
+    if (to === null) return null
+    if (to === undefined) return { guarded: true, changed: [] }
+    const pathspecs = inside.map(path => `:(literal)${path}`)
+    const diff = ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z']
+    let names: readonly string[] | null
+    if (target.from === 'worktree') names = await run([...diff, to, '--', ...pathspecs])
+    else {
+        const from = await commit(target.from ?? 'HEAD')
+        if (from === null) return null
+        names = await run(from === undefined ? ['ls-tree', '-r', '--name-only', '-z', to, '--', ...inside] : [...diff, from, to, '--', ...pathspecs])
+    }
+    return names && names.length <= GUARD_LOCATION_LIMITS.sensitivePaths ? { guarded: true, changed: names.map(name => join(top, name)).sort() } : null
+}
+
+// A package manifest is a few kilobytes; a larger one is not read.
+const MANIFEST_BYTES = 1_048_576
+
+type Manifest = { readonly name: string | null; readonly scripts: readonly string[]; readonly workspaces: readonly string[] | undefined }
+const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
+
+/** A bounded plain file's text, undefined when it is absent, or null when it is a link, not a file or too large. */
+function boundedText(path: string, maxBytes: number): string | null | undefined {
+    let read
+    try { read = readBoundedFile(path, maxBytes) } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code ?? ''
+        if (missing(error) || code === 'ENOTDIR') return undefined
+        if (['ELOOP', 'EISDIR', 'ENXIO'].includes(code)) return null
+        throw error
+    }
+    return read.kind === 'too-large' ? null : read.bytes.toString('utf8')
+}
+
+/** The package.json in `directory`: undefined when there is none, null when it is not a readable JSON object. */
+function readManifest(directory: string): Manifest | null | undefined {
+    const text = boundedText(join(directory, 'package.json'), MANIFEST_BYTES)
+    if (typeof text !== 'string') return text
+    let manifest: unknown
+    try { manifest = JSON.parse(text) } catch (error) { if (error instanceof SyntaxError) return null; throw error }
+    if (!record(manifest)) return null
+    // npm and yarn list workspace globs as an array, or under `packages`.
+    const listed = Array.isArray(manifest.workspaces) ? manifest.workspaces : record(manifest.workspaces) ? manifest.workspaces.packages : undefined
+    return { name: typeof manifest.name === 'string' ? manifest.name : null, scripts: record(manifest.scripts) ? Object.keys(manifest.scripts) : [],
+        workspaces: Array.isArray(listed) && listed.every(item => typeof item === 'string') ? listed : undefined }
+}
+
+// A workspace's packages, and the directories walked to find them, past which its scripts are not proven.
+const WORKSPACE_PACKAGES = 512
+const WORKSPACE_DIRECTORIES = 4096
+
+/**
+ * The package directories a workspace's globs name below `root`: `*` and other single-segment globs, and
+ * `**` to a bounded depth, never into node_modules or a hidden directory. Null when a glob climbs out with
+ * `..`, or the walk passes its bound.
+ */
+function workspacePackages(root: string, globs: readonly string[]): readonly string[] | null {
+    const found = new Set<string>()
+    let walked = 0
+    const children = (directory: string): readonly string[] => {
+        let entries
+        try { entries = readdirSync(directory, { withFileTypes: true }) } catch (error) { if (missing(error) || (error as NodeJS.ErrnoException).code === 'ENOTDIR') return []; throw error }
+        return entries.filter(entry => entry.isDirectory() && entry.name !== 'node_modules' && !entry.name.startsWith('.')).map(entry => join(directory, entry.name))
+    }
+    const expand = (directory: string, segments: readonly string[], depth: number): boolean => {
+        if (++walked > WORKSPACE_DIRECTORIES) return false
+        const [segment, ...rest] = segments
+        if (segment === undefined) { found.add(directory); return found.size <= WORKSPACE_PACKAGES }
+        if (segment === '**') return expand(directory, rest, depth) && (depth >= 4 || children(directory).every(child => expand(child, segments, depth + 1)))
+        if (!/[*?[]/.test(segment)) return expand(join(directory, segment), rest, depth)
+        const pattern = new RegExp(`^${segment.split(/(\*+|\?|\[[^\]]*\])/).map((part, at) => at % 2
+            ? part.startsWith('*') ? '.*' : part === '?' ? '.' : part : part.replace(/[.+^${}()|\\]/g, '\\$&')).join('')}$`)
+        return children(directory).filter(child => pattern.test(basename(child))).every(child => expand(child, rest, depth))
+    }
+    for (const glob of globs) {
+        if (glob.startsWith('!')) continue
+        const segments = glob.replace(/^\.\//, '').split('/').filter(segment => segment && segment !== '.')
+        if (segments.includes('..') || !expand(root, segments, 0)) return null
+    }
+    return [...found]
+}
+
+/**
+ * The nearest package.json at or above `path` while `inside` holds: its `name` and the names of its
+ * `scripts`, or none when there is no manifest; null when one is not a plain readable JSON file. With
+ * `workspace`, also every script name the enclosing workspace's root or any of its packages declares,
+ * from pnpm-workspace.yaml or a package.json `workspaces` list, or null when they could not all be read.
+ */
+export function guardPackageManifest(path: string, inside: (path: string) => boolean, workspace = false): { readonly name: string | null; readonly scripts: readonly string[]; readonly workspace?: readonly string[] | null } | null {
+    let nearest: Manifest | undefined
+    let start = path
+    for (let directory = path; inside(directory); directory = dirname(directory)) {
+        const manifest = readManifest(directory)
+        if (manifest === null) return null
+        if (manifest !== undefined) { nearest = manifest; start = directory; break }
+        if (dirname(directory) === directory) break
+    }
+    const own = { name: nearest?.name ?? null, scripts: nearest?.scripts ?? [] }
+    if (!workspace) return own
+    const scripts = new Set(own.scripts)
+    for (let directory = start; inside(directory); directory = dirname(directory)) {
+        const yaml = boundedText(join(directory, 'pnpm-workspace.yaml'), MANIFEST_BYTES)
+        let globs: readonly string[] | undefined
+        if (yaml === null) return { ...own, workspace: null }
+        if (yaml !== undefined) {
+            let parsed: unknown
+            try { parsed = parseYaml(yaml) } catch { return { ...own, workspace: null } } // an unreadable workspace file proves no script
+            const packages = record(parsed) ? parsed.packages : undefined
+            if (!Array.isArray(packages) || !packages.every(item => typeof item === 'string')) return { ...own, workspace: null }
+            globs = packages
+        }
+        const manifest = readManifest(directory)
+        if (manifest === null) return { ...own, workspace: null }
+        globs ??= manifest?.workspaces
+        if (globs === undefined) { if (dirname(directory) === directory) break; continue }
+        for (const name of manifest?.scripts ?? []) scripts.add(name)
+        const packages = workspacePackages(directory, globs)
+        if (packages === null) return { ...own, workspace: null }
+        for (const item of packages) {
+            const member = readManifest(item)
+            if (member === null) return { ...own, workspace: null }
+            for (const name of member?.scripts ?? []) scripts.add(name)
+        }
+        break
+    }
+    return { ...own, workspace: [...scripts].sort() }
+}
+
+// A patch an agent applies is a few hundred kilobytes at most; a larger one is not read.
+const PATCH_BYTES = 4_194_304
+
+/**
+ * Every path a patch file's headers name, relative to the tree it applies to and with Git's `a/` and
+ * `b/` prefixes removed, or null when the file is not a regular file inside `root`, is too large,
+ * names a path the guard cannot read, such as a quoted one, or is a mail whose body is encoded.
+ */
+export function guardPatchTargets(path: string): readonly string[] | null {
+    let read
+    try { read = readBoundedFile(path, PATCH_BYTES) } catch (error) {
+        if (missing(error) || ['ELOOP', 'EISDIR', 'ENXIO'].includes((error as NodeJS.ErrnoException).code ?? '')) return null
+        throw error
+    }
+    if (read.kind === 'too-large') return null
+    const text = read.bytes.toString('utf8')
+    // `git am` decodes a base64 or quoted-printable mail body before it applies the patch inside, whose
+    // headers the raw lines then do not show.
+    if (/^content-transfer-encoding:(?![ \t]*(?:7bit|8bit)[ \t]*\r?$)/im.test(text)) return null
+    const targets = new Set<string>()
+    for (const line of text.split('\n')) {
+        if (!/^(?:diff --git |--- |\+\+\+ |(?:rename|copy) (?:from|to) )/.test(line)) continue
+        // A header the guard cannot read, such as a quoted name or one with spaces, may name any path.
+        const header = /^(?:diff --git (\S+) (\S+)|(?:---|\+\+\+) (\S+)(?:\t.*)?|(?:rename|copy) (?:from|to) (\S+))\r?$/.exec(line)
+        if (!header || line.includes('"')) return null
+        for (const named of [header[1], header[2], header[3]].filter((item): item is string => item !== undefined)) {
+            if (named !== '/dev/null') targets.add(named.replace(/^[^/]*\//, ''))
+        }
+        if (header[4] !== undefined) targets.add(header[4])
+        if (targets.size > GUARD_LOCATION_LIMITS.sensitivePaths) return null
+    }
+    return [...targets]
 }
 
 /**

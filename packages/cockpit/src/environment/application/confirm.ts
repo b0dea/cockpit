@@ -122,8 +122,8 @@ export async function runConfirm(input: ConfirmCommandInput, adapters: ConfirmCo
     }
 
     // The observation re-reads cockpit.toml itself, so the record binds to what it observed only if the
-    // file is still the one loaded above. An agent edit made meanwhile cannot be reverted before this
-    // read: the guard holds every call but sync and check once the file differs from the synced one.
+    // file is still the one loaded above. An edit made and undone while the observation ran is not seen
+    // here: the guard admits a non-widening edit and the exact restoration of the synced file.
     const after = await loadCockpitConfig(configPath)
     if (after.kind !== 'complete' || after.result.source.sha256 !== loaded.result.source.sha256) {
         return refusalOutcome(ENVIRONMENT_CODES.CONFIG_CHANGED_DURING_EXECUTION,

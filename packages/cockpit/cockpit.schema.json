@@ -505,7 +505,7 @@
         },
         "allow": {
           "default": [],
-          "description": "Commands allowed in addition to the built-in rules.",
+          "description": "Exceptions that admit a command the guard would otherwise ask about, such as a program it does not know or inline interpreter code; an entry never admits a blocked command, such as a secret read, a write outside the cockpit, a protected-branch or force push, or a change to the guard.",
           "maxItems": 64,
           "type": "array",
           "items": {
@@ -713,9 +713,18 @@
             "additionalProperties": false
           }
         },
+        "default": {
+          "default": "allow",
+          "description": "What the guard does with a shell command outside its blocked list: allow runs a command whose executable is a development tool it knows, a project program inside the roots and package scripts, and asks about an unknown program or inline interpreter code, which a person approves or admits with an allow entry; ask is the strict mode, which admits only the read-only commands the guard classifies, declared build and test commands and allow entries, and asks for every other command. Secrets, writes outside the cockpit, protected branches and force pushes, declared hosts, the guard itself and privilege escalation are refused in both modes.",
+          "type": "string",
+          "enum": [
+            "allow",
+            "ask"
+          ]
+        },
         "external_reads": {
           "default": "grant",
-          "description": "Who admits a shell read of a named file outside the cockpit: grant needs its complete command under allow; native leaves it to the agent tool's own permissions. Secret names, recursive searches and writes stay guarded either way.",
+          "description": "Who admits a shell read outside the cockpit, of a named file or by a read-only Git command run alone in another repository: grant needs its complete command under allow; native leaves it to the agent tool's own permissions. Secret names, recursive searches and writes stay guarded either way.",
           "type": "string",
           "enum": [
             "grant",

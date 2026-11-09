@@ -344,7 +344,8 @@ describe('shipped skill contract', () => {
         expect(body).toContain('Show the human the proposed sibling declaration before invoking the command')
         expect(body).toContain('The command writes cockpit.toml immediately; `--json` changes only its output format')
         // A new repository is a new directory the agent may write, so its sync is a person's; an added tool is not, so the agent runs it.
-        expect(body).toContain('Adding or removing a repository widens what agents may do (a new repository is a new directory they may write), so the hold names the sibling and a person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` in a terminal')
+        expect(body).toContain('Adding or removing a repository widens what agents may do (a new repository is a new directory they may write), so until a person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a terminal and confirms it, calls are judged under the configuration last synced and every refusal names the sibling')
+        expect(body).not.toContain('the hold names')
         expect(body).toContain('Adding a tool does not widen what agents may do, so you may run `tool add`')
         expect(body).not.toContain('until a person runs `./node_modules/.bin/cockpit down')
         expect(body).not.toContain('until a person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs down')
@@ -512,7 +513,9 @@ describe('shipped procedure commands', () => {
             let output = ''
             const sink = { write: (text: string) => { output += text; return true } }
             const status = await runCli(argv, { stdout: sink, stderr: sink, confirmInit: async preview => preview.previewSha256,
-                confirmWorkOrder: async candidate => candidate.digest, confirmStaleRemoval: async () => undefined }, {
+                confirmWorkOrder: async candidate => candidate.digest, confirmStaleRemoval: async () => undefined,
+                // The person's selftest asks them to approve its probe specifications and executables at the terminal.
+                confirmSelftestProbeSpecifications: async candidate => candidate.sha256, confirmSelftestExecutable: async candidate => candidate.sha256 }, {
                 init: async input => { invoked = true; return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: [], result: { stage: 'surface-previewed', root: input.root, target: input.target, previewSha256: 'a'.repeat(64), files: [] } } },
                 // The documented work commands are the agent's; a gate the policy gives an agent needs no binding.
                 beginOperatorWorkApplication: async () => { invoked = true; return { status: 0, result: null, diagnostics: [] } },

@@ -18,10 +18,55 @@ Every diagnostic message names what failed and how to fix it. The sections below
 | `RUNTIME_UNAVAILABLE` | The container runtime cannot be reached or identified. | Start it and verify `docker info`; if the message names a Docker or Compose version with no X.Y.Z core, install a release that prints one. Then retry. |
 | `RUNTIME_UNMEASURED` | This machine has no passing measurement for the current runtime and engine version. | Run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config cockpit.toml --image <local-image>`, which records the result for this machine only, then retry. |
 | `CLAIM_CO_TENANT` | Another [holder](concepts.md#holder) is using the stack. | After a failed `up`, run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml` to resume or `./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config cockpit.toml` to release. Otherwise, have every session that holds the stack run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config cockpit.toml`, then retry. |
-| `PORT_FAMILY_COLLISION` | A selected host port is already in use. | Stop the named listener or release the inactive stack, then retry. |
+| `PORT_FAMILY_COLLISION` | A selected host port is already in use. | Stop the named listener or release the inactive stack, then retry. A host process meant to serve a leased port must be [started by the session](environment.md#host-processes-on-leased-ports) holding the stack. |
 | `PORT_LEASE_EXHAUSTED` | Every declared port family is leased or occupied. | Release an inactive stack or extend `ports.count` after checking host capacity. |
 | `SETUP_MANUAL_MISSING` | A manually managed sibling checkout is absent. | Create it at the declared path, then rerun `./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config cockpit.toml`. |
 | `SETUP_REMOTE_MISMATCH` | The checkout remote and declaration name different sources. | Correct the remote or declaration, then rerun `./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config cockpit.toml`. |
+
+## Guard refusals
+
+A guard refusal reaches the agent as its reason text; `GUARD_REFUSED` marks it in diagnostics. Under
+the allow default these are the blocked list and the asks for an unknown program or inline code
+([Safety and autonomy](safety-and-autonomy.md)); an agent hands the command to a person, or proposes
+a `[[guards.allow]]` rule, rather than rewording it.
+
+| Reason starts with | Why | Fix |
+| --- | --- | --- |
+| `Refusing to read or write an environment file` | A known tool, such as `sort`, `xxd`, `awk`, `curl -T` or `gh gist create`, was given a `.env` or `.env.*` file that is not a documentation name or a declared template. | Run the trusted process through a declared project command that wraps Varlock, or list names with `cockpit env keys`. |
+| `Refusing to read, print or send a credential store` | The command names a file or directory that holds tokens or keys, or a directory above one. | Name the files the command needs; a person handles credentials. |
+| `Refusing … it prints a credential or a URL that can carry one` | `gh auth token`, `git credential`, `git remote -v`, `aws configure get` of a secret and similar print a credential. | Use `git remote` for remote names; a person runs the rest. |
+| `Refusing to print the environment or a variable named as a secret` | `env`, `printenv`, `export -p`, `set`, `ps e`, `npm run env` (also `yarn` and `pnpm`), `make -p`, an `awk` program reading `ENVIRON`, `declare -p` of a secret's name, or echoing a variable named with TOKEN, KEY, PASS and the like. | Print one non-secret variable by name, or list names with `cockpit env keys`. |
+| `Refusing a force push` / `Refusing to delete remote branches` | Force pushes, including bundled or abbreviated flags such as `-uf` and `--forc`, and remote branch deletion are refused for every branch. | Push new commits; a person runs a force push or deletion. |
+| `Refusing push to a declared protected branch` / `Refusing to rewrite history on a declared protected branch` / `Refusing a fetch into a declared protected branch` | The push, rewrite or fetch refspec reaches `protected_branches`, directly, through `@{push}` or as `heads/<branch>`, including `rebase --onto <base> <upstream> <protected>`. | Work on a branch and open a pull request; fetch into a remote-tracking ref. |
+| `The guard does not know the push option` | A `git push` option outside the guard's list may change what or where it sends. | Push without it, or a person runs it. |
+| `The guard could not tell which remote branch this push updates` | The destination is implicit and Git could not resolve it. | Name it: `git push origin <branch>:<branch>`. |
+| `An earlier command in this call can change the current branch` | A push or rewrite rests on the current branch after a command that may move it. | Run the push or rewrite as its own call. |
+| `… sets <NAME>, which changes what Git, its hooks, the shell or the command search path runs` | A prefixed or exported `GIT_*`, `HOME`, `HUSKY`, `SKIP`, `LEFTHOOK` or relative `PATH` assignment. | Run the command without that assignment. |
+| `Refusing \`--no-verify\`` / `Refusing \`git -c <key>\`` | Skipping hooks, or a configuration key that chooses a program Git runs. | Run without it and fix what the hook reports. |
+| `… is not a development tool the guard knows, or runs inline code it cannot judge` | The executable is not a tool the guard knows, or the command runs inline code: `python3 -c`, `node -e`, an interpreter reading a script from standard input, `find -exec`, `make --eval`, `go -exec`, `rsync -e`, an `awk` program that calls `system` or writes with `print >`, a `sed` `e` or `w` command. `psql` asks as an unknown program. In Codex and OpenCode the ask is a refusal. | A person approves or runs the command, or adds a `[[guards.allow]]` rule for the program to `cockpit.toml` and runs `sync`. Do not reword it. |
+| `… is a cockpit command an agent does not run unprompted` / `… is a cockpit command that publishes policy or is not one an agent runs` | A cockpit command the command table does not admit to an agent: `sync --interactive`, `sync --adopt`, `reset` and the other commands that change what agents may do, however spelled. `sync` and `upgrade` themselves run only where `[autonomy] sync = "agent"`. | A person runs it in a terminal. |
+| `Refusing to run cockpit sync` / `Refusing to run cockpit upgrade` | An agent ran it while `cockpit.toml` holds an unapproved edit that widens what agents may do. | A person reviews the edit and runs `sync --interactive`, or reverts it. |
+| `Refusing … it runs sync or upgrade from a copy of cockpit` / `… runs a copy of cockpit outside the installed package` | `node <copy>/dist/cli.js sync` would bind the guard to a copy an agent can edit. | A person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` in a terminal; an agent runs the installed package. |
+| `… downloads files whose names the guard cannot see into <dir>, which holds guard files` | `gh run download`, or `gh release download` without `-p`, writes into a directory that holds guard files, such as the cockpit root. | Download into another directory, such as `build/`, or name the release assets with `-p`. |
+| `… names <path>, which holds guard files, and the guard does not know whether it writes them` | A Git command, an operand writer such as `rsync`, or an unknown program names a directory that holds guard files: `git restore --source=<rev> .`, `git pull . <branch>`, `git clone . <dir>`. In Codex and OpenCode the ask is a refusal. | Name the files it needs, or run it from a subdirectory; otherwise a person approves or runs it. |
+| `Refusing … it would write <path> into the working tree from another revision` | In a repository whose work tree holds guard controls, `merge`, `checkout`, `switch`, `reset --hard`, `cherry-pick`, `revert`, `rebase`, `stash pop` or a `pull --ff-only` would overwrite a guard control, a secrets directory or a declared instance. | A person runs it. |
+| `… writes another revision's files into the working tree` / `… brings content into a working tree that holds guard controls` | The revision does not resolve, Git did not answer, or a plain `git pull` brings content the guard cannot check first. | Fetch, then `git merge --ff-only <remote>/<branch>`; or a person runs it. |
+| `… applies <file>, whose target paths the guard could not read` | `git apply` or `git am` of a mail with an encoded body, headers the guard does not parse, or a file with no diff. | Apply a patch file inside the cockpit with plain headers. |
+| `Refusing … it changes the person's own tool configuration or installs outside the configured roots` | Package-manager configuration writes, global installs, `npm link`, `go install`, `go env -w`, `cargo install`, `uv tool install`, `pip install --user`, `pipx install`, `gh config set`, `gh alias set`, `gh extension install`. | A person runs it. |
+| `… writes the project's .npmrc` / `… installs <package>, a package from a URL or a Git host` | `npm config set --location=project`, or an install from a URL or Git source, whose install scripts run code the guard cannot read. | Install from the registry by name, or a person approves it. |
+| `Refusing … it bypasses branch protection, overwrites or deletes a repository's branches` | `gh pr merge --admin`, `gh repo sync --force`, `gh repo delete`, or `gh repo edit` of the default branch, visibility or merge settings. | A person runs it. |
+| `… merges into the pull request's base branch` / `… changes the repository on its host` | Any other `gh pr merge`, any other `gh repo edit`, and `gh repo rename` or `archive`. Merging is a person's or CI's decision. | A person runs it or approves it. |
+| `… runs Docker Compose, whose services can mount any host path` | Compose services can mount any host path, so `docker compose up`, `logs`, `ps` and `down` ask. | Use `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml`, or `logs <service>` or `ps` the same way; otherwise a person approves it. |
+| `Here-strings (<<<) are unsupported` | The parser does not read `<<<`, so the command is not evaluated. | Pipe the text instead: `printf '%s\n' "<text>" \| <command>`. |
+| `… names <path>, outside the configured roots` | Under the allow default any command naming a path outside the cockpit follows `[guards] external_reads`. | A person lists the location under `[guards] read_paths` or sets `external_reads = "native"`, then syncs. |
+| `… holds <word>, which names or can match an environment file …` / `… whose value the guard cannot see` | An assignment, loop item or glob names or can match a secret, or an unexpanded word decides a path. | Write the files out by name. |
+| `Guard path escapes configured roots` | The command writes outside the cockpit and its siblings. | Write inside the cockpit, or a person runs it. |
+| `… has an unapproved edit that widens what agents may do` (appended) | `cockpit.toml` widens the policy; calls are judged under the configuration last synced. | A person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a terminal, reads the widened fields and answers yes, or reverts the edit. |
+| `The guard ran out of time` | The guard did not decide within its own 25-second deadline, so it refused the call rather than leave it to the harness's hook timeout. | Retry; a call that searches or lists a very large tree is slow, so name a narrower path. On a heavily loaded machine, wait for other work to finish. |
+
+`sync` itself reports `GUARD_CONFIG_WIDENED` and writes nothing when `cockpit.toml` widens what
+agents may do and nobody confirmed it: a person runs `sync --interactive`, reads the widened fields
+and answers yes, or the edit is reverted. A narrowing or neutral edit syncs unattended.
 
 ## GENERATED_ARTIFACT_DRIFT
 
@@ -165,11 +210,13 @@ file is not a repair.
 ### Selftest and override inspection
 
 `SELFTEST_SOURCE_INVALID` means the generated check, resolved probe-specification path, source
-digest, generated-manifest digest or specification shape failed its check. Write a fresh file with
-`./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <path> --write-probe-specifications <new file>`.
-New files contain supported native protocols and explicit pending rows; they need no invented
-markers. For a stale file, add `--probe-specifications <stale file>` to preserve unchanged filled
-legacy rows. Do not edit stored digests. Legacy rows still containing `null` must be completed with
+digest, generated-manifest digest or specification shape failed its check. Run
+`./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <path> --interactive`, which writes
+fresh specifications for that run itself. To keep a file under review instead, write one with
+`--write-probe-specifications <file>` (add `--replace` to write over your own file). New files
+contain supported native protocols and explicit pending rows; they need no invented markers. For a
+stale file, add `--probe-specifications <stale file>` to preserve unchanged filled legacy rows. Do
+not edit stored digests. Legacy rows still containing `null` must be completed with
 a demonstrably compatible native diagnostic contract or replaced with a fresh file.
 [Skills and selftest evidence](harness-surfaces.md#skills-and-selftest-evidence) describes the
 supported native scope and remaining operator work.
@@ -191,8 +238,11 @@ supported native scope and remaining operator work.
 `SELFTEST_GUARD_IDENTITY_MISMATCH` means the guard identity `sync` wrote under
 `.cockpit/local/guard-identity` differs from the one this selftest would write, so the Claude Code
 guard probe cannot run; selftest refuses before asking for any approval. Most often `sync` ran under
-another Node than this shell's, and the message names both. Run selftest with the Node the guard was
-installed for, as the fix prints it, or run `sync` under the current Node and then selftest. When the
+another Node than this shell's. An interactive selftest then reruns itself under the Node `sync`
+recorded, once it has checked that Node's SHA-256 against the record, so this refusal names both
+Nodes only when that Node is gone or changed, or the run was not interactive. Run `sync` under the
+current Node and then selftest, or, when the recorded Node is still there, rerun selftest with
+`--interactive` at a terminal. When the
 Node at the recorded path was upgraded in place, no Node runs what `sync` recorded and the guard holds
 its calls until `sync` runs again, so run `sync`, then selftest. For any other difference, run `sync`
 with this cockpit, then selftest. `doctor` reports `GUARD_NODE_DIFFERS` for both Node cases.
@@ -309,6 +359,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `GENERATED_STALE_APPROVAL_REQUIRED` | [see above](#merge-ownership-and-generation) |
 | `GENERATED_STALE_ARTIFACT` | a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal and confirms the stale-file removals it shows with yes |
 | `GUARD_AUTHORITY_UNAVAILABLE` | [see above](#common-refusal-guidance) |
+| `GUARD_CONFIG_WIDENED` | [see above](#guard-refusals) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_NODE_DIFFERS` | [see above](#selftest-and-override-inspection) |
 | `GUARD_REFUSED` | [see above](#common-refusal-guidance) |
@@ -322,7 +373,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `MCP_INPUT_INVALID` | [see above](#mcp-and-restrictions) |
 | `MCP_NOT_APPROVED` | [see above](#mcp-and-restrictions) |
 | `MCP_TRANSPORT_UNAVAILABLE` | [see above](#mcp-and-restrictions) |
-| `OUTPUT_EXISTS` | choose a new path; replacement requires a future explicit option |
+| `OUTPUT_EXISTS` | choose a new path, or write over your own file with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --write-probe-specifications <file> --replace |
 | `PORT_FAMILY_COLLISION` | [see above](#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [see above](#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [see above](#sibling-projection-and-skills) |

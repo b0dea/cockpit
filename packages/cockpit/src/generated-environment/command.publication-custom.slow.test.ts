@@ -74,16 +74,19 @@ describe('public surface publication transaction', () => {
             await writeCustomModule(fixture.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\n' }])
             expect(await syncTeamGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
             const config = await readFile(fixture.configPath, 'utf8')
-            await writeFile(fixture.configPath, config.slice(0, config.indexOf('[[surfaces.harnesses]]')))
+            const removed = config.slice(0, config.indexOf('[[surfaces.harnesses]]'))
+            await writeFile(fixture.configPath, removed)
+            // Removing a harness widens what agents may do, so this stands for the sync a person confirmed.
+            const confirmed = { configPath: fixture.configPath, guardWidening: { configSha256: createHash('sha256').update(removed).digest('hex') } }
             const manifest = '{"private":true}\n'
             await writeFile(join(fixture.root, 'package.json'), manifest)
             const before = await bytes(fixture.root, ['package.json', '.gitignore', 'custom/rules.md', '.cockpit/generated-environment-ownership.json'])
-            expect(await syncTeamGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({
+            expect(await syncTeamGeneratedEnvironment(confirmed)).toMatchObject({
                 kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_STALE_APPROVAL_REQUIRED' })],
             })
             expect(await bytes(fixture.root, Object.keys(before))).toEqual(before)
             let approvals = 0
-            const outcome = await syncTeamGeneratedEnvironment({ configPath: fixture.configPath }, {
+            const outcome = await syncTeamGeneratedEnvironment(confirmed, {
                 authorizeStaleRemoval: async request => {
                     approvals += 1
                     expect(await readFile(join(fixture.root, 'package.json'), 'utf8')).toBe(manifest)

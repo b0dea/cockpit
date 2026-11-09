@@ -103,7 +103,10 @@ Look at the directory before asking. Several cases can apply; bootstrap first.
 Done when `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml --json` exits 0, where a
 runtime is declared `./node_modules/@b00dea/cockpit/bin/cockpit.mjs preflight --config cockpit.toml --json` passes,
 and every gap in `result.readiness` of `./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml --json`
-has been cleared or reported to the human.
+has been cleared or reported to the human. Cockpit is usable once `check` passes; `selftest` is not
+an adoption step. It is optional native evidence a person runs with one command at their own
+terminal, `./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config cockpit.toml --interactive`, so never
+wait for it, and do not ask the person to run it unless they ask for native evidence.
 
 - **Only where a runtime is declared, before the first `up`**, run
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config cockpit.toml --image <local-image> --json`.

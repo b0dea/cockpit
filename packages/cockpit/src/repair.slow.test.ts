@@ -12,6 +12,7 @@ import { applyGeneratedEnvironmentRepair, syncGeneratedEnvironment } from './env
 import * as transaction from './generated-environment/transaction.js'
 import { proposeGeneratedEnvironmentRepair } from './repair.js'
 import { runCli, type CliIo } from './cli.js'
+import { loadOperatorPolicy } from './environment/operator-application.js'
 import { initializeTeamMetadata } from '../test-support/team-metadata.js'
 import { stubComposeTopology } from '../test-support/compose-topology-docker.js'
 
@@ -58,9 +59,9 @@ async function consumer() {
     if (!templateIdentity) throw new Error('Synthetic repair fixture has no guard identity')
     const configBytes = await readFile(configPath)
     const [rootStatus, configStatus] = await Promise.all([lstat(root), lstat(configPath)])
-    expect(await writeGuardLocalIdentity(root, { ...templateIdentity, root, rootDevice: String(rootStatus.dev), rootInode: String(rootStatus.ino),
+    expect(await writeGuardLocalIdentity(root, { ...templateIdentity, root, rootInode: String(rootStatus.ino),
         configPath, configSha256: createHash('sha256').update(configBytes).digest('hex'),
-        configDevice: String(configStatus.dev), configInode: String(configStatus.ino) }, configBytes.toString('utf8'))).toEqual({ kind: 'complete' })
+        configInode: String(configStatus.ino) }, configBytes.toString('utf8'))).toEqual({ kind: 'complete' })
     expect(parseGuardLocalIdentity(await readFile(identityPath, 'utf8'))).toMatchObject({ root, rootInode: String(rootStatus.ino), configPath })
     // What Compose reports for compose.yml, for a check run against stubComposeTopology.
     const services = { first: { image, volumes: [{ type: 'bind', source: join(root, 'app'), target: '/app' }] } }
@@ -103,6 +104,53 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
         const reverted = (await check()).diagnostics.map(row => row.code)
         expect(reverted).not.toContain('POLICY_WEAKENING_UNCONFIRMED')
         expect(reverted).not.toContain('GUARD_CONFIG_UNSYNCED')
+    })
+
+    // An agent reaches sync by spellings the guard cannot prove are cockpit (package scripts, package
+    // manager exec, node with flags), so sync itself refuses an edit that widens the guard until a
+    // person confirms it.
+    it('applies a cockpit.toml edit that widens the guard only once a person confirms it at sync, and a narrowing one unattended', async () => {
+        const { root, configPath } = await consumer()
+        expect(await initializeTeamMetadata(configPath)).toMatchObject({ kind: 'complete' })
+        const original = await readFile(configPath, 'utf8')
+        const generatedFrom = async () => parseGuardLocalIdentity(await readFile(join(root, GUARD_LOCAL_PATHS.identity), 'utf8'))!.configSha256
+        const digestOf = async () => createHash('sha256').update(await readFile(configPath)).digest('hex')
+        const sync = async (args: readonly string[], confirm?: (request: { digest: string }) => Promise<string | undefined>) => {
+            let stdout = ''
+            const io = { stdout: { write: (text: string) => { stdout += text; return true } }, stderr: { write: () => true },
+                ...confirm ? { confirmPolicyWeakening: confirm } : {} } as CliIo
+            const status = await runCli(['sync', '--config', configPath, ...args], io, {}, { env: {} })
+            return { status, stdout }
+        }
+        const synced = await generatedFrom()
+        await writeFile(configPath, `${original}\n[[guards.allow]]\nargv = ["cat", "notes.md"]\ncwd = "."\nreason = "Read the selected input."\n`)
+        const refused = await sync(['--json'])
+        expect(refused.status).toBe(2)
+        const envelope = JSON.parse(refused.stdout)
+        expect(envelope.diagnostics).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED', message: expect.stringContaining('(guards.allow)') })])
+        expect(envelope.guidance).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED', text: expect.stringContaining('--interactive') })])
+        expect(await generatedFrom()).toBe(synced)
+        // A wrong digest is no confirmation; the displayed one applies exactly this edit.
+        expect((await sync(['--interactive'], async () => 'd'.repeat(64))).status).toBe(2)
+        expect(await generatedFrom()).toBe(synced)
+        const shown: string[] = []
+        expect((await sync(['--interactive'], async request => { shown.push(request.digest); return request.digest })).status).toBe(0)
+        expect(shown).toHaveLength(1)
+        expect(await generatedFrom()).toBe(await digestOf())
+        await writeFile(configPath, original)
+        expect((await sync(['--json'])).status).toBe(0)
+        expect(await generatedFrom()).toBe(await digestOf())
+        // A widening that lands after sync classified the file is judged on the bytes it would publish.
+        const narrowed = await generatedFrom()
+        let stdout = ''
+        const io = { stdout: { write: (text: string) => { stdout += text; return true } }, stderr: { write: () => true } } as CliIo
+        expect(await runCli(['sync', '--config', configPath, '--json'], io, { loadPolicy: async path => {
+            const classified = await loadOperatorPolicy(path)
+            await writeFile(configPath, `${original}\n[[guards.allow]]\nargv = ["cat", "late.md"]\ncwd = "."\nreason = "Read the selected input."\n`)
+            return classified
+        } }, { env: {} })).toBe(2)
+        expect(JSON.parse(stdout).diagnostics).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED', message: expect.stringContaining('(guards.allow)') })])
+        expect(await generatedFrom()).toBe(narrowed)
     })
 
     it('uses one admission and the same plan for catalogue repair with single consumption', async () => {

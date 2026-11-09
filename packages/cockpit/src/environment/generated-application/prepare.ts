@@ -21,6 +21,7 @@ import {
     type GeneratedEnvironmentCommandAdapters,
     type GeneratedEnvironmentCommandInput,
     type GeneratedEnvironmentSyncInput,
+    type GuardWideningApproval,
     MAX_OWNERSHIP_BYTES,
     OWNERSHIP_PATH,
     type OwnedBytes,
@@ -54,7 +55,7 @@ export function syncCommandInput(input: unknown): GeneratedEnvironmentSyncInput 
         if (input === null || typeof input !== 'object' || Array.isArray(input) || isProxy(input)) return undefined
         const descriptors = Object.getOwnPropertyDescriptors(input)
         const keys = Reflect.ownKeys(descriptors)
-        if (keys.some((key) => typeof key !== 'string' || key !== 'configPath' && key !== 'dryRun' && key !== 'bootstrapState')
+        if (keys.some((key) => typeof key !== 'string' || key !== 'configPath' && key !== 'dryRun' && key !== 'bootstrapState' && key !== 'guardWidening')
             || !Object.hasOwn(descriptors, 'configPath') || !('value' in descriptors.configPath!)) return undefined
         const configPath = descriptors.configPath.value
         const dryRun = Object.hasOwn(descriptors, 'dryRun') && 'value' in descriptors.dryRun! ? descriptors.dryRun.value : false
@@ -65,7 +66,13 @@ export function syncCommandInput(input: unknown): GeneratedEnvironmentSyncInput 
             const state = ownRecord(bootstrapState)
             if (!state || !exactKeys(state, ['publication', 'address'])) return undefined
         }
-        return { configPath, dryRun, ...(bootstrapState === undefined ? {} : { bootstrapState }) }
+        const guardWidening = Object.hasOwn(descriptors, 'guardWidening') && 'value' in descriptors.guardWidening!
+            ? ownRecord(descriptors.guardWidening.value) : undefined
+        if (Object.hasOwn(descriptors, 'guardWidening') && !(guardWidening
+            && (exactKeys(guardWidening, ['configSha256']) && typeof guardWidening.configSha256 === 'string'
+                || exactKeys(guardWidening, ['fields']) && Array.isArray(guardWidening.fields) && guardWidening.fields.every(field => typeof field === 'string')))) return undefined
+        return { configPath, dryRun, ...(bootstrapState === undefined ? {} : { bootstrapState }),
+            ...(guardWidening === undefined ? {} : { guardWidening: guardWidening as GuardWideningApproval }) }
     } catch {
         // a guard over caller-supplied values; a throwing accessor or proxy trap is malformed input the caller refuses.
         return undefined

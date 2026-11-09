@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PassThrough, Readable } from 'node:stream'
 import * as fixCatalogue from './fix-catalogue.js'
 import { runCli, type CliIo } from './cli.js'
+import { runGuardCommand } from './cli-guard.js'
 import { createInvocationRecord } from './invocation.js'
 import { runSyncOperatorCommand } from './generated-environment/command.js'
 import { loadCockpitConfig } from './config/load.js'
@@ -1049,6 +1050,11 @@ describe('generated environment process contract', () => {
                 captureIo().io, { selftest: async (input) => { selftestCalls.push(input); return { status: 0, diagnostics: [], result: null } } }),
             conflict.join(' ')).toBe(2)
         }
+        // --replace overwrites only the file --write-probe-specifications names.
+        const replaceAlone = captureIo()
+        expect(await runCli(['selftest', '--config', 'cockpit.toml', '--probe-specifications', 'probe.json', '--replace'], replaceAlone.io,
+            { selftest: async (input) => { selftestCalls.push(input); return { status: 0, diagnostics: [], result: null } } })).toBe(2)
+        expect(replaceAlone.output().stderr).toContain('--replace only applies with --write-probe-specifications')
         expect(await runCli(['selftest', '--config', 'cockpit.toml', '--write-probe-specifications', 'probe.json', '--probe-specifications', 'earlier.json'],
             captureIo().io, { selftest: async (input) => { selftestCalls.push(input); return { status: 0, diagnostics: [], result: null } } })).toBe(0)
         expect(selftestCalls).toEqual([
@@ -1856,6 +1862,19 @@ describe('terminal-safe diagnostics', () => {
         }
     })
 
+    // The hook registrations give a guard call 30 seconds, and what a harness does when that fires is
+    // unmeasured, so the guard refuses on its own before then.
+    it('refuses a guard call still undecided at its deadline, and stops reading its input', async () => {
+        const stdin = new PassThrough()
+        let stdout = '', stderr = ''
+        const io = { stdin, stdout: { write: (text: string) => { stdout += text; return true } },
+            stderr: { write: (text: string) => { stderr += text; return true } } } as unknown as CliIo
+        expect(await runGuardCommand(['--harness', 'claudecode'], io, {}, performance.now() + 50)).toBe(2)
+        expect(stdout).toBe('')
+        expect(stderr).toMatch(/^cockpit guard: The guard ran out of time/)
+        expect(stdin.destroyed).toBe(true)
+    })
+
     it('visibly escapes C1 and Unicode bidi controls in every human diagnostic field', () => {
         const rendered = renderHumanDiagnostics([
             {
@@ -1895,7 +1914,7 @@ describe('generated sync operator admission', () => {
 
         const outcome = await runSyncOperatorCommand({ configPath: 'cockpit.toml' }, {
             interactive: true, json: false, ci: undefined,
-        }, { stderr, stdin }, async (input) => input.dryRun
+        }, { stderr, stdin, env: {} }, async (input) => input.dryRun
             ? { status: 0, diagnostics: [], result: { dryRun: true, staleRemoval: preview } }
             : { status: 0, diagnostics: [], result: { dryRun: false } }, personStalePolicy)
 
@@ -1919,7 +1938,7 @@ describe('generated sync operator admission', () => {
         const outcome = await runSyncOperatorCommand({ configPath: 'cockpit.toml' }, {
             interactive: true, json: false, ci: undefined,
         }, {
-            stderr: { write: () => true },
+            stderr: { write: () => true }, env: {},
             confirmStaleRemoval: async () => preview.digest,
         }, async (input) => {
             calls += 1

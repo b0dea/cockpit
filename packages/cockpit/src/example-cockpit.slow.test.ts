@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
 import { resolveDockerExecutable } from './environment/executable.js'
+import { runCli, type CliIo } from './cli.js'
 import { inventory } from '../test-support/example-inventory.js'
 
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
@@ -189,7 +190,7 @@ describe('the compose-first and docs-only example cockpits', () => {
             .toEqual(['127.0.0.1:${API_HOST_PORT:-4200}:3000', '127.0.0.1:${WEB_HOST_PORT:-4300}:3000'])
     })
 
-    it('runs the minimal example README commands and refuses a host path no Compose service mounts', () => {
+    it('runs the minimal example README commands and refuses a host path no Compose service mounts', async () => {
         const root = copyPlainExample('minimal', 'minimal')
         const { executable } = inventory(readFileSync(join(root, 'README.md'), 'utf8'))
         expect(executable.map(argv => argv.slice(1, 2))).toEqual([['sync'], ['sync'], ['check']])
@@ -202,7 +203,12 @@ describe('the compose-first and docs-only example cockpits', () => {
         // A host path no Compose service mounts reaches no container, so check refuses it.
         const configPath = join(root, 'cockpit.toml')
         writeFileSync(configPath, readFileSync(configPath, 'utf8').replace('[environment]\n', '[environment]\ngenerated_host_paths = [".cache"]\n'))
-        expect(run(root, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json']).status).toBe(0)
+        // A declared host path widens what agents may do, so sync applies it only once a person confirms it.
+        const unconfirmed = run(root, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json'])
+        expect(unconfirmed.status).toBe(2)
+        expect(unconfirmed.response.diagnostics).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED' })])
+        expect(await runCli(['sync', '--config', realpathSync(configPath), '--interactive'], { stdout: { write: () => true }, stderr: { write: () => true },
+            confirmPolicyWeakening: async request => request.digest } as CliIo, {}, { env: {} })).toBe(0)
         const unmounted = run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
         expect(unmounted.status, unmounted.stdout).toBe(2)
         expect(unmounted.response.diagnostics.filter((row: { severity: string }) => row.severity === 'error')).toEqual([

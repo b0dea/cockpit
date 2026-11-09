@@ -49,10 +49,10 @@ const captures: Record<typeof rows[number]['name'], CapturePair> = {
     'option decoy': { candidate: [git('push', '--push-option=feature', 'origin', 'main')], control: [git('push', '--push-option=main', 'origin', 'feature')] },
     'function definition': { candidate: defined, control: [definition('ship', 'git', 'push', 'origin', 'main', ';', '}'), printf('ok')] },
     'alias definition': { candidate: defined, control: [definition('alias', 'ship=git push origin main'), printf('ok')] },
-    'assignment host': { candidate: [expected('printf', ['ok'], [{ role: 'environment-assignment-value', value: 'https://db.example.test' }])], control: [printf('NOTE=git push origin main')] },
+    'assignment host': { candidate: [expected('printf', ['ok'], [{ role: 'environment-assignment-value', value: 'https://db.example.test', name: 'DB_URL' }])], control: [printf('NOTE=git push origin main')] },
     'command variable': { candidate: dynamic('$cmd'), control: [printf('$cmd push origin main')] },
     'variable indirection': { candidate: dynamic('${!name}'), control: [printf('${!name} push origin main')] },
-    'command substitution': { candidate: 'Unsupported shell operator.', control: [printf('$(printf git) push origin main')] },
+    'command substitution': { candidate: dynamic('$(printf git)'), control: [printf('$(printf git) push origin main')] },
 }
 const protectedPush = 'Refusing push to a declared protected branch.'
 const uncaptured = 'Guard input is unavailable or was not captured by the invocation parser.'

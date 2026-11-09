@@ -953,7 +953,7 @@ it('lists every outstanding headless init question with the values it proposes',
 }, 480_000)
 
 it('finishes init across three runs without a terminal and lets a teammate clone set up, sync and check', async () => {
-    const { launcher, env } = await installedInitEnvironment()
+    const { launcher, env, installedCli } = await installedInitEnvironment()
     const answersFile = join(packScratch, 'headless-answers.toml')
     writeFileSync(answersFile, [
         '[cockpit]', 'name = "synthetic"', '',
@@ -996,10 +996,19 @@ it('finishes init across three runs without a terminal and lets a teammate clone
     const teamLock = JSON.parse(readFileSync(join(portable, 'package-lock.json'), 'utf8'))
     teamLock.packages[''].devDependencies['@b00dea/cockpit'] = cockpitPackageVersion
     writeFileSync(join(portable, 'package-lock.json'), `${JSON.stringify(teamLock, null, 2)}\n`)
-    const preparedTeam = spawnSync(process.execPath, [launcher, 'sync', '--config', join(portable, 'cockpit.toml'), '--json'], {
-        cwd: portable, env, encoding: 'utf8', timeout: 30_000,
-    })
-    expect(preparedTeam.status, preparedTeam.stdout + preparedTeam.stderr).toBe(0)
+    // Moving a sibling's directory widens what agents may do, so the maintainer confirms it at sync, at a
+    // terminal outside CI: the confirmation below stands in for that person, so the runner's CI is not theirs.
+    const maintainerEnv: NodeJS.ProcessEnv = { ...env }
+    delete maintainerEnv.CI
+    let prepared = ''
+    const preparedTeam = await installedCli(['sync', '--config', join(portable, 'cockpit.toml'), '--interactive'], {
+        stdout: { write: (text: string) => { prepared += text; return true } }, stderr: { write: (text: string) => { prepared += text; return true } },
+        confirmPolicyWeakening: async (request: { widened: readonly string[]; digest: string }) => {
+            expect(request.widened).toEqual(['sibling.library.dir'])
+            return request.digest
+        },
+    }, {}, { env: maintainerEnv })
+    expect(preparedTeam, prepared).toBe(0)
     execFileSync('git', ['init', '--quiet', portable])
     execFileSync('git', ['-C', portable, 'add', '.'])
     execFileSync('git', ['-C', portable, '-c', 'user.name=Synthetic Maintainer', '-c', 'user.email=maintainer@example.test',

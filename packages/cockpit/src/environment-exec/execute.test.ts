@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ENVIRONMENT_CODES, snapshotJson, type ExecutionPlan, type ExecutionStep } from '../environment/contract.js'
 import { resolveExecutablePath } from '../environment/executable.js'
-import { cleanupFencedExecution, consumeFencedExecutionTermination, executeForegroundProcess, executePlan, executeProbe, authenticatedExecutionOutcome, repairFencedExecution } from './execute.js'
+import { cleanupFencedExecution, consumeFencedExecutionTermination, executeForegroundProcess, executePlan, executeProbe, authenticatedExecutionOutcome, repairFencedExecution, withExecutionSignal } from './execute.js'
 
 // A spawned step reaches its first line in milliseconds when idle and in seconds under load;
 // expect.poll's 1 s default failed these waits whenever a full suite shared the machine. The wait
@@ -100,11 +100,33 @@ async function waitForProcessGone(pid: number, timeoutMs = 5_000): Promise<boole
     return false
 }
 
+// A fence's socket and settled marker live in a directory shared with every other process of this user, so
+// each is removed by the name its own attempt derived, never by listing the directory.
 afterEach(() => {
-    for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true })
+    const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+    for (const path of scratch.splice(0)) {
+        rmSync(path, { recursive: true, force: true })
+        const socket = join(socketRoot, `${sha256(path).slice(0, 24)}.sock`)
+        for (const residue of [socket, `${socket}.settled`]) rmSync(residue, { force: true })
+    }
 })
 
 describe('mechanical environment executor', () => {
+    // The shared socket directory outlives every step, so a finished step must not leave its own entries there.
+    it('leaves no socket or settled marker behind once a fenced step has finished', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-finished-'))
+        scratch.push(directory)
+        const attemptId = sha256(directory)
+        const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+        const fence = { attemptId, markerPath: join(directory, 'executor.json'), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
+
+        const outcome = await executeProbe(nodeStep('fenced-finished', '0', { executionFence: fence }))
+
+        expect(outcome).toMatchObject({ kind: 'complete' })
+        expect(existsSync(fence.socketPath)).toBe(false)
+        expect(existsSync(`${fence.socketPath}.settled`)).toBe(false)
+    })
+
     it('cancels a delayed fenced starter before any destructive effect can begin', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-cancel-race-'))
         scratch.push(directory)
@@ -670,6 +692,30 @@ describe('mechanical environment executor', () => {
             controller.abort()
             await pending
         }
+    })
+
+    it('stops every step started inside an execution scope when its signal aborts, and starts no more', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-scoped-abort-'))
+        scratch.push(directory)
+        const ready = join(directory, 'ready')
+        const controller = new AbortController()
+        // Started one call deep, as an owner the caller never sees would start it.
+        const owner = () => executeProbe(nodeStep('scoped-abort', [
+            "const { renameSync, writeFileSync } = require('node:fs')",
+            "process.on('SIGTERM', () => {})",
+            `writeFileSync(${JSON.stringify(`${ready}.tmp`)}, String(process.pid)); renameSync(${JSON.stringify(`${ready}.tmp`)}, ${JSON.stringify(ready)})`,
+            KEEP_ALIVE,
+        ].join(';')))
+        const pending = withExecutionSignal(controller.signal, owner)
+        await waitForPath(ready)
+        const pid = Number(readFileSync(ready, 'utf8'))
+        controller.abort()
+        expect(await pending).toMatchObject({ kind: 'refusal', code: 'EXECUTION_ABORTED' })
+        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+        const later = join(directory, 'later')
+        expect(await withExecutionSignal(controller.signal, () => executeProbe(nodeStep('after-abort',
+            `require('node:fs').writeFileSync(${JSON.stringify(later)}, 'spawned')`)))).toMatchObject({ kind: 'refusal', code: 'EXECUTION_ABORTED' })
+        expect(existsSync(later)).toBe(false)
     })
 
     it('refuses an already-expired step before spawning it', async () => {

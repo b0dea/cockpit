@@ -4,12 +4,15 @@ import { GUARD_LOCAL_PATHS, writeCockpitLocalFiles, writeGuardLocalIdentity } fr
 import { GUARD_HELD_CALLS } from '../../surfaces/harness-registry.js'
 import { portablePublicationPaths, authorizePublicationPlan, runPublicationPlan } from '../../generated-environment/transaction.js'
 import { refusalOutcome as refuse } from '../../refusal.js'
-import { readBoundedInput } from '../../config/load.js'
+import { parseCockpitConfigBytes, readBoundedInput } from '../../config/load.js'
+import { guardWideningUnconfirmedDiagnostic, observeGuardConfigChange } from '../../guards/policy-change.js'
 import {
     type GeneratedEnvironmentCommandAdapters,
     type GeneratedEnvironmentCommandOutcome,
     type GeneratedEnvironmentRepairAuthority,
     type GeneratedEnvironmentSyncInput,
+    type GuardWideningApproval,
+    type PreparedEnvironment,
     type RefusalOutcome,
     complete,
     mergedAdapters,
@@ -68,6 +71,22 @@ export async function syncGeneratedEnvironment(
     return prepared.kind === 'refusal' ? prepared : applyGeneratedEnvironmentRepair(prepared.authority, { dryRun: prepared.dryRun })
 }
 
+// The guard refuses an agent's sync of an edit that widens it only where it proves the call starts
+// cockpit, and init syncs too, so the team sync itself refuses to publish such an edit without its
+// approval. It judges the bytes publication is bound to, which publication re-reads before and after
+// it writes, so an edit landing after a caller classified the file cannot ride along.
+async function unapprovedGuardWidening(prepared: PreparedEnvironment, approval: GuardWideningApproval | undefined): Promise<RefusalOutcome | undefined> {
+    const read = await readBoundedInput(prepared.configPath)
+    const config = read.kind === 'complete' && sha256(read.bytes) === prepared.sourceSha256 ? parseCockpitConfigBytes(read.bytes) : undefined
+    if (!config) return refuse('GENERATED_SOURCE_CHANGED', 'the configuration changed before generated files could be published', prepared.configSource.path)
+    const change = await observeGuardConfigChange(prepared.root, { sha256: prepared.sourceSha256, config })
+    if (change?.kind !== 'widening') return undefined
+    if (approval && ('configSha256' in approval ? approval.configSha256 === prepared.sourceSha256
+        : change.fields.every(field => approval.fields.includes(field)))) return undefined
+    const refusal = guardWideningUnconfirmedDiagnostic(change.fields, prepared.configPath)
+    return refuse(refusal.code, refusal.message, refusal.target, refusal.fix)
+}
+
 export async function syncTeamGeneratedEnvironment(
     input: GeneratedEnvironmentSyncInput,
     adapterOverrides: Partial<GeneratedEnvironmentCommandAdapters> = {},
@@ -80,6 +99,8 @@ export async function syncTeamGeneratedEnvironment(
     if (prepared.kind === 'refusal') return prepared
     if (!prepared.dryRun) {
         const record = issuedRepairs.get(prepared.authority)!
+        const widened = await unapprovedGuardWidening(record.prepared, request.guardWidening)
+        if (widened) return widened
         const approved = await authorizePublicationPlan(record.plan, record.adapters)
         if (approved !== true) return approved
         const applied = await applyTeamMetadata(metadata.authority)

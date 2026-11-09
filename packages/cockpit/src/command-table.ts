@@ -139,6 +139,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     'reset-answer': 'Preview clearing one recorded init answer field',
     remote: 'Repository remote URL recorded for the sibling',
     'replace-from': 'With env schema: replace that schema with this draft file, or create it, instead of printing it',
+    replace: 'With --write-probe-specifications: write over the file at that path when it exists',
     role: 'Declared browser role',
     'from-subagent': 'Under [work] grading = "subagent": states that --verdict and --note came from the evaluator subagent you spawned; cockpit cannot verify it',
     'fail-on-findings': 'Exit 2 when a route has console errors, uncaught errors or failed requests, for a criterion that wants a clean route',
@@ -184,9 +185,6 @@ type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; reason: s
     cwdRole: 'canonical-root'
     configuration: 'resolved' | 'none'
     forbidden: Readonly<{ presence: readonly string[] }>
-    // While cockpit.toml carries a non-widening edit the guards were not regenerated for, the guard
-    // holds every agent call except these commands, which apply or report that edit.
-    admittedWhileUnsynced?: true
     // Admitted only where cockpit.toml grants it: browser preapproval, on by default for and allowed
     // only on isolated data that cannot reach production, or an [autonomy] field set to agent.
     requires?: OrdinaryGrant
@@ -378,10 +376,10 @@ const sources = [
         handler: 'sync',
         visibility: 'public',
         // Adoption rewrites cockpit.toml and moves a team's harness settings, so it stays a person's. A
-        // real sync rewrites the guard's own files from a configuration the guard already pins and
-        // holds every call after an edit to, so it is an agent's only where [autonomy] sync = "agent".
-        ordinary: ordinary('sync', { forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'adopt']) }), requires: 'autonomy-sync',
-            admittedWhileUnsynced: true }),
+        // real sync rewrites the guard's own files from a configuration the guard already pins, and
+        // applies an edit that widens it only once a person confirms it, so it is an agent's only where
+        // [autonomy] sync = "agent".
+        ordinary: ordinary('sync', { forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'adopt']) }), requires: 'autonomy-sync' }),
         flags: { config: configFlag, 'dry-run': bool(flag), adopt: { type: 'string', multiple: true }, interactive: bool(), json: jsonFlag },
     },
     {
@@ -390,7 +388,7 @@ const sources = [
         summary: 'Report generated files that no longer match cockpit.toml',
         handler: 'check',
         visibility: 'public',
-        ordinary: ordinary('check', { admittedWhileUnsynced: true }),
+        ordinary: ordinary('check'),
         flags: configured,
     },
     {
@@ -400,8 +398,9 @@ const sources = [
         handler: 'selftest',
         visibility: 'public',
         ordinary: ordinary('selftest', { forbidden: Object.freeze({ presence: Object.freeze(['interactive']) }) }),
+        // --write-probe-specifications and --replace write a file a person reviews, so no agent passes them.
         flags: { config: configFlag, 'probe-specifications': str(value('confined-path', true)), 'write-probe-specifications': str(),
-            interactive: bool(), json: jsonFlag },
+            replace: bool(), interactive: bool(), json: jsonFlag },
     },
     {
         name: 'runtime',
@@ -682,12 +681,6 @@ function canonicalPath(path: unknown): path is string {
 function record(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
-
-/** The commands the guard admits while a non-widening edit of cockpit.toml waits for sync. */
-export const UNSYNCED_ADMITTED_COMMANDS: readonly string[] = Object.freeze(commands.flatMap(row =>
-    row.ordinary.availability === 'available' && row.ordinary.admittedWhileUnsynced ? [row.name] : []))
-/** The same commands as prose, for the hold that names them: "cockpit sync and check". */
-export const UNSYNCED_ADMITTED_PROSE = `cockpit ${new Intl.ListFormat('en', { type: 'conjunction' }).format(UNSYNCED_ADMITTED_COMMANDS)}`
 
 /**
  * The inner command of an exact `session --config <configured file> -- <command…>` run from the

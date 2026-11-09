@@ -61,8 +61,15 @@ export interface GeneratedEnvironmentCommandInput {
     readonly configPath: string
 }
 
+/**
+ * What a team sync may publish that widens the guards this machine was generated from: exactly the
+ * configuration bytes a person confirmed, or only the fields the sync's own caller wrote.
+ */
+export type GuardWideningApproval = Readonly<{ configSha256: string }> | Readonly<{ fields: readonly string[] }>
+
 export interface GeneratedEnvironmentSyncInput extends GeneratedEnvironmentCommandInput {
     readonly dryRun?: boolean
+    readonly guardWidening?: GuardWideningApproval
     readonly bootstrapState?: Readonly<{
         readonly publication: StateResult<BootstrapStateRecord>
         readonly address: BootstrapStateAddress

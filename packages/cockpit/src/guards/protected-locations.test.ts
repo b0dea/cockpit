@@ -7,8 +7,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolveGitExecutable } from '../environment/executable.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { GUARD_SECRET_FILE_LIMIT } from './evaluator.js'
-import { guardInstalledDirectories, guardSearchDirectories, guardSearchPathRelativeEntry, guardSecretFiles, guardSensitivePathsBelow,
-    guardTrackedSensitivePaths, guardUnignoredSensitivePaths } from './protected-locations.js'
+import { guardBranchFacts, guardInstalledDirectories, guardPackageManifest, guardPatchTargets, guardRemoteCredentials, guardSearchDirectories, guardSearchPathRelativeEntry,
+    guardSecretFiles, guardSensitivePathsBelow, guardTrackedSensitivePaths, guardUnignoredSensitivePaths, guardWorktreeChanges } from './protected-locations.js'
 
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -146,6 +146,132 @@ describe('guard protected locations', () => {
         expect(await guardTrackedSensitivePaths(root, [instance], git, executeProbe)).toEqual([])
         execFileSync('git', ['-C', root, 'add', '--force', '.env', 'config/runtime.env', 'src/a.ts'])
         expect(await guardTrackedSensitivePaths(root, [instance], git, executeProbe)).toEqual([join(root, '.env'), instance])
+    })
+
+    it('reports what a push or pull acts on, and whether a remote URL Git prints carries a credential', async () => {
+        const resolution = await resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+        if (resolution.state !== 'available') throw new Error(resolution.reason)
+        const git = resolution.value
+        const root = scratch()
+        const config = (...args: string[]) => execFileSync('git', ['-C', root, 'config', ...args])
+        execFileSync('git', ['init', '-q', '-b', 'main', root])
+        config('remote.origin.url', 'https://example.test/r.git')
+        expect(await guardBranchFacts(root, git, executeProbe)).toEqual({ head: 'refs/heads/main', push: null, pushDefault: null, pushRefspecs: false, pullRebase: false })
+        expect(await guardRemoteCredentials(root, git, executeProbe)).toBe(false)
+        config('push.default', 'matching')
+        config('pull.rebase', 'true')
+        config('remote.origin.push', 'refs/heads/*:refs/heads/*')
+        expect(await guardBranchFacts(root, git, executeProbe)).toMatchObject({ pushDefault: 'matching', pushRefspecs: true, pullRebase: true })
+        config('branch.main.rebase', 'false')
+        expect(await guardBranchFacts(root, git, executeProbe)).toMatchObject({ pullRebase: false })
+        config('remote.origin.pushurl', 'https://synthetic-user:synthetic-password@example.test/r.git')
+        expect(await guardRemoteCredentials(root, git, executeProbe)).toBe(true)
+        config('--unset', 'remote.origin.pushurl')
+        config('url.https://synthetic-user:synthetic-password@example.test/.insteadOf', 'https://example.test/')
+        expect(await guardRemoteCredentials(root, git, executeProbe)).toBe(true)
+        config('--remove-section', 'url.https://synthetic-user:synthetic-password@example.test/')
+        config('http.https://example.test/.extraHeader', 'AUTHORIZATION: synthetic')
+        expect(await guardRemoteCredentials(root, git, executeProbe)).toBe(true)
+        // Settings only in the person's global configuration count, below HOME and below XDG_CONFIG_HOME.
+        const other = scratch()
+        execFileSync('git', ['init', '-q', '-b', 'main', other])
+        const home = scratch()
+        mkdirSync(join(home, '.config/git'), { recursive: true })
+        writeFileSync(join(home, '.config/git/config'), '[push]\n\tdefault = matching\n[url "https://synthetic-user:synthetic-password@example.test/"]\n\tinsteadOf = https://example.test/\n')
+        mkdirSync(join(home, 'xdg/git'), { recursive: true })
+        writeFileSync(join(home, 'xdg/git/config'), '[pull]\n\trebase = true\n')
+        expect(await guardBranchFacts(other, git, executeProbe)).toMatchObject({ pushDefault: null, pullRebase: false })
+        expect(await guardBranchFacts(other, git, executeProbe, { HOME: home })).toMatchObject({ pushDefault: 'matching', pullRebase: false })
+        expect(await guardBranchFacts(other, git, executeProbe, { HOME: home, XDG_CONFIG_HOME: join(home, 'xdg') })).toMatchObject({ pullRebase: true })
+        expect(await guardRemoteCredentials(other, git, executeProbe)).toBe(false)
+        expect(await guardRemoteCredentials(other, git, executeProbe, { HOME: home })).toBe(true)
+    })
+
+    it('reports which guard controls a revision would write into the work tree, as each Git verb compares them', async () => {
+        const resolution = await resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+        if (resolution.state !== 'available') throw new Error(resolution.reason)
+        const git = resolution.value
+        const root = scratch()
+        const run = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args], { encoding: 'utf8' })
+        const guard = join(root, '.cockpit/guards/bash-guard.sh')
+        mkdirSync(join(root, '.cockpit/guards'), { recursive: true })
+        writeFileSync(guard, 'guard\n')
+        writeFileSync(join(root, 'notes.md'), 'notes\n')
+        run('init', '-q', '-b', 'work')
+        run('add', '.')
+        run('commit', '-qm', 'base')
+        // A second branch replaces the guard, as a commit made in a second worktree does.
+        run('switch', '-qc', 'evil')
+        writeFileSync(guard, 'exit 0\n')
+        run('commit', '-qam', 'replace')
+        run('switch', '-q', 'work')
+        writeFileSync(join(root, 'notes.md'), 'more notes\n')
+        run('commit', '-qam', 'notes')
+        const changes = (revision: string, from?: string) => guardWorktreeChanges(root, { revision, ...from === undefined ? {} : { from } }, [guard, join(root, '.cockpit/mcp')], git, executeProbe)
+        expect(await changes('evil')).toEqual({ guarded: true, changed: [guard] })
+        expect(await changes('work~1')).toEqual({ guarded: true, changed: [] })
+        // A pick applies only what the commit changed, and a word that names no commit writes nothing.
+        expect(await changes('evil', 'evil^')).toEqual({ guarded: true, changed: [guard] })
+        expect(await changes('work', 'work^')).toEqual({ guarded: true, changed: [] })
+        expect(await changes('notes.md')).toEqual({ guarded: true, changed: [] })
+        // A reset overwrites the work tree itself, local edits included.
+        writeFileSync(guard, 'edited\n')
+        expect(await changes('HEAD', 'worktree')).toEqual({ guarded: true, changed: [guard] })
+        // A from that names no commit lists what the revision holds, as a stash's untracked files are restored.
+        expect(await changes('evil', 'evil~5')).toEqual({ guarded: true, changed: [guard] })
+        // A repository whose work tree holds no protected path is not asked.
+        const sibling = scratch()
+        execFileSync('git', ['init', '-q', sibling])
+        expect(await guardWorktreeChanges(sibling, { revision: 'HEAD' }, [guard], git, executeProbe)).toEqual({ guarded: false, changed: [] })
+    })
+
+    it('reads the nearest package manifest inside the roots, and none past them or from an unreadable one', () => {
+        const root = scratch()
+        writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'synthetic-app', scripts: { build: 'tsc', test: 'vitest' } }))
+        mkdirSync(join(root, 'copy/dist'), { recursive: true })
+        writeFileSync(join(root, 'copy/package.json'), JSON.stringify({ name: '@b00dea/cockpit' }))
+        writeFileSync(join(root, 'copy/dist/cli.js'), '')
+        const inside = (path: string) => path === root || path.startsWith(`${root}/`)
+        expect(guardPackageManifest(join(root, 'src'), inside)).toEqual({ name: 'synthetic-app', scripts: ['build', 'test'] })
+        expect(guardPackageManifest(join(root, 'copy/dist/cli.js'), inside)).toEqual({ name: '@b00dea/cockpit', scripts: [] })
+        expect(guardPackageManifest(join(root, 'src'), (path: string) => path.startsWith(`${root}/src`))).toEqual({ name: null, scripts: [] })
+        writeFileSync(join(root, 'copy/package.json'), '{')
+        expect(guardPackageManifest(join(root, 'copy/dist/cli.js'), inside)).toBeNull()
+    })
+
+    it('reads every script a workspace declares, from pnpm-workspace.yaml or package.json, and none it cannot bound', () => {
+        const root = scratch()
+        const inside = (path: string) => path === root || path.startsWith(`${root}/`)
+        const write = (path: string, text: string) => { mkdirSync(join(root, path, '..'), { recursive: true }); writeFileSync(join(root, path), text) }
+        write('package.json', JSON.stringify({ name: 'monorepo', scripts: { lint: 'eslint .' } }))
+        write('pnpm-workspace.yaml', "packages:\n  - 'packages/*'\n  - 'tools/**'\n  - '!packages/skip'\n")
+        write('packages/web/package.json', JSON.stringify({ name: 'web', scripts: { build: 'vite build' } }))
+        write('packages/api/package.json', JSON.stringify({ name: 'api', scripts: { test: 'vitest' } }))
+        write('packages/web/node_modules/dep/package.json', JSON.stringify({ name: 'dep', scripts: { evil: 'x' } }))
+        write('tools/a/b/package.json', JSON.stringify({ name: 'b', scripts: { gen: 'node gen.js' } }))
+        expect(guardPackageManifest(join(root, 'packages/api'), inside, true)).toEqual({ name: 'api', scripts: ['test'], workspace: ['build', 'gen', 'lint', 'test'] })
+        // npm and yarn list their workspaces in package.json.
+        rmSync(join(root, 'pnpm-workspace.yaml'))
+        write('package.json', JSON.stringify({ name: 'monorepo', workspaces: { packages: ['packages/*'] } }))
+        expect(guardPackageManifest(join(root, 'packages/api'), inside, true)).toMatchObject({ workspace: ['build', 'test'] })
+        write('package.json', JSON.stringify({ name: 'monorepo', workspaces: ['../outside/*'] }))
+        expect(guardPackageManifest(join(root, 'packages/api'), inside, true)).toMatchObject({ workspace: null })
+    })
+
+    it('names every path a patch file applies to, and none when a header is one it cannot read', () => {
+        const root = scratch()
+        const patch = (text: string) => { writeFileSync(join(root, 'p.diff'), text); return guardPatchTargets(join(root, 'p.diff')) }
+        expect(patch('diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\t2026-01-01\n+++ b/src/a.ts\n@@ -1 +1 @@\n-a\n+b\n'
+            + 'diff --git a/old.ts b/.cockpit/guards/bash-guard.sh\nrename from old.ts\nrename to .cockpit/guards/bash-guard.sh\n')).toEqual(['src/a.ts', 'old.ts', '.cockpit/guards/bash-guard.sh'])
+        expect(patch('--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1 @@\n+x\n')).toEqual(['new.ts'])
+        expect(patch('diff --git "a/x y" "b/x y"\n')).toBeNull()
+        // `git am` decodes an encoded mail body, so the raw lines name nothing it applies.
+        expect(patch('From: synthetic@example.test\nSubject: [PATCH] x\nContent-Transfer-Encoding: base64\n\nZGlmZiAtLWdpdA==\n')).toBeNull()
+        expect(patch('Subject: x\ncontent-transfer-encoding: quoted-printable\n\n--- a/src/a.ts\n+++ b/=2Ecockpit/guards/bash-guard.sh\n')).toBeNull()
+        expect(patch('Subject: x\nContent-Transfer-Encoding: 8bit\n\n--- a/src/a.ts\n+++ b/src/a.ts\n')).toEqual(['src/a.ts'])
+        symlinkSync(join(root, 'p.diff'), join(root, 'link.diff'))
+        expect(guardPatchTargets(join(root, 'link.diff'))).toBeNull()
+        expect(guardPatchTargets(join(root, 'absent.diff'))).toBeNull()
     })
 
     it('enumerates every secrets file identity under any folded spelling and reports a second hard link or an exceeded bound', () => {

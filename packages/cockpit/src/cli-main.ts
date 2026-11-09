@@ -1,12 +1,13 @@
 import { confirmDigest } from './operator-confirmation.js'
 import { randomUUID } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { ComposeProfileName, EVALUATOR_COMMANDS, runningEvaluatorTool, UNCONFIRMABLE_ANSWERS, type EvaluatorTool } from './schema.js'
 import { installedPackageMetadata } from './package-metadata.js'
 import { validateTeamMetadata, type TeamMetadataResult } from './team-metadata.js'
 import { renderComposeScaffold, SCAFFOLD_BACKING_SERVICES, writeComposeScaffold, type ScaffoldBackingService } from './init/scaffold.js'
 import { discoverReleaseFreshness, type ReleaseMetadataTransport } from './freshness.js'
 import { observeMcpStartup } from './environment/mcp-observation.js'
-import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { parse as parseToml, TomlError } from 'smol-toml'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { createInterface } from 'node:readline/promises'
@@ -52,12 +53,12 @@ import { runLogs as runLogsApplication } from './environment/application/logs.js
 import { runDocsCheck } from './docs/check.js'
 import { runEnvKeys, runEnvSchema } from './environment/env-sources.js'
 import { runServiceExec, runServicePs, runServiceRestart } from './environment/application/services.js'
-import { executeForegroundProcess, executePlan, executeProbe, foregroundTerminal } from './environment-exec/execute.js'
+import { executeForegroundProcess, executePlan, executeProbe, foregroundTerminal, type ForegroundProcessOutcome } from './environment-exec/execute.js'
 import { createDestructiveCommandAdapters, selectDestructiveDaemon } from './environment/destructive-composition.js'
 import { createHealthCommandAdapters } from './environment/health-composition.js'
 import { inspectInitReadiness, measureInitMachine, proposeInitGrading } from './environment/readiness-composition.js'
 import { createLifecycleCommandAdapters } from './environment/lifecycle-composition.js'
-import { isProcessStart, observeProcessStart, processHost, type HolderProcess } from './environment/claims.js'
+import { isProcessStart, listenerHost, observeProcessAncestry, observeProcessStart, processHost, type HolderProcess } from './environment/claims.js'
 import { createReadCommandAdapters } from './environment/read-composition.js'
 import { probeInstalledRuntime, runRuntimeMeasure } from './environment/runtime-measurement.js'
 import { initializeLocalGitRepository, runSiblingAdd, runSiblingRemove, type SiblingAddInput, type SiblingRemoveInput } from './environment/sibling-registration.js'
@@ -89,7 +90,7 @@ import { inspectGuardConfigChange } from './guards/policy-change.js'
 import { gitEnvironment, planSetup } from './environment/setup.js'
 import { synchronizeInstructionPointer } from './environment/instruction-pointer.js'
 import { synchronizeSiblingInstructionFiles } from './environment/sibling-instructions.js'
-import { resolvedGitExecutable, resolveExecutable, resolveGitExecutable } from './environment/executable.js'
+import { resolvedGitExecutable, resolveExecutable, resolveGitExecutable, type ResolvedExecutable } from './environment/executable.js'
 import { checkoutId, holderId, stackId } from './environment/identity.js'
 import { selectStateRoot } from './environment/state.js'
 import { recordLifecycleStarted } from './environment/lifecycle-stage.js'
@@ -107,6 +108,7 @@ import {
     runSyncOperatorCommand,
     type GeneratedEnvironmentCommandInput,
     type GeneratedEnvironmentCommandOutcome,
+    type GeneratedEnvironmentOperatorIo,
 } from './generated-environment/command.js'
 import type { GeneratedStaleRemovalApproval, GeneratedStaleRemovalApprovalRequest } from './environment/generated-application/shared.js'
 import { runUpgrade } from './environment/upgrade-application.js'
@@ -116,6 +118,7 @@ import {
     runSelftestOperatorCommand,
     type SurfaceSelftestDraftInput,
     type SurfaceSelftestExecutableCandidate,
+    type SurfaceSelftestHandlerInput,
     type SurfaceSelftestProbeSpecificationsCandidate,
 } from './environment/selftest-application.js'
 import { loadOperatorPolicy, runResetOperatorApplication, runStacksPruneOperatorApplication, type StacksPruneOperatorSession } from './environment/operator-application.js'
@@ -137,6 +140,7 @@ export interface CliIo {
         candidate: SurfaceSelftestProbeSpecificationsCandidate,
     ) => Promise<string | undefined>
     confirmStaleRemoval?: (request: GeneratedStaleRemovalApprovalRequest) => Promise<string | undefined>
+    confirmPolicyWeakening?: GeneratedEnvironmentOperatorIo['confirmPolicyWeakening']
     confirmStacksPrune?: (preview: CommandOutcome) => Promise<string | undefined>
 }
 
@@ -149,6 +153,8 @@ export interface CliRuntime {
 export interface CommandOutcome {
     artifact?: string | null
     destination?: string | null
+    /** Write `artifact` over an existing `destination`, which the person asked for explicitly. */
+    replace?: boolean
     diagnostics: readonly Diagnostic[]
     evidence?: SetupRefusalEvidence
     result: unknown
@@ -186,15 +192,7 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
     sibling: Readonly<{ operation: 'add'; input: Omit<SiblingAddInput, 'env'> }> | Readonly<{ operation: 'remove'; input: Omit<SiblingRemoveInput, 'env'> }>
     tool: ToolChangeInput
     setup: SetupCommandInput
-    selftest: Readonly<{
-        configPath: string
-        probeSpecificationsPath: string
-        env: Readonly<Record<string, string | undefined>>
-        requestExecutableApproval?: (candidate: SurfaceSelftestExecutableCandidate) => Promise<string | undefined>
-        requestProbeSpecificationsApproval?: (
-            candidate: SurfaceSelftestProbeSpecificationsCandidate,
-        ) => Promise<string | undefined>
-    }> | SurfaceSelftestDraftInput
+    selftest: SurfaceSelftestHandlerInput | SurfaceSelftestDraftInput
     session: Readonly<{ configPath: string; argv: readonly [string, ...string[]]; sessionId: string; profiles: readonly string[] }>
     sleep: SleepCommandInput
     stacks: Readonly<{ configPath: string; operation: 'list' | 'prune' }>
@@ -579,9 +577,12 @@ const SESSION_PROCESS = /^([1-9][0-9]{0,9})@(\S+)$/
 // not to itself. The variable only names a process: the child reads that process's start identity
 // again and records the hold only when it matches, so a stale or invented value cannot tie a hold
 // to a process the wrapper is not. A hold carries only its own holder's process, and dead-holder
-// release removes only the holder whose recorded process is gone, so the most a forged value can
-// do is end the forger's own hold early; reaching another session's hold needs its session ID,
-// which already allows `sleep` on it.
+// release removes only the holder whose recorded process is gone, so a forged value cannot end
+// another session's hold; reaching that needs its session ID, which already allows `sleep` on it.
+// A recorded session also vouches for listeners its descendants hold on the stack's leased ports,
+// so the named process must be an ancestor of this command. A forged value naming one of the
+// caller's own ancestors, such as its shell, still passes: nothing here tells a wrapper from such
+// a process, and the caller could equally write the coordination record.
 async function sessionChildHolderProcess(
     env: Readonly<Record<string, string | undefined>>,
 ): Promise<{ readonly refusal: CommandOutcome } | { readonly refusal?: never; readonly holderProcess?: HolderProcess }> {
@@ -593,13 +594,21 @@ async function sessionChildHolderProcess(
     const pid = Number(match?.[1])
     if (!match || pid > 2_147_483_647 || !isProcessStart(match[2])) return { refusal: usageOutcome('CLI_USAGE_INVALID',
         'COCKPIT_SESSION_PROCESS must be <pid>@<start identity> as a cockpit session wrapper sets it', 'COCKPIT_SESSION_PROCESS') }
-    const observed = await observeProcessStart(pid, processHost(executeProbe))
+    const host = listenerHost(executeProbe)
+    const observed = await observeProcessStart(pid, host.process)
     // As for the wrapper's own hold, a start that cannot be confirmed leaves a pid-only hold, which
-    // is released only once that pid is gone.
+    // is released only once that pid is gone and never vouches for a listener.
     if (observed.state === 'unknown') return { holderProcess: { pid } }
     if (observed.state === 'absent' || observed.start !== match[2]) return { refusal: usageOutcome('CLI_USAGE_INVALID',
         `the cockpit session that set COCKPIT_SESSION_ID has ended (its process ${pid} is gone); start a new cockpit session or run this outside it`,
         'COCKPIT_SESSION_PROCESS') }
+    // A recorded session vouches for its descendants' listeners, so the named process must be one
+    // this command runs under. Unreadable ancestry keeps the pid-only hold, which vouches for nothing.
+    const ancestry = await observeProcessAncestry({ pid: process.pid, ancestor: { pid, processStart: match[2] }, host })
+    if (ancestry === 'unrelated') return { refusal: usageOutcome('CLI_USAGE_INVALID',
+        `COCKPIT_SESSION_PROCESS names process ${pid}, which this command does not run under; only a cockpit session wrapper sets it, for the commands it starts`,
+        'COCKPIT_SESSION_PROCESS') }
+    if (ancestry !== 'ancestor') return { holderProcess: { pid } }
     return { holderProcess: { pid, processStart: match[2] } }
 }
 
@@ -861,10 +870,20 @@ function usageOutcome(code: string, message: string, target?: string): CommandOu
     }
 }
 
+// Renamed into place, so a symlink at the destination is replaced rather than written through.
+async function writeOver(destination: string, artifact: string): Promise<void> {
+    const temporary = join(dirname(destination), `.${basename(destination)}.${randomUUID()}.tmp`)
+    try {
+        await writeFile(temporary, artifact, { encoding: 'utf8', flag: 'wx' })
+        await rename(temporary, destination)
+    } finally { await rm(temporary, { force: true }) }
+}
+
 async function executeOutcome(outcome: CommandOutcome): Promise<CommandOutcome> {
     if (!outcome.artifact || !outcome.destination) return outcome
     try {
-        await writeFile(outcome.destination, outcome.artifact, { encoding: 'utf8', flag: 'wx' })
+        if (outcome.replace) await writeOver(outcome.destination, outcome.artifact)
+        else await writeFile(outcome.destination, outcome.artifact, { encoding: 'utf8', flag: 'wx' })
         return outcome
     } catch (error) {
         const code = (error as NodeJS.ErrnoException).code
@@ -874,7 +893,7 @@ async function executeOutcome(outcome: CommandOutcome): Promise<CommandOutcome> 
                 code: 'OUTPUT_EXISTS',
                 message: 'the output path already exists and was not changed',
                 target: outcome.destination,
-                fix: 'choose a new path; replacement requires a future explicit option',
+                fix: 'choose a new path, or write over your own file with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --write-probe-specifications <file> --replace',
             }
             : {
                 severity: 'error',
@@ -1177,10 +1196,11 @@ async function decodeRequest(
     }
 
     if (handler === 'selftest') {
-        const values = parsed.values as { config?: string; 'probe-specifications'?: string; 'write-probe-specifications'?: string; interactive?: boolean; json?: boolean }
+        const values = parsed.values as { config?: string; 'probe-specifications'?: string; 'write-probe-specifications'?: string; replace?: boolean; interactive?: boolean; json?: boolean }
         if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'selftest accepts named inputs only')
         if (!values.config) return missingConfig()
         const draftPath = values['write-probe-specifications']
+        if (values.replace && draftPath === undefined) return usageOutcome('CLI_USAGE_INVALID', '--replace only applies with --write-probe-specifications, to write over that file', '--replace')
         if (draftPath !== undefined) {
             if (draftPath.length === 0) return usageOutcome('CLI_USAGE_INVALID', '--write-probe-specifications requires a non-empty path', '--write-probe-specifications')
             // Writing the file runs nothing, so there is nothing to approve interactively.
@@ -1190,10 +1210,12 @@ async function decodeRequest(
                 return usageOutcome('CLI_USAGE_INVALID', '--probe-specifications requires a non-empty path', '--probe-specifications')
             }
             return { handler, input: { configPath: values.config, writeProbeSpecificationsPath: draftPath,
-                ...(previous === undefined ? {} : { previousProbeSpecificationsPath: previous }) } }
+                ...(previous === undefined ? {} : { previousProbeSpecificationsPath: previous }), ...values.replace ? { replace: true } : {} } }
         }
-        if (!values['probe-specifications']) return usageOutcome('CLI_USAGE_INVALID',
-            'provide --probe-specifications <file>; write one with --write-probe-specifications <new file> first', '--probe-specifications')
+        // With --interactive and no file, selftest writes fresh specifications for the person to approve.
+        const probeSpecificationsPath = values['probe-specifications']
+        if (probeSpecificationsPath === '' || probeSpecificationsPath === undefined && !values.interactive) return usageOutcome('CLI_USAGE_INVALID',
+            'run selftest with --interactive at a terminal, which writes fresh probe specifications itself, or provide --probe-specifications <file>; write one with --write-probe-specifications <new file> first', '--probe-specifications')
         const invalidEnvironment = () => usageOutcome('CLI_USAGE_INVALID',
             `selftest probe environment inputs must be bounded own string or undefined values; supply ${['PATH', ...INHERITED_TOOL_ENVIRONMENT].join(', ')} without accessors and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --help to retry`)
         const env: Record<string, string | undefined> = {}
@@ -1212,7 +1234,7 @@ async function decodeRequest(
                 env[key] = descriptor.value
             }
         } catch { return invalidEnvironment() } // A throwing accessor or proxy trap makes the environment invalid data.
-        return { handler, input: { configPath: values.config, probeSpecificationsPath: values['probe-specifications'], env } }
+        return { handler, input: { configPath: values.config, ...probeSpecificationsPath === undefined ? {} : { probeSpecificationsPath }, env } }
     }
 
     if (handler === 'session') {
@@ -1416,7 +1438,31 @@ async function decodeRequest(
 }
 
 type InvocationOptions = { readonly interactive: boolean; readonly apply?: boolean; readonly json: boolean; readonly ci: string | undefined;
-    readonly env: Readonly<Record<string, string | undefined>> }
+    readonly env: Readonly<Record<string, string | undefined>>; readonly argv: readonly string[] }
+
+// Set in the environment of a selftest rerun under the guard's Node, so a rerun that still meets a
+// mismatch refuses instead of rerunning again.
+const SELFTEST_RERUN_MARKER = 'COCKPIT_SELFTEST_RERUN'
+const COCKPIT_ENTRYPOINT = fileURLToPath(new URL('../bin/cockpit.mjs', import.meta.url))
+
+// The guard hook runs the Node sync recorded, and selftest can measure only the guard its own Node
+// would install, so a person's selftest started under another Node (a version manager's shell, say)
+// continues under the recorded one: same arguments, same terminal for the approvals.
+async function rerunSelftest(node: ResolvedExecutable, options: InvocationOptions, io: CliIo): Promise<ForegroundProcessOutcome> {
+    io.stderr.write(`the guard runs the Node at ${node.canonicalPath}; rerunning selftest under it\n`)
+    // The rerun leads its own session, so an interrupt, a closed terminal or a kill reaches only this
+    // process; each stops the rerun, and a repeat cannot end this process before the rerun is gone.
+    const controller = new AbortController()
+    const abort = () => controller.abort()
+    const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const
+    for (const signal of signals) process.on(signal, abort)
+    try {
+        return await executeForegroundProcess({ executable: node, argv: [COCKPIT_ENTRYPOINT, ...options.argv], cwd: process.cwd(),
+            env: { ...concreteEnvironment(options.env), [SELFTEST_RERUN_MARKER]: '1' } }, { signal: controller.signal })
+    } finally {
+        for (const signal of signals) process.removeListener(signal, abort)
+    }
+}
 
 // `sibling` nests its arguments under the operation it runs; every other configured command carries
 // configPath at the top of its input.
@@ -1504,7 +1550,7 @@ async function dispatchHandler(
     }, handlers.init ?? (async () => refusalOutcome('INIT_UNAVAILABLE', 'init application is unavailable')))
     if (request.handler === 'registry-resolve') return handlers['registry-resolve']?.(request.input) ?? unavailable()
     if (request.handler === 'setup') return handlers.setup?.(request.input) ?? unavailable()
-    if (request.handler === 'sync') return runSyncOperatorCommand(request.input, options, io, handlers.sync ?? (async () => unavailable()), operators.loadPolicy ?? loadOperatorPolicy)
+    if (request.handler === 'sync') return runSyncOperatorCommand(request.input, options, { ...io, env: options.env }, handlers.sync ?? (async () => unavailable()), operators.loadPolicy ?? loadOperatorPolicy)
     if (request.handler === 'check') return handlers.check?.(request.input) ?? unavailable()
     if (request.handler === 'docs-check') return handlers['docs-check']?.(request.input) ?? unavailable()
     if (request.handler === 'env-keys') return handlers['env-keys']?.(request.input) ?? unavailable()
@@ -1518,7 +1564,9 @@ async function dispatchHandler(
             const drafted = await selftest(request.input)
             return options.json ? executeOutcome(drafted) : drafted
         }
-        return runSelftestOperatorCommand(request.input, options, io, selftest)
+        const rerun = options.interactive && options.env[SELFTEST_RERUN_MARKER] === undefined
+        return runSelftestOperatorCommand(request.input, { ...options,
+            ...rerun ? { rerunUnderNode: (node: ResolvedExecutable) => rerunSelftest(node, options, io) } : {} }, io, selftest)
     }
     if (request.handler === 'upgrade') return handlers.upgrade?.(request.input) ?? unavailable()
     if (request.handler === 'up') return handlers.up?.(request.input) ?? unavailable()
@@ -1729,6 +1777,7 @@ export async function runCli(
                         json: parsed.values.json === true,
                         ci: (runtime.env ?? process.env).CI,
                         env: runtime.env ?? process.env,
+                        argv: args,
                     }, io)
                 } catch (error) {
                     outcome = usageOutcome(

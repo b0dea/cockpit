@@ -24,6 +24,8 @@ export interface ReadOnlyAccess {
      * below these paths, relative to `cwd`, or anywhere when null.
      */
     readonly trackedContent?: { readonly limitedTo: readonly string[] | null }
+    /** A `reads` operand may name a revision instead, so one that names no existing path reads nothing. */
+    readonly revisionOperands?: boolean
 }
 
 type Classified = Omit<ReadOnlyAccess, 'cwd'> | undefined
@@ -44,6 +46,8 @@ interface OptionTable {
     readonly exclusionValues?: ReadonlySet<string>
     /** Short flags that may be clustered, as in `-in`. */
     readonly cluster?: RegExp
+    /** A short option whose count is optional and only ever attached, as in `-C3`. */
+    readonly optionalCount?: RegExp
 }
 
 const set = (...values: string[]) => new Set(values)
@@ -70,6 +74,8 @@ function parseOptions(argv: readonly string[], table: OptionTable): Options | un
             if (table.fileValues?.has(name)) files.push(value)
             present.add(name)
         } else if (long && table.attachedOnly?.has(name)) present.add(name)
+        // BSD grep's `-C` takes an optional count, only ever attached, so a bare `-C` never takes the next word.
+        else if (table.optionalCount?.test(word)) present.add(word.slice(0, 2))
         else if (equals < 0 && table.flags.has(word)) present.add(word)
         else if (equals < 0 && table.cluster?.test(word)) for (const flag of word.slice(1)) present.add(`-${flag}`)
         else return undefined
@@ -79,11 +85,13 @@ function parseOptions(argv: readonly string[], table: OptionTable): Options | un
 
 const LS: OptionTable = { flags: set('--all', '--almost-all', '--classify', '--human-readable', '--recursive', '--reverse'), values: set(), attachedOnly: set('--color'), cluster: /^-[1aAbBcCdFfghiklLmnopqrRsStTuUvwxX@]+$/ }
 const CAT: OptionTable = { flags: set('--number', '--number-nonblank', '--show-all', '--show-ends', '--show-tabs', '--squeeze-blank'), values: set(), cluster: /^-[AbeEnstTuv]+$/ }
-// `tail -f` never exits, so following is absent; `head -5` is the legacy count spelling.
+// `head -5` is the legacy count spelling.
 const HEAD_TAIL: OptionTable = { flags: set('-q', '-v', '--quiet', '--silent', '--verbose'), values: set('-n', '-c', '--lines', '--bytes'),
     countValues: set('-n', '-c', '--lines', '--bytes'), cluster: /^-\d+$/ }
-// Only output-shaping flags: `-f`/`--from-file`, `--rawfile`, `--slurpfile` and `-L` read other files and
-// `--arg`-style options take values, so none is listed.
+// `tail -f` keeps reading the files it names, and nothing else.
+const TAIL: OptionTable = { ...HEAD_TAIL, flags: new Set([...HEAD_TAIL.flags, '-f', '-F', '--follow', '--retry']), attachedOnly: set('--follow') }
+// Only output-shaping flags: `-f`/`--from-file` and `-L` read programs and modules, so neither is listed;
+// `--arg`-style pairs are read before this table, with `--rawfile` and `--slurpfile` files inspected as reads.
 const JQ: OptionTable = { flags: set('--raw-output', '--compact-output', '--sort-keys', '--slurp', '--exit-status', '--tab', '--join-output', '--ascii-output', '--monochrome-output'),
     values: set(), cluster: /^-[rcSseCMjan]+$/ }
 // `env`, `$ENV` and `$__prog_args` expose the environment, and `import`/`include` read module files.
@@ -101,6 +109,7 @@ const GREP: OptionTable = {
     // BSD grep, the macOS default, takes `-C` and `--context` values only attached, unlike GNU grep.
     attachedOnly: set('--color', '--colour', '--context'),
     cluster: /^-[iIvwxclLnhHoqsrRFEGPaZz]+$/,
+    optionalCount: /^-C\d*$/,
 }
 // Hidden, ignored, compressed and symlink-following searches widen what is read past what the
 // declared protections can see, and `--pre` and `--hostname-bin` run programs, so none is listed.
@@ -118,6 +127,14 @@ const RG: OptionTable = {
     exclusionValues: set('-g', '--glob', '--iglob'),
     cluster: /^-[iSswxvnNlcFHIoqp]+$/,
 }
+// Under the allow default a search may also read hidden and ignored files and take any glob: the
+// evaluator then walks the whole tree for secrets instead of only what Git leaves unignored.
+const RG_WIDE: OptionTable = {
+    ...RG,
+    flags: new Set([...RG.flags, '--hidden', '--no-ignore', '--no-ignore-vcs', '--no-ignore-dot', '--no-ignore-parent', '--no-ignore-global', '--multiline', '--pcre2']),
+    exclusionValues: set(),
+    cluster: /^-[iSswxvnNlcFHIoqpuU.P]+$/,
+}
 const FD: OptionTable = {
     flags: set('--hidden', '--no-ignore', '--case-sensitive', '--ignore-case', '--glob', '--regex', '--fixed-strings', '--absolute-path', '--print0', '--full-path'),
     values: set('-t', '--type', '-e', '--extension', '-d', '--max-depth', '--min-depth', '-E', '--exclude', '--max-results', '--color'),
@@ -125,7 +142,7 @@ const FD: OptionTable = {
 }
 const FIND_VALUE = set('-name', '-iname', '-path', '-ipath', '-wholename', '-iwholename', '-regex', '-iregex', '-type', '-maxdepth', '-mindepth',
     '-mtime', '-mmin', '-atime', '-amin', '-ctime', '-cmin', '-size', '-user', '-group', '-perm', '-newer')
-const FIND_FLAG = set('-print', '-print0', '-prune', '-empty', '-not', '!', '-a', '-and', '-o', '-or', '(', ')', '-depth', '-xdev', '-mount', '-true', '-false')
+const FIND_FLAG = set('-print', '-print0', '-prune', '-empty', '-not', '!', '-a', '-and', '-o', '-or', '(', ')', '-depth', '-xdev', '-mount', '-true', '-false', '-quit')
 
 function find(argv: readonly string[]): Classified {
     let index = 0
@@ -157,9 +174,12 @@ function search(argv: readonly string[], table: OptionTable, recursiveByDefault:
     return recursive ? { reads: parsed.files, trees: paths, listings: [] } : { reads: [...parsed.files, ...paths], trees: [], listings: [] }
 }
 
-// Only `p` commands on line-number or last-line addresses: any other sed command can write (`w`),
-// read another file (`r`), run a program (GNU `e`) or edit in place (`-i`).
-const SED_PRINT = /^(?:\d+|\$)(?:,(?:\d+|\$))?p(?:;(?:\d+|\$)(?:,(?:\d+|\$))?p)*$/
+// Only `p` and `d` commands on line-number, last-line or pattern addresses, and `s` substitutions whose
+// flags neither write (`w`) nor run the result (GNU `e`): any other sed command can write (`w`), read
+// another file (`r`), run a program (GNU `e`) or edit in place (`-i`).
+const SED_ADDRESS = String.raw`(?:\d+|\$|/(?:[^/\\]|\\.)*/I?)`
+const SED_COMMAND = String.raw`(?:${SED_ADDRESS}(?:,${SED_ADDRESS})?[pd]|s/(?:[^/\\]|\\.)*/(?:[^/\\]|\\.)*/[gpiI0-9]*)`
+const SED_PRINT = new RegExp(String.raw`^${SED_COMMAND}(?:;${SED_COMMAND})*$`)
 
 function sed(argv: readonly string[]): Classified {
     const scripts: string[] = []
@@ -186,7 +206,29 @@ function files(argv: readonly string[], table: OptionTable): Classified {
     return parsed && { reads: parsed.positionals, trees: [], listings: [] }
 }
 
+// `--arg` and `--argjson` bind a name to a value, `--rawfile` and `--slurpfile` to a file's content.
+const JQ_PAIRS = set('--arg', '--argjson', '--rawfile', '--slurpfile')
+
 function jq(argv: readonly string[]): Classified {
+    const words: string[] = []
+    const files: string[] = []
+    for (let index = 0; index < argv.length; index++) {
+        const word = argv[index]!
+        if (word === '--') { words.push(...argv.slice(index)); break }
+        if (JQ_PAIRS.has(word)) {
+            const value = argv[index + 2]
+            if (argv[index + 1] === undefined || value === undefined) return undefined
+            if (word === '--rawfile' || word === '--slurpfile') files.push(value)
+            index += 2
+        } else if (word === '--indent') {
+            if (!/^\d$/.test(argv[++index] ?? '')) return undefined
+        } else words.push(word)
+    }
+    const classified = jqWords(words)
+    return classified && { ...classified, reads: [...files, ...classified.reads] }
+}
+
+function jqWords(argv: readonly string[]): Classified {
     const parsed = parseOptions(argv, JQ)
     const [filter, ...operands] = parsed?.positionals ?? []
     // `-n` reads no input, so a file operand with it is still just a read; the filter alone must be inert.
@@ -194,7 +236,31 @@ function jq(argv: readonly string[]): Classified {
 }
 
 const GIT_READ_VERBS = set('status', 'diff', 'log', 'show')
-const GIT_BRANCH_LIST = set('--list', '-a', '--all', '-r', '--remotes', '-v', '-vv', '--verbose', '--show-current')
+const GIT_GREP: OptionTable = {
+    flags: set('--line-number', '--ignore-case', '--word-regexp', '--invert-match', '--count', '--files-with-matches', '--name-only', '--files-without-match',
+        '--extended-regexp', '--fixed-strings', '--basic-regexp', '--perl-regexp', '--full-name', '--heading', '--break', '--show-function', '--column', '--only-matching',
+        '--quiet', '--null', '--all-match', '--and', '--or', '--not', '--cached', '-I', '--recursive'),
+    values: set('-e', '-f', '-A', '-B', '-C', '--after-context', '--before-context', '--context', '-m', '--max-count', '--max-depth'),
+    fileValues: set('-f'),
+    countValues: set('-A', '-B', '-C', '--after-context', '--before-context', '--context', '-m', '--max-count', '--max-depth'),
+    attachedOnly: set('--color', '--colour'),
+    cluster: /^-[nivwclLhHEFGPzqoW]+$/,
+}
+const GIT_BLAME: OptionTable = {
+    flags: set('-w', '-s', '-l', '-t', '-n', '-f', '-e', '-p', '-c', '-b', '--porcelain', '--line-porcelain', '--incremental', '--root', '--show-name', '--show-number',
+        '--show-email', '--show-stats', '--minimal', '-M', '-C'),
+    values: set('-L', '--date', '--since'),
+    attachedOnly: set('--abbrev', '--color-lines', '--color-by-age'),
+}
+const GIT_BRANCH_LIST = set('--list', '-l', '-a', '--all', '-r', '--remotes', '-v', '-vv', '--verbose', '--show-current')
+const GIT_CONFIG_SECTIONS = set('user', 'core', 'init', 'pull', 'push', 'merge', 'rebase', 'commit', 'tag', 'fetch', 'status', 'log', 'diff', 'color', 'advice', 'safe', 'gpg')
+// Scope and display only: `--file` and `--blob` read other input, and the rest write or list.
+const GIT_CONFIG_READ = set('--global', '--system', '--local', '--worktree', '--includes', '--no-includes', '--show-origin', '--show-scope', '-z', '--null',
+    '--bool', '--int', '--bool-or-int', '--path')
+const GIT_MERGE_BASE = set('--all', '-a', '--is-ancestor', '--independent', '--octopus', '--fork-point')
+// Names, modes and object names only: `--eol` reads file content, `--with-tree` and `--exclude-from` name more input.
+const GIT_LS_FILES = set('-z', '-c', '--cached', '-d', '--deleted', '-m', '--modified', '-o', '--others', '-s', '--stage', '-u', '--unmerged',
+    '--exclude-standard', '--directory', '--no-empty-directory', '--full-name', '--error-unmatch')
 // Diff output that names files or counts lines; any other diff output prints file content.
 const GIT_NAME_ONLY = set('--stat', '--numstat', '--shortstat', '--name-only', '--name-status', '--summary', '--raw', '--dirstat', '-s', '--no-patch', '--quiet')
 // Options that print changed lines: patch output, and `--check`, which quotes each line it flags. Git
@@ -241,16 +307,71 @@ function git(argv: readonly string[], cwd: string): ReadOnlyAccess | undefined {
     if (verb === 'branch') return args.every(arg => GIT_BRANCH_LIST.has(arg)) ? { cwd: directory, reads: [], trees: [], listings: [], requires } : undefined
     // rev-parse prints object names, refs and repository paths, never file content.
     if (verb === 'rev-parse') return args.some(arg => /^--(?:git-path|resolve-git-dir|parseopt|sq-quote)(?:=|$)/.test(arg)) ? undefined : { cwd: directory, reads: [], trees: [], listings: [], requires }
+    // One key, from a section whose values name no remote, URL, header or credential helper, any of
+    // which can hold a credential; listings and patterns print them all. Reading runs no helper.
+    if (verb === 'config') {
+        const modern = args[0] === 'get'
+        const rest = modern ? args.slice(1) : args
+        const actions: string[] = rest.filter(arg => arg === '--get' || arg === '--get-all')
+        const [key, ...more] = rest.filter(arg => !arg.startsWith('-'))
+        return (modern ? actions.length === 0 : actions.length === 1) && key !== undefined && more.length === 0 && /^[a-z][a-z0-9-]*\..*[a-z0-9-]$/i.test(key)
+            && GIT_CONFIG_SECTIONS.has(key.slice(0, key.indexOf('.')).toLowerCase())
+            && rest.every(arg => !arg.startsWith('-') || actions.includes(arg) || GIT_CONFIG_READ.has(arg) || modern && arg === '--all')
+            ? { cwd: directory, reads: [], trees: [], listings: [], requires } : undefined
+    }
+    // Remote names only: `-v`, `show` and `get-url` print URLs, which can carry a credential.
+    if (verb === 'remote') return args.length === 0 ? { cwd: directory, reads: [], trees: [], listings: [], requires } : undefined
+    // merge-base prints commit names; its operands are always revisions.
+    if (verb === 'merge-base') return args.every(arg => !arg.startsWith('-') || GIT_MERGE_BASE.has(arg)) ? { cwd: directory, reads: [], trees: [], listings: [], requires } : undefined
+    // ls-files prints index names, modes and object names; its operands are pathspecs it lists.
+    if (verb === 'ls-files') {
+        const end = args.indexOf('--')
+        const options = end < 0 ? args : args.slice(0, end)
+        const listings = [...options.filter(arg => !arg.startsWith('-')), ...end < 0 ? [] : args.slice(end + 1)]
+        return options.every(arg => !arg.startsWith('-') || GIT_LS_FILES.has(arg)) ? { cwd: directory, reads: [], trees: [], listings, requires } : undefined
+    }
+    // One object, by type, size, existence or pretty-printed content. A `rev:path` blob name prints a
+    // path the inspection cannot see, and `--batch`, `--filters` and `--textconv` are absent.
+    if (verb === 'cat-file') {
+        const [mode, object, ...rest] = args
+        if (!['-t', '-s', '-e', '-p'].includes(mode ?? '') || object === undefined || object.startsWith('-') || object.includes(':') || rest.length) return undefined
+        return { cwd: directory, reads: [], trees: [], listings: [], requires, ...(mode === '-p' ? { trackedContent: { limitedTo: null } } : {}) }
+    }
+    // grep prints matching lines of tracked files, and blame one tracked file's lines: committed content,
+    // limited to the pathspecs after `--` or the blamed file. `--untracked` and `--no-index` read files
+    // the index does not hold, and `-O` and `--textconv` run programs, so neither table lists them.
+    if (verb === 'grep') {
+        const parsed = parseOptions(args, GIT_GREP)
+        const end = args.indexOf('--')
+        const pathspecs = end < 0 ? null : args.slice(end + 1)
+        if (!parsed || pathspecs?.some(spec => spec.startsWith(':') || /[*?[\\]/.test(spec))) return undefined
+        return { cwd: directory, reads: parsed.files, trees: [], listings: [], requires, trackedContent: { limitedTo: pathspecs?.length ? pathspecs : null } }
+    }
+    if (verb === 'blame') {
+        const parsed = parseOptions(args, GIT_BLAME)
+        const file = parsed?.positionals.at(-1)
+        if (!parsed || file === undefined || parsed.positionals.length > 2 || file.includes(':')) return undefined
+        return { cwd: directory, reads: [file], trees: [], listings: [], requires, revisionOperands: true, trackedContent: { limitedTo: [file] } }
+    }
+    // `git show REV:PATH` prints one committed file, judged by its path; the work tree's top is the
+    // working directory, which `requires` proves, so the path resolves from there.
+    if (verb === 'show' && args.length === 1 && /^[^-:][^:]*:[^:/]/.test(args[0]!) && !/(?:^|[^\w])stash(?:@|$|\^|~|:)/.test(args[0]!)) {
+        const file = args[0]!.slice(args[0]!.indexOf(':') + 1)
+        if (/^\.\.?(?:\/|$)/.test(file) || /[*?[\\]/.test(file)) return undefined
+        return { cwd: directory, reads: [file], trees: [], listings: [], requires, revisionOperands: true, trackedContent: { limitedTo: [file] } }
+    }
     if (verb === undefined || !GIT_READ_VERBS.has(verb)) return undefined
     // --output writes a file, an external diff driver runs a program, and --no-index prints any file.
     if (args.some(arg => /^--(?:output|ext-diff|textconv|no-index)(?:=|$)/.test(arg))) return undefined
     // Revision operands that name a blob (`HEAD:path`) print content the path inspection cannot see, and
     // so does `git log -L<range>:<path>`, whose path is attached to the option.
     if (args.some(arg => !arg.startsWith('-') && arg.includes(':') || /^-L/.test(arg))) return undefined
-    // Operands may be pathspecs whose content is printed, and a path outside the repository turns
-    // `git diff` into a file comparison, so every operand is inspected as a read.
+    // A path outside the repository turns `git diff` into a `--no-index` comparison that prints whole
+    // trees, and `requires` makes the directory the repository's top, so no operand may leave it.
+    if (args.some(arg => !arg.startsWith('-') && /^\.\.(?:\/|$)/.test(posix.relative(directory, posix.resolve(directory, arg))))) return undefined
+    // Operands may be pathspecs whose content is printed, so every operand is inspected as a read.
     const trackedContent = verb === 'status' ? undefined : gitTrackedContent(verb, args)
-    return { cwd: directory, reads: args.filter(arg => !arg.startsWith('-')), trees: [], listings: [], requires, ...(trackedContent ? { trackedContent } : {}) }
+    return { cwd: directory, reads: args.filter(arg => !arg.startsWith('-')), trees: [], listings: [], requires, revisionOperands: true, ...(trackedContent ? { trackedContent } : {}) }
 }
 
 /**
@@ -290,9 +411,11 @@ function cockpit(argv: readonly string[]): Classified {
  * The paths an exact read-only invocation touches, or undefined when it is not one. `cockpit` holds
  * the cockpit arguments only when the application proved the invocation starts the installed cockpit.
  */
-export function classifyReadOnlyInvocation(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean; readonly cockpit?: readonly string[] } = { ripgrepConfigActive: false }): ReadOnlyAccess | undefined {
+export function classifyReadOnlyInvocation(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean; readonly cockpit?: readonly string[]; readonly wideSearch?: boolean } = { ripgrepConfigActive: false }): ReadOnlyAccess | undefined {
     if (invocation.executable === null || invocation.wrapped || invocation.redirects.some(redirect => redirect.write)
-        || invocation.words.some(word => word.role === 'environment-assignment-value')) return undefined
+        || invocation.words.some(word => word.role === 'environment-assignment-value')
+        // A word whose expansion the guard cannot see names no path it can inspect; echo and printf name none.
+        || invocation.dynamic && !['echo', 'printf'].includes(invocation.executable)) return undefined
     const argv = invocation.argv
     const inputs = invocation.redirects.map(redirect => redirect.target)
     const shape = (classified: Classified): ReadOnlyAccess | undefined =>
@@ -303,7 +426,7 @@ export function classifyReadOnlyInvocation(invocation: ParsedInvocation, environ
         ? undefined : access
 }
 
-function classify(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean; readonly cockpit?: readonly string[] },
+function classify(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean; readonly cockpit?: readonly string[]; readonly wideSearch?: boolean },
     shape: (classified: Classified) => ReadOnlyAccess | undefined, inputs: readonly string[]): ReadOnlyAccess | undefined {
     const argv = invocation.argv
     if (environment.cockpit) return shape(cockpit(environment.cockpit))
@@ -319,7 +442,8 @@ function classify(invocation: ParsedInvocation, environment: { readonly ripgrepC
             return parsed && shape({ reads: [], trees: [], listings: parsed.positionals.length ? parsed.positionals : ['.'] })
         }
         case 'cat': return shape(files(argv, CAT))
-        case 'head': case 'tail': return shape(files(argv, HEAD_TAIL))
+        case 'head': return shape(files(argv, HEAD_TAIL))
+        case 'tail': return shape(files(argv, TAIL))
         case 'jq': return shape(jq(argv))
         case 'wc': return shape(files(argv, WC))
         case 'shasum': {
@@ -333,8 +457,10 @@ function classify(invocation: ParsedInvocation, environment: { readonly ripgrepC
         case 'grep': return shape(search(argv, GREP, false))
         // Every option ripgrep is admitted with keeps its ignore filters, which the trees are then judged by.
         case 'rg': {
-            const access = environment.ripgrepConfigActive ? undefined : shape(search(argv, RG, true))
-            return access && { ...access, skipsIgnored: true }
+            if (environment.ripgrepConfigActive) return undefined
+            const narrow = shape(search(argv, RG, true))
+            if (narrow) return { ...narrow, skipsIgnored: true }
+            return environment.wideSearch ? shape(search(argv, RG_WIDE, true)) : undefined
         }
         case 'fd': {
             const parsed = parseOptions(argv, FD)

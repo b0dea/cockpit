@@ -99,27 +99,33 @@ describe('guard policy pin', () => {
             `*** Begin Patch\n*** Update File: ${config}\n@@\n [guards]\n-protected_branches = ["main"]\n+protected_branches = []\n*** End Patch` } })).toBeUndefined()
     })
 
-    it('denies what it cannot apply: an unmatched or ambiguous edit, text it was not given, unparseable TOML, or a shell write', () => {
+    it('denies what it cannot apply: an unmatched or ambiguous edit, text it was not given, unparseable TOML, or a shell command that can write it', () => {
         expect(edit('not in the file', 'x')).toBe('deny')
         expect(edit('"', "'")).toBe('deny')
         expect(edit('[work]', '[work')).toBe('deny')
         expect(decide({ tool_name: 'Edit', tool_input: { file_path: config } })).toBe('deny')
-        // A path or `node <script>` may spell the installed cockpit, but only cockpit's own --config
-        // operand is left to the guard's launcher proof; any other naming may be a writer under that
-        // spelling, and a session's command is judged as a command of its own.
+        // Only a command that can write the file is refused: a redirect onto it, a writer, an in-place
+        // editor, a program spelled `git` that is not the search path's, or any program given a write
+        // option, wrapped or not and whichever cockpit session runs it.
         for (const command of [`sed -i '' 's/person/agent/' ${config}`, `printf x >> ${config}`, `cp other.toml ${config}`,
-            `/usr/bin/sed -i 's/reset = "person"/reset = "agent"/' cockpit.toml`, '/bin/cp other.toml cockpit.toml', 'node /tmp/w.js cockpit.toml',
+            `/usr/bin/sed -i 's/reset = "person"/reset = "agent"/' cockpit.toml`, '/bin/cp other.toml cockpit.toml', 'mv cockpit.toml old.toml',
+            "perl -pi -e 's/person/agent/' cockpit.toml", 'echo x | tee cockpit.toml', 'git checkout -- cockpit.toml', './git add cockpit.toml',
+            "timeout 5 sed -i 's/person/agent/' cockpit.toml", 'sort -o cockpit.toml other.toml', 'node /tmp/w.js --out=cockpit.toml',
+            'node /tmp/w.js --output cockpit.toml', 'prettier --write cockpit.toml', 'cat other.toml > cockpit.toml',
             "npx --no cockpit session --config cockpit.toml -- sed -i '' 's/person/agent/' cockpit.toml",
             'npx --no cockpit session --config cockpit.toml -- npx --no cockpit session -- cp other.toml cockpit.toml',
-            'node /tmp/w.js --out=cockpit.toml', './git add cockpit.toml',
-            // Exec's command is judged on its own, and in the container no spelling proves a reader or cockpit.
-            'npx --no cockpit exec --service app -- tool --config cockpit.toml', 'npx --no cockpit exec --service app -- tool --config=cockpit.toml',
-            'npx --no cockpit exec --service app -- cat cockpit.toml']) {
+            "npx --no cockpit exec --service app -- sed -i 's/person/agent/' cockpit.toml"]) {
             expect(decide({ tool_name: 'Bash', tool_input: { command } }), command).toBe('deny')
         }
+        const parsed = parseGuardInput({ hook_event_name: 'PreToolUse', cwd: root, tool_name: 'Bash', tool_input: { command: 'mv cockpit.toml old.toml' } })
+        if (parsed.status !== 'parsed') throw new Error(parsed.reason)
+        expect(pinnedPolicyDenial(parsed, current, path => path === config)?.reason).toMatch(/^Refusing a shell command that can write the cockpit configuration/)
+        // Reading it, under any program or launcher spelling, changes nothing.
         for (const command of [`cat ${config}`, `git add ${config}`, 'git -C . diff -- cockpit.toml', 'printf x > notes.txt',
+            'diff cockpit.toml other.toml', 'sort cockpit.toml', 'pnpm exec cockpit check --config cockpit.toml',
+            '/usr/local/bin/node ./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml', 'node /tmp/w.js cockpit.toml',
             'npx --no cockpit sync --config cockpit.toml', './node_modules/.bin/cockpit check --config=cockpit.toml',
-            'npx --no cockpit session --config cockpit.toml -- cat cockpit.toml']) {
+            'npx --no cockpit session --config cockpit.toml -- cat cockpit.toml', 'npx --no cockpit exec --service app -- cat cockpit.toml']) {
             expect(decide({ tool_name: 'Bash', tool_input: { command } }), command).toBeUndefined()
         }
         // A hard link or another spelling of the configuration is the configuration.

@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util'
 import { decide, policyWeakening, policyWeakeningDiagnostic, POLICY_RECORD_PATH, weakeningDigest, writeRecordedPolicy, type EffectivePolicy, type PolicyWeakening } from '../autonomy.js'
 import { loadAutonomyPolicy } from '../config/load.js'
+import { guardWideningUnconfirmedDiagnostic, observeGuardConfigChange } from '../guards/policy-change.js'
 import type { Decider } from '../schema.js'
 import { ENVIRONMENT_CODES, type Diagnostic } from './contract.js'
 import { EXIT_CODES } from '../invocation.js'
@@ -23,8 +24,13 @@ interface OperatorAdmission {
     readonly apply?: boolean
 }
 
-/** The autonomy policy a gated command reads, or the refusal that it could not be read. */
-type OperatorPolicy = Readonly<{ current: EffectivePolicy; recorded?: EffectivePolicy; record: () => Promise<void> }>
+/**
+ * The autonomy policy a gated command reads, or the refusal that it could not be read. `widened` names
+ * the fields by which cockpit.toml widens the guards this machine was generated from, and binds the
+ * exact configuration bytes a confirmation of them covers.
+ */
+type OperatorPolicy = Readonly<{ current: EffectivePolicy; recorded?: EffectivePolicy; record: () => Promise<void>
+    widened?: Readonly<{ fields: readonly string[]; configSha256: string }> }>
 
 interface OperatorCommandOutcome {
     readonly status: number
@@ -54,7 +60,7 @@ interface SyncOperatorApplicationAdapters {
     readonly synchronize: (input: GeneratedEnvironmentSyncHandlerInput) => Promise<OperatorCommandOutcome>
     readonly confirmStaleRemoval: (request: GeneratedStaleRemovalApprovalRequest) => Promise<string | undefined>
     readonly policy: (configPath: string) => Promise<OperatorPolicy | OperatorCommandOutcome>
-    readonly confirmPolicyWeakening: (request: Readonly<{ weakened: readonly PolicyWeakening[]; digest: string }>) => Promise<string | undefined>
+    readonly confirmPolicyWeakening: (request: Readonly<{ weakened: readonly PolicyWeakening[]; widened: readonly string[]; digest: string }>) => Promise<string | undefined>
 }
 
 
@@ -64,7 +70,9 @@ const isPolicy = (value: OperatorPolicy | OperatorCommandOutcome): value is Oper
 export async function loadOperatorPolicy(configPath: string): Promise<OperatorPolicy | OperatorCommandOutcome> {
     const loaded = await loadAutonomyPolicy(configPath)
     if ('refusal' in loaded) return { status: 2, result: null, diagnostics: [loaded.refusal] }
-    return { current: loaded.current, ...loaded.recorded ? { recorded: loaded.recorded } : {}, record: () => writeRecordedPolicy(loaded.root, loaded.current) }
+    const change = await observeGuardConfigChange(loaded.root, loaded.source)
+    return { current: loaded.current, ...loaded.recorded ? { recorded: loaded.recorded } : {}, record: () => writeRecordedPolicy(loaded.root, loaded.current),
+        ...change?.kind === 'widening' ? { widened: { fields: change.fields, configSha256: loaded.source.sha256 } } : {} }
 }
 
 /** Why `decider` does not let this run pass the decision, as the refusal a command returns, or undefined when it does. */
@@ -208,8 +216,12 @@ function previewedStaleRemoval(outcome: OperatorCommandOutcome):
     return { state: 'stale', request: candidate as GeneratedStaleRemovalApprovalRequest }
 }
 
-// The one place sync's decision lives: who may write, whether a weakened policy was accepted, and
-// whether stale generated files go without a person. A dry run writes nothing and passes untouched.
+// The one place sync's decision lives: who may write, whether a weakened policy or a widened guard was
+// accepted, and whether stale generated files go without a person. A dry run writes nothing and passes
+// untouched. The guard refuses an agent's sync while an edit widens it only where it proves the call
+// starts cockpit; a package script, a package manager's exec or node with flags start it too, so the
+// widening waits for a yes at a terminal here, whatever started sync. That is a bar, not a proof of a
+// person: an agent that allocates a pseudo-terminal can answer the prompt as it can any --interactive one.
 export async function runSyncOperatorApplication(
     input: GeneratedEnvironmentCommandInput & Readonly<{ dryRun?: boolean }>,
     admission: OperatorAdmission,
@@ -228,31 +240,38 @@ export async function runSyncOperatorApplication(
         const refused = autonomyRefusal('sync', 'ci', admission)
         if (refused) return refused
     }
-    const reviewedPolicy = JSON.stringify([policy.current, policy.recorded])
+    const reviewedPolicy = JSON.stringify([policy.current, policy.recorded, policy.widened])
     const revalidatePolicy = async (): Promise<OperatorCommandOutcome | undefined> => {
         const latest = await adapters.policy(input.configPath)
         if (!isPolicy(latest)) return latest
-        if (JSON.stringify([latest.current, latest.recorded]) !== reviewedPolicy) {
+        if (JSON.stringify([latest.current, latest.recorded, latest.widened]) !== reviewedPolicy) {
             return refusal('POLICY_WEAKENING_UNCONFIRMED', 'policy changed during review; nothing was written; review a fresh sync preview', 'autonomy')
         }
         return undefined
     }
     const weakened = policy.recorded ? policyWeakening(policy.recorded, policy.current) : []
-    if (weakened.length) {
-        const digest = weakeningDigest(policy.recorded!, policy.current)
-        if (!admission.interactive) return weakeningRefusal(weakened, 'nothing was written', { weakened, digest })
-        if (await adapters.confirmPolicyWeakening({ weakened, digest }) !== digest) {
-            return refusal('POLICY_WEAKENING_UNCONFIRMED', 'the displayed policy weakening was not approved; nothing was written', 'autonomy')
+    const widened = policy.widened
+    if (weakened.length || widened) {
+        const digest = weakeningDigest(policy.recorded, policy.current, widened)
+        if (!admission.interactive) {
+            return { status: 2, result: { weakened, ...widened ? { widened: widened.fields } : {}, digest },
+                diagnostics: [...weakened.length ? weakeningRefusal(weakened, 'nothing was written').diagnostics : [],
+                    ...widened ? [guardWideningUnconfirmedDiagnostic(widened.fields, input.configPath)] : []] }
+        }
+        if (await adapters.confirmPolicyWeakening({ weakened, widened: widened?.fields ?? [], digest }) !== digest) {
+            return refusal('POLICY_WEAKENING_UNCONFIRMED', 'the displayed policy change was not approved; nothing was written', 'autonomy')
         }
         const changed = await revalidatePolicy()
         if (changed) return changed
     }
+    // The team sync publishes a widening only as exactly the bytes the person confirmed.
+    const applied = widened ? { ...input, guardWidening: { configSha256: widened.configSha256 } } : input
     // Stale removal an agent may take is approved for exactly the entries this sync computes.
     const staleByPolicy = decide(policy.current.autonomy.stale_delete, { CI: admission.ci }) === 'proceed'
     const approveAll = async (request: GeneratedStaleRemovalApprovalRequest) => ({ format: 'cockpit-stale-removal-approval/v1' as const, digest: request.digest })
     let outcome: OperatorCommandOutcome
     if (!admission.interactive || staleByPolicy) {
-        outcome = await adapters.synchronize({ ...input, ...staleByPolicy ? { authorizeStaleRemoval: approveAll } : {} })
+        outcome = await adapters.synchronize({ ...applied, ...staleByPolicy ? { authorizeStaleRemoval: approveAll } : {} })
     } else {
         const preview = await adapters.synchronize({ ...input, dryRun: true })
         if (preview.status !== 0) return preview
@@ -260,7 +279,7 @@ export async function runSyncOperatorApplication(
         if (inspected.state === 'invalid') {
             return refusal('CLI_INTERNAL_ERROR', 'interactive sync received an invalid dry-run result', 'sync')
         }
-        if (inspected.state === 'none') outcome = await adapters.synchronize(input)
+        if (inspected.state === 'none') outcome = await adapters.synchronize(applied)
         else {
             const typedDigest = await adapters.confirmStaleRemoval(inspected.request)
             if (typedDigest !== inspected.request.digest) {
@@ -270,7 +289,7 @@ export async function runSyncOperatorApplication(
             if (changed) return changed
             const previewBytes = JSON.stringify(inspected.request)
             outcome = await adapters.synchronize({
-                ...input,
+                ...applied,
                 authorizeStaleRemoval: async (request) => request.digest === inspected.request.digest
                     && JSON.stringify(request) === previewBytes
                     ? { format: 'cockpit-stale-removal-approval/v1', digest: request.digest }

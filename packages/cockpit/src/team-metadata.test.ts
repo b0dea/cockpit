@@ -171,7 +171,7 @@ purpose = "Synthetic local repository"
         await mkdir(join(root, '.cockpit'))
         // The guard was installed under the Node running this command unless a case says otherwise.
         const node = await realpath(process.execPath)
-        const identity = { ...Object.fromEntries(['root', 'rootDevice', 'rootInode', 'configPath', 'configSha256', 'configDevice', 'configInode',
+        const identity = { ...Object.fromEntries(['root', 'rootInode', 'configPath', 'configSha256', 'configInode',
             'nodeFingerprint', 'moduleSha256'].map(key => [key, 'synthetic'])), node, nodeSha256: createHash('sha256').update(await readFile(node)).digest('hex') }
         const bind = (module: string, nodePath = identity.node, nodeSha256 = identity.nodeSha256) => writeCockpitLocalFiles(root, [{ name: 'guard-identity',
             bytes: encodeGuardLocalIdentity({ ...identity, module, node: nodePath, nodeSha256 } as never) }])

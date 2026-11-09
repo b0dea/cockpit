@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { chmod, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { basename, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { createSelftestFixture } from '../../test-support/selftest-fixture.js'
@@ -338,6 +339,51 @@ else process.stdout.write(JSON.stringify([
             && record.reason === 'authentication_required')).toBe(true)
         expect(unrelated).not.toHaveBeenCalled()
         expect(execute).not.toHaveBeenCalled()
+    }, 180_000)
+
+    it('runs from one command: writes fresh probe specifications into the ignored probe directory and asks for the same approval', async () => {
+        const { root, configPath } = fixture()
+        // No tool on PATH, so every cell is pending and the run is quick; the flow is what is measured.
+        const emptyBin = join(root, 'empty-bin')
+        await mkdir(emptyBin, { recursive: true })
+        const probes = join(root, '.cockpit/local/probes')
+        const approvals: SurfaceSelftestProbeSpecificationsCandidate[] = []
+        const run = async (args: readonly string[], approve: boolean) => {
+            const output: string[] = []
+            const status = await runCli(['selftest', '--config', configPath, ...args], {
+                stdout: { write: (chunk: string) => output.push(chunk) > 0 }, stderr: { write: (chunk: string) => output.push(chunk) > 0 },
+                confirmSelftestProbeSpecifications: async candidate => { approvals.push(candidate); return approve ? candidate.sha256 : undefined },
+                confirmSelftestExecutable: async candidate => candidate.sha256,
+            }, {}, { env: { PATH: emptyBin } })
+            return { status, output: output.join('') }
+        }
+        const written = async () => (await readdir(probes).catch(() => [])).filter(name => name.startsWith('probe-specifications-'))
+
+        // Without a person at a terminal nothing is written and nothing runs.
+        expect((await run([], true)).status).toBe(2)
+        expect((await run(['--interactive', '--json'], true)).status).toBe(2)
+        expect(approvals).toEqual([])
+        expect(await written()).toEqual([])
+
+        const first = await run(['--interactive'], true)
+        expect(first.status, first.output).toBe(0)
+        expect(first.output).toMatch(/Selftest incomplete: 0 measured, \d+ pending\./)
+        expect(approvals).toHaveLength(1)
+        const [approved] = approvals
+        expect(approved!.canonicalPath.startsWith(`${probes}/probe-specifications-`)).toBe(true)
+        const bytes = await readFile(approved!.canonicalPath)
+        expect(createHash('sha256').update(bytes).digest('hex')).toBe(approved!.sha256)
+        expect(JSON.parse(bytes.toString('utf8'))).toMatchObject({ schema: 'cockpit-selftest-probe-specifications/v1' })
+        expect((await stat(approved!.canonicalPath)).mode & 0o777).toBe(0o600)
+        // sync makes .cockpit/local ignore itself, so the file never reaches a commit.
+        expect(await readFile(join(root, '.cockpit/local/.gitignore'), 'utf8')).toMatch(/^\*$/m)
+
+        // Each run writes its own file instead of reusing one that may have gone stale; a declined one is not kept.
+        expect((await run(['--interactive'], false)).status).toBe(2)
+        expect(approvals).toHaveLength(2)
+        expect(approvals[1]!.canonicalPath).not.toBe(approved!.canonicalPath)
+        expect(existsSync(approvals[1]!.canonicalPath)).toBe(false)
+        expect(await written()).toEqual([basename(approved!.canonicalPath)])
     }, 180_000)
 
     it('refuses absent, malformed and mismatched probe artifacts before executing a probe', async () => {

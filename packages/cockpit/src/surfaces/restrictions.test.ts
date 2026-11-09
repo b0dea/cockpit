@@ -112,7 +112,8 @@ async function input(overrides: Partial<RestrictionExpansionInput> = {}): Promis
             return { slug: `repo-${index}`, dir: relative(dirname(canonical), path), mount: 'always', acquire: 'none', var: `REPO_${index}_DIR`, purpose: 'Synthetic checkout',
                 ...(files.length ? { environment_files: files } : {}) }
         }),
-        guards: { hosted_db_hosts: [...value.policy.hosted_db_hosts], protected_branches: [...value.policy.protected_branches] },
+        // These cases pin how a prompt reaches each harness, so they run the strict mode, where unclassified commands ask.
+        guards: { default: 'ask', hosted_db_hosts: [...value.policy.hosted_db_hosts], protected_branches: [...value.policy.protected_branches] },
         ports: { bases: { APP_PORT: 4100 } },
     })
     const configPath = join(canonical, 'cockpit.toml')
@@ -122,8 +123,8 @@ async function input(overrides: Partial<RestrictionExpansionInput> = {}): Promis
     const rootStat = lstatSync(canonical)
     const configStat = lstatSync(configPath)
     const hash = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex')
-    const handler = { root: canonical, rootDevice: String(rootStat.dev), rootInode: String(rootStat.ino), configPath,
-        configDevice: String(configStat.dev), configInode: String(configStat.ino), configSha256: hash(configPath),
+    const handler = { root: canonical, rootInode: String(rootStat.ino), configPath,
+        configInode: String(configStat.ino), configSha256: hash(configPath),
         node, nodeSha256: hash(node), nodeFingerprint: fileFingerprint(node, lstatSync(node)), module, moduleSha256: hash(module) }
     pendingContext = { root: canonical, alias, api, source, configPath, handler }
     return { ...value, canonicalProjectRoot: canonical, allowedProjectRoots: roots, instances }
@@ -434,9 +435,12 @@ describe('restriction expansion', () => {
         const result = complete(expandRestrictions(await input({ canonicalProjectRoot: directory })))
         await mkdir(join(directory, '.cockpit', 'guards'), { recursive: true })
         for (const name of ['claudecode', 'codexcli'] as const) {
-            const command = (JSON.parse(target(result, name).files[0]!.bytes) as {
-                hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> }
-            }).hooks.PreToolUse[0]!.hooks[0]!.command
+            const hook = (JSON.parse(target(result, name).files[0]!.bytes) as {
+                hooks: { PreToolUse: Array<{ hooks: Array<{ command: string; timeout?: unknown }> }> }
+            }).hooks.PreToolUse[0]!.hooks[0]!
+            const command = hook.command
+            // Both harnesses read the hook's timeout in seconds; cockpit states it rather than inheriting each default.
+            expect(hook.timeout, name).toBe(30)
             // A guard that cannot load its handler exits 1; a killed one 137. Exit 2 keeps its own reason.
             for (const [exit, status, stderr] of [[1, 2, 'cockpit guard failed (exit 1)\n'], [137, 2, 'cockpit guard failed (exit 137)\n'], [2, 2, 'refused\n'], [0, 0, '']] as const) {
                 await writeFile(join(directory, result.sharedGuard.path), exit === 2 ? "printf 'refused\\n' >&2; exit 2\n" : `exit ${exit}\n`)

@@ -81,6 +81,13 @@ describe('public generated repair', () => {
 
 })
 
+
+// Switches a fixture's guard to the strict mode, where only exact profiles and grants run unprompted.
+async function strictGuard(configPath: string): Promise<void> {
+    const text = await readFile(configPath, 'utf8')
+    await writeFile(configPath, /^\[guards\]$/m.test(text) ? text.replace(/^\[guards\]$/m, '[guards]\ndefault = "ask"') : `${text}\n[guards]\ndefault = "ask"\n`)
+}
+
 it('prepares canonical currentness with genuine producer facts and no wall-clock field', async () => {
     const { root, configPath } = await composeConsumer('producer-currentness')
     const first = '2026-10-22T12:00:00.000Z'
@@ -406,6 +413,8 @@ it('consumes vendor and exact build/test authority through installed hook regist
     const { root, configPath } = await surfaceConsumer('installed-authority')
     expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
     await writeFile(join(root, 'app/package-lock.json'), '{}')
+    // Exact build and test tuples are what the strict mode admits; the allow default runs any spelling.
+    await strictGuard(configPath)
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
     const registered = async (path: string) => JSON.parse(await readFile(join(root, path), 'utf8')).hooks.PreToolUse
         .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('bash-guard.sh')).command as string
@@ -451,9 +460,12 @@ it('consumes vendor and exact build/test authority through installed hook regist
     const original = await readFile(configPath, 'utf8')
     await writeFile(configPath, original.replace('api.vendor.example.test', 'replacement.vendor.example.test')
         .replace('build = [ "npm", "run", "build" ]\n', '').replace('"unit.test.ts" ]', '"other.test.ts" ]'))
-    const held = invoke('npm run build')
-    expect(held).toMatchObject({ status: 2, stdout: '', stderr: expect.stringContaining('@b00dea/cockpit is not installed or is incomplete') })
-    expect(held.stderr).not.toContain('sync --config')
+    // That edit widens (a vendor host is gone), so it is not applied: calls are judged under the
+    // configuration last synced, and a refusal says a person must sync it.
+    expect(invoke('npm run build')).toMatchObject({ status: 0, stdout: '', stderr: '' })
+    const pending = invoke('curl https://api.vendor.example.test/messages')
+    expect(pending.stdout).toContain('permissionDecision":"deny')
+    expect(pending.stdout).toContain('has an unapproved edit that widens what agents may do')
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
     expect(invoke('npm run build').stdout).toContain('permissionDecision":"ask')
     expect(invoke('npm test -- unit.test.ts').stdout).toContain('permissionDecision":"ask')
@@ -476,6 +488,8 @@ native_hooks = { install = "inspect" }
 ` })
     expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
     await writeFile(join(root, 'app/package-lock.json'), '{}')
+    // Which spellings prove the installed cockpit shows in the strict mode, where an unproven one asks.
+    await strictGuard(configPath)
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
     const hook = (JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8')).hooks.PreToolUse
         .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('bash-guard.sh')).command) as string
@@ -525,12 +539,13 @@ native_hooks = { install = "inspect" }
         expect(decision(command), command).toBe('ask')
     }
     expect(decision('npx --no cockpit session --config cockpit.toml -- curl https://api.vendor.example.test/messages')).toBe('deny')
-    // A launcher spelling admits cockpit's own --config operand only; naming the configuration any
-    // other way, directly or as a session's command, is the policy pin's hard denial.
+    // Writing the configuration, directly or as a session's command, is the policy pin's hard denial.
     for (const command of [`/usr/bin/sed -i 's/sync = "person"/sync = "agent"/' cockpit.toml`, '/bin/cp app/package-lock.json cockpit.toml',
-        'node /tmp/w.js cockpit.toml', "npx --no cockpit session --config cockpit.toml -- sed -i '' 's/person/agent/' cockpit.toml"]) {
+        "npx --no cockpit session --config cockpit.toml -- sed -i '' 's/person/agent/' cockpit.toml"]) {
         expect(decision(command), command).toBe('deny')
     }
+    // A program that only names it is not the pin's to refuse; the strict mode asks about the program.
+    expect(decision('node /tmp/w.js cockpit.toml')).toBe('ask')
     // Bare cockpit counts only when the command search path finds the installed package.
     expect(decision('cockpit check --config cockpit.toml')).toBe('ask')
     expect(decision('cockpit check --config cockpit.toml', root, `${dirname(bin)}:${basePath}`)).toBe('allow')

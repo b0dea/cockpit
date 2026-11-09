@@ -51,7 +51,7 @@ const COMMON_REFUSAL_GUIDANCE: Readonly<Record<string, Readonly<{ why: string; f
     }),
     PORT_FAMILY_COLLISION: Object.freeze({
         why: 'one or more ports selected for this stack are already in use',
-        fix: 'stop the named listener or release the inactive stack, then retry',
+        fix: 'stop the named listener or release the inactive stack, then retry; a host process meant to serve a leased port must be started by the cockpit session holding the stack',
     }),
     PORT_LEASE_EXHAUSTED: Object.freeze({
         why: 'every declared port family is leased or occupied',

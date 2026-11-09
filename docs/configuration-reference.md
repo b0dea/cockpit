@@ -38,6 +38,7 @@ The values cockpit uses for a key the configuration leaves out.
     "allow": [],
     "deny": [],
     "read_paths": [],
+    "default": "allow",
     "external_reads": "grant"
   },
   "mcp": {
@@ -165,10 +166,11 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `hosted_db_hosts` | Hosted database host names the guards keep agents away from. | array of string | `[]` | at most 128 items; each item: pattern [P3](#patterns) |
 | `vendor_endpoint_hosts` | Real vendor endpoint host names the guards keep agents away from. | array of string | `[]` | at most 128 items; each item: pattern [P3](#patterns) |
 | `protected_branches` | Branches the guards keep agents from pushing to or rewriting. | array of string | `["main","master"]` |  |
-| `allow` | Commands allowed in addition to the built-in rules. | array of table: [`[[guards.allow]]`](#guardsallow) | `[]` | at most 64 items |
+| `allow` | Exceptions that admit a command the guard would otherwise ask about, such as a program it does not know or inline interpreter code; an entry never admits a blocked command, such as a secret read, a write outside the cockpit, a protected-branch or force push, or a change to the guard. | array of table: [`[[guards.allow]]`](#guardsallow) | `[]` | at most 64 items |
 | `deny` | Commands refused in addition to the built-in rules. | array of table, one of: [`[[guards.deny]]` form 1](#guardsdeny-form-1), [`[[guards.deny]]` form 2](#guardsdeny-form-2) | `[]` | at most 64 items |
 | `read_paths` | Files and directories outside the cockpit whose named files agents may read, list and search; never written, searched recursively or used as a working directory. | array of table: [`[[guards.read_paths]]`](#guardsread_paths) | `[]` | at most 64 items |
-| `external_reads` | Who admits a shell read of a named file outside the cockpit: grant needs its complete command under allow; native leaves it to the agent tool's own permissions. Secret names, recursive searches and writes stay guarded either way. | string | `"grant"` | one of `"grant"`, `"native"` |
+| `default` | What the guard does with a shell command outside its blocked list: allow runs a command whose executable is a development tool it knows, a project program inside the roots and package scripts, and asks about an unknown program or inline interpreter code, which a person approves or admits with an allow entry; ask is the strict mode, which admits only the read-only commands the guard classifies, declared build and test commands and allow entries, and asks for every other command. Secrets, writes outside the cockpit, protected branches and force pushes, declared hosts, the guard itself and privilege escalation are refused in both modes. | string | `"allow"` | one of `"allow"`, `"ask"` |
+| `external_reads` | Who admits a shell read outside the cockpit, of a named file or by a read-only Git command run alone in another repository: grant needs its complete command under allow; native leaves it to the agent tool's own permissions. Secret names, recursive searches and writes stay guarded either way. | string | `"grant"` | one of `"grant"`, `"native"` |
 
 ### `[[guards.allow]]`
 
@@ -646,6 +648,6 @@ Agent tools load every skill's frontmatter into each session and its entry point
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 12 | `packages/cockpit/surfaces/skills/procedures/fix.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 9 | `packages/cockpit/surfaces/skills/procedures/work.md` |
 
-Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `30c4d8119d69a82ce147bc72a00ffd711a4ebf6ef0f29324d8b6d55b78cd5777`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `ac8cb6fdfdbf10d0c49b6646aabd8918b4cbff23a1a7efea22e573bf9154fe62`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `49537028a511610580f1f0817d1eaef8375ba8ca55c4331dff2e6389d336b064`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `612a5c52ebcba1dd8ffc7c904e2a3a8e69d8f1f65d4623401d21ad63edb00d7c`).
+Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `082371dfc0031c9d9243acfcc7bc4c9a59e1306af8828203f6119dba94adb4a5`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `b773dcb3fa3ec3b9edcb079edaf2ac004fd4ecea7fdec9dbed6d86d4495c33a9`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `26aceeaf0cf347a833e33f29bb8bed5a7059269f2a1150779ae355c62c6ff4ea`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `f57503670c90ffabb61ba35e8303e99b134533f1949a8969ab662ba1357442dc`).
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.

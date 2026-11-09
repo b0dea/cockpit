@@ -63,6 +63,10 @@ describe('surface selftest command', () => {
             expect(await runCli(['selftest', '--config', configPath, '--write-probe-specifications', draftPath], io)).toBe(2)
             expect(output.join('')).toContain('OUTPUT_EXISTS')
             expect(await readFile(draftPath, 'utf8')).toBe('filled\n')
+            // The refusal names the explicit option that replaces a person's own file.
+            expect(output.join('')).toMatch(/OUTPUT_EXISTS[^\n]*--write-probe-specifications <file> --replace/)
+            expect(await runCli(['selftest', '--config', configPath, '--write-probe-specifications', draftPath, '--replace'], io), output.join('')).toBe(0)
+            expect(JSON.parse(await readFile(draftPath, 'utf8'))).toMatchObject({ schema: 'cockpit-selftest-probe-specifications/v1' })
         } finally { await rm(draftPath, { force: true }) }
 
         const bin = await fakeHarnesses(root)

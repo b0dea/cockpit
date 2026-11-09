@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { constants, lstatSync } from 'node:fs'
@@ -618,6 +619,33 @@ async function prepareExecutionPlan(plan: ExecutionPlan): Promise<PreparationRes
     }
 }
 
+// Each step runs detached in its own process group, which the end of this process leaves running. A
+// caller that must stop by a deadline, whatever owner it is waiting on (the guard, before its harness
+// gives up on the hook), scopes its work to a signal: every step that work starts, at any depth, ends
+// with it and none starts after. Compensation is not scoped; it undoes what already ran.
+const executionScope = new AsyncLocalStorage<AbortSignal>()
+
+export function withExecutionSignal<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
+    return executionScope.run(signal, work)
+}
+
+/**
+ * `work`'s answer, or `expired`'s once `deadline` (a time on the performance clock, which starts with
+ * this process) passes first; then every step the work started ends and none starts after.
+ */
+export async function runUntilDeadline<T>(deadline: number, work: () => Promise<T>, expired: () => T): Promise<T> {
+    const stop = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const late = new Promise<T>(resolve => { timer = setTimeout(() => { stop.abort(); resolve(expired()) }, Math.max(0, deadline - performance.now())) })
+    try { return await Promise.race([withExecutionSignal(stop.signal, work), late]) }
+    finally { clearTimeout(timer) }
+}
+
+function scopedSignal(signal: AbortSignal | undefined): AbortSignal | undefined {
+    const scoped = executionScope.getStore()
+    return scoped && signal ? AbortSignal.any([scoped, signal]) : scoped ?? signal
+}
+
 async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promise<InternalStepExecution> {
     const step = prepared.logical
     const beforeSpawnFailure = (failure: ExecutionFailureCode): InternalStepExecution => ({
@@ -1086,7 +1114,7 @@ export async function executeProbe(
     else {
         const prepared = preparation.plan
         const execution = prepared.steps.get(resolved)
-        observation = execution === undefined ? invalidStepExecution() : await executeStep(execution, signal)
+        observation = execution === undefined ? invalidStepExecution() : await executeStep(execution, scopedSignal(signal))
         if (observation.failure !== ENVIRONMENT_CODES.EXECUTION_TERMINATION_UNCONFIRMED
             && prepared.directory !== undefined && !await removePreparedDirectory(prepared.directory)) {
             observation.failure = ENVIRONMENT_CODES.EXECUTION_STAGING_CLEANUP_FAILED
@@ -1142,7 +1170,7 @@ export async function executePlan(plan: ExecutionPlan, options: { signal?: Abort
         const completed: StepExecution[] = []
         for (const step of resolvedPlan.steps) {
         const preparedStep = preparedPlan.steps.get(step)
-        const observation = preparedStep === undefined ? invalidStepExecution() : await executeStep(preparedStep, signal)
+        const observation = preparedStep === undefined ? invalidStepExecution() : await executeStep(preparedStep, scopedSignal(signal))
         if (!observation.failure) {
             const {
                 failure: _failure, started: _started, stdout: _stdout, stderr: _stderr, receipt: _receipt,
