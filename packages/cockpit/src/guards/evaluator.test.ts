@@ -1287,7 +1287,9 @@ describe('allow by default', () => {
         // Docker answers only for the image and container listings, and the version report; the rest can run, pull, publish or reach another daemon.
         ...['docker inspect web', 'docker container inspect web', 'docker exec web sh', 'docker run alpine true', 'docker pull alpine', 'docker build .', 'docker login', 'docker info',
             'docker context ls', 'docker -H tcp://host.example.test ps', 'docker --host=tcp://host.example.test ps', 'docker --context other image ls', 'docker -c other ps',
-            'DOCKER_HOST=tcp://host.example.test docker ps', 'env DOCKER_CONTEXT=other docker image ls', 'docker ps --no-trunc', 'docker image ls --unknown', 'docker compose ps',
+            'DOCKER_HOST=tcp://host.example.test docker ps', 'env DOCKER_CONTEXT=other docker image ls', 'docker ps --no-trunc',
+            // An exported variable reaches the docker call after it as a prefix assignment does.
+            'export DOCKER_HOST=tcp://host.example.test; docker ps', 'declare -x DOCKER_CONTEXT=other && docker image ls', 'DOCKER_CONFIG=/tmp/c; docker ps', 'docker image ls --unknown', 'docker compose ps',
             // An image's default and `.Config`-reaching output carries the Env a build baked in.
             'docker image inspect app:latest', "docker image inspect app:latest --format '{{json .Config.Env}}'", "docker image inspect app:latest --format '{{json .}}'",
             "docker image inspect app:latest --format '{{index . \"Config\"}}'", "docker image inspect app:latest -f '{{.ContainerConfig.Env}}'"]

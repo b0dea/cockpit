@@ -1293,10 +1293,11 @@ function gitProgramOption(git: GitInvocation): boolean {
 
 // Git's location and configuration variables point it at state or programs the guard does not inspect,
 // HOME and XDG_CONFIG_HOME choose the configuration that names hooks, hook managers' switches skip the
-// hooks, a relative PATH entry runs a file the agent wrote, and the agent tools' session markers are
-// how a person's terminal confirmation tells itself apart from an agent's.
+// hooks, a relative PATH entry runs a file the agent wrote, Docker's choose the daemon (any host, or
+// one reached over ssh) and the client configuration a known docker read uses, and the agent tools'
+// session markers are how a person's terminal confirmation tells itself apart from an agent's.
 function steers({ name, value }: { readonly name?: string; readonly value: string }): boolean {
-    return name === undefined || /^(?:GIT_.*|HOME|XDG_CONFIG_HOME|BASH_ENV|ENV|HUSKY.*|SKIP|LEFTHOOK.*|OVERCOMMIT_DISABLE|PRE_COMMIT_ALLOW_NO_CONFIG|CLAUDECODE|CODEX_THREAD_ID|OPENCODE)$/.test(name)
+    return name === undefined || /^(?:GIT_.*|DOCKER_.*|HOME|XDG_CONFIG_HOME|BASH_ENV|ENV|HUSKY.*|SKIP|LEFTHOOK.*|OVERCOMMIT_DISABLE|PRE_COMMIT_ALLOW_NO_CONFIG|CLAUDECODE|CODEX_THREAD_ID|OPENCODE)$/.test(name)
         || name === 'PATH' && value.split(':').some(entry => !entry.startsWith('/'))
 }
 
@@ -2251,13 +2252,13 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         }
         const prefixed = (invocation.words.filter((word) => word.role === 'environment-assignment-value') as ReadonlyArray<{ readonly value: string; readonly name?: string }>).find(steers)
         if (open && prefixed) holdBoundary(invocation, ask(prefixed.name === undefined ? 'An environment assignment the guard could not name requires human approval.'
-            : `${named(invocation)} sets ${prefixed.name}, which changes what Git, its hooks, the shell or the command search path runs. Run it without that assignment.`))
+            : `${named(invocation)} sets ${prefixed.name}, which changes what Git, its hooks, Docker, the shell or the command search path runs. Run it without that assignment.`))
         // Exported variables reach every later command in the call, so they steer it as a prefix assignment does.
         const program = posix.basename(invocation.executable ?? '')
         if (['export', 'declare', 'typeset', 'readonly', 'local'].includes(program)) {
             const exported = invocation.argv.filter(arg => /^[A-Za-z_][A-Za-z0-9_]*=/.test(arg)).map(arg => ({ name: arg.slice(0, arg.indexOf('=')), value: arg.slice(arg.indexOf('=') + 1) }))
             const steered = exported.find(steers)
-            if (steered) holdBoundary(invocation, ask(`${named(invocation)} sets ${steered.name}, which changes what Git, its hooks, the shell or the command search path runs for the rest of the call. Run it without that assignment.`))
+            if (steered) holdBoundary(invocation, ask(`${named(invocation)} sets ${steered.name}, which changes what Git, its hooks, Docker, the shell or the command search path runs for the rest of the call. Run it without that assignment.`))
         }
         // Removing a session marker, or every variable with `env -i`, hides that an agent runs what follows.
         const marker = (word: string) => /^(?:CLAUDECODE|CODEX_THREAD_ID|OPENCODE)$/.test(word)

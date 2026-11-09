@@ -14,7 +14,7 @@ interpreters running project files (`node`, `python3`, `ruby`) and build and tes
 (`gofmt`, `golangci-lint`, `shellcheck`, `rspec`, `rake`, `pre-commit`, and `bundle exec`, which is followed to the
 program it runs); `docker` for its read-only queries only (`image ls`, `images`, `ps`, `container ls`, `version`, and
 `image inspect` with a `--format` template that reads only the image's identity, never `.Config` or `Env`; a global option such as `-H` or
-`--context`, a `DOCKER_*` variable, `container inspect`, `exec`, `run`, `compose` and every other subcommand ask); `rustup`, for its read verbs only; `lsof`, `pkill` and `kill`, which signals a
+`--context`, a `DOCKER_*` variable set or exported anywhere in the call, `container inspect`, `exec`, `run`, `compose` and every other subcommand ask); `rustup`, for its read verbs only; `lsof`, `pkill` and `kill`, which signals a
 process id of 2 or more or a `%job`, never every process or a process group; shells; read and text
 utilities (`cat`, `rg`, `find`, `jq`, `awk`, `sed`); file utilities, judged as writes inside the roots
 (`mkdir`, `cp`, `mv`, `rm`, `tee`); archive and sync tools (`tar`, `zip`, `rsync`); `curl` and `wget`;
@@ -33,8 +33,8 @@ that matches one, is still held. In practice an agent works freely inside the co
 such as `add`, `commit`, `merge`, `rebase`, `switch`, `stash`, `fetch`, `pull` and pushes to work
 branches, builds, tests, package scripts, `gh` queries and pull requests.
 
-Two kinds of command ask instead. A program the guard does not know (`kubectl`, `ssh`, `docker`,
-`psql`, `perl`, an unlisted tool fetched by `npx`) asks, and so does inline code the guard cannot read:
+Two kinds of command ask instead. A program the guard does not know (`kubectl`, `ssh`, `docker`
+beyond its read-only listings, `psql`, `perl`, an unlisted tool fetched by `npx`) asks, and so does inline code the guard cannot read:
 
 - an interpreter's `-c` or `-e`, including after option values (`python3 -X utf8 -c`,
   `node -r ./x.js -e`), and `deno eval`;
