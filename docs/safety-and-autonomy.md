@@ -639,7 +639,9 @@ naming the configured `cockpit.toml`; `check`, `doctor` and help also count from
 spelling counts only where the guard proves it starts its own installed package:
 
 - the installed entrypoint `./node_modules/@b00dea/cockpit/bin/cockpit.mjs`, a `.bin` symlink, or a
-  path given to `node` must resolve to it;
+  path given to `node` must resolve to it. `node` is bare, or the absolute path of the `node` in a
+  directory the agent's command search path names, spelled as that entry spells it, such as
+  `/opt/homebrew/bin/node` when `/opt/homebrew/bin` is on its `PATH`;
 - bare `cockpit` must be what the command search path finds first;
 - the npx spellings must run from the cockpit root with no root `.npmrc` and no `bin` or
   `directories.bin` in the root `package.json`, because npm would otherwise run that program or

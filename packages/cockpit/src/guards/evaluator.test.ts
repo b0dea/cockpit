@@ -732,10 +732,11 @@ describe('built-in read-only profile', () => {
         // The application proves each spelling, with its exact launcher words, from one directory.
         const script = './node_modules/@b00dea/cockpit/bin/cockpit.mjs'
         const launched = () => ({ ...policy(), cockpitLaunchers: [candidate('cockpit', []), candidate('npx', ['--no', 'cockpit']),
-            candidate('npx', ['--no', '--', 'cockpit']), candidate('./node_modules/.bin/cockpit', []), candidate('node', [script])] })
+            candidate('npx', ['--no', '--', 'cockpit']), candidate('./node_modules/.bin/cockpit', []), candidate('node', [script]), candidate('/opt/homebrew/bin/node', [script])] })
         const decideLaunched = (command: string, configured = launched(), cwd = root) => evaluateGuard(parseGuardInput(shellPayload(command, cwd)), configured, inspect)
         for (const command of ['cockpit check', 'npx --no cockpit doctor --config cockpit.toml', 'npx --no cockpit check --json', 'npx --no -- cockpit --help',
-            'npx --no -- cockpit --version', 'npx --no cockpit session --help', 'npx --no cockpit work grade --help', './node_modules/.bin/cockpit check --config cockpit.toml', `node ${script} doctor`]) {
+            'npx --no -- cockpit --version', 'npx --no cockpit session --help', 'npx --no cockpit work grade --help', './node_modules/.bin/cockpit check --config cockpit.toml', `node ${script} doctor`,
+            `/opt/homebrew/bin/node ${script} doctor`]) {
             expect(decideLaunched(command), command).toEqual({ decision: 'allow', reason: expect.any(String) })
             expect(decideLaunched(command, { ...launched(), cockpitLaunchers: [] }).decision, command).toBe('ask')
         }
@@ -750,6 +751,7 @@ describe('built-in read-only profile', () => {
             'npx --no cockpit --script-shell=/bin/sh doctor', 'npx --no cockpit --help',
             // A proof covers its own script only, and node options run code before the script.
             'node ./other.mjs doctor', `node --require ./other.cjs ${script} doctor`,
+            '/opt/homebrew/bin/node ./other.mjs doctor', `/opt/homebrew/bin/node --require ./other.cjs ${script} doctor`, `/usr/local/bin/node ${script} doctor`,
             'npx --no cockpit sync --config cockpit.toml', './node_modules/.bin/cockpit sync --config cockpit.toml',
         ]) expect(decideLaunched(command).decision, command).not.toBe('allow')
         expect(decideLaunched('npx --no cockpit doctor', launched(), `${root}/src`).decision).toBe('ask')
