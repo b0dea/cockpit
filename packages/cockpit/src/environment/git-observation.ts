@@ -67,6 +67,9 @@ type GitObservationResult =
     | { readonly kind: 'unavailable'; readonly reason: string }
 
 const OUTPUT_LIMIT = 65_536
+// `git status` lists every changed and untracked file, so a checkout mid-migration needs the bound cockpit's other Git
+// listings use; past it the evidence is unavailable rather than read in part.
+const STATUS_OUTPUT_LIMIT = 16_777_216
 interface ObservationBinding {
     readonly stackId: StackId
     readonly source: string
@@ -109,7 +112,7 @@ export function createGitObservationStep(input: {
         cwd: input.checkoutRoot,
         env: Object.fromEntries(safeEnvironment),
         timeoutMs: input.timeoutMs,
-        stdoutLimitBytes: OUTPUT_LIMIT,
+        stdoutLimitBytes: STATUS_OUTPUT_LIMIT,
         stderrLimitBytes: OUTPUT_LIMIT,
         paths: [input.checkoutRoot],
         ports: [],
@@ -193,7 +196,7 @@ export function decodeGitObservation(
     bytes: Buffer,
     context: { readonly stackId: StackId; readonly observedAt: string; readonly source: string; readonly checkoutRoot: string },
 ): GitObservationResult {
-    if (bytes.byteLength > OUTPUT_LIMIT || !/^stack:[a-f0-9]{64}$/.test(context.stackId)
+    if (bytes.byteLength > STATUS_OUTPUT_LIMIT || !/^stack:[a-f0-9]{64}$/.test(context.stackId)
         || !isCanonicalTimestamp(context.observedAt) || typeof context.source !== 'string'
         || context.source.length === 0 || Buffer.byteLength(`${context.source}:working-tree`) > 1_024
         || Buffer.byteLength(`${context.source}:adjacency`) > 1_024 || /[\x00-\x1f\x7f]/.test(context.source)

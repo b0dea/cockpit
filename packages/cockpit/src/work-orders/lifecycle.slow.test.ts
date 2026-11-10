@@ -57,6 +57,7 @@ const fs = require('node:fs'); const argv = process.argv.slice(2)
 if (argv[0] === '--version') { process.stdout.write('claude 1.0.0\\n'); process.exit(0) }
 if (argv.at(-1) === '--help') { process.stdout.write('--print --output-format --json-schema --no-session-persistence --safe-mode --strict-mcp-config --tools --permission-mode --add-dir\\n'); process.exit(0) }
 const request = JSON.parse(fs.readFileSync(/request JSON at (\\S+) with SHA-256/.exec(argv.at(-1))[1], 'utf8'))
+fs.writeFileSync(__dirname + '/request.json', JSON.stringify(request))
 const verdict = fs.existsSync(__dirname + '/verdict') ? fs.readFileSync(__dirname + '/verdict', 'utf8').trim() : 'unclear'
 const evidence = verdict === 'met' ? [{ source: request.changes[0].path, quote: request.changes[0].diff }] : []
 const answer = { criteria: request.order.criteria.map(row => ({ id: row.id, verdict, note: 'synthetic: ' + row.text, evidence })) }
@@ -129,9 +130,16 @@ describe('work-order lifecycle', () => {
         expect(await work(root, ['work', 'check', '--work-order', 'WO-1'])).toMatchObject({ status: 0, result: { state: 'checked', results: [{ criterion: 'AC1', passed: true }] } })
 
         writeFileSync(join(root, 'README.md'), 'outside the scope\n')
+        // More changes outside scope than the record lists: the grade fails on all of them, and records the first ones and the count.
+        mkdirSync(join(root, 'docs'))
+        for (let at = 0; at < 513; at += 1) writeFileSync(join(root, `docs/page-${String(at).padStart(3, '0')}.md`), 'page\n')
         const outside = await work(root, ['work', 'grade', '--work-order', 'WO-1'])
-        expect(outside).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_GRADE_UNSATISFIED' }], result: { outOfScope: ['README.md'], state: 'accepted' } })
-        rmSync(join(root, 'README.md'))
+        expect(outside).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_GRADE_UNSATISFIED', message: expect.stringMatching(/changed outside scope: README\.md, docs\/page-000\.md, .* \(cut; 514 in all\)/) }],
+            result: { outOfScope: expect.arrayContaining(['README.md', 'docs/page-512.md']), state: 'accepted' } })
+        expect(outside.result?.outOfScope).toHaveLength(514)
+        expect(record(root, 'WO-1').grade).toMatchObject({ outOfScope: expect.arrayContaining(['README.md', 'docs/page-510.md']), outOfScopeTotal: 514 })
+        expect(record(root, 'WO-1').grade.outOfScope).toHaveLength(512)
+        rmSync(join(root, 'README.md')); rmSync(join(root, 'docs'), { recursive: true })
 
         // An edited contract is stale until its change is accepted, and adding a criterion is the amend gate's.
         writeFileSync(join(root, 'workorders/WO-1.md'), order('WO-1', '  - id: AC1\n    text: add(2, 3) returns 5.\n    check: [node, test/add.test.mjs]\n  - id: AC2\n    text: add is exported.\n    check: [node, test/add.test.mjs]'))
@@ -429,14 +437,31 @@ describe('work-order lifecycle', () => {
         const root = await cockpit('[work]\ngrading = "checks"\n\n[work.gates]\nacknowledge = "agent"')
         // A second test the order's check does not run, so only the protection can notice its loss.
         writeFileSync(join(root, 'test/extra.test.mjs'), "console.log('extra')\n")
-        git(root, 'add', '-A'); git(root, 'commit', '-qm', 'extra test')
+        const history = Array.from({ length: 400 }, (_, at) => `src/history/record-${String(at).padStart(4, '0')}-${'x'.repeat(150)}.md`)
+        mkdirSync(join(root, 'src/history'))
+        for (const path of history) writeFileSync(join(root, path), `${path}\n`)
+        mkdirSync(join(root, 'test/fixtures'))
+        writeFileSync(join(root, 'test/fixtures/data.txt'), 'before\n')
+        writeFileSync(join(root, 'test/moved.test.mjs'), "console.log('moved')\n")
+        writeFileSync(join(root, 'test/fixtures/image.bin'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x0a]))
+        git(root, 'add', '-A'); git(root, 'commit', '-qm', 'extra test and history')
         writeFileSync(join(root, 'workorders/WO-4.md'), order('WO-4'))
         expect((await work(root, ['work', 'accept', '--work-order', 'WO-4'])).status).toBe(0)
         expect(await work(root, ['work', 'grade', '--work-order', 'WO-4'])).toMatchObject({ status: 0, result: { state: 'graded', testProtection: { findings: [] } } })
 
+        // A large unrelated migration inside the order's scope: relocated history, a long fixture edit and many new files, each listing and
+        // the diff of the tests far past 64 KiB, with the deleted test ordered after all of it.
+        git(root, 'mv', 'src/history', 'src/archive')
+        writeFileSync(join(root, 'test/fixtures/data.txt'), 'after\n'.repeat(40_000))
+        // A binary fixture's bytes need not be UTF-8.
+        writeFileSync(join(root, 'test/fixtures/image.bin'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe, 0x0a]))
+        // A test moved out of the tests is judged as the pair Git reports, under its new name.
+        git(root, 'mv', 'test/moved.test.mjs', 'src/moved.mjs')
+        mkdirSync(join(root, 'src/notes'))
+        for (const path of history) writeFileSync(join(root, path.replace('src/history/', 'src/notes/')), 'note\n')
         rmSync(join(root, 'test/extra.test.mjs'))
         const weakened = await work(root, ['work', 'grade', '--work-order', 'WO-4'])
-        expect(weakened).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_TEST_WEAKENED', message: expect.stringContaining('test/extra.test.mjs: test-file-removed') }],
+        expect(weakened).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_TEST_WEAKENED', message: expect.stringMatching(/src\/moved\.mjs: test-file-removed.*test\/extra\.test\.mjs: test-file-removed/) }],
             result: { state: 'accepted', criteria: [{ id: 'AC1', verdict: 'met' }, { id: 'test-protection', verdict: 'unmet' }],
                 testProtection: { testFiles: expect.stringContaining('built-in') } } })
 
@@ -461,12 +486,15 @@ describe('work-order lifecycle', () => {
         expect((await work(root, later)).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
         expect(await work(root, ['work', 'grade', '--work-order', 'WO-4'])).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_TEST_WEAKENED',
             message: expect.stringContaining('test/later.test.mjs: test-skipped') }] })
+
     }, 120_000)
 
     it('has the evaluator judge changes outside scope, flagged test changes and an agent\'s rewording, and leaves a lowered bar and a capped order to whom the policy names', async () => {
         const root = await cockpit(['[work]', 'evaluators = ["claudecode"]', 'attempt_cap = 1', '', '[work.gates]', 'signoff = "person"', '', '[testing]', '', '[[testing.stages]]', 'id = "unit"',
             'command = ["node", "test/add.test.mjs"]', 'requires_stack = false', '', '[[testing.gates]]', 'id = "quick"', 'tier = "targeted"', 'stages = ["unit"]', 'changes = "any change"'].join('\n'))
         writeFileSync(join(root, 'test/extra.test.mjs'), "console.log('extra')\n")
+        writeFileSync(join(root, 'src/notes'), 'notes\n')
+        writeFileSync(join(root, 'src/kept.txt'), 'kept\n')
         git(root, 'add', '-A'); git(root, 'commit', '-qm', 'extra test')
         const tools = syntheticEvaluator()
         const env = { ...process.env, CLAUDECODE: undefined, CODEX_THREAD_ID: undefined, PATH: [tools, ...(process.env.PATH ?? '').split(':')].join(':') }
@@ -480,12 +508,26 @@ describe('work-order lifecycle', () => {
             before: 'add(2, 3) returns 5. [check: ["node","test/add.test.mjs"]]', after: 'add(2, 3) returns 5 for whole numbers. [check: ["node","test/add.test.mjs"]]' }] })])
 
         writeFileSync(join(root, 'README.md'), 'add sums two numbers\n')
+        writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => a + b\n// sums two numbers\n')
         rmSync(join(root, 'test/extra.test.mjs'))
         // Where a model grades, a test-run reports the weakening for the grade to judge instead of failing on it.
         expect(await run(['test-run', '--gate', 'quick', '--mode', 'canonical'])).toMatchObject({ status: 0, result: { testProtection: {
             orders: [{ id: 'WO-7', findings: [expect.stringContaining('test/extra.test.mjs: test-file-removed')] }], note: expect.stringContaining('test-changes-justified') } } })
+        // A deleted file whose name is now a directory holding a credential file: the file's own diff must not carry it.
+        rmSync(join(root, 'src/notes')); mkdirSync(join(root, 'src/notes')); writeFileSync(join(root, 'src/notes/.env'), 'SYNTHETIC_TOKEN=never-shown\n')
+        git(root, 'add', '-f', 'src/notes')
+        // Untracked but kept on disk: listed as deleted and as new, and the new row shows the file.
+        git(root, 'rm', '-q', '--cached', 'src/kept.txt')
         writeFileSync(join(tools, 'verdict'), 'met')
         const graded = await run(['work', 'grade', '--work-order', 'WO-7'])
+        // The evaluator reads each changed file's own diff, however cockpit read them.
+        const shown = Object.fromEntries((JSON.parse(readFileSync(join(tools, 'request.json'), 'utf8')).changes as { path: string; diff: string }[]).map(row => [row.path, row.diff]))
+        expect(shown['src/add.mjs']).toMatch(/^diff --git a\/src\/add\.mjs b\/src\/add\.mjs\n[^]*\n\+\/\/ sums two numbers\n$/)
+        expect(shown['test/extra.test.mjs']).toMatch(/^diff --git a\/test\/extra\.test\.mjs b\/test\/extra\.test\.mjs\ndeleted file mode [^]*\n-console\.log\('extra'\)\n$/)
+        expect(shown['README.md']).toBe('add sums two numbers\n')
+        expect(shown['src/kept.txt']).toBe('kept\n')
+        expect(JSON.stringify(shown)).not.toContain('never-shown')
+        expect(shown['src/notes/.env']).toMatch(/^\(content withheld/)
         expect(graded).toMatchObject({ status: 0, result: { state: 'graded', outOfScope: ['README.md'], criteria: [{ id: 'AC1', verdict: 'met' },
             { id: 'scope-changes-necessary', verdict: 'met', note: expect.stringContaining('Changed outside scope: README.md') },
             { id: 'test-changes-justified', verdict: 'met', note: expect.stringContaining('test/extra.test.mjs: test-file-removed') },

@@ -36,8 +36,8 @@ import { createLifecycleCommandAdapters } from '../environment/lifecycle-composi
 import { createReadCommandAdapters } from '../environment/read-composition.js'
 import { deriveEntrypoints, observeRetainedPortFamily } from '../environment/ports.js'
 import { readState } from '../environment/state.js'
-import { parseDiff } from '../testing/test-protection.js'
-import { testFilePatterns, weakeningFindings, type RepositoryWeakening, type TestFilePatterns } from '../testing/weakening.js'
+import { parseDiff, type DiffFile } from '../testing/test-protection.js'
+import { judgedByWeakening, testFilePatterns, weakeningFindings, type RepositoryWeakening, type TestFilePatterns } from '../testing/weakening.js'
 import { runGate, type GateDependencies, type GateRegistry, type GateRequest, type ProductGateInvocation } from '../testing/gates.js'
 import { readSiblingCheckouts, missingServedCheckout, servedPath, servedSiblings, type ServedSibling } from '../environment/sibling-checkouts.js'
 import { splitRepositoryPath } from '../repository-path.js'
@@ -139,6 +139,12 @@ const MAX_DECISION_RECORD_BYTES = 262_144
 // What the grader is shown of one changed file, and of the whole change.
 const MAX_DIFF_BYTES = 65_536
 const MAX_CHANGE_BYTES = 1_048_576
+// A probe's answer is a line or a short record; Git's listings and the test diff grow with the change, so a
+// large migration needs the bound the guard's and the docs check's Git listings use. Past it, the read refuses.
+const PROBE_OUTPUT_BYTES = 65_536
+const GIT_CHANGE_OUTPUT_BYTES = 16_777_216
+// executeBounded takes at most this many arguments.
+const MAX_ARGUMENTS = 128
 const VERIFICATION_TIMEOUT_FIELD = 'work.verification_timeout_seconds'
 const DEFAULT_EXECUTABLE_DIRECTORIES = Object.freeze(['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'])
 // Work-order coordination files change as the work is tracked, not as the product changes: the orders,
@@ -348,12 +354,12 @@ async function executable(directories: readonly string[], name: string): Promise
 // its output, so it refuses a truncated or non-UTF-8 capture. A declared command (a product test stage or
 // a work-order verification row) is judged by its exit status: it runs for its declared timeout, keeps
 // the tail of long output and receives the non-secret variables build tools resolve caches from.
-type BoundedExecutionMode = Readonly<{ kind: 'probe' }>
-    | Readonly<{ kind: 'declared'; env: Readonly<Record<string, string>>; timeoutField: string }>
+type BoundedExecutionMode = (Readonly<{ kind: 'probe' }>
+    | Readonly<{ kind: 'declared'; env: Readonly<Record<string, string>>; timeoutField: string }>) & Readonly<{ stdoutLimitBytes?: number; lenientText?: true }>
 
 async function executeBounded(root: string, argv: readonly string[], directories = DEFAULT_EXECUTABLE_DIRECTORIES, timeoutMs = 30_000,
     mode: BoundedExecutionMode = { kind: 'probe' }): Promise<VerificationObservation & Readonly<{ observedBytes?: number }>> {
-    if (!Array.isArray(argv) || !argv.length || argv.length > 128 || argv.some(value => typeof value !== 'string' || !value || Buffer.byteLength(value) > 4_096)) {
+    if (!Array.isArray(argv) || !argv.length || argv.length > MAX_ARGUMENTS || argv.some(value => typeof value !== 'string' || !value || Buffer.byteLength(value) > 4_096)) {
         return { kind: 'error', reason: 'Execution requires bounded argv' }
     }
     if (!Array.isArray(directories) || !directories.length || directories.length > 64
@@ -365,6 +371,7 @@ async function executeBounded(root: string, argv: readonly string[], directories
     const resolution = await (isAbsolute(argv[0]) ? executable([dirname(argv[0])], basename(argv[0])) : executable(directories, argv[0]))
     if (resolution.state !== 'available') return { kind: 'unavailable', reason: resolution.reason }
     const resolved = resolution.value
+    const stdoutLimit = mode.stdoutLimitBytes ?? PROBE_OUTPUT_BYTES
     const consumedFile: ConsumedFile = { path: resolved.path, sha256: resolved.sha256, maxBytes: resolved.bytes,
         argvIndexes: [0], executable: true, executionMode: 'verified-path' }
     const filesystemCheck: FilesystemCheck = { path: root, expected: 'directory' }
@@ -374,7 +381,7 @@ async function executeBounded(root: string, argv: readonly string[], directories
         // workspace-write sandbox that lookup fails and git warns on stderr, which fails a probe that
         // requires silence; a probe therefore names the temporary directory Node already resolved.
         cwd: root, env: { ...(mode.kind === 'declared' ? mode.env : { TMPDIR: tmpdir() }), PATH: directories.join(delimiter) }, timeoutMs,
-        spawnNotAfter: new Date(Date.now() + timeoutMs).toISOString(), stdoutLimitBytes: 65_536, stderrLimitBytes: 65_536,
+        spawnNotAfter: new Date(Date.now() + timeoutMs).toISOString(), stdoutLimitBytes: stdoutLimit, stderrLimitBytes: PROBE_OUTPUT_BYTES,
         ...(mode.kind === 'declared' ? { outputOverflow: 'retain-tail' as const } : {}),
         paths: [], ports: [], labels: { owner: 'work-application' }, expected: [],
         consumedFiles: [consumedFile], filesystemChecks: [filesystemCheck], compensation: [] }
@@ -384,14 +391,15 @@ async function executeBounded(root: string, argv: readonly string[], directories
         return { kind: 'error', reason: `timed out after ${timeoutMs / 1_000} seconds${mode.kind === 'declared' ? `; raise ${mode.timeoutField}` : ''}` }
     }
     if (result.kind === 'refusal' && result.code === ENVIRONMENT_CODES.EXECUTION_SPAWN_FAILED) return { kind: 'unavailable', reason: `${argv[0]} could not be started` }
+    if (result.kind === 'refusal' && result.code === ENVIRONMENT_CODES.EXECUTION_STDOUT_LIMIT) return { kind: 'error', reason: `${argv[0]} printed more than ${stdoutLimit} bytes, so its answer is refused rather than read in part` }
     // A non-zero exit carries a receipt only when the process started and its termination was confirmed.
     const exited = result.kind === 'complete' || result.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED && result.receipt !== undefined
     if (!exited) return { kind: 'error', reason: `${argv[0]} did not run to completion: ${result.code}` }
     const truncated = result.execution.stdoutObservedBytes !== result.execution.stdoutRetainedBytes
         || result.execution.stderrObservedBytes !== result.execution.stderrRetainedBytes
-    if (truncated && mode.kind === 'probe') return { kind: 'error', reason: `${argv[0]} output exceeded the 64 KiB probe capture` }
+    if (truncated && mode.kind === 'probe') return { kind: 'error', reason: `${argv[0]} output exceeded the ${stdoutLimit}-byte probe capture` }
     // A probe parses its output, so it refuses invalid UTF-8; a declared command's output is evidence to read.
-    const decode = (bytes: Buffer) => new TextDecoder('utf-8', { fatal: mode.kind === 'probe' }).decode(bytes)
+    const decode = (bytes: Buffer) => new TextDecoder('utf-8', { fatal: mode.kind === 'probe' && !mode.lenientText }).decode(bytes)
     let stdout: string; let stderr: string
     try {
         stdout = decode(result.stdout)
@@ -525,7 +533,8 @@ async function observeRepositorySubject(repository: Readonly<{ identity: string;
         if (!path.startsWith(prefix)) throw new RefusalError(`repository subject ${repository.identity} escaped its declared root: ${path}`)
         return path.slice(prefix.length)
     }
-    const status = await executeBounded(repository.root, ['git', ...GIT_CHILD_CONFIG, 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', '--', '.'], directories)
+    const status = await executeBounded(repository.root, ['git', ...GIT_CHILD_CONFIG, 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', '--', '.'], directories,
+        30_000, { kind: 'probe', stdoutLimitBytes: GIT_CHANGE_OUTPUT_BYTES })
     if (status.kind !== 'executed' || status.exitCode !== 0 || status.stderr || status.truncated) {
         throw new RefusalError(`repository subject ${repository.identity} is unavailable: ${probeFailure('git status', status)}`)
     }
@@ -581,7 +590,8 @@ async function observeRepositorySubject(repository: Readonly<{ identity: string;
         paths: change.paths.map(path => ({ path,
             sha256: repositoryPathDigest(repository.root, repository.identity, path, aggregate, sensitivePaths, forbiddenTargets) })),
     }))
-    const confirmed = await executeBounded(repository.root, ['git', ...GIT_CHILD_CONFIG, 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', '--', '.'], directories)
+    const confirmed = await executeBounded(repository.root, ['git', ...GIT_CHILD_CONFIG, 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', '--', '.'], directories,
+        30_000, { kind: 'probe', stdoutLimitBytes: GIT_CHANGE_OUTPUT_BYTES })
     const confirmedPrefix = await executeBounded(repository.root, ['git', ...GIT_CHILD_CONFIG, 'rev-parse', '--show-prefix'], directories)
     if (confirmed.kind !== 'executed' || confirmed.exitCode !== 0 || confirmed.stderr || confirmed.truncated
         || confirmedPrefix.kind !== 'executed' || confirmedPrefix.exitCode !== 0 || confirmedPrefix.stdout !== prefixResult.stdout
@@ -705,8 +715,8 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             throw error
         }
     }
-    const git = async (repository: typeof repositories[number], args: readonly string[]) => {
-        const observed = await executeBounded(repository.root, ['git', ...GIT_CHILD_CONFIG, ...args], directories)
+    const git = async (repository: typeof repositories[number], args: readonly string[], options: Readonly<{ stdoutLimitBytes?: number; lenientText?: true }> = {}) => {
+        const observed = await executeBounded(repository.root, ['git', ...GIT_CHILD_CONFIG, ...args], directories, 30_000, { kind: 'probe', ...options })
         if (observed.kind !== 'executed' || observed.exitCode !== 0 || observed.truncated) throw new RefusalError(`${repository.identity}: ${probeFailure(`git ${args.join(' ')}`, observed)}`)
         return observed.stdout
     }
@@ -780,7 +790,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         return [repository.key, head] as const
     })))
     const untrackedFiles = async (): Promise<ReadonlyMap<string, readonly string[]>> => new Map(await Promise.all(repositories.map(async repository =>
-        [repository.key, (await git(repository, ['ls-files', '--others', '--exclude-standard', '-z'])).split('\0').filter(Boolean)] as const)))
+        [repository.key, (await git(repository, ['ls-files', '--others', '--exclude-standard', '-z'], { stdoutLimitBytes: GIT_CHANGE_OUTPUT_BYTES })).split('\0').filter(Boolean)] as const)))
     // What changed since the base: committed, staged, unstaged and untracked files, each with its diff
     // or new content. A credential-shaped or declared-instance path is listed but its content is withheld.
     const changesWith = async (base: Readonly<Record<string, string>>, untrackedPaths: ReadonlyMap<string, readonly string[]>): Promise<readonly ChangedFile[]> => {
@@ -797,25 +807,56 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         }
         for (const repository of repositories) {
             const from = base[repository.key] ?? 'HEAD'
-            const tracked = (await git(repository, ['diff', '--name-status', '-z', '--no-renames', from, '--'])).split('\0').filter(Boolean)
+            const tracked = (await git(repository, ['diff', '--name-status', '-z', '--no-renames', from, '--'], { stdoutLimitBytes: GIT_CHANGE_OUTPUT_BYTES })).split('\0').filter(Boolean)
             const rows: [status: string, path: string, untracked: boolean][] = []
             for (let index = 0; index + 1 < tracked.length; index += 2) rows.push([tracked[index]!, tracked[index + 1]!, false])
             for (const path of untrackedPaths.get(repository.key)!) rows.push(['A', path, true])
-            for (const [status, path, untracked] of rows) {
-                if (repository.key === '.' && (excludedRepositoryPath(path, COCKPIT_WRITTEN) || generated.has(path))) continue
-                let diff: string
+            const shown = rows.filter(([, path]) => !(repository.key === '.' && (excludedRepositoryPath(path, COCKPIT_WRITTEN) || generated.has(path))))
+            const declared = { kind: 'declared', env: {}, timeoutField: VERIFICATION_TIMEOUT_FIELD } as const
+            const read = async (path: string, untracked: boolean): Promise<string> => {
                 try {
                     admitRepositoryPath(repository.root, repository.identity, path, repository.sensitivePaths, browserAuthenticationTargets)
-                    const observed = untracked
-                        ? { kind: 'executed' as const, stdout: readBounded(repository.root, path, MAX_DIFF_BYTES).toString('utf8') }
-                        : await executeBounded(repository.root, ['git', ...GIT_CHILD_CONFIG, 'diff', '--no-ext-diff', from, '--', path], directories, 30_000,
-                            { kind: 'declared', env: {}, timeoutField: VERIFICATION_TIMEOUT_FIELD })
-                    diff = observed.kind === 'executed' ? observed.stdout : `(diff unavailable: ${observed.reason})`
+                    if (untracked) return readBounded(repository.root, path, MAX_DIFF_BYTES).toString('utf8')
                 } catch (error) {
                     if (!(error instanceof RefusalError)) throw error
-                    diff = `(content withheld: ${error.message})`
+                    return `(content withheld: ${error.message})`
                 }
-                const bounded = Buffer.byteLength(diff) > Math.min(MAX_DIFF_BYTES, budget) ? `${Buffer.from(diff).subarray(0, Math.min(MAX_DIFF_BYTES, budget)).toString('utf8')}\n(diff cut at its bound)` : diff
+                const observed = await executeBounded(repository.root, ['git', ...GIT_CHILD_CONFIG, '--literal-pathspecs', 'diff', '--no-ext-diff', from, '--', path], directories, 30_000, declared)
+                if (observed.kind !== 'executed') return `(diff unavailable: ${observed.reason})`
+                if (observed.truncated) return `(diff unavailable: longer than ${PROBE_OUTPUT_BYTES} bytes)`
+                // A path also matches the files under a directory of that name, which are listed, and admitted, on their own.
+                if ((observed.stdout.match(/^diff --git /gm) ?? []).length > 1) return '(diff unavailable: the path also names a directory, whose files are listed separately)'
+                return observed.stdout
+            }
+            // One Git process per file costs seconds per hundred files, so tracked files are diffed together, without
+            // pairing renames (one file's diff cannot), and each chunk goes to the path its header names exactly. A chunk no
+            // path asked for (a file under a directory that shares a changed file's name) is dropped; a path without
+            // exactly one chunk (a quoted name, a typechange) is read on its own; and nothing more is read once the bound
+            // is spent, since every further diff is cut to nothing.
+            const batched = new Map<string, string>()
+            const command = ['git', ...GIT_CHILD_CONFIG, '--literal-pathspecs', 'diff', '--no-ext-diff', '--no-renames', from, '--']
+            let prefetched = 0
+            const readable = shown.filter(([, path, untracked]) => {
+                if (untracked) return false
+                try { admitRepositoryPath(repository.root, repository.identity, path, repository.sensitivePaths, browserAuthenticationTargets); return true }
+                catch (error) { if (error instanceof RefusalError) return false; throw error }
+            }).map(([, path]) => path)
+            for (let at = 0; at < readable.length && prefetched < budget; at += MAX_ARGUMENTS - command.length) {
+                const batch = readable.slice(at, at + MAX_ARGUMENTS - command.length)
+                const observed = await executeBounded(repository.root, [...command, ...batch], directories, 30_000, { ...declared, stdoutLimitBytes: GIT_CHANGE_OUTPUT_BYTES })
+                if (observed.kind !== 'executed' || observed.exitCode !== 0 || observed.truncated) continue
+                const headers = new Map(batch.map(path => [`diff --git a/${path} b/${path}\n`, path]))
+                const found = new Map<string, string[]>()
+                for (const chunk of observed.stdout.split(/^(?=diff --git )/m)) {
+                    const path = headers.get(chunk.slice(0, chunk.indexOf('\n') + 1))
+                    if (path !== undefined) found.set(path, [...found.get(path) ?? [], chunk])
+                }
+                // A typechange is two chunks under one header; that file, like one with no chunk, is read on its own.
+                for (const [path, [chunk, ...more]] of found) if (!more.length) { batched.set(path, chunk!); prefetched += Math.min(Buffer.byteLength(chunk!), MAX_DIFF_BYTES) }
+            }
+            for (const [status, path, untracked] of shown) {
+                const diff = budget === 0 ? '' : (untracked ? undefined : batched.get(path)) ?? await read(path, untracked)
+                const bounded = budget === 0 || Buffer.byteLength(diff) > Math.min(MAX_DIFF_BYTES, budget) ? `${Buffer.from(diff).subarray(0, Math.min(MAX_DIFF_BYTES, budget)).toString('utf8')}\n(diff cut at its bound)` : diff
                 budget = Math.max(0, budget - Buffer.byteLength(bounded))
                 files.push({ path: qualified(repository.key, path), status, diff: bounded })
             }
@@ -827,10 +868,28 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
     const weakeningWith = async (base: Readonly<Record<string, string>>, untracked: ReadonlyMap<string, readonly string[]>): Promise<TestWeakeningObservation> => {
         const patterns = testFilePatterns(config.testing?.testFiles)
         const isTest = scopeMatcher(patterns.tests)
+        const judged = judgedByWeakening(patterns)
         const perRepository = await Promise.all(repositories.map(async repository => {
             const from = base[repository.key] ?? 'HEAD'
-            const diff = await git(repository, ['-c', 'core.quotePath=true', 'diff', '--no-ext-diff', '--no-textconv', '--no-color', '--text', '--find-renames', '--unified=0', from, '--'])
-            const files = parseDiff(diff)
+            // Only tests and test configuration can earn a finding, so only they are diffed: a large unrelated
+            // migration costs a listing, not its content. A rename is diffed with both its sides, so Git can pair it again.
+            const listed = (await git(repository, ['diff', '--name-status', '-z', '--find-renames', from, '--'], { stdoutLimitBytes: GIT_CHANGE_OUTPUT_BYTES })).split('\0')
+            const changed: string[][] = []
+            for (let at = 0; at < listed.length - 1;) {
+                const sides = /^[RC]/.test(listed[at]!) ? 2 : 1
+                const paths = listed.slice(at + 1, at + 1 + sides)
+                if (paths.some(judged)) changed.push(paths)
+                at += 1 + sides
+            }
+            const command = ['-c', 'core.quotePath=true', '--literal-pathspecs', 'diff', '--no-ext-diff', '--no-textconv', '--no-color', '--text', '--find-renames', '--unified=0', from, '--']
+            const room = MAX_ARGUMENTS - 1 - GIT_CHILD_CONFIG.length - command.length
+            const files: DiffFile[] = []
+            for (let batch: string[] = []; changed.length || batch.length;) {
+                if (changed.length && batch.length + changed[0]!.length <= room) { batch.push(...changed.shift()!); continue }
+                // --text reads a binary fixture as bytes, which are scanned, not parsed, so they need not be UTF-8.
+                files.push(...parseDiff(await git(repository, [...command, ...batch], { stdoutLimitBytes: GIT_CHANGE_OUTPUT_BYTES, lenientText: true })))
+                batch = []
+            }
             for (const path of untracked.get(repository.key)!) {
                 if (!isTest(path)) continue
                 let content: string

@@ -34,10 +34,14 @@ const CheckResult = z.object({
 }).strict()
 export type CheckResult = z.infer<typeof CheckResult>
 
+// The record lists this many paths outside scope; a large migration's full list would not fit its 1 MiB.
+export const MAX_RECORDED_OUT_OF_SCOPE = 512
 const Verdict = z.object({ id: z.string().max(64), verdict: z.enum(['met', 'unmet', 'unclear']), note: z.string().max(4_096) }).strict()
 const Grade = z.object({
     at, digest: z.string().length(64), mode: z.enum(GRADE_MODES), passed: z.boolean(),
-    criteria: z.array(Verdict).max(64), outOfScope: z.array(z.string().max(1_100)).max(512),
+    criteria: z.array(Verdict).max(64), outOfScope: z.array(z.string().max(1_100)).max(MAX_RECORDED_OUT_OF_SCOPE),
+    // How many paths were outside scope, when there were more than the record lists.
+    outOfScopeTotal: z.number().int().min(MAX_RECORDED_OUT_OF_SCOPE + 1).optional(),
     // Which evaluator answered and those passed over on the way; absent when no evaluator ran.
     evaluator: z.object({ tool: z.string().max(64), fallbacks: z.array(z.object({ tool: z.string().max(64), code: z.string().max(64), message: z.string().max(8_192) }).strict()).max(8) }).strict().optional(),
     note: note.optional(),

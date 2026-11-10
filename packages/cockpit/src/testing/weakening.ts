@@ -29,6 +29,13 @@ export function testFilePatterns(declared: readonly string[] | undefined): TestF
         : { tests: DEFAULT_TEST_FILES, configuration: TEST_CONFIGURATION, source: 'the built-in test-file patterns for common layouts (no [testing] test_files declared)' }
 }
 
+/** Whether the classifier can find anything in a change to `path`: it judges tests and test configuration only. */
+export function judgedByWeakening(patterns: TestFilePatterns): (path: string) => boolean {
+    const isTest = scopeMatcher(patterns.tests)
+    const isTestConfig = scopeMatcher(patterns.configuration)
+    return path => isTest(path) || isTestConfig(path)
+}
+
 export function weakeningFindings(files: readonly DiffFile[], patterns: TestFilePatterns): WeakeningFinding[] {
     const roles: TestRoles = { isTest: scopeMatcher(patterns.tests), isTestConfig: scopeMatcher(patterns.configuration) }
     return classifyTestWeakening(files, roles)

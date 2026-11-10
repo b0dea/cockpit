@@ -49,9 +49,12 @@ describe('Git adjacency evidence', () => {
         expect(decode(source)).toMatchObject({ kind: 'complete', evidence: { workingTree, adjacency } })
     })
 
-    it('refuses malformed UTF-8 and unbounded output', () => {
+    it('refuses malformed UTF-8 and unbounded output, and counts a checkout mid-migration', () => {
         expect(decodeGitObservation(Buffer.from([0xff]), context)).toMatchObject({ kind: 'unavailable' })
-        expect(decodeGitObservation(Buffer.alloc(65_537, 0x61), context)).toMatchObject({ kind: 'unavailable' })
+        expect(decodeGitObservation(Buffer.alloc(16_777_217, 0x61), context)).toMatchObject({ kind: 'unavailable' })
+        const untracked = Array.from({ length: 2_000 }, (_, at) => `? archive/record-${at}-${'x'.repeat(40)}.md\n`).join('')
+        expect(Buffer.byteLength(untracked)).toBeGreaterThan(65_536)
+        expect(decode(`# branch.oid abcdef\n# branch.head main\n${untracked}`)).toMatchObject({ kind: 'complete', evidence: { untrackedCount: 2_000, workingTree: 'untracked' } })
         expect(decodeGitObservation(Buffer.from(`# branch.oid ${revision}\n# branch.head ${'é'.repeat(600)}\n`), context)).toMatchObject({ kind: 'unavailable' })
     })
 
@@ -113,6 +116,9 @@ describe('Git adjacency evidence', () => {
             const goneAdjacency = gone.observations.find(({ code }) => code === 'CHECKOUT_ADJACENCY_UNHEALTHY')!
             expect(observationSatisfiesExpectation(goneAdjacency)).toBe(false)
             expect(goneAdjacency.remedy).toContain(`git -C ${root} branch --unset-upstream`)
+            // A checkout mid-migration lists far more than 64 KiB of status, and is still counted.
+            for (let at = 0; at < 1_500; at += 1) await writeFile(join(root, `record-${at}-${'x'.repeat(60)}.md`), 'record\n')
+            expect(observeGit(step, await executeProbe(step), { stackId, checkoutId, source: root })).toMatchObject({ kind: 'complete', evidence: { untrackedCount: 1_500 } })
             expect(observeGit(step, { ...outcome }, { stackId, checkoutId, source: root })).toEqual({
                 kind: 'unavailable', reason: 'Git execution evidence is unavailable or unauthenticated',
             })

@@ -9,7 +9,7 @@ import { GRADING, isGradeMode, type Decider, type GradeMode, type WorkGrading } 
 import { runGate } from '../testing/gates.js'
 import { describeWeakening, testWeakeningDigest, type RepositoryWeakening } from '../testing/weakening.js'
 import { scopeMatcher, type AmendmentReview, type WorkOrderCriterion } from './contract.js'
-import type { WorkRecord } from './store.js'
+import { MAX_RECORDED_OUT_OF_SCOPE, type WorkRecord } from './store.js'
 import type { WorkApplicationComposition } from './composition.js'
 import { complete, now, refusal, TERMINAL, unsatisfied, type WorkApplicationOutcome, type WorkApplicationRequest, type WorkContext, type WorkRequest } from './application-context.js'
 import { decisions } from './application-decisions.js'
@@ -218,7 +218,8 @@ export async function gradeOrder(request: Extract<WorkRequest, { operation: 'wor
     // Where a model grades, whether a change outside scope was needed is its standing criterion; under checks nothing can judge it, so any fails.
     const passed = verdicts.every(row => row.verdict === 'met') && checks.every(row => row.passed) && (judged || outOfScope.length === 0)
     const grade: NonNullable<WorkRecord['grade']> = { at: now(), digest: record.accepted.digest, mode, passed,
-        criteria: [...verdicts], outOfScope: [...outOfScope], ...evaluator ? { evaluator } : {}, ...request.note ? { note: request.note } : {} }
+        criteria: [...verdicts], outOfScope: outOfScope.slice(0, MAX_RECORDED_OUT_OF_SCOPE),
+        ...outOfScope.length > MAX_RECORDED_OUT_OF_SCOPE ? { outOfScopeTotal: outOfScope.length } : {}, ...evaluator ? { evaluator } : {}, ...request.note ? { note: request.note } : {} }
     const loweredBar = verdicts.find(row => row.id === AMENDMENTS_HOLD && row.verdict !== 'met')
     await store.update(order.id, async existing => {
         if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while it was graded; rerun work grade`)
@@ -232,7 +233,7 @@ export async function gradeOrder(request: Extract<WorkRequest, { operation: 'wor
     if (passed) return complete(operation, value)
     return unsatisfied(operation, value, [...split(verdicts).others.map(row => `${row.id} ${row.verdict}: ${row.note}${remedyOf(row.id, order.id)}`),
         ...checks.filter(row => !row.passed).map(row => `check ${row.criterion}: ${row.outcome}`),
-        ...!judged && outOfScope.length ? [`changed outside scope: ${outOfScope.join(', ')}`] : []].join('; '), split(verdicts).weakening)
+        ...!judged && outOfScope.length ? [`changed outside scope: ${listed(outOfScope, ', ')}`] : []].join('; '), split(verdicts).weakening)
 }
 
 // The quick path: an independent grade of uncommitted work with no order and no record.
