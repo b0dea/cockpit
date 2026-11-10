@@ -80,7 +80,8 @@ at `work.attempt_cap` the order is blocked until it is amended or closed, by who
 - **check** runs every criterion's check and the order's gates, in the order the contract lists
   them.
 - **grade** grades the order the way [`[work] grading`](#how-an-order-earns-done) says, and reports
-  every changed file outside `scope` since the base commits under `outOfScope`. Where a model
+  every changed file outside `scope` since the base commits under `outOfScope` (the order's record
+  keeps the first 512 and, past them, the count as `outOfScopeTotal`). Where a model
   grades, each such change is judged by the standing criterion `scope-changes-necessary`; under
   `checks` grading any change outside scope fails the grade. [Weakened tests](#test-protection) are
   judged the same way.
