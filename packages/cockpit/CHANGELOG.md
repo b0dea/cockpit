@@ -13,6 +13,13 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.12
+
+### Patch Changes
+
+- 3cf1183: The guard now proves a cockpit command started by Node's absolute path, such as `/opt/homebrew/bin/node ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --dry-run`, as it proves the same command started by bare `node`. Before, it took that Node binary for the cockpit launcher itself, so the proof failed and an agent's `sync --dry-run` asked as a person's command even under `[autonomy] sync = "agent"`. The absolute path counts only when it is the `node` in a directory the agent's command search path names, spelled as that entry spells it. A `node` anywhere else, an interpreter option before the script, or a script other than the installed launcher still asks, and a `sync` while `cockpit.toml` holds an unapproved widening edit is still refused.
+- 756b30f: A large change no longer stops `test-run`, `work grade` or `cockpit grade` before any check runs. Reading which files changed, and the test diff that test protection judges, were held to 64 KiB of Git output, so a change past that (a relocated history, a big fixture edit) refused with `EXECUTION_STDOUT_LIMIT`. Git's listings of changed, untracked and staged files now read up to 16 MiB, the bound cockpit's other Git listings use, and refuse past it rather than read in part. Test protection now diffs only the files it judges, tests and test-runner configuration, with each rename's two sides together, so its cost follows the test changes rather than the whole change; a weakening is still found anywhere in the change, and a changed binary fixture among the tests no longer refuses as invalid UTF-8. The grader's per-file diffs are read in batches rather than one Git process per file, which made a grade over a few thousand changed files take minutes. A deleted file whose name is now a directory no longer shows that directory's files, including ones whose content is withheld, as part of its diff, and a file's diff too long to read whole is reported unavailable rather than shown as its last part. A grade with more than 512 changed files outside scope no longer fails on an internal validation error: the order's record keeps the first 512 and the count as `outOfScopeTotal`, the grade still fails or is judged on all of them, and its message lists them up to a bound. `doctor` and `preflight` count a checkout with more than 64 KiB of `git status` output instead of reporting its Git evidence unavailable.
+
 ## 0.1.11
 
 ### Patch Changes
