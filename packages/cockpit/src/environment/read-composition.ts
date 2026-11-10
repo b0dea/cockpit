@@ -14,7 +14,7 @@ import type { ForegroundProcessInput, ForegroundProcessOutcome } from '../enviro
 import type { LifecycleRecordValue } from './lifecycle-stage.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { deriveEntrypoints, observeRetainedPortFamily, projectRetainedPortFamilyResult, type PortLeaseProjection } from './ports.js'
-import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, type ExecutionStep, type HolderId, type LifecycleProgress, type StackId, RefusalError } from './contract.js'
+import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, type ExecutionStep, type LifecycleProgress, type StackId, RefusalError } from './contract.js'
 import { loadServedSiblings, servedSiblingVariables } from './sibling-checkouts.js'
 import { DeclarationRefusalError, runtimeNotDeclared, serviceNotDeclared } from './declaration.js'
 import {
@@ -79,7 +79,6 @@ interface StableReadContext {
     readonly namespace: StateNamespace
     readonly cockpitId: string
     readonly stackId: StackId
-    readonly holderId: HolderId
     readonly topology: RuntimeTopologyEvidence
     readonly lifecycleRecord: StateRecord
     readonly lifecycle: LifecycleRecordValue
@@ -248,8 +247,19 @@ export function createReadCommandAdapters(
         const references = configuration.config.environment.compose_files
         const composeFiles = await composeArtifacts(checkoutRoot, references)
         if (!composeFiles) throw new RefusalError('compose artifacts are unavailable')
+        const lifecycleRead = await readState(context.namespace.paths.lifecycle(context.stackId))
+        if (lifecycleRead.kind !== 'complete') throw new RefusalError('lifecycle state is unavailable')
+        const lifecycleValue = decodeLifecycleRecord(lifecycleRead.value, context)?.value
+        if (!lifecycleValue) throw new RefusalError('lifecycle state is malformed')
+        if (lifecycleValue.teardownComplete) throw new RefusalError('down removed the stack')
+        if (lifecycleValue.completedServices.length === 0 && !partial) throw new RefusalError('lifecycle state is malformed')
+        // A reader runs as its own command under its own session identity, and the stack belongs to
+        // the holder that started it: a gate run after a plain `up` claimed a holder no lease named
+        // and saw no stack. So the ports are read as the holder the stack's record names. The
+        // retained observation admits that holder only while it holds this checkout's active lease,
+        // so a released holder, or one recorded for another checkout, still grants nothing.
         const retained = await observeRetainedPortFamily({ namespace: context.namespace, stackId: context.stackId,
-            holderId: context.holderId, checkoutId: context.checkoutId, config: context.ports })
+            holderId: lifecycleValue.holderId, checkoutId: context.checkoutId, config: context.ports })
         if (retained.kind !== 'complete') throw new RefusalError('retained port authority is unavailable')
         const entrypoints = deriveEntrypoints({ lease: retained.lease, declarations: context.entrypointDerivatives })
         const ports: PortLeaseProjection | undefined = await projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints })
@@ -261,13 +271,11 @@ export function createReadCommandAdapters(
             || readiness.topology.configSha256 !== context.runtimeSha256) {
             throw new RefusalError('configuration and runtime authority do not match')
         }
-        const lifecycleRead = await readState(context.namespace.paths.lifecycle(context.stackId))
-        if (lifecycleRead.kind !== 'complete') throw new RefusalError('lifecycle state is unavailable')
-        const lifecycleValue = decodeLifecycleRecord(lifecycleRead.value, context)?.value
-        if (!lifecycleValue) throw new RefusalError('lifecycle state is malformed')
-        if (lifecycleValue.teardownComplete) throw new RefusalError('down removed the stack')
-        if (lifecycleValue.completedServices.length === 0 && !partial) throw new RefusalError('lifecycle state is malformed')
-        if (lifecycleValue.holderId !== context.holderId) throw new RefusalError('lifecycle holder authority changed')
+        // The record named the holder before the readiness calls; a `down` that marked teardown meanwhile is caught here.
+        const confirmedLifecycle = await readState(context.namespace.paths.lifecycle(context.stackId))
+        if (confirmedLifecycle.kind !== 'complete' || JSON.stringify(confirmedLifecycle.value) !== JSON.stringify(lifecycleRead.value)) {
+            throw new RefusalError('lifecycle state changed during runtime observation')
+        }
         const env = runtimeEnvironment(input.env)
         const executable = await resolveDockerExecutable(input.env)
         if (executable.state !== 'available') {
@@ -297,7 +305,6 @@ export function createReadCommandAdapters(
             namespace: context.namespace,
             cockpitId: context.cockpitId,
             stackId: context.stackId,
-            holderId: context.holderId,
             topology: readiness.topology,
             lifecycleRecord: lifecycleRead.value,
             lifecycle: lifecycleValue,

@@ -57,6 +57,8 @@ const controls = vi.hoisted(() => ({
     readinessBatchIds: [] as string[],
     stateChanged: false,
     lifecycleReads: 0,
+    // The lifecycle read from which a changed state is returned.
+    changedFromRead: 2,
     revalidatedServices: [] as string[],
     readinessPorts: [] as unknown[],
     executePreparation: false,
@@ -169,7 +171,7 @@ vi.mock('./state.js', async (importOriginal) => ({
         const selected = controls.lifecycleHolderId
             ? { ...selectedRecord, value: { ...selectedRecord.value, holderId: controls.lifecycleHolderId } }
             : selectedRecord
-        return controls.stateChanged && controls.lifecycleReads > 1
+        return controls.stateChanged && controls.lifecycleReads >= controls.changedFromRead
             ? { kind: 'complete', value: { ...selected, revision: 1 } }
             : { kind: 'complete', value: selected }
     }),
@@ -236,6 +238,7 @@ describe('production read command composition', () => {
         controls.readinessBatchIds.length = 0
         controls.stateChanged = false
         controls.lifecycleReads = 0
+        controls.changedFromRead = 2
         controls.revalidatedServices.length = 0
         controls.readinessPorts.length = 0
         controls.executePreparation = false
@@ -432,6 +435,12 @@ describe('production read command composition', () => {
         controls.incomplete = false
         controls.stateChanged = true
         controls.lifecycleReads = 0
+        // A change while readiness is observed, such as a down marking teardown, is caught before any service is read.
+        await expect(adapters.logs.observe({ configPath: source.path, service: 'api' })).rejects.toThrow(
+            'lifecycle state changed during runtime observation',
+        )
+        controls.lifecycleReads = 0
+        controls.changedFromRead = 3
         await expect(adapters.logs.observe({ configPath: source.path, service: 'api' })).rejects.toThrow(
             'lifecycle state changed during log observation',
         )
