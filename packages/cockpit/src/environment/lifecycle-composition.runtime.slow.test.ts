@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
+import { runCli } from '../cli.js'
 import { beginOperatorReset, runDown, runReset } from './application/destructive.js'
 import { runDoctor } from './application/doctor.js'
 import { decodeLifecycleRecord, runSession, runSleep, runUp } from './application/lifecycle.js'
@@ -1031,6 +1032,42 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
             '--profile', 'jobs', 'exec', '--no-tty', 'app', 'psql', '-c', 'select 1'])
         expect(await runServiceRestart({ configPath: first.candidate.configPath, service: 'missing', verb: 'rebuild' }, services))
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'SERVICE_NOT_DECLARED' }] })
+    })
+
+    // `up`, `ps` and `test-run` run as separate commands, each under its own session identity, so
+    // they read the stack as the holder its record names; a reader that claimed its own identity
+    // found no retained port authority, and the gate ran no stage against a healthy stack.
+    it('runs a stack-dependent gate stage against the stack a separate up started, and refuses foreign or missing port authority', async () => {
+        const first = await runStackScenario({ testing: true })
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        // The gate reads the repository it grades at a commit.
+        await run('git', ['-C', first.candidate.checkout, '-c', 'user.email=fixture@example.invalid', '-c', 'user.name=fixture', 'commit', '--quiet', '--allow-empty', '-m', 'fixture'])
+        const cli = async (argv: readonly string[]) => {
+            let stdout = ''
+            const io = { stdout: { write: (text: string) => ((stdout += text), true) }, stderr: { write: () => true } }
+            const status = await runCli([...argv, '--config', first.candidate.configPath, '--json'], io, {},
+                { env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home } })
+            return { status, ...JSON.parse(stdout) as { result: Record<string, unknown> | null; diagnostics: readonly { message: string }[] } }
+        }
+        const gate = () => cli(['test-run', '--gate', 'full'])
+        const passed = await gate()
+        expect(passed, JSON.stringify(passed.diagnostics)).toMatchObject({ status: 0, result: { verdict: 'PASS', executed: 1 } })
+        await expect(readFile(join(first.candidate.root, 'stage-ran'), 'utf8')).resolves.toBe('')
+        expect(await cli(['ps'])).toMatchObject({ status: 0, result: { services: [{ service: 'app', state: 'running', health: 'healthy' }] } })
+
+        const coordination = first.context.namespace.paths.coordination(first.context.stackId).path
+        const retained = await readFile(coordination, 'utf8')
+        const unavailable = { status: 2, result: { verdict: 'DEGRADED', executed: 0 },
+            diagnostics: [{ message: expect.stringContaining('retained port authority is unavailable') }] }
+        // The recorded holder registered to another checkout is not this checkout's authority.
+        const record = JSON.parse(retained) as { value: { holders: { checkoutId: string }[] } }
+        record.value.holders[0]!.checkoutId = checkoutId({ checkoutPath: '/synthetic/other' })
+        await writeFile(coordination, JSON.stringify(record))
+        expect(await gate()).toMatchObject(unavailable)
+        await rm(coordination)
+        expect(await gate()).toMatchObject(unavailable)
+        await writeFile(coordination, retained)
+        expect(await gate()).toMatchObject({ status: 0, result: { verdict: 'PASS', executed: 1 } })
     })
 
     it('gives two cockpits with the same name their own Compose project, kept across a cosmetic edit', async () => {

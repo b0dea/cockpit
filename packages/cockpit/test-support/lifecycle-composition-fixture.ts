@@ -86,7 +86,7 @@ async function fixture(portCount = 2, runtimeMeasurement: 'supported' | 'unmeasu
 
 // A one-service stack run from its own compose.yml, with a resettable data volume, against a
 // scripted docker that answers the topology, inspection and lifecycle calls the owners make.
-async function stackFixture(options: Readonly<{ seed?: readonly string[]; memoryMb?: number; profiles?: readonly string[] }> = {}) {
+async function stackFixture(options: Readonly<{ seed?: readonly string[]; memoryMb?: number; profiles?: readonly string[]; testing?: boolean }> = {}) {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-lifecycle-stack-')))
     roots.push(root)
     const checkout = join(root, 'checkout')
@@ -126,6 +126,10 @@ async function stackFixture(options: Readonly<{ seed?: readonly string[]; memory
         'free_disk_mb = 1024',
         'cold_start_seconds = 30',
         '',
+        // A gate whose one stage needs the running stack, as a product's full suite does.
+        ...(options.testing ? ['[testing]',
+            'stages = [{ id = "full", command = ["sh", "-c", ": > ../stage-ran"], requires_stack = true }]',
+            'gates = [{ id = "full", tier = "full", stages = ["full"], changes = "any change" }]', ''] : []),
     ].join('\n'))
     await writeFile(join(checkout, 'compose.yml'), [
         'services:',
@@ -229,6 +233,13 @@ case "$1" in
     network|image) [ "$2" = ls ] || exit 64; exit 0 ;;
     builder) [ "$2" = du ] || exit 64; exit 0 ;;
     version) printf '27.1.2\\n'; exit 0 ;;
+    # The stability capture a stack-dependent gate takes: PID 1's identity, then its content hash.
+    exec)
+        case "$joined" in
+            *cockpit-content-hash*) printf '%s  %s\\n' ${shellQuote('b'.repeat(64))} /tmp/sorted ;;
+            *) printf '1 4242\\n' ;;
+        esac
+        exit 0 ;;
     info)
         case "$joined" in
             *OperatingSystem*) printf '%s\\n' '["Docker Desktop","docker-desktop","linux"]' ;;
@@ -282,7 +293,7 @@ exit 64
 
 // `synced` runs the real sync first, for a test that goes on to sync or check that ownership. The
 // other scenarios only need the override up hands Compose, and a sync costs dozens of child processes.
-async function runStackScenario(options: Readonly<{ seed?: readonly string[]; memoryMb?: number; healthcheck?: boolean; profiles?: readonly string[]; synced?: boolean }> = {}) {
+async function runStackScenario(options: Readonly<{ seed?: readonly string[]; memoryMb?: number; healthcheck?: boolean; profiles?: readonly string[]; synced?: boolean; testing?: boolean }> = {}) {
     const candidate = await stackFixture(options)
     if (options.synced) {
         // sync reads the state root from HOME.
