@@ -847,6 +847,20 @@ describe('guard policy construction', () => {
         const forced = { ...request, searchPath: '/usr/bin:/bin', payload: shellPayload('ls --force', root) }
         expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({ decision: { decision: 'allow' }, diagnostics: [] })
         expect(await runGuardEvaluationApplication(sync, adapters)).toMatchObject({ decision: { decision: 'allow' } })
+        // Node named by its absolute path is proven as bare `node` is, by the search path the agent runs
+        // with: it must be the `node` of one of its absolute entries, and the script the installed launcher.
+        const script = './node_modules/@b00dea/cockpit/bin/cockpit.mjs'
+        const homebrew = '/opt/homebrew/bin:/usr/bin:/bin'
+        const preview = async (node: string, searchPath = homebrew, launched = script) => (await runGuardEvaluationApplication({ ...request, searchPath,
+            payload: shellPayload(`${node} ${launched} sync --config cockpit.toml --dry-run`, root) }, adapters)).decision.decision
+        expect(await preview('node')).toBe('allow')
+        expect(await preview('/opt/homebrew/bin/node')).toBe('allow')
+        expect(await preview('/usr/bin/node')).toBe('allow')
+        for (const [node, searchPath, launched] of [['/opt/homebrew/bin/node', '/usr/bin:/bin', script], [`${root}/node`, `${homebrew}:${root}/tools/bin`, script],
+            [`${tmpdir()}/node`, homebrew, script], ['/opt/homebrew/bin/../bin/node', homebrew, script], ['/opt/homebrew/bin/node', homebrew, `--require ./app/other.cjs ${script}`],
+            ['/opt/homebrew/bin/node', homebrew, './node_modules/@b00dea/cockpit/dist/cli.js'], ['/opt/homebrew/bin/node', homebrew, './node_modules/@b00dea/missing/bin/cockpit.mjs']]) {
+            expect(await preview(node!, searchPath, launched), `${node} ${launched} with ${searchPath}`).not.toBe('allow')
+        }
         expect((await runGuardEvaluationApplication(forced, adapters)).decision.reason ?? '').not.toContain('Forced writes require review.')
         const restricted = parse(readFileSync(configPath, 'utf8')) as { guards: { deny: unknown[] } }
         restricted.guards.deny.push({ contains: ['--force'], reason: 'Forced writes require review.' })
@@ -877,6 +891,8 @@ describe('guard policy construction', () => {
             `cd ${scope} && node cockpit/dist/cli.js sync --config ${canonicalConfig}`]) {
             expect((await runGuardEvaluationApplication({ ...sync, payload: shellPayload(command, root) }, adapters)).decision.reason, command).toMatch(/^Refusing to run cockpit (sync|upgrade)/)
         }
+        expect((await runGuardEvaluationApplication({ ...sync, searchPath: homebrew, payload: shellPayload(`/opt/homebrew/bin/node ${script} sync --config cockpit.toml --dry-run`, root) }, adapters))
+            .decision.reason).toMatch(/^Refusing to run cockpit sync/)
         expect(await runGuardEvaluationApplication(sync, adapters)).toMatchObject({ decision: { decision: 'deny',
             reason: `Refusing to run cockpit sync while ${canonicalConfig} has an unapproved edit that widens what agents may do: a person reviews it and syncs.${notice}` } })
     }, 120_000)

@@ -62,7 +62,10 @@ export function guardInstalledDirectories(packageRoot: string, consumerRoot: str
  * The file whose identity proves that `executable` with the launcher `words` after it, run in `cwd`,
  * starts `launcher`, the installed cockpit the guard runs from, or undefined when it may start
  * something else. A path, or the script `node` is given, qualifies when it resolves to the launcher;
- * the bare name when the first `cockpit` on the command search path does. `npx` qualifies only in
+ * the bare name when the first `cockpit` on the command search path does. A path named `node` is
+ * `node` only as the `node` of an absolute search path entry, spelled as that entry spells it: bare
+ * `node` runs such a file, and the guard protects every search path directory inside the roots as it
+ * does the installed cockpit, so the name alone trusts nothing. `npx` qualifies only in
  * `root`, where npm runs a `bin` the root package.json declares before any installed one and applies
  * the root `.npmrc`, whose `script-shell` and `node-options` run other code first; with neither
  * present it runs the root's `node_modules/.bin/cockpit`, which must resolve to the launcher.
@@ -74,8 +77,11 @@ export function guardLauncherEvidence(executable: string, words: readonly string
             throw error
         }
     }
+    if (executable === 'node' || executable.includes('/') && posix.basename(executable) === 'node') {
+        const searched = executable === 'node' || searchPath.split(':').some(entry => entry.startsWith('/') && `${entry.replace(/\/+$/, '')}/node` === executable)
+        return searched ? resolving(posix.resolve(cwd, words[0]!)) : undefined
+    }
     if (executable.includes('/')) return resolving(posix.resolve(cwd, executable))
-    if (executable === 'node') return resolving(posix.resolve(cwd, words[0]!))
     if (executable === 'cockpit') {
         // The shell runs the first executable file the search path names; an empty entry is `cwd`.
         for (const entry of searchPath.split(':')) {
