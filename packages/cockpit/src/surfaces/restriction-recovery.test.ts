@@ -61,13 +61,21 @@ it('diagnoses a missing OpenCode guard through the emitted plugin without admitt
     const path = join(root, plugin.path)
     await mkdir(dirname(path), { recursive: true })
     await writeFile(path, plugin.bytes)
-    const run = () => spawnSync(process.execPath, ['--input-type=module', '--eval',
-        `const { CockpitRestrictions } = await import(${JSON.stringify(pathToFileURL(path).href)}); const hooks = await CockpitRestrictions(); await hooks['tool.execute.before']({ tool: 'bash' }, { args: { command: 'git restore -- .cockpit/guards/bash-guard.sh' } })`,
+    // A command larger than a pipe buffer makes the launcher exit before the call is written, as a small
+    // one sometimes does on a loaded machine: the refusal and its reason must survive the closed pipe.
+    const run = (padding = 0) => spawnSync(process.execPath, ['--input-type=module', '--eval',
+        `const { CockpitRestrictions } = await import(${JSON.stringify(pathToFileURL(path).href)}); const hooks = await CockpitRestrictions(); await hooks['tool.execute.before']({ tool: 'bash' }, { args: { command: 'git restore -- .cockpit/guards/bash-guard.sh' + ' '.repeat(${padding}) } })`,
     ], { cwd: root, encoding: 'utf8' })
-    const absentConfig = run()
-    expect(absentConfig).toMatchObject({ status: 1, stdout: '', stderr: expect.stringContaining('Local hook changes can remain after switching branches') })
+    for (const padding of [0, 1024 * 1024]) {
+        expect(run(padding)).toMatchObject({ status: 1, stdout: '', stderr: expect.stringContaining('Local hook changes can remain after switching branches') })
+    }
     await writeFile(configPath, '[cockpit]\n')
     expect(run()).toMatchObject({ status: 1, stdout: '', stderr: expect.stringContaining('@b00dea/cockpit is not installed or is incomplete') })
+    // An allow from a guard that exited before reading the whole call judged none of it.
+    const guard = join(root, '.cockpit/guards/bash-guard.sh')
+    await mkdir(dirname(guard), { recursive: true })
+    await writeFile(guard, 'exit 0\n')
+    expect(run(1024 * 1024)).toMatchObject({ status: 1, stdout: '', stderr: expect.stringContaining('cockpit restriction guard failed: spawnSync /bin/bash EPIPE') })
 })
 
 it('uses the same recovery at the shared launcher when machine-local identity is unavailable', async () => {
