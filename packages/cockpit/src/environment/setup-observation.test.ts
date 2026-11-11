@@ -913,9 +913,10 @@ exec '${input.gitExecutable.canonicalPath}' "$@"
             })
             if (generated.state !== 'available') throw new Error(generated.reason)
             if (clockChange === 'reversed') vi.setSystemTime(now + 61_000)
+            // Git is gone before revalidation starts: renamed while it ran, the refresh could still find it and pass.
+            if (clockChange === 'expired') await rename(git, join(bin, 'git-held'))
             const pending = revalidateGeneratedCheckoutIdentity(generated)
             vi.setSystemTime(now + (clockChange === 'reversed' ? 59_000 : clockChange === 'backwards' ? -60_001 : 60_001))
-            if (clockChange === 'expired') await rename(git, join(bin, 'git-held'))
             expect(await pending).toBe(clockChange === 'refreshed')
         } finally {
             vi.useRealTimers()
