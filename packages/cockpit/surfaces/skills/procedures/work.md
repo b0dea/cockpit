@@ -142,9 +142,11 @@ not the thinking: reuse the planning skills the harness already has.
    Done when the grade passes.
 7. **Attempt cap.** Each failed check or grade counts an attempt; at `work.attempt_cap` the order is
    blocked. Record the root cause with `work note`, then do what the refusal names: close it with
-   `work signoff --partial` or `--abandon`, or amend the contract, yourself where `[work.gates]` gives
-   that step to the agent, and otherwise hand the person the command. Done when the order is closed or
-   amended, or the person has the cause and the command.
+   `work signoff --partial` or `--abandon`, yourself where `[work.gates]` gives that step to the agent,
+   and otherwise hand the person the command; or, when the contract is right and the cause is fixed,
+   hand the person `work retry --note <the root cause> --interactive`, which is always theirs. An
+   amendment you accept keeps the count. Done when the order is closed or given fresh attempts, or
+   the person has the cause and the command.
 8. **Close** with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work signoff --config cockpit.toml --work-order WO-001`
    once graded, or under `off` when the work is finished: it closes as `ungraded`, listing any check that
    failed or never ran, so report those, and pass a `--note` saying why if one failed (expected, not

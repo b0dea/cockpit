@@ -56,6 +56,7 @@ This generated index is for users choosing the command that owns their next oper
 - `cockpit work acknowledge`: Acknowledge that an order weakened tests, as [work.gates] allows.
 - `cockpit work grade`: Grade an accepted order the way [work] grading says.
 - `cockpit work signoff`: Close a graded order as done, or any open one as partial or abandoned.
+- `cockpit work retry`: Grant an order at its attempt cap fresh attempts, as a person at a terminal.
 - `cockpit work recover`: Inspect or remove a crashed command's work-order lock.
 - `cockpit work verify`: Check every record against its order; in CI, pass the steps gated on ci.
 - `cockpit grade`: Independently grade uncommitted work against a criteria file, with no work order.

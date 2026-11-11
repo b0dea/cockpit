@@ -185,7 +185,7 @@ export async function gradeOrder(request: Extract<WorkRequest, { operation: 'wor
     // Checks bind in every mode, so an agent's own `met` never covers a failed check. Changes are read
     // after the checks, so files a check writes count too.
     const checks = await runChecks(order)
-    const { changes, weakening: weak } = await composition.review(record.accepted.base)
+    const { changes, weakening: weak } = await composition.review(record.accepted.base, order.scope)
     // The decision records an order is required to write are part of its work wherever scope points.
     const decisionFiles = [composition.docs?.decisions, composition.docs?.decisionsIndex].filter((path): path is string => path !== undefined)
     const inScope = scopeMatcher([...order.scope, ...decisionFiles])
@@ -206,8 +206,10 @@ export async function gradeOrder(request: Extract<WorkRequest, { operation: 'wor
         // No model reads the change under checks, so weakened tests fail the grade until acknowledged.
         verdicts = [...verdicts, ...standingVerdictsUnderChecks(standingInput)]
     } else {
-        // The contract's own change is shown to the evaluator as a changed file, so a verdict on the amendments can quote it.
-        const contract = amendments.length ? [{ path: `workorders/${order.id}.md`, status: 'amended',
+        // The contract's own change is shown to the evaluator as a changed file, so a verdict on the amendments can quote it,
+        // unless scope names the order file, whose diff is then among the changes; a second entry would shadow one of them.
+        const contractPath = `workorders/${order.id}.md`
+        const contract = amendments.length && !changes.some(change => change.path === contractPath) ? [{ path: contractPath, status: 'amended',
             diff: amendments.map(row => `${row.field}\n- ${row.before}\n+ ${row.after}`).join('\n') }] : []
         const graded = await composition.evaluate({ objective: order.objective, criteria: [...order.criteria, ...standing], nonGoals: order.non_goals, scope: order.scope,
             checks, changes: [...changes, ...contract], outOfScope })
@@ -247,7 +249,7 @@ export async function gradeCriteriaFile(request: Extract<WorkRequest, { operatio
     const checks = await runChecks(file)
     // The criteria file is the request, not part of the change it grades.
     // With no order there is no recorded base, so the change since HEAD is compared, and the evaluator judges any test weakening.
-    const review = await composition.review(await composition.heads())
+    const review = await composition.review(await composition.heads(), file.scope)
     const changes = review.changes.filter(change => change.path !== posix.normalize(request.criteriaFile))
     const inScope = scopeMatcher(file.scope)
     const outOfScope = file.scope.length ? changes.map(change => change.path).filter(path => !inScope(path)) : []

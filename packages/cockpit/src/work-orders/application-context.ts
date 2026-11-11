@@ -29,6 +29,7 @@ const Request = z.discriminatedUnion('operation', [
     z.object({ operation: z.literal('work-grade'), workOrderId: id, verdict: z.enum(['met', 'unmet']).optional(), note: note.optional(), fromSubagent: z.literal(true).optional() }).strict(),
     z.object({ operation: z.literal('work-signoff'), workOrderId: id, close: z.enum(['done', 'partial', 'abandoned']), note: note.optional() }).strict(),
     z.object({ operation: z.literal('work-acknowledge'), workOrderId: id, note }).strict(),
+    z.object({ operation: z.literal('work-retry'), workOrderId: id, note }).strict(),
     z.object({ operation: z.literal('work-recover'), workOrderId: id, apply: z.boolean() }).strict(),
     z.object({ operation: z.literal('work-verify') }).strict(),
     z.object({ operation: z.literal('grade-criteria'), criteriaFile: relativeFile }).strict(),
@@ -96,7 +97,9 @@ export interface WorkContext {
     readonly attemptCap: number
     /** The records under [docs] decisions, read once per command. */
     readonly decisionRecords: () => Promise<ReadonlyMap<string, string>>
-    readonly gated: (gate: WorkGate, decider: Decider, lines: readonly string[], verb: string,
+    /** What clears an order at the attempt cap, for whoever [work.gates] names. */
+    readonly capRemedy: (orderId: string) => string
+    readonly gated: (gate: WorkGate | 'retry', decider: Decider, lines: readonly string[], verb: string,
         apply: (by: Decider) => Promise<WorkApplicationOutcome>) => Promise<WorkApplicationOutcome>
     /** The order and its record, refused unless it is accepted, open, unchanged and not blocked. */
     readonly current: (orderId: string) => Promise<Readonly<{ row: Observed; record: WorkRecord; order: WorkOrder }>>
@@ -126,7 +129,7 @@ export function workContext(composition: WorkApplicationComposition, operation: 
 
     // Who passed a gate: the agent; a person, after typing the digest of exactly what they were shown;
     // or CI, which locally records the step as awaiting the `work verify` job and passes it there.
-    const gated = async (gate: WorkGate, decider: Decider, lines: readonly string[], verb: string,
+    const gated = async (gate: WorkGate | 'retry', decider: Decider, lines: readonly string[], verb: string,
         apply: (by: Decider) => Promise<WorkApplicationOutcome>): Promise<WorkApplicationOutcome> => {
         const decision = decide(decider, composition.env)
         if (decision === 'proceed') return apply(decider === 'ci' ? 'ci' : 'agent')
@@ -134,19 +137,22 @@ export function workContext(composition: WorkApplicationComposition, operation: 
         const digest = createHash('sha256').update(JSON.stringify({ gate, lines })).digest('hex')
         let used = false
         return { kind: 'human-needed', operation, continuation: { digest,
-            prompt: [...lines.map(shown), `[work.gates] ${gate} = person. To ${verb} exactly this, type ${verb} ${digest}`].join('\n'),
+            prompt: [...lines.map(shown), `${gate === 'retry' ? 'work retry is always a person\'s step' : `[work.gates] ${gate} = person`}. To ${verb} exactly this, type ${verb} ${digest}`].join('\n'),
             decide: async (answer: string) => {
                 if (used) return refusal(operation, `this prompt was already answered; rerun work ${operation.slice('work-'.length)}`)
                 used = true
                 return answer.trim() === `${verb} ${digest}` ? apply('person') : refusal(operation, `Nothing was recorded: the person did not type ${verb} ${digest}`)
             } } }
     }
-    // Who closes or amends a capped order is whoever [work.gates] says; a sentence naming a person where the policy names the agent is a control that is not there.
-    const attemptCapRemedy = (orderId: string) => {
+    // Who closes a capped order is whoever [work.gates] says; a sentence naming a person where the policy names the agent is a control that is not there.
+    // Fresh attempts are a person's (or, through an amendment, CI's where it passes amend): an amendment the agent accepts keeps the count, or the cap
+    // would not stop an agent retrying its own failed work.
+    const capRemedy = (orderId: string) => {
         const by = (gate: WorkGate, verb: string, command: string) => policy.gates[gate] === 'person' ? `a person ${verb} it with ${command} --interactive`
             : `${verb.replace(/s$/, '')} it with ${command}${policy.gates[gate] === 'ci' ? ', which the work verify job confirms in CI' : ''}`
-        return `${by('signoff', 'closes', `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work signoff --config <your cockpit.toml> --work-order ${orderId} --partial|--abandon --note <why>`)}, `
-            + `or ${by('amend', 'amends', `an edit to workorders/${orderId}.md and ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config <your cockpit.toml> --work-order ${orderId}`)}`
+        return [`record the root cause with work note, then ${by('signoff', 'closes', `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work signoff --config <your cockpit.toml> --work-order ${orderId} --partial|--abandon --note <why>`)}`,
+            ...policy.gates.amend === 'agent' ? [] : [by('amend', 'amends', `an edit to workorders/${orderId}.md and ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config <your cockpit.toml> --work-order ${orderId}`)],
+            `a person grants it fresh attempts with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work retry --config <your cockpit.toml> --work-order ${orderId} --note <the root cause> --interactive`].join(', or ')
     }
     const current = async (orderId: string): Promise<Readonly<{ row: Observed; record: WorkRecord; order: WorkOrder }>> => {
         const row = await observe(orderId)
@@ -157,7 +163,7 @@ export function workContext(composition: WorkApplicationComposition, operation: 
             + `run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config <your cockpit.toml> --work-order ${orderId} to accept the change`)
         if (state === 'blocked') throw new RefusalError(openQuestions(row.record).length
             ? `${orderId} has open question ${openQuestions(row.record).join(', ')}; it is answered with work answer`
-            : `${orderId} reached the attempt cap (${composition.caps.attempts}); record the root cause with work note, then ${attemptCapRemedy(orderId)}`)
+            : `${orderId} reached the attempt cap (${composition.caps.attempts}); ${capRemedy(orderId)}`)
         return { row, record: row.record, order: row.order! }
     }
     const runChecks = async (order: Pick<WorkOrder, 'criteria' | 'gates'>): Promise<readonly CheckResult[]> => {
@@ -167,5 +173,5 @@ export function workContext(composition: WorkApplicationComposition, operation: 
         for (const gate of order.gates) results.push(await composition.runCheck(gateCheckId(gate), { gate }))
         return results
     }
-    return { composition, operation, policy, store, observe, wip, attemptCap, decisionRecords, gated, current, runChecks }
+    return { composition, operation, policy, store, observe, wip, attemptCap, decisionRecords, capRemedy, gated, current, runChecks }
 }

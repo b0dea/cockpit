@@ -12,7 +12,7 @@ export function isRecordedAnswerField(value: string): boolean {
 }
 
 export type WorkHandlerIdentifier =
-    | 'work-status' | 'work-accept' | 'work-check' | 'work-note' | 'work-decide' | 'work-answer' | 'work-acknowledge' | 'work-grade' | 'work-signoff' | 'work-recover' | 'work-verify' | 'grade-criteria'
+    | 'work-status' | 'work-accept' | 'work-check' | 'work-note' | 'work-decide' | 'work-answer' | 'work-acknowledge' | 'work-grade' | 'work-signoff' | 'work-retry' | 'work-recover' | 'work-verify' | 'grade-criteria'
     | 'browser-drive' | 'browser-screenshot' | 'test-run'
 
 export type HandlerIdentifier = WorkHandlerIdentifier
@@ -600,6 +600,10 @@ const sources = [
     { name: 'work signoff', handler: 'work-signoff', stage: 'test-and-grade', summary: 'Close a graded order as done, or any open one as partial or abandoned', visibility: 'public',
         ordinary: ordinary('work-signoff', personFlag),
         flags: { ...configured, 'work-order': workOrderFlag, partial: bool(flag), abandon: bool(flag), note: str(value('label')), interactive: bool() } },
+    // The attempt cap stops an agent retrying its own failed work, so fresh attempts at an unchanged contract are always a person's.
+    { name: 'work retry', handler: 'work-retry', stage: 'test-and-grade', summary: 'Grant an order at its attempt cap fresh attempts, as a person at a terminal', visibility: 'public',
+        ordinary: ordinary('work-retry', personFlag),
+        flags: { ...configured, 'work-order': workOrderFlag, note: str(value('label', true)), interactive: bool() } },
     // Inspection only reports the holder. --apply removes the lock only once the command has shown its
     // holder gone where a pid probe cannot see: the lock's host and the containers cockpit labels.
     { name: 'work recover', handler: 'work-recover', stage: 'test-and-grade', summary: "Inspect or remove a crashed command's work-order lock", visibility: 'public',

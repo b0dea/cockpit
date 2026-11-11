@@ -137,7 +137,7 @@ describe('closed ordinary invocation metadata', () => {
         'test-run': ['--gate', 'quick'], reset: ['--apply'], grade: ['--criteria', 'criteria.md'], use: ['app'], tool: ['add', 'codexcli'], confirm: ['ports.bases'],
         ...Object.fromEntries(['accept', 'check', 'acknowledge', 'grade', 'signoff', 'recover'].map(sub => [`work ${sub}`, ['--work-order', 'WO-1']])),
         'work note': ['--work-order', 'WO-1', '--text', 'why'], 'work decide': ['--work-order', 'WO-1', '--decision', '1', '--record'], 'work answer': ['--work-order', 'WO-1', '--question', '1', '--text', 'because'],
-        'work acknowledge': ['--work-order', 'WO-1', '--note', 'the deleted test is replaced'],
+        'work acknowledge': ['--work-order', 'WO-1', '--note', 'the deleted test is replaced'], 'work retry': ['--work-order', 'WO-1', '--note', 'the grader saw no change'],
     }
     // The container command follows `--` at the very end, after every option.
     const trailingWords = (name: string): readonly string[] => name === 'exec' ? ['--', 'psql', '-c', 'select 1'] : []
@@ -239,7 +239,7 @@ describe('closed ordinary invocation metadata', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
         expect(rows.map(row => row.name)).toEqual(['setup', 'use', 'pull', 'tool', 'confirm', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'ps', 'restart', 'rebuild', 'exec',
             'sleep', 'down', 'reset', 'stacks', 'doctor', 'env keys', 'env schema',
-            'test-run', 'work status', 'work accept', 'work check', 'work note', 'work decide', 'work answer', 'work acknowledge', 'work grade', 'work signoff', 'work recover', 'work verify', 'grade',
+            'test-run', 'work status', 'work accept', 'work check', 'work note', 'work decide', 'work answer', 'work acknowledge', 'work grade', 'work signoff', 'work retry', 'work recover', 'work verify', 'grade',
             'browser drive', 'browser screenshot', 'docs check'])
         for (const row of rows) {
             const argv = [...row.name.split(' '), ...(requiredWords[row.name] ?? [])]
@@ -585,6 +585,7 @@ describe('CLI help', () => {
             '  acknowledge  Acknowledge that an order weakened tests, as [work.gates] allows\n' +
             '  grade        Grade an accepted order the way [work] grading says\n' +
             '  signoff      Close a graded order as done, or any open one as partial or abandoned\n' +
+            '  retry        Grant an order at its attempt cap fresh attempts, as a person at a terminal\n' +
             "  recover      Inspect or remove a crashed command's work-order lock\n" +
             '  verify       Check every record against its order; in CI, pass the steps gated on ci\n\n' +
             "Run 'cockpit work <subcommand> --help' for its options.\n")
@@ -597,7 +598,7 @@ describe('CLI help', () => {
 
         const envelope = async (args: string[]) => JSON.parse((await runInProcess([...args, '--json'])).stdout)
         expect(await envelope(['work'])).toMatchObject({ invocation: { verb: 'work', exitCode: 2 }, diagnostics: [{ code: 'CLI_COMMAND_REQUIRED',
-            message: 'work requires a subcommand: status, accept, check, note, decide, answer, acknowledge, grade, signoff, recover, verify' }] })
+            message: 'work requires a subcommand: status, accept, check, note, decide, answer, acknowledge, grade, signoff, retry, recover, verify' }] })
         expect(await envelope(['work', 'bogus'])).toMatchObject({ invocation: { verb: 'unknown' }, diagnostics: [{ code: 'CLI_UNKNOWN_COMMAND', message: 'unknown command "work bogus"' }] })
         // There are no hyphenated aliases; the refusal names the spelling that runs.
         const hyphenated = await runInProcess(['work-grade', '--config', 'cockpit.toml'])
