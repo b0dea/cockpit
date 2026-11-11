@@ -318,7 +318,8 @@ describe('installed container-runtime capability promotion', () => {
     it('bounds a slow installed command before mutation and leaves no owned runtime identity', () => {
         const verdict = installedChildProbe(request({
             executable: { canonicalPath: slowDockerPath, invocationPath: slowDockerPath, sha256: slowDockerSha, executionMode: 'verified-path' },
-            timeoutMs: 25,
+            // Every step gets this bound, git init included, which outlasted 25 ms on a loaded runner; half the stub's one-second sleep still bounds Docker.
+            timeoutMs: 500,
         }))
         expect(verdict).toEqual(expect.objectContaining({
             status: 'unavailable',
