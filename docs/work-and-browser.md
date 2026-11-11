@@ -58,6 +58,7 @@ variables, judged by exit status, for at most `work.verification_timeout_seconds
 <!-- cockpit:ref command=work status --> <!-- cockpit:ref command=work accept -->
 <!-- cockpit:ref command=work check --> <!-- cockpit:ref command=work grade -->
 <!-- cockpit:ref command=work acknowledge --> <!-- cockpit:ref command=work signoff -->
+<!-- cockpit:ref command=work retry -->
 
 ```sh
 npx --no cockpit work accept --config cockpit.toml --work-order WO-1
@@ -72,8 +73,15 @@ derives: **stale** when the file or a source changed since acceptance, **blocked
 question waits or the attempt cap is reached, and **draft** before acceptance. `partial` and
 `abandoned` are closures. The work-in-progress cap, `work.wip_cap`, counts accepted orders that are
 not closed, and `work accept` refuses a new one past it. A failed check or grade counts an attempt;
-at `work.attempt_cap` the order is blocked until it is amended or closed, by whoever
-[`[work.gates]`](#who-passes-each-gate) names for `amend` and `signoff`; the refusal names who.
+at `work.attempt_cap` the order is blocked until it is closed, by whoever
+[`[work.gates]`](#who-passes-each-gate) names for `signoff`, or given fresh attempts; the refusal
+names who. An amendment a person or CI accepts resets the count. One the agent accepts keeps it, or
+reordering a list in its own contract would undo the cap. When the contract is right and the
+attempts failed for a cause now fixed, a person runs
+`work retry --work-order <id> --note <the root cause> --interactive`: it shows what failed last and
+the cause, and once the person types its digest it grants a fresh set of attempts at the same
+contract and base. The record keeps the failed count, the cause and, in brief, what failed.
+`work retry` is always a person's step, whatever `[work.gates]` says.
 
 - **accept** records the contract. Run it again after editing an accepted order to accept the change
   (an [amendment](#amendments)). The check base stays the commits recorded at first acceptance.
@@ -238,7 +246,8 @@ way that may lower the bar, before and after:
 
 The next grade carries `amendments-hold-bar`, with the before and after of every amendment the agent
 made since a person or CI last accepted the contract; under `independent` the evaluator also sees
-them as the change to `workorders/<id>.md`. When it is not met the grade fails, and the next
+them as the change to `workorders/<id>.md`, or, where the order's scope names that file, its diff
+since the base. When it is not met the grade fails, and the next
 amendment and any closure are a person's: revert or rewrite the order, then a person runs
 `work accept --interactive`. The order records the finding, so a later `work check` or grade does
 not clear it; only an amendment a person or CI accepts does.
@@ -401,7 +410,9 @@ server in your OpenCode configuration adds is outside its denials. cockpit check
 against the output schema and refuses one that does not match.
 
 The grader is given each criterion with the result of the check cockpit ran for it, and every
-changed file's diff since the base commits. A credential-shaped path or a declared environment
+changed file's diff since the base commits. Files under `workorders/` and cockpit's records under
+`.cockpit/` are coordination and left out, except the files under `workorders/` that the order's
+scope names, which are its work. A credential-shaped path or a declared environment
 instance is listed with its content withheld. A `met` verdict stands only when each quote it cites,
 at least eight characters long, is found exactly once in the change or check output it names;
 otherwise it reads as `unclear` with the reason. No evaluator runs with a browser, and the request

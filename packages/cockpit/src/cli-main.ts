@@ -523,9 +523,14 @@ function weakenedTestsDiagnostic(operation: WorkApplicationRequest['operation'],
             : 'read result.testProtection: restore each deleted, skipped, suppressed or loosened test. A grade without an order has the evaluator judge the test changes; an order records the base they are compared with, and under [work] grading = "checks" a person acknowledges a legitimate change with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why> --interactive, or CI where [work.gates] acknowledge = "ci"' }
 }
 
+type PersonHandler = 'work-accept' | 'work-answer' | 'work-signoff' | 'work-acknowledge' | 'work-retry'
+const PERSON_HANDLERS: ReadonlySet<string> = new Set<PersonHandler>(['work-accept', 'work-answer', 'work-signoff', 'work-acknowledge', 'work-retry'])
+const isPersonHandler = (handler: string): handler is PersonHandler => PERSON_HANDLERS.has(handler)
+
 // A person gate binds what the person reads to the digest they type, so it never completes for an agent.
-function personRequired(handler: 'work-accept' | 'work-answer' | 'work-signoff' | 'work-acknowledge', prompt: string): CommandOutcome {
-    return { artifact: null, destination: null, result: { prompt }, status: 2, diagnostics: [{ severity: 'error', message: `${handler.slice('work-'.length)} is a person's step under [work.gates] in cockpit.toml, and this run has no person at a terminal`,
+function personRequired(handler: PersonHandler, prompt: string): CommandOutcome {
+    const rule = handler === 'work-retry' ? 'always a person\'s step' : 'a person\'s step under [work.gates] in cockpit.toml'
+    return { artifact: null, destination: null, result: { prompt }, status: 2, diagnostics: [{ severity: 'error', message: `${handler.slice('work-'.length)} is ${rule}, and this run has no person at a terminal`,
         code: 'WORK_PERSON_REQUIRED' satisfies typeof ENVIRONMENT_CODES.WORK_PERSON_REQUIRED,
         fix: 'stop and ask a person to run the same command with --interactive in a terminal outside CI, read what it shows, and type the digest; never type it for them' }] }
 }
@@ -1057,9 +1062,9 @@ async function decodeRequest(
             const answer = text('text'), question = Number(text('question'))
             if (!answer || !Number.isSafeInteger(question) || question < 1) return usageOutcome('CLI_USAGE_INVALID', 'provide --question <number> and --text <answer>')
             request = { operation: handler, workOrderId: workOrderId!, question, text: answer }
-        } else if (handler === 'work-acknowledge') {
+        } else if (handler === 'work-acknowledge' || handler === 'work-retry') {
             const note = text('note')
-            if (!note) return usageOutcome('CLI_USAGE_INVALID', 'provide --note <why this change to the tests is not a weakening>', '--note')
+            if (!note) return usageOutcome('CLI_USAGE_INVALID', handler === 'work-retry' ? 'provide --note <the root cause of the failed attempts>' : 'provide --note <why this change to the tests is not a weakening>', '--note')
             request = { operation: handler, workOrderId: workOrderId!, note }
         } else if (handler === 'work-grade') {
             const verdict = text('verdict'), note = text('note')
@@ -1502,7 +1507,7 @@ async function dispatchHandler(
         request.handler,
     )
     if (isWorkHandler(request.handler) && 'request' in request.input) {
-        if (request.handler === 'work-accept' || request.handler === 'work-answer' || request.handler === 'work-signoff' || request.handler === 'work-acknowledge') {
+        if (isPersonHandler(request.handler)) {
             const opened = await operators.beginOperatorWorkApplication?.(request.input)
             if (!opened) return unavailable()
             if (!('decide' in opened)) return opened

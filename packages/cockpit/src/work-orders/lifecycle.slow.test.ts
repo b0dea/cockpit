@@ -59,7 +59,7 @@ if (argv.at(-1) === '--help') { process.stdout.write('--print --output-format --
 const request = JSON.parse(fs.readFileSync(/request JSON at (\\S+) with SHA-256/.exec(argv.at(-1))[1], 'utf8'))
 fs.writeFileSync(__dirname + '/request.json', JSON.stringify(request))
 const verdict = fs.existsSync(__dirname + '/verdict') ? fs.readFileSync(__dirname + '/verdict', 'utf8').trim() : 'unclear'
-const evidence = verdict === 'met' ? [{ source: request.changes[0].path, quote: request.changes[0].diff }] : []
+const evidence = verdict === 'met' && request.changes.length ? [{ source: request.changes[0].path, quote: request.changes[0].diff }] : []
 const answer = { criteria: request.order.criteria.map(row => ({ id: row.id, verdict, note: 'synthetic: ' + row.text, evidence })) }
 process.stdout.write(JSON.stringify({ type: 'result', is_error: false, session_id: require('node:crypto').randomUUID(), result: JSON.stringify(answer), structured_output: answer }))
 `)
@@ -536,9 +536,9 @@ describe('work-order lifecycle', () => {
         writeFileSync(join(tools, 'verdict'), 'unmet')
         expect(await run(['work', 'grade', '--work-order', 'WO-7'])).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_TEST_WEAKENED' },
             { code: 'WORK_GRADE_UNSATISFIED', message: expect.stringContaining('the next amendment of WO-7 is a person\'s') }] })
-        // The cap's remedy names whoever [work.gates] names: a person for signoff here, the agent for amend.
+        // The cap's remedy names whoever [work.gates] names: a person for signoff here. Amend is the agent's, which keeps the count, so it is not offered.
         expect((await run(['work', 'check', '--work-order', 'WO-7'])).diagnostics[0]?.message)
-            .toMatch(/attempt cap \(1\); record the root cause with work note, then a person closes it with .*--partial\|--abandon --note <why> --interactive, or amend it with an edit to workorders\/WO-7\.md/)
+            .toMatch(/attempt cap \(1\); record the root cause with work note, then a person closes it with .*--partial\|--abandon --note <why> --interactive, or a person grants it fresh attempts with .*work retry /)
         // A grade that found the agent's amendments lower the bar makes the next amendment a person's.
         writeFileSync(join(root, 'workorders/WO-7.md'), order('WO-7'))
         expect((await run(['work', 'accept', '--work-order', 'WO-7'])).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
@@ -571,6 +571,48 @@ describe('work-order lifecycle', () => {
         // A person's amendment settles it: the agent may reword its contract again.
         writeFileSync(join(root, 'workorders/WO-10.md'), reworded)
         expect((await run(['work', 'accept', '--work-order', 'WO-10'])).result).toMatchObject({ amended: true, by: 'agent' })
+    }, 120_000)
+
+    it('shows the evaluator the files under workorders/ an order\'s scope names, and no other order\'s', async () => {
+        const root = await cockpit('[work]\nevaluators = ["claudecode"]')
+        const tools = syntheticEvaluator()
+        const env = { ...process.env, CLAUDECODE: undefined, CODEX_THREAD_ID: undefined, PATH: [tools, ...(process.env.PATH ?? '').split(':')].join(':') }
+        const run = (args: readonly string[]) => work(root, args, env)
+        // An order whose work is itself kept beside the orders, such as a register of parked ideas.
+        writeFileSync(join(root, 'workorders/WO-12.md'), '---\nid: WO-12\nobjective: Register every parked idea.\nscope: [workorders/WO-12-register/]\n'
+            + 'criteria:\n  - id: AC1\n    text: Every parked idea has a row with a decision.\n---\n')
+        expect((await run(['work', 'accept', '--work-order', 'WO-12'])).status).toBe(0)
+        mkdirSync(join(root, 'workorders/WO-12-register'))
+        writeFileSync(join(root, 'workorders/WO-12-register/register.md'), '| idea | decision |\n| dark mode | build later |\n')
+        writeFileSync(join(root, 'workorders/WO-13.md'), order('WO-13'))
+        writeFileSync(join(tools, 'verdict'), 'met')
+        expect(await run(['work', 'grade', '--work-order', 'WO-12'])).toMatchObject({ status: 0, result: { state: 'graded', outOfScope: [], criteria: [{ id: 'AC1', verdict: 'met' }] } })
+        // The order file, another order and cockpit's records stay coordination.
+        expect((JSON.parse(readFileSync(join(tools, 'request.json'), 'utf8')).changes as { path: string }[]).map(row => row.path)).toEqual(['workorders/WO-12-register/register.md'])
+    }, 120_000)
+
+    it('grants a capped order fresh attempts only on a person\'s word, keeping what failed, and an agent\'s amendment keeps the count', async () => {
+        const root = await cockpit('[work]\ngrading = "checks"\nattempt_cap = 1')
+        const run = (args: readonly string[]) => work(root, args)
+        writeFileSync(join(root, 'workorders/WO-14.md'), order('WO-14'))
+        expect((await run(['work', 'accept', '--work-order', 'WO-14'])).status).toBe(0)
+        writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => a - b\n')
+        expect((await run(['work', 'check', '--work-order', 'WO-14'])).status).toBe(2)
+        expect((await run(['work', 'check', '--work-order', 'WO-14'])).diagnostics[0]?.message).toMatch(/attempt cap \(1\); record the root cause with work note, then close it with .*--partial\|--abandon --note <why>, or a person grants it fresh attempts with .*work retry .*--note <the root cause> --interactive$/)
+        expect((await run(['work', 'accept', '--work-order', 'WO-14'])).diagnostics[0]?.message)
+            .toMatch(/^WO-14 is already accepted and workorders\/WO-14\.md has not changed since, so there is nothing to amend; it is at its attempt cap \(1\): /)
+        const retry = ['work', 'retry', '--work-order', 'WO-14', '--note', 'add subtracted; fixed in src/add.mjs']
+        expect((await run(retry)).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
+        let shown = ''
+        expect(await asPerson(root, retry, (prompt, digest) => { shown = prompt; return `retry ${digest}` })).toBe(0)
+        expect(shown).toMatch(/Last failed:\n  check AC1 exit 1\nRoot cause given:\n  add subtracted; fixed in src\/add\.mjs\nwork retry is always a person's step/)
+        expect(record(root, 'WO-14')).toMatchObject({ attempts: 0, retries: [{ by: 'person', attempts: 1, note: 'add subtracted; fixed in src/add.mjs', failed: [{ id: 'check AC1', text: 'exit 1' }] }] })
+        expect((await run(retry)).diagnostics[0]?.message).toBe('WO-14 has 1 of its 1 attempts left; work retry is for an order at its attempt cap')
+        // Rewording its contract does not hand the agent its attempts back.
+        expect((await run(['work', 'check', '--work-order', 'WO-14'])).status).toBe(2)
+        writeFileSync(join(root, 'workorders/WO-14.md'), order('WO-14').replace('scope: [src/, test/]', 'scope: [test/, src/]'))
+        expect((await run(['work', 'accept', '--work-order', 'WO-14'])).result).toMatchObject({ amended: true, by: 'agent' })
+        expect((await run(['work', 'check', '--work-order', 'WO-14'])).diagnostics[0]?.message).toMatch(/^WO-14 reached the attempt cap \(1\)/)
     }, 120_000)
 
     it('removes a crashed command\'s lock only once its holder is shown gone, and records what it checked', async () => {

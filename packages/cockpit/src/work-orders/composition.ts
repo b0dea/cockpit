@@ -102,8 +102,11 @@ export interface WorkApplicationComposition {
     readonly evaluate: (subject: GradingSubject) => Promise<GradingResult>
     /** Test weakening in each checkout since `base`, over the files this cockpit treats as tests. */
     readonly testWeakening: (base: Readonly<Record<string, string>>) => Promise<TestWeakeningObservation>
-    /** What changed in each checkout since `base` (committed, staged, unstaged and untracked, each with its diff), and its test weakening, from one listing of untracked files. */
-    readonly review: (base: Readonly<Record<string, string>>) => Promise<Readonly<{ changes: readonly ChangedFile[]; weakening: TestWeakeningObservation }>>
+    /**
+     * What changed in each checkout since `base` (committed, staged, unstaged and untracked, each with its diff), and its test weakening,
+     * from one listing of untracked files. Files under workorders/ are coordination, except those `scope` names: an order's own work.
+     */
+    readonly review: (base: Readonly<Record<string, string>>, scope: readonly string[]) => Promise<Readonly<{ changes: readonly ChangedFile[]; weakening: TestWeakeningObservation }>>
     readonly browser: (kind: BrowserCommandKind, role?: string, route?: string) => Promise<BrowserCommandInput>
     /** The [docs] table as declared; absent when the cockpit declares none. */
     readonly docs?: Readonly<{ decisions?: string; decisionsIndex?: string }>
@@ -793,8 +796,12 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         [repository.key, (await git(repository, ['ls-files', '--others', '--exclude-standard', '-z'], { stdoutLimitBytes: GIT_CHANGE_OUTPUT_BYTES })).split('\0').filter(Boolean)] as const)))
     // What changed since the base: committed, staged, unstaged and untracked files, each with its diff
     // or new content. A credential-shaped or declared-instance path is listed but its content is withheld.
-    const changesWith = async (base: Readonly<Record<string, string>>, untrackedPaths: ReadonlyMap<string, readonly string[]>): Promise<readonly ChangedFile[]> => {
+    const changesWith = async (base: Readonly<Record<string, string>>, untrackedPaths: ReadonlyMap<string, readonly string[]>, scope: readonly string[]): Promise<readonly ChangedFile[]> => {
         const files: ChangedFile[] = []
+        // An order may keep its work beside the orders, such as a register; hiding that left the grader nothing to quote.
+        // Only workorders/ is reopened this way, never what cockpit writes under .cockpit/.
+        const inScope = scopeMatcher(scope)
+        const coordination = (path: string) => excludedRepositoryPath(path, COCKPIT_WRITTEN) && !(path.startsWith('workorders/') && inScope(path))
         let budget = MAX_CHANGE_BYTES
         // What sync generates is cockpit's, not the order's: the paths the ownership manifest lists.
         const generated = new Set<string>()
@@ -811,7 +818,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             const rows: [status: string, path: string, untracked: boolean][] = []
             for (let index = 0; index + 1 < tracked.length; index += 2) rows.push([tracked[index]!, tracked[index + 1]!, false])
             for (const path of untrackedPaths.get(repository.key)!) rows.push(['A', path, true])
-            const shown = rows.filter(([, path]) => !(repository.key === '.' && (excludedRepositoryPath(path, COCKPIT_WRITTEN) || generated.has(path))))
+            const shown = rows.filter(([, path]) => !(repository.key === '.' && (coordination(path) || generated.has(path))))
             const declared = { kind: 'declared', env: {}, timeoutField: VERIFICATION_TIMEOUT_FIELD } as const
             const read = async (path: string, untracked: boolean): Promise<string> => {
                 try {
@@ -904,9 +911,9 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         return { patterns, findings: perRepository.flat() }
     }
     const testWeakening = async (base: Readonly<Record<string, string>>) => weakeningWith(base, await untrackedFiles())
-    const review = async (base: Readonly<Record<string, string>>) => {
+    const review = async (base: Readonly<Record<string, string>>, scope: readonly string[]) => {
         const untracked = await untrackedFiles()
-        const [changed, weakening] = await Promise.all([changesWith(base, untracked), weakeningWith(base, untracked)])
+        const [changed, weakening] = await Promise.all([changesWith(base, untracked, scope), weakeningWith(base, untracked)])
         return { changes: changed, weakening }
     }
     const gradeIndependently = async (subject: GradingSubject): Promise<GradingResult> => {

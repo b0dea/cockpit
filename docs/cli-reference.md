@@ -734,6 +734,26 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
+## cockpit work retry
+
+Grant an order at its attempt cap fresh attempts, as a person at a terminal.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--json` | boolean | `false` |
+| `--work-order` | string | unset |
+| `--note` | string | unset |
+| `--interactive` | boolean | `false` |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
 ## cockpit work recover
 
 Inspect or remove a crashed command's work-order lock.

@@ -36,6 +36,9 @@ export type CheckResult = z.infer<typeof CheckResult>
 
 // The record lists this many paths outside scope; a large migration's full list would not fit its 1 MiB.
 export const MAX_RECORDED_OUT_OF_SCOPE = 512
+export const MAX_RETRIES = 16
+export const MAX_RETRY_FAILURES = 64
+export const MAX_RETRY_FAILURE_TEXT = 300
 const Verdict = z.object({ id: z.string().max(64), verdict: z.enum(['met', 'unmet', 'unclear']), note: z.string().max(4_096) }).strict()
 const Grade = z.object({
     at, digest: z.string().length(64), mode: z.enum(GRADE_MODES), passed: z.boolean(),
@@ -81,6 +84,10 @@ export const WorkRecord = z.object({
     notes: z.array(z.object({ at, by: z.enum(['agent', 'person', 'ci']), kind: z.enum(['note', 'question', 'answer', 'decision', 'resolution']), text: note,
         answers: z.number().int().min(1).optional(), resolves: z.number().int().min(1).optional(), record: z.string().max(1_100).optional() }).strict()).max(1_024),
     closure: z.object({ at, by, how: z.enum(['graded', 'subagent-reported', 'checks-passed', 'self-reported', 'ungraded', 'partial', 'abandoned']), note: note.optional() }).strict().optional(),
+    // Each time a person granted an order at its attempt cap fresh attempts: how many had failed, why, and in brief what failed last,
+    // which the next grade or check replaces. Bounded so repeated retries keep the record within its size.
+    retries: z.array(z.object({ at, by: z.literal('person'), attempts: z.number().int().min(1), note,
+        failed: z.array(z.object({ id: z.string().max(128), text: z.string().max(MAX_RETRY_FAILURE_TEXT) }).strict()).max(MAX_RETRY_FAILURES) }).strict()).max(MAX_RETRIES).optional(),
     // Each lock `work recover --apply` removed: the holder it named and what was checked to call it gone.
     recoveries: z.array(z.object({ at, holder: z.string().max(1_024), checked: z.array(z.string().max(1_024)).max(16) }).strict()).max(256).optional(),
 }).strict()

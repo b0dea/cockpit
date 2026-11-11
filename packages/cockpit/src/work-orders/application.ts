@@ -12,7 +12,7 @@ import { errorCause, RefusalError } from '../environment/contract.js'
 import { GRADING, isGradeMode, type Decider } from '../schema.js'
 import { describeWeakening, testWeakeningDigest } from '../testing/weakening.js'
 import { checksBindsField, contractAmendment, workOrderDigest } from './contract.js'
-import type { WorkRecord } from './store.js'
+import { MAX_RETRIES, MAX_RETRY_FAILURE_TEXT, MAX_RETRY_FAILURES, type WorkRecord } from './store.js'
 import { isWorkApplicationComposition, type WorkApplicationComposition } from './composition.js'
 import { captureWorkApplicationRequest, complete, displayState, now, openQuestions, refusal, TERMINAL, unsatisfied, workContext,
     type WorkApplicationOutcome, type WorkApplicationRequest, type WorkRequest } from './application-context.js'
@@ -65,7 +65,7 @@ function browserFindingsReason(receipt: BrowserCommandReceipt): string {
 
 async function work(request: WorkRequest, composition: WorkApplicationComposition): Promise<WorkApplicationOutcome> {
     const context = workContext(composition, request.operation)
-    const { operation, policy, store, observe, wip, attemptCap, gated, current, runChecks } = context
+    const { operation, policy, store, observe, wip, attemptCap, capRemedy, gated, current, runChecks } = context
     if (request.operation === 'work-status') {
         const ids = request.workOrderId ? [request.workOrderId] : [...new Set([...await composition.orderIds(), ...(await store.list()).map(row => row.id)])].sort()
         const rows = await Promise.all(ids.map(observe))
@@ -109,7 +109,8 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         }
         const record = row.record
         if (TERMINAL.has(record.state)) return refusal(operation, `${order.id} is closed (${record.state}); write a new order for further work`)
-        if (row.digest === record.accepted.digest) return refusal(operation, `${order.id} is already accepted and unchanged since`)
+        if (row.digest === record.accepted.digest) return refusal(operation, `${order.id} is already accepted and workorders/${order.id}.md has not changed since, so there is nothing to amend`
+            + (record.attempts >= attemptCap ? `; it is at its attempt cap (${composition.caps.attempts}): ${capRemedy(order.id)}` : ''))
         const { removed: weakened, review } = contractAmendment(record.accepted.order, order)
         // Removing a criterion or gate lowers the bar in every reading, so an agent never certifies it. A rewrite may
         // only clarify: where a model grades, the next grade judges it; under checks nothing could, so a person does.
@@ -124,7 +125,8 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
             ...failedReview ? [`A grade found the agent's earlier amendments lower the bar: ${failedReview.note}`] : [],
             ...review.map(row => `Changed ${row.field}: "${row.before}" -> "${row.after}"`), ...shownOrder], 'amend', async by => store.update(order.id, async existing => {
             if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while this prompt was open; rerun work accept`)
-            const next: WorkRecord = { ...existing, state: 'accepted', attempts: 0, checks: undefined, grade: undefined,
+            // An amendment the agent accepts keeps the attempt count, or reordering a list in its own contract would undo the cap.
+            const next: WorkRecord = { ...existing, state: 'accepted', attempts: by === 'agent' ? existing.attempts : 0, checks: undefined, grade: undefined,
                 ...by === 'agent' ? {} : { amendmentsFailedReview: undefined, evaluatorFailed: undefined },
                 accepted: { at: now(), by, digest, order, sources, base: existing.accepted.base },
                 amendments: [...existing.amendments, { at: now(), by, from: existing.accepted.digest, to: digest, weakened: [...weakened], review: [...review] }] }
@@ -192,6 +194,32 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         }))
     }
     if (request.operation === 'work-signoff') return signoff(request, context)
+    if (request.operation === 'work-retry') {
+        const id = request.workOrderId
+        const row = await observe(id)
+        const record = row.record
+        if (!record || TERMINAL.has(record.state)) return refusal(operation, `${id} has no open record to retry`)
+        if (displayState(row, attemptCap) === 'stale') return refusal(operation, `${id} changed since it was accepted; `
+            + `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config <your cockpit.toml> --work-order ${id} accepts the change, which resets its attempts`)
+        if (attemptCap === Infinity) return refusal(operation, `[work] grading = "${policy.grading}" sets no attempt cap, so ${id} has nothing to retry`)
+        if (record.attempts < attemptCap) return refusal(operation, `${id} has ${attemptCap - record.attempts} of its ${attemptCap} attempts left; work retry is for an order at its attempt cap`)
+        // What failed last, from the grade and from checks run on this contract: the person reads it in full, and the record keeps
+        // each in brief, since the next grade or check replaces them.
+        const failed = [...record.grade && !record.grade.passed ? record.grade.criteria.filter(row => row.verdict !== 'met').map(row => ({ id: row.id, text: `${row.verdict}: ${row.note}` })) : [],
+            ...record.checks?.digest === record.accepted.digest ? record.checks.results.filter(row => !row.passed).map(row => ({ id: `check ${row.criterion}`, text: row.outcome })) : []]
+        const retried = record.retries?.length ?? 0
+        if (retried >= MAX_RETRIES) return refusal(operation, `${id} was already granted fresh attempts ${MAX_RETRIES} times; close it with work signoff, or a person or CI amends its contract`)
+        return gated('retry', 'person', [`Grant ${id} ${attemptCap} fresh attempts at its unchanged contract (digest ${record.accepted.digest}) after ${record.attempts} failed`,
+            ...failed.length ? ['Last failed:', ...failed.map(row => `  ${row.id} ${row.text}`)] : ['No failed grade or check is recorded on this contract; an amendment cleared them'],
+            'Root cause given:', `  ${request.note}`], 'retry', async () => store.update(id, async existing => {
+            if (!existing || existing.accepted.digest !== record.accepted.digest || existing.attempts !== record.attempts || (existing.retries?.length ?? 0) !== retried) {
+                throw new RefusalError(`${id} changed while this prompt was open; rerun work retry`)
+            }
+            return { record: { ...existing, attempts: 0, retries: [...existing.retries ?? [], { at: now(), by: 'person' as const, attempts: existing.attempts, note: request.note,
+                failed: failed.slice(0, MAX_RETRY_FAILURES).map(row => ({ id: row.id.slice(0, 128), text: row.text.slice(0, MAX_RETRY_FAILURE_TEXT) })) }] },
+                value: complete(operation, { id, attempts: 0, cap: attemptCap, failedBefore: existing.attempts, by: 'person' }) }
+        }))
+    }
     if (request.operation === 'work-recover') {
         // A pid probe sees only this machine's processes, so the command looks where it cannot first: the
         // lock's host and the containers cockpit labels. Applied, it removes nothing it has not shown gone.
