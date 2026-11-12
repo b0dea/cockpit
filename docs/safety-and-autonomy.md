@@ -178,9 +178,14 @@ A schema's exemption has a limit: it is documentation to the guard and code to V
 
 Executable use of a declared hosted database or vendor host is denied at hostname boundaries.
 Matching examines executable, argument and environment-assignment-value roles; redirects, heredocs,
-comments and definitions do not count. Host names are compared after Unicode compatibility
+comments and alias definitions do not count; a function body counts, as the next paragraph explains. Host names are compared after Unicode compatibility
 normalization, so fullwidth letters and ideographic full stops, which resolvers fold to ASCII, do
 not hide a declared host.
+
+A function a command defines is judged as the commands in its body, in every directory the command
+visits, whether or not it is called: zsh runs functions such as `TRAPEXIT`, `zshexit` and `precmd`
+without being asked. Calling a defined function by name, and defining one inside a loop, are
+refused.
 
 ### Configuration, Git and guard controls
 
@@ -416,9 +421,9 @@ on Codex and OpenCode, where a prompt becomes a denial. It covers exact argument
 `git status`, `git diff`, `git log`, `git show`, `git grep`, `git blame`, `git rev-parse`, `git branch` listing flags,
 `git worktree list`, `git ls-files`, `git cat-file`, `git merge-base`, `git remote`, `git config --get`,
 the `gh` reads (`pr view`, `list`, `checks` and `status`, `run view`, `list` and `watch`, `issue view`,
-`list` and `status`, `repo view`, `auth status` without the token, and `gh api` with `GET` and no fields
-or input, none naming an `.env*` or `.secrets` path; `gh pr diff` is left out, because a pull request
-can add an environment file), and the cockpit commands [below](#cockpit-commands-an-agent-can-run). The
+`list` and `status`, `repo view` and `auth status` without the token; `gh pr diff` is left out, because
+a pull request can add an environment file, and so is `gh api`, whose `GET` returns any file the
+repository holds), and the cockpit commands [below](#cockpit-commands-an-agent-can-run). The
 [read-only profile](../packages/cockpit/src/guards/read-only.ts) lists each permitted option.
 
 - Any other option falls back to the ordinary rules, including options that run programs or write
@@ -463,16 +468,12 @@ can add an environment file), and the cockpit commands [below](#cockpit-commands
   inside is. A `cd` inside a subshell moves only the subshell; one inside a loop, or inside a group
   that feeds a pipeline, is refused. Redirects after a loop or subshell are judged as writes or reads
   of their own. `<(…)` must be a word of its own, and `>(…)` and `((` arithmetic are refused. A
-  script read from `<(…)` or `/dev/stdin`, as in `bash <(…)`, `node <(…)` or `make -f <(…)`, is
-  code the guard never read, so it asks as inline code does.
-- A redirect may name a variable, as in `out=build; npm test > "$out/test.log"`, when the variable
-  is double-quoted and was set to a plain path, with no `=`, `:` or `~`, by assignments that come
-  directly before the command, outside a pipeline, a background job, a loop, a conditional group
-  and an `&&` or `||` chain. Any other command in between may set a variable under a spelling the
-  guard does not read, such as `printf -v` or `declare -n`, so after one no variable is resolved.
-  Names the shell sets itself, such as `_`, `REPLY` or zsh's `argv`, and names starting with `_`
-  are never resolved. The redirect is then judged as the literal path. `"${PIPESTATUS[0]}"` and
-  other literal array indexes are read as plain variables.
+  shell or interpreter given any word that names `<(…)`, `/dev/stdin` or another descriptor, as its
+  script, a module it preloads or an option's value (`bash <(…)`, `node -r ./x.js /dev/fd/63`), and
+  `make`, `awk` or `sed` reading its program file from one, run code the guard never read, so they
+  ask as inline code does.
+- A redirect into a variable, such as `> "$out/test.log"`, is refused: write the path out.
+  `"${PIPESTATUS[0]}"` and other literal array indexes are read as plain variables.
 - Git runs read-only only in a directory with its own `.git`, because Git otherwise treats a
   directory holding `HEAD`, `objects` and `refs` as a repository and honours its configuration. Git
   operands are inspected as files whose content may be printed.

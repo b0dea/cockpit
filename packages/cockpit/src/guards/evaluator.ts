@@ -1460,17 +1460,19 @@ function interpreterCode(options: InterpreterOptions, argv: readonly string[]): 
     return true
 }
 
-// A descriptor or standard input as a script: what a `<(…)` or pipe produced, which the guard never read.
-const PIPED_SCRIPT = /^\/dev\/(?:fd\/\d+|stdin)$/
+// A descriptor or standard input as a file, however it is spelled: what a `<(…)` or pipe produced, which the guard never read.
+const pipedFile = (cwd: string, word: string) => /^\/(?:dev\/(?:fd\/\d+|stdin)|proc\/self\/fd\/\d+)$/.test(posix.resolve(cwd, word))
 
 /** Whether a known tool runs code the guard cannot read: inline code, a program an option names, or a script on standard input. */
 function runsUnreadCode(invocation: ParsedInvocation): boolean {
     const name = posix.basename(invocation.executable ?? '')
     const argv = invocation.argv
-    if (PIPED_SCRIPT.test(executedFile(invocation) ?? '')) return true
+    // A script runner takes its script, a module it preloads or a configuration file from any word, an option's value
+    // included, so a word naming a pipe is code wherever it stands.
+    if (SCRIPT_RUNNERS.has(name) && argv.some(arg => pipedFile(invocation.cwd, arg.slice(arg.indexOf('=') + 1)))) return true
     // make, awk and sed run the program file -f names.
-    if (['make', 'awk', 'gawk', 'mawk', 'nawk', 'sed'].includes(name) && argv.some((arg, at) => PIPED_SCRIPT.test(arg) && /^(?:-f|--file|--makefile)$/.test(argv[at - 1] ?? '')
-        || /^(?:-f|--file=|--makefile=)\/dev\/(?:fd\/\d+|stdin)$/.test(arg))) return true
+    if (['make', 'awk', 'gawk', 'mawk', 'nawk', 'sed'].includes(name) && argv.some((arg, at) => /^(?:-f|--file|--makefile)$/.test(argv[at - 1] ?? '') && pipedFile(invocation.cwd, arg)
+        || pipedFile(invocation.cwd, /^(?:-f|--file=|--makefile=)(.+)$/.exec(arg)?.[1] ?? ''))) return true
     const interpreter = INTERPRETER_OPTIONS[name]
     if (interpreter) return interpreterCode(interpreter, argv)
     if (name === 'bun') return argv.some(arg => /^(?:-e|--eval|-p|--print)(?:=|$)/.test(arg))

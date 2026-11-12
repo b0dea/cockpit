@@ -432,35 +432,28 @@ export function cockpitLauncherPrefix(executable: string, argv: readonly string[
 // starts a browser instead, so it is left out.
 // `pr diff` is left out: a pull request can add an environment file, which its diff prints.
 const GH_READS = new Set(['pr view', 'pr list', 'pr checks', 'pr status', 'run view', 'run list', 'run watch', 'issue view', 'issue list', 'issue status', 'repo view', 'auth status'])
-// gh's options that take the next word, as they appear on its read commands and `gh api`.
+// gh's options that take the next word, as they appear on its read commands.
 const GH_VALUES = new Set(['-R', '--repo', '-q', '--jq', '-t', '--template', '--json', '-s', '--state', '-L', '--limit', '-A', '--author', '-a', '--assignee',
     '-l', '--label', '-B', '--base', '-H', '--head', '--search', '-S', '-b', '--branch', '-u', '--user', '-w', '--workflow', '-e', '--event', '-c', '--commit',
-    '-j', '--job', '-i', '--interval', '--hostname', '--cache', '-X', '--method', '-p', '--preview', '--header', '--created', '--status', '--app', '--milestone', '--mention'])
+    '-j', '--job', '-i', '--interval', '--created', '--status', '--app', '--milestone', '--mention'])
 
-/** gh reading its host: one of the read commands above, `gh api` with GET and no fields or input, or `gh auth status` without the token. */
+/**
+ * gh reading its host: one of the read commands above, or `gh auth status` without the token. `gh api` is left out: a GET
+ * returns any file the repository holds, under any spelling of its name, as a blob, a commit, a compare or an archive.
+ */
 function gh(argv: readonly string[]): Classified {
     const operands: string[] = []
-    const values = new Map<string, string>()
     for (let index = 0; index < argv.length; index++) {
         const word = argv[index]!
         if (!word.startsWith('-') || word === '-') { operands.push(word); continue }
         const [name, attached] = word.split(/=(.*)/s)
-        // Fields and input make `gh api` send a request body, `--web` starts a browser and `--show-token` prints the token.
-        if (/^--(?:web|input|field|raw-field|show-token)$/.test(name!) || /^-[fF]/.test(word)) return undefined
+        // `--web` starts a browser and `--show-token` prints the token.
+        if (/^--(?:web|show-token)$/.test(name!)) return undefined
         if (GH_VALUES.has(name!)) {
-            const value = attached ?? argv[++index]
-            if (value === undefined) return undefined
-            values.set(name!, value)
+            if (attached === undefined && argv[++index] === undefined) return undefined
         } else if (attached !== undefined || !/^--[a-z][a-z-]*$|^-[a-zA-Z]$/.test(word)) return undefined
     }
-    const [group, verb, ...rest] = operands
-    const command = `${group} ${verb}`
-    // A path the host holds under a secret's name prints that secret, so its name is judged as a local one would be.
-    if (argv.some((word) => /(?:^|\/)\.(?:env|secrets)(?:[./]|$)/i.test(word))) return undefined
-    if (group === 'api') {
-        const method = (values.get('-X') ?? values.get('--method') ?? 'GET').toUpperCase()
-        return method === 'GET' && verb !== undefined && verb !== 'graphql' && !rest.length ? { reads: [], trees: [], listings: [] } : undefined
-    }
+    const command = operands.slice(0, 2).join(' ')
     // `-w` names a workflow on `run list` and starts a browser everywhere else.
     if (!GH_READS.has(command) || argv.includes('-w') && command !== 'run list') return undefined
     if (command === 'auth status' && argv.some((word) => /^-[a-zA-Z]*t/.test(word) && !word.startsWith('--'))) return undefined

@@ -206,7 +206,7 @@ describe('guard invocation capture', () => {
         ] })
         const parsed = parseGuardInput(shellPayload(command), mark)
         expect(parsed.status === 'parsed' && parsed.invocations.map((item) => Object.hasOwn(item, 'dynamic'))).toEqual([true, false, true])
-        for (const [refused, reason] of [['$cmd push origin main', 'chooses the program'], ['"$(printf git)" push', 'chooses the program'], ['printf ok > "$OUT"', 'dynamic redirect target'],
+        for (const [refused, reason] of [['$cmd push origin main', 'chooses the program'], ['"$(printf git)" push', 'chooses the program'], ['printf ok > "$OUT"', 'dynamic redirect target'], ['out=build; npm test > "$out/x.log"', 'Write the path out'],
             ['cd "$DIR" && ls', 'cd is judged only as'], ['env -C "$DIR" ls', 'holds an expansion'], ['echo "$(eval "$X")"', 'runs a command or script built'],
             ['echo `sudo ls`', 'Privilege escalation'], ['printf "${X:-$(rm -rf ./src)}"', 'Unsupported parameter expansion'],
             // Dynamic must mean an unknown value, never code: each of these runs a command held in a variable.
@@ -380,10 +380,8 @@ describe('guard invocation capture', () => {
         expect(parseGuardInput(shellPayload('diff <(ls src) b'))).toMatchObject({ status: 'parsed', invocations: [{ executable: 'ls', argv: ['src'] }, { executable: 'diff', argv: ['/dev/fd/63', 'b'] }] })
         expect(parseGuardInput(shellPayload('ls | xargs -0 -n1 wc -l'), mark)).toMatchObject({ status: 'parsed', invocations: [
             { executable: 'ls' }, { executable: 'wc', argv: ['-l', '$(xargs input)'], wrapped: true, dynamic: true }] })
-        expect(parseGuardInput(shellPayload('out=build; ls > "$out/list.txt"'))).toMatchObject({ status: 'parsed', invocations: [
-            { executable: null }, { executable: 'ls', redirects: [{ target: 'build/list.txt' }] }] })
         for (const [command, reason] of [['echo a<(ls)', 'whole word'], ['tee >(cat)', 'whole word'], ['ls | xargs -I{} cat {}', '-I and -J'], ['ls | xargs', 'Missing xargs'],
-            ['ls | xargs wc', 'Dynamic command construction'], ['{ cd ./src; } | sort', 'feeds a pipeline'], ['(ls) extra', 'subshell is parsed only']] as const) {
+            ['ls | xargs wc', 'Dynamic command construction'], ['{ cd ./src; } | sort', 'feeds a pipeline'], ['(ls) extra', 'subshell is parsed only'], ['while true; do f() { ls; }; done', 'inside a loop']] as const) {
             expect(parseGuardInput(shellPayload(command)), command).toMatchObject({ status: 'unavailable', reason: expect.stringContaining(reason) })
         }
     })
