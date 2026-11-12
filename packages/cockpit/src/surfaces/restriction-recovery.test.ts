@@ -36,7 +36,11 @@ async function fixture() {
     }
     const launcher = join(root, 'node_modules/@b00dea/cockpit/bin/cockpit.mjs')
     const handler = join(root, 'node_modules/@b00dea/cockpit/dist/cli.js')
-    return { root, configPath, rendered, run, launcher, handler }
+    // The hook command only runs the committed guard script, which carries the recovery text.
+    const guard = join(root, rendered.sharedGuard.path)
+    await mkdir(dirname(guard), { recursive: true })
+    await writeFile(guard, rendered.sharedGuard.bytes)
+    return { root, configPath, rendered, run, launcher, handler, guard }
 }
 
 it.each(['claudecode', 'codexcli'] as const)('holds %s calls when retained hooks outlive the configured branch', async harness => {
@@ -56,7 +60,8 @@ it.each(['claudecode', 'codexcli'] as const)('holds %s calls when retained hooks
 })
 
 it('diagnoses a missing OpenCode guard through the emitted plugin without admitting the tool call', async () => {
-    const { root, configPath, rendered } = await fixture()
+    const { root, configPath, rendered, guard: committed } = await fixture()
+    await rm(committed)
     const plugin = rendered.targets.find(target => target.target === 'opencode')!.files[0]!
     const path = join(root, plugin.path)
     await mkdir(dirname(path), { recursive: true })
@@ -179,10 +184,8 @@ it('names no invented path and asks for the cockpit root when the hook finds no 
     const hook = (JSON.parse(rendered.targets.find(target => target.target === 'claudecode')!.files[0]!.bytes) as { hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> } }).hooks.PreToolUse[0]!.hooks[0]!.command
     const refused = spawnSync('/bin/sh', ['-c', hook], { cwd: root, encoding: 'utf8', input: '{}', env: { ...process.env, CLAUDE_PROJECT_DIR: '' } })
     expect(refused).toMatchObject({ status: 2, stdout: '' })
-    expect(refused.stderr).toContain(`<cockpit checkout>/${configFile} is missing or unreadable`)
-    expect(refused.stderr).not.toContain(` /${configFile}`)
-    expect(refused.stderr).toContain('cockpit restriction guard missing: <cockpit checkout>/.cockpit/guards/bash-guard.sh')
+    expect(refused.stderr).toContain('cockpit guard failed (127): <unset>/.cockpit/guards/bash-guard.sh; run cockpit sync')
     expect(refused.stderr).not.toContain(' /.cockpit/')
-    expect(refused.stderr).toContain('start the agent from its cockpit root')
+    expect(refused.stderr).not.toContain(` /${configFile}`)
     expect(existsSync(join(root, 'injected'))).toBe(false)
 })
