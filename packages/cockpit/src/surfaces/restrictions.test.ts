@@ -326,12 +326,17 @@ describe('restriction expansion', () => {
             expect(denied.status, denied.stderr).toBe(0)
             expect(denied.stdout).toContain('permissionDecision":"deny')
         }
-        // A guard script an agent wrote below the cockpit is not the one the hook runs.
+        // A second guard script on the way, below the cockpit or above it as a nested cockpit's would be, is
+        // never the one the hook runs: the call blocks, naming the ambiguity.
         await mkdir(join(directory, 'nested/.cockpit/guards'), { recursive: true })
         await writeFile(join(directory, 'nested/.cockpit/guards/bash-guard.sh'), 'printf planted >&2; exit 0\n')
-        const planted = runs('codexcli', join(directory, 'nested'), ambient, 'env/service.env')
-        expect(planted.stderr).not.toContain('planted')
-        expect(planted.stdout).toContain('permissionDecision":"deny')
+        for (const cwd of [join(directory, 'nested'), directory]) {
+            const run = runs('codexcli', cwd, ambient, 'env/service.env')
+            if (cwd === directory) { expect(run.stdout, run.stderr).toContain('permissionDecision":"deny'); continue }
+            expect(run).toMatchObject({ status: 2, stdout: '' })
+            expect(run.stderr).toContain('more than one .cockpit/guards/bash-guard.sh')
+            expect(run.stderr).not.toContain('planted')
+        }
         // Without the harness's project root the registration cannot find the guard and blocks.
         expect(runs('claudecode', directory, ambient, 'env/service.env.example')).toMatchObject({
             status: 2, stdout: '', stderr: expect.stringContaining('cockpit guard failed (127): /no-cockpit-root/.cockpit/guards/bash-guard.sh; sync the cockpit'),
@@ -450,7 +455,7 @@ describe('restriction expansion', () => {
             // Claude Code prints the whole hook command beside each refusal it reports, so it stays one short line;
             // Codex's also walks up to the cockpit, so it is one line but longer.
             expect(command, name).not.toContain('\n')
-            expect(command.length, name).toBeLessThanOrEqual(name === 'claudecode' ? 220 : 400)
+            expect(command.length, name).toBeLessThanOrEqual(name === 'claudecode' ? 220 : 700)
             // Both harnesses read the hook's timeout in seconds; cockpit states it rather than inheriting each default.
             expect(hook.timeout, name).toBe(30)
             // A guard that cannot load its handler exits 1; a killed one 137. Exit 2 keeps its own reason.

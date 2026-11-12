@@ -386,13 +386,15 @@ function shellLiteral(value: string): string {
 // nowhere, which no agent can create, and the call blocks. A Codex session can start in a subdirectory of
 // the cockpit, where the guard script would be one an agent may have written, so the hook takes the
 // outermost directory at or above the session's that holds the guard script: the directories above the
-// cockpit lie outside every root, which agents do not write. The walk is plain shell, since a program the
-// hook found on the session's search path could be one an agent planted.
+// cockpit lie outside every root, which agents do not write. A second guard script on the way is ambiguous,
+// whoever wrote it, so the call blocks. The walk is plain shell, since a program the hook found on the
+// session's search path could be one an agent planted.
 const MISSING_ROOT = '/no-cockpit-root'
 const HOOK_ROOT = Object.freeze({
     claudecode: { expression: '${CLAUDE_PROJECT_DIR:-}', prelude: '', guard: `\${CLAUDE_PROJECT_DIR:-${MISSING_ROOT}}` },
     codexcli: { expression: '$(pwd -P 2>/dev/null)',
-        prelude: `d=$(pwd -P) || d=; r=${MISSING_ROOT}; while [ -n "$d" ]; do [ -f "$d/.cockpit/guards/bash-guard.sh" ] && r=$d; d=\${d%/*}; done; `, guard: '$r' },
+        prelude: `d=$(pwd -P) || d=; r=${MISSING_ROOT}; n=0; while [ -n "$d" ]; do [ -f "$d/.cockpit/guards/bash-guard.sh" ] && { r=$d; n=$((n+1)); }; d=\${d%/*}; done; `
+            + `[ $n -gt 1 ] && { echo "cockpit guard: more than one .cockpit/guards/bash-guard.sh at or above $(pwd -P), so the guard to run is ambiguous; a person removes the one that is not the cockpit's" >&2; exit 2; }; `, guard: '$r' },
 } as const)
 
 const GUARD_HOOK_TIMEOUT_SECONDS = 30
