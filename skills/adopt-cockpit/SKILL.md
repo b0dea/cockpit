@@ -222,6 +222,14 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
    - **The non-local hosts** for `guards`: the database and live vendor API hosts of every
      production, staging or shared environment. Env templates give variable names only; each host
      comes from the person.
+   - **Secret locations** for `guards.secret_paths`: files and directories beyond `.env` files where
+     the product keeps secrets, such as signed-in browser sessions or copies of production data, each
+     relative to the cockpit or as `<sibling slug>:path`. They come from the person. Then read where
+     the product's test runners write their output (a Playwright `outputDir`, screenshots,
+     `error-context.md`, traces) and flag any that lands under a declared secret path: agents cannot
+     read it there, so they cannot see why a test failed. Suggest moving output that holds no
+     secret, such as screenshots and page snapshots, out of the secret path, while traces that carry
+     session cookies stay in it.
    - **How grading runs** for `work.grading`. Offer the person the choices in the *How grading can run*
      section of `./node_modules/@b00dea/cockpit/docs/work-and-browser.md`, with init's proposal and
      its reason: `independent` with two or more listed tools on `PATH`, so each grades the other's

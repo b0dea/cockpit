@@ -39,6 +39,10 @@ The values cockpit uses for a key the configuration leaves out.
     "deny": [],
     "read_paths": [],
     "default": "allow",
+    "secret_paths": [],
+    "related_checkouts": [],
+    "unresolved": "ask",
+    "external_writes": "guard",
     "external_reads": "grant"
   },
   "mcp": {
@@ -170,6 +174,10 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `deny` | Commands refused in addition to the built-in rules. | array of table, one of: [`[[guards.deny]]` form 1](#guardsdeny-form-1), [`[[guards.deny]]` form 2](#guardsdeny-form-2) | `[]` | at most 64 items |
 | `read_paths` | Files and directories outside the cockpit whose named files agents may read, list and search; never written, searched recursively or used as a working directory. | array of table: [`[[guards.read_paths]]`](#guardsread_paths) | `[]` | at most 64 items |
 | `default` | What the guard does with a shell command outside its blocked list: allow runs a command whose executable is a development tool it knows, a project program inside the roots and package scripts, and asks about an unknown program or inline interpreter code, which a person approves or admits with an allow entry; ask is the strict mode, which admits only the read-only commands the guard classifies, declared build and test commands and allow entries, and asks for every other command. Secrets, writes outside the cockpit, protected branches and force pushes, declared hosts, the guard itself and privilege escalation are refused in both modes. | string | `"allow"` | one of `"allow"`, `"ask"` |
+| `secret_paths` | Files and directories, relative to the cockpit or as <sibling slug>:path in a sibling, that agents never read, write, search or stage, as an .env file is kept from them; the guard refuses them on every agent tool and Claude Code's own file tools are denied them too. | array of string | `[]` | at most 64 items; each item: pattern [P5](#patterns), at most 1024 characters |
+| `related_checkouts` | Other checkouts agents may read, search and inspect with read-only Git, such as the upstream of a tool this cockpit installs: an absolute path, a ~/ path or a path relative to the cockpit. Writes there, Git commands that change them, and secret names stay refused. | array of string | `[]` | at most 16 items; each item: pattern `^(?:\/\|~\/\|(?:\.\.\/)*)[^\x00-\x1f\x7f]+$`, at most 4096 characters |
+| `unresolved` | What the guard does with a command it would ask a person about: ask prompts where the agent tool can (Claude Code) and refuses where it cannot; deny refuses everywhere, naming the reason and the route, so an autonomous session continues another way instead of waiting. | string | `"ask"` | one of `"ask"`, `"deny"` |
+| `external_writes` | Who decides a write or working directory outside the cockpit: guard refuses it; native leaves it to the agent tool's own permission, except the agent tools' configuration, shell startup files, credential stores, secret names, guard controls, Git hooks and scheduled jobs, which stay refused. | string | `"guard"` | one of `"guard"`, `"native"` |
 | `external_reads` | Who admits a shell read outside the cockpit, of a named file or by a read-only Git command run alone in another repository: grant needs its complete command under allow; native leaves it to the agent tool's own permissions. Secret names, recursive searches and writes stay guarded either way. | string | `"grant"` | one of `"grant"`, `"native"` |
 
 ### `[[guards.allow]]`
@@ -282,7 +290,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
 | `reference` | Image reference pinned by sha256 digest. | string |  | required; pattern `^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$` |
-| `driver_version` | Playwright driver version the image carries. | string |  | required; pattern [P5](#patterns); at most 128 characters |
+| `driver_version` | Playwright driver version the image carries. | string |  | required; pattern [P6](#patterns); at most 128 characters |
 
 ### `[browser.project]`
 
@@ -292,7 +300,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `manifest_sha256` | SHA-256 of the manifest; required when manifest is set. | string |  | pattern `^[a-f0-9]{64}$` |
 | `lockfile` | Lockfile that pins the Playwright driver the browser commands load. | string |  | required; pattern [P1](#patterns) |
 | `sha256` | SHA-256 of the lockfile. | string |  | required; pattern `^[a-f0-9]{64}$` |
-| `driver_version` | Playwright driver version the lockfile pins. | string |  | required; pattern [P5](#patterns); at most 128 characters |
+| `driver_version` | Playwright driver version the lockfile pins. | string |  | required; pattern [P6](#patterns); at most 128 characters |
 
 ### `[browser.proxy]`
 
@@ -473,14 +481,14 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `name` | Name of the declaration; an overlay that reuses a core name replaces it. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
 | `feature` | Kind of surface the overlay provides. | string |  | required; one of `"rules"`, `"subagents"`, `"skills"`, `"hooks"` |
 | `sources` | Files that make up the declaration. | array of table: [`[[surfaces.overlays.sources]]`](#surfacesoverlayssources) |  | required; 1–256 items |
-| `source` | Where the declaration was read from. | string |  | required; pattern [P1](#patterns); pattern [P6](#patterns); at most 4096 characters |
+| `source` | Where the declaration was read from. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
 | `replaces` | Core declaration this overlay replaces; required when the name matches a core one. | table: [`[surfaces.overlays.replaces]`](#surfacesoverlaysreplaces) |  |  |
 
 ### `[[surfaces.overlays.sources]]`
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
-| `path` | Path of the source file. | string |  | required; pattern [P1](#patterns); pattern [P6](#patterns); at most 4096 characters |
+| `path` | Path of the source file. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
 | `bytes` | Full text of the source. | string |  | required; at most 65536 characters |
 
 ### `[surfaces.overlays.replaces]`
@@ -503,8 +511,8 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | --- | --- | --- | --- | --- |
 | `feature` | Surface feature this row describes. | string |  | required; one of `"rules"`, `"mcp"`, `"subagents"`, `"skills"`, `"hooks"`, `"permissions"` |
 | `measured_on` | Date the capability was measured. | string |  | required; format `date`; pattern [P2](#patterns) |
-| `spelling` | File the harness reads for this feature. | string |  | required; pattern [P1](#patterns); pattern [P6](#patterns); at most 4096 characters |
-| `control` | Path of the deliberately broken control file the capability was measured against. | string |  | required; pattern [P1](#patterns); pattern [P6](#patterns); at most 4096 characters |
+| `spelling` | File the harness reads for this feature. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
+| `control` | Path of the deliberately broken control file the capability was measured against. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
 | `mechanism` | Code that emits the surface. | table: [`mechanism` shape](#mechanism-shape) |  | required |
 | `state` | Whether the harness enforces, only instructs, or lacks this capability. | string |  | required; exactly `"enforced"` |
 | `evidence` | Evidence that the harness enforces the capability. | table: [`[surfaces.harnesses.capabilities.evidence]`](#surfacesharnessescapabilitiesevidence) |  | required |
@@ -513,7 +521,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
-| `reference` | Probe record or file, relative to the cockpit. | string |  | required; pattern [P1](#patterns); pattern [P6](#patterns); at most 4096 characters |
+| `reference` | Probe record or file, relative to the cockpit. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
 | `sha256` | SHA-256 of the evidence. | string |  | required; pattern `^[a-f0-9]{64}$` |
 
 ### `[[surfaces.harnesses.capabilities]]` form 2
@@ -522,8 +530,8 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | --- | --- | --- | --- | --- |
 | `feature` | Surface feature this row describes. | string |  | required; one of `"rules"`, `"mcp"`, `"subagents"`, `"skills"`, `"hooks"`, `"permissions"` |
 | `measured_on` | Date the capability was measured. | string |  | required; format `date`; pattern [P2](#patterns) |
-| `spelling` | File the harness reads for this feature. | string |  | required; pattern [P1](#patterns); pattern [P6](#patterns); at most 4096 characters |
-| `control` | Path of the deliberately broken control file the capability was measured against. | string |  | required; pattern [P1](#patterns); pattern [P6](#patterns); at most 4096 characters |
+| `spelling` | File the harness reads for this feature. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
+| `control` | Path of the deliberately broken control file the capability was measured against. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
 | `mechanism` | Code that emits the surface. | table: [`mechanism` shape](#mechanism-shape) |  | required |
 | `state` | Whether the harness enforces, only instructs, or lacks this capability. | string |  | required; exactly `"instructed"` |
 
@@ -541,7 +549,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
 | `path` | Harness settings file that was adopted. | string |  | required; one of `".claude/settings.json"`, `".codex/config.toml"`, `".codex/hooks.json"` |
-| `source` | Where the adopted copy now lives, under cockpit/adopted/. | string |  | required; pattern [P1](#patterns); pattern [P6](#patterns); at most 4096 characters |
+| `source` | Where the adopted copy now lives, under cockpit/adopted/. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
 | `sha256` | SHA-256 of the bytes that were moved, as a record for review. | string |  | required; pattern `^[a-f0-9]{64}$` |
 | `adopted_on` | Date the file was adopted. | string |  | required; format `date`; pattern [P2](#patterns) |
 | `provenance` | Where the adoption came from; its kind must be declared. | table: [`provenance` shape](#provenance-shape) |  | required |
@@ -551,8 +559,8 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
 | `living` | Globs of the Markdown documents that must stay true; docs check reports the paths and make targets they cite that the repository has since removed. | array of string | `[]` | at most 64 items; each item: pattern `^(?!(?:[a-z0-9][a-z0-9-]{0,63}:)?(?:.*\/)?\.\.(?:\/\|$))(?:[a-z0-9][a-z0-9-]{0,63}:)?(?![/])[A-Za-z0-9._@+\-/*?]+$`, at most 1024 characters |
-| `decisions` | Directory of decision records, such as docs/adr. Work orders record their lasting decisions there, and docs check reports duplicate numbers, missing statuses and broken supersedes links. | string |  | pattern [P7](#patterns); at most 1024 characters |
-| `decisions_index` | Index file that links every decision record; a record cockpit writes is appended to it, and docs check reports records it omits and links to records that do not exist. | string |  | pattern [P7](#patterns); at most 1024 characters |
+| `decisions` | Directory of decision records, such as docs/adr. Work orders record their lasting decisions there, and docs check reports duplicate numbers, missing statuses and broken supersedes links. | string |  | pattern [P5](#patterns); at most 1024 characters |
+| `decisions_index` | Index file that links every decision record; a record cockpit writes is appended to it, and docs check reports records it omits and links to records that do not exist. | string |  | pattern [P5](#patterns); at most 1024 characters |
 
 ## Shapes
 
@@ -562,7 +570,7 @@ These tables recur in several places; each place links here instead of repeating
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
-| `module` | Module that implements the capability. | string |  | required; pattern [P1](#patterns); pattern [P6](#patterns); at most 4096 characters |
+| `module` | Module that implements the capability. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
 | `export` | Export of the module that implements the capability. | string |  | required; pattern `^[A-Za-z_$][A-Za-z0-9_$]*$`; at most 128 characters |
 
 ### `provenance` shape
@@ -587,9 +595,9 @@ Long patterns that several keys share, cited by name in the tables.
 | P2 | `^(?:(?:\d\d[2468][048]\|\d\d[13579][26]\|\d\d0[48]\|[02468][048]00\|[13579][26]00)-02-29\|\d{4}-(?:(?:0[13578]\|1[02])-(?:0[1-9]\|[12]\d\|3[01])\|(?:0[469]\|11)-(?:0[1-9]\|[12]\d\|30)\|(?:02)-(?:0[1-9]\|1\d\|2[0-8])))$` |
 | P3 | `^(?:\*\.)?(?=[a-z0-9.-]{1,253}(?![\s\S]))[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*(?![\s\S])` |
 | P4 | `^[^\x00-\x1f\x7f-\x9f\uD800-\uDFFF]{1,128}(?![\s\S])` |
-| P5 | `^(?:0\|[1-9]\d*)\.(?:0\|[1-9]\d*)\.(?:0\|[1-9]\d*)(?:-(?:0\|[1-9]\d*\|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0\|[1-9]\d*\|\d*[A-Za-z-][0-9A-Za-z-]*))*)?$` |
-| P6 | `^(?!.*(?:^\|\/)(?:\.git\|internal\|node_modules)(?:\/\|$)).+$` |
-| P7 | `^(?!(?:[a-z0-9][a-z0-9-]{0,63}:)?(?:.*\/)?\.\.?(?:\/\|$))(?:[a-z0-9][a-z0-9-]{0,63}:)?(?![/])[A-Za-z0-9._@+\-/]*[A-Za-z0-9._@+-]$` |
+| P5 | `^(?!(?:[a-z0-9][a-z0-9-]{0,63}:)?(?:.*\/)?\.\.?(?:\/\|$))(?:[a-z0-9][a-z0-9-]{0,63}:)?(?![/])[A-Za-z0-9._@+\-/]*[A-Za-z0-9._@+-]$` |
+| P6 | `^(?:0\|[1-9]\d*)\.(?:0\|[1-9]\d*)\.(?:0\|[1-9]\d*)(?:-(?:0\|[1-9]\d*\|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0\|[1-9]\d*\|\d*[A-Za-z-][0-9A-Za-z-]*))*)?$` |
+| P7 | `^(?!.*(?:^\|\/)(?:\.git\|internal\|node_modules)(?:\/\|$)).+$` |
 
 ## Checks beyond the schema
 
@@ -648,6 +656,6 @@ Agent tools load every skill's frontmatter into each session and its entry point
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 12 | `packages/cockpit/surfaces/skills/procedures/fix.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 9 | `packages/cockpit/surfaces/skills/procedures/work.md` |
 
-Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `560f12e4c9968ea6d7c7956f4dd2b00456d0a954aaf15212cdbc710fceb94c30`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `b773dcb3fa3ec3b9edcb079edaf2ac004fd4ecea7fdec9dbed6d86d4495c33a9`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `26aceeaf0cf347a833e33f29bb8bed5a7059269f2a1150779ae355c62c6ff4ea`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `f7ae0ab5ff4dc4f50f9afad9c78650285dedd6d66f7c0af681fff431e187d6c7`).
+Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `3dc54962814dfb7532d71e3f5f09e04688e00aade6fb309e06da9707d72530b4`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `b773dcb3fa3ec3b9edcb079edaf2ac004fd4ecea7fdec9dbed6d86d4495c33a9`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `26aceeaf0cf347a833e33f29bb8bed5a7059269f2a1150779ae355c62c6ff4ea`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `f7ae0ab5ff4dc4f50f9afad9c78650285dedd6d66f7c0af681fff431e187d6c7`).
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.
