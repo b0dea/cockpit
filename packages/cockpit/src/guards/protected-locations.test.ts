@@ -8,7 +8,7 @@ import { GUARD_EXECUTABLE_SEARCH_PATH, resolveGitExecutable } from '../environme
 import { executeProbe } from '../environment-exec/execute.js'
 import { GUARD_SECRET_FILE_LIMIT } from './evaluator.js'
 import { guardBranchFacts, guardInstalledDirectories, guardPackageManifest, guardPatchTargets, guardRemoteCredentials, guardSearchDirectories, guardSearchPathRelativeEntry,
-    guardSecretFiles, guardSensitivePathsBelow, guardTrackedSensitivePaths, guardUnignoredSensitivePaths, guardWorktreeChanges } from './protected-locations.js'
+    guardCommittedSensitivePaths, guardSecretFiles, guardSensitivePathsBelow, guardTrackedSensitivePaths, guardUnignoredSensitivePaths, guardWorktreeChanges } from './protected-locations.js'
 
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -149,6 +149,20 @@ describe('guard protected locations', () => {
         expect(await guardTrackedSensitivePaths(root, [instance], git, executeProbe)).toEqual([])
         execFileSync('git', ['-C', root, 'add', '--force', '.env', 'config/runtime.env', 'src/a.ts'])
         expect(await guardTrackedSensitivePaths(root, [instance], git, executeProbe)).toEqual([join(root, '.env'), instance])
+        // History is asked separately: a file committed once and removed since stays in every commit that held it.
+        expect(await guardCommittedSensitivePaths(root, [instance], git, executeProbe)).toEqual([])
+        const commit = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', 'commit', '-q', ...args])
+        commit('-m', 'Synthetic history')
+        execFileSync('git', ['-C', root, 'rm', '-q', '--cached', '.env', 'config/runtime.env'])
+        commit('-m', 'Remove the environment files')
+        expect(await guardTrackedSensitivePaths(root, [instance], git, executeProbe)).toEqual([])
+        expect(await guardCommittedSensitivePaths(root, [instance], git, executeProbe)).toEqual([join(root, '.env'), instance])
+        // A deleted branch leaves its commits in HEAD's reflog, which `git show <commit>` still prints.
+        const first = execFileSync('git', ['-C', root, 'branch', '--show-current'], { encoding: 'utf8' }).trim()
+        execFileSync('git', ['-C', root, 'checkout', '-q', '--orphan', 'clean'])
+        commit('--allow-empty', '-m', 'Unrelated history')
+        execFileSync('git', ['-C', root, 'branch', '-q', '-D', first])
+        expect(await guardCommittedSensitivePaths(root, [], git, executeProbe)).toEqual([join(root, '.env')])
     })
 
     it('reports what a push or pull acts on, and whether a remote URL Git prints carries a credential', async () => {

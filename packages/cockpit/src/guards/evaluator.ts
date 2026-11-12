@@ -5,7 +5,7 @@ import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from './host.js'
 import { GuardCommandArgv, McpAllowedTools } from '../schema.js'
 import { renderGuardProjectCommand } from '../environment/install-policy.js'
 import { GUARD_LOCAL_PATHS } from './local-identity.js'
-import { classifyReadOnlyInvocation, cockpitLauncherPrefix, type ReadOnlyAccess } from './read-only.js'
+import { classifyReadOnlyInvocation, cockpitLauncherPrefix, ghWords, gitContentOperands, type ReadOnlyAccess } from './read-only.js'
 import { SURFACE_EXECUTION_CONTROL_PATHS } from '../surfaces/harness-registry.js'
 
 /**
@@ -137,7 +137,8 @@ interface PathInspectionRequest {
      * only what Git does not ignore, as ripgrep does by default; its `sensitive` holds only what such
      * a search reads, and also every declared instance it reads. A `repository` is the Git repository
      * at the path; its evidence carries `tracked`, every `.env*`, secrets or instance path its index
-     * holds, or null when Git could not say. A `branch` is the repository's current branch and push
+     * holds, or null when Git could not say, and with `history` also `committed`, every such path a
+     * commit reachable from a ref or the reflog holds, or null alike. A `branch` is the repository's current branch and push
      * settings; a `remote` says whether a remote URL Git prints for the repository carries a credential;
      * a `patch` is a patch file, and its evidence carries `targets`, every path its headers name. A
      * `tree` asks the repository at `cwd` which protected paths its work tree holds would differ between
@@ -155,6 +156,8 @@ interface PathInspectionRequest {
     readonly workspace?: true
     /** For a `search`, the reading tool follows links, so a link below the path leaves its `sensitive` unknown (null). */
     readonly followsLinks?: true
+    /** For a `repository`, the command can print a commit, so its evidence also carries `committed`. */
+    readonly history?: true
 }
 /** The application supplies current, symlink-aware facts; the evaluator performs no I/O. */
 export type PathInspection = (request: PathInspectionRequest) => unknown
@@ -1316,10 +1319,39 @@ function decompressedWrites(invocation: ParsedInvocation): readonly string[] {
 }
 
 // Git verbs whose output can be committed file content; the read-only profile proves the forms it can.
-const GIT_CONTENT_VERBS = new Set(['grep', 'blame', 'annotate', 'show', 'diff', 'log', 'cat-file', 'archive', 'format-patch', 'whatchanged', 'range-diff'])
+// The plumbing diffs print patches of commits as `diff` does, and `merge-tree` the files it merges.
+const GIT_CONTENT_VERBS = new Set(['grep', 'blame', 'annotate', 'show', 'diff', 'log', 'cat-file', 'archive', 'format-patch', 'whatchanged', 'range-diff',
+    'diff-tree', 'diff-index', 'diff-files', 'merge-tree'])
 
 function gitPrintsContent(git: GitInvocation | undefined): boolean {
     return git !== undefined && (GIT_CONTENT_VERBS.has(git.verb) || git.verb === 'stash' && git.args[0] === 'show')
+}
+
+// `gh api` reads that return file content or patches: a file, tree or archive, a commit's or a
+// comparison's patches, a pull request's files, and GraphQL objects such as a Blob's text.
+const GH_API_CONTENT = /(?:^|\/)(?:contents|readme|tarball|zipball|compare|git\/blobs|git\/trees)(?:[/?]|$)|(?:^|\/)commits\/[^/?]+|(?:^|\/)pulls\/[^/?]+\/files(?:[/?]|$)/
+
+/**
+ * gh reads that print committed file content: a pull request's diff unless names only, code search
+ * across the host, and a `gh api` read of file content or patches. Its words are read as gh's parser
+ * reads them, and a form it cannot read exactly counts when any two words could spell such a command.
+ */
+function ghPrintsContent(invocation: ParsedInvocation): boolean {
+    if (posix.basename(invocation.executable ?? '') !== 'gh') return false
+    const { operands, flags, exact } = ghWords(invocation.argv)
+    const command = operands.slice(0, 2).join(' ')
+    if (operands[0] === 'api' || invocation.argv.find(arg => !arg.startsWith('-')) === 'api') {
+        const call = ghApiCall(invocation.argv.slice(invocation.argv.indexOf('api') + 1))
+        const headers = invocation.argv.flatMap((arg, at) => ['-H', '--header'].includes(arg) ? [invocation.argv[at + 1] ?? ''] : /^--header=/.test(arg) ? [arg.slice(9)] : [])
+        return GH_API_CONTENT.test(call.endpoint) || /(?:^|\/)pulls\/[^/?]+$/.test(call.endpoint) && headers.some(header => /diff|patch/i.test(header))
+            || call.endpoint === 'graphql' && call.fields.some(field => /\bBlob\b|\bobject\s*\(|\bentries\b/.test(field))
+    }
+    const words = invocation.argv.filter(arg => !arg.startsWith('-'))
+    const spelled = words.includes('pr') && words.includes('diff') || words.includes('search') && words.includes('code')
+    if (!exact) return spelled
+    if (command === 'pr diff') return !flags.some(flag => ['-w', '--web', '--name-only'].includes(flag))
+    if (command === 'search code') return !flags.some(flag => ['-w', '--web'].includes(flag))
+    return false
 }
 
 /** The `-c` keys before a Git verb, and whether any other global option than `-C` and paging appears. */
@@ -1514,24 +1546,34 @@ function appliedPatches(git: GitInvocation): readonly string[] | null {
     return files.length ? files : null
 }
 
-/** The local source trees an archiver, copier or recursive diff reads, or undefined for any other command. */
-function sourceTrees(invocation: ParsedInvocation): readonly string[] | undefined {
+/**
+ * The local source trees an archiver, copier or recursive diff reads, or undefined for any other
+ * command, and whether it follows a link below them to read what the link names: diff and scp always
+ * do (scp(1): "scp follows symbolic links encountered in the tree traversal"), zip unless `-y` stores
+ * links as links (zip(1)), rsync with `-L`, `-k` or `--copy-unsafe-links` (rsync(1)). tar's `-h` and
+ * `-L` are a form tarWrites does not model, so the command is refused before its sources matter.
+ */
+function sourceTrees(invocation: ParsedInvocation): { readonly paths: readonly string[]; readonly followsLinks: boolean } | undefined {
     const name = posix.basename(invocation.executable ?? '')
     const local = (word: string) => !/^[a-z][a-z0-9+.-]*:\/\//i.test(word) && !/^[^/]*:/.test(word)
     const operands: string[] = []
+    const flags: string[] = []
     const valued = name === 'zip' ? ['-b', '-n', '-t', '-tt', '-P', '-O'] : name === 'diff' ? ['-x', '-X', '-I', '-F', '-L', '-S', '-C', '-U', '-D'] : name === 'rsync' ? ['-e', '--rsh', '--exclude', '--include', '--filter', '-f'] : name === 'scp' ? ['-i', '-o', '-P', '-F', '-c', '-l', '-J', '-S'] : []
     let options = true
     for (let index = 0; index < invocation.argv.length; index++) {
         const arg = invocation.argv[index]!
         if (options && arg === '--') { options = false; continue }
-        if (options && arg.startsWith('-')) { if (valued.includes(arg)) index++; continue }
+        if (options && arg.startsWith('-')) { if (valued.includes(arg)) index++; else flags.push(arg); continue }
         operands.push(arg)
     }
-    if (name === 'tar') return tarWrites(invocation.argv).sources
-    // zip names its archive first; the others name their destination last.
-    if (name === 'zip') return operands.slice(1)
-    if (['rsync', 'scp', 'ditto'].includes(name)) return operands.slice(0, -1).filter(local)
-    if (name === 'diff') return operands
+    if (name === 'tar') return { paths: tarWrites(invocation.argv).sources, followsLinks: false }
+    // zip names its archive first; the others name their destination last. A zip flag cluster counts as
+    // storing links only when every letter in it is a plain one, so no option word hides a `y`.
+    if (name === 'zip') return { paths: operands.slice(1), followsLinks: !flags.some(flag => flag === '--symlinks' || /^-[qrRvyDjX0-9]*y[qrRvyDjX0-9]*$/.test(flag)) }
+    if (name === 'rsync') return { paths: operands.slice(0, -1).filter(local),
+        followsLinks: flags.some(flag => /^--copy-(?:links|dirlinks|unsafe-links)$/.test(flag) || /^-[a-zA-Z]*[Lk]/.test(flag)) }
+    if (['scp', 'ditto'].includes(name)) return { paths: operands.slice(0, -1).filter(local), followsLinks: name === 'scp' }
+    if (name === 'diff') return { paths: operands, followsLinks: true }
     return undefined
 }
 
@@ -2015,20 +2057,21 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         catch (error) { inspectionFailure = errorCause(error); return undefined }
         inspectedLink = record(evidence) && evidence.symlink === true
         const lexical = posix.resolve(request.cwd, request.path)
-        const listed = request.operation === 'search' || request.operation === 'unignored-search' ? 'sensitive' : request.operation === 'repository' ? 'tracked' : undefined
+        const listed = request.operation === 'search' || request.operation === 'unignored-search' ? ['sensitive']
+            : request.operation === 'repository' ? ['tracked', ...request.history ? ['committed'] : []] : []
         const canonicalPath = evidence !== undefined && record(evidence) ? evidence.canonicalPath : undefined
         const observedPath = canonicalPath ?? lexical
-        const paths = listed && evidence !== undefined && record(evidence) ? evidence[listed] : null
         const linkCount = record(evidence) ? evidence.links : undefined
-        return record(evidence) && keys(evidence, ['status', 'path', 'symlink', 'identity', 'ancestors', ...(listed ? [listed] : []), ...(canonicalPath === undefined ? [] : ['canonicalPath']),
+        return record(evidence) && keys(evidence, ['status', 'path', 'symlink', 'identity', 'ancestors', ...listed, ...(canonicalPath === undefined ? [] : ['canonicalPath']),
             ...(linkCount === undefined ? [] : ['links'])]) && evidence.status === 'resolved'
             && (linkCount === undefined || request.operation === 'write' && typeof linkCount === 'number' && Number.isSafeInteger(linkCount) && linkCount >= 1)
             && (canonicalPath === undefined || ['read', 'search', 'unignored-search'].includes(request.operation) && canonical(canonicalPath)
                 && resolved.allowedRoots.some(root => within(lexical, root)) && resolved.allowedRoots.some(root => within(canonicalPath, root)))
             && evidence.path === lexical && evidence.symlink === false && (evidence.identity === null || identity(evidence.identity))
             && Array.isArray(evidence.ancestors) && evidence.ancestors.every(identity)
-            && (paths === null || Array.isArray(paths) && paths.length <= GUARD_LOCATION_LIMITS.sensitivePaths
-                && paths.every((path) => canonical(path) && typeof observedPath === 'string' && within(path, observedPath))) ? evidence : undefined
+            && listed.every((key) => { const paths = evidence[key]
+                return paths === null || Array.isArray(paths) && paths.length <= GUARD_LOCATION_LIMITS.sensitivePaths
+                    && paths.every((path) => canonical(path) && typeof observedPath === 'string' && within(path, observedPath)) }) ? evidence : undefined
     }
     let pathCount = input.paths.length + input.invocations.reduce((sum, item) => sum + item.redirects.length, 0)
     const externalWriteDenial = (path: string, hazard: string) => deny(`Refusing to write ${shownGuardWord(path)}: [guards] write_paths admits writes below the paths it lists, but never into ${hazard}, which changes what agents, the shell or Git run later, or holds credentials. A person makes this change.`)
@@ -2320,16 +2363,24 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (!evidence || evidence.identity === null) safe = false
         }
         // Diffs, patches and blobs print committed content, which the path inspection never sees. The
-        // index stands for the repository: a file once committed and since removed from it is not seen.
+        // index stands for the repository, and for a command that can print a commit so does every path
+        // any commit holds: `git log -p` prints an environment file committed once and removed since.
         if (access.trackedContent) {
-            const tracked = resolvedEvidence({ path: '.', cwd: access.cwd, operation: 'repository' })?.tracked as readonly string[] | null | undefined
-            const limits = access.trackedContent.limitedTo?.map((spec) => fold(posix.resolve(access.cwd, spec)))
-            const exposed = tracked?.find((file) => !documentation(fold(file)) && (limits === undefined || limits.some((limit) => within(fold(file), limit))))
-            if (!tracked || exposed !== undefined || !chainReadOnly) {
+            const { limitedTo, history } = access.trackedContent
+            const repository = resolvedEvidence({ path: '.', cwd: access.cwd, operation: 'repository', ...history ? { history } : {} })
+            const tracked = repository?.tracked as readonly string[] | null | undefined
+            const committed = history ? repository?.committed as readonly string[] | null | undefined : []
+            const limits = limitedTo?.map((spec) => fold(posix.resolve(access.cwd, spec)))
+            const exposes = (files: readonly string[] | null | undefined) => files?.find((file) => !documentation(fold(file)) && (limits === undefined || limits.some((limit) => within(fold(file), limit))))
+            const exposed = exposes(tracked)
+            const once = exposes(committed)
+            if (!tracked || !committed || exposed !== undefined || once !== undefined || !chainReadOnly) {
                 safe = false
                 searchBlocker = ask(!tracked ? 'The guard could not list the environment files and secrets this repository tracks, so it cannot prove this Git command prints none of them.'
-                    : exposed !== undefined ? `This Git command can print ${posix.relative(access.cwd, exposed)}, a tracked environment file, secrets file or declared instance. Limit it with \`-- <path>\` to paths that do not hold one.`
-                        : 'This Git command prints committed content, and another command in this call can change what the repository tracks first. Run it on its own.')
+                    : !committed ? 'The guard could not list the environment files and secrets this repository\'s history holds, so it cannot prove this Git command prints none of them.'
+                        : exposed !== undefined ? `This Git command can print ${posix.relative(access.cwd, exposed)}, a tracked environment file, secrets file or declared instance. Limit it with \`-- <path>\` to paths that do not hold one.`
+                            : once !== undefined ? `This Git command can print ${posix.relative(access.cwd, once)}, an environment file, secrets file or declared instance the repository's history holds. Limit it with \`-- <path>\` to paths that never held one.`
+                                : 'This Git command prints committed content, and another command in this call can change what the repository tracks first. Run it on its own.')
             }
         }
         for (const path of access.reads) visit(path, 'read')
@@ -2580,7 +2631,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // Archivers, copiers and recursive diffs read every file below a source, as a recursive search does.
         const sources = sourceTrees(invocation)
         const othersReadOnly = invocations.every(other => other === invocation || accesses.get(other) !== undefined || other.executable === null && !other.redirects.some(redirect => redirect.write))
-        if (sources?.length && !inspectReadOnly({ cwd: invocation.cwd, reads: [], trees: sources, listings: [], ...executableName === 'diff' ? { followsLinks: true as const } : {} }, othersReadOnly)
+        if (sources?.paths.length && !inspectReadOnly({ cwd: invocation.cwd, reads: [], trees: sources.paths, listings: [], ...sources.followsLinks ? { followsLinks: true as const } : {} }, othersReadOnly)
             && !approvalBarriers.has(invocation)) {
             approvalBarriers.set(invocation, searchBlocker ?? ask(`${named(invocation)} reads every file below its sources, which the guard cannot prove hold no secret. Name the files it needs.`))
         }
@@ -2937,6 +2988,25 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const stashVerb = git.args.find(arg => !arg.startsWith('-'))
         if (git.verb === 'stash' && (stashVerb === undefined || ['push', 'save'].includes(stashVerb))
             && git.args.some(arg => /^--(?:include-untracked|all)$/.test(arg) || /^-[a-zA-Z]*[ua]/.test(arg) && !arg.startsWith('--'))) inspectStage(invocation, '.', git.cwd)
+        // A Git command that prints committed content prints a secret its pathspec or `rev:path` names from
+        // any commit, tracked now or not, so such a name is refused as a read of the file is, in every form
+        // and mode. A `rev:path` and a `:/` pathspec name the path from the work tree's top, which is the
+        // working directory or one above it.
+        if (gitPrintsContent(git)) {
+            const { revisions, pathspecs } = gitContentOperands(git.verb, git.args)
+            const tops: string[] = []
+            for (let directory = git.cwd; inRoots(directory); directory = posix.dirname(directory)) { tops.push(directory); if (directory === '/') break }
+            // An exclusion names what is not printed.
+            for (const arg of [...revisions, ...pathspecs ?? []].filter(word => !/^:(?:!|\^|\([^)]*exclude)/.test(word))) {
+                const spellings = [arg, arg.slice(arg.lastIndexOf(':') + 1), arg.slice(arg.lastIndexOf(')') + 1)].flatMap(word => [word, word.replace(/^\/+/, '')]).filter(Boolean)
+                for (const folded of new Set(spellings.flatMap(word => [git.cwd, ...tops].map(top => fold(posix.resolve(top, word)))))) {
+                    if (dotenvSecret(folded)) hold(dotenvDenial)
+                    if (credential(folded)) hold(credentialDenial)
+                    if (folded.split('/').includes('.secrets') || resolved.instances.some((item) => within(folded, fold(item.path)))) hold(readDenial)
+                    if (inSecretPath(folded)) hold(secretPathDenial)
+                }
+            }
+        }
         // The stash's third parent and a walk of every ref or the reflog print files the index does not list.
         if ((gitPrintsContent(git) || git.verb === 'stash' && stashVerb === 'show' && git.args.some(arg => /^(?:-u|--include-untracked|--only-untracked)$/.test(arg)))
             && (git.args.some(arg => /(?:^|[^\w])stash(?:@\{|$|\^|~)|^refs\/stash/.test(arg)) || git.args.some(arg => /^--(?:all|reflog|walk-reflogs)$|^-g$/.test(arg))
@@ -3047,11 +3117,13 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const heredocWriter = executable === 'cat' && invocation.argv.length === 0 && invocation.redirects.length > 0 && invocation.redirects.every(redirect => redirect.write)
                 && invocation.words.some(word => word.role === 'heredoc-body')
             if (open && !containerCommands.has(invocation) && !cockpitCommand(invocation) && (!READING_EXECUTABLES.has(executable) || heredocWriter)
-                && !(executable === 'git' && gitPrintsContent(gitInvocation(invocation)))) continue
+                && !(executable === 'git' && gitPrintsContent(gitInvocation(invocation))) && !ghPrintsContent(invocation)) continue
             if (open && cockpitCommand(invocation)) return ask(`${named(invocation)} is a cockpit command that publishes policy or is not one an agent runs: \`sync\`, \`upgrade\` and the other commands that change what agents may do are a person's. A person runs it in a terminal.`)
             const config = /^[\w./@%+=:,-]+$/.test(resolved.configPath) ? resolved.configPath : `'${resolved.configPath.replaceAll("'", "'\\''")}'`
             if (invocation.executable === 'node' && invocation.argv[0] === '--test') return ask(`${named(invocation)} requires human approval: Node tests execute code. Keep this Node argv: a person admits it under [guards] allow in ${posix.basename(resolved.configPath)}, `
                 + `or declares it as a [[testing.stages]] command in a gate that agents run with \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run --config ${config} --gate <gate>\`; a gate whose stages use another runner does not run this verifier.`)
+            if (open && ghPrintsContent(invocation)) return searchRefusals.get(invocation) ?? ask(`${named(invocation)} prints committed file content or patches that the guard cannot match against what this checkout's repository holds: `
+                + 'another repository\'s pull request, code search across the host, a `gh api` read of files or patches, or a diff run below the repository\'s top directory. Run `gh pr diff` from the top of this checkout, or a person approves it.')
             // Under the allow default only a reading command or Git printing content reaches here: one whose form the
             // read-only profile cannot prove reads no secret.
             if (open && !containerCommands.has(invocation)) return searchRefusals.get(invocation) ?? ask(`${named(invocation)} reads files in a form the guard cannot prove reads no secret. `

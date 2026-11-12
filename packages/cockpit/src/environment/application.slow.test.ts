@@ -480,6 +480,45 @@ describe('guard policy construction', () => {
         expect((await decide('git commit -m done')).decision).toBe('ask')
     }, 120_000)
 
+    it('asks Git which environment files history holds before a command prints a commit, through the installed guard', async () => {
+        const { root, configPath } = await observedPolicy()
+        const git = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args], { stdio: 'pipe' })
+        expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
+            resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }) }
+        const decide = async (command: string) => {
+            const identity = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
+            return (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'claudecode', cwd: root,
+                payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+        }
+        // A commit no ref or reflog reaches, as a fetch or a dropped stash leaves one, is walked when a command names it.
+        const index = join(root, '.git/synthetic.index')
+        const plumbing = (args: string[], input?: string) => execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args],
+            { env: { ...process.env, GIT_INDEX_FILE: index }, input, encoding: 'utf8' }).trim()
+        plumbing(['read-tree', '--empty'])
+        plumbing(['update-index', '--add', '--cacheinfo', `100644,${plumbing(['hash-object', '-w', '--stdin'], 'SYNTHETIC_KEY=synthetic\n')},stray/.env.production`])
+        const stray = plumbing(['commit-tree', plumbing(['write-tree']), '-m', 'Unreferenced'])
+        rmSync(index)
+        for (const command of [`git show ${stray}`, `git log -p ${stray}`, `git diff ${stray}~0 HEAD`]) {
+            expect(await decide(command), command).toMatchObject({ decision: 'ask', reason: expect.stringContaining('can print stray/.env.production') })
+        }
+        expect(await decide('git log -p')).toMatchObject({ decision: 'allow' })
+        mkdirSync(join(root, 'notes'), { recursive: true })
+        writeFileSync(join(root, 'notes/.env.local'), 'SYNTHETIC_KEY=synthetic\n')
+        git('add', '--force', 'notes/.env.local')
+        git('commit', '-q', '-m', 'Commit an environment file')
+        git('rm', '-q', '--cached', 'notes/.env.local')
+        git('commit', '-q', '-m', 'Remove it from the index')
+        rmSync(join(root, 'notes/.env.local'))
+        // The index no longer holds it, but the first commit does, and these print that commit.
+        for (const command of ['git log -p', 'git show HEAD', 'git diff HEAD~1 HEAD', 'git grep SYNTHETIC HEAD~1', 'git log -p -- notes']) {
+            expect(await decide(command), command).toMatchObject({ decision: 'ask',
+                reason: expect.stringContaining('can print notes/.env.local, an environment file, secrets file or declared instance the repository\'s history holds') })
+        }
+        for (const command of ['git show HEAD~1:notes/.env.local', 'git log -p HEAD~1 -- notes/.env.local']) expect(await decide(command), command).toMatchObject({ decision: 'deny' })
+        for (const command of ['git log --stat', 'git log -p -- app', 'git diff']) expect(await decide(command), command).toMatchObject({ decision: 'allow' })
+    }, 120_000)
+
     it('binds the guard only to the cockpit installed under the root, never to a copy that runs sync', async () => {
         const { root, configPath } = await observedPolicy()
         // The installed package is a copy holding its own cli.js, so the running cockpit is not it.

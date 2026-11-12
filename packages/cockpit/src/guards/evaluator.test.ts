@@ -14,13 +14,13 @@ const root = '/workspace/project'
 const other = '/workspace/other'
 const instance = `${root}/config/active.instance`
 // A search's evidence also lists the `.env*` and `.secrets` names below it, and a repository's the
-// ones its index holds; synthetic trees and repositories hold none.
+// ones its index holds and, when asked, the ones its history ever held; synthetic trees and repositories hold none.
 const searches = (operation?: string) => operation === 'search' || operation === 'unignored-search'
 // A synthetic repository's work tree holds no guard control, so no revision changes one.
-const inspect = ({ path, cwd, operation, revision, from }: { path: string; cwd: string; operation?: string; revision?: string; from?: string }) => operation === 'tree'
+const inspect = ({ path, cwd, operation, revision, from, history }: { path: string; cwd: string; operation?: string; revision?: string; from?: string; history?: true }) => operation === 'tree'
     ? { status: 'resolved', path: posix.resolve(cwd, path), revision, ...from === undefined ? {} : { from }, guarded: false, changed: [] as string[] }
     : { status: 'resolved', path: posix.resolve(cwd, path), symlink: false, identity: null, ancestors: [],
-        ...(searches(operation) ? { sensitive: [] as string[] | null } : {}), ...(operation === 'repository' ? { tracked: [] as string[] | null } : {}) }
+        ...(searches(operation) ? { sensitive: [] as string[] | null } : {}), ...(operation === 'repository' ? { tracked: [] as string[] | null, ...history ? { committed: [] as string[] | null } : {} } : {}) }
 // Identity facts for every protected path; synthetic tests name only the ones they exercise.
 type IdentityFacts = Record<string, { identity: string | null; ancestors: string[] }>
 function protectedIdentities(instances: readonly { path: string }[], known: IdentityFacts = {}) {
@@ -867,7 +867,6 @@ describe('built-in read-only profile', () => {
 
     it('falls back to a prompt for every shape outside the exact read-only table', () => {
         for (const command of [
-            'git diff --no-index env/.secrets/token README.md',
             // Searches that widen past ignore rules; a glob that is not an exclusion re-includes hidden and ignored files.
             'rg --hidden needle src', 'rg -uu needle src', 'grep -R needle src', "rg -g '.env*' KEY src", "rg --glob='*.ts' needle src", "rg --iglob '*' needle src",
             // Options that run programs or write files.
@@ -889,6 +888,9 @@ describe('built-in read-only profile', () => {
         // rather than asked; `grep -C 5`, `sed 's/a/b/'` moved to the allowed shapes, since a bare `-C` is
         // read as a flag and its count as the pattern, which reads every word that could be a file.
         expect(decideInRepositories('git show HEAD:config/active.instance').decision).toBe('deny')
+        // ACK: a Git command that prints content refuses a secret it names in every form, so `--no-index` over a
+        // secrets file is refused rather than asked; over an ordinary file it still asks.
+        expect(decideInRepositories('git diff --no-index env/.secrets/token README.md').decision).toBe('deny')
         // ACK: `tail -f` left the ask list: following a file inside the roots reads only that file.
         expect(decideInRepositories('tail -f src/a.ts').decision).toBe('allow')
         // jq reads files like cat, but its filter language can also read the environment, modules and other files;
@@ -981,6 +983,47 @@ describe('built-in read-only profile', () => {
         expect(tracking(null)('git log -p').reason).toBe('The guard could not list the environment files and secrets this repository tracks, so it cannot prove this Git command prints none of them.')
         expect(tracking([])('npm test && git diff -- src').reason)
             .toBe('This Git command prints committed content, and another command in this call can change what the repository tracks first. Run it on its own.')
+    })
+
+    it('refuses Git history named by a secret, and asks while the history once held one', () => {
+        const secretPaths = [`${root}/var/sessions`]
+        const declared = { ...policy(), secretPaths, protectedIdentities: [...policy().protectedIdentities, ...secretPaths.map(path => ({ path, identity: null, ancestors: [] }))] }
+        const history = (committed: string[] | null) => (command: string, configured: object) => evaluateGuard(parseGuardInput(shellPayload(command)), configured,
+            (request: { path: string; cwd: string; operation?: string; history?: true }) => ({ ...withGit(request),
+                ...request.operation === 'repository' && request.history ? { committed } : {} }))
+        for (const configured of [declared, { ...declared, defaultDecision: 'allow' as const }]) {
+            const clean = history([])
+            // A pathspec or a `rev:path` naming a secret is refused whatever revision, verb or mode prints it.
+            for (const command of ['git log -p other -- .env', 'git log -p --all -- var/sessions', 'git show abc123:.env.local', 'git show abc123 -- .env',
+                'git diff abc123 def456 -- var/sessions/a', 'git grep KEY abc123 -- .env', 'git grep KEY abc123:var/sessions', 'git grep -e KEY -- .ENV', 'git grep KEY .env',
+                'git cat-file -p abc123:.env', 'git cat-file -p abc123:var/sessions/a', 'git archive HEAD .env', 'git archive HEAD -- var/sessions',
+                'git format-patch -1 -- .env', 'git whatchanged -p -- var/sessions', "git log -p -- ':(icase)VAR/SESSIONS'", "git log -p -- ':/var/sessions'",
+                'git show :.env', 'git blame abc123 -- .env', 'git diff-tree -p HEAD -- .env', 'git log -p --grep x -- .env']) {
+                expect(clean(command, configured), command).toMatchObject({ decision: 'deny' })
+            }
+            // History that once held an environment file holds a command that prints history beyond the paths it names.
+            const held = history([`${root}/config/.env.production`, `${root}/.env.example`])
+            for (const command of ['git log -p', 'git log -p main', 'git show HEAD~3', 'git diff HEAD~3 HEAD', 'git diff --cached', 'git grep KEY HEAD~3',
+                'git log -p --follow -- src/a.ts', 'git log -p -- config', 'git show abc123 -- src', 'git log -p --grep fix: main']) {
+                expect(held(command, configured), command).toEqual({ decision: 'ask',
+                    reason: 'This Git command can print config/.env.production, an environment file, secrets file or declared instance the repository\'s history holds. Limit it with `-- <path>` to paths that never held one.' })
+            }
+            for (const command of ['git log --stat', 'git log --name-only --all', 'git log --oneline main', 'git log -p -- src', 'git diff', 'git grep KEY -- src',
+                'git show HEAD:src/a.ts', 'git blame src/a.ts']) {
+                expect(held(command, configured), command).toMatchObject({ decision: 'allow' })
+            }
+            expect(history(null)('git log -p', configured).reason)
+                .toBe('The guard could not list the environment files and secrets this repository\'s history holds, so it cannot prove this Git command prints none of them.')
+            // An option's value is text, not a path, and only the strict mode's table admits a pattern spelled as a name.
+            for (const command of ['git log -p main', 'git log --grep .env', 'git log -p -S .env.local -- src', 'git grep -C 2 .env -- src', 'git grep -m 1 .env -- src',
+                'git cat-file -t abc123']) {
+                expect(clean(command, configured), command).toMatchObject({ decision: 'allow' })
+            }
+            // A bare object printed may be a blob nothing names, and plumbing diffs print patches as diff does.
+            for (const command of ['git cat-file -p abc123', 'git diff-tree -p -r --root HEAD', 'git diff-index -p --cached HEAD~1', 'git diff-files -p', 'git merge-tree a b c']) {
+                expect(clean(command, configured).decision, command).not.toBe('allow')
+            }
+        }
     })
 
     it('keeps reads of declared instances and secrets a hard denial under every spelling', () => {
@@ -1402,12 +1445,42 @@ describe('allow by default', () => {
                 expect(run(command, configured).decision, command).not.toBe('allow')
             }
         }
-        // A pull request's diff, and any file the API returns under whatever name, can print a committed environment file,
-        // which the strict mode does not admit unread.
-        for (const command of ['gh pr diff 12', 'gh api repos/o/r/pulls', 'gh api repos/o/r/contents/%2Eenv', 'gh api repos/o/r/git/blobs/abc1234']) {
+        // Any file the API returns under whatever name can print a committed environment file, which the strict mode does not admit unread.
+        for (const command of ['gh api repos/o/r/pulls', 'gh api repos/o/r/contents/%2Eenv', 'gh api repos/o/r/git/blobs/abc1234']) {
             expect(run(command, { ...open(), defaultDecision: 'ask' as const }), command).toMatchObject({ decision: 'ask' })
         }
         expect(run('git fetch origin')).toMatchObject({ decision: 'allow' })
+    })
+
+    it('holds a pull request diff as it holds git diff, by the environment files and secrets the repository tracks or once committed', () => {
+        const repository = (tracked: string[], committed: string[] = []): PathInspection => request => ({ ...onBranch('refs/heads/topic')(request),
+            ...request.operation === 'repository' ? { tracked, ...(request as { history?: true }).history ? { committed } : {} } : {} })
+        for (const configured of [open(), { ...open(), defaultDecision: 'ask' as const }]) {
+            for (const command of ['gh pr diff 12', 'gh pr diff', 'gh pr diff --patch 12', 'gh pr diff 12 --color never', "gh pr diff topic -e '*.lock'"]) {
+                expect(run(command, configured, repository([`${root}/.env`])), command).toEqual({ decision: 'ask',
+                    reason: 'This Git command can print .env, a tracked environment file, secrets file or declared instance. Limit it with `-- <path>` to paths that do not hold one.' })
+                expect(run(command, configured, repository([], [`${root}/config/.env.production`])), command).toMatchObject({ decision: 'ask', reason: expect.stringContaining('config/.env.production') })
+                expect(run(command, configured, repository([`${root}/.env.example`], [`${root}/.env.schema`])), command).toMatchObject({ decision: 'allow' })
+            }
+            // Names only print no content; another repository's pull request, or code search across the host, is not this checkout's to describe.
+            expect(run('gh pr diff --name-only 12', configured, repository([`${root}/.env`]))).toMatchObject({ decision: 'allow' })
+            // A value option takes the next word, so `-e --name-only` excludes a glob and prints the whole diff.
+            for (const command of ['gh pr diff 12 -R o/other', 'gh pr diff --repo=o/other 12', 'gh pr diff https://example.test/o/other/pull/1', 'gh search code KEY', 'cd ./src && gh pr diff 12',
+                'gh pr diff -e --name-only', 'gh pr diff --exclude --name-only -R o/other 7']) {
+                expect(run(command, configured, repository([`${root}/.env`])).decision, command).toBe('ask')
+            }
+        }
+        expect(run('gh pr diff --web 12', open(), repository([`${root}/.env`]))).toMatchObject({ decision: 'allow' })
+        // Under the allow default gh's words are read as its parser reads them, and an API read of files or patches asks.
+        for (const command of ['gh pr diff -e -w 7 -R o/other', 'gh search -L 5 code KEY', 'gh pr --color always diff https://example.test/o/r/pull/1',
+            "gh api repos/o/r/compare/a...b --jq '.files[].patch'", "gh api -H 'Accept: application/vnd.github.diff' repos/o/r/pulls/7", 'gh api repos/o/r/pulls/7/files',
+            'gh api repos/o/r/commits/abc1234', 'gh api repos/o/r/contents/src/a.ts', 'gh api repos/o/r/tarball/main',
+            "gh api graphql -f query='query{repository(owner:\"o\",name:\"r\"){object(expression:\"HEAD:src\"){id}}}'"]) {
+            expect(run(command, open(), repository([])).decision, command).toBe('ask')
+        }
+        for (const command of ['gh api repos/o/r/pulls/7/comments', 'gh api repos/o/r/pulls', 'gh issue list --search "pr diff"']) {
+            expect(run(command, open(), repository([])), command).toMatchObject({ decision: 'allow' })
+        }
     })
 
     it('lets a read-only program compare or print guard controls, and still refuses writing them or reading a secret', () => {
@@ -1425,6 +1498,16 @@ describe('allow by default', () => {
                 ? { ...onBranch('refs/heads/topic')(request), sensitive: null } : onBranch('refs/heads/topic')(request)
             expect(run('diff -r src build', configured, linked).decision).not.toBe('allow')
             expect(run('rg needle src', configured, linked)).toMatchObject({ decision: 'allow' })
+        }
+        // zip and scp follow a link below a tree they read, and rsync does with -L or -k; zip -y stores the link instead.
+        const linked: PathInspection = request => request.operation === 'search' && (request as { followsLinks?: true }).followsLinks
+            ? { ...onBranch('refs/heads/topic')(request), sensitive: null } : onBranch('refs/heads/topic')(request)
+        for (const command of ['zip -qr build/a.zip src', 'zip -r -q build/a.zip src', 'scp -r src host:', 'scp -rp src host:/tmp/', 'rsync -aL src/ build/c/',
+            'rsync -a --copy-links src/ build/c/', 'rsync -ak src/ build/c/', 'rsync -a --copy-unsafe-links src/ host:/tmp/']) {
+            expect(run(command, open(), linked).decision, command).not.toBe('allow')
+        }
+        for (const command of ['zip -qry build/a.zip src', 'zip -r --symlinks build/a.zip src', 'zip -r -y build/a.zip src', 'rsync -a src/ build/c/']) {
+            expect(run(command, open(), linked), command).toMatchObject({ decision: 'allow' })
         }
     })
 

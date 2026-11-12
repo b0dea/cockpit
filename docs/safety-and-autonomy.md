@@ -465,9 +465,9 @@ on Codex and OpenCode, where a prompt becomes a denial. It covers exact argument
 `git status`, `git diff`, `git log`, `git show`, `git grep`, `git blame`, `git rev-parse`, `git branch` listing flags,
 `git worktree list`, `git ls-files`, `git cat-file`, `git merge-base`, `git remote`, `git config --get`,
 the `gh` reads (`pr view`, `list`, `checks` and `status`, `run view`, `list` and `watch`, `issue view`,
-`list` and `status`, `repo view` and `auth status` without the token; `gh pr diff` is left out, because
-a pull request can add an environment file, and so is `gh api`, whose `GET` returns any file the
-repository holds), and the cockpit commands [below](#cockpit-commands-an-agent-can-run). The
+`list` and `status`, `repo view` and `auth status` without the token, and `pr diff`, judged as
+`git diff <revision>` is [below](#reading-secrets-and-instances), from the repository's top and never with `--repo`
+or a URL; `gh api` is left out, because its `GET` returns any file the repository holds), and the cockpit commands [below](#cockpit-commands-an-agent-can-run). The
 [read-only profile](../packages/cockpit/src/guards/read-only.ts) lists each permitted option.
 
 - Any other option falls back to the ordinary rules, including options that run programs or write
@@ -482,8 +482,9 @@ repository holds), and the cockpit commands [below](#cockpit-commands-an-agent-c
   branch name. `git worktree list` accepts its porcelain, NUL and verbose listing flags;
   worktree creation, removal and pruning remain outside the read-only profile. `git ls-files` lists
   names, modes and object names, never with `--eol`. `git cat-file` takes one of `-t`, `-s`, `-e` or
-  `-p` and one object, never a `rev:path` blob name; `-p` prints content, so it is judged as
-  `git show` is. `git remote` lists names only; `-v` and `get-url` print URLs, which can carry a
+  `-p` and one object; `-p` prints content, so it is judged as `git show` is, a `rev:path` blob
+  name as a read of that path, and with any other object than `HEAD` and its ancestors it asks,
+  since the object may be a blob nothing names, such as an environment file staged once and unstaged. `git remote` lists names only; `-v` and `get-url` print URLs, which can carry a
   credential, so outside this profile they run only while no configured remote URL or http header
   carries one, and `show` is refused. `git config --get <key>`, `--get-all` and `git config get` read one key from
   the `user`, `core`, `init`, `pull`, `push`, `merge`, `rebase`, `commit`, `tag`, `fetch`, `status`,
@@ -496,7 +497,9 @@ repository holds), and the cockpit commands [below](#cockpit-commands-an-agent-c
   excluded because a checksum manifest names additional files. `cmp` and `diff` read guard controls
   as any other file; `diff` is judged as reading everything below each operand, because a directory
   operand prints the files inside it, and it asks when a link lies below one, since it follows links
-  there. Output redirects remain writes.
+  there. The sources of `zip` (unless `-y` stores links as links), `scp` and `rsync -L`, `-k` or
+  `--copy-unsafe-links` are judged the same way, since each follows links below a tree it reads.
+  Output redirects remain writes.
 - `$?` is allowed as an argument only to a read-only command, and never as the directory of
   `env -C`.
 - A command may follow `cd ./dir`, `cd ../dir` or `cd /abs/dir` joined by `&&` or `;`, with the
@@ -622,8 +625,8 @@ without a grant, as a named file read is. The guard still requires the read-only
 form, so no `-c`, alias, external diff, pager option, write or network access passes; the whole call,
 never a pipeline or chain; a `-C` directory holding its own `.git`, reached without a link; and
 operands that name regular files or revisions. A command that prints file content there, such as
-`diff`, `show`, `log -p` or `cat-file -p`, is admitted only when that repository's index tracks no
-`.env*` or `.secrets` file, as inside the cockpit. Running it runs that repository's configured
+`diff`, `show`, `log -p` or `cat-file -p`, is admitted only when that repository's index, and for a
+command that can print a commit its history, holds no `.env*` or `.secrets` file, as inside the cockpit. Running it runs that repository's configured
 helpers, such as fsmonitor, clean filters, textconv, signature verification and the pager, as
 running it yourself would. Agents cannot write outside the roots, so those helpers are what a person
 or their tools configured there, and choosing native external reads hands consent for that command
@@ -800,6 +803,12 @@ The guard enumerates that directory on every call, up to 512 entries; above that
 read falls back to a prompt. A hard link to a file in any other `.secrets` directory is recognised
 only by its spelling.
 
+A Git command that prints committed content (`diff`, `show`, `log`, `grep`, `blame`, `cat-file`,
+`archive`, `format-patch`, `whatchanged`) is refused when a pathspec or `rev:path` names such a
+path, in any mode and whether or not the index holds it now: `git log -p main -- .env`,
+`git show HEAD~3:.env.local`, `git grep KEY HEAD~3 -- <secret path>` and the `:/` and `:(icase)`
+pathspec spellings of a secret path all print it from history.
+
 These reads fall back to a prompt instead of being allowed:
 
 - a recursive search, whenever a declared instance or an `env/.secrets` file has a second hard link
@@ -818,13 +827,26 @@ These reads fall back to a prompt instead of being allowed:
   is not a whole path component, or non-UTF-8 bytes, or when Git does not answer), the search is
   walked like `grep -r`. Either way the guard sees only what exists before the call runs, so a
   recursive search is allowed only when every other command in the call is read-only too;
-- `git diff`, `git show`, and `git log` with patch output, whenever the repository's index holds a
-  `.env*` file that is neither a declared template nor a documentation name, a file below a
-  `.secrets` directory or a declared instance, unless the command names no revision and is limited
-  with `-- <path>` to paths that hold none (`git log` may name revisions, but not `--full-diff`).
-  `--check` counts as printing content, and `git log -L<range>:<path>` is not read-only. Only the
-  index is asked: a file committed once and since removed from it is still in history, and
-  `git log -p` prints it. Run `git rm --cached` and rotate what it held;
+- `git diff`, `git show`, `git log` with patch output, `git grep`, `git cat-file -p` and `gh pr diff`,
+  whenever the repository's index holds a `.env*` file that is neither a declared template nor a
+  documentation name, a file below a `.secrets` directory, a declared instance or a
+  `[guards] secret_paths` entry, unless the command names no revision and is limited with
+  `-- <path>` to paths that hold none (`git log` may name revisions, but not `--full-diff` or
+  `--follow`). A command that can print a commit (`log`, `show`, a `diff` or `grep` naming a
+  revision, `diff --cached`, `cat-file -p` and `gh pr diff`) also asks whenever a commit reachable
+  from a ref, a reflog or a revision the command names (such as `FETCH_HEAD` or a dropped stash's
+  commit) holds such a file within those paths: a file committed once and since removed from the
+  index is still in history, and `git log -p` prints it. A blob named by its object id, as in
+  `git show <blob>`, is not walked. Git walks every commit to answer, so in a large history the
+  answer can take seconds, and past the guard's time limit the command asks. Run `git rm --cached` and rotate what it held, and limit history reads with
+  `-- <path>`. `--check` counts as printing content, and `git log -L<range>:<path>` is not
+  read-only. The plumbing diffs `diff-tree`, `diff-index`, `diff-files` and `merge-tree` are not
+  read-only either. `gh pr diff --name-only` prints names only and runs; `gh pr diff --repo` or a
+  URL, `gh search code`, and a `gh api` read of files or patches (contents, blobs, trees, archives,
+  commits, comparisons, a pull request's files or its diff media type, and GraphQL objects) print
+  content the guard cannot match against this checkout, so they ask under the allow default. gh's
+  words are read as its parser reads them: `gh pr diff -e --name-only` excludes the glob
+  `--name-only` and prints the whole diff;
 - a path that is a symlink or leaves one through `..`, lies outside the configured roots, or has
   another `.env*` name, such as `.envrc`.
 
@@ -841,6 +863,7 @@ identity checks cover shell commands only.
 | Native read measurement | Observed result |
 | --- | --- |
 | Claude Code 2.1.318, macOS, 2026-11-05 | Ordinary Read succeeded; Read through an unmatched-name symlink to a synthetic `.env.private` was refused. Explicit `Bash(cat *)` permission let `cat ordinary.txt` run, while `cat .env.schema` was refused. |
+| Claude Code 2.1.322, macOS (APFS), 2026-11-12, project settings only, a positive and a negative control file | `/path` and `//**/` rules refused Read and Grep of upper- and mixed-case spellings of the ruled path, and Grep of the whole directory left the ruled files out. A rule spelled in Unicode NFD did not refuse the same file asked for in NFC, which APFS resolves to it, so `sync` writes each non-ASCII rule in both normal forms; a spelling that mixes the two forms within one path is not covered. A malformed rule was skipped silently under `claude -p`; only `claude doctor` named it. |
 
 Claude's filesystem-root deny rules cannot exempt the documentation names: native file tools and
 recognized shell reads such as `cat` also refuse `.env.example`, `.env.sample`, `.env.schema`,
@@ -849,11 +872,21 @@ that. [Claude's permission rules](https://code.claude.com/docs/en/permissions#re
 why no setting carves `.env.schema` out: deny rules are evaluated first and an allow rule cannot
 make an exception to one; a `!` negation carves only out of `path` or `./path` rules of the same
 settings file, and is read relative to the working directory even when `//` follows the `!`, so it
-cannot reach the `//**` rules that cover siblings. A gitignore character class could spell every
-`.env.*` name but `.env.schema` as a set of deny rules (`.env.[!s]*`, `.env.s[!c]*` and so on), but
-whether Claude Code reads a negated class is not measured, and the same page says a deny pattern it
-cannot use guards only its literal path: a misread set would leave `.env.local` readable. The
-denials stay until a dated run shows such a set refusing every other `.env.*` name. The supported route is
+cannot reach the `//**` rules that cover siblings. Measured on Claude Code 2.1.322, macOS,
+2026-11-12, with synthetic names in place of `.env` and the same rule shapes:
+
+- an allow rule, in settings or on the command line, did not carve `.schema` out of the deny rules;
+- `!` and `^` inside a character class are literal members, not negation: `[!s]` refused the
+  `.schema` file and let `.local`, `.production` and `.example` through;
+- a set of positive-range classes spelling every suffix but `schema` (`[a-rt-z0-9_.-]*`, `s[abd-z0-9_.-]*`
+  and so on) left only `.schema` readable, under any case, but cannot name a suffix character outside
+  its ranges, which would then be readable; an uppercase range also matched lowercase and refused
+  `.schema` too;
+- cwd-relative deny rules followed by a `!` rule for `.schema` left only `.schema` readable at every
+  depth below the working directory, while the same `!` rule beside `//**` rules carved nothing out.
+
+None of these keeps every other `.env.*` name refused in the siblings outside the working directory, so the
+denials stay. The supported route is
 [`cockpit env keys`](environment.md#read-variable-names-and-schemas) for variable names and
 `cockpit env schema` for one schema's text, neither of which resolves anything.
 
