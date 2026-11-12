@@ -36,6 +36,7 @@ export type CheckResult = z.infer<typeof CheckResult>
 
 // The record lists this many paths outside scope; a large migration's full list would not fit its 1 MiB.
 export const MAX_RECORDED_OUT_OF_SCOPE = 512
+export const MAX_RECORDED_HELD_PATHS = 32
 export const MAX_RETRIES = 16
 export const MAX_RETRY_FAILURES = 64
 export const MAX_RETRY_FAILURE_TEXT = 300
@@ -48,6 +49,8 @@ const Grade = z.object({
     // Which evaluator answered and those passed over on the way; absent when no evaluator ran.
     evaluator: z.object({ tool: z.string().max(64), fallbacks: z.array(z.object({ tool: z.string().max(64), code: z.string().max(64), message: z.string().max(8_192) }).strict()).max(8) }).strict().optional(),
     note: note.optional(),
+    // The open orders whose scope held changes this grade left to them, each with the first paths it left.
+    otherOrders: z.record(z.string().regex(WORK_ORDER_ID), z.array(z.string().max(1_100)).min(1).max(MAX_RECORDED_HELD_PATHS)).optional(),
 }).strict()
 
 export const WorkRecord = z.object({

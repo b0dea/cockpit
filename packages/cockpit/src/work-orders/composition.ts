@@ -100,13 +100,15 @@ export interface WorkApplicationComposition {
     readonly heads: () => Promise<Readonly<Record<string, string>>>
     readonly runCheck: (criterion: string, check: WorkOrderCheck) => Promise<CheckResult>
     readonly evaluate: (subject: GradingSubject) => Promise<GradingResult>
-    /** Test weakening in each checkout since `base`, over the files this cockpit treats as tests. */
-    readonly testWeakening: (base: Readonly<Record<string, string>>) => Promise<TestWeakeningObservation>
+    /** Test weakening in each checkout since `base`, over the files this cockpit treats as tests, less what `attribution` gives other orders. */
+    readonly testWeakening: (base: Readonly<Record<string, string>>, attribution?: Attribution) => Promise<TestWeakeningObservation>
     /**
      * What changed in each checkout since `base` (committed, staged, unstaged and untracked, each with its diff), and its test weakening,
      * from one listing of untracked files. Files under workorders/ are coordination, except those `scope` names: an order's own work.
+     * A change `attribution` gives another order is left out of both and listed under that order.
      */
-    readonly review: (base: Readonly<Record<string, string>>, scope: readonly string[]) => Promise<Readonly<{ changes: readonly ChangedFile[]; weakening: TestWeakeningObservation }>>
+    readonly review: (base: Readonly<Record<string, string>>, scope: readonly string[], attribution?: Attribution) => Promise<Readonly<{ changes: readonly ChangedFile[]
+        weakening: TestWeakeningObservation; otherOrders: Readonly<Record<string, readonly string[]>> }>>
     readonly browser: (kind: BrowserCommandKind, role?: string, route?: string) => Promise<BrowserCommandInput>
     /** The [docs] table as declared; absent when the cockpit declares none. */
     readonly docs?: Readonly<{ decisions?: string; decisionsIndex?: string }>
@@ -121,6 +123,13 @@ export interface WorkApplicationComposition {
     readonly containers: () => Promise<ContainerEvidence>
 }
 type TestWeakeningObservation = Readonly<{ patterns: TestFilePatterns; findings: readonly RepositoryWeakening[] }>
+/**
+ * The other open orders in the tree, by accepted scope and base. A changed path outside `own` and inside one's scope is
+ * that order's work, which its own grade judges, provided the path is the same at both bases: then its diff shows the
+ * whole change. A path that differs between them holds work only this order's diff shows, so it stays this order's.
+ */
+export type Attribution = Readonly<{ own: readonly string[]; others: readonly Readonly<{ id: string; scope: readonly string[]; base: Readonly<Record<string, string>> }>[] }>
+type Holder = (key: string, path: string) => string | undefined
 interface WorkApplicationGateRequest {
     readonly operation: 'test-run'
     readonly gate: string
@@ -796,8 +805,9 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         [repository.key, (await git(repository, ['ls-files', '--others', '--exclude-standard', '-z'], { stdoutLimitBytes: GIT_CHANGE_OUTPUT_BYTES })).split('\0').filter(Boolean)] as const)))
     // What changed since the base: committed, staged, unstaged and untracked files, each with its diff
     // or new content. A credential-shaped or declared-instance path is listed but its content is withheld.
-    const changesWith = async (base: Readonly<Record<string, string>>, untrackedPaths: ReadonlyMap<string, readonly string[]>, scope: readonly string[]): Promise<readonly ChangedFile[]> => {
+    const changesWith = async (base: Readonly<Record<string, string>>, untrackedPaths: ReadonlyMap<string, readonly string[]>, scope: readonly string[], holder: Holder) => {
         const files: ChangedFile[] = []
+        const otherOrders: Record<string, Set<string>> = {}
         // An order may keep its work beside the orders, such as a register; hiding that left the grader nothing to quote.
         // Only workorders/ is reopened this way, never what cockpit writes under .cockpit/.
         const inScope = scopeMatcher(scope)
@@ -818,7 +828,12 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             const rows: [status: string, path: string, untracked: boolean][] = []
             for (let index = 0; index + 1 < tracked.length; index += 2) rows.push([tracked[index]!, tracked[index + 1]!, false])
             for (const path of untrackedPaths.get(repository.key)!) rows.push(['A', path, true])
-            const shown = rows.filter(([, path]) => !(repository.key === '.' && (coordination(path) || generated.has(path))))
+            const shown = rows.filter(([, path]) => {
+                if (repository.key === '.' && (coordination(path) || generated.has(path))) return false
+                const held = holder(repository.key, path)
+                if (held !== undefined) (otherOrders[held] ??= new Set()).add(qualified(repository.key, path))
+                return held === undefined
+            })
             const declared = { kind: 'declared', env: {}, timeoutField: VERIFICATION_TIMEOUT_FIELD } as const
             const read = async (path: string, untracked: boolean): Promise<string> => {
                 try {
@@ -868,11 +883,11 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
                 files.push({ path: qualified(repository.key, path), status, diff: bounded })
             }
         }
-        return files
+        return { files, otherOrders: Object.fromEntries(Object.entries(otherOrders).map(([id, paths]) => [id, [...paths]])) }
     }
     // Test weakening since the base, per checkout: committed, staged and unstaged edits of tracked files,
     // and new untracked test files, which a diff against the base does not list.
-    const weakeningWith = async (base: Readonly<Record<string, string>>, untracked: ReadonlyMap<string, readonly string[]>): Promise<TestWeakeningObservation> => {
+    const weakeningWith = async (base: Readonly<Record<string, string>>, untracked: ReadonlyMap<string, readonly string[]>, holder: Holder): Promise<TestWeakeningObservation> => {
         const patterns = testFilePatterns(config.testing?.testFiles)
         const isTest = scopeMatcher(patterns.tests)
         const judged = judgedByWeakening(patterns)
@@ -885,7 +900,8 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             for (let at = 0; at < listed.length - 1;) {
                 const sides = /^[RC]/.test(listed[at]!) ? 2 : 1
                 const paths = listed.slice(at + 1, at + 1 + sides)
-                if (paths.some(judged)) changed.push(paths)
+                // A rename is this order's while either side is.
+                if (paths.some(judged) && !paths.every(path => holder(repository.key, path) !== undefined)) changed.push(paths)
                 at += 1 + sides
             }
             const command = ['-c', 'core.quotePath=true', '--literal-pathspecs', 'diff', '--no-ext-diff', '--no-textconv', '--no-color', '--text', '--find-renames', '--unified=0', from, '--']
@@ -898,7 +914,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
                 batch = []
             }
             for (const path of untracked.get(repository.key)!) {
-                if (!isTest(path)) continue
+                if (!isTest(path) || holder(repository.key, path) !== undefined) continue
                 let content: string
                 try {
                     admitRepositoryPath(repository.root, repository.identity, path, repository.sensitivePaths, browserAuthenticationTargets)
@@ -910,11 +926,28 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         }))
         return { patterns, findings: perRepository.flat() }
     }
-    const testWeakening = async (base: Readonly<Record<string, string>>) => weakeningWith(base, await untrackedFiles())
-    const review = async (base: Readonly<Record<string, string>>, scope: readonly string[]) => {
-        const untracked = await untrackedFiles()
-        const [changed, weakening] = await Promise.all([changesWith(base, untracked, scope), weakeningWith(base, untracked)])
-        return { changes: changed, weakening }
+    const holderOf = async (base: Readonly<Record<string, string>>, attribution: Attribution | undefined): Promise<Holder> => {
+        if (!attribution?.others.length) return () => undefined
+        const own = scopeMatcher(attribution.own)
+        const others = await Promise.all(attribution.others.map(async other => ({ id: other.id, inScope: scopeMatcher(other.scope),
+            differing: new Map(await Promise.all(repositories.map(async repository => {
+                const [from, to] = [base[repository.key] ?? 'HEAD', other.base[repository.key] ?? 'HEAD']
+                return [repository.key, new Set(from === to ? [] : (await git(repository, ['diff', '--name-only', '-z', '--no-renames', from, to, '--'],
+                    { stdoutLimitBytes: GIT_CHANGE_OUTPUT_BYTES })).split('\0').filter(Boolean))] as const
+            }))) })))
+        return (key, path) => {
+            const named = qualified(key, path)
+            return own(named) ? undefined : others.find(other => other.inScope(named) && !other.differing.get(key)!.has(path))?.id
+        }
+    }
+    const testWeakening = async (base: Readonly<Record<string, string>>, attribution?: Attribution) => {
+        const [untracked, holder] = await Promise.all([untrackedFiles(), holderOf(base, attribution)])
+        return weakeningWith(base, untracked, holder)
+    }
+    const review = async (base: Readonly<Record<string, string>>, scope: readonly string[], attribution?: Attribution) => {
+        const [untracked, holder] = await Promise.all([untrackedFiles(), holderOf(base, attribution)])
+        const [changed, weakening] = await Promise.all([changesWith(base, untracked, scope, holder), weakeningWith(base, untracked, holder)])
+        return { changes: changed.files, weakening, otherOrders: changed.otherOrders }
     }
     const gradeIndependently = async (subject: GradingSubject): Promise<GradingResult> => {
         let evaluator: EvaluatorAuthority

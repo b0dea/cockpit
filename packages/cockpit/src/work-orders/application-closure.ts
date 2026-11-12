@@ -40,6 +40,12 @@ export async function signoff(request: Extract<WorkRequest, { operation: 'work-s
             + `grade it again under the current mode with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work grade --config <your cockpit.toml> --work-order ${order.id}, or close it with --partial or --abandon`)
         const open = await Promise.all(order.depends_on.map(async dependency => (await store.read(dependency))?.state === 'done' ? undefined : dependency))
         if (open.some(Boolean)) return refusal(operation, `${order.id} depends on ${open.filter(Boolean).join(', ')}, which ${open.filter(Boolean).length === 1 ? 'is' : 'are'} not done`)
+        // The grade left changes to orders that would judge them; one that closed without a grade never did.
+        for (const [id, paths] of Object.entries(grade?.otherOrders ?? {})) {
+            const holder = await store.read(id)
+            if (holder?.state !== 'done' && (!holder || TERMINAL.has(holder.state))) return refusal(operation, `${order.id}'s grade left ${paths.join(', ')} to ${id}, `
+                + `which closed ${holder?.state ?? 'without a record'} without judging it; grade ${order.id} again with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work grade --config <your cockpit.toml> --work-order ${order.id}`)
+        }
         how = GRADING[grade?.mode ?? policy.grading].closure
     } else {
         if (!request.note) return refusal(operation, `closing ${request.workOrderId} as ${request.close} needs --note saying what was and was not done`)
@@ -50,10 +56,15 @@ export async function signoff(request: Extract<WorkRequest, { operation: 'work-s
     if (open.length) return refusal(operation, `${request.workOrderId} cannot close while ${open.join('; ')}`)
     // A grade found the agent's own amendments lowered the bar; a re-grade must not let it close the order unseen.
     const failedReview = record.amendmentsFailedReview
-    const decider = failedReview && policy.gates.signoff === 'agent' ? 'person' : policy.gates.signoff
+    // Closing ungraded an order whose scope held changes a done order's grade left to it would leave them judged by no one.
+    const leftHere = request.close === 'done' ? [] : (await store.list()).flatMap(row => {
+        const paths = row.state === 'done' ? row.grade?.otherOrders?.[request.workOrderId] : undefined
+        return paths ? [`${row.id} closed done on a grade that left ${paths.join(', ')} to ${request.workOrderId}; closing it as ${request.close} leaves them ungraded`] : []
+    })
+    const decider = (failedReview || leftHere.length) && policy.gates.signoff === 'agent' ? 'person' : policy.gates.signoff
     const facts = how === 'ungraded' ? checkFacts(record) : undefined
     return gated('signoff', decider, [`Close ${request.workOrderId} as ${request.close} (${how})`, ...request.note ? [`Note: ${request.note}`] : [],
-        ...failedReview ? [`A grade found the agent's amendments lower the bar: ${failedReview.note}`] : [],
+        ...failedReview ? [`A grade found the agent's amendments lower the bar: ${failedReview.note}`] : [], ...leftHere,
         ...facts?.checksFailed.map(row => `Check failed: ${row}`) ?? [], ...facts?.checksNotRun.map(row => `Check not run: ${row}`) ?? [],
         ...record.grade ? record.grade.criteria.map(row => `${row.id}: ${row.verdict} — ${row.note}`) : [],
         ...decisions(record).map(row => `Decision ${row.decision} (${row.title}): ${row.resolution!.record ? `recorded in ${row.resolution!.record}` : `no lasting decision — ${row.resolution!.text}`}`)],

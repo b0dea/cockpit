@@ -92,7 +92,8 @@ contract and base. The record keeps the failed count, the cause and, in brief, w
   keeps the first 512 and, past them, the count as `outOfScopeTotal`). Where a model
   grades, each such change is judged by the standing criterion `scope-changes-necessary`; under
   `checks` grading any change outside scope fails the grade. [Weakened tests](#test-protection) are
-  judged the same way.
+  judged the same way. A change [another open order holds](#several-open-orders) is left to that
+  order's grade.
 - **signoff** closes a graded order as done; under `off` it closes any open order, as `ungraded`
   unless it already holds a passing grade. `--partial --note <what is left>` or
   `--abandon --note <why>` closes any open order without a passing grade. Every closure first needs
@@ -114,6 +115,23 @@ result, the grade with the evaluator that answered and those passed over, notes,
 closed. The guard denies an agent's writes there as
 [guard controls](safety-and-autonomy.md#configuration-git-and-guard-controls). That holds only for
 the tool calls the guard inspects; a process outside the guard can still replace a record.
+
+### Several open orders
+
+Open orders share one tree, and uncommitted work names no order, so a grade goes by scope. A
+changed path outside this order's `scope` and inside another open order's accepted `scope` is that
+order's work: this order's grade, `work acknowledge` and `test-run`'s protection for this order
+leave it out of the change, out of `outOfScope` and out of test protection, and the grade lists it
+under `otherOrders`, by order. A path inside this order's own `scope` stays its own, even when
+another order's scope names it too, and so does a move with either side there. A path that differs
+between the two orders' base commits stays this order's, since the other order's diff would not
+show all of its change. `cockpit grade` with a `scope` does the same; without one, the whole
+uncommitted change is graded.
+
+The other order's grade judges what it was left. So an order whose grade left changes to an order
+that then closed partial or abandoned does not close as done until it is graded again, and once an
+order has closed done on such a grade, the order holding the changes closes partial or abandoned
+only through a person, or CI where `[work.gates] signoff = "ci"`.
 
 ## Who passes each gate
 
@@ -268,8 +286,8 @@ nothing. The file has the same front-matter `criteria` list, and optionally `sco
 An agent can make a check pass by weakening the tests behind it. Every `work grade`, in any
 `[work] grading` mode, and `cockpit grade` therefore compare each checkout's tests with the base
 commits the order recorded at acceptance (committed, staged, unstaged and new files;
-`cockpit grade`, which has no order, compares with `HEAD`). Over the files cockpit treats as tests
-it flags:
+`cockpit grade`, which has no order, compares with `HEAD`), less the changes
+[another open order holds](#several-open-orders). Over the files cockpit treats as tests it flags:
 
 - a test file deleted or moved out of the tests (`test-file-removed`);
 - a test skipped, focused, marked todo or expected to fail: `it.skip`, `describe.only`, `test.todo`,
@@ -410,9 +428,10 @@ server in your OpenCode configuration adds is outside its denials. cockpit check
 against the output schema and refuses one that does not match.
 
 The grader is given each criterion with the result of the check cockpit ran for it, and every
-changed file's diff since the base commits. Files under `workorders/` and cockpit's records under
-`.cockpit/` are coordination and left out, except the files under `workorders/` that the order's
-scope names, which are its work. A credential-shaped path or a declared environment
+changed file's diff since the base commits, less the changes
+[another open order holds](#several-open-orders). Files under `workorders/` and cockpit's records
+under `.cockpit/` are coordination and left out, except the files under `workorders/` that the
+order's scope names, which are its work. A credential-shaped path or a declared environment
 instance is listed with its content withheld. A `met` verdict stands only when each quote it cites,
 at least eight characters long, is found exactly once in the change or check output it names;
 otherwise it reads as `unclear` with the reason. No evaluator runs with a browser, and the request

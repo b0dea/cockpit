@@ -23,6 +23,8 @@ afterEach(() => { opening.around = undefined; for (const root of roots.splice(0)
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=fixture@example.invalid', '-c', 'user.name=fixture', ...args], { cwd: root, stdio: 'pipe' })
 const order = (id: string, criteria = '  - id: AC1\n    text: add(2, 3) returns 5.\n    check: [node, test/add.test.mjs]') =>
     `---\nid: ${id}\nobjective: add sums two numbers.\nscope: [src/, test/]\ncriteria:\n${criteria}\n---\n\nNotes.\n`
+const scopedOrder = (id: string, scope: string) =>
+    `---\nid: ${id}\nobjective: Retire the legacy helper.\nscope: [${scope}]\ncriteria:\n  - id: AC1\n    text: node runs.\n    check: [node, --version]\n---\n`
 
 async function cockpit(policy: string): Promise<string> {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-work-lifecycle-')))
@@ -589,6 +591,84 @@ describe('work-order lifecycle', () => {
         expect(await run(['work', 'grade', '--work-order', 'WO-12'])).toMatchObject({ status: 0, result: { state: 'graded', outOfScope: [], criteria: [{ id: 'AC1', verdict: 'met' }] } })
         // The order file, another order and cockpit's records stay coordination.
         expect((JSON.parse(readFileSync(join(tools, 'request.json'), 'utf8')).changes as { path: string }[]).map(row => row.path)).toEqual(['workorders/WO-12-register/register.md'])
+    }, 120_000)
+
+    // Several orders open in one tree: a long-lived order's grade failed on test files a later order deleted as its own work.
+    it('leaves a change inside another open order\'s scope to that order\'s grade, unless this order\'s scope names it or that order\'s base already holds it', async () => {
+        const root = await cockpit(['[work]', 'grading = "checks"', 'evaluators = ["claudecode"]', '', '[testing]', '', '[[testing.stages]]', 'id = "unit"',
+            'command = ["node", "test/add.test.mjs"]', 'requires_stack = false', '', '[[testing.gates]]', 'id = "quick"', 'tier = "targeted"', 'stages = ["unit"]', 'changes = "any change"'].join('\n'))
+        mkdirSync(join(root, 'lib'))
+        writeFileSync(join(root, 'lib/legacy.mjs'), 'export const legacy = true\n')
+        writeFileSync(join(root, 'lib/legacy.test.mjs'), "console.log('legacy')\n")
+        writeFileSync(join(root, 'test/moved.test.mjs'), "console.log('moved')\n")
+        git(root, 'add', '-A'); git(root, 'commit', '-qm', 'legacy helper')
+        const tools = syntheticEvaluator()
+        const env = { ...process.env, CLAUDECODE: undefined, CODEX_THREAD_ID: undefined, PATH: [tools, ...(process.env.PATH ?? '').split(':')].join(':') }
+        const run = (args: readonly string[]) => work(root, args, env)
+        writeFileSync(join(root, 'workorders/WO-20.md'), order('WO-20'))
+        writeFileSync(join(root, 'workorders/WO-21.md'), scopedOrder('WO-21', 'lib/'))
+        for (const id of ['WO-20', 'WO-21']) expect((await run(['work', 'accept', '--work-order', id])).status).toBe(0)
+        rmSync(join(root, 'lib/legacy.mjs')); rmSync(join(root, 'lib/legacy.test.mjs'))
+        writeFileSync(join(root, 'lib/next.test.mjs'), "test.skip('next', () => {})\n")
+        const held = ['lib/legacy.mjs', 'lib/legacy.test.mjs', 'lib/next.test.mjs']
+
+        // WO-21's work, which its own grade judges: not outside WO-20's scope, not WO-20's weakening, and said where it went.
+        expect(await run(['work', 'grade', '--work-order', 'WO-20'])).toMatchObject({ status: 0, result: { state: 'graded', outOfScope: [],
+            testProtection: { findings: [] }, otherOrders: { 'WO-21': held } } })
+        expect((await run(['work', 'acknowledge', '--work-order', 'WO-20', '--note', 'not this order\'s'])).diagnostics[0]?.message).toContain('WO-20 weakens no tests since its base')
+        expect(await run(['test-run', '--gate', 'quick', '--mode', 'canonical'])).toMatchObject({ status: 2,
+            diagnostics: [{ code: 'WORK_TEST_WEAKENED', message: expect.stringMatching(/^WO-21: tests were weakened since the base \(lib\/legacy\.test\.mjs: test-file-removed/) }],
+            result: { testProtection: { orders: [{ id: 'WO-20', findings: [] }, { id: 'WO-21', findings: [expect.stringContaining('lib/legacy.test.mjs: test-file-removed'), expect.stringContaining('lib/next.test.mjs: test-skipped')] }] } } })
+        // The quick path with a scope leaves it to the open order too.
+        writeFileSync(join(root, 'criteria.md'), '---\nscope: [src/]\ncriteria:\n  - id: AC1\n    text: add(2, 3) returns 5.\n---\n')
+        expect((await run(['grade', '--criteria', 'criteria.md'])).result).toMatchObject({ outOfScope: [], testProtection: { findings: [] },
+            otherOrders: { 'WO-21': held } })
+        rmSync(join(root, 'criteria.md'))
+
+        // A path inside an order's own scope is its own, even where another open order's scope names it too.
+        writeFileSync(join(root, 'workorders/WO-22.md'), scopedOrder('WO-22', 'lib/'))
+        expect((await run(['work', 'accept', '--work-order', 'WO-22'])).status).toBe(0)
+        expect(await run(['work', 'grade', '--work-order', 'WO-21'])).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_TEST_WEAKENED',
+            message: expect.stringContaining('lib/legacy.test.mjs: test-file-removed') }], result: { outOfScope: [] } })
+
+        // With no open order holding it, the change is WO-20's again.
+        for (const id of ['WO-21', 'WO-22']) expect((await run(['work', 'signoff', '--work-order', id, '--abandon', '--note', 'superseded'])).status).toBe(0)
+        const alone = { status: 2, diagnostics: [{ code: 'WORK_TEST_WEAKENED', message: expect.stringContaining('lib/legacy.test.mjs: test-file-removed') }, { code: 'WORK_GRADE_UNSATISFIED' }],
+            result: { outOfScope: held } }
+        expect(await run(['work', 'grade', '--work-order', 'WO-20'])).toMatchObject(alone)
+        // Nor does an order accepted after the change was committed take it: its own grade never sees it.
+        git(root, 'add', '-A', 'lib'); git(root, 'commit', '-qm', 'retire the legacy helper')
+        writeFileSync(join(root, 'workorders/WO-23.md'), scopedOrder('WO-23', 'lib/'))
+        expect((await run(['work', 'accept', '--work-order', 'WO-23'])).status).toBe(0)
+        // A test moved from this order's scope into another's is this order's too: one side of it is.
+        git(root, 'mv', 'test/moved.test.mjs', 'lib/moved.mjs')
+        expect(await run(['work', 'grade', '--work-order', 'WO-20'])).toMatchObject({ ...alone, diagnostics: [{ code: 'WORK_TEST_WEAKENED',
+            message: expect.stringMatching(/lib\/legacy\.test\.mjs: test-file-removed.*lib\/moved\.mjs: test-file-removed/) }, { code: 'WORK_GRADE_UNSATISFIED' }] })
+    }, 120_000)
+
+    it('closes an order as done only while the orders its grade left changes to may still judge them', async () => {
+        const root = await cockpit('[work]\ngrading = "checks"')
+        mkdirSync(join(root, 'lib'))
+        writeFileSync(join(root, 'lib/legacy.test.mjs'), "console.log('legacy')\n")
+        git(root, 'add', '-A'); git(root, 'commit', '-qm', 'legacy test')
+        writeFileSync(join(root, 'workorders/WO-30.md'), order('WO-30'))
+        writeFileSync(join(root, 'workorders/WO-31.md'), scopedOrder('WO-31', 'lib/'))
+        for (const id of ['WO-30', 'WO-31']) expect((await work(root, ['work', 'accept', '--work-order', id])).status).toBe(0)
+        rmSync(join(root, 'lib/legacy.test.mjs'))
+        expect((await work(root, ['work', 'grade', '--work-order', 'WO-30'])).result).toMatchObject({ state: 'graded', otherOrders: { 'WO-31': ['lib/legacy.test.mjs'] } })
+        // An order that took the change closed without judging it: the grade that left it there no longer closes anything.
+        expect((await work(root, ['work', 'signoff', '--work-order', 'WO-31', '--abandon', '--note', 'superseded'])).status).toBe(0)
+        expect((await work(root, ['work', 'signoff', '--work-order', 'WO-30'])).diagnostics[0]?.message)
+            .toMatch(/WO-30's grade left lib\/legacy\.test\.mjs to WO-31, which closed abandoned without judging it; grade WO-30 again/)
+        // Once an order closed done on such a grade, the order holding the change closes ungraded only on a person's word.
+        writeFileSync(join(root, 'workorders/WO-32.md'), scopedOrder('WO-32', 'lib/'))
+        expect((await work(root, ['work', 'accept', '--work-order', 'WO-32'])).status).toBe(0)
+        expect((await work(root, ['work', 'grade', '--work-order', 'WO-30'])).result).toMatchObject({ state: 'graded', otherOrders: { 'WO-32': ['lib/legacy.test.mjs'] } })
+        expect((await work(root, ['work', 'signoff', '--work-order', 'WO-30'])).result).toMatchObject({ state: 'done' })
+        const abandon = ['work', 'signoff', '--work-order', 'WO-32', '--abandon', '--note', 'superseded']
+        expect((await work(root, abandon)).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
+        expect(await asPerson(root, abandon, (prompt, digest) => prompt.includes('WO-30 closed done on a grade that left lib/legacy.test.mjs to WO-32') ? `signoff ${digest}` : '')).toBe(0)
+        expect(record(root, 'WO-32')).toMatchObject({ state: 'abandoned', closure: { by: 'person' } })
     }, 120_000)
 
     it('grants a capped order fresh attempts only on a person\'s word, keeping what failed, and an agent\'s amendment keeps the count', async () => {
