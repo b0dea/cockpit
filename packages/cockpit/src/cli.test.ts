@@ -802,6 +802,48 @@ describe('generated environment process contract', () => {
         expect(capture.output().stderr).toContain('WARNING GUARD_HOSTS_UNDECLARED')
     })
 
+    it('reports a state lock a command took over from a dead holder, and nothing for a command that took none', async () => {
+        const { hostname } = await import('node:os')
+        const { randomUUID } = await import('node:crypto')
+        const { mkdir, writeFile, readlink } = await import('node:fs/promises')
+        const { selectStateRoot, transactState } = await import('./environment/state.js')
+        const home = join(mkdtempSync(join(tmpdir(), 'cockpit-takeover-')), 'home')
+        await mkdir(home)
+        const selected = await selectStateRoot({ platform: 'linux', home, cockpitId: `cockpit:sample:${'a'.repeat(64)}` as never })
+        if (selected.kind !== 'complete') throw new Error('expected a selected state root')
+        const namespace = selected.value
+        const child = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' })
+        await mkdir(namespace.paths.stateLock, { recursive: true })
+        await writeFile(join(namespace.paths.stateLock, 'owner.json'), `${JSON.stringify({
+            format: 'cockpit-state/v1', kind: 'state-lock', ownerId: `holder:${'d'.repeat(64)}:session`, pid: Number(child.stdout),
+            command: 'cockpit.mjs reset --config cockpit.toml', acquiredAt: '2000-01-01T00:00:00.000Z', token: randomUUID(),
+            host: hostname(), ...(process.platform === 'linux' ? { pidNamespace: await readlink('/proc/self/ns/pid') } : {}),
+        })}\n`)
+        const stackId = `stack:${'b'.repeat(64)}` as never
+        // A command that writes state takes the lock; stacks stands in for any such non-lifecycle command.
+        const takesLock = async () => {
+            const address = namespace.paths.lifecycle(stackId)
+            const result = await transactState(namespace, address, { ownerId: `holder:${'e'.repeat(64)}:session` as never, contentionTimeoutMs: 5_000 },
+                async () => ({ format: 'cockpit-state/v1', kind: address.kind, cockpitId: address.cockpitId, subjectId: address.subjectId,
+                    revision: 0, updatedAt: '2026-09-07T12:00:00.000Z', value: {} }) as never)
+            if (result.kind !== 'complete') throw new Error(JSON.stringify(result))
+            return { artifact: null, destination: null, status: 0, diagnostics: [], result: null }
+        }
+        const takesNone = async () => ({ artifact: null, destination: null, status: 0, diagnostics: [], result: null })
+
+        const first = captureIo()
+        expect(await runCli(['stacks', '--config', 'cockpit.toml', '--json'], first.io, { stacks: takesLock })).toBe(0)
+        expect(JSON.parse(first.output().stdout).diagnostics).toEqual([expect.objectContaining({
+            severity: 'warning', code: 'STATE_LOCK_RECLAIMED', target: namespace.paths.stateLock,
+            message: expect.stringContaining(`process ${child.stdout} (cockpit.mjs reset --config cockpit.toml)`),
+        })])
+
+        // Reported once: the next command, which takes no lock, says nothing.
+        const second = captureIo()
+        expect(await runCli(['stacks', '--config', 'cockpit.toml', '--json'], second.io, { stacks: takesNone })).toBe(0)
+        expect(JSON.parse(second.output().stdout).diagnostics).toEqual([])
+    })
+
     it.each(['sync', 'check'] as const)('routes %s in JSON and human modes', async (command) => {
         const calls: unknown[] = []
         const handler = async (input: unknown) => {
