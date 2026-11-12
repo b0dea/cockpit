@@ -1681,7 +1681,48 @@ function launchedBy(program: ParsedInvocation, launcher: ParsedInvocation): bool
 }
 
 /** Hard boundaries are independent of grants and are evaluated across the complete capture. */
+/**
+ * The guard's decision for one captured call. A command it would ask about also names the
+ * `[[guards.allow]]` entries that would admit it, where some would, proved by judging the call again
+ * with them; a background agent whose ask turns into a bare refusal then has something to propose.
+ * Under `[guards] unresolved = "deny"` such an ask is refused, keeping its reason and that route.
+ */
 export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInspection): GuardDecision {
+    const decision = judgeGuard(input, policy, inspect)
+    if (decision.decision !== 'ask' || !isParsedGuardInput(input)) return decision
+    const resolved = capturePolicy(policy)!
+    const entries = admittingAllowEntries(input, resolved, inspect)
+    const configName = posix.basename(resolved.configPath)
+    const proposed = entries.length ? ` A person can admit it for good by adding ${entries.length === 1 ? 'this entry' : 'these entries'} to ${configName} (one key per line) and running sync: ${entries.join(' ')}`
+        : ''
+    // A reason past the adapter's bound would turn the answer into a failure, so a long entry is left out.
+    const route = Buffer.byteLength(decision.reason + proposed) <= 3_072 ? proposed : ''
+    if (resolved.unresolved !== 'deny') return { decision: 'ask', reason: decision.reason + route }
+    return deny(`${decision.reason}${route} [guards] unresolved = "deny" in ${configName} refuses what would wait for a person, so nobody is asked: take the route this names${route ? '' : ', such as a literal local target the guard can judge'}, or a person runs the command.`)
+}
+
+/** The fewest exact `[[guards.allow]]` entries, as TOML, that would admit every command in the call, or none. */
+function admittingAllowEntries(input: Readonly<{ invocations: readonly ParsedInvocation[] }>, resolved: GuardEvaluationPolicy, inspect: PathInspection): readonly string[] {
+    // A rule admits only what it spells: never a launched, wrapped or environment-changing command, nor one whose words the guard cannot see.
+    const eligible = input.invocations.filter(invocation => invocation.executable !== null && !invocation.wrapped && !invocation.dynamic
+        && !invocation.words.some(word => word.role === 'environment-assignment-value')
+        && GuardCommandArgv.safeParse([invocation.executable, ...invocation.argv]).success)
+    if (!eligible.length || eligible.length > 8 || resolved.declaredAllows.length + eligible.length > 64) return []
+    // A rule's cwd is relative to the cockpit; a sibling's directory cannot be spelled there, so its rule names none.
+    const rules = eligible.map(invocation => ({ argv: [invocation.executable!, ...invocation.argv], reason: 'Admitted by a person.',
+        ...within(invocation.cwd, resolved.canonicalRoot) ? { cwd: invocation.cwd } : {} }))
+    const admits = (chosen: readonly typeof rules[number][]) => judgeGuard(input, { ...resolved, declaredAllows: [...resolved.declaredAllows, ...chosen] }, inspect).decision === 'allow'
+    let chosen = [...new Map(rules.map(rule => [JSON.stringify(rule), rule])).values()]
+    if (!admits(chosen)) return []
+    for (const rule of [...chosen]) {
+        const without = chosen.filter(other => other !== rule)
+        if (without.length && admits(without)) chosen = without
+    }
+    return chosen.map(rule => `[[guards.allow]] argv = [${rule.argv.map(word => JSON.stringify(word)).join(', ')}]${rule.cwd === undefined ? ''
+        : ` cwd = ${JSON.stringify(posix.relative(resolved.canonicalRoot, rule.cwd) || '.')}`} reason = "<why it is safe>"`)
+}
+
+function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): GuardDecision {
     if (!isParsedGuardInput(input)) return unavailable('Guard input is unavailable or was not captured by the invocation parser.')
     const resolved = capturePolicy(policy)
     if (!resolved) return unavailable('Guard policy is incomplete or malformed.')

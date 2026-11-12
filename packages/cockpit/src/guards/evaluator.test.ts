@@ -891,7 +891,9 @@ describe('built-in read-only profile', () => {
         // Each refusal names the command and what to do instead.
         expect(decideInRepositories('git commit -m "Add the parser"').reason).toBe('`git commit -m …` requires human approval: the guard admits only the read-only commands it classifies, '
             + 'a declared build or test command run from its checkout, and [guards] allow rules. A person approves it or runs it in a terminal. To run tests, use '
-            + '`./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run --config /workspace/project/cockpit.toml --gate <gate>`; a person can admit a command for good under [guards] allow in cockpit.toml.')
+            + '`./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run --config /workspace/project/cockpit.toml --gate <gate>`; a person can admit a command for good under [guards] allow in cockpit.toml.'
+            // The exact entry that would admit it, so an agent whose ask arrives as a bare refusal can propose it.
+            + ' A person can admit it for good by adding this entry to cockpit.toml (one key per line) and running sync: [[guards.allow]] argv = ["git", "commit", "-m", "Add the parser"] cwd = "." reason = "<why it is safe>"')
         expect(decideInRepositories('cat /etc/hosts').reason).toContain('"/etc/hosts" is outside the configured roots')
         // A path is quoted with the characters a harness rejects in a reason escaped, so the refusal still arrives.
         expect(decideInRepositories('cat /tmp/a\u2028b').reason).toContain('"/tmp/a\\u2028b" is outside the configured roots')
@@ -1269,6 +1271,32 @@ describe('allow by default', () => {
         // The default keeps every write outside the roots refused.
         expect(run('echo x > /tmp/scratch/out.log', { ...native, externalWrites: 'guard' })).toEqual({ decision: 'unavailable', reason: expect.stringContaining('writes outside every root') })
         expect(run(`mv ${home}/Downloads/a.png public/img/a.png`, { ...native, externalWrites: undefined }).decision).not.toBe('allow')
+    })
+
+    it('names the exact allow entry that would admit an asked command, and refuses instead of asking under unresolved = "deny"', () => {
+        const marked = (command: string, configured: object = open()) => evaluateGuard(parseGuardInput(shellPayload(command), { dynamicWords: 'mark', home }), configured, onBranch('refs/heads/topic'))
+        const entry = '[[guards.allow]] argv = ["kubectl", "get", "pods"] cwd = "." reason = "<why it is safe>"'
+        expect(marked('kubectl get pods')).toEqual({ decision: 'ask', reason: expect.stringContaining(entry) })
+        // The entry is exact: the call runs once a person adds it, and a chain gets one per command that needs one.
+        expect(marked('kubectl get pods', { ...open(), declaredAllows: [{ argv: ['kubectl', 'get', 'pods'], cwd: root, reason: 'Read pods.' }] })).toMatchObject({ decision: 'allow' })
+        const chain = marked('kubectl get pods && npm test && helm list').reason
+        expect(chain).toContain(entry)
+        expect(chain).toContain('[[guards.allow]] argv = ["helm", "list"] cwd = "."')
+        expect(chain).not.toContain('argv = ["npm"')
+        // No entry is offered where none admits the command: a boundary ask, or a word the guard cannot see.
+        for (const command of ['git push origin HEAD', 'psql "$DATABASE_URL"']) expect(marked(command).reason, command).not.toContain('[[guards.allow]]')
+        const refusing = { ...open(), unresolved: 'deny' as const }
+        const refused = marked('kubectl get pods', refusing)
+        expect(refused).toEqual({ decision: 'deny', reason: expect.stringContaining('[guards] unresolved = "deny"') })
+        expect(refused.reason).toContain('is not a development tool the guard knows')
+        expect(refused.reason).toContain(entry)
+        expect(marked('psql "$DATABASE_URL"', refusing)).toEqual({ decision: 'deny', reason: expect.stringContaining('a literal local target') })
+        for (const harness of ['claudecode', 'codexcli'] as const) {
+            expect(JSON.parse(adaptGuardDecision(harness, refused).stdout).hookSpecificOutput).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: refused.reason })
+        }
+        // What was allowed or refused before is unchanged.
+        expect(marked('npm test', refusing)).toMatchObject({ decision: 'allow' })
+        expect(marked('cat .env', refusing).reason).not.toContain('unresolved')
     })
 
     it('judges a function body as the commands it runs, since zsh runs a TRAP function nobody calls', () => {
