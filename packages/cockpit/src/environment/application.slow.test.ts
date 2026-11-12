@@ -896,7 +896,7 @@ describe('guard policy construction', () => {
         expect(await runGuardEvaluationApplication(request, { ...adapters, resolveGit: async () => ({ state: 'unavailable', reason: 'missing' }) }))
             .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining('Git executable') } })
         expect(await runGuardEvaluationApplication({ ...request, payload: { ...payload, cwd: join(root, 'app') } }, adapters))
-            .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining('cwd') } })
+            .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining(`reports the working directory ${JSON.stringify(join(root, 'app'))}`) } })
         let loads = 0
         expect(await runGuardEvaluationApplication(request, { ...adapters, loadConfig: async path => {
             loads += 1
