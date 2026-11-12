@@ -891,6 +891,38 @@ describe('guard policy construction', () => {
         }, 120_000,
     )
 
+    it('names an install, not a sync, when the installed cockpit is older than the one that generated the guards', async () => {
+        const { root, configPath, request, adapters } = await installedGuardRequest()
+        const path = join(root, '.cockpit/generated-environment-ownership.json')
+        const original = readFileSync(path, 'utf8')
+        const generatedBy = (version: string) => {
+            const { integrity: _integrity, ...payload } = JSON.parse(original)
+            payload.producer.version = version
+            const bytes = JSON.stringify({ ...payload, integrity: createHash('sha256').update(JSON.stringify(payload)).digest('hex') })
+            expect(parseOwnershipManifest(bytes, { root, configPath, cockpitId: payload.cockpitId }).kind).toBe('complete')
+            writeFileSync(path, bytes)
+        }
+        writeFileSync(join(root, 'package-lock.json'), '{}\n')
+        try {
+            generatedBy('999.0.0')
+            const older = (await runGuardEvaluationApplication(request, adapters)).decision
+            expect(older).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('the installed cockpit is older than the one that generated the guards') })
+            expect(older.reason).toContain('999.0.0 generated them')
+            expect(older.reason).toContain('`npm ci`')
+            expect(older.reason).toContain('sync is not the fix')
+            // The handler bytes are compared first; the version that generated the guards still names the direction.
+            const handler = { ...request, identity: { ...request.identity as object, moduleSha256: '0'.repeat(64) } }
+            expect((await runGuardEvaluationApplication(handler, adapters)).decision.reason).toContain('the installed cockpit is older')
+            generatedBy('0.0.1')
+            const newer = (await runGuardEvaluationApplication(request, adapters)).decision
+            expect(newer.reason).toContain('newer than 0.0.1')
+            expect(newer.reason).toContain('sync --config')
+            expect(newer.reason).not.toContain('npm ci')
+        } finally {
+            rmSync(join(root, 'package-lock.json'))
+        }
+    }, 120_000)
+
     it.each(['v1', 'v2'] as const)('refuses obsolete ownership format %s before checkout observation', async format => {
         const { root, configPath, request, adapters } = await installedGuardRequest()
         const path = join(root, '.cockpit/generated-environment-ownership.json')

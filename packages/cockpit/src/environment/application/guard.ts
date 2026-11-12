@@ -14,6 +14,7 @@ import {
     type EnvironmentCommandOutcome,
     type ExecutionStep,
     snapshotJson,
+    tryParseJson,
 } from '../contract.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, type ExecutableResolution, type ResolvedExecutable } from '../executable.js'
 import { CockpitConfig } from '../../schema.js'
@@ -158,9 +159,40 @@ function recoveryState(identity: GuardHandlerIdentity): Readonly<{ config: boole
     }
 }
 
-function guardHeld(identity: GuardHandlerIdentity, what: string, why: string): string {
-    const fix = guardRecovery(identity.root, identity.configPath, recoveryState(identity))
+function guardHeld(identity: GuardHandlerIdentity, what: string, why: string, fix = guardRecovery(identity.root, identity.configPath, recoveryState(identity))): string {
     return `${what}; ${why}, so ${GUARD_HELD_CALLS} are held, including a sync run through this agent, while ${GUARD_UNHELD_CALLS} continue. ${fix}`
+}
+
+// Which way the installed cockpit moved from the one that generated the guards decides the fix: an
+// older one installed, as after switching to a branch whose lockfile pins it, is fixed by installing
+// the dependencies again, and sync would only regenerate the guards with the older version.
+function versionOrder(left: string, right: string): number | undefined {
+    const parts = (version: string) => /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.exec(version)?.slice(1).map(Number)
+    const [a, b] = [parts(left), parts(right)]
+    if (!a || !b) return undefined
+    for (let index = 0; index < 3; index++) if (a[index] !== b[index]) return a[index]! - b[index]!
+    return undefined
+}
+
+const LOCKFILE_INSTALLS: readonly (readonly [string, string])[] = [['pnpm-lock.yaml', 'pnpm install --frozen-lockfile'], ['package-lock.json', 'npm ci'],
+    ['yarn.lock', 'yarn install --immutable'], ['bun.lock', 'bun install --frozen-lockfile'], ['bun.lockb', 'bun install --frozen-lockfile']]
+
+/** The hold for guards a different cockpit version generated, naming the direction and the command that fixes it. */
+function versionDrift(identity: GuardHandlerIdentity, generated: string | undefined): string {
+    const installed = installedPackageMetadata.version
+    const order = generated === undefined ? undefined : versionOrder(installed, generated)
+    const why = 'the guard trusts only the cockpit, Node and configuration it was generated for'
+    if (order === undefined || order > 0) {
+        const what = generated === undefined || generated === installed
+            ? 'the installed cockpit version changed (its handler bytes differ) since the guards were generated'
+            : `the installed cockpit version changed since the guards were generated: ${installedPackageMetadata.name} ${installed} is installed, newer than ${generated}, which generated them`
+        return guardHeld(identity, what, why)
+    }
+    const lockfile = LOCKFILE_INSTALLS.find(([file]) => recoveryFile(join(identity.root, file), constants.R_OK))
+    const install = lockfile ? `\`${lockfile[1]}\`` : 'the repository\'s documented dependency install'
+    return guardHeld(identity,
+        `the installed cockpit is older than the one that generated the guards: ${installedPackageMetadata.name} ${installed} is installed, and ${generated} generated them, as after switching to a branch or checkout whose dependencies were installed earlier`,
+        why, `Fix: install the dependencies the lockfile pins, with ${install} in ${formatShellCommand([identity.root])}, outside the agent; sync is not the fix, since it would regenerate the guards with the older version. If the older version is intended, a human runs \`${installedSyncCommand(identity.root, identity.configPath)}\` in a terminal instead.`)
 }
 
 // An edit that does not widen what agents may do is judged as written, so a policy it cannot build
@@ -281,7 +313,13 @@ export async function runGuardEvaluationApplication(
         const publicationPending = settle(readPublication())
         const checkoutsPending = settle(readSiblingCheckouts(identity.root))
         const module = unwrap(await modulePending)
-        if (module.sha256 !== identity.moduleSha256) return changed('the installed cockpit version changed (its handler bytes differ)')
+        if (module.sha256 !== identity.moduleSha256) {
+            // The manifest names the version that generated the guards; it is read here only to word the fix.
+            const settled = await publicationPending
+            const manifest = 'value' in settled ? tryParseJson(settled.value.get(manifestPath)!.bytes.toString('utf8')) : undefined
+            const producer = manifest && typeof manifest === 'object' ? (manifest as { producer?: { version?: unknown } }).producer?.version : undefined
+            return unavailable(versionDrift(identity, typeof producer === 'string' ? producer : undefined))
+        }
         // What an admitted call rests on besides the configuration: the bytes sync published, for this
         // machine and this cockpit.
         const authenticatePublication = async (pending: typeof publicationPending, cockpitName: string) => {
@@ -304,7 +342,10 @@ export async function runGuardEvaluationApplication(
             const producer = ownership.manifest.producer
             if (producer.package !== installedPackageMetadata.name
                 || producer.version !== installedPackageMetadata.version
-                || producer.sourceRevision !== installedPackageMetadata.cockpitSourceRevision) return { held: changed(`the installed cockpit version changed (the guards were generated by ${producer.package} ${producer.version}, ${installedPackageMetadata.name} ${installedPackageMetadata.version} is installed)`) }
+                || producer.sourceRevision !== installedPackageMetadata.cockpitSourceRevision) {
+                if (producer.package === installedPackageMetadata.name && producer.version !== installedPackageMetadata.version) return { held: unavailable(versionDrift(identity, producer.version)) }
+                return { held: changed(`the installed cockpit version changed (the guards were generated by ${producer.package} ${producer.version}, ${installedPackageMetadata.name} ${installedPackageMetadata.version} is installed)`) }
+            }
             const published = new Map<string, string>()
             for (const path of ['.cockpit/guards/bash-guard.sh', registration]) {
                 const entry = ownership.manifest.entries.find(entry => entry.path === path)
