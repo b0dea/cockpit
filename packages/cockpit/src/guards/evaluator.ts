@@ -1434,12 +1434,12 @@ function dumpsEnvironment(invocation: ParsedInvocation): boolean {
 
 // Programs that write their operands, or a destination operand, without the guard modelling which
 // one: every operand outside the roots is judged as a write.
-const OUTSIDE_WRITERS = new Set(['rsync', 'ditto', 'scp', 'patch', 'uniq', 'split', 'cpio', 'sponge', 'zip', 'gzip', 'gunzip', 'bunzip2', 'xz', 'unxz', 'csplit'])
+const OUTSIDE_WRITERS = new Set(['rsync', 'ditto', 'scp', 'patch', 'uniq', 'split', 'cpio', 'pax', 'sponge', 'zip', 'gzip', 'gunzip', 'bunzip2', 'xz', 'unxz', 'csplit'])
 // Git verbs whose operand is a directory or file they create.
 const GIT_CREATES = new Set(['clone', 'init', 'worktree', 'bundle'])
 
 /** Local paths an outside writer names: not options, URLs or `host:path` remote spellings. */
-function writerOperands(invocation: ParsedInvocation, git: GitInvocation | undefined): { readonly cwd: string; readonly paths: readonly string[] } | undefined {
+function writerOperands(invocation: ParsedInvocation, git: GitInvocation | undefined): { readonly cwd: string; readonly paths: readonly string[]; readonly destinations?: readonly string[] } | undefined {
     const local = (word: string) => !word.startsWith('-') && !/^[a-z][a-z0-9+.-]*:\/\//i.test(word) && !/^[^/]*:/.test(word)
     if (git && GIT_CREATES.has(git.verb)) {
         const operands = git.args.filter(local)
@@ -1448,7 +1448,28 @@ function writerOperands(invocation: ParsedInvocation, git: GitInvocation | undef
         return { cwd: git.cwd, paths }
     }
     if (invocation.executable === null || !OUTSIDE_WRITERS.has(posix.basename(invocation.executable))) return undefined
-    return { cwd: invocation.cwd, paths: invocation.argv.filter(local) }
+    const paths = invocation.argv.filter(local)
+    return { cwd: invocation.cwd, paths, destinations: writerDestinations(posix.basename(invocation.executable), invocation.argv, paths) }
+}
+
+/**
+ * The operands a writer writes, by its own grammar: a sync or copy's last operand, `uniq`'s output,
+ * `zip`'s archive, `split`'s and `csplit`'s prefix, every file a compressor replaces or `sponge`
+ * and `patch` rewrite, and the working directory where `patch` reads its targets from the patch or
+ * `cpio` extracts members whose names the guard cannot see.
+ */
+function writerDestinations(name: string, argv: readonly string[], operands: readonly string[]): readonly string[] {
+    if (['rsync', 'scp', 'ditto', 'pax'].includes(name)) return operands.length > 1 ? operands.slice(-1) : name === 'pax' && argv.some(arg => /^-[A-Za-z]*r/.test(arg)) ? ['.'] : []
+    if (name === 'uniq') return operands.slice(1, 2)
+    if (name === 'zip') return operands.slice(0, 1)
+    if (name === 'split') return [operands[1] ?? 'x']
+    if (name === 'csplit') {
+        const prefix = argv.findIndex(arg => arg === '-f' || arg === '--prefix')
+        return [prefix >= 0 ? argv[prefix + 1] ?? '.' : 'xx']
+    }
+    if (name === 'patch') return operands.length ? operands.slice(0, 1) : ['.']
+    if (name === 'cpio') return [...operands, ...argv.some(arg => arg === '--extract' || /^-[A-Za-z]*i/.test(arg)) ? ['.'] : []]
+    return operands
 }
 
 // Options that name a program for Git to run on either side of a transfer.
@@ -2549,6 +2570,12 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             else if (!resolvedEvidence({ path, cwd: created!.cwd, operation: 'write' })) {
                 hold(unavailable(`${named(invocation)} names ${shownGuardWord(path)}, which leads through a link or could not be inspected, so the guard cannot tell where the write lands.`))
             }
+        }
+        // Inside the roots what the writer writes is a full write, judged with everything it may cover:
+        // `rsync x node_modules/@b00dea/cockpit/dist/cli.js` replaced the guard's own code, and
+        // `rsync -a stage/ ./` would overwrite its script with whatever stage holds.
+        for (const path of !git ? created?.destinations ?? [] : []) {
+            if (inRoots(posix.resolve(created!.cwd, path))) inspectPath({ path, cwd: created!.cwd, operation: 'write' }, true)
         }
         // Archivers, copiers and recursive diffs read every file below a source, as a recursive search does.
         const sources = sourceTrees(invocation)

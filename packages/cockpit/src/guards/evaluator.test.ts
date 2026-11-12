@@ -2317,6 +2317,21 @@ describe('installed code, search path and secret links', () => {
         expect(decision.reason).not.toContain('Maximum call stack')
     })
 
+    it('judges where a sync, copy or in-place writer writes inside the roots as a write, refusing installed code and guard files', () => {
+        const installed = `${root}/node_modules/@b00dea/cockpit`
+        const configured = { ...policy(), defaultDecision: 'allow' as const, homeDirectory: '/workspace/person', executionDirectories: [installed] }
+        const run = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command)), configured, withGit)
+        for (const command of ['rsync evil.js node_modules/@b00dea/cockpit/dist/guards/evaluator.js', 'scp evil.js node_modules/@b00dea/cockpit/dist/cli.js',
+            'ditto evil.js node_modules/.bin/cockpit', 'rsync -a stage/ ./', 'rsync -a stage/ .cockpit/', 'rsync evil.sh .cockpit/guards/bash-guard.sh',
+            'rsync evil.sh stage/.cockpit/guards/bash-guard.sh', 'uniq in.txt node_modules/.bin/git', 'sponge node_modules/.bin/git', 'gzip .cockpit/guards/bash-guard.sh',
+            'zip node_modules/.bin/x.zip a.txt', 'patch node_modules/@b00dea/cockpit/dist/cli.js fix.diff', 'patch < fix.diff', 'cpio -i < a.cpio']) {
+            expect(run(command), command).toMatchObject({ decision: 'deny' })
+        }
+        for (const command of ['rsync -a src/ build/', 'scp notes.md build/notes.md', 'uniq in.txt out.txt', 'zip build/a.zip a.txt', 'gzip build/a.log']) {
+            expect(run(command), command).toMatchObject({ decision: 'allow' })
+        }
+    })
+
     it('denies links to secrets, instances, guard controls and installed code', () => {
         for (const command of ['ln env/.secrets/token notes/token', 'ln -s ../env/.secrets/token notes/token', 'ln -s env/.SECRETS notes/secrets',
             'ln config/active.instance notes/copy', 'ln -s ../config/active.instance notes/copy', 'ln -s config notes/config', 'ln -s ../other/.secrets/key notes/key',

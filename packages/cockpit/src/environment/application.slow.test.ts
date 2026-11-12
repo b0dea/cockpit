@@ -672,6 +672,10 @@ describe('guard policy construction', () => {
                 expect(await decide(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('hard link') })
             }
             expect(await decide("mkdir -p stage/.cockpit/guards && printf 'exit 0\\n' > stage/.cockpit/guards/bash-guard.sh")).toMatchObject({ decision: 'deny' })
+            for (const command of ['rsync shared.txt node_modules/@b00dea/cockpit/dist/cli.js', 'scp shared.txt node_modules/@b00dea/cockpit/dist/cli.js', 'rsync -a fixtures/ ./']) {
+                expect(await decide(command), command).toMatchObject({ decision: 'deny' })
+            }
+            expect(await decide('rsync -a fixtures/ build/')).toMatchObject({ decision: 'allow' })
             expect(await decide('echo x > fixtures/notes.txt')).toMatchObject({ decision: 'allow' })
         } finally {
             rmSync(join(root, 'shared.txt'), { force: true })

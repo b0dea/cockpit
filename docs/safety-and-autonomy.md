@@ -357,7 +357,10 @@ forms. Git paths use the directory selected by `git -C`. Extraction without an e
 writes to the working directory. A `cp` or `mv` onto an existing regular file writes that file: the
 path below it, which the command would write if the destination were a directory, names nothing.
 Visible source files for bounded `cp`, `install`, `dd` and `tar` forms get the same protected read
-check as read-only commands.
+check as read-only commands. What `rsync`, `scp`, `ditto`, `pax`, `cpio`, `uniq`, `split`, `csplit`,
+`zip`, `sponge`, `patch` and the compressors write inside the roots is judged as a write together
+with everything below it, so a destination that is or covers installed code, a `node_modules/.bin`
+directory, a guard control or a `.cockpit/guards` path is refused, as in `rsync -a stage/ ./`.
 
 A hard or symbolic `ln` whose target is, contains or lies inside a secrets directory, a declared
 instance, a guard control or the installed cockpit is a hard denial. A call that makes a symbolic
