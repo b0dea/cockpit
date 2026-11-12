@@ -18,7 +18,7 @@ import {
 } from '../contract.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, type ExecutableResolution, type ResolvedExecutable } from '../executable.js'
 import { CockpitConfig } from '../../schema.js'
-import { pinnedPolicyDenial, restoresRecordedConfiguration } from '../../guards/policy-pin.js'
+import { correctsHeldConfiguration, pinnedPolicyDenial, restoresRecordedConfiguration } from '../../guards/policy-pin.js'
 import { GUARD_RESTORE_LIMIT, guardConfigChange, guardConfigHeldReason } from '../../guards/policy-change.js'
 import {
     evaluateGuard,
@@ -213,6 +213,31 @@ function forwardedReason(reason: string): string {
 }
 
 const restored: GuardEvaluationApplicationResult = { decision: { decision: 'allow', reason: 'The edit restores the configuration the guards were generated from.' }, diagnostics: [] }
+const correcting: GuardDecision = { decision: 'allow', reason: 'The configuration does not load, and this edit of it changes no pinned table; it takes effect only once it loads, and one that widens waits for a person.' }
+const reporting: GuardDecision = { decision: 'allow', reason: 'The configuration does not load, and this command only reports on it.' }
+// How cockpit's own messages spell the installed launcher from the cockpit root.
+const launcherSpelling = './node_modules/@b00dea/cockpit/bin/cockpit.mjs'
+
+/**
+ * `check` or `sync --dry-run` of the configuration, alone, from the cockpit root, through a launcher
+ * proven to start the installed cockpit: the reports an agent needs to mend a configuration that does
+ * not load. Both read and print; neither writes a file the guard relies on.
+ */
+function heldConfigurationCheck(parsed: Readonly<{ invocations: readonly import('../../guards/invocation-parser.js').ParsedInvocation[] }>, identity: GuardHandlerIdentity, searchPath: string): boolean {
+    if (parsed.invocations.length !== 1) return false
+    const [invocation] = parsed.invocations as [import('../../guards/invocation-parser.js').ParsedInvocation]
+    if (invocation.executable === null || invocation.wrapped || invocation.dynamic || invocation.redirects.length || invocation.cwd !== identity.root
+        || invocation.words.some(word => word.role === 'environment-assignment-value')) return false
+    const prefix = cockpitLauncherPrefix(invocation.executable, invocation.argv)
+    if (prefix === undefined) return false
+    const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')
+    if (guardLauncherEvidence(invocation.executable, invocation.argv.slice(0, prefix), invocation.cwd, identity.root, launcher, searchPath) === undefined) return false
+    const args = invocation.argv.slice(prefix)
+    const config = (word: string | undefined) => word !== undefined && !word.split('/').includes('..') && resolve(invocation.cwd, word) === identity.configPath
+    return args.length === 3 && args[0] === 'check' && args[1] === '--config' && config(args[2])
+        || args.length === 4 && args[0] === 'sync' && (args[1] === '--dry-run' && args[2] === '--config' && config(args[3])
+            || args[1] === '--config' && config(args[2]) && args[3] === '--dry-run')
+}
 
 /** Installed bytes are authority only while their source, roots and publication still match. */
 export async function runGuardEvaluationApplication(
@@ -360,7 +385,7 @@ export async function runGuardEvaluationApplication(
         if (loaded.kind !== 'complete' || loaded.result.source.path !== identity.configPath) {
             const held = guardHeld(identity, `${identity.configPath} changed since the guards were generated and does not load${loaded.kind === 'complete' ? '' : ` (${forwardedReason(loaded.diagnostics[0]?.message ?? 'no reason given')})`}`,
                 'guard policy comes from it and an edit takes effect only once a human approves it')
-            const hold = unavailable(`${held} Sync refuses a file that does not load, so correct it first, or undo it: one edit or write of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig} is admitted; ${GUARD_RESTORE_LIMIT}.`)
+            const hold = unavailable(`${held} Sync refuses a file that does not load, so correct it first: an edit, write or patch of ${identity.configPath} alone that leaves [work], [autonomy] and MCP restrictions as they are is admitted, and so are \`${formatShellCommand([launcherSpelling, 'check', '--config', configName])}\` and \`${formatShellCommand([launcherSpelling, 'sync', '--dry-run', '--config', configName])}\` run alone from the cockpit root, to see what is wrong. Or undo it: one edit or write that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}; ${GUARD_RESTORE_LIMIT}.`)
             // Restoring the recorded bytes needs no policy, so a file with none to offer is no reason to
             // refuse it; without this an agent's valid-TOML edit the schema rejects stranded it.
             const parsed = parseGuardInput(data.payload)
@@ -368,10 +393,19 @@ export async function runGuardEvaluationApplication(
             const current = await anchored(configName)
             const recorded = await anchored(GUARD_LOCAL_PATHS.generatedConfig)
             const recordedConfig = recorded.kind === 'complete' && recorded.sha256 === identity.configSha256 ? parseCockpitConfigBytes(recorded.bytes) : undefined
+            if (!recordedConfig || recorded.kind !== 'complete') return hold
             // A file too large to read gets the empty text, which an edit cannot match; a write needs none.
-            if (!recordedConfig || !restoresRecordedConfiguration(parsed, current.kind === 'complete' ? current.bytes.toString('utf8') : '', identity.configPath, identity.configSha256)) return hold
+            const currentText = current.kind === 'complete' ? current.bytes.toString('utf8') : ''
+            // The agent that broke the file can mend it, and read what check reports about it, without a
+            // person; everything else waits for a file that loads. Neither grants anything: a correction
+            // that widens what agents may do still waits for a person's sync once it loads.
+            const correction = restoresRecordedConfiguration(parsed, currentText, identity.configPath, identity.configSha256) ? 'admit'
+                : correctsHeldConfiguration(parsed, current.kind === 'complete' ? currentText : undefined, recorded.bytes.toString('utf8'), identity.configPath)
+            const admitted = correction === 'admit' ? correcting : correction ?? (heldConfigurationCheck(parsed, identity, data.searchPath ?? '') ? reporting : undefined)
+            if (!admitted) return hold
+            if (admitted.decision !== 'allow') return refused(admitted)
             const authenticated = await authenticatePublication(settle(readPublication(publicationRequests.filter(request => request.path !== configName))), recordedConfig.cockpit.name)
-            return authenticated.held ?? restored
+            return authenticated.held ?? { decision: admitted, diagnostics: [] }
         }
         // Every check below runs against the configuration on disk. An edit since sync that does not
         // widen the one the guards were generated from grants nothing the last sync did not, so calls are

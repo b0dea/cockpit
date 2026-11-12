@@ -156,12 +156,29 @@ export function restoresRecordedConfiguration(input: Readonly<{ cwd: string; con
 }
 
 /**
+ * How the guard answers an edit of a configuration that does not load, which otherwise holds every
+ * guarded call until it does: `admit` for one edit, write or patch of the canonical file alone that
+ * changes no pinned table, the pin's denial for one that does, and undefined for any other call.
+ * The tables are compared with the current text, or with the recorded one when the current text is
+ * not TOML at all. Admitting the correction grants nothing: once the file loads, an edit that widens
+ * what agents may do still waits for a person's sync.
+ */
+export function correctsHeldConfiguration(input: Readonly<{ tool: string; cwd: string; content?: GuardFileContent; paths: readonly string[]; removed: readonly string[] }>,
+    current: string | undefined, recorded: string, configPath: string): 'admit' | GuardDecision | undefined {
+    const isConfig = (path: string) => !path.split('/').includes('..') && posix.resolve(input.cwd, path) === configPath
+    if (input.tool === 'Bash' || input.tool === 'NotebookEdit' || !input.paths.length || !input.paths.every(isConfig) || input.removed.length) return undefined
+    // An unreadable file offers no text an edit can match; a write is compared with the recorded text.
+    const denied = pinnedPolicyDenial({ ...input, invocations: [] }, current ?? '', isConfig, current !== undefined && pinnedPolicyTables(current) ? current : recorded)
+    return denied ?? 'admit'
+}
+
+/**
  * The denial for a tool call that would change the pinned policy tables, or undefined. `isConfig`
  * says whether a lexically resolved path is the configuration, by spelling or by file identity.
  */
 export function pinnedPolicyDenial(input: Readonly<{
     tool: string; cwd: string; content?: GuardFileContent; paths: readonly string[]; invocations: readonly ParsedInvocation[]
-}>, current: string, isConfig: (path: string) => boolean): GuardDecision | undefined {
+}>, current: string, isConfig: (path: string) => boolean, base = current): GuardDecision | undefined {
     const resolved = (cwd: string) => (path: string) => isConfig(posix.resolve(cwd, path))
     if (input.tool === 'Bash') {
         for (const invocation of judgedInvocations(input.invocations)) {
@@ -185,7 +202,7 @@ export function pinnedPolicyDenial(input: Readonly<{
     if (proposed === undefined) return denial(escapedText(input.content, current)
         ? `Refusing an edit of the cockpit configuration whose old text matches its current text only once the file's TOML \\u escapes are read as the characters they stand for: the file spells a character as an escape such as \\u2014, and the edit's old text holds the character itself, which tool input decodes from \\u2014. The guard matches the text exactly, so it cannot prove which span changes and whether the change to ${PINNED} is permitted. Spell the escape with its backslash in the old and new text (\\\\u2014 inside the tool's JSON), or edit a span without escapes.`
         : `Refusing an edit of the cockpit configuration that does not apply exactly once to its current text, so the guard cannot prove the change to ${PINNED} is permitted.`)
-    const before = pinnedPolicyTables(current)
+    const before = pinnedPolicyTables(base)
     const after = pinnedPolicyTables(proposed)
     if (!before || !after) return denial(`Refusing an edit that leaves the cockpit configuration unparseable, so the guard cannot prove the change to ${PINNED} is permitted.`)
     const { mcp: beforeMcp, ...beforePinned } = before

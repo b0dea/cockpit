@@ -1096,21 +1096,38 @@ describe('guard policy construction', () => {
         expect(await decision(write(`${recorded}\n`), unobserved)).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('cannot build its policy') })
         expect(await decision(write(recorded), unobserved)).toMatchObject({ decision: 'allow' })
 
-        // A configuration that does not load has the same way out, however it fails to.
+        // A configuration that does not load has the same way out, however it fails to, and the agent may
+        // also correct it and read what check reports, while every other call waits for a file that loads.
         const declared = '[ports.bases]'
         const undeclared = '[ports.not_bases]'
         const invalid = recorded.replace(declared, undeclared)
+        const launcher = './node_modules/@b00dea/cockpit/bin/cockpit.mjs'
+        const shell = (command: string) => decision({ ...request, payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' })
         for (const broken of [invalid, `${recorded}\n[[[ not toml\n`, `${recorded}\n${'#'.repeat(1_100_000)}\n`]) {
             writeFileSync(configPath, broken)
-            const unloaded = await decision(write(`${recorded}\n`))
+            const unloaded = await shell('ls')
             expect(unloaded).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('does not load') })
             expect(unloaded.reason).toContain('.cockpit/local/guard-config')
-            expect(await decision({ ...request, payload: shellPayload('ls', root) })).toMatchObject({ decision: 'unavailable' })
+            expect(unloaded.reason).toContain('sync --dry-run --config cockpit.toml')
+            for (const command of ['git commit --allow-empty -m held', `${launcher} sync --config cockpit.toml`, `${launcher} check --config cockpit.toml && git commit --allow-empty -m held`,
+                `${launcher} check --config cockpit.toml > report.txt`, `cd app && ../${launcher.slice(2)} check --config ../cockpit.toml`]) {
+                expect(await shell(command), command).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('does not load') })
+            }
+            for (const command of [`${launcher} check --config cockpit.toml`, `${launcher} sync --dry-run --config cockpit.toml`, `${launcher} sync --config cockpit.toml --dry-run`]) {
+                expect(await shell(command), command).toMatchObject({ decision: 'allow' })
+            }
             expect(await decision(write(recorded))).toMatchObject({ decision: 'allow' })
+            expect(await decision(write(`${recorded}\n`))).toMatchObject({ decision: 'allow' })
         }
         writeFileSync(configPath, invalid)
         expect(await decision(call('Edit', { file_path: configPath, old_string: undeclared, new_string: declared }))).toMatchObject({ decision: 'allow' })
-        expect(await decision(call('Edit', { file_path: configPath, old_string: undeclared, new_string: `${declared}\n` }))).toMatchObject({ decision: 'unavailable' })
+        expect(await decision(call('Edit', { file_path: configPath, old_string: undeclared, new_string: `${declared}\n` }))).toMatchObject({ decision: 'allow' })
+        // The pin still holds the agent's own gates, the correction must name the file itself, and emptying it is no correction.
+        const pinned = recorded.includes('[autonomy]') ? '[autonomy]' : '[cockpit]'
+        for (const other of [call('Edit', { file_path: configPath, old_string: pinned, new_string: `[work.gates]\naccept = "agent"\n\n${pinned}` }),
+            write(recorded, 'app/../cockpit.toml'), write('')]) {
+            expect((await decision(other)).decision).not.toBe('allow')
+        }
         // Admitting it still rests on the publication sync wrote for this machine.
         const localIdentity = join(root, GUARD_LOCAL_PATHS.identity)
         const localBytes = readFileSync(localIdentity)
