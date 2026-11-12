@@ -9,8 +9,8 @@ import { GRADING, isGradeMode, type Decider, type GradeMode, type WorkGrading } 
 import { runGate } from '../testing/gates.js'
 import { describeWeakening, testWeakeningDigest, type RepositoryWeakening } from '../testing/weakening.js'
 import { scopeMatcher, type AmendmentReview, type WorkOrderCriterion } from './contract.js'
-import { MAX_RECORDED_OUT_OF_SCOPE, type WorkRecord } from './store.js'
-import type { WorkApplicationComposition } from './composition.js'
+import { MAX_RECORDED_HELD_PATHS, MAX_RECORDED_OUT_OF_SCOPE, type WorkRecord } from './store.js'
+import type { Attribution, WorkApplicationComposition } from './composition.js'
 import { complete, now, refusal, TERMINAL, unsatisfied, type WorkApplicationOutcome, type WorkApplicationRequest, type WorkContext, type WorkRequest } from './application-context.js'
 import { decisions } from './application-decisions.js'
 
@@ -19,6 +19,7 @@ const listed = (rows: readonly string[], separator: string, limit = 3_000) => {
     const text = rows.join(separator)
     return text.length <= limit ? text : `${text.slice(0, limit)} (cut; ${rows.length} in all)`
 }
+const held = (otherOrders: Readonly<Record<string, readonly string[]>>) => Object.keys(otherOrders).length > 0
 const weakeningPath = (row: RepositoryWeakening) => row.repository === '.' ? row.path : `${row.repository}:${row.path}`
 // The agent's contract amendments since a person or CI last accepted it, each still to be judged by the next grade.
 function amendmentsToReview(record: WorkRecord): readonly AmendmentReview[] {
@@ -32,6 +33,16 @@ const unaddressed = (note: string, paths: readonly string[]) => paths.filter(pat
 })
 
 type Weakening = Awaited<ReturnType<WorkApplicationComposition['testWeakening']>>
+// The decision records an order is required to write are part of its work wherever scope points.
+const decisionFiles = (composition: WorkApplicationComposition) => [composition.docs?.decisions, composition.docs?.decisionsIndex].filter((path): path is string => path !== undefined)
+// Orders open in one tree share it, and uncommitted work names no order, so a change goes by scope: one inside another open
+// order's scope and outside this one's is that order's, which its grade judges. Otherwise a long-lived order's grade judged,
+// and failed on, every later order's work. A grade, an acknowledgement and a test run read an order's work the same way.
+const heldElsewhere = (open: readonly WorkRecord[], id: string | undefined, own: readonly string[]): Attribution =>
+    ({ own, others: open.filter(row => row.id !== id && !TERMINAL.has(row.state)).map(row => ({ id: row.id, scope: row.accepted.order.scope, base: row.accepted.base })) })
+const attributionOf = (open: readonly WorkRecord[], record: WorkRecord, composition: WorkApplicationComposition) =>
+    heldElsewhere(open, record.id, [...record.accepted.order.scope, ...decisionFiles(composition)])
+export const orderAttribution = async (composition: WorkApplicationComposition, record: WorkRecord) => attributionOf(await composition.store.list(), record, composition)
 const ACKNOWLEDGE = './node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why this is not a weakening>'
 export interface AcknowledgeRule {
     /** Who passes `work acknowledge`. */
@@ -131,14 +142,10 @@ export async function testRun(captured: Extract<WorkApplicationRequest, { operat
     // A passing run proves nothing if the tests it ran were weakened, so it is checked against the base of each open order.
     // Under checks grading an unacknowledged finding fails the run; where a model grades, the grade judges it.
     const open = (await composition.store.list()).filter(row => !TERMINAL.has(row.state))
-    // Orders accepted at the same commits share one observation of what changed since.
-    const observed = new Map<string, Promise<Weakening>>()
-    const weakeningSince = (base: Readonly<Record<string, string>>) => {
-        const key = JSON.stringify(Object.entries(base).sort(([left], [right]) => left < right ? -1 : 1))
-        if (!observed.has(key)) observed.set(key, composition.testWeakening(base))
-        return observed.get(key)!
-    }
-    const guards = await Promise.all(open.map(async row => ({ id: row.id, ...protection(await weakeningSince(row.accepted.base), row, acknowledgeRule(composition.policy)) })))
+    const guards = await Promise.all(open.map(async row => {
+        const weak = await composition.testWeakening(row.accepted.base, attributionOf(open, row, composition))
+        return { id: row.id, ...protection(weak, row, acknowledgeRule(composition.policy)) }
+    }))
     const binding = composition.policy.grading === 'checks'
     const testProtection = guards.length ? { comparedWith: guards.map(row => `${row.id}'s base`), orders: guards.map(row => ({ id: row.id, ...row.value })),
         ...!binding && guards.some(row => row.value.findings.length) ? { note: !isGradeMode(composition.policy.grading)
@@ -185,10 +192,8 @@ export async function gradeOrder(request: Extract<WorkRequest, { operation: 'wor
     // Checks bind in every mode, so an agent's own `met` never covers a failed check. Changes are read
     // after the checks, so files a check writes count too.
     const checks = await runChecks(order)
-    const { changes, weakening: weak } = await composition.review(record.accepted.base, order.scope)
-    // The decision records an order is required to write are part of its work wherever scope points.
-    const decisionFiles = [composition.docs?.decisions, composition.docs?.decisionsIndex].filter((path): path is string => path !== undefined)
-    const inScope = scopeMatcher([...order.scope, ...decisionFiles])
+    const { changes, weakening: weak, otherOrders } = await composition.review(record.accepted.base, order.scope, await orderAttribution(composition, record))
+    const inScope = scopeMatcher([...order.scope, ...decisionFiles(composition)])
     const outOfScope = changes.map(change => change.path).filter(path => !inScope(path))
     const guarded = protection(weak, record, acknowledgeRule(policy))
     const amendments = judged ? amendmentsToReview(record) : []
@@ -221,7 +226,8 @@ export async function gradeOrder(request: Extract<WorkRequest, { operation: 'wor
     const passed = verdicts.every(row => row.verdict === 'met') && checks.every(row => row.passed) && (judged || outOfScope.length === 0)
     const grade: NonNullable<WorkRecord['grade']> = { at: now(), digest: record.accepted.digest, mode, passed,
         criteria: [...verdicts], outOfScope: outOfScope.slice(0, MAX_RECORDED_OUT_OF_SCOPE),
-        ...outOfScope.length > MAX_RECORDED_OUT_OF_SCOPE ? { outOfScopeTotal: outOfScope.length } : {}, ...evaluator ? { evaluator } : {}, ...request.note ? { note: request.note } : {} }
+        ...outOfScope.length > MAX_RECORDED_OUT_OF_SCOPE ? { outOfScopeTotal: outOfScope.length } : {}, ...evaluator ? { evaluator } : {}, ...request.note ? { note: request.note } : {},
+        ...held(otherOrders) ? { otherOrders: Object.fromEntries(Object.entries(otherOrders).map(([id, paths]) => [id, paths.slice(0, MAX_RECORDED_HELD_PATHS)])) } : {} }
     const loweredBar = verdicts.find(row => row.id === AMENDMENTS_HOLD && row.verdict !== 'met')
     await store.update(order.id, async existing => {
         if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while it was graded; rerun work grade`)
@@ -231,7 +237,8 @@ export async function gradeOrder(request: Extract<WorkRequest, { operation: 'wor
             ...checks.length ? { checks: { at: now(), digest: record.accepted.digest, results: [...checks] } } : {} }, value: undefined }
     })
     const answeredBy = GRADING[policy.grading].answeredBy?.(evaluator?.tool)
-    const value = { id: order.id, state: passed ? 'graded' : 'accepted', mode, ...answeredBy ? { answeredBy } : {}, criteria: verdicts, checks, outOfScope, testProtection: guarded.value, ...evaluator ? { evaluator } : {} }
+    const value = { id: order.id, state: passed ? 'graded' : 'accepted', mode, ...answeredBy ? { answeredBy } : {}, criteria: verdicts, checks, outOfScope,
+        ...held(otherOrders) ? { otherOrders } : {}, testProtection: guarded.value, ...evaluator ? { evaluator } : {} }
     if (passed) return complete(operation, value)
     return unsatisfied(operation, value, [...split(verdicts).others.map(row => `${row.id} ${row.verdict}: ${row.note}${remedyOf(row.id, order.id)}`),
         ...checks.filter(row => !row.passed).map(row => `check ${row.criterion}: ${row.outcome}`),
@@ -249,7 +256,9 @@ export async function gradeCriteriaFile(request: Extract<WorkRequest, { operatio
     const checks = await runChecks(file)
     // The criteria file is the request, not part of the change it grades.
     // With no order there is no recorded base, so the change since HEAD is compared, and the evaluator judges any test weakening.
-    const review = await composition.review(await composition.heads(), file.scope)
+    // A scope says which part of the change is graded, so what an open order holds outside it is left to that order; without
+    // one, the whole uncommitted change is the subject.
+    const review = await composition.review(await composition.heads(), file.scope, file.scope.length ? heldElsewhere(await composition.store.list(), undefined, file.scope) : undefined)
     const changes = review.changes.filter(change => change.path !== posix.normalize(request.criteriaFile))
     const inScope = scopeMatcher(file.scope)
     const outOfScope = file.scope.length ? changes.map(change => change.path).filter(path => !inScope(path)) : []
@@ -259,7 +268,8 @@ export async function gradeCriteriaFile(request: Extract<WorkRequest, { operatio
     const graded = await composition.evaluate(subject)
     if ('refusal' in graded) return refusal(operation, `${graded.refusal.code}: ${graded.refusal.message}; ${graded.refusal.fix}`)
     const passed = graded.criteria.every(row => row.verdict === 'met') && checks.every(row => row.passed)
-    const value = { criteria: graded.criteria, checks, outOfScope, testProtection: { testFiles: weak.patterns.source, findings: weak.findings.map(describeWeakening) }, evaluator: graded.evaluator }
+    const value = { criteria: graded.criteria, checks, outOfScope, ...held(review.otherOrders) ? { otherOrders: review.otherOrders } : {},
+        testProtection: { testFiles: weak.patterns.source, findings: weak.findings.map(describeWeakening) }, evaluator: graded.evaluator }
     return passed ? complete(operation, value) : unsatisfied(operation, value, split(graded.criteria).others.map(row => `${row.id} ${row.verdict}: ${row.note}`)
         .concat(checks.filter(row => !row.passed).map(row => `check ${row.criterion}: ${row.outcome}`)).join('; '), split(graded.criteria).weakening)
 }
