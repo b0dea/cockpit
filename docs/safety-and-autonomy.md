@@ -1050,7 +1050,7 @@ Unavailable or malformed decisions exit 2 on every target, so adapter exit 0 alo
 permission was granted. Claude Code prints the hook command beside every refusal it reports, so the
 generated Claude Code and Codex commands are one short line that runs the committed guard script,
 which holds the recovery text; a script that is missing or exits with any status but 0 or 2 blocks
-the call with `cockpit guard failed (<status>): <script>; run cockpit sync`. The generated Claude Code and Codex registrations give the guard hook a
+the call with `cockpit guard failed (<status>): <script>; sync the cockpit`. The generated Claude Code and Codex registrations give the guard hook a
 `timeout` of 30 seconds; a guard call spawns several Node and Git processes and was seen to exceed
 Codex's 5-second default on a loaded machine. What either harness does with the call when that
 timeout fires, run it or refuse it, is not measured. So the guard keeps its own deadline of 25

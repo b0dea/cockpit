@@ -396,7 +396,7 @@ function hooksBytes(target: keyof typeof HOOK_ROOT, matcher: string, guardPath: 
     // process, a missing shell or guard script) would let the tool call run, so it is folded into a
     // blocking exit. Claude Code prints the whole hook command beside every refusal it reports, so the
     // command stays one short line and the recovery text lives in the guard script it runs.
-    const guard = `H="${root.guard}/${guardPath}"; ${askIsDeny ? 'COCKPIT_ASK_IS_DENY=1 ' : ''}/bin/bash "$H" --harness ${target}; s=$?; case $s in 0|2) exit $s;; esac; echo "cockpit guard failed ($s): $H; run cockpit sync" >&2; exit 2`
+    const guard = `H="${root.guard}/${guardPath}"; ${askIsDeny ? 'COCKPIT_ASK_IS_DENY=1 ' : ''}/bin/bash "$H" --harness ${target}; s=$?; case $s in 0|2) exit $s;; esac; echo "cockpit guard failed ($s): $H; sync the cockpit" >&2; exit 2`
     // Claude Code 2.1.317 and Codex 0.166.0 (a trusted hook) each ran a SessionStart command and put its
     // stdout in the agent's context, measured 2026-11-03 beside a misspelled event that never ran. A
     // drift report there tells the agent what to re-sync before it works; the hook never blocks.

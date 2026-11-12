@@ -326,7 +326,7 @@ describe('restriction expansion', () => {
         }
         // Without the harness's project root the registration cannot find the guard and blocks.
         expect(runs('claudecode', directory, ambient, 'env/service.env.example')).toMatchObject({
-            status: 2, stdout: '', stderr: expect.stringContaining('cockpit guard failed (127): <unset>/.cockpit/guards/bash-guard.sh; run cockpit sync'),
+            status: 2, stdout: '', stderr: expect.stringContaining('cockpit guard failed (127): <unset>/.cockpit/guards/bash-guard.sh; sync the cockpit'),
         })
         expect(runs('codexcli', tmpdir(), ambient, 'env/service.env.example')).toMatchObject({
             status: 2, stdout: '', stderr: expect.stringContaining(`cockpit guard failed (127): ${await realpath(tmpdir())}/.cockpit/guards/bash-guard.sh`),
@@ -446,7 +446,7 @@ describe('restriction expansion', () => {
             expect(hook.timeout, name).toBe(30)
             // A guard that cannot load its handler exits 1; a killed one 137. Exit 2 keeps its own reason.
             const guard = join(await realpath(directory), result.sharedGuard.path)
-            for (const [exit, status, stderr] of [[1, 2, `cockpit guard failed (1): ${guard}; run cockpit sync\n`], [137, 2, `cockpit guard failed (137): ${guard}; run cockpit sync\n`],
+            for (const [exit, status, stderr] of [[1, 2, `cockpit guard failed (1): ${guard}; sync the cockpit\n`], [137, 2, `cockpit guard failed (137): ${guard}; sync the cockpit\n`],
                 [2, 2, 'refused\n'], [0, 0, '']] as const) {
                 await writeFile(join(directory, result.sharedGuard.path), exit === 2 ? "printf 'refused\\n' >&2; exit 2\n" : `exit ${exit}\n`)
                 const run = spawnSync('/bin/sh', ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: directory } })
@@ -456,7 +456,7 @@ describe('restriction expansion', () => {
             await rm(join(directory, result.sharedGuard.path))
             const missing = spawnSync('/bin/sh', ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: directory } })
             expect(missing.status).toBe(2)
-            expect(missing.stderr).toContain(`cockpit guard failed (127): ${guard}; run cockpit sync`)
+            expect(missing.stderr).toContain(`cockpit guard failed (127): ${guard}; sync the cockpit`)
         }
         expect(result.sharedGuard.bytes).toContain(`so ${GUARD_HELD_CALLS} are refused.`)
     })
