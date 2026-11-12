@@ -184,7 +184,7 @@ it('names no invented path and asks for the cockpit root when the hook finds no 
     const hook = (JSON.parse(rendered.targets.find(target => target.target === 'claudecode')!.files[0]!.bytes) as { hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> } }).hooks.PreToolUse[0]!.hooks[0]!.command
     const refused = spawnSync('/bin/sh', ['-c', hook], { cwd: root, encoding: 'utf8', input: '{}', env: { ...process.env, CLAUDE_PROJECT_DIR: '' } })
     expect(refused).toMatchObject({ status: 2, stdout: '' })
-    expect(refused.stderr).toContain('cockpit guard failed (127): <unset>/.cockpit/guards/bash-guard.sh; sync the cockpit')
+    expect(refused.stderr).toContain('cockpit guard failed (127): /no-cockpit-root/.cockpit/guards/bash-guard.sh; sync the cockpit')
     expect(refused.stderr).not.toContain(' /.cockpit/')
     expect(refused.stderr).not.toContain(` /${configFile}`)
     expect(existsSync(join(root, 'injected'))).toBe(false)
