@@ -612,6 +612,39 @@ function transferOperands(command: 'cp' | 'install' | 'mv' | 'ln', args: readonl
     }
 }
 
+// Git verbs that write files from a revision or a patch into a work tree, where a symbolic link can arrive.
+const GIT_TREE_WRITERS = new Set(['checkout', 'switch', 'restore', 'reset', 'merge', 'pull', 'rebase', 'cherry-pick', 'revert', 'stash', 'am', 'apply',
+    'clone', 'worktree', 'read-tree', 'checkout-index', 'submodule', 'mv', 'bisect', 'sparse-checkout'])
+
+/**
+ * Whether an invocation can create a symbolic link: `ln`, a copy that keeps or makes links, a sync or
+ * an extraction that can carry one, or Git writing a revision's files. A link's text resolves where the
+ * link lies, so one made or moved in a call can point anywhere once it is moved, and every later path
+ * in that call is judged against the filesystem as it was before the call.
+ */
+function createsLink(invocation: ParsedInvocation, git: GitInvocation | undefined): boolean {
+    if (invocation.executable === null) return false
+    if (git) {
+        if (!GIT_TREE_WRITERS.has(git.verb)) return false
+        const operands = git.args.filter(arg => !arg.startsWith('-'))
+        // Forms that write only the index or refs leave the work tree, and every link in it, as it was.
+        if (['checkout', 'switch'].includes(git.verb) && git.args.some(arg => ['-b', '-B', '-c', '-C', '--create', '--force-create', '--orphan'].includes(arg)) && operands.length <= 1) return false
+        if (git.verb === 'restore' && git.args.some(arg => arg === '--staged' || arg === '-S') && !git.args.some(arg => arg === '--worktree' || arg === '-W')) return false
+        if (git.verb === 'reset' && !git.args.some(arg => /^--(?:hard|merge|keep)$/.test(arg))) return false
+        if (git.verb === 'stash' && ['list', 'show'].includes(operands[0] ?? '')) return false
+        if (git.verb === 'worktree' && operands[0] !== 'add') return false
+        if (git.verb === 'submodule' && !['update', 'add'].includes(operands[0] ?? '')) return false
+        if (git.verb === 'bisect' && ['log', 'visualize', 'view'].includes(operands[0] ?? '')) return false
+        return true
+    }
+    const name = posix.basename(invocation.executable)
+    if (['ln', 'rsync', 'unzip', 'cpio', 'pax', 'ditto', 'bsdtar', 'gtar'].includes(name)) return true
+    if (name === 'tar') return invocation.argv.some(arg => arg === '--extract' || arg === '--get' || /^-?[A-Za-z]*x/.test(arg) && !arg.startsWith('--'))
+    if (name === 'cp') return invocation.argv.some(arg => /^--(?:symbolic-link|no-dereference|archive|recursive|preserve(?:=.*links.*)?)$/.test(arg)
+        || /^-[A-Za-z]*[sPadRr]/.test(arg))
+    return false
+}
+
 interface VisibleWrites {
     readonly paths: readonly string[]
     readonly reads?: readonly string[]
@@ -793,7 +826,10 @@ function visibleWrites(invocation: ParsedInvocation): VisibleWrites | undefined 
     const name = posix.basename(invocation.executable)
     if (name === 'cp' || name === 'install' || name === 'mv') {
         const transfer = transferOperands(name, invocation.argv)
-        return { paths: transfer.writes, reads: name === 'mv' ? [] : transfer.sources, removes: false, uncertain: transfer.uncertain }
+        // `cp -s` makes each destination a symbolic link to its source, as `ln -s` does.
+        const symbolic = name === 'cp' && invocation.argv.some(arg => arg === '--symbolic-link' || /^-[A-Za-z]*s/.test(arg))
+        return { paths: transfer.writes, reads: name === 'mv' ? [] : transfer.sources, removes: false, uncertain: transfer.uncertain,
+            ...symbolic ? { links: transfer.sources } : {} }
     }
     if (name === 'ln') {
         const transfer = transferOperands('ln', invocation.argv)
@@ -2249,6 +2285,26 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const pattern = globExpression(posix.basename(folded).replace(/\[[^\]]*\]/g, '?'))
         return [...secretPaths, fold(secretRoot), ...resolved.instances.map((item) => fold(item.path))]
             .some((path) => posix.dirname(path) === posix.dirname(folded) && pattern.test(posix.basename(path)))
+    }
+    // A call that makes a symbolic link, or moves or copies an existing one, runs nothing else: its link
+    // can be moved to where its text reaches a guard control or a secret, and every other path in the call
+    // was judged before the link existed there. Commands in a pipeline or in the background run beside it,
+    // so the commands before it are held as well as those after.
+    const linkMakers = invocations.filter(invocation => {
+        const git = gitInvocation(invocation)
+        if (createsLink(invocation, git)) return true
+        const name = posix.basename(invocation.executable ?? '')
+        const sources = git?.verb === 'mv' ? transferOperands('mv', git.args).sources
+            : ['mv', 'cp', 'install'].includes(name) ? transferOperands(name as 'mv' | 'cp' | 'install', invocation.argv).sources : []
+        return sources.some(source => {
+            if (!scalar(source) || Buffer.byteLength(source) > GUARD_INPUT_LIMITS.pathBytes) return true
+            const evidence = resolvedEvidence({ path: source, cwd: git?.cwd ?? invocation.cwd, operation: 'read' })
+            return inspectedLink || evidence?.canonicalPath !== undefined
+        })
+    })
+    if (linkMakers.length && invocations.some(invocation => !linkMakers.includes(invocation) && (invocation.executable !== null || invocation.redirects.length))
+        || linkMakers.length > 1) {
+        hold(deny(`Refusing ${named(linkMakers[0]!)} with other commands in one call: it makes or moves a symbolic link, which a later command could move to where its text reaches a guard control or a secret, and the guard judges every other path against the filesystem before the call. Make or move the link on its own, then run the rest in a later call.`))
     }
     inspectPath({ path: input.cwd, cwd: input.cwd, operation: 'cwd' })
     for (const path of input.removed) {

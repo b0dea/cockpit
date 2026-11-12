@@ -616,6 +616,14 @@ describe('guard policy construction', () => {
         }
     }, 120_000)
 
+    it('refuses a call that makes a link and moves it onto the guard, through the installed guard', async () => {
+        const { root, request, adapters } = await installedGuardRequest()
+        const decide = async (command: string) => (await runGuardEvaluationApplication({ ...request, payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+        expect(await decide("mkdir -p a/b/c x/y && ln -s ../../.cockpit/guards/bash-guard.sh a/b/c/l && mv a/b/c/l x/y/l && printf 'exit 0\\n' > x/y/l"))
+            .toMatchObject({ decision: 'deny', reason: expect.stringContaining('symbolic link') })
+        expect(await decide('ln -s fixtures/personas.json personas-link')).toMatchObject({ decision: 'allow' })
+    }, 120_000)
+
     it('judges a move or copy onto an existing file as a write of that file, through the installed guard', async () => {
         const { root, request, adapters } = await installedGuardRequest()
         mkdirSync(join(root, 'notes'), { recursive: true })

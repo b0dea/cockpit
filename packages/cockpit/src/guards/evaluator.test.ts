@@ -1534,7 +1534,7 @@ describe('allow by default', () => {
         ['worktree update onto a control', 'git pull ./build/c work', undefined, { decision: 'ask', facts: { guarded: true } }],
         ['worktree update onto a control', 'git pull --rebase', undefined, { decision: 'ask', facts: { guarded: true } }],
         ['worktree update onto a control', 'git merge evil', undefined, { decision: 'ask', facts: { treeUnresolved: true } }],
-        ['worktree update onto a control', 'git fetch ./build/c work && git merge FETCH_HEAD', undefined, { decision: 'ask', facts: { guarded: true } }],
+        ['worktree update onto a control', 'git fetch ./build/c work && git merge FETCH_HEAD', undefined, { decision: 'deny', facts: { guarded: true } }],
         ['encoded patch', 'git am build/m.mbox', undefined, { decision: 'ask', facts: { patchTargets: [] } }],
         ['encoded patch', 'git am -3 build/m.mbox', undefined, { decision: 'ask', facts: { patchTargets: [] } }],
         ...["curl -s -w '%output{.cockpit/guards/bash-guard.sh}exit 0' https://example.test/", "curl -s -w '%output{>>.cockpit/guards/bash-guard.sh}exit 0' https://example.test/",
@@ -2172,6 +2172,39 @@ describe('installed code, search path and secret links', () => {
             expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured(), inspect), command).toEqual({ decision: 'deny', reason: npmrc })
         }
         expect(evaluateGuard(parseGuardInput(payload('Write', { file_path: `${root}/notes/npmrc.txt`, content: 'x' })), configured(), inspect).decision).toBe('allow')
+    })
+
+    it('runs nothing else in a call that makes or moves a symbolic link, since a moved link reaches what its text names from there', () => {
+        const secretPaths = [`${root}/var/sessions`]
+        const configured = { ...policy(), defaultDecision: 'allow' as const, homeDirectory: '/workspace/home', secretPaths,
+            protectedIdentities: [...policy().protectedIdentities, ...secretPaths.map(path => ({ path, identity: null, ancestors: [] }))] }
+        // `old/l` is a link that already exists; the inspector reports where a named read through it leads.
+        const evidence: PathInspection = request => {
+            const path = posix.resolve(request.cwd, request.path)
+            return path === `${root}/old/l` ? { ...withGit(request), canonicalPath: `${root}/.cockpit/guards/bash-guard.sh` } : withGit(request)
+        }
+        const run = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command), { dynamicWords: 'mark', home: '/workspace/home' }), configured, evidence)
+        for (const command of [
+            "mkdir -p a/b/c x/y && ln -s ../../.cockpit/guards/bash-guard.sh a/b/c/l && mv a/b/c/l x/y/l && printf 'exit 0\\n' > x/y/l",
+            'ln -s ../../var/sessions a/b/c/s && mv a/b/c/s x/y/s && cat x/y/s/owner.json',
+            "printf 'exit 0\\n' > x/y/l | ln -s ../../.cockpit/guards/bash-guard.sh x/y/l",
+            "ln -s ../../.cockpit/guards/bash-guard.sh a/b/c/l & printf 'exit 0\\n' > x/y/l",
+            'cp -s ../../.cockpit/guards/bash-guard.sh x/y/l && echo x > x/y/l',
+            'cp -P links/l x/y/l && echo x > x/y/l',
+            'rsync -a links/ out/ && echo x > out/l',
+            'tar -xf links.tar -C out && echo x > out/l',
+            'unzip links.zip -d out && cat out/l',
+            'git checkout topic -- links && echo x > links/l',
+            'git restore --source=topic links && cat links/l',
+            'git mv a/b/c/l x/y/l && echo x > x/y/l',
+            'mv old/l x/y/l && echo x > x/y/l',
+            'cp old/l x/y/l && cat x/y/l',
+        ]) expect(run(command), command).toMatchObject({ decision: 'deny' })
+        // Alone, each is judged as before: the link is in place for the next call, which sees it as a link.
+        for (const command of ['ln -s ../src a/src', 'mv a/b/c/l x/y/l', 'git checkout -b topic && git commit -m done', 'git restore --staged src/a.ts && git status',
+            'cp src/a.ts src/b.ts && cat src/b.ts', 'mv src/a.ts src/b.ts && cat src/b.ts']) {
+            expect(run(command).reason, command).not.toContain('symbolic link')
+        }
     })
 
     it('denies links to secrets, instances, guard controls and installed code', () => {
