@@ -788,9 +788,9 @@ export async function runGuardEvaluationApplication(
  * missing location grants nothing, a linked one is held to where it leads, and neither `/` nor the home
  * directory itself is ever granted.
  */
-function canonicalOutsidePaths(paths: readonly Readonly<{ path: string }>[]): readonly string[] {
+function canonicalOutsidePaths(paths: readonly string[]): readonly string[] {
     const home = realpathSync(homedir())
-    return paths.flatMap(({ path }) => {
+    return paths.flatMap(path => {
         const spelled = path.startsWith('~/') ? join(homedir(), path.slice(2)) : path
         try { return [realpathSync(spelled)] } catch (error) { if (hasErrorCode(error, 'ENOENT')) return []; throw error }
     }).filter(path => path !== '/' && path !== home)
@@ -1037,8 +1037,8 @@ export async function prepareGuardEvaluationPolicy(
                     return reserved
                 }))],
                 // One holding the home directory would admit every shell startup file below it.
-                writePaths: canonicalOutsidePaths(config.guards.write_paths).filter(path => !confinedPath(path, realpathSync(homedir()))),
-                readPaths: canonicalOutsidePaths(config.guards.read_paths),
+                writePaths: canonicalOutsidePaths(config.guards.write_paths.map(({ path }) => path)).filter(path => !confinedPath(path, realpathSync(homedir()))),
+                readPaths: canonicalOutsidePaths(config.guards.read_paths.map(({ path }) => path)),
                 secretPaths,
                 executionDirectories, cockpitPackageDirectories, searchDirectories: [], searchPathRelativeEntry: null,
                 secretFileIdentities: secretFiles.identities && [...secretFiles.identities], protectedFilesLinked,
