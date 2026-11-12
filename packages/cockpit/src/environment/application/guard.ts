@@ -79,6 +79,7 @@ import {
 import { browserPreapprovalRequested, loadCockpitConfig, consumeLoadedConfigProjection, parseCockpitConfigBytes, STRUCTURED_INPUT_BYTE_LIMIT, withRecordedDeclarations, type LoadedConfigProjection } from '../../config/load.js'
 import { deriveRegistry } from '../../registry-derivation.js'
 import { confinedPath, lifecycleRefusal, ownDataValues, sameSource } from './shared.js'
+import { splitRepositoryPath } from '../../repository-path.js'
 import { readSiblingCheckouts, servedSiblings, type ServedSibling, type SiblingCheckoutRecordRead } from '../sibling-checkouts.js'
 
 export interface GuardEvaluationApplicationInput {
@@ -390,6 +391,8 @@ export async function runGuardEvaluationApplication(
         // that prints committed content. A request not asked here gets the walk, or no answer.
         const policy = prepared.result.policy
         const instancePaths = policy.instances.map(item => item.path)
+        // What Git is asked to list beside environment and secrets names: every declared instance and secret path.
+        const watchedPaths = [...instancePaths, ...policy.secretPaths ?? []]
         const present = (path: string) => { try { lstatSync(path); return true } catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENAMETOOLONG')) return false; throw error } }
         const allowed = (path: string) => policy.allowedRoots.some(root => confinedPath(root, path))
         // These are exact observation requests, never roots for mutation or arbitrary execution.
@@ -406,10 +409,12 @@ export async function runGuardEvaluationApplication(
         }
         // Native external reads leave a read-only Git command to the agent tool, so its repository outside
         // the roots is inspected as a granted one's is. The evaluator admits it only alone in the call.
-        const nativeGit = policy.externalReads === 'native'
-        for (const invocation of nativeGit ? parsed.invocations : []) {
+        // A related checkout admits the same read-only Git there.
+        const related = (path: string) => (policy.relatedCheckouts ?? []).some(root => confinedPath(root, path))
+        const nativeGit = (cwd: string) => policy.externalReads === 'native' || related(cwd)
+        for (const invocation of parsed.invocations) {
             const access = invocation.executable === 'git' ? classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: data.ripgrepConfigActive === true }) : undefined
-            if (!access || allowed(access.cwd)) continue
+            if (!access || allowed(access.cwd) || !nativeGit(access.cwd)) continue
             approvedDirectories.add(access.cwd)
             for (const path of access.requires ?? []) approvedRequirements.add(resolve(access.cwd, path))
         }
@@ -430,7 +435,7 @@ export async function runGuardEvaluationApplication(
         }
         // What a merge, checkout, reset, pick, rebase, stash or pull writes into a work tree holding a
         // guard control: Git compares the revisions before the command runs.
-        const protectedPaths = [...GUARD_ROOT_PROTECTIONS.map(item => join(policy.canonicalRoot, item.path)), ...instancePaths]
+        const protectedPaths = [...GUARD_ROOT_PROTECTIONS.map(item => join(policy.canonicalRoot, item.path)), ...watchedPaths]
         const trees = new Map<string, Awaited<ReturnType<typeof guardWorktreeChanges>>>()
         const treeKey = (cwd: string, revision: string, from: string | undefined) => `${cwd}\0${revision}\0${from ?? ''}`
         for (const invocation of parsed.invocations) {
@@ -455,15 +460,15 @@ export async function runGuardEvaluationApplication(
         }
         for (const invocation of parsed.invocations) {
             const access = classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: data.ripgrepConfigActive === true })
-            if (access?.trackedContent && (allowed(access.cwd) || nativeGit && parsed.invocations.length === 1) && !tracked.has(access.cwd)) {
+            if (access?.trackedContent && (allowed(access.cwd) || nativeGit(access.cwd) && parsed.invocations.length === 1) && !tracked.has(access.cwd)) {
                 tracked.set(access.cwd, null)
-                queries.push(async () => { tracked.set(access.cwd, await guardTrackedSensitivePaths(access.cwd, instancePaths, git.value, adapters.execute ?? executeProbe)) })
+                queries.push(async () => { tracked.set(access.cwd, await guardTrackedSensitivePaths(access.cwd, watchedPaths, git.value, adapters.execute ?? executeProbe)) })
             }
             for (const tree of access?.skipsIgnored ? access.trees : []) {
                 const path = resolve(access!.cwd, tree)
                 if (!allowed(path) || unignored.has(path) || !present(path) || realpathSync(path) !== path) continue
                 unignored.set(path, undefined)
-                queries.push(async () => { unignored.set(path, await guardUnignoredSensitivePaths(path, instancePaths, git.value, adapters.execute ?? executeProbe)) })
+                queries.push(async () => { unignored.set(path, await guardUnignoredSensitivePaths(path, watchedPaths, git.value, adapters.execute ?? executeProbe)) })
             }
         }
         // A query starts up to four Git processes, so a command naming many trees is asked about a few
@@ -481,7 +486,7 @@ export async function runGuardEvaluationApplication(
             if (walked === undefined) walks.set(key, walked = guardSensitivePathsBelow(path, undefined, followsLinks))
             // The walk names environment and secrets names; an ignore-aware search also needs the instances it reads.
             if (!unignoredOnly || walked === null) return walked
-            const found = [...new Set([...walked, ...instancePaths.filter(item => confinedPath(path, item) && present(item))])].sort()
+            const found = [...new Set([...walked, ...watchedPaths.filter(item => confinedPath(path, item) && present(item))])].sort()
             return found.length > GUARD_LOCATION_LIMITS.sensitivePaths ? null : found
         }
         const inspected = new Map<string, Stats>()
@@ -524,17 +529,34 @@ export async function runGuardEvaluationApplication(
                 return facts ? { status: 'resolved', path, revision: request.revision, ...request.from === undefined ? {} : { from: request.from }, ...facts }
                     : { status: 'unavailable', path, symlink: false }
             }
+            if (request.operation === 'external-write') {
+                // Where a write outside the roots lands: the deepest existing ancestor through its links, then the rest as spelled.
+                let cursor = path
+                const rest: string[] = []
+                for (;;) {
+                    try { lstatSync(cursor); break }
+                    catch (error) {
+                        if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR') || cursor === '/') throw error
+                        rest.unshift(basename(cursor))
+                        cursor = dirname(cursor)
+                    }
+                }
+                return { status: 'resolved', path, landsAt: join(realpathSync(cursor), ...rest) }
+            }
             if (request.operation === 'manifest') {
                 const manifest = allowed(path) ? guardPackageManifest(path, allowed, request.workspace === true) : null
                 return manifest ? { status: 'resolved', path, ...manifest } : { status: 'unavailable', path, symlink: false }
             }
             const managedRoot = policy.allowedRoots.filter(root => confinedPath(root, path)).sort((a, b) => b.length - a.length)[0]
+            const reading = ['read', 'list', 'search', 'unignored-search'].includes(request.operation)
+            // A related checkout is read as a root is: a named file, a listing or a search walked for secrets.
+            const relatedRoot = !managedRoot && reading ? policy.relatedCheckouts?.find(root => confinedPath(root, path)) : undefined
             // A person's read path admits this read, or with native external reads the agent tool's own permission decided it.
-            const declaredRead = !managedRoot && ['read', 'list', 'search', 'unignored-search'].includes(request.operation)
+            const declaredRead = !managedRoot && reading
                 && (policy.externalReads === 'native' || (policy.readPaths ?? []).some(root => confinedPath(root, path)))
-            const externalRead = ['read', 'list', 'search', 'unignored-search'].includes(request.operation) && (approvedReads.has(path) || approvedRequirements.has(path)) || declaredRead
+            const externalRead = reading && (approvedReads.has(path) || approvedRequirements.has(path)) || declaredRead
                 || request.operation === 'cwd' && approvedDirectories.has(path) || request.operation === 'repository' && tracked.has(path)
-            const root = managedRoot ?? (externalRead ? '/' : undefined)
+            const root = managedRoot ?? relatedRoot ?? (externalRead ? '/' : undefined)
             if (!root) return { status: 'unavailable', path, symlink: false }
             if (leavesLink(request.cwd, request.path)) return { status: 'resolved', path, symlink: true }
             let cursor = root
@@ -578,7 +600,7 @@ export async function runGuardEvaluationApplication(
             }
             // Outside the managed roots the walk recognises only `.env*` and `.secrets` names, not other
             // credential files, so an approved external read or search names a regular file, never a tree.
-            if (!managedRoot && !['cwd', 'repository'].includes(request.operation) && !approvedRequirements.has(path) && exists && !inspected.get(path)!.isFile()
+            if (!managedRoot && !relatedRoot && !['cwd', 'repository'].includes(request.operation) && !approvedRequirements.has(path) && exists && !inspected.get(path)!.isFile()
                 && !(request.operation === 'list' && inspected.get(path)!.isDirectory())) return { status: 'unavailable', path, symlink: false }
             const search = request.operation === 'search' || request.operation === 'unignored-search'
             return { status: 'resolved', path, symlink: false, identity: exists ? chain.at(-1)! : null, ancestors: exists ? chain.slice(0, -1) : chain,
@@ -659,6 +681,8 @@ export async function runGuardEvaluationApplication(
             mcpAllowedTools: config.mcp.allowed_tools,
             cockpitLaunchers: launched.map(({ executable, cwd, argv, prefix }) => ({ executable, cwd, argv: argv.slice(0, prefix) })),
             searchDirectories: guardSearchDirectories(searchPath, prepared.result.policy.allowedRoots),
+            // Native external writes still never plant a program in a search path directory outside the roots.
+            ...policy.externalWrites === 'native' ? { externalSearchDirectories: externalSearchDirectories(searchPath, policy.allowedRoots) } : {},
             searchPathRelativeEntry: guardSearchPathRelativeEntry(searchPath),
             ripgrepConfigActive: data.ripgrepConfigActive === true }, inspect)
         const current = await adapters.loadConfig(identity.configPath)
@@ -681,6 +705,20 @@ export async function runGuardEvaluationApplication(
         if (error instanceof CallPathUnreadable) return unavailable(error.message)
         return unavailable(`Guard authority could not be read or revalidated: ${errorCause(error)}`)
     }
+}
+
+/** Absolute command search path directories, as spelled and as resolved, that lie outside every managed root. */
+function externalSearchDirectories(searchPath: string, roots: readonly string[]): readonly string[] {
+    const found = new Set<string>()
+    for (const entry of searchPath.split(':')) {
+        if (!entry.startsWith('/')) continue
+        const spelled = resolve(entry)
+        const candidates = [spelled]
+        try { candidates.push(realpathSync(spelled)) } catch (error) { if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR')) throw error }
+        for (const candidate of candidates) if (candidate !== '/' && !roots.some(root => confinedPath(root, candidate))) found.add(candidate)
+    }
+    if (found.size > 256) throw new RefusalError('guard search path exceeds 256 directories outside the allowed roots')
+    return [...found].sort()
 }
 
 // The guard runs against the configuration sync generated it from, or one that does not widen it, so
@@ -789,7 +827,7 @@ export async function prepareGuardEvaluationPolicy(
             const protectedIdentities = new Map<string, GuardProtectedIdentity>()
             // Records the identity of every existing component so the evaluator can match a protected
             // entry by inode rather than by spelling.
-            const protect = (root: string, path: string, leaf: 'file' | 'directory', label: string) => {
+            const protect = (root: string, path: string, leaf: 'file' | 'directory' | 'any', label: string) => {
                 const segments = relative(root, path).split(sep)
                 const chain = [guardIdentity(identities.get(root)!)]
                 let cursor = root
@@ -802,7 +840,8 @@ export async function prepareGuardEvaluationPolicy(
                         if (hasErrorCode(error, 'ENOENT')) { exists = false; break }
                         throw error
                     }
-                    if (status.isSymbolicLink() || (index < segments.length - 1 || leaf === 'directory' ? !status.isDirectory() : !status.isFile())) {
+                    const last = index === segments.length - 1
+                    if (status.isSymbolicLink() || (!last || leaf === 'directory' ? !status.isDirectory() : leaf === 'file' && !status.isFile())) {
                         throw new RefusalError(`guard policy ${label} path has a symlink or unexpected file type`)
                     }
                     identities.set(cursor, status)
@@ -840,6 +879,20 @@ export async function prepareGuardEvaluationPolicy(
                 }
             }
             if (allowedRoots.size > 256 || instances.length > 256) throw new RefusalError('guard policy exceeds restriction root or instance bounds')
+            // A declared secret path lies in the cockpit, or in every checkout of the sibling it names.
+            const secretPaths: string[] = []
+            for (const declared of config.guards.secret_paths) {
+                const { slug, path: spelled } = splitRepositoryPath(declared)
+                const roots = slug === undefined ? [canonicalRoot] : checkoutRoots.filter(row => row.sibling.slug === slug).map(row => row.root)
+                if (!roots.length) throw new RefusalError(`guard policy secret path ${declared} names an undeclared sibling`)
+                for (const root of roots) {
+                    const path = resolve(root, spelled)
+                    if (!confinedPath(root, path) || path === root) throw new RefusalError('guard policy secret path escapes its root')
+                    if (secretPaths.includes(path)) continue
+                    protect(root, path, 'any', 'secret')
+                    secretPaths.push(path)
+                }
+            }
             for (const { path, type } of GUARD_ROOT_PROTECTIONS) protect(canonicalRoot, join(canonicalRoot, path), type, 'guard control or secrets')
             // The configuration's own identity lets the evaluator recognise its deletion under any spelling.
             const configPath = loaded.source.path
@@ -873,12 +926,26 @@ export async function prepareGuardEvaluationPolicy(
                     ...(rule.fix === undefined ? {} : { fix: rule.fix }),
                 })),
                 ripgrepConfigActive: false, externalReads: config.guards.external_reads, defaultDecision: config.guards.default,
+                unresolved: config.guards.unresolved, externalWrites: config.guards.external_writes,
                 homeDirectory: realpathSync(homedir()),
+                relatedCheckouts: config.guards.related_checkouts.flatMap(spelled => {
+                    const path = spelled.startsWith('~/') ? join(homedir(), spelled.slice(2)) : resolve(canonicalRoot, spelled)
+                    let real: string
+                    // A missing checkout grants nothing; a linked one is held to where it leads.
+                    try { real = realpathSync(path) } catch (error) { if (hasErrorCode(error, 'ENOENT')) return []; throw error }
+                    const home = realpathSync(homedir())
+                    // The filesystem root, the home directory or a directory above it is no checkout, and one
+                    // overlapping a managed root would make that root read-only.
+                    if (!lstatSync(real).isDirectory() || real === '/' || confinedPath(real, home)
+                        || [...allowedRoots].some(root => confinedPath(root, real) || confinedPath(real, root))) return []
+                    return [real]
+                }),
                 readPaths: config.guards.read_paths.flatMap(({ path }) => {
                     const spelled = path.startsWith('~/') ? join(homedir(), path.slice(2)) : path
                     // A missing location grants nothing; a linked one is held to where it leads.
                     try { return [realpathSync(spelled)] } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error }
                 }).filter(path => path !== '/' && path !== realpathSync(homedir())),
+                secretPaths,
                 executionDirectories, cockpitPackageDirectories, searchDirectories: [], searchPathRelativeEntry: null,
                 secretFileIdentities: secretFiles.identities && [...secretFiles.identities], protectedFilesLinked,
                 cockpitInvocations: [], cockpitLaunchers: [], projectCommands: [],

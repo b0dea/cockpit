@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 import { evaluateGuard, GUARD_ROOT_PROTECTIONS, type PathInspection } from './evaluator.js'
 import { parseGuardInput } from './invocation-parser.js'
+import { adaptGuardDecision } from './harness-adapter.js'
 import { invocationCorpus, shellPayload } from './fixtures/invocation-corpus.js'
 import { GuardCommandArgv } from '../schema.js'
 import { renderGuardProjectCommand } from '../environment/install-policy.js'
@@ -704,6 +705,34 @@ describe('built-in read-only profile', () => {
         expect(run('cp README.md /workspace/inputs/copy.md', readPath).decision).toBe('unavailable')
     })
 
+    it('reads and inspects a related checkout with read-only Git, and never changes it', () => {
+        const upstream = '/workspace/upstream'
+        const related = { ...policy(), defaultDecision: 'allow' as const, relatedCheckouts: [upstream] }
+        const present = (request: Parameters<typeof inspect>[0]) => ({ ...withGit(request), identity: posix.resolve(request.cwd, request.path) === `${upstream}/.git` ? '9:2' : '8:2' })
+        const run = (command: string, configured: object = related, evidence: PathInspection = present) => evaluateGuard(parseGuardInput(shellPayload(command)), configured, evidence)
+        for (const command of [`git -C ${upstream} log -1`, `git -C ${upstream} status --short`, `git -C ${upstream} show HEAD --stat`,
+            `cat ${upstream}/README.md`, `rg needle ${upstream}/src`, `ls ${upstream}`]) {
+            expect(run(command), command).toMatchObject({ decision: 'allow' })
+        }
+        for (const command of [`git -C ${upstream} push origin topic`, `git -C ${upstream} commit -m x`, `git -C ${upstream} checkout -b other`,
+            `echo x > ${upstream}/notes.md`, `cp README.md ${upstream}/README.md`, `rm ${upstream}/README.md`, `cd ${upstream} && make`,
+            `cat ${upstream}/.env`, `cat ${upstream}/.secrets/token`]) {
+            expect(run(command), command).toMatchObject({ decision: 'deny' })
+        }
+        expect(run(`echo x > ${upstream}/notes.md`, { ...related, externalWrites: 'native' })).toMatchObject({ decision: 'deny', reason: expect.stringContaining('[guards] related_checkouts') })
+        expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: `${upstream}/x.md`, content: 'x' } }), related, present))
+            .toMatchObject({ decision: 'deny' })
+        // Its configured helpers run with Git, so Git runs there only as the whole call, and a search that would read a secret asks.
+        expect(run(`git -C ${upstream} log -1 | head -n 1`).decision).not.toBe('allow')
+        const holdsSecret: PathInspection = request => searches(request.operation) ? { ...present(request), sensitive: [`${upstream}/src/.env.local`] } : present(request)
+        expect(run(`rg needle ${upstream}/src`, related, holdsSecret)).toEqual({ decision: 'ask', reason: expect.stringContaining('.env.local') })
+        // Without the key nothing there is the agent's.
+        expect(run(`git -C ${upstream} log -1`, { ...related, relatedCheckouts: undefined }).decision).not.toBe('allow')
+        expect(run(`cat ${upstream}/README.md`, { ...related, relatedCheckouts: undefined }).decision).not.toBe('allow')
+        // A related checkout overlapping a managed root is refused as a malformed policy.
+        expect(run('pwd', { ...related, relatedCheckouts: ['/workspace'] }).decision).toBe('unavailable')
+    })
+
     it('keeps secret names, external paths and search proofs beyond a declared rule', () => {
         // macOS cat prints every named file before it rejects an unknown option.
         const granted = (...argv: string[]) => ({ ...policy(), declaredAllows: [{ argv, cwd: root, reason: 'Declared.' }] })
@@ -1162,6 +1191,84 @@ describe('allow by default', () => {
         for (const command of [`PAYMENT_SECRET_KEY=${test} true`, `npm test -- --key=${test}`, `echo ${['sk', 'live', 'short'].join('_')}`, `echo dis${live}`]) {
             expect(run(command), command).toMatchObject({ decision: 'allow' })
         }
+    })
+
+    it('keeps a declared secret path from every tool in both harnesses, and leaves the files beside it alone', () => {
+        const secretPaths = [`${root}/var/sessions`, `${root}/var/snapshots`, `${root}/.vendor-dev`, `${other}/var/sessions`]
+        const configured = { ...open(), secretPaths, protectedIdentities: [...policy().protectedIdentities, ...secretPaths.map(path => ({ path, identity: null, ancestors: [] }))] }
+        const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
+        const judge = (input: object, evidence: PathInspection = onBranch('refs/heads/topic')) => evaluateGuard(parseGuardInput(input), configured, evidence)
+        const refused = [
+            payload('Bash', { command: 'cat var/sessions/owner.json' }),
+            payload('Bash', { command: 'head -n 3 .vendor-dev/.tmp/keys.json' }),
+            payload('Bash', { command: 'cat VAR/Sessions/owner.json' }),
+            payload('Bash', { command: 'cat src/../var/sessions/owner.json' }),
+            payload('Bash', { command: `cat ${other}/var/sessions/owner.json` }),
+            payload('Bash', { command: 'sort < var/sessions/owner.json' }),
+            payload('Bash', { command: 'echo x > var/snapshots/new.json' }),
+            payload('Bash', { command: 'cp var/snapshots/copy.json build/copy.json' }),
+            payload('Bash', { command: 'rm -rf var' }),
+            payload('Bash', { command: 'git add var' }),
+            payload('Bash', { command: 'ln -s var/sessions build/sessions' }),
+            payload('Bash', { command: 'python3 scripts/read.py var/sessions/owner.json' }),
+            payload('Write', { file_path: `${root}/var/snapshots/new.json`, content: '{}' }),
+            payload('Edit', { file_path: `${root}/var/snapshots/old.json`, old_string: 'a', new_string: 'b' }),
+            payload('apply_patch', { command: `*** Begin Patch\n*** Add File: ${root}/var/snapshots/new.json\n+{}\n*** End Patch` }),
+        ]
+        for (const input of refused) {
+            const decision = judge(input)
+            expect(decision, JSON.stringify(input.tool_input)).toMatchObject({ decision: 'deny' })
+            for (const harness of ['claudecode', 'codexcli'] as const) {
+                expect(JSON.parse(adaptGuardDecision(harness, decision).stdout).hookSpecificOutput.permissionDecision, harness).toBe('deny')
+            }
+        }
+        expect(judge(payload('Bash', { command: 'cat var/sessions/owner.json' })).reason).toContain('[guards] secret_paths')
+        // A search or a glob that reaches one is not proven to leave it unread.
+        for (const command of ['grep -rn KEY var', 'rg KEY var/sess*', 'cat var/sess?ons/owner.json', 'cat var/sess*', 'cat .vendor-[!x]ev']) {
+            const present: PathInspection = request => ({ ...onBranch('refs/heads/topic')(request), ...secretPaths.includes(posix.resolve(request.cwd, request.path)) ? { identity: '7:7' } : {} })
+            const covering = { ...configured, protectedIdentities: configured.protectedIdentities.map(item => item.path === `${root}/var/sessions` ? { ...item, identity: '7:7' } : item) }
+            expect(evaluateGuard(parseGuardInput(payload('Bash', { command }), { dynamicWords: 'mark', home }), covering, present).decision, command).not.toBe('allow')
+        }
+        // Listing names, and everything beside the secret paths, stay open.
+        for (const command of ['ls var/sessions', 'cat var/notes.md', 'echo x > var/notes.md', 'rg KEY src']) {
+            expect(judge(payload('Bash', { command })), command).toMatchObject({ decision: 'allow' })
+        }
+        expect(judge(payload('Write', { file_path: `${root}/var/notes.md`, content: 'x' }))).toMatchObject({ decision: 'allow' })
+    })
+
+    it('leaves a write outside the roots to the agent tool under native external writes, except where it changes what runs later', () => {
+        const native = { ...open(), externalReads: 'native' as const, externalWrites: 'native' as const, externalSearchDirectories: ['/opt/tools/bin'] }
+        // Where each write lands once existing links are followed, as the application reports it.
+        const links: Record<string, string> = { [`${home}/dotfiles/settings.json`]: `${home}/.claude/settings.json`, [`${home}/project-link/.cockpit/guards/bash-guard.sh`]: `${root}/.cockpit/guards/bash-guard.sh`,
+            [`${home}/notes-link/out.md`]: `${root}/README.md` }
+        const lands: PathInspection = request => {
+            const path = posix.resolve(request.cwd, request.path)
+            if (request.operation === 'external-write') return { status: 'resolved', path, landsAt: links[path] ?? path }
+            return { ...onBranch('refs/heads/topic')(request), identity: path.startsWith(root) ? null : '8:2' }
+        }
+        const run = (command: string, configured: object = native, evidence: PathInspection = lands) => evaluateGuard(parseGuardInput(shellPayload(command)), configured, evidence)
+        for (const command of [`mv ${home}/Downloads/a.png public/img/a.png`, `cp build/out.png ${home}/Desktop/out.png`, 'echo x > /tmp/scratch/out.log',
+            `rm ${home}/Downloads/a.png`, 'cd /tmp/scratch && touch run.log', `git clone ../origin ${home}/src/copy`]) {
+            expect(run(command), command).toMatchObject({ decision: 'allow' })
+        }
+        expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: '/tmp/scratch/notes.md', content: 'x' } }), native, lands))
+            .toMatchObject({ decision: 'allow' })
+        for (const command of [`echo x >> ${home}/.zshrc`, `cp x ${home}/.claude/settings.json`, `cp x ${home}/.codex/hooks.json`, `echo x > ${home}/.config/opencode/opencode.json`,
+            `cp x ${home}/.ZSHRC`, `cp x /System/Volumes/Data${home}/.bash_profile`, `cp x ${home}/.config/fish/config.fish`, `cp x ${home}/.ssh/authorized_keys`,
+            `cp x ${home}/.gitconfig`, `cp x /elsewhere/project/.claude/settings.json`, `echo x > /elsewhere/project/.codex/hooks.json`,
+            `touch /elsewhere/project/.cockpit/guards/bash-guard.sh`, `cp x /elsewhere/project/.git/hooks/pre-commit`, `cp x /elsewhere/project/.husky/pre-commit`,
+            `cp x ${home}/Library/LaunchAgents/job.plist`, 'echo x > /etc/cron.d/job', 'cp x /elsewhere/.env', 'cp x /elsewhere/.envrc', 'cp x /opt/tools/bin/git',
+            `rm -rf ${home}/.codex`, `cp x ${home}/dotfiles/settings.json`, `cd ${home}/.claude && touch x`]) {
+            expect(run(command), command).toMatchObject({ decision: 'deny' })
+        }
+        // A link that carries the write back into the roots is judged there.
+        expect(run(`cp x ${home}/project-link/.cockpit/guards/bash-guard.sh`)).toMatchObject({ decision: 'deny', reason: expect.stringContaining('guard') })
+        expect(run(`cp x ${home}/notes-link/out.md`)).toMatchObject({ decision: 'allow' })
+        // Without an answer about links the guard cannot rule one out.
+        expect(run('echo x > /tmp/scratch/out.log', native, request => request.operation === 'external-write' ? { status: 'unavailable', path: request.path } : lands(request)).decision).toBe('unavailable')
+        // The default keeps every write outside the roots refused.
+        expect(run('echo x > /tmp/scratch/out.log', { ...native, externalWrites: 'guard' })).toEqual({ decision: 'unavailable', reason: expect.stringContaining('writes outside every root') })
+        expect(run(`mv ${home}/Downloads/a.png public/img/a.png`, { ...native, externalWrites: undefined }).decision).not.toBe('allow')
     })
 
     it('judges a function body as the commands it runs, since zsh runs a TRAP function nobody calls', () => {

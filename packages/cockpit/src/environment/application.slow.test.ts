@@ -314,6 +314,66 @@ describe('guard policy construction', () => {
         expect(await decide(`cat '${elsewhere}/notes.md'`)).toEqual({ decision: 'ask', reason: expect.stringContaining('is outside the configured roots') })
     }, 120_000)
 
+    it.each(['claudecode', 'codexcli'] as const)('keeps a declared secret path from reads, writes and searches through the %s application', async harness => {
+        const { root, configPath } = await observedPolicy()
+        mkdirSync(join(root, 'var/sessions'), { recursive: true })
+        writeFileSync(join(root, 'var/sessions/owner.json'), '{"synthetic":true}\n')
+        mkdirSync(join(root, 'app/tmp/sessions'), { recursive: true })
+        writeFileSync(join(root, 'app/tmp/sessions/state.json'), '{}\n')
+        writeFileSync(join(root, 'var/notes.md'), 'synthetic notes\n')
+        const config = CockpitConfig.parse(parse(readFileSync(configPath, 'utf8')))
+        config.guards.secret_paths = ['var/sessions', 'app:tmp/sessions']
+        writeFileSync(configPath, stringify(config))
+        expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        const identity = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
+        const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
+            resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }) }
+        const judge = async (payload: object) => (await runGuardEvaluationApplication({ identity, guardRoot: root, harness, cwd: root,
+            payload, searchPath: '/usr/bin:/bin' }, adapters)).decision
+        const tool = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
+        for (const payload of [shellPayload('cat var/sessions/owner.json', root), shellPayload('cat VAR/Sessions/owner.json', root),
+            shellPayload('cat app/tmp/sessions/state.json', root), shellPayload('echo x > var/sessions/new.json', root),
+            tool('Write', { file_path: join(root, 'var/sessions/new.json'), content: '{}' }),
+            tool('apply_patch', { command: `*** Begin Patch\n*** Add File: ${join(root, 'var/sessions/new.json')}\n+{}\n*** End Patch` })]) {
+            expect(await judge(payload), JSON.stringify(payload.tool_input)).toMatchObject({ decision: 'deny', reason: expect.stringContaining('[guards] secret_paths') })
+        }
+        // A recursive search of the directory holding it would read it.
+        expect((await judge(shellPayload('grep -rn synthetic var', root))).decision).not.toBe('allow')
+        for (const command of ['cat var/notes.md', 'ls var/sessions', 'echo x > var/other.md']) expect(await judge(shellPayload(command, root)), command).toMatchObject({ decision: 'allow' })
+    }, 120_000)
+
+    it('reads a related checkout without changing it, and leaves other writes outside the roots to the agent tool under native external writes', async () => {
+        const { root, configPath } = await observedPolicy()
+        const upstream = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-related-checkout-')))
+        const outside = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-external-writes-')))
+        scratch.push(upstream, outside)
+        execFileSync('git', ['init', '--quiet', upstream])
+        writeFileSync(join(upstream, 'README.md'), 'synthetic upstream\n')
+        execFileSync('git', ['-C', upstream, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', 'commit', '--quiet', '--allow-empty', '-m', 'Synthetic'])
+        writeFileSync(join(root, 'notes.md'), 'synthetic notes\n')
+        writeFileSync(join(outside, 'photo.png'), 'synthetic image\n')
+        symlinkSync(join(root, '.cockpit/guards'), join(outside, 'guards-link'))
+        const config = CockpitConfig.parse(parse(readFileSync(configPath, 'utf8')))
+        config.guards.related_checkouts = [upstream]
+        config.guards.external_reads = 'native'
+        config.guards.external_writes = 'native'
+        writeFileSync(configPath, stringify(config))
+        expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        const identity = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
+        const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
+            resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }) }
+        const decide = async (command: string) => (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'codexcli', cwd: root,
+            payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+        for (const command of [`git -C '${upstream}' log -1`, `git -C '${upstream}' status --short`, `cat '${upstream}/README.md'`, `rg -n synthetic '${upstream}'`,
+            `cp notes.md '${outside}/copy.md'`, `mv '${outside}/photo.png' photo.png`]) {
+            expect(await decide(command), command).toMatchObject({ decision: 'allow' })
+        }
+        for (const command of [`echo x > '${upstream}/notes.md'`, `git -C '${upstream}' commit --allow-empty -m x`, `cp notes.md '${outside}/guards-link/bash-guard.sh'`,
+            `echo x >> '${homedir()}/.zshrc'`, `cp notes.md '${homedir()}/.claude/settings.json'`]) {
+            expect(await decide(command), command).toMatchObject({ decision: 'deny' })
+        }
+    }, 120_000)
+
     it('allows development by default, resolves where a bare push goes, and asks again in strict mode', async () => {
         const { root, configPath } = await observedPolicy()
         const remote = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-push-remote-')))

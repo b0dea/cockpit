@@ -171,6 +171,7 @@ describe('public surface publication transaction', () => {
             declaration.surfaces.tools = [...SURFACE_TARGETS]
             // A person approves each server here, so only the one whose digest is recorded is enabled.
             declaration.autonomy.mcp_approve = 'person'
+            declaration.guards.secret_paths = ['var/sessions', 'app:tmp/sessions']
             const remoteHeaders = { Authorization: 'Bearer ${SYNTHETIC_TOKEN}', 'X-Workspace': '${SYNTHETIC_WORKSPACE}' }
             declaration.mcp.approved['remote-headers'] = mcpApprovalDigest({ transport: 'http', url: 'https://mcp.example.test/mcp', headers: remoteHeaders, helper: null }, fixture.root)
             declaration.mcp.approved['remote-helper'] = mcpApprovalDigest({ transport: 'http', url: 'https://helper.example.test/mcp', headers: {},
@@ -252,7 +253,10 @@ describe('public surface publication transaction', () => {
             expect(claude.mcpServers['approved-server']!.args).toEqual([expect.stringMatching(/^\.cockpit\/mcp\/[a-f0-9]{64}\.sh$/)])
             // Claude's Read, Grep and Glob bypass the guard hook, so the read denial is native: every
             // `.env` and `.env.*` file, every secrets directory, and each declared instance by its clone-independent sibling suffix.
-            expect(settings.permissions.deny!.filter(rule => rule.startsWith('Read('))).toEqual(['Read(//**/.env)', 'Read(//**/.env.*)', 'Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/external/.env)'])
+            // A declared secret path is denied to Read and Edit as itself and everything below it.
+            expect(settings.permissions.deny!.filter(rule => rule.startsWith('Read('))).toEqual(['Read(//**/.env)', 'Read(//**/.env.*)', 'Read(//**/.secrets/**)', 'Read(//**/app/.env)',
+                'Read(//**/app/tmp/sessions)', 'Read(//**/app/tmp/sessions/**)', 'Read(//**/external/.env)', 'Read(/var/sessions)', 'Read(/var/sessions/**)'])
+            expect(settings.permissions.deny).toEqual(expect.arrayContaining(['Edit(//**/app/tmp/sessions)', 'Edit(//**/app/tmp/sessions/**)', 'Edit(/var/sessions)', 'Edit(/var/sessions/**)']))
             // The guard judges command text, so the files it depends on are also denied to the tool's own
             // writes: its script, identity and accepted policy, every hook registration, and each
             // repository's Git hooks and configuration, submodules and worktree configuration included,
@@ -329,6 +333,7 @@ describe('public surface publication transaction', () => {
             expect(openCode.permission.read).toEqual({
                 '*/.secrets/*': 'deny', '*/app/.env': 'deny', '*/external/.env': 'deny',
                 '.secrets/*': 'deny', 'app/.env': 'deny', 'external/.env': 'deny',
+                ...Object.fromEntries(['var/sessions', 'app/tmp/sessions'].flatMap(path => [path, `${path}/*`, `*/${path}`, `*/${path}/*`]).map(pattern => [pattern, 'deny'])),
             })
             expect(openCode.$schema).toBe('https://opencode.ai/config.json')
             expect(openCodeBytes.startsWith(`{/* cockpit:owner:${ownerId}:start */"$schema":"https://opencode.ai/config.json",`)).toBe(true)

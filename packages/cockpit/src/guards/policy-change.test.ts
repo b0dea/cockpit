@@ -30,6 +30,7 @@ const declared: Declared = {
         hosted_db_hosts: ['db.example.test'], vendor_endpoint_hosts: ['api.vendor.example.test'],
         allow: [{ argv: ['make', 'verify'], reason: 'Verification is safe.' }],
         deny: [{ prefix: ['make', 'deploy'], reason: 'Deploys are a person\'s.' }],
+        secret_paths: ['var/sessions'], related_checkouts: ['../upstream'], unresolved: 'deny',
     },
     mcp: { approved: { docs: 'a'.repeat(64) } },
     work: { attempt_cap: 1, gates: { accept: 'person' } },
@@ -61,6 +62,10 @@ describe('policyChange', () => {
         ['a removed deny rule', config => { config.guards.deny = [] }, ['guards.deny']],
         ['a new read path', config => { config.guards.read_paths = [{ path: '~/Downloads', reason: 'Inputs a person drops in.' }] }, ['guards.read_paths']],
         ['external reads handed to the agent tools', config => { config.guards.external_reads = 'native' }, ['guards.external_reads']],
+        ['a removed secret path', config => { config.guards.secret_paths = [] }, ['guards.secret_paths']],
+        ['a new related checkout', config => config.guards.related_checkouts.push('~/src/tool'), ['guards.related_checkouts']],
+        ['unresolved commands asking again', config => { config.guards.unresolved = 'ask' }, ['guards.unresolved']],
+        ['external writes handed to the agent tools', config => { config.guards.external_writes = 'native' }, ['guards.external_writes']],
         ['strict mode turned into the allow default', config => { config.guards.default = 'allow' }, ['guards.default']],
         ['an autonomy decision moved toward agent', config => { config.autonomy = { reset: 'agent' } }, ['autonomy.reset']],
         ['a work gate moved toward agent', config => { config.work.gates.accept = 'agent' }, ['work.gates.accept']],
@@ -102,6 +107,10 @@ describe('policyChange', () => {
 
     it.each<[string, (config: Declared) => void]>([
         ['an unchanged configuration', () => {}],
+        ['an added secret path and a removed related checkout', config => {
+            config.guards.secret_paths.push('web:var/sessions')
+            config.guards.related_checkouts = []
+        }],
         ['an added deny rule, a removed allow rule and added hosts', config => {
             config.guards.deny.push({ contains: ['--force'], reason: 'Forced writes are a person\'s.' })
             config.guards.allow = []
@@ -127,9 +136,11 @@ describe('policyChange', () => {
         expect(changed(edit)).toEqual({ kind: 'non-widening' })
     })
 
-    it('narrows when external reads return to grants and a read path is removed', () => {
+    it('narrows when external reads and writes return to the guard, unresolved commands are refused and a read path is removed', () => {
         const wide = structuredClone(declared)
         wide.guards.external_reads = 'native'
+        wide.guards.external_writes = 'native'
+        wide.guards.unresolved = 'ask'
         wide.guards.read_paths = [{ path: '~/Downloads', reason: 'Inputs a person drops in.' }]
         expect(policyChange(CockpitConfig.parse(wide), before)).toEqual({ kind: 'non-widening' })
     })

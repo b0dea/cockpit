@@ -11,6 +11,7 @@ import { GUARD_LOCAL_PATHS } from '../../guards/local-identity.js'
 import { claudeGuardFileDenials, openCodeGuardFileDenials } from '../../surfaces/guard-file-protection.js'
 import { RefusalError, tryParseJson } from '../contract.js'
 import { compareCodeUnits, ownRecord, sha256 } from './shared.js'
+import { splitRepositoryPath } from '../../repository-path.js'
 
 export function expectedSurfaceOutputs(
     tools: readonly SurfaceTarget[],
@@ -168,11 +169,38 @@ export function emptyGeneration(): Extract<SurfaceGenerationOutcome, { kind: 'co
 function claudeReadDenials(
     siblings: readonly { slug: string; path: string }[],
     instances: readonly { slug: string; path: string }[],
+    secretPaths: readonly string[] = [],
 ): readonly string[] {
-    const literal = (path: string) => path.replace(/[*?[\]\\!#()]/g, '?')
-    const rules = ['//**/.secrets/**', '//**/.env', '//**/.env.*', ...instanceReadPaths(siblings, instances)
-        .map(row => row.inRoot ? `/${literal(row.path)}` : `//**/${literal(row.path)}`)]
+    const rules = ['//**/.secrets/**', '//**/.env', '//**/.env.*', ...instanceReadPaths(siblings, instances).map(claudePathRule),
+        ...claudeSecretPathDenials(siblings, secretPaths)]
     return [...new Set(rules)].sort(compareCodeUnits)
+}
+
+function claudePathRule(row: Readonly<{ inRoot: boolean; path: string }>): string {
+    const literal = row.path.replace(/[*?[\]\\!#()]/g, '?')
+    return row.inRoot ? `/${literal}` : `//**/${literal}`
+}
+
+/**
+ * `[guards] secret_paths`, spelled as Claude Code rules the way an instance is: the path itself and
+ * everything below it, since a declared secret path may be a file or a directory. Claude Code's Read,
+ * Grep and Glob never reach the guard hook, and its Edit and Write do, so each path is denied to both
+ * the read and the edit rules: the hook still refuses an edit if a rule is missing, the rule refuses a read the hook never sees.
+ */
+function claudeSecretPathDenials(siblings: readonly { slug: string; path: string }[], secretPaths: readonly string[]): readonly string[] {
+    return declaredSecretPaths(siblings, secretPaths).flatMap(row => [claudePathRule(row), `${claudePathRule(row)}/**`])
+}
+
+/** Each declared secret path by the path that is the same in every clone, as an instance's is. */
+function declaredSecretPaths(siblings: readonly { slug: string; path: string }[], secretPaths: readonly string[]): readonly Readonly<{ inRoot: boolean; path: string }>[] {
+    return secretPaths.map(declared => {
+        const { slug, path } = splitRepositoryPath(declared)
+        if (slug === undefined) return { inRoot: true, path }
+        const sibling = siblings.find(row => row.slug === slug)
+        if (!sibling) throw new RefusalError(`secret path ${declared} names sibling ${slug}, whose directory was not authenticated`)
+        const suffix = [...sibling.path.split('/'), ...path.split('/')].filter(part => part !== '..' && part !== '.' && part !== '')
+        return sibling.path === '' ? { inRoot: true, path } : { inRoot: false, path: suffix.join('/') }
+    })
 }
 
 /**
@@ -205,9 +233,11 @@ const OPENCODE_CONFIG_SCHEMA = 'https://opencode.ai/config.json'
 export function openCodeReadDenials(
     siblings: readonly { slug: string; path: string }[],
     instances: readonly { slug: string; path: string }[],
+    secretPaths: readonly string[] = [],
 ): readonly string[] {
     const literal = (path: string) => path.replace(/[*?]/g, '?')
-    const paths = ['.secrets/*', ...instanceReadPaths(siblings, instances).map(row => literal(row.path))]
+    const paths = ['.secrets/*', ...instanceReadPaths(siblings, instances).map(row => literal(row.path)),
+        ...declaredSecretPaths(siblings, secretPaths).flatMap(row => [literal(row.path), `${literal(row.path)}/*`])]
     return [...new Set(paths.flatMap(path => [path, `*/${path}`]))].sort(compareCodeUnits)
 }
 
@@ -260,6 +290,7 @@ export function nativeSources(
     grants: readonly { slug: string; target: SurfaceTarget; path: string }[],
     siblings: readonly { slug: string; path: string }[],
     instances: readonly { slug: string; path: string }[],
+    secretPaths: readonly string[] = [],
 ): readonly SurfaceSourceFile[] {
     const sources: SurfaceSourceFile[] = []
     const transports = mcp.result.harnesses.flatMap(row => row.servers)
@@ -297,8 +328,8 @@ export function nativeSources(
         permission: {},
         claudecode: {
             permission: {
-                read: Object.fromEntries(claudeReadDenials(siblings, instances).map(rule => [rule, 'deny'])),
-                edit: Object.fromEntries(claudeGuardFileDenials().map(rule => [rule, 'deny'])),
+                read: Object.fromEntries(claudeReadDenials(siblings, instances, secretPaths).map(rule => [rule, 'deny'])),
+                edit: Object.fromEntries([...claudeGuardFileDenials(), ...claudeSecretPathDenials(siblings, secretPaths)].map(rule => [rule, 'deny'])),
                 bash: claudeCommandAllowances(),
             },
             permissions: { additionalDirectories: paths('claudecode') },

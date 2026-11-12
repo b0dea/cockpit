@@ -354,7 +354,7 @@ export async function prepareSurfaces(
     }
     // Every sibling directory relative to the cockpit root, whether or not a grant names it.
     const siblingDirectories = [...prepared.siblingRoots.siblings].map(([slug, sibling]) => ({ slug, path: relative(prepared.root, sibling.root) }))
-    const generatedNativeSources = nativeSources(mcp, projection.grants, siblingDirectories, prepared.registry.secretPaths)
+    const generatedNativeSources = nativeSources(mcp, projection.grants, siblingDirectories, prepared.registry.secretPaths, config.guards.secret_paths)
     const generatedSources = [...mergedSources, ...generatedNativeSources]
         .sort((left, right) => compareCodeUnits(left.path, right.path))
     if (new Set(generatedSources.map(source => source.path)).size !== generatedSources.length) {
@@ -514,7 +514,7 @@ export async function prepareSurfaces(
     const grantTargets = [...new Set([...projection.grants.map(row => row.target), ...tools.filter(target => target === 'opencode')])]
     const generatedNativeMcp = nativeFragmentSet(generated, mcp.result, nativeMcpPaths(mcpTargets))
     const nativeGrants = nativeGrantFragmentSet(generated, projection.grants, nativeGrantPaths(grantTargets),
-        openCodeReadDenials(siblingDirectories, prepared.registry.secretPaths))
+        openCodeReadDenials(siblingDirectories, prepared.registry.secretPaths, config.guards.secret_paths))
     const nativeMcp = generatedNativeMcp && nativeGrants ? bindNativeGrantsToMcp(generatedNativeMcp, nativeGrants) : undefined
     if (!nativeMcp || !nativeGrants) return refuse('SURFACE_INPUT_INVALID', 'native surface fragments could not be bound', 'surfaces')
     const browserSkillRendered = browser?.files.some(file => file.path.endsWith('/skills/cockpit-browser/SKILL.md')) === true
