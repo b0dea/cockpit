@@ -908,17 +908,18 @@ function compoundTokens(compound: Compound): readonly Token[] {
     return [...compound.kind === 'for' ? compound.items : compound.kind === 'while' ? compound.condition : [], ...compound.body, ...compound.redirects]
 }
 
-// Variables the shell gives a meaning of its own, or sets itself, so an assignment to one is never read as plain text.
-const SPECIAL_VARIABLES = /^(?:HOME|PATH|CDPATH|PWD|OLDPWD|IFS|ENV|BASH_ENV|RANDOM|SRANDOM|SECONDS|LINENO|UID|EUID|PPID|SHELLOPTS|BASHOPTS|BASH_[A-Z_]*|ZSH_[A-Z_]*|path|cdpath|fpath|manpath|mailpath|module_path|psvar|fignore|watch)$/
-// A plain path, with nothing a later expansion could read differently.
-const PLAIN_VALUE = /^[\w@%+=:,./-]*$/
-/** Drops every variable a word of `tokens` could set: `NAME=…`, or `NAME` handed to read, unset, export, a loop and the like. */
-function forget(variables: Map<string, string>, tokens: readonly Token[]) {
-    for (const token of tokens) {
-        const name = token.kind === 'word' ? /^([A-Za-z_][A-Za-z0-9_]*)(?:=|$)/.exec(token.value)?.[1] : undefined
-        if (name !== undefined) variables.delete(name)
-    }
-}
+// Variables bash or zsh give a meaning of their own, or set themselves after any command, so an assignment to one is not
+// what a later expansion reads: `$_` is the previous command's last word, and zsh's `argv`, `reply` and `match` are set
+// by builtins. A name starting with `_` is never tracked.
+const SPECIAL_VARIABLES = new RegExp('^(?:HOME|PATH|CDPATH|PWD|OLDPWD|IFS|ENV|BASH_ENV|RANDOM|SRANDOM|SECONDS|LINENO|UID|EUID|GID|EGID|PPID|SHELLOPTS|BASHOPTS|BASHPID'
+    + '|BASH[A-Z_]*|ZSH[A-Z_]*|HISTCMD|HISTFILE|HISTCHARS|histchars|EPOCHSECONDS|EPOCHREALTIME|epochtime|COLUMNS|LINES|OPTARG|OPTIND|COPROC|DIRSTACK|dirstack|GROUPS|FUNCNAME'
+    + '|PIPESTATUS|pipestatus|status|argv|ARGC|reply|REPLY|match|MATCH|mbegin|mend|MBEGIN|MEND|ERRNO|TTY|TTYIDLE|USERNAME|HOST|SHLVL|LOGNAME|TRY_BLOCK_ERROR|TRY_BLOCK_INTERRUPT'
+    + '|path|cdpath|fpath|manpath|mailpath|module_path|psvar|PSVAR|fignore|watch|prompt|PS[1-4]|PROMPT[1-4]?|RPROMPT|RPS1|signals|options|parameters|commands|functions'
+    + '|aliases|galiases|saliases|builtins|history|historywords|jobstates|jobtexts|jobdirs|nameddirs|userdirs|modules|terminfo|termcap|widgets|keymaps|errnos|sysparams'
+    + '|funcstack|funcfiletrace|funcsourcetrace|functrace|zsh_eval_context|precmd_functions|preexec_functions|chpwd_functions|periodic_functions)$')
+const TRACKED_NAME = /^[A-Za-z][A-Za-z0-9_]*$/
+// A plain path: zsh expands a leading or `:`-led `=cmd` and bash a `:~` in an assignment's value, so neither `=` nor `:` is plain.
+const PLAIN_VALUE = /^[\w@%+,./-]*$/
 
 // Builtins that set a variable they are handed by name, which may be HOME or CDPATH when the guard cannot see the name.
 const variableSetters = new Set(['export', 'declare', 'typeset', 'readonly', 'local', 'read', 'unset', 'getopts', 'mapfile', 'readarray', 'printf'])
@@ -996,10 +997,8 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
         if (!compound) return [...substituted(current, directory), ...invocation(current, directory, local)]
         // Redirects after a compound command apply to every command inside, so they are judged once as a bare redirect.
         const redirected = compound.redirects.length ? [...substituted(compound.redirects, directory), ...invocation(compound.redirects, directory, local)] : []
-        // A subshell sees the variables set so far; a loop may change them on any pass, so it sees none it sets.
-        const inner = new Map(variables)
-        if (compound.kind !== 'subshell') forget(inner, [...compoundTokens(compound), ...compound.kind === 'for' ? [{ kind: 'word', value: compound.name } as Token] : []])
-        const nested = { ...deeper, variables: inner }
+        // A subshell sees the variables set so far; a loop may change them on any pass, so it sees none.
+        const nested = { ...deeper, variables: compound.kind === 'subshell' ? new Map(variables) : new Map<string, string>() }
         if (compound.kind === 'subshell') return [...parseTokens(compound.body, directory, nested, true), ...redirected]
         // A cd in a loop would move every later pass, so its commands are judged once only without one.
         if (compound.kind === 'while') return [...parseTokens(compound.condition, directory, nested, false), ...parseTokens(compound.body, directory, nested, false), ...redirected]
@@ -1012,18 +1011,19 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
         return [...substituted(compound.items, directory), header, ...parseTokens(compound.body, directory, nested, false), ...redirected]
     }
     // What a command that only assigns sets for the rest of the list: only where it surely runs in this shell, never in a
-    // pipeline, a background job or after `&&` or `||`; any other command that names a variable may change it.
+    // pipeline, a background job or after `&&` or `||`. Any other command may set a variable under a spelling the guard
+    // does not read (`printf -vout`, `declare -n`, `read`, a function), so after one nothing is known.
     const track = (separator: string | undefined) => {
         const assigns = !compound && current.length > 0 && current.every((token) => token.kind === 'word' && /^[A-Za-z_][A-Za-z0-9_]*=/.test(token.value))
         if (!assigns) {
-            forget(variables, compound ? [...compoundTokens(compound), ...compound.kind === 'for' ? [{ kind: 'word', value: compound.name } as Token] : []] : current)
+            variables.clear()
             return
         }
         const sure = gate === undefined && separator !== '|' && separator !== '&' && !groups.some((group) => group.conditional)
         for (const token of current) {
             const name = token.value.slice(0, token.value.indexOf('='))
             const value = token.value.slice(name.length + 1)
-            if (sure && !token.dynamic && !token.braced && !SPECIAL_VARIABLES.test(name) && PLAIN_VALUE.test(value)) {
+            if (sure && !token.dynamic && !token.braced && TRACKED_NAME.test(name) && !SPECIAL_VARIABLES.test(name) && PLAIN_VALUE.test(value)) {
                 variables.set(name, value)
                 for (const group of groups) group.names.add(name)
             } else variables.delete(name)
@@ -1057,8 +1057,8 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
             }
             states = [...new Map(next.map((state) => [`${state.ok}\0${state.directory}`, state])).values()]
         }
-        // A group that feeds a pipeline is that pipeline's stage.
-        const stageItems = closed?.piped ?? result.slice(first)
+        // A group that feeds a pipeline is that pipeline's stage, with any redirect after it.
+        const stageItems = [...closed?.piped ?? [], ...result.slice(first)]
         if (gate === '|' && fetched && stageItems.some(interprets)) refuse(FETCHED_CODE)
         fetched = (gate === '|' && fetched) || stageItems.some(fetches)
         track(separator)
@@ -1137,7 +1137,14 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
         } else if (token.kind === 'op' && token.value === '}') {
             if (!groups.length || current.length || needsCommand) refuse('Malformed brace group.')
             const group = groups.pop()!
-            const after = tokens[i + 1]
+            // The separator after the group and any redirects on it.
+            let next = i + 1
+            for (let item = tokens[next]; item; item = tokens[next]) {
+                if (item.kind === 'op' && redirects.has(item.value)) next += 2
+                else if (['descriptor', 'body', 'comment'].includes(item.kind)) next++
+                else break
+            }
+            const after = tokens[next]
             // A group feeding a pipeline, or run in the background, runs in a subshell: a cd or an assignment there moves nothing after it.
             if (after?.kind === 'op' && ['|', '&'].includes(after.value)) {
                 const items = result.slice(group.start)
@@ -1146,8 +1153,12 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
                 closed = { piped: items }
             } else closed = {}
         } else {
+            // A redirect on a closed group keeps the group as the stage it ends.
+            const previous = current.at(-1)
+            const redirecting = token.kind === 'descriptor' || token.kind === 'body' || token.kind === 'op' && redirects.has(token.value)
+                || token.kind === 'word' && previous?.kind === 'op' && redirects.has(previous.value)
             current.push(token)
-            closed = undefined
+            if (!redirecting) closed = undefined
             if (token.kind === 'word') needsCommand = false
         }
     }

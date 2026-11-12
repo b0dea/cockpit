@@ -26,6 +26,8 @@ export interface ReadOnlyAccess {
     readonly trackedContent?: { readonly limitedTo: readonly string[] | null }
     /** A `reads` operand may name a revision instead, so one that names no existing path reads nothing. */
     readonly revisionOperands?: boolean
+    /** The command follows links below its `trees`, which a walk that does not follow them cannot vouch for. */
+    readonly followsLinks?: true
 }
 
 type Classified = Omit<ReadOnlyAccess, 'cwd'> | undefined
@@ -223,7 +225,8 @@ function cmp(argv: readonly string[]): Classified {
 
 /**
  * diff compares two files, or the files directly inside two directories and with -r everything below them, so each
- * operand is judged as a tree: what lies below it may be printed.
+ * operand is judged as a tree: what lies below it may be printed. It follows links there, which the evaluator's
+ * source-tree check judges.
  */
 function diff(argv: readonly string[]): Classified {
     const parsed = parseOptions(argv, DIFF)
@@ -427,7 +430,8 @@ export function cockpitLauncherPrefix(executable: string, argv: readonly string[
 
 // gh commands that only read the repository's host. Every option they take formats or selects what is printed; `--web`
 // starts a browser instead, so it is left out.
-const GH_READS = new Set(['pr view', 'pr list', 'pr checks', 'pr diff', 'pr status', 'run view', 'run list', 'run watch', 'issue view', 'issue list', 'issue status', 'repo view', 'auth status'])
+// `pr diff` is left out: a pull request can add an environment file, which its diff prints.
+const GH_READS = new Set(['pr view', 'pr list', 'pr checks', 'pr status', 'run view', 'run list', 'run watch', 'issue view', 'issue list', 'issue status', 'repo view', 'auth status'])
 // gh's options that take the next word, as they appear on its read commands and `gh api`.
 const GH_VALUES = new Set(['-R', '--repo', '-q', '--jq', '-t', '--template', '--json', '-s', '--state', '-L', '--limit', '-A', '--author', '-a', '--assignee',
     '-l', '--label', '-B', '--base', '-H', '--head', '--search', '-S', '-b', '--branch', '-u', '--user', '-w', '--workflow', '-e', '--event', '-c', '--commit',
@@ -451,6 +455,8 @@ function gh(argv: readonly string[]): Classified {
     }
     const [group, verb, ...rest] = operands
     const command = `${group} ${verb}`
+    // A path the host holds under a secret's name prints that secret, so its name is judged as a local one would be.
+    if (argv.some((word) => /(?:^|\/)\.(?:env|secrets)(?:[./]|$)/i.test(word))) return undefined
     if (group === 'api') {
         const method = (values.get('-X') ?? values.get('--method') ?? 'GET').toUpperCase()
         return method === 'GET' && verb !== undefined && verb !== 'graphql' && !rest.length ? { reads: [], trees: [], listings: [] } : undefined

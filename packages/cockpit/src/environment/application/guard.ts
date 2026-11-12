@@ -473,11 +473,12 @@ export async function runGuardEvaluationApplication(
         }
         await Promise.all([worker(), worker(), worker(), worker()])
         const walks = new Map<string, readonly string[] | null>()
-        const searched = (path: string, unignoredOnly: boolean): readonly string[] | null => {
+        const searched = (path: string, unignoredOnly: boolean, followsLinks: boolean): readonly string[] | null => {
             const listed = unignoredOnly ? unignored.get(path) : undefined
             if (listed !== undefined) return listed
-            let walked = walks.get(path)
-            if (walked === undefined) walks.set(path, walked = guardSensitivePathsBelow(path))
+            const key = `${followsLinks}\0${path}`
+            let walked = walks.get(key)
+            if (walked === undefined) walks.set(key, walked = guardSensitivePathsBelow(path, undefined, followsLinks))
             // The walk names environment and secrets names; an ignore-aware search also needs the instances it reads.
             if (!unignoredOnly || walked === null) return walked
             const found = [...new Set([...walked, ...instancePaths.filter(item => confinedPath(path, item) && present(item))])].sort()
@@ -556,11 +557,11 @@ export async function runGuardEvaluationApplication(
                 }
                 if (status.isSymbolicLink()) {
                     // Package managers link installed packages into a store inside the checkout. A named
-                    // file read, a search of a file or directory, or a working directory follows that link to
-                    // a target inside the roots and is judged there, a search by the same secret walk as any
-                    // other. A path below such a working directory still meets the link, so a write there is
-                    // refused and a `..` leaving it is caught above. External grants never follow one.
-                    if (managedRoot && ['read', 'search', 'unignored-search', 'cwd'].includes(request.operation)) {
+                    // file read, or a search of a file or directory, follows that link to a target inside
+                    // the roots and is judged there, a search by the same secret walk as any other. A working
+                    // directory does not: its relative paths and program paths resolve where the link leads.
+                    // External grants never follow one.
+                    if (managedRoot && ['read', 'search', 'unignored-search'].includes(request.operation)) {
                         inspected.set(cursor, status)
                         const target = realpathSync(path)
                         const leads = allowed(target) ? lstatSync(target) : undefined
@@ -581,7 +582,7 @@ export async function runGuardEvaluationApplication(
                 && !(request.operation === 'list' && inspected.get(path)!.isDirectory())) return { status: 'unavailable', path, symlink: false }
             const search = request.operation === 'search' || request.operation === 'unignored-search'
             return { status: 'resolved', path, symlink: false, identity: exists ? chain.at(-1)! : null, ancestors: exists ? chain.slice(0, -1) : chain,
-                ...(search ? { sensitive: exists ? searched(path, request.operation === 'unignored-search') : [] } : {}),
+                ...(search ? { sensitive: exists ? searched(path, request.operation === 'unignored-search', request.followsLinks === true) : [] } : {}),
                 ...(request.operation === 'repository' ? { tracked: tracked.get(path) ?? null } : {}) }
         }
         const cockpitInvocations: GuardInvocationProfile[] = []

@@ -60,6 +60,7 @@ describe('guard protected locations', () => {
         mkdirSync(join(root, 'tree/src'), { recursive: true })
         writeFileSync(join(root, 'tree/src/a.ts'), 'export {}\n')
         expect(guardSensitivePathsBelow(join(root, 'tree'))).toEqual([])
+        expect(guardSensitivePathsBelow(join(root, 'tree'), undefined, true)).toEqual([])
         mkdirSync(join(root, 'tree/pkg/.Secrets'), { recursive: true })
         writeFileSync(join(root, 'tree/src/.ENV.local'), 'SYNTHETIC=1\n')
         writeFileSync(join(root, 'tree/.envrc'), 'export SYNTHETIC=1\n')
@@ -70,6 +71,8 @@ describe('guard protected locations', () => {
         expect(guardSensitivePathsBelow(join(root, 'tree/src/.ENV.local'))).toEqual([join(root, 'tree/src/.ENV.local')])
         expect(guardSensitivePathsBelow(join(root, 'absent'))).toEqual([])
         expect(guardSensitivePathsBelow(join(root, 'tree'), 6)).toBeNull()
+        // A tool that follows links, as diff does, reads what the walk never sees behind one.
+        expect(guardSensitivePathsBelow(join(root, 'tree'), undefined, true)).toBeNull()
     })
 
     it('lists the protected paths a default ripgrep search reads from Git, and declines where Git cannot stand for ripgrep', async () => {

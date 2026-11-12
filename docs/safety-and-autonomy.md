@@ -415,9 +415,10 @@ on Codex and OpenCode, where a prompt becomes a denial. It covers exact argument
 `pwd`, `cat`, `head`, `tail`, `wc`, `shasum`, `cmp`, `diff`, `rg`, `grep`, `fd`, `find`, `jq`, `echo`, `printf`, `sed`,
 `git status`, `git diff`, `git log`, `git show`, `git grep`, `git blame`, `git rev-parse`, `git branch` listing flags,
 `git worktree list`, `git ls-files`, `git cat-file`, `git merge-base`, `git remote`, `git config --get`,
-the `gh` reads (`pr view`, `list`, `checks`, `diff` and `status`, `run view`, `list` and `watch`, `issue view`,
+the `gh` reads (`pr view`, `list`, `checks` and `status`, `run view`, `list` and `watch`, `issue view`,
 `list` and `status`, `repo view`, `auth status` without the token, and `gh api` with `GET` and no fields
-or input), and the cockpit commands [below](#cockpit-commands-an-agent-can-run). The
+or input, none naming an `.env*` or `.secrets` path; `gh pr diff` is left out, because a pull request
+can add an environment file), and the cockpit commands [below](#cockpit-commands-an-agent-can-run). The
 [read-only profile](../packages/cockpit/src/guards/read-only.ts) lists each permitted option.
 
 - Any other option falls back to the ordinary rules, including options that run programs or write
@@ -445,7 +446,8 @@ or input), and the cockpit commands [below](#cockpit-commands-an-agent-can-run).
   named files, including guard controls, with algorithm and text/binary options. Check mode is
   excluded because a checksum manifest names additional files. `cmp` and `diff` read guard controls
   as any other file; `diff` is judged as reading everything below each operand, because a directory
-  operand prints the files inside it. Output redirects remain writes.
+  operand prints the files inside it, and it asks when a link lies below one, since it follows links
+  there. Output redirects remain writes.
 - `$?` is allowed as an argument only to a read-only command, and never as the directory of
   `env -C`.
 - A command may follow `cd ./dir`, `cd ../dir` or `cd /abs/dir` joined by `&&` or `;`, with the
@@ -460,11 +462,16 @@ or input), and the cockpit commands [below](#cockpit-commands-an-agent-can-run).
   substitution `<(…)` are judged by the commands inside them, so each is allowed when every command
   inside is. A `cd` inside a subshell moves only the subshell; one inside a loop, or inside a group
   that feeds a pipeline, is refused. Redirects after a loop or subshell are judged as writes or reads
-  of their own. `<(…)` must be a word of its own, and `>(…)` and `((` arithmetic are refused.
+  of their own. `<(…)` must be a word of its own, and `>(…)` and `((` arithmetic are refused. A
+  script read from `<(…)` or `/dev/stdin`, as in `bash <(…)`, `node <(…)` or `make -f <(…)`, is
+  code the guard never read, so it asks as inline code does.
 - A redirect may name a variable, as in `out=build; npm test > "$out/test.log"`, when the variable
-  is double-quoted and was set to a plain literal path in its own assignment earlier in the same
-  command, outside a pipeline, a background job, a loop and an `&&` or `||` chain, and nothing since
-  could have changed it. The redirect is then judged as the literal path. `"${PIPESTATUS[0]}"` and
+  is double-quoted and was set to a plain path, with no `=`, `:` or `~`, by assignments that come
+  directly before the command, outside a pipeline, a background job, a loop, a conditional group
+  and an `&&` or `||` chain. Any other command in between may set a variable under a spelling the
+  guard does not read, such as `printf -v` or `declare -n`, so after one no variable is resolved.
+  Names the shell sets itself, such as `_`, `REPLY` or zsh's `argv`, and names starting with `_`
+  are never resolved. The redirect is then judged as the literal path. `"${PIPESTATUS[0]}"` and
   other literal array indexes are read as plain variables.
 - Git runs read-only only in a directory with its own `.git`, because Git otherwise treats a
   directory holding `HEAD`, `objects` and `refs` as a repository and honours its configuration. Git
@@ -565,10 +572,10 @@ to the agent tool, which asks or sandboxes it by its own rules.
 
 A named file, or a search or listing, under a managed root may follow a package-manager link to a
 target inside a managed root: a named read only to a regular file, a search also to a directory,
-which is then walked for secrets as any search is. A working directory may follow such a link to a
-directory, as in `cd node_modules/<package>/docs && rg <pattern> <file>`; a path below it still meets
-the link, so a write there is refused, and a `..` that leaves the link is not followed. Both
-spellings and the target's identity are checked, and the link is revalidated before the decision is
+which is then walked for secrets as any search is. A working directory reached through a link is
+refused with that reason, because relative paths and `..` from it resolve where the link leads: run
+the command from the checkout and name the path through the link, as in
+`rg <pattern> node_modules/<package>/docs`. Both spellings and the target's identity are checked, and the link is revalidated before the decision is
 returned.
 
 A `[guards] allow` rule admits a command the read-only profile cannot classify, but never past the

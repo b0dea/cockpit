@@ -145,9 +145,10 @@ const sensitiveName = isSensitiveGuardName
 /**
  * Every path at or below `path` whose case-folded name starts with `.env` or is `.secrets`, of any
  * type, without following links, as a recursive search would reach it; null once the walk passes
- * `entryLimit` entries or finds more than the sensitive path bound. A missing path has none.
+ * `entryLimit` entries or finds more than the sensitive path bound. A missing path has none. With
+ * `followsLinks`, for a tool that follows them, null as well once the walk meets a link.
  */
-export function guardSensitivePathsBelow(path: string, entryLimit = GUARD_SEARCH_ENTRY_LIMIT): readonly string[] | null {
+export function guardSensitivePathsBelow(path: string, entryLimit = GUARD_SEARCH_ENTRY_LIMIT, followsLinks = false): readonly string[] | null {
     let status
     try { status = lstatSync(path) } catch (error) { if (missing(error)) return []; throw error }
     const found = sensitiveName(basename(path)) ? [path] : []
@@ -156,7 +157,7 @@ export function guardSensitivePathsBelow(path: string, entryLimit = GUARD_SEARCH
     while (pending.length) {
         const directory = pending.pop()!
         for (const entry of readdirSync(directory, { withFileTypes: true })) {
-            if (++seen > entryLimit) return null
+            if (++seen > entryLimit || followsLinks && entry.isSymbolicLink()) return null
             const child = join(directory, entry.name)
             if (sensitiveName(entry.name) && found.push(child) > GUARD_LOCATION_LIMITS.sensitivePaths) return null
             if (entry.isDirectory()) pending.push(child)

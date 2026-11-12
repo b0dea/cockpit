@@ -134,6 +134,8 @@ interface PathInspectionRequest {
     readonly from?: string
     /** For a `manifest`, also the scripts any package of the enclosing workspace declares, as `workspace`. */
     readonly workspace?: true
+    /** For a `search`, the reading tool follows links, so a link below the path leaves its `sensitive` unknown (null). */
+    readonly followsLinks?: true
 }
 /** The application supplies current, symlink-aware facts; the evaluator performs no I/O. */
 export type PathInspection = (request: PathInspectionRequest) => unknown
@@ -1211,9 +1213,10 @@ const CREDENTIAL_PRINTERS: ReadonlyArray<readonly string[]> = [['gh', 'auth', 't
 
 /** Whether an invocation prints a remote URL Git has configured: `git remote -v`, `git remote get-url` and `git ls-remote --get-url`. */
 function printsRemoteUrl(git: GitInvocation | undefined): boolean {
-    const [first, ...rest] = git?.args ?? []
-    return git?.verb === 'remote' && (first === 'get-url' || [first, ...rest].some(word => word !== undefined && /^(?:-v+|--verbose)$/.test(word)))
-        || git?.verb === 'ls-remote' && git.args.includes('--get-url')
+    // Git takes any unambiguous prefix of a long option: `--verb` is --verbose and `--g` is --get-url.
+    const abbreviates = (word: string, option: string, shortest: number) => word.length >= shortest && option.startsWith(word)
+    return git?.verb === 'remote' && (git.args[0] === 'get-url' || git.args.some(word => /^-v+$/.test(word) || abbreviates(word, '--verbose', 3)))
+        || git?.verb === 'ls-remote' && git.args.some(word => abbreviates(word, '--get-url', 3))
 }
 
 /** Whether an invocation prints a credential without naming a file. */
@@ -1239,7 +1242,7 @@ function printsCredential(invocation: ParsedInvocation, git: GitInvocation | und
 
 // A live payment secret or restricted key, as the payment processor issues it: a pasted one lands in shell
 // history and transcripts. Test keys of the same shape reach only test data.
-const LIVE_SECRET_KEY = /[sr]k_live_[A-Za-z0-9]{24,}/
+const LIVE_SECRET_KEY = /(?<![A-Za-z0-9])[sr]k_live_[A-Za-z0-9]{24,}/
 
 // Names a glob is tried against: a pattern that can match one of them may reach a secret.
 const SECRET_SAMPLES = ['.env', '.env.local', '.env.production', '.secrets', 'id_rsa', 'id_ed25519', 'credentials', 'server.pem', 'server.key', '.npmrc', '.netrc',
@@ -1457,10 +1460,17 @@ function interpreterCode(options: InterpreterOptions, argv: readonly string[]): 
     return true
 }
 
+// A descriptor or standard input as a script: what a `<(…)` or pipe produced, which the guard never read.
+const PIPED_SCRIPT = /^\/dev\/(?:fd\/\d+|stdin)$/
+
 /** Whether a known tool runs code the guard cannot read: inline code, a program an option names, or a script on standard input. */
 function runsUnreadCode(invocation: ParsedInvocation): boolean {
     const name = posix.basename(invocation.executable ?? '')
     const argv = invocation.argv
+    if (PIPED_SCRIPT.test(executedFile(invocation) ?? '')) return true
+    // make, awk and sed run the program file -f names.
+    if (['make', 'awk', 'gawk', 'mawk', 'nawk', 'sed'].includes(name) && argv.some((arg, at) => PIPED_SCRIPT.test(arg) && /^(?:-f|--file|--makefile)$/.test(argv[at - 1] ?? '')
+        || /^(?:-f|--file=|--makefile=)\/dev\/(?:fd\/\d+|stdin)$/.test(arg))) return true
     const interpreter = INTERPRETER_OPTIONS[name]
     if (interpreter) return interpreterCode(interpreter, argv)
     if (name === 'bun') return argv.some(arg => /^(?:-e|--eval|-p|--print)(?:=|$)/.test(arg))
@@ -1748,18 +1758,22 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     // A throwing inspector is missing evidence, which every caller treats as unsafe; the cause is
     // kept so the refusal can name it.
     let inspectionFailure: string | undefined
+    // The last inspected path leads through a link, which the guard judges only as spelled.
+    let inspectedLink = false
     const resolvedEvidence = (request: PathInspectionRequest): JsonSnapshotObject | undefined => {
         let evidence: JsonSnapshot | undefined
         inspectionFailure = undefined
+        inspectedLink = false
         try { evidence = snapshotJson(inspect(request)) }
         catch (error) { inspectionFailure = errorCause(error); return undefined }
+        inspectedLink = record(evidence) && evidence.symlink === true
         const lexical = posix.resolve(request.cwd, request.path)
         const listed = request.operation === 'search' || request.operation === 'unignored-search' ? 'sensitive' : request.operation === 'repository' ? 'tracked' : undefined
         const canonicalPath = evidence !== undefined && record(evidence) ? evidence.canonicalPath : undefined
         const observedPath = canonicalPath ?? lexical
         const paths = listed && evidence !== undefined && record(evidence) ? evidence[listed] : null
         return record(evidence) && keys(evidence, ['status', 'path', 'symlink', 'identity', 'ancestors', ...(listed ? [listed] : []), ...(canonicalPath === undefined ? [] : ['canonicalPath'])]) && evidence.status === 'resolved'
-            && (canonicalPath === undefined || ['read', 'search', 'unignored-search', 'cwd'].includes(request.operation) && canonical(canonicalPath)
+            && (canonicalPath === undefined || ['read', 'search', 'unignored-search'].includes(request.operation) && canonical(canonicalPath)
                 && resolved.allowedRoots.some(root => within(lexical, root)) && resolved.allowedRoots.some(root => within(canonicalPath, root)))
             && evidence.path === lexical && evidence.symlink === false && (evidence.identity === null || identity(evidence.identity))
             && Array.isArray(evidence.ancestors) && evidence.ancestors.every(identity)
@@ -1799,7 +1813,10 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         }
         const evidence = resolvedEvidence(request)
         if (!evidence) {
-            hold(unavailable(`Guard path inspection failed, or its evidence is missing, symlinked or mismatched${inspectionFailure === undefined ? '' : ` (${inspectionFailure})`}.`))
+            hold(unavailable(request.operation === 'cwd' && inspectedLink
+                // A relative path or `..` from such a directory resolves where the link leads, not where it is spelled.
+                ? `The working directory ${shownGuardWord(request.path)} leads through a link, and the guard judges paths only as they are spelled. Run the command from the checkout and name the path through the link, as in \`rg <pattern> node_modules/<package>/docs\`.`
+                : `Guard path inspection failed, or its evidence is missing, symlinked or mismatched${inspectionFailure === undefined ? '' : ` (${inspectionFailure})`}.`))
             return
         }
         if (!mutating) return evidence
@@ -1943,7 +1960,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             // Unenumerated secrets leave every content read unproven, and a second hard link to a
             // protected file leaves every recursive search unproven: either may reach it unnamed.
             if (kind !== 'listing' && !secretFiles || kind === 'tree' && resolved.protectedFilesLinked) safe = false
-            const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: kind === 'tree' ? access.skipsIgnored ? 'unignored-search' : 'search' : kind === 'listing' && external ? 'list' : 'read' })
+            const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: kind === 'tree' ? access.skipsIgnored ? 'unignored-search' : 'search' : kind === 'listing' && external ? 'list' : 'read',
+                ...kind === 'tree' && access.followsLinks ? { followsLinks: true as const } : {} })
             if (!evidence || external && evidence.identity === null && !(kind === 'read' && access.revisionOperands)) {
                 if (external && kind === 'tree' && evidence) searchBlocker ??= ask(`${shownGuardWord(path)} does not exist outside the configured roots. Name an existing regular file.`)
                 else if (external && kind === 'tree') searchBlocker ??= ask(`A search of ${shownGuardWord(path)} outside the configured roots must name a regular file: there the guard recognises only .env and .secrets names, not other credential files, so it does not search a directory or follow a link. Search the named files instead.`)
@@ -2199,7 +2217,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         // Archivers, copiers and recursive diffs read every file below a source, as a recursive search does.
         const sources = sourceTrees(invocation)
         const othersReadOnly = invocations.every(other => other === invocation || accesses.get(other) !== undefined || other.executable === null && !other.redirects.some(redirect => redirect.write))
-        if (sources?.length && !inspectReadOnly({ cwd: invocation.cwd, reads: [], trees: sources, listings: [] }, othersReadOnly) && !approvalBarriers.has(invocation)) {
+        if (sources?.length && !inspectReadOnly({ cwd: invocation.cwd, reads: [], trees: sources, listings: [], ...executableName === 'diff' ? { followsLinks: true as const } : {} }, othersReadOnly)
+            && !approvalBarriers.has(invocation)) {
             approvalBarriers.set(invocation, searchBlocker ?? ask(`${named(invocation)} reads every file below its sources, which the guard cannot prove hold no secret. Name the files it needs.`))
         }
         if (posix.basename(invocation.executable ?? '') === 'unzip' && invocation.argv.some(arg => /^-[a-zA-Z]*[pc]/.test(arg))) {

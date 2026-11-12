@@ -599,7 +599,7 @@ describe('guard policy construction', () => {
             .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringMatching(new RegExp(`${JSON.stringify(reported)}.*${JSON.stringify(root)}`)) } })
     }, 120_000)
 
-    it('runs a read from a working directory reached through a package link inside the roots, through the installed guard', async () => {
+    it('reads through a package link inside the roots by its path, and names the link when it is the working directory, through the installed guard', async () => {
         const { root, request, adapters } = await installedGuardRequest()
         // Package managers such as pnpm link an installed package into a store inside the checkout.
         mkdirSync(join(root, 'store/pkg/docs'), { recursive: true })
@@ -608,12 +608,12 @@ describe('guard policy construction', () => {
         symlinkSync('../store/pkg', join(root, 'vendor/pkg'))
         try {
             const decide = async (command: string) => (await runGuardEvaluationApplication({ ...request, payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+            expect(await decide('rg -n needle vendor/pkg/docs/guide.md')).toMatchObject({ decision: 'allow' })
+            // From a directory reached through a link, `..` and relative program paths resolve where the link leads.
             const linked = join(root, 'vendor/pkg/docs')
-            expect(await decide(`cd ${linked} && rg -n needle guide.md`)).toMatchObject({ decision: 'allow' })
-            // A write there still meets the link, and a link leading out of the roots is not followed.
-            expect(await decide(`cd ${linked} && touch new.md`)).not.toMatchObject({ decision: 'allow' })
-            expect(await decide(`cd ${linked} && rg -n needle ../../../store/pkg/docs/guide.md`)).not.toMatchObject({ decision: 'allow' })
-            expect(await decide(`cd ${join(root, 'node_modules/@b00dea/cockpit/docs')} && rg -n needle README.md`)).not.toMatchObject({ decision: 'allow' })
+            for (const command of [`cd ${linked} && rg -n needle guide.md`, `cd ${linked} && sort ../../../notes.md`, `cd ${linked} && ../../../bin/tool`, 'git -C vendor/pkg status']) {
+                expect(await decide(command), command).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('leads through a link') })
+            }
         } finally {
             rmSync(join(root, 'vendor'), { recursive: true, force: true })
             rmSync(join(root, 'store'), { recursive: true, force: true })
