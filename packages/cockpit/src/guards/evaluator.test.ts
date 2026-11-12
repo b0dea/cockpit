@@ -381,7 +381,7 @@ describe('resolved guard evaluation', () => {
                 shellPayload(`printf ok > ${path}`),
             ]) expect(evaluateGuard(parseGuardInput(input), policy(), inspect), `${input.tool_name} ${path}`).toEqual(refusal)
         }
-        for (const path of [`${other}/.claude/settings.json`, `${root}/.claude/agents/evaluator.md`, `${root}/.cockpit/guards/notes.md`, `${root}/.opencode/agents/reviewer.md`,
+        for (const path of [`${other}/.claude/settings.json`, `${root}/.claude/agents/evaluator.md`, `${root}/.opencode/agents/reviewer.md`,
             `${root}/workorders/WO-001.md`]) {
             expect(evaluateGuard(parseGuardInput(payload('Write', { file_path: path, content: '{}' })), policy(), inspect).decision, path).toBe('allow')
         }
@@ -1262,7 +1262,7 @@ describe('allow by default', () => {
         }
         const run = (command: string, configured: object = native, evidence: PathInspection = lands) => evaluateGuard(parseGuardInput(shellPayload(command)), configured, evidence)
         for (const command of [`mv ${home}/Downloads/a.png public/img/a.png`, `cp build/out.png ${home}/Desktop/out.png`, 'echo x > /tmp/scratch/out.log',
-            `rm ${home}/Downloads/a.png`, `git clone ../origin ${home}/src/copy`]) {
+            `rm ${home}/Downloads/a.png`]) {
             expect(run(command), command).toMatchObject({ decision: 'allow' })
         }
         expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: '/tmp/scratch/notes.md', content: 'x' } }), native, lands))
@@ -1647,9 +1647,9 @@ describe('allow by default', () => {
             'npm install github:a/b', 'npm install git+https://example.test/a/b.git', 'npm install https://example.test/x.tgz', 'npm i a/b', 'pnpm add a/b',
             'pnpm add github:a/b', 'yarn add https://example.test/x.tgz', 'bun add a/b'].map(command => ['install from a URL or Git source', command, undefined, { decision: 'ask' }] as const),
         ...['gh release download v1 -p bash-guard.sh -D .cockpit/guards --clobber', "gh release download v1 -p '*.sh' --dir .cockpit/guards", 'gh run download 1 -D .cockpit/mcp',
-            'gh repo clone o/r .cockpit/mcp/x', 'gh gist clone abc123 .opencode/plugin/x']
+            'gh repo clone o/r .cockpit/mcp/x', 'gh gist clone abc123 .opencode/plugin/x', 'gh release download v1 -D .cockpit/guards']
             .map(command => ['gh download into a control', command, undefined, { decision: 'deny' }] as const),
-        ...['gh release download v1 -D .cockpit/guards', 'gh run download 1 -n art -D .', 'gh run download 1']
+        ...['gh run download 1 -n art -D .', 'gh run download 1']
             .map(command => ['gh download into a control', command, undefined, { decision: 'ask' }] as const),
         ...['.config/github-copilot/apps.json', '.config/github-copilot/hosts.json', '.vercel/auth.json', '.netlify/config.json', '.heroku/credentials']
             .map(name => ['legacy credential store', `xxd '${home}/${name}'`, undefined, { decision: 'deny', externalReads: 'native' }] as const),
@@ -2256,6 +2256,65 @@ describe('installed code, search path and secret links', () => {
             'cp src/a.ts src/b.ts && cat src/b.ts', 'mv src/a.ts src/b.ts && cat src/b.ts']) {
             expect(run(command).reason, command).not.toContain('symbolic link')
         }
+    })
+
+    it('treats hard links and materialised repositories as links, and never writes a file another hard link shares', () => {
+        const configured = { ...policy(), defaultDecision: 'allow' as const, homeDirectory: '/workspace/person' }
+        const run = (command: string, evidence: PathInspection = withGit) => evaluateGuard(parseGuardInput(shellPayload(command)), configured, evidence)
+        // Each makes a link the rest of the call would write through, as `ln` does.
+        for (const command of ["cp -l .cockpit/guards/bash-guard.sh h && printf 'exit 0\\n' > h", 'cp --link src/a.ts h && echo x > h', 'cp -l src/a.ts h && echo x > h',
+            'install -l s ../../.cockpit/guards/bash-guard.sh x/y/l && echo x > x/y/l', 'link src/a.ts h && echo x > h',
+            'pax -rwl src out && echo x > out/src/a.ts', 'cpio -pdl out < list.txt && echo x > out/a.ts', 'rsync -a --link-dest=../src src/ out/ && echo x > out/a.ts',
+            "gh repo clone o/r c && printf 'exit 0\\n' > c/l", "gh repo fork o/r --clone && printf 'exit 0\\n' > r/l", 'gh run download 1 -D out && cat out/l']) {
+            expect(run(command), command).toMatchObject({ decision: 'deny' })
+        }
+        // A hard link names its target as `ln` does, so one to a guard control is refused on its own.
+        for (const command of ['cp -l .cockpit/guards/bash-guard.sh h', 'link .cockpit/guards/bash-guard.sh h', 'cp -l config/active.instance copy']) {
+            expect(run(command), command).toMatchObject({ decision: 'deny' })
+        }
+        // Across calls the hard link is a file with two names: writing it is refused, however it is named.
+        const shared: PathInspection = request => posix.resolve(request.cwd, request.path) === `${root}/e.js` && request.operation === 'write' ? { ...withGit(request), identity: '5:5', links: 2 } : withGit(request)
+        for (const command of ['echo x > e.js', 'printf x >> e.js', 'cp src/a.ts e.js', 'tee e.js']) expect(run(command, shared), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('hard link') })
+        expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: `${root}/e.js`, content: 'x' } }), configured, shared))
+            .toMatchObject({ decision: 'deny' })
+        const single: PathInspection = request => request.operation === 'write' ? { ...withGit(request), identity: '5:6', links: 1 } : withGit(request)
+        expect(run('echo x > e.js', single)).toMatchObject({ decision: 'allow' })
+        // Below a write path a file with another hard link is refused too.
+        const area = { ...configured, writePaths: ['/workspace/person/work'] }
+        expect(evaluateGuard(parseGuardInput(shellPayload('echo x > /workspace/person/work/n')), area, request => request.operation === 'external-write'
+            ? { status: 'resolved', path: posix.resolve(request.cwd, request.path), landsAt: posix.resolve(request.cwd, request.path), links: 2 } : withGit(request)))
+            .toMatchObject({ decision: 'deny', reason: expect.stringContaining('hard link') })
+    })
+
+    it('never writes a .cockpit/guards path or a .cockpit directory, and writes outside the roots only file by file', () => {
+        const area = '/workspace/person/dev'
+        const configured = { ...policy(), defaultDecision: 'allow' as const, homeDirectory: '/workspace/person', writePaths: [area] }
+        const lands: PathInspection = request => request.operation === 'external-write'
+            ? { status: 'resolved', path: posix.resolve(request.cwd, request.path), landsAt: posix.resolve(request.cwd, request.path) } : withGit(request)
+        const run = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command)), configured, lands)
+        for (const command of ["mkdir -p stage/.cockpit/guards && printf 'exit 0\\n' > stage/.cockpit/guards/bash-guard.sh", 'mkdir -p stage/.cockpit/guards',
+            'mkdir stage/.cockpit', 'mv stage/dot stage2/.cockpit', 'touch app/.cockpit/guards/bash-guard.sh', `mkdir -p ${area}/.cockpit/guards`,
+            `cp x ${area}/.cockpit/guards/bash-guard.sh`, `mv stage/dot ${area}/.cockpit`]) {
+            expect(run(command), command).toMatchObject({ decision: 'deny' })
+        }
+        expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: `${root}/stage/.cockpit/guards/bash-guard.sh`, content: 'exit 0' } }), configured, lands))
+            .toMatchObject({ decision: 'deny' })
+        // A writer whose member names the guard cannot see writes nothing below a write path.
+        for (const command of [`rsync -a stage/ ${area}/`, `tar -xf x.tar -C ${area}`, `unzip x.zip -d ${area}`, `ditto stage ${area}/stage`, `git clone ../origin ${area}/copy`,
+            `gh repo clone o/r ${area}/r`, `gh release download v1 -D ${area}`, `wget -r -P ${area} https://example.test/`]) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+        // One that names each file writes there.
+        for (const command of [`cp README.md ${area}/README.md`, `echo x > ${area}/notes.md`, `mkdir -p ${area}/out`]) expect(run(command), command).toMatchObject({ decision: 'allow' })
+    })
+
+    it('judges a case variant of a root below a write path once, without recursing', () => {
+        const configured = { ...policy(), defaultDecision: 'allow' as const, homeDirectory: '/workspace/person', writePaths: ['/workspace/person/dev'] }
+        const command = `cp x ${root.toUpperCase()}/.cockpit/guards/bash-guard.sh`
+        const decision = evaluateGuard(parseGuardInput(shellPayload(command)), configured, request => request.operation === 'external-write'
+            ? { status: 'resolved', path: posix.resolve(request.cwd, request.path), landsAt: posix.resolve(request.cwd, request.path) } : withGit(request))
+        expect(decision.decision).not.toBe('allow')
+        expect(decision.reason).not.toContain('Maximum call stack')
     })
 
     it('denies links to secrets, instances, guard controls and installed code', () => {

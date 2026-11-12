@@ -662,6 +662,23 @@ describe('guard policy construction', () => {
         expect(await decide('ln -s fixtures/personas.json personas-link')).toMatchObject({ decision: 'allow' })
     }, 120_000)
 
+    it('refuses writing a file another hard link shares, and a guard script path anywhere, through the installed guard', async () => {
+        const { root, request, adapters } = await installedGuardRequest()
+        const decide = async (command: string) => (await runGuardEvaluationApplication({ ...request, payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+        writeFileSync(join(root, 'shared.txt'), 'synthetic\n')
+        linkSync(join(root, 'shared.txt'), join(root, 'second-name.txt'))
+        try {
+            for (const command of ['echo x > second-name.txt', 'printf x >> shared.txt']) {
+                expect(await decide(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('hard link') })
+            }
+            expect(await decide("mkdir -p stage/.cockpit/guards && printf 'exit 0\\n' > stage/.cockpit/guards/bash-guard.sh")).toMatchObject({ decision: 'deny' })
+            expect(await decide('echo x > fixtures/notes.txt')).toMatchObject({ decision: 'allow' })
+        } finally {
+            rmSync(join(root, 'shared.txt'), { force: true })
+            rmSync(join(root, 'second-name.txt'), { force: true })
+        }
+    }, 120_000)
+
     it('judges a move or copy onto an existing file as a write of that file, through the installed guard', async () => {
         const { root, request, adapters } = await installedGuardRequest()
         mkdirSync(join(root, 'notes'), { recursive: true })

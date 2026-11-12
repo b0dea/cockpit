@@ -647,10 +647,40 @@ function createsLink(invocation: ParsedInvocation, git: GitInvocation | undefine
         return true
     }
     const name = posix.basename(invocation.executable)
-    if (['ln', 'rsync', 'unzip', 'cpio', 'pax', 'ditto', 'bsdtar', 'gtar'].includes(name)) return true
+    if (['ln', 'link', 'rsync', 'unzip', 'cpio', 'pax', 'ditto', 'bsdtar', 'gtar', '7z', '7za', '7zz'].includes(name)) return true
     if (name === 'tar') return invocation.argv.some(arg => arg === '--extract' || arg === '--get' || /^-?[A-Za-z]*x/.test(arg) && !arg.startsWith('--'))
-    if (name === 'cp') return invocation.argv.some(arg => /^--(?:symbolic-link|no-dereference|archive|recursive|preserve(?:=.*links.*)?)$/.test(arg)
-        || /^-[A-Za-z]*[sPadRr]/.test(arg))
+    // `cp -l` makes hard links, `-s` symbolic ones, and the rest keep the links they copy.
+    if (name === 'cp') return invocation.argv.some(arg => /^--(?:link|symbolic-link|no-dereference|archive|recursive|preserve(?:=.*links.*)?)$/.test(arg)
+        || /^-[A-Za-z]*[sPadRrl]/.test(arg))
+    // BSD `install -l` makes a hard or symbolic link in place of the copy.
+    if (name === 'install') return invocation.argv.some(arg => /^-[A-Za-z]*l/.test(arg) && !arg.startsWith('--'))
+    // A clone or a downloaded archive brings whatever links the repository or artifact holds.
+    if (name === 'gh') return materialisesRepository(invocation)
+    return false
+}
+
+/** `gh repo clone`, `gh repo fork --clone`, `gh gist clone`, `gh release download` and `gh run download`. */
+function materialisesRepository(invocation: ParsedInvocation): boolean {
+    const words = invocation.argv.filter(arg => !arg.startsWith('-'))
+    const [group, verb] = words
+    return (group === 'repo' || group === 'gist') && verb === 'clone' || group === 'repo' && verb === 'fork' && invocation.argv.some(arg => /^--clone(?:=true)?$/.test(arg))
+        || (group === 'release' || group === 'run') && verb === 'download'
+}
+
+/**
+ * A writer whose member names the guard cannot see: an extraction, a sync of a directory, a recursive
+ * copy, a clone or a download of an archive. Outside the roots a write path admits only a write that
+ * names each file, so none of these writes there.
+ */
+function writesUnseenMembers(invocation: ParsedInvocation, git: GitInvocation | undefined): boolean {
+    if (invocation.executable === null) return false
+    if (git) return ['clone', 'worktree', 'submodule', 'bundle'].includes(git.verb)
+    const name = posix.basename(invocation.executable)
+    if (['rsync', 'unzip', 'cpio', 'pax', 'ditto', 'bsdtar', 'gtar', '7z', '7za', '7zz', 'scp'].includes(name)) return true
+    if (name === 'tar') return createsLink(invocation, undefined)
+    if (name === 'cp') return invocation.argv.some(arg => /^--(?:archive|recursive)$/.test(arg) || /^-[A-Za-z]*[aRr]/.test(arg))
+    if (name === 'gh') return materialisesRepository(invocation)
+    if (name === 'wget') return invocation.argv.some(arg => /^--(?:recursive|mirror|page-requisites)$/.test(arg) || /^-[A-Za-z]*[rmp]/.test(arg))
     return false
 }
 
@@ -835,10 +865,16 @@ function visibleWrites(invocation: ParsedInvocation): VisibleWrites | undefined 
     const name = posix.basename(invocation.executable)
     if (name === 'cp' || name === 'install' || name === 'mv') {
         const transfer = transferOperands(name, invocation.argv)
-        // `cp -s` makes each destination a symbolic link to its source, as `ln -s` does.
-        const symbolic = name === 'cp' && invocation.argv.some(arg => arg === '--symbolic-link' || /^-[A-Za-z]*s/.test(arg))
-        return { paths: transfer.writes, reads: name === 'mv' ? [] : transfer.sources, removes: false, uncertain: transfer.uncertain,
-            ...symbolic ? { links: transfer.sources } : {} }
+        // `cp -s` and `cp -l` make each destination a symbolic or hard link to its source, as `ln` does, and so does BSD `install -l`.
+        const linking = name === 'cp' && invocation.argv.some(arg => ['--symbolic-link', '--link'].includes(arg) || /^-[A-Za-z]*[sl]/.test(arg))
+            || name === 'install' && invocation.argv.some(arg => /^-[A-Za-z]*l/.test(arg) && !arg.startsWith('--'))
+        return { paths: transfer.writes, reads: name === 'mv' ? [] : transfer.sources, removes: linking, uncertain: transfer.uncertain,
+            ...linking ? { links: transfer.sources } : {} }
+    }
+    // `link <file> <name>` makes a hard link, as `ln` without options does.
+    if (name === 'link') {
+        const operands = invocation.argv.filter(arg => arg !== '--')
+        return { paths: operands.slice(1, 2), links: operands.slice(0, 1), removes: true, uncertain: operands.length !== 2 || invocation.argv.some(arg => arg.startsWith('-') && arg !== '--') }
     }
     if (name === 'ln') {
         const transfer = transferOperands('ln', invocation.argv)
@@ -1255,6 +1291,9 @@ function ghDownloads(invocation: ParsedInvocation): { readonly clones: readonly 
     const [group, verb, ...rest] = operands
     if ((group === 'repo' || group === 'gist') && verb === 'clone' && rest[0] !== undefined) {
         return { clones: [rest[1] ?? posix.basename(rest[0]).replace(/\.git$/, '')] }
+    }
+    if (group === 'repo' && verb === 'fork' && args.some(arg => /^--clone(?:=true)?$/.test(arg))) {
+        return { clones: [rest[0] === undefined ? '.' : posix.basename(rest[0]).replace(/\.git$/, '')] }
     }
     if (!['release', 'run'].includes(group ?? '') || verb !== 'download') return undefined
     const path = values(['-D', '--dir']).at(-1) ?? '.'
@@ -1815,6 +1854,18 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const inRelatedCheckout = (lexical: string) => relatedCheckouts.some((path) => within(fold(lexical), path))
     const relatedDenial = deny(`Refusing to change a checkout [guards] related_checkouts names in ${posix.basename(resolved.configPath)}: agents read it and run read-only Git there, such as \`git -C <checkout> log\`, status, diff or show, but write, commit, push or run anything else there only from a session started in that checkout.`)
     const writePaths = resolved.writePaths ?? []
+    // Sync writes a guard script at `.cockpit/guards`, and a Codex session runs the one it finds above it,
+    // so no agent writes such a path, nor a directory named `.cockpit` that one could be moved into, anywhere.
+    const guardScriptLocation = (folded: string) => {
+        const parts = folded.split('/')
+        return parts.at(-1) === '.cockpit' || parts.some((part, at) => part === '.cockpit' && parts[at + 1] === 'guards')
+    }
+    const guardScriptDenial = deny('Refusing to write a path below .cockpit/guards, or a directory named .cockpit: cockpit sync writes the guard script there, and a Codex session runs the one it finds above it. Agents never write one.')
+    // A file with another hard link is the same file under a name the guard may not protect: writing it
+    // writes that one too, the guard's own code or a control included, however each name is spelled.
+    const hardLinkDenial = deny('Refusing to write a file that has another hard link: the write changes every name of the file, and the guard cannot see the others. Write a new file instead, or a person removes the extra link.')
+    // The invocation being judged writes files whose names it chooses itself, such as an extraction or a clone.
+    let unseenMembers = false
     // Spellings a related checkout is declared under, with their missing ancestors: nothing is written there.
     const relatedReserved = (resolved.relatedReserved ?? []).map(fold)
     const reservedForRelated = (lexical: string) => relatedReserved.some((path) => within(fold(lexical), path))
@@ -1947,7 +1998,10 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const canonicalPath = evidence !== undefined && record(evidence) ? evidence.canonicalPath : undefined
         const observedPath = canonicalPath ?? lexical
         const paths = listed && evidence !== undefined && record(evidence) ? evidence[listed] : null
-        return record(evidence) && keys(evidence, ['status', 'path', 'symlink', 'identity', 'ancestors', ...(listed ? [listed] : []), ...(canonicalPath === undefined ? [] : ['canonicalPath'])]) && evidence.status === 'resolved'
+        const linkCount = record(evidence) ? evidence.links : undefined
+        return record(evidence) && keys(evidence, ['status', 'path', 'symlink', 'identity', 'ancestors', ...(listed ? [listed] : []), ...(canonicalPath === undefined ? [] : ['canonicalPath']),
+            ...(linkCount === undefined ? [] : ['links'])]) && evidence.status === 'resolved'
+            && (linkCount === undefined || request.operation === 'write' && typeof linkCount === 'number' && Number.isSafeInteger(linkCount) && linkCount >= 1)
             && (canonicalPath === undefined || ['read', 'search', 'unignored-search'].includes(request.operation) && canonical(canonicalPath)
                 && resolved.allowedRoots.some(root => within(lexical, root)) && resolved.allowedRoots.some(root => within(canonicalPath, root)))
             && evidence.path === lexical && evidence.symlink === false && (evidence.identity === null || identity(evidence.identity))
@@ -1969,7 +2023,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         }
         let evidence: JsonSnapshot | undefined
         try { evidence = snapshotJson(inspect({ path: request.path, cwd: request.cwd, operation: 'external-write' })) } catch (error) { inspectionFailure = errorCause(error) }
-        const reported = record(evidence) && evidence.status === 'resolved' && evidence.path === lexical && canonical(evidence.landsAt) ? evidence.landsAt : undefined
+        const reported = record(evidence) && evidence.status === 'resolved' && evidence.path === lexical && canonical(evidence.landsAt)
+            && (evidence.links === undefined || typeof evidence.links === 'number' && Number.isSafeInteger(evidence.links) && evidence.links >= 1) ? evidence.landsAt : undefined
         if (reported === undefined) {
             hold(unavailable(`Guard could not tell where a write outside the configured roots lands, so it cannot rule out a link into a location it protects: ${shownGuardWord(request.path)}. Write to a path that exists up to its parent directory, or a person runs it.`))
             return
@@ -1978,9 +2033,18 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const folded = fold(landsAt)
         if (inRelatedCheckout(landsAt) || reservedForRelated(landsAt)) { hold(relatedDenial); return }
         if (resolved.allowedRoots.some((root) => within(folded, fold(root)))) {
-            inspectPath({ path: landsAt, cwd: posix.dirname(landsAt), operation: 'write' }, true)
+            // Another spelling of a root, such as its folded case, is judged once as that spelling: inspecting
+            // it again would find it outside the roots and come back here.
+            if (resolved.allowedRoots.some((root) => within(landsAt, root))) inspectPath({ path: landsAt, cwd: posix.dirname(landsAt), operation: 'write' }, true)
+            else hold(unavailable(`Refusing ${shownGuardWord(request.path)}: it names a configured root under another spelling, such as another case. Name it as the cockpit does.`))
             return
         }
+        if (guardScriptLocation(folded)) { hold(guardScriptDenial); return }
+        if (unseenMembers) {
+            hold(deny(`Refusing ${shownGuardWord(request.path)}: the command writes files whose names it chooses itself, as an extraction, a sync of a directory, a recursive copy, a clone or a download of an archive does, and outside the roots a write path admits only writes that name each file. Write it inside the cockpit and copy the files you need by name.`))
+            return
+        }
+        if (evidence !== undefined && record(evidence) && typeof evidence.links === 'number' && evidence.links > 1) { hold(hardLinkDenial); return }
         if ([...resolved.guardRuntime ?? [], ...resolved.cockpitPackageDirectories ?? [], ...resolved.executionDirectories].some((path) => within(folded, fold(path)))) {
             hold(executionDenial)
             return
@@ -2008,6 +2072,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const folded = fold(lexical)
         if (mutating && (folded.split('/').includes('.secrets') || (staging || removing) && within(fold(secretRoot), folded))) hold(staging && !folded.split('/').includes('.secrets') ? coveringStageDenial : secretDenial)
         // Held first, so a declared instance's own denial, held after it, is the one reported.
+        // Held before the control denials, so a control's own denial is the one reported.
+        if ((request.operation === 'write' || staging) && guardScriptLocation(folded)) hold(guardScriptDenial)
         if (mutating && dotenvSecret(folded)) hold(dotenvDenial)
         if (mutating && (inSecretPath(folded) || (staging || removing) && coversSecretPath(folded))) hold(staging && !inSecretPath(folded) ? coveringStageDenial : secretPathDenial)
         if (mutating && resolved.instances.some((item) => folded === fold(item.path) || (staging || removing) && within(fold(item.path), folded))) hold(staging && !resolved.instances.some((item) => folded === fold(item.path)) ? coveringStageDenial : instanceDenial)
@@ -2034,6 +2100,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             return
         }
         if (!mutating) return evidence
+        if (request.operation === 'write' && typeof evidence.links === 'number' && evidence.links > 1) hold(hardLinkDenial)
         // Identity catches every spelling the volume resolves to a protected entry, including ones
         // the shared normalisation does not equate, such as a hard link.
         const { is, below, covers } = evidenceFacts(evidence)
@@ -2386,6 +2453,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             }
         }
         const git = gitInvocation(invocation)
+        unseenMembers = writesUnseenMembers(invocation, git)
         const executableName = posix.basename(invocation.executable ?? '')
         const removed = removedOperands(invocation, git)
         for (const path of removed?.paths ?? []) {
@@ -2444,10 +2512,13 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             pathCount++
             inspectPath({ path, cwd: invocation.cwd, operation: 'write' }, true)
         }
+        const naming = unseenMembers
+        unseenMembers = true
         for (const path of [...optioned?.covered ?? [], ...downloads?.directories ?? []]) {
             pathCount++
             inspectPath({ path, cwd: invocation.cwd, operation: 'write' }, true)
         }
+        unseenMembers = naming
         // gh writes downloads into a directory and clones into a new one: a clone is judged as a write
         // with what it would hold, and a download by the guard files its names could reach there.
         const ghWrites = ghDownloads(invocation)

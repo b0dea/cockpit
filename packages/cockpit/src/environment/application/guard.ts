@@ -616,7 +616,10 @@ export async function runGuardEvaluationApplication(
                         cursor = dirname(cursor)
                     }
                 }
-                return { status: 'resolved', path, landsAt: join(realpathSync(cursor), ...rest) }
+                const landsAt = join(realpathSync(cursor), ...rest)
+                // An existing file with another hard link is reported, since writing it writes every name it has.
+                const target = rest.length ? undefined : lstatIfPresentSync(landsAt)
+                return { status: 'resolved', path, landsAt, ...target?.isFile() ? { links: target.nlink } : {} }
             }
             if (request.operation === 'manifest') {
                 const manifest = allowed(path) ? guardPackageManifest(path, allowed, request.workspace === true) : null
@@ -680,7 +683,8 @@ export async function runGuardEvaluationApplication(
             const search = request.operation === 'search' || request.operation === 'unignored-search'
             return { status: 'resolved', path, symlink: false, identity: exists ? chain.at(-1)! : null, ancestors: exists ? chain.slice(0, -1) : chain,
                 ...(search ? { sensitive: exists ? searched(path, request.operation === 'unignored-search', request.followsLinks === true) : [] } : {}),
-                ...(request.operation === 'repository' ? { tracked: tracked.get(path) ?? null } : {}) }
+                ...(request.operation === 'repository' ? { tracked: tracked.get(path) ?? null } : {}),
+                ...(request.operation === 'write' && exists && inspected.get(path)!.isFile() ? { links: inspected.get(path)!.nlink } : {}) }
         }
         const cockpitInvocations: GuardInvocationProfile[] = []
         const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')

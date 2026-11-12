@@ -364,7 +364,15 @@ instance, a guard control or the installed cockpit is a hard denial. A call that
 link (`ln`, `cp -s`, a copy that keeps links, `rsync`, an extraction, or Git writing a revision's
 files) or moves or copies an existing one runs nothing else: a link's text resolves where the link
 lies, so one moved within the call could reach a guard control or a secret, and the guard judged the
-call's other paths against the filesystem before it ran. A symbolic link's target is
+call's other paths against the filesystem before it ran. Hard links count too (`ln`, `link`, `cp -l`,
+BSD `install -l`, `pax -l`, `cpio -l`, `rsync --link-dest`), and so do a `gh repo clone`, `gh repo
+fork --clone`, `gh gist clone`, `gh release download` and `gh run download`, which bring whatever
+links the repository or artifact holds. Writing an existing file that has another hard link is
+refused in any call, inside the roots or below a write path, since the write changes every name the
+file has, including one the guard protects.
+
+No agent writes a path below `.cockpit/guards`, or a directory named `.cockpit`, anywhere: sync
+writes the guard script there, and a Codex session runs the one it finds above it. A symbolic link's target is
 checked from both the working directory and the link's own directory.
 
 These are `unavailable`: every unsupported `tar` or `ln` mode or option, and a command whose visible
@@ -686,7 +694,9 @@ read from `/` when it is spelled through `/System/Volumes/Data` or `/Volumes`. O
 cockpit or a sibling is judged there as any write is; in a related checkout, or in the Node or cockpit
 the guard runs, it is refused; and outside every write path it is refused as before. A working
 directory outside the roots stays refused, as does staging there, which the guard cannot walk for
-secrets. A dotfile or dot-directory directly in a write path is refused, and below one these stay
+secrets. A write path admits only writes that name each file: an extraction, a sync of a directory,
+a recursive copy, a clone or an archive download writes nothing there, since the guard cannot see
+the names it chooses. A dotfile or dot-directory directly in a write path is refused, and below one these stay
 hard denials, judged as spelled and again where the path's existing links lead: the agent tools' own
 configuration (`~/.claude`, `~/.claude.json`, `~/.codex`, `~/.config/opencode`, `~/.cursor` and the
 others the guard knows, `~/.agents`, a `.mcp.json`); shell startup files (`~/.zshrc`, `~/.zprofile`,
@@ -1061,8 +1071,8 @@ Unavailable or malformed decisions exit 2 on every target, so adapter exit 0 alo
 permission was granted. Claude Code prints the hook command beside every refusal it reports, so the
 generated Claude Code and Codex commands are one line that runs the committed guard script, which
 holds the recovery text. Claude Code's finds it through `CLAUDE_PROJECT_DIR`; Codex's takes the
-outermost directory at or above the session's that holds the guard script, since one below the
-cockpit could be a script an agent wrote, and the directories above it lie outside every root; a script that is missing or exits with any status but 0 or 2 blocks
+outermost directory at or above the session's that holds the guard script, and blocks the call when
+more than one directory on the way holds one, since it cannot tell which is the cockpit's; a script that is missing or exits with any status but 0 or 2 blocks
 the call with `cockpit guard failed (<status>): <script>; sync the cockpit`. The generated Claude Code and Codex registrations give the guard hook a
 `timeout` of 30 seconds; a guard call spawns several Node and Git processes and was seen to exceed
 Codex's 5-second default on a loaded machine. What either harness does with the call when that
