@@ -272,7 +272,9 @@ export async function guardUnignoredSensitivePaths(path: string, watched: readon
         gitPaths(git, repository, ['ls-files', '-z', '--others', '--ignored', '--directory', '--exclude-per-directory=.gitignore', '--', ...scope], execute),
     ])
     if (named?.length !== 0 || cached === null || others === null || ignored === null || ignored.length > GUARD_IGNORED_ENTRY_LIMIT) return undefined
-    const folded = new Set(watched.map(foldGuardSpelling))
+    const folded = watched.map(foldGuardSpelling)
+    // A watched directory, such as a declared secret path, holds every entry below it.
+    const isWatched = (absolute: string) => { const spelled = foldGuardSpelling(absolute); return folded.some(path => spelled === path || spelled.startsWith(`${path}/`)) }
     const boundaries = new Map<string, boolean>()
     // ripgrep stops applying the ignore files above a directory holding `.git` or `.jj`, which Git
     // does not, so what Git ignores below such a directory may still be read.
@@ -291,7 +293,7 @@ export async function guardUnignoredSensitivePaths(path: string, watched: readon
         const absolute = join(repository, ...names)
         if (absolute !== path && !absolute.startsWith(`${path}/`)) return undefined
         // A collapsed directory may hold anything; a file matters only under a protected name.
-        const protectedEntry = entry.endsWith('/') || names.some(sensitiveName) || folded.has(foldGuardSpelling(absolute))
+        const protectedEntry = entry.endsWith('/') || names.some(sensitiveName) || isWatched(absolute)
         if (protectedEntry && belowBoundary(dirname(absolute))) return undefined
     }
     const listed: string[] = []
@@ -341,7 +343,7 @@ export async function guardUnignoredSensitivePaths(path: string, watched: readon
         const names = absolute === path ? [] : relative(path, absolute).split('/')
         const first = names.findIndex(sensitiveName)
         if (first >= 0) found.add(join(path, ...names.slice(0, first + 1)))
-        else if (folded.has(foldGuardSpelling(absolute))) found.add(absolute)
+        else if (isWatched(absolute)) found.add(absolute)
         if (found.size > GUARD_LOCATION_LIMITS.sensitivePaths) return null
     }
     return [...found].sort()

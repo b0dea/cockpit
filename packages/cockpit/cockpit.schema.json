@@ -722,6 +722,75 @@
             "ask"
           ]
         },
+        "secret_paths": {
+          "default": [],
+          "description": "Files and directories, relative to the cockpit or as <sibling slug>:path in a sibling, that agents never read, write, search or stage, as an .env file is kept from them; the guard refuses them on every agent tool and Claude Code's own file tools are denied them too.",
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1024,
+            "pattern": "^(?!(?:[a-z0-9][a-z0-9-]{0,63}:)?(?:.*\\/)?\\.\\.?(?:\\/|$))(?:[a-z0-9][a-z0-9-]{0,63}:)?(?![/])[A-Za-z0-9._@+\\-/]*[A-Za-z0-9._@+-]$"
+          }
+        },
+        "related_checkouts": {
+          "default": [],
+          "description": "Other checkouts agents may read, search and inspect with read-only Git, such as the upstream of a tool this cockpit installs: an absolute path, a ~/ path or a path relative to the cockpit. Writes there, Git commands that change them, and secret names stay refused.",
+          "maxItems": 16,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096,
+            "pattern": "^(?:\\/|~\\/|(?:\\.\\.\\/)*)[^\\x00-\\x1f\\x7f]+$"
+          }
+        },
+        "unresolved": {
+          "default": "ask",
+          "description": "What the guard does with a command it would ask a person about: ask prompts where the agent tool can (Claude Code) and refuses where it cannot; deny refuses everywhere, naming the reason and the route, so an autonomous session continues another way instead of waiting.",
+          "type": "string",
+          "enum": [
+            "ask",
+            "deny"
+          ]
+        },
+        "write_paths": {
+          "default": [],
+          "description": "Files and directories outside the cockpit where agents may write, create and remove files, such as a drop folder; never a working directory, Git hooks, a guard, an agent tool's or the shell's configuration, or a secret name.",
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "maxLength": 4096,
+                "pattern": "^(?:\\/|~\\/)[^\\x00-\\x1f\\x7f]+$",
+                "description": "File or directory outside the cockpit, absolute or starting with ~/ for the home directory of whoever runs the agent."
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "allOf": [
+                  {
+                    "type": "string",
+                    "pattern": "\\S"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]+$"
+                  }
+                ],
+                "description": "Why agents may write there."
+              }
+            },
+            "required": [
+              "path",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
         "external_reads": {
           "default": "grant",
           "description": "Who admits a shell read outside the cockpit, of a named file or by a read-only Git command run alone in another repository: grant needs its complete command under allow; native leaves it to the agent tool's own permissions. Secret names, recursive searches and writes stay guarded either way.",

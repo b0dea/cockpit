@@ -57,7 +57,8 @@ describe('bounded exact project command declarations', () => {
 
 describe('declared guard hosts', () => {
     it('defaults vendor authority separately and refuses normalized duplicates in either declaration', () => {
-        expect(Guards.parse({})).toEqual({ hosted_db_hosts: [], vendor_endpoint_hosts: [], protected_branches: ['main', 'master'], allow: [], deny: [], read_paths: [], external_reads: 'grant', default: 'allow' })
+        expect(Guards.parse({})).toEqual({ hosted_db_hosts: [], vendor_endpoint_hosts: [], protected_branches: ['main', 'master'], allow: [], deny: [], read_paths: [], external_reads: 'grant', default: 'allow',
+            secret_paths: [], related_checkouts: [], unresolved: 'ask', write_paths: [] })
         for (const field of ['hosted_db_hosts', 'vendor_endpoint_hosts']) {
             for (const hosts of [['db.example.test', 'db.example.test'], ['db.example.test', '*.db.example.test'], ['*.db.example.test', 'db.example.test'], Array.from({ length: 129 }, (_, index) => `host-${index}.example.test`)]) {
                 expect(Guards.safeParse({ [field]: hosts }).success, `${field}: ${hosts}`).toBe(false)

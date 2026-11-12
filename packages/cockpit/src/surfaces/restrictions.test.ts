@@ -316,6 +316,8 @@ describe('restriction expansion', () => {
         for (const [name, cwd, env] of [
             ['claudecode', join(directory, 'nested'), { ...ambient, CLAUDE_PROJECT_DIR: directory }],
             ['codexcli', directory, ambient],
+            // A Codex session started in a subdirectory finds the cockpit's own guard above it.
+            ['codexcli', join(directory, 'nested'), ambient],
         ] as const) {
             const allowed = runs(name, cwd, env, 'env/service.env.example')
             expect(allowed.status, allowed.stderr).toBe(0)
@@ -324,12 +326,23 @@ describe('restriction expansion', () => {
             expect(denied.status, denied.stderr).toBe(0)
             expect(denied.stdout).toContain('permissionDecision":"deny')
         }
+        // A second guard script on the way, below the cockpit or above it as a nested cockpit's would be, is
+        // never the one the hook runs: the call blocks, naming the ambiguity.
+        await mkdir(join(directory, 'nested/.cockpit/guards'), { recursive: true })
+        await writeFile(join(directory, 'nested/.cockpit/guards/bash-guard.sh'), 'printf planted >&2; exit 0\n')
+        for (const cwd of [join(directory, 'nested'), directory]) {
+            const run = runs('codexcli', cwd, ambient, 'env/service.env')
+            if (cwd === directory) { expect(run.stdout, run.stderr).toContain('permissionDecision":"deny'); continue }
+            expect(run).toMatchObject({ status: 2, stdout: '' })
+            expect(run.stderr).toContain('more than one .cockpit/guards/bash-guard.sh')
+            expect(run.stderr).not.toContain('planted')
+        }
         // Without the harness's project root the registration cannot find the guard and blocks.
         expect(runs('claudecode', directory, ambient, 'env/service.env.example')).toMatchObject({
-            status: 2, stdout: '', stderr: expect.stringContaining('through CLAUDE_PROJECT_DIR'),
+            status: 2, stdout: '', stderr: expect.stringContaining('cockpit guard failed (127): /no-cockpit-root/.cockpit/guards/bash-guard.sh; sync the cockpit'),
         })
         expect(runs('codexcli', tmpdir(), ambient, 'env/service.env.example')).toMatchObject({
-            status: 2, stdout: '', stderr: expect.stringContaining('through the canonical Codex session directory'),
+            status: 2, stdout: '', stderr: expect.stringContaining('cockpit guard failed (127): /no-cockpit-root/.cockpit/guards/bash-guard.sh'),
         })
 
         // At session start each registration runs the installed cockpit's check on the configuration
@@ -439,19 +452,26 @@ describe('restriction expansion', () => {
                 hooks: { PreToolUse: Array<{ hooks: Array<{ command: string; timeout?: unknown }> }> }
             }).hooks.PreToolUse[0]!.hooks[0]!
             const command = hook.command
+            // Claude Code prints the whole hook command beside each refusal it reports, so it stays one short line;
+            // Codex's also walks up to the cockpit, so it is one line but longer.
+            expect(command, name).not.toContain('\n')
+            expect(command.length, name).toBeLessThanOrEqual(name === 'claudecode' ? 220 : 700)
             // Both harnesses read the hook's timeout in seconds; cockpit states it rather than inheriting each default.
             expect(hook.timeout, name).toBe(30)
             // A guard that cannot load its handler exits 1; a killed one 137. Exit 2 keeps its own reason.
-            for (const [exit, status, stderr] of [[1, 2, 'cockpit guard failed (exit 1)\n'], [137, 2, 'cockpit guard failed (exit 137)\n'], [2, 2, 'refused\n'], [0, 0, '']] as const) {
+            const guard = join(await realpath(directory), result.sharedGuard.path)
+            for (const [exit, status, stderr] of [[1, 2, `cockpit guard failed (1): ${guard}; sync the cockpit\n`], [137, 2, `cockpit guard failed (137): ${guard}; sync the cockpit\n`],
+                [2, 2, 'refused\n'], [0, 0, '']] as const) {
                 await writeFile(join(directory, result.sharedGuard.path), exit === 2 ? "printf 'refused\\n' >&2; exit 2\n" : `exit ${exit}\n`)
                 const run = spawnSync('/bin/sh', ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: directory } })
                 expect({ status: run.status, stderr: run.stderr }, `${name} exit ${exit}`).toEqual({ status, stderr })
             }
-            // A missing guard blocks with what it holds, printed intact through the hook's shell quoting.
+            // A missing guard blocks, naming the script and the fix.
             await rm(join(directory, result.sharedGuard.path))
             const missing = spawnSync('/bin/sh', ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: directory } })
             expect(missing.status).toBe(2)
-            expect(missing.stderr).toContain(`so ${GUARD_HELD_CALLS} are held while ${GUARD_UNHELD_CALLS} continue.`)
+            // Codex finds no cockpit above the session once the script is gone, so it names the absolute path that exists nowhere.
+            expect(missing.stderr).toContain(`cockpit guard failed (127): ${name === 'claudecode' ? guard : '/no-cockpit-root/.cockpit/guards/bash-guard.sh'}; sync the cockpit`)
         }
         expect(result.sharedGuard.bytes).toContain(`so ${GUARD_HELD_CALLS} are refused.`)
     })

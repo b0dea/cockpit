@@ -14,10 +14,11 @@ import {
     type EnvironmentCommandOutcome,
     type ExecutionStep,
     snapshotJson,
+    tryParseJson,
 } from '../contract.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, type ExecutableResolution, type ResolvedExecutable } from '../executable.js'
 import { CockpitConfig } from '../../schema.js'
-import { pinnedPolicyDenial, restoresRecordedConfiguration } from '../../guards/policy-pin.js'
+import { correctsHeldConfiguration, pinnedPolicyDenial, restoresRecordedConfiguration } from '../../guards/policy-pin.js'
 import { GUARD_RESTORE_LIMIT, guardConfigChange, guardConfigHeldReason } from '../../guards/policy-change.js'
 import {
     evaluateGuard,
@@ -79,6 +80,7 @@ import {
 import { browserPreapprovalRequested, loadCockpitConfig, consumeLoadedConfigProjection, parseCockpitConfigBytes, STRUCTURED_INPUT_BYTE_LIMIT, withRecordedDeclarations, type LoadedConfigProjection } from '../../config/load.js'
 import { deriveRegistry } from '../../registry-derivation.js'
 import { confinedPath, lifecycleRefusal, ownDataValues, sameSource } from './shared.js'
+import { splitRepositoryPath } from '../../repository-path.js'
 import { readSiblingCheckouts, servedSiblings, type ServedSibling, type SiblingCheckoutRecordRead } from '../sibling-checkouts.js'
 
 export interface GuardEvaluationApplicationInput {
@@ -157,9 +159,40 @@ function recoveryState(identity: GuardHandlerIdentity): Readonly<{ config: boole
     }
 }
 
-function guardHeld(identity: GuardHandlerIdentity, what: string, why: string): string {
-    const fix = guardRecovery(identity.root, identity.configPath, recoveryState(identity))
+function guardHeld(identity: GuardHandlerIdentity, what: string, why: string, fix = guardRecovery(identity.root, identity.configPath, recoveryState(identity))): string {
     return `${what}; ${why}, so ${GUARD_HELD_CALLS} are held, including a sync run through this agent, while ${GUARD_UNHELD_CALLS} continue. ${fix}`
+}
+
+// Which way the installed cockpit moved from the one that generated the guards decides the fix: an
+// older one installed, as after switching to a branch whose lockfile pins it, is fixed by installing
+// the dependencies again, and sync would only regenerate the guards with the older version.
+function versionOrder(left: string, right: string): number | undefined {
+    const parts = (version: string) => /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.exec(version)?.slice(1).map(Number)
+    const [a, b] = [parts(left), parts(right)]
+    if (!a || !b) return undefined
+    for (let index = 0; index < 3; index++) if (a[index] !== b[index]) return a[index]! - b[index]!
+    return undefined
+}
+
+const LOCKFILE_INSTALLS: readonly (readonly [string, string])[] = [['pnpm-lock.yaml', 'pnpm install --frozen-lockfile'], ['package-lock.json', 'npm ci'],
+    ['yarn.lock', 'yarn install --immutable'], ['bun.lock', 'bun install --frozen-lockfile'], ['bun.lockb', 'bun install --frozen-lockfile']]
+
+/** The hold for guards a different cockpit version generated, naming the direction and the command that fixes it. */
+function versionDrift(identity: GuardHandlerIdentity, generated: string | undefined): string {
+    const installed = installedPackageMetadata.version
+    const order = generated === undefined ? undefined : versionOrder(installed, generated)
+    const why = 'the guard trusts only the cockpit, Node and configuration it was generated for'
+    if (order === undefined || order > 0) {
+        const what = generated === undefined || generated === installed
+            ? 'the installed cockpit version changed (its handler bytes differ) since the guards were generated'
+            : `the installed cockpit version changed since the guards were generated: ${installedPackageMetadata.name} ${installed} is installed, newer than ${generated}, which generated them`
+        return guardHeld(identity, what, why)
+    }
+    const lockfile = LOCKFILE_INSTALLS.find(([file]) => recoveryFile(join(identity.root, file), constants.R_OK))
+    const install = lockfile ? `\`${lockfile[1]}\`` : 'the repository\'s documented dependency install'
+    return guardHeld(identity,
+        `the installed cockpit is older than the one that generated the guards: ${installedPackageMetadata.name} ${installed} is installed, and ${generated} generated them, as after switching to a branch or checkout whose dependencies were installed earlier`,
+        why, `Fix: install the dependencies the lockfile pins, with ${install} in ${formatShellCommand([identity.root])}, outside the agent; sync is not the fix, since it would regenerate the guards with the older version. If the older version is intended, a human runs \`${installedSyncCommand(identity.root, identity.configPath)}\` in a terminal instead.`)
 }
 
 // An edit that does not widen what agents may do is judged as written, so a policy it cannot build
@@ -180,6 +213,31 @@ function forwardedReason(reason: string): string {
 }
 
 const restored: GuardEvaluationApplicationResult = { decision: { decision: 'allow', reason: 'The edit restores the configuration the guards were generated from.' }, diagnostics: [] }
+const correcting: GuardDecision = { decision: 'allow', reason: 'The configuration does not load, and this edit of it changes no pinned table; it takes effect only once it loads, and one that widens waits for a person.' }
+const reporting: GuardDecision = { decision: 'allow', reason: 'The configuration does not load, and this command only reports on it.' }
+// How cockpit's own messages spell the installed launcher from the cockpit root.
+const launcherSpelling = './node_modules/@b00dea/cockpit/bin/cockpit.mjs'
+
+/**
+ * `check` or `sync --dry-run` of the configuration, alone, from the cockpit root, through a launcher
+ * proven to start the installed cockpit: the reports an agent needs to mend a configuration that does
+ * not load. Both read and print; neither writes a file the guard relies on.
+ */
+function heldConfigurationCheck(parsed: Readonly<{ invocations: readonly import('../../guards/invocation-parser.js').ParsedInvocation[] }>, identity: GuardHandlerIdentity, searchPath: string): boolean {
+    if (parsed.invocations.length !== 1) return false
+    const [invocation] = parsed.invocations as [import('../../guards/invocation-parser.js').ParsedInvocation]
+    if (invocation.executable === null || invocation.wrapped || invocation.dynamic || invocation.redirects.length || invocation.cwd !== identity.root
+        || invocation.words.some(word => word.role === 'environment-assignment-value')) return false
+    const prefix = cockpitLauncherPrefix(invocation.executable, invocation.argv)
+    if (prefix === undefined) return false
+    const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')
+    if (guardLauncherEvidence(invocation.executable, invocation.argv.slice(0, prefix), invocation.cwd, identity.root, launcher, searchPath) === undefined) return false
+    const args = invocation.argv.slice(prefix)
+    const config = (word: string | undefined) => word !== undefined && !word.split('/').includes('..') && resolve(invocation.cwd, word) === identity.configPath
+    return args.length === 3 && args[0] === 'check' && args[1] === '--config' && config(args[2])
+        || args.length === 4 && args[0] === 'sync' && (args[1] === '--dry-run' && args[2] === '--config' && config(args[3])
+            || args[1] === '--config' && config(args[2]) && args[3] === '--dry-run')
+}
 
 /** Installed bytes are authority only while their source, roots and publication still match. */
 export async function runGuardEvaluationApplication(
@@ -280,7 +338,13 @@ export async function runGuardEvaluationApplication(
         const publicationPending = settle(readPublication())
         const checkoutsPending = settle(readSiblingCheckouts(identity.root))
         const module = unwrap(await modulePending)
-        if (module.sha256 !== identity.moduleSha256) return changed('the installed cockpit version changed (its handler bytes differ)')
+        if (module.sha256 !== identity.moduleSha256) {
+            // The manifest names the version that generated the guards; it is read here only to word the fix.
+            const settled = await publicationPending
+            const manifest = 'value' in settled ? tryParseJson(settled.value.get(manifestPath)!.bytes.toString('utf8')) : undefined
+            const producer = manifest && typeof manifest === 'object' ? (manifest as { producer?: { version?: unknown } }).producer?.version : undefined
+            return unavailable(versionDrift(identity, typeof producer === 'string' ? producer : undefined))
+        }
         // What an admitted call rests on besides the configuration: the bytes sync published, for this
         // machine and this cockpit.
         const authenticatePublication = async (pending: typeof publicationPending, cockpitName: string) => {
@@ -303,7 +367,10 @@ export async function runGuardEvaluationApplication(
             const producer = ownership.manifest.producer
             if (producer.package !== installedPackageMetadata.name
                 || producer.version !== installedPackageMetadata.version
-                || producer.sourceRevision !== installedPackageMetadata.cockpitSourceRevision) return { held: changed(`the installed cockpit version changed (the guards were generated by ${producer.package} ${producer.version}, ${installedPackageMetadata.name} ${installedPackageMetadata.version} is installed)`) }
+                || producer.sourceRevision !== installedPackageMetadata.cockpitSourceRevision) {
+                if (producer.package === installedPackageMetadata.name && producer.version !== installedPackageMetadata.version) return { held: unavailable(versionDrift(identity, producer.version)) }
+                return { held: changed(`the installed cockpit version changed (the guards were generated by ${producer.package} ${producer.version}, ${installedPackageMetadata.name} ${installedPackageMetadata.version} is installed)`) }
+            }
             const published = new Map<string, string>()
             for (const path of ['.cockpit/guards/bash-guard.sh', registration]) {
                 const entry = ownership.manifest.entries.find(entry => entry.path === path)
@@ -318,7 +385,7 @@ export async function runGuardEvaluationApplication(
         if (loaded.kind !== 'complete' || loaded.result.source.path !== identity.configPath) {
             const held = guardHeld(identity, `${identity.configPath} changed since the guards were generated and does not load${loaded.kind === 'complete' ? '' : ` (${forwardedReason(loaded.diagnostics[0]?.message ?? 'no reason given')})`}`,
                 'guard policy comes from it and an edit takes effect only once a human approves it')
-            const hold = unavailable(`${held} Sync refuses a file that does not load, so correct it first, or undo it: one edit or write of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig} is admitted; ${GUARD_RESTORE_LIMIT}.`)
+            const hold = unavailable(`${held} Sync refuses a file that does not load, so correct it first: an edit, write or patch of ${identity.configPath} alone that leaves [work], [autonomy] and MCP restrictions as they are is admitted, and so are \`${formatShellCommand([launcherSpelling, 'check', '--config', configName])}\` and \`${formatShellCommand([launcherSpelling, 'sync', '--dry-run', '--config', configName])}\` run alone from the cockpit root, to see what is wrong. Or undo it: one edit or write that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}; ${GUARD_RESTORE_LIMIT}.`)
             // Restoring the recorded bytes needs no policy, so a file with none to offer is no reason to
             // refuse it; without this an agent's valid-TOML edit the schema rejects stranded it.
             const parsed = parseGuardInput(data.payload)
@@ -326,10 +393,19 @@ export async function runGuardEvaluationApplication(
             const current = await anchored(configName)
             const recorded = await anchored(GUARD_LOCAL_PATHS.generatedConfig)
             const recordedConfig = recorded.kind === 'complete' && recorded.sha256 === identity.configSha256 ? parseCockpitConfigBytes(recorded.bytes) : undefined
+            if (!recordedConfig || recorded.kind !== 'complete') return hold
             // A file too large to read gets the empty text, which an edit cannot match; a write needs none.
-            if (!recordedConfig || !restoresRecordedConfiguration(parsed, current.kind === 'complete' ? current.bytes.toString('utf8') : '', identity.configPath, identity.configSha256)) return hold
+            const currentText = current.kind === 'complete' ? current.bytes.toString('utf8') : ''
+            // The agent that broke the file can mend it, and read what check reports about it, without a
+            // person; everything else waits for a file that loads. Neither grants anything: a correction
+            // that widens what agents may do still waits for a person's sync once it loads.
+            const correction = restoresRecordedConfiguration(parsed, currentText, identity.configPath, identity.configSha256) ? 'admit'
+                : correctsHeldConfiguration(parsed, current.kind === 'complete' ? currentText : undefined, recorded.bytes.toString('utf8'), identity.configPath)
+            const admitted = correction === 'admit' ? correcting : correction ?? (heldConfigurationCheck(parsed, identity, data.searchPath ?? '') ? reporting : undefined)
+            if (!admitted) return hold
+            if (admitted.decision !== 'allow') return refused(admitted)
             const authenticated = await authenticatePublication(settle(readPublication(publicationRequests.filter(request => request.path !== configName))), recordedConfig.cockpit.name)
-            return authenticated.held ?? restored
+            return authenticated.held ?? { decision: admitted, diagnostics: [] }
         }
         // Every check below runs against the configuration on disk. An edit since sync that does not
         // widen the one the guards were generated from grants nothing the last sync did not, so calls are
@@ -390,6 +466,8 @@ export async function runGuardEvaluationApplication(
         // that prints committed content. A request not asked here gets the walk, or no answer.
         const policy = prepared.result.policy
         const instancePaths = policy.instances.map(item => item.path)
+        // What Git is asked to list beside environment and secrets names: every declared instance and secret path.
+        const watchedPaths = [...instancePaths, ...policy.secretPaths ?? []]
         const present = (path: string) => { try { lstatSync(path); return true } catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENAMETOOLONG')) return false; throw error } }
         const allowed = (path: string) => policy.allowedRoots.some(root => confinedPath(root, path))
         // These are exact observation requests, never roots for mutation or arbitrary execution.
@@ -406,10 +484,12 @@ export async function runGuardEvaluationApplication(
         }
         // Native external reads leave a read-only Git command to the agent tool, so its repository outside
         // the roots is inspected as a granted one's is. The evaluator admits it only alone in the call.
-        const nativeGit = policy.externalReads === 'native'
-        for (const invocation of nativeGit ? parsed.invocations : []) {
+        // A related checkout admits the same read-only Git there.
+        const related = (path: string) => (policy.relatedCheckouts ?? []).some(root => confinedPath(root, path))
+        const nativeGit = (cwd: string) => policy.externalReads === 'native' || related(cwd)
+        for (const invocation of parsed.invocations) {
             const access = invocation.executable === 'git' ? classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: data.ripgrepConfigActive === true }) : undefined
-            if (!access || allowed(access.cwd)) continue
+            if (!access || allowed(access.cwd) || !nativeGit(access.cwd)) continue
             approvedDirectories.add(access.cwd)
             for (const path of access.requires ?? []) approvedRequirements.add(resolve(access.cwd, path))
         }
@@ -430,7 +510,7 @@ export async function runGuardEvaluationApplication(
         }
         // What a merge, checkout, reset, pick, rebase, stash or pull writes into a work tree holding a
         // guard control: Git compares the revisions before the command runs.
-        const protectedPaths = [...GUARD_ROOT_PROTECTIONS.map(item => join(policy.canonicalRoot, item.path)), ...instancePaths]
+        const protectedPaths = [...GUARD_ROOT_PROTECTIONS.map(item => join(policy.canonicalRoot, item.path)), ...watchedPaths]
         const trees = new Map<string, Awaited<ReturnType<typeof guardWorktreeChanges>>>()
         const treeKey = (cwd: string, revision: string, from: string | undefined) => `${cwd}\0${revision}\0${from ?? ''}`
         for (const invocation of parsed.invocations) {
@@ -455,15 +535,15 @@ export async function runGuardEvaluationApplication(
         }
         for (const invocation of parsed.invocations) {
             const access = classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: data.ripgrepConfigActive === true })
-            if (access?.trackedContent && (allowed(access.cwd) || nativeGit && parsed.invocations.length === 1) && !tracked.has(access.cwd)) {
+            if (access?.trackedContent && (allowed(access.cwd) || nativeGit(access.cwd) && parsed.invocations.length === 1) && !tracked.has(access.cwd)) {
                 tracked.set(access.cwd, null)
-                queries.push(async () => { tracked.set(access.cwd, await guardTrackedSensitivePaths(access.cwd, instancePaths, git.value, adapters.execute ?? executeProbe)) })
+                queries.push(async () => { tracked.set(access.cwd, await guardTrackedSensitivePaths(access.cwd, watchedPaths, git.value, adapters.execute ?? executeProbe)) })
             }
             for (const tree of access?.skipsIgnored ? access.trees : []) {
                 const path = resolve(access!.cwd, tree)
                 if (!allowed(path) || unignored.has(path) || !present(path) || realpathSync(path) !== path) continue
                 unignored.set(path, undefined)
-                queries.push(async () => { unignored.set(path, await guardUnignoredSensitivePaths(path, instancePaths, git.value, adapters.execute ?? executeProbe)) })
+                queries.push(async () => { unignored.set(path, await guardUnignoredSensitivePaths(path, watchedPaths, git.value, adapters.execute ?? executeProbe)) })
             }
         }
         // A query starts up to four Git processes, so a command naming many trees is asked about a few
@@ -481,7 +561,7 @@ export async function runGuardEvaluationApplication(
             if (walked === undefined) walks.set(key, walked = guardSensitivePathsBelow(path, undefined, followsLinks))
             // The walk names environment and secrets names; an ignore-aware search also needs the instances it reads.
             if (!unignoredOnly || walked === null) return walked
-            const found = [...new Set([...walked, ...instancePaths.filter(item => confinedPath(path, item) && present(item))])].sort()
+            const found = [...new Set([...walked, ...watchedPaths.filter(item => confinedPath(path, item) && present(item))])].sort()
             return found.length > GUARD_LOCATION_LIMITS.sensitivePaths ? null : found
         }
         const inspected = new Map<string, Stats>()
@@ -524,17 +604,37 @@ export async function runGuardEvaluationApplication(
                 return facts ? { status: 'resolved', path, revision: request.revision, ...request.from === undefined ? {} : { from: request.from }, ...facts }
                     : { status: 'unavailable', path, symlink: false }
             }
+            if (request.operation === 'external-write') {
+                // Where a write outside the roots lands: the deepest existing ancestor through its links, then the rest as spelled.
+                let cursor = path
+                const rest: string[] = []
+                for (;;) {
+                    try { lstatSync(cursor); break }
+                    catch (error) {
+                        if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR') || cursor === '/') throw error
+                        rest.unshift(basename(cursor))
+                        cursor = dirname(cursor)
+                    }
+                }
+                const landsAt = join(realpathSync(cursor), ...rest)
+                // An existing file with another hard link is reported, since writing it writes every name it has.
+                const target = rest.length ? undefined : lstatIfPresentSync(landsAt)
+                return { status: 'resolved', path, landsAt, ...target?.isFile() ? { links: target.nlink } : {} }
+            }
             if (request.operation === 'manifest') {
                 const manifest = allowed(path) ? guardPackageManifest(path, allowed, request.workspace === true) : null
                 return manifest ? { status: 'resolved', path, ...manifest } : { status: 'unavailable', path, symlink: false }
             }
             const managedRoot = policy.allowedRoots.filter(root => confinedPath(root, path)).sort((a, b) => b.length - a.length)[0]
+            const reading = ['read', 'list', 'search', 'unignored-search'].includes(request.operation)
+            // A related checkout is read as a root is: a named file, a listing or a search walked for secrets.
+            const relatedRoot = !managedRoot && reading ? policy.relatedCheckouts?.find(root => confinedPath(root, path)) : undefined
             // A person's read path admits this read, or with native external reads the agent tool's own permission decided it.
-            const declaredRead = !managedRoot && ['read', 'list', 'search', 'unignored-search'].includes(request.operation)
+            const declaredRead = !managedRoot && reading
                 && (policy.externalReads === 'native' || (policy.readPaths ?? []).some(root => confinedPath(root, path)))
-            const externalRead = ['read', 'list', 'search', 'unignored-search'].includes(request.operation) && (approvedReads.has(path) || approvedRequirements.has(path)) || declaredRead
+            const externalRead = reading && (approvedReads.has(path) || approvedRequirements.has(path)) || declaredRead
                 || request.operation === 'cwd' && approvedDirectories.has(path) || request.operation === 'repository' && tracked.has(path)
-            const root = managedRoot ?? (externalRead ? '/' : undefined)
+            const root = managedRoot ?? relatedRoot ?? (externalRead ? '/' : undefined)
             if (!root) return { status: 'unavailable', path, symlink: false }
             if (leavesLink(request.cwd, request.path)) return { status: 'resolved', path, symlink: true }
             let cursor = root
@@ -578,12 +678,13 @@ export async function runGuardEvaluationApplication(
             }
             // Outside the managed roots the walk recognises only `.env*` and `.secrets` names, not other
             // credential files, so an approved external read or search names a regular file, never a tree.
-            if (!managedRoot && !['cwd', 'repository'].includes(request.operation) && !approvedRequirements.has(path) && exists && !inspected.get(path)!.isFile()
+            if (!managedRoot && !relatedRoot && !['cwd', 'repository'].includes(request.operation) && !approvedRequirements.has(path) && exists && !inspected.get(path)!.isFile()
                 && !(request.operation === 'list' && inspected.get(path)!.isDirectory())) return { status: 'unavailable', path, symlink: false }
             const search = request.operation === 'search' || request.operation === 'unignored-search'
             return { status: 'resolved', path, symlink: false, identity: exists ? chain.at(-1)! : null, ancestors: exists ? chain.slice(0, -1) : chain,
                 ...(search ? { sensitive: exists ? searched(path, request.operation === 'unignored-search', request.followsLinks === true) : [] } : {}),
-                ...(request.operation === 'repository' ? { tracked: tracked.get(path) ?? null } : {}) }
+                ...(request.operation === 'repository' ? { tracked: tracked.get(path) ?? null } : {}),
+                ...(request.operation === 'write' && exists && inspected.get(path)!.isFile() ? { links: inspected.get(path)!.nlink } : {}) }
         }
         const cockpitInvocations: GuardInvocationProfile[] = []
         const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')
@@ -659,6 +760,9 @@ export async function runGuardEvaluationApplication(
             mcpAllowedTools: config.mcp.allowed_tools,
             cockpitLaunchers: launched.map(({ executable, cwd, argv, prefix }) => ({ executable, cwd, argv: argv.slice(0, prefix) })),
             searchDirectories: guardSearchDirectories(searchPath, prepared.result.policy.allowedRoots),
+            // A write path still never takes a program planted in a search path directory, nor the Node the guard runs.
+            ...policy.writePaths?.length ? { externalSearchDirectories: externalSearchDirectories(searchPath, policy.allowedRoots),
+                guardRuntime: [...new Set([identity.node, dirname(dirname(identity.node)), process.execPath])].filter(path => path !== '/') } : {},
             searchPathRelativeEntry: guardSearchPathRelativeEntry(searchPath),
             ripgrepConfigActive: data.ripgrepConfigActive === true }, inspect)
         const current = await adapters.loadConfig(identity.configPath)
@@ -681,6 +785,33 @@ export async function runGuardEvaluationApplication(
         if (error instanceof CallPathUnreadable) return unavailable(error.message)
         return unavailable(`Guard authority could not be read or revalidated: ${errorCause(error)}`)
     }
+}
+
+/**
+ * Read and write paths as the guard holds them: `~/` is the home directory of whoever runs the agent, a
+ * missing location grants nothing, a linked one is held to where it leads, and neither `/` nor the home
+ * directory itself is ever granted.
+ */
+function canonicalOutsidePaths(paths: readonly string[]): readonly string[] {
+    const home = realpathSync(homedir())
+    return paths.flatMap(path => {
+        const spelled = path.startsWith('~/') ? join(homedir(), path.slice(2)) : path
+        try { return [realpathSync(spelled)] } catch (error) { if (hasErrorCode(error, 'ENOENT')) return []; throw error }
+    }).filter(path => path !== '/' && path !== home)
+}
+
+/** Absolute command search path directories, as spelled and as resolved, that lie outside every managed root. */
+function externalSearchDirectories(searchPath: string, roots: readonly string[]): readonly string[] {
+    const found = new Set<string>()
+    for (const entry of searchPath.split(':')) {
+        if (!entry.startsWith('/')) continue
+        const spelled = resolve(entry)
+        const candidates = [spelled]
+        try { candidates.push(realpathSync(spelled)) } catch (error) { if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR')) throw error }
+        for (const candidate of candidates) if (candidate !== '/' && !roots.some(root => confinedPath(root, candidate))) found.add(candidate)
+    }
+    if (found.size > 256) throw new RefusalError('guard search path exceeds 256 directories outside the allowed roots')
+    return [...found].sort()
 }
 
 // The guard runs against the configuration sync generated it from, or one that does not widen it, so
@@ -789,7 +920,7 @@ export async function prepareGuardEvaluationPolicy(
             const protectedIdentities = new Map<string, GuardProtectedIdentity>()
             // Records the identity of every existing component so the evaluator can match a protected
             // entry by inode rather than by spelling.
-            const protect = (root: string, path: string, leaf: 'file' | 'directory', label: string) => {
+            const protect = (root: string, path: string, leaf: 'file' | 'directory' | 'any', label: string) => {
                 const segments = relative(root, path).split(sep)
                 const chain = [guardIdentity(identities.get(root)!)]
                 let cursor = root
@@ -802,7 +933,8 @@ export async function prepareGuardEvaluationPolicy(
                         if (hasErrorCode(error, 'ENOENT')) { exists = false; break }
                         throw error
                     }
-                    if (status.isSymbolicLink() || (index < segments.length - 1 || leaf === 'directory' ? !status.isDirectory() : !status.isFile())) {
+                    const last = index === segments.length - 1
+                    if (status.isSymbolicLink() || (!last || leaf === 'directory' ? !status.isDirectory() : leaf === 'file' && !status.isFile())) {
                         throw new RefusalError(`guard policy ${label} path has a symlink or unexpected file type`)
                     }
                     identities.set(cursor, status)
@@ -840,6 +972,21 @@ export async function prepareGuardEvaluationPolicy(
                 }
             }
             if (allowedRoots.size > 256 || instances.length > 256) throw new RefusalError('guard policy exceeds restriction root or instance bounds')
+            const relatedSpellings = config.guards.related_checkouts.map(spelled => spelled.startsWith('~/') ? join(homedir(), spelled.slice(2)) : resolve(canonicalRoot, spelled))
+            // A declared secret path lies in the cockpit, or in every checkout of the sibling it names.
+            const secretPaths: string[] = []
+            for (const declared of config.guards.secret_paths) {
+                const { slug, path: spelled } = splitRepositoryPath(declared)
+                const roots = slug === undefined ? [canonicalRoot] : checkoutRoots.filter(row => row.sibling.slug === slug).map(row => row.root)
+                if (!roots.length) throw new RefusalError(`guard policy secret path ${declared} names an undeclared sibling`)
+                for (const root of roots) {
+                    const path = resolve(root, spelled)
+                    if (!confinedPath(root, path) || path === root) throw new RefusalError('guard policy secret path escapes its root')
+                    if (secretPaths.includes(path)) continue
+                    protect(root, path, 'any', 'secret')
+                    secretPaths.push(path)
+                }
+            }
             for (const { path, type } of GUARD_ROOT_PROTECTIONS) protect(canonicalRoot, join(canonicalRoot, path), type, 'guard control or secrets')
             // The configuration's own identity lets the evaluator recognise its deletion under any spelling.
             const configPath = loaded.source.path
@@ -873,12 +1020,30 @@ export async function prepareGuardEvaluationPolicy(
                     ...(rule.fix === undefined ? {} : { fix: rule.fix }),
                 })),
                 ripgrepConfigActive: false, externalReads: config.guards.external_reads, defaultDecision: config.guards.default,
+                unresolved: config.guards.unresolved,
                 homeDirectory: realpathSync(homedir()),
-                readPaths: config.guards.read_paths.flatMap(({ path }) => {
-                    const spelled = path.startsWith('~/') ? join(homedir(), path.slice(2)) : path
-                    // A missing location grants nothing; a linked one is held to where it leads.
-                    try { return [realpathSync(spelled)] } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error }
-                }).filter(path => path !== '/' && path !== realpathSync(homedir())),
+                // A related checkout is granted only where it already exists under exactly the spelling declared: a
+                // missing one, or one reached through a link, could be a link an agent made to anywhere it likes.
+                relatedCheckouts: relatedSpellings.flatMap(path => {
+                    let real: string
+                    try { real = realpathSync(path) } catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return []; throw error }
+                    const home = realpathSync(homedir())
+                    // The filesystem root, the home directory or a directory above it is no checkout, and one
+                    // overlapping a managed root would make that root read-only.
+                    if (real !== path || !lstatSync(real).isDirectory() || real === '/' || confinedPath(real, home)
+                        || [...allowedRoots].some(root => confinedPath(root, real) || confinedPath(real, root))) return []
+                    return [real]
+                }),
+                // Every declared spelling and its missing ancestors stay unwritten, so no agent can create one.
+                relatedReserved: [...new Set(relatedSpellings.flatMap(path => {
+                    const reserved = [path]
+                    for (let cursor = dirname(path); cursor !== '/' && !lstatIfPresentSync(cursor); cursor = dirname(cursor)) reserved.push(cursor)
+                    return reserved
+                }))],
+                // One holding the home directory would admit every shell startup file below it.
+                writePaths: canonicalOutsidePaths(config.guards.write_paths.map(({ path }) => path)).filter(path => !confinedPath(path, realpathSync(homedir()))),
+                readPaths: canonicalOutsidePaths(config.guards.read_paths.map(({ path }) => path)),
+                secretPaths,
                 executionDirectories, cockpitPackageDirectories, searchDirectories: [], searchPathRelativeEntry: null,
                 secretFileIdentities: secretFiles.identities && [...secretFiles.identities], protectedFilesLinked,
                 cockpitInvocations: [], cockpitLaunchers: [], projectCommands: [],

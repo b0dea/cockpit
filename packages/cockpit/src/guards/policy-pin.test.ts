@@ -46,6 +46,23 @@ describe('guard policy pin', () => {
         expect(edit(approved, approved + '\nfuture = true', config, prior)).toBe('deny')
     })
 
+    it('names a TOML escape the edit tool decoded as the reason an edit does not apply, and applies the escaped spelling', () => {
+        // A purpose spelled with an escaped em dash, as TOML writers emit it; tool input arrives with the character itself.
+        const escaped = current.replace('purpose = "the application"', 'purpose = "the application \\u2014 web"')
+        const reason = (old: string, replacement: string) => {
+            const parsed = parseGuardInput({ hook_event_name: 'PreToolUse', cwd: root, tool_name: 'Edit', tool_input: { file_path: config, old_string: old, new_string: replacement } })
+            if (parsed.status !== 'parsed') throw new Error(parsed.reason)
+            return pinnedPolicyDenial(parsed, escaped, path => path === config)
+        }
+        const decoded = reason('the application — web', 'the storefront — web')
+        expect(decoded).toMatchObject({ decision: 'deny', reason: expect.stringContaining('TOML \\u escapes') })
+        expect(decoded!.reason).toContain('Spell the escape with its backslash')
+        // The escaped spelling matches exactly once and changes no pinned table, so it is admitted.
+        expect(reason('the application \\u2014 web', 'the storefront \\u2014 web')).toBeUndefined()
+        // Text that is absent under either spelling keeps the plain refusal.
+        expect(reason('no such purpose', 'x')!.reason).not.toContain('TOML')
+    })
+
     it.each(['person', 'agent'])('holds MCP tool expansion for a person when server approval belongs to %s', authority => {
         const text = current.replace('mcp_approve = "person"', `mcp_approve = "${authority}"`)
         const declaration = 'approved = {}'

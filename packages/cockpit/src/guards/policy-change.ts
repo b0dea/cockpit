@@ -127,6 +127,14 @@ const CHANGE_RULES: Rules = {
     'guards.read_paths': onlyRemoves,
     // Handing named external reads to the agent tool's own permissions widens; returning to grants narrows.
     'guards.external_reads': (before: string | undefined, after: string | undefined, at: string) => after === 'native' && before !== 'native' ? [at] : [],
+    // A secret path keeps agents out of it; removing one hands its contents back to them.
+    'guards.secret_paths': onlyAdds,
+    // A related checkout is a location agents may read.
+    'guards.related_checkouts': onlyRemoves,
+    // Refusing what would ask narrows; going back to asking lets a person approve, which widens.
+    'guards.unresolved': (before: string | undefined, after: string | undefined, at: string) => before === 'deny' && after !== 'deny' ? [at] : [],
+    // A write path is a location outside the roots agents may write.
+    'guards.write_paths': onlyRemoves,
     // Allowing by default admits every command outside the blocked list; returning to ask narrows.
     'guards.default': (before: string | undefined, after: string | undefined, at: string) => after === 'allow' && before !== 'allow' ? [at] : [],
     'guards.hosted_db_hosts': onlyAdds,

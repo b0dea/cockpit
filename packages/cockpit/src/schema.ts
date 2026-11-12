@@ -409,13 +409,27 @@ const GuardAllow = z.object({
     reason: GuardRuleText.describe('Why the command is allowed.'),
     cwd: z.union([z.literal('.'), SafeRelativePath.max(4096)]).optional().describe('Allow only when run from this directory, relative to the cockpit.'),
 }).strict()
+const GuardOutsidePath = z.string().max(4096).regex(/^(?:\/|~\/)[^\x00-\x1f\x7f]+$/u)
+    .refine(path => !path.endsWith('/') && !path.split('/').slice(1).some(part => ['', '.', '..'].includes(part)), 'write the path without empty, . or .. segments or a trailing slash')
+    .describe('File or directory outside the cockpit, absolute or starting with ~/ for the home directory of whoever runs the agent.')
 // A location a person lets agents read, as a native additional-directory grant would, but held by the guard.
 const GuardReadPath = z.object({
-    path: z.string().max(4096).regex(/^(?:\/|~\/)[^\x00-\x1f\x7f]+$/u)
-        .refine(path => !path.endsWith('/') && !path.split('/').slice(1).some(part => ['', '.', '..'].includes(part)), 'write the path without empty, . or .. segments or a trailing slash')
-        .describe('File or directory outside the cockpit, absolute or starting with ~/ for the home directory of whoever runs the agent.'),
+    path: GuardOutsidePath,
     reason: GuardRuleText.describe('Why agents may read it.'),
 }).strict()
+// A location a person lets agents write, such as a folder they collect inputs from.
+const GuardWritePath = z.object({
+    path: GuardOutsidePath,
+    reason: GuardRuleText.describe('Why agents may write there.'),
+}).strict()
+// A path whose contents agents never read or write, as `.env` files and `.secrets` directories are kept from
+// them: `path` in the cockpit's own checkout or `<sibling slug>:path` in each checkout of a sibling.
+const GuardSecretPath = z.string().max(1_024).regex(REPOSITORY_FILE,
+    'one relative path without wildcards, optionally <sibling slug>:path, without . or .. segments or a leading or trailing /')
+// Another checkout an agent may read but never change, such as the upstream of a tool this cockpit installs.
+const GuardRelatedCheckout = z.string().max(4096).regex(/^(?:\/|~\/|(?:\.\.\/)*)[^\x00-\x1f\x7f]+$/u)
+    .refine(path => !path.endsWith('/') && !path.replace(/^(?:\.\.\/)+/, '').replace(/^~?\//, '').split('/').some(part => ['', '.', '..'].includes(part)),
+        'write the checkout as an absolute path, a ~/ path or a path relative to the cockpit, with .. only as leading segments, and no empty or . segments or trailing slash')
 const GuardDeny = z.union([
     z.object({ prefix: GuardCommandArgv.describe('Command prefix, as an argument list, that is refused.'), reason: GuardRuleText.describe('Why the command is refused.'), fix: GuardRuleText.optional().describe('Safer command or step to suggest instead.') }).strict(),
     z.object({ contains: GuardCommandArgv.describe('Argument sequence that is refused wherever it appears in a command.'), reason: GuardRuleText.describe('Why the command is refused.'), fix: GuardRuleText.optional().describe('Safer command or step to suggest instead.') }).strict(),
@@ -430,6 +444,10 @@ export const Guards = z
         deny: z.array(GuardDeny).max(64).default([]).describe('Commands refused in addition to the built-in rules.'),
         read_paths: z.array(GuardReadPath).max(64).default([]).describe('Files and directories outside the cockpit whose named files agents may read, list and search; never written, searched recursively or used as a working directory.'),
         default: z.enum(['allow', 'ask']).default('allow').describe('What the guard does with a shell command outside its blocked list: allow runs a command whose executable is a development tool it knows, a project program inside the roots and package scripts, and asks about an unknown program or inline interpreter code, which a person approves or admits with an allow entry; ask is the strict mode, which admits only the read-only commands the guard classifies, declared build and test commands and allow entries, and asks for every other command. Secrets, writes outside the cockpit, protected branches and force pushes, declared hosts, the guard itself and privilege escalation are refused in both modes.'),
+        secret_paths: z.array(GuardSecretPath).max(64).default([]).describe('Files and directories, relative to the cockpit or as <sibling slug>:path in a sibling, that agents never read, write, search or stage, as an .env file is kept from them; the guard refuses them on every agent tool and Claude Code\'s own file tools are denied them too.'),
+        related_checkouts: z.array(GuardRelatedCheckout).max(16).default([]).describe('Other checkouts agents may read, search and inspect with read-only Git, such as the upstream of a tool this cockpit installs: an absolute path, a ~/ path or a path relative to the cockpit. Writes there, Git commands that change them, and secret names stay refused.'),
+        unresolved: z.enum(['ask', 'deny']).default('ask').describe('What the guard does with a command it would ask a person about: ask prompts where the agent tool can (Claude Code) and refuses where it cannot; deny refuses everywhere, naming the reason and the route, so an autonomous session continues another way instead of waiting.'),
+        write_paths: z.array(GuardWritePath).max(64).default([]).describe('Files and directories outside the cockpit where agents may write, create and remove files, such as a drop folder; never a working directory, Git hooks, a guard, an agent tool\'s or the shell\'s configuration, or a secret name.'),
         external_reads: z.enum(['grant', 'native']).default('grant').describe('Who admits a shell read outside the cockpit, of a named file or by a read-only Git command run alone in another repository: grant needs its complete command under allow; native leaves it to the agent tool\'s own permissions. Secret names, recursive searches and writes stay guarded either way.'),
     })
     .strict()
@@ -1061,6 +1079,12 @@ export const CockpitConfig = z
                 if (slug !== '.' && !cfg.sibling.some(row => row.slug === slug)) {
                     ctx.addIssue({ code: 'custom', path: at, message: `${JSON.stringify(path)} names sibling "${slug}", which no [[sibling]] declares` })
                 }
+            }
+        }
+        for (const [index, path] of cfg.guards.secret_paths.entries()) {
+            const slug = repositoryOf(path)
+            if (slug !== '.' && !cfg.sibling.some(row => row.slug === slug)) {
+                ctx.addIssue({ code: 'custom', path: ['guards', 'secret_paths', index], message: `${JSON.stringify(path)} names sibling "${slug}", which no [[sibling]] declares` })
             }
         }
         // Not checked here: that `environment.profiles` and each `profile:<name>` mount name a

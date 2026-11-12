@@ -110,6 +110,23 @@ export interface GuardEvaluationPolicy {
     readonly homeDirectory?: string
     /** The installed cockpit package's own directory under every spelling, wherever it is installed. */
     readonly cockpitPackageDirectories?: readonly string[]
+    /** Canonical files and directories inside the roots that `[guards] secret_paths` keeps from agents. */
+    readonly secretPaths?: readonly string[]
+    /** Canonical checkouts outside the roots that agents may read and inspect with read-only Git, never change. */
+    readonly relatedCheckouts?: readonly string[]
+    /** `deny` refuses what would otherwise ask, naming the route; absent means `ask`. */
+    readonly unresolved?: 'ask' | 'deny'
+    /** Canonical files and directories outside the roots below which agents may write. */
+    readonly writePaths?: readonly string[]
+    /**
+     * Every `[guards] related_checkouts` spelling, granted or not, with each ancestor of it that does not
+     * exist: writing there could plant a link that a later call would grant as a related checkout.
+     */
+    readonly relatedReserved?: readonly string[]
+    /** Command search path directories outside the roots, where a planted file shadows a command everywhere. */
+    readonly externalSearchDirectories?: readonly string[]
+    /** The Node executable and install prefix the guard runs with, wherever they are. */
+    readonly guardRuntime?: readonly string[]
 }
 interface PathInspectionRequest {
     readonly path: string
@@ -127,9 +144,11 @@ interface PathInspectionRequest {
      * `from` (HEAD when absent, or the work tree itself) and `revision`; its evidence carries `guarded`,
      * whether the work tree holds any protected path, and `changed`, the protected paths that differ. A
      * `manifest` is the nearest package.json at or above the path: its `name` and its `scripts` names.
+     * An `external-write` is a path outside the roots a write may land on; its evidence carries
+     * `landsAt`, the path with every existing link on the way resolved.
      */
     /** `list` reads names only; it is asked for a listing outside the roots, where a directory may be listed but not read. */
-    readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'list' | 'remove' | 'search' | 'unignored-search' | 'repository' | 'branch' | 'remote' | 'patch' | 'tree' | 'manifest'
+    readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'list' | 'remove' | 'search' | 'unignored-search' | 'repository' | 'branch' | 'remote' | 'patch' | 'tree' | 'manifest' | 'external-write'
     readonly revision?: string
     readonly from?: string
     /** For a `manifest`, also the scripts any package of the enclosing workspace declares, as `workspace`. */
@@ -182,6 +201,8 @@ export const GUARD_LOCATION_LIMITS = Object.freeze({
     // Environment files and secrets directories one searched tree or repository index holds. Each is
     // compared against every protected target, and a monorepo keeps one or more per package.
     sensitivePaths: 1024,
+    // `[guards] secret_paths` holds 64 entries, each in the cockpit or in every checkout of one sibling.
+    secretPaths: 1024,
 })
 export const GUARD_SECRET_FILE_LIMIT = 512
 /** Root-relative paths whose identity every policy carries beside each instance's. */
@@ -264,9 +285,18 @@ function projectTuple(value: JsonSnapshotObject): boolean {
 }
 function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     const p = snapshotJson(value)
-    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'searchPathRelativeEntry', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands', ...p.mcpAllowedTools === undefined ? [] : ['mcpAllowedTools'], ...p.externalReads === undefined ? [] : ['externalReads'], ...p.readPaths === undefined ? [] : ['readPaths'], ...p.defaultDecision === undefined ? [] : ['defaultDecision'], ...p.homeDirectory === undefined ? [] : ['homeDirectory'], ...p.cockpitPackageDirectories === undefined ? [] : ['cockpitPackageDirectories']])
+    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'searchPathRelativeEntry', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands', ...p.mcpAllowedTools === undefined ? [] : ['mcpAllowedTools'], ...p.externalReads === undefined ? [] : ['externalReads'], ...p.readPaths === undefined ? [] : ['readPaths'], ...p.defaultDecision === undefined ? [] : ['defaultDecision'], ...p.homeDirectory === undefined ? [] : ['homeDirectory'], ...p.cockpitPackageDirectories === undefined ? [] : ['cockpitPackageDirectories'],
+        ...['secretPaths', 'relatedCheckouts', 'unresolved', 'writePaths', 'relatedReserved', 'externalSearchDirectories', 'guardRuntime'].filter(key => p[key] !== undefined)])
         || p.readPaths !== undefined && (!strings(p.readPaths) || p.readPaths.length > 64 || !p.readPaths.every(canonical))
         || p.externalReads !== undefined && p.externalReads !== 'grant' && p.externalReads !== 'native'
+        || p.unresolved !== undefined && p.unresolved !== 'ask' && p.unresolved !== 'deny'
+        || [p.writePaths, p.relatedReserved, p.guardRuntime].some(list => list !== undefined && (!strings(list) || list.length > 64 * 16 || !list.every(canonical)))
+        // A write path that is the home directory or above it would admit every shell startup file below.
+        || Array.isArray(p.writePaths) && typeof p.homeDirectory === 'string' && (p.writePaths as string[]).some(path => within(p.homeDirectory as string, path))
+        || p.secretPaths !== undefined && (!strings(p.secretPaths) || p.secretPaths.length > GUARD_LOCATION_LIMITS.secretPaths || !p.secretPaths.every(canonical))
+        || p.relatedCheckouts !== undefined && (!strings(p.relatedCheckouts) || p.relatedCheckouts.length > 16 || !p.relatedCheckouts.every(canonical))
+        || p.externalSearchDirectories !== undefined && (!strings(p.externalSearchDirectories) || p.externalSearchDirectories.length > GUARD_LOCATION_LIMITS.searchPathDirectories
+            || !p.externalSearchDirectories.every(canonical))
         || p.defaultDecision !== undefined && p.defaultDecision !== 'allow' && p.defaultDecision !== 'ask'
         || p.homeDirectory !== undefined && (!canonical(p.homeDirectory) || p.homeDirectory === '/')
         || p.cockpitPackageDirectories !== undefined && (!strings(p.cockpitPackageDirectories) || p.cockpitPackageDirectories.length > GUARD_LOCATION_LIMITS.packageDirectories
@@ -288,6 +318,9 @@ function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
         || !hosts.every(isGuardHost) || new Set(hosts.map(normalizeGuardHost)).size !== hosts.length)
         || p.protectedBranches.some((branch) => /[\s:*?\[\\]/.test(branch))
         || p.instances.some((item) => !record(item) || !keys(item, ['name', 'path']) || !scalar(item.name) || !confined(item.path))
+        || p.secretPaths !== undefined && !p.secretPaths.every(confined)
+        // A related checkout is read-only, so one overlapping a root would make that root unwritable or readable past its bounds.
+        || p.relatedCheckouts !== undefined && p.relatedCheckouts.some((path) => roots.some((root) => within(path, root) || within(root, path)))
         || !p.templates.every(confined)
         || p.declaredAllows.length > 64 || p.declaredAllows.some((item) => !record(item)
             || !keys(item, item.cwd === undefined ? ['argv', 'reason'] : ['argv', 'reason', 'cwd'])
@@ -306,7 +339,7 @@ function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
         || p.protectedIdentities.some((item) => !record(item) || !keys(item, ['path', 'identity', 'ancestors']) || !confined(item.path)
             || item.identity !== null && !identity(item.identity) || !Array.isArray(item.ancestors) || !item.ancestors.every(identity))) return undefined
     // A policy that omits an identity would silently fall back to spellings, so coverage is exact.
-    const expected = new Set([...p.instances.map((item) => (item as JsonSnapshotObject).path as string), p.configPath as string,
+    const expected = new Set([...p.instances.map((item) => (item as JsonSnapshotObject).path as string), ...p.secretPaths ?? [], p.configPath as string,
         ...GUARD_ROOT_PROTECTIONS.map((item) => `${p.canonicalRoot}/${item.path}`)])
     const carried = new Set(p.protectedIdentities.map((item) => (item as JsonSnapshotObject).path as string))
     if (carried.size !== p.protectedIdentities.length || carried.size !== expected.size || [...expected].some((path) => !carried.has(path))) return undefined
@@ -588,6 +621,69 @@ function transferOperands(command: 'cp' | 'install' | 'mv' | 'ln', args: readonl
     }
 }
 
+// Git verbs that write files from a revision or a patch into a work tree, where a symbolic link can arrive.
+const GIT_TREE_WRITERS = new Set(['checkout', 'switch', 'restore', 'reset', 'merge', 'pull', 'rebase', 'cherry-pick', 'revert', 'stash', 'am', 'apply',
+    'clone', 'worktree', 'read-tree', 'checkout-index', 'submodule', 'mv', 'bisect', 'sparse-checkout'])
+
+/**
+ * Whether an invocation can create a symbolic link: `ln`, a copy that keeps or makes links, a sync or
+ * an extraction that can carry one, or Git writing a revision's files. A link's text resolves where the
+ * link lies, so one made or moved in a call can point anywhere once it is moved, and every later path
+ * in that call is judged against the filesystem as it was before the call.
+ */
+function createsLink(invocation: ParsedInvocation, git: GitInvocation | undefined): boolean {
+    if (invocation.executable === null) return false
+    if (git) {
+        if (!GIT_TREE_WRITERS.has(git.verb)) return false
+        const operands = git.args.filter(arg => !arg.startsWith('-'))
+        // Forms that write only the index or refs leave the work tree, and every link in it, as it was.
+        if (['checkout', 'switch'].includes(git.verb) && git.args.some(arg => ['-b', '-B', '-c', '-C', '--create', '--force-create', '--orphan'].includes(arg)) && operands.length <= 1) return false
+        if (git.verb === 'restore' && git.args.some(arg => arg === '--staged' || arg === '-S') && !git.args.some(arg => arg === '--worktree' || arg === '-W')) return false
+        if (git.verb === 'reset' && !git.args.some(arg => /^--(?:hard|merge|keep)$/.test(arg))) return false
+        if (git.verb === 'stash' && ['list', 'show'].includes(operands[0] ?? '')) return false
+        if (git.verb === 'worktree' && operands[0] !== 'add') return false
+        if (git.verb === 'submodule' && !['update', 'add'].includes(operands[0] ?? '')) return false
+        if (git.verb === 'bisect' && ['log', 'visualize', 'view'].includes(operands[0] ?? '')) return false
+        return true
+    }
+    const name = posix.basename(invocation.executable)
+    if (['ln', 'link', 'rsync', 'unzip', 'cpio', 'pax', 'ditto', 'bsdtar', 'gtar', '7z', '7za', '7zz'].includes(name)) return true
+    if (name === 'tar') return invocation.argv.some(arg => arg === '--extract' || arg === '--get' || /^-?[A-Za-z]*x/.test(arg) && !arg.startsWith('--'))
+    // `cp -l` makes hard links, `-s` symbolic ones, and the rest keep the links they copy.
+    if (name === 'cp') return invocation.argv.some(arg => /^--(?:link|symbolic-link|no-dereference|archive|recursive|preserve(?:=.*links.*)?)$/.test(arg)
+        || /^-[A-Za-z]*[sPadRrl]/.test(arg))
+    // BSD `install -l` makes a hard or symbolic link in place of the copy.
+    if (name === 'install') return invocation.argv.some(arg => /^-[A-Za-z]*l/.test(arg) && !arg.startsWith('--'))
+    // A clone or a downloaded archive brings whatever links the repository or artifact holds.
+    if (name === 'gh') return materialisesRepository(invocation)
+    return false
+}
+
+/** `gh repo clone`, `gh repo fork --clone`, `gh gist clone`, `gh release download` and `gh run download`. */
+function materialisesRepository(invocation: ParsedInvocation): boolean {
+    const words = invocation.argv.filter(arg => !arg.startsWith('-'))
+    const [group, verb] = words
+    return (group === 'repo' || group === 'gist') && verb === 'clone' || group === 'repo' && verb === 'fork' && invocation.argv.some(arg => /^--clone(?:=true)?$/.test(arg))
+        || (group === 'release' || group === 'run') && verb === 'download'
+}
+
+/**
+ * A writer whose member names the guard cannot see: an extraction, a sync of a directory, a recursive
+ * copy, a clone or a download of an archive. Outside the roots a write path admits only a write that
+ * names each file, so none of these writes there.
+ */
+function writesUnseenMembers(invocation: ParsedInvocation, git: GitInvocation | undefined): boolean {
+    if (invocation.executable === null) return false
+    if (git) return ['clone', 'worktree', 'submodule', 'bundle'].includes(git.verb)
+    const name = posix.basename(invocation.executable)
+    if (['rsync', 'unzip', 'cpio', 'pax', 'ditto', 'bsdtar', 'gtar', '7z', '7za', '7zz', 'scp'].includes(name)) return true
+    if (name === 'tar') return createsLink(invocation, undefined)
+    if (name === 'cp') return invocation.argv.some(arg => /^--(?:archive|recursive)$/.test(arg) || /^-[A-Za-z]*[aRr]/.test(arg))
+    if (name === 'gh') return materialisesRepository(invocation)
+    if (name === 'wget') return invocation.argv.some(arg => /^--(?:recursive|mirror|page-requisites)$/.test(arg) || /^-[A-Za-z]*[rmp]/.test(arg))
+    return false
+}
+
 interface VisibleWrites {
     readonly paths: readonly string[]
     readonly reads?: readonly string[]
@@ -769,7 +865,16 @@ function visibleWrites(invocation: ParsedInvocation): VisibleWrites | undefined 
     const name = posix.basename(invocation.executable)
     if (name === 'cp' || name === 'install' || name === 'mv') {
         const transfer = transferOperands(name, invocation.argv)
-        return { paths: transfer.writes, reads: name === 'mv' ? [] : transfer.sources, removes: false, uncertain: transfer.uncertain }
+        // `cp -s` and `cp -l` make each destination a symbolic or hard link to its source, as `ln` does, and so does BSD `install -l`.
+        const linking = name === 'cp' && invocation.argv.some(arg => ['--symbolic-link', '--link'].includes(arg) || /^-[A-Za-z]*[sl]/.test(arg))
+            || name === 'install' && invocation.argv.some(arg => /^-[A-Za-z]*l/.test(arg) && !arg.startsWith('--'))
+        return { paths: transfer.writes, reads: name === 'mv' ? [] : transfer.sources, removes: linking, uncertain: transfer.uncertain,
+            ...linking ? { links: transfer.sources } : {} }
+    }
+    // `link <file> <name>` makes a hard link, as `ln` without options does.
+    if (name === 'link') {
+        const operands = invocation.argv.filter(arg => arg !== '--')
+        return { paths: operands.slice(1, 2), links: operands.slice(0, 1), removes: true, uncertain: operands.length !== 2 || invocation.argv.some(arg => arg.startsWith('-') && arg !== '--') }
     }
     if (name === 'ln') {
         const transfer = transferOperands('ln', invocation.argv)
@@ -1006,6 +1111,12 @@ const KEY_FILE = /^(?:.*\.(?:pem|p12|pfx|key)|id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk
 const unfirmlinked = (folded: string) => folded === '/system/volumes/data' ? '/' : folded.startsWith('/system/volumes/data/') ? folded.slice('/system/volumes/data'.length)
     : /^\/volumes\/[^/]+(?:\/|$)/.test(folded) ? folded.replace(/^\/volumes\/[^/]+/, '') || '/' : folded
 
+/** A path spelled through the Data volume's firmlink or a volume under /Volumes, as the same path from `/`; any other path as it is. */
+export function guardFirmlinkStripped(path: string): string {
+    const stripped = path.replace(/^\/system\/volumes\/data(?=\/|$)/i, '').replace(/^\/volumes\/[^/]+(?=\/|$)/i, '')
+    return stripped === path ? path : stripped || '/'
+}
+
 function credentialStore(spelled: string, home: string | undefined): boolean {
     const folded = unfirmlinked(spelled)
     if (KEY_FILE.test(posix.basename(folded))) return true
@@ -1016,6 +1127,40 @@ function credentialStore(spelled: string, home: string | undefined): boolean {
     const below = folded.slice(foldedHome.length + 1)
     return HOME_CREDENTIALS.some(pattern => pattern.test(below)) || HOME_CREDENTIAL_DIRECTORIES.some(directory => within(directory, below))
 }
+
+// Under native external writes the agent tool decides a write outside the roots, except where the write
+// would change what agents, the shell, Git or the system run later, or reach a credential: those stay
+// refused whatever the tool would allow. Matched folded, below the home directory or anywhere.
+const HOME_RUN_CONFIGURATION: readonly Readonly<{ path: string; what: string }>[] = [
+    ...['.claude', '.claude.json', '.codex', '.config/opencode', '.local/share/opencode', '.local/state/opencode', '.cursor', '.grok', '.gemini',
+        '.config/claude', '.config/github-copilot', '.agents', '.mcp.json'].map(path => ({ path, what: 'an agent tool\'s own configuration' })),
+    ...['.zshrc', '.zprofile', '.zshenv', '.zlogin', '.zlogout', '.bashrc', '.bash_profile', '.bash_login', '.bash_logout', '.profile', '.inputrc',
+        '.config/fish', '.oh-my-zsh', '.config/direnv', '.direnvrc'].map(path => ({ path, what: 'a shell startup file' })),
+    ...['.gitconfig', '.config/git', '.config/gh', '.npmrc', '.yarnrc', '.yarnrc.yml', '.config/pnpm', '.bunfig.toml', '.config/pip', '.pip',
+        '.cargo/config', '.cargo/config.toml', '.docker', '.ssh', '.config/mise', '.tool-versions'].map(path => ({ path, what: 'a tool configuration that chooses the programs it runs' })),
+    ...['library/launchagents', '.config/systemd', '.local/share/systemd', '.config/autostart'].map(path => ({ path, what: 'a launch agent or scheduled job' })),
+]
+const SYSTEM_RUN_CONFIGURATION = ['/etc', '/private/etc', '/library', '/system', '/usr', '/bin', '/sbin', '/var/at', '/private/var/at', '/var/spool', '/private/var/spool',
+    '/var/cron', '/private/var/cron']
+// Another checkout's agent configuration and generated guard, Git hooks wherever a repository keeps
+// them, and direnv's `.envrc`, which runs when a shell enters its directory.
+const NAMED_RUN_CONFIGURATION = new Set(['.cockpit', '.claude', '.codex', '.opencode', '.cursor', '.grok', '.gemini', '.git', '.husky', '.githooks'])
+const NAMED_RUN_FILES = new Set(['opencode.json', 'opencode.jsonc', '.envrc', '.mcp.json'])
+
+function externalWriteHazard(spelled: string, home: string | undefined, searchDirectories: readonly string[]): string | undefined {
+    const folded = unfirmlinked(spelled)
+    if (credentialStore(folded, home)) return 'a credential store'
+    if (dotenvName(posix.basename(folded)) || folded.split('/').includes('.secrets')) return 'an environment file or secrets directory'
+    if (folded.split('/').some(name => NAMED_RUN_CONFIGURATION.has(name)) || NAMED_RUN_FILES.has(posix.basename(folded))) return 'an agent tool\'s configuration, a cockpit\'s guard or a repository\'s Git hooks'
+    if (searchDirectories.some(directory => posix.dirname(folded) === fold(directory) || within(fold(directory), folded))) return 'a command search path directory'
+    if (SYSTEM_RUN_CONFIGURATION.some(directory => within(folded, directory))) return 'system configuration, launch daemons or scheduled jobs'
+    if (home === undefined) return undefined
+    const foldedHome = fold(home)
+    if (!within(folded, foldedHome)) return undefined
+    const below = folded.slice(foldedHome.length + 1)
+    return HOME_RUN_CONFIGURATION.find(item => within(below, item.path) || within(item.path, below))?.what
+}
+const dotenvName = (name: string) => name === '.env' || name.startsWith('.env.')
 
 /**
  * Files a command writes through an option rather than an operand: Git's patch output, downloads,
@@ -1146,6 +1291,9 @@ function ghDownloads(invocation: ParsedInvocation): { readonly clones: readonly 
     const [group, verb, ...rest] = operands
     if ((group === 'repo' || group === 'gist') && verb === 'clone' && rest[0] !== undefined) {
         return { clones: [rest[1] ?? posix.basename(rest[0]).replace(/\.git$/, '')] }
+    }
+    if (group === 'repo' && verb === 'fork' && args.some(arg => /^--clone(?:=true)?$/.test(arg))) {
+        return { clones: [rest[0] === undefined ? '.' : posix.basename(rest[0]).replace(/\.git$/, '')] }
     }
     if (!['release', 'run'].includes(group ?? '') || verb !== 'download') return undefined
     const path = values(['-D', '--dir']).at(-1) ?? '.'
@@ -1286,12 +1434,12 @@ function dumpsEnvironment(invocation: ParsedInvocation): boolean {
 
 // Programs that write their operands, or a destination operand, without the guard modelling which
 // one: every operand outside the roots is judged as a write.
-const OUTSIDE_WRITERS = new Set(['rsync', 'ditto', 'scp', 'patch', 'uniq', 'split', 'cpio', 'sponge', 'zip', 'gzip', 'gunzip', 'bunzip2', 'xz', 'unxz', 'csplit'])
+const OUTSIDE_WRITERS = new Set(['rsync', 'ditto', 'scp', 'patch', 'uniq', 'split', 'cpio', 'pax', 'sponge', 'zip', 'gzip', 'gunzip', 'bunzip2', 'xz', 'unxz', 'csplit'])
 // Git verbs whose operand is a directory or file they create.
 const GIT_CREATES = new Set(['clone', 'init', 'worktree', 'bundle'])
 
 /** Local paths an outside writer names: not options, URLs or `host:path` remote spellings. */
-function writerOperands(invocation: ParsedInvocation, git: GitInvocation | undefined): { readonly cwd: string; readonly paths: readonly string[] } | undefined {
+function writerOperands(invocation: ParsedInvocation, git: GitInvocation | undefined): { readonly cwd: string; readonly paths: readonly string[]; readonly destinations?: readonly string[] } | undefined {
     const local = (word: string) => !word.startsWith('-') && !/^[a-z][a-z0-9+.-]*:\/\//i.test(word) && !/^[^/]*:/.test(word)
     if (git && GIT_CREATES.has(git.verb)) {
         const operands = git.args.filter(local)
@@ -1300,7 +1448,28 @@ function writerOperands(invocation: ParsedInvocation, git: GitInvocation | undef
         return { cwd: git.cwd, paths }
     }
     if (invocation.executable === null || !OUTSIDE_WRITERS.has(posix.basename(invocation.executable))) return undefined
-    return { cwd: invocation.cwd, paths: invocation.argv.filter(local) }
+    const paths = invocation.argv.filter(local)
+    return { cwd: invocation.cwd, paths, destinations: writerDestinations(posix.basename(invocation.executable), invocation.argv, paths) }
+}
+
+/**
+ * The operands a writer writes, by its own grammar: a sync or copy's last operand, `uniq`'s output,
+ * `zip`'s archive, `split`'s and `csplit`'s prefix, every file a compressor replaces or `sponge`
+ * and `patch` rewrite, and the working directory where `patch` reads its targets from the patch or
+ * `cpio` extracts members whose names the guard cannot see.
+ */
+function writerDestinations(name: string, argv: readonly string[], operands: readonly string[]): readonly string[] {
+    if (['rsync', 'scp', 'ditto', 'pax'].includes(name)) return operands.length > 1 ? operands.slice(-1) : name === 'pax' && argv.some(arg => /^-[A-Za-z]*r/.test(arg)) ? ['.'] : []
+    if (name === 'uniq') return operands.slice(1, 2)
+    if (name === 'zip') return operands.slice(0, 1)
+    if (name === 'split') return [operands[1] ?? 'x']
+    if (name === 'csplit') {
+        const prefix = argv.findIndex(arg => arg === '-f' || arg === '--prefix')
+        return [prefix >= 0 ? argv[prefix + 1] ?? '.' : 'xx']
+    }
+    if (name === 'patch') return operands.length ? operands.slice(0, 1) : ['.']
+    if (name === 'cpio') return [...operands, ...argv.some(arg => arg === '--extract' || /^-[A-Za-z]*i/.test(arg)) ? ['.'] : []]
+    return operands
 }
 
 // Options that name a program for Git to run on either side of a transfer.
@@ -1623,7 +1792,48 @@ function launchedBy(program: ParsedInvocation, launcher: ParsedInvocation): bool
 }
 
 /** Hard boundaries are independent of grants and are evaluated across the complete capture. */
+/**
+ * The guard's decision for one captured call. A command it would ask about also names the
+ * `[[guards.allow]]` entries that would admit it, where some would, proved by judging the call again
+ * with them; a background agent whose ask turns into a bare refusal then has something to propose.
+ * Under `[guards] unresolved = "deny"` such an ask is refused, keeping its reason and that route.
+ */
 export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInspection): GuardDecision {
+    const decision = judgeGuard(input, policy, inspect)
+    if (decision.decision !== 'ask' || !isParsedGuardInput(input)) return decision
+    const resolved = capturePolicy(policy)!
+    const entries = admittingAllowEntries(input, resolved, inspect)
+    const configName = posix.basename(resolved.configPath)
+    const proposed = entries.length ? ` A person can admit it for good by adding ${entries.length === 1 ? 'this entry' : 'these entries'} to ${configName} (one key per line) and running sync: ${entries.join(' ')}`
+        : ''
+    // A reason past the adapter's bound would turn the answer into a failure, so a long entry is left out.
+    const route = Buffer.byteLength(decision.reason + proposed) <= 3_072 ? proposed : ''
+    if (resolved.unresolved !== 'deny') return { decision: 'ask', reason: decision.reason + route }
+    return deny(`${decision.reason}${route} [guards] unresolved = "deny" in ${configName} refuses what would wait for a person, so nobody is asked: take the route this names${route ? '' : ', such as a literal local target the guard can judge'}, or a person runs the command.`)
+}
+
+/** The fewest exact `[[guards.allow]]` entries, as TOML, that would admit every command in the call, or none. */
+function admittingAllowEntries(input: Readonly<{ invocations: readonly ParsedInvocation[] }>, resolved: GuardEvaluationPolicy, inspect: PathInspection): readonly string[] {
+    // A rule admits only what it spells: never a launched, wrapped or environment-changing command, nor one whose words the guard cannot see.
+    const eligible = input.invocations.filter(invocation => invocation.executable !== null && !invocation.wrapped && !invocation.dynamic
+        && !invocation.words.some(word => word.role === 'environment-assignment-value')
+        && GuardCommandArgv.safeParse([invocation.executable, ...invocation.argv]).success)
+    if (!eligible.length || eligible.length > 8 || resolved.declaredAllows.length + eligible.length > 64) return []
+    // A rule's cwd is relative to the cockpit; a sibling's directory cannot be spelled there, so its rule names none.
+    const rules = eligible.map(invocation => ({ argv: [invocation.executable!, ...invocation.argv], reason: 'Admitted by a person.',
+        ...within(invocation.cwd, resolved.canonicalRoot) ? { cwd: invocation.cwd } : {} }))
+    const admits = (chosen: readonly typeof rules[number][]) => judgeGuard(input, { ...resolved, declaredAllows: [...resolved.declaredAllows, ...chosen] }, inspect).decision === 'allow'
+    let chosen = [...new Map(rules.map(rule => [JSON.stringify(rule), rule])).values()]
+    if (!admits(chosen)) return []
+    for (const rule of [...chosen]) {
+        const without = chosen.filter(other => other !== rule)
+        if (without.length && admits(without)) chosen = without
+    }
+    return chosen.map(rule => `[[guards.allow]] argv = [${rule.argv.map(word => JSON.stringify(word)).join(', ')}]${rule.cwd === undefined ? ''
+        : ` cwd = ${JSON.stringify(posix.relative(resolved.canonicalRoot, rule.cwd) || '.')}`} reason = "<why it is safe>"`)
+}
+
+function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): GuardDecision {
     if (!isParsedGuardInput(input)) return unavailable('Guard input is unavailable or was not captured by the invocation parser.')
     const resolved = capturePolicy(policy)
     if (!resolved) return unavailable('Guard policy is incomplete or malformed.')
@@ -1655,6 +1865,41 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     const controlDenial = deny('Refusing mutation of the guard, its hook registration or its ownership manifest.')
     const gitMetadataDenial = deny('Refusing direct mutation of Git metadata: its configuration chooses programs that read-only Git commands run.')
     const readDenial = deny('Refusing to read a declared environment instance or secrets directory into the agent context.')
+    // A path `[guards] secret_paths` names is kept from agents as a `.secrets` directory is, at every spelling.
+    const secretPaths = (resolved.secretPaths ?? []).map(fold)
+    const inSecretPath = (folded: string) => secretPaths.some((path) => within(folded, path))
+    const coversSecretPath = (folded: string) => secretPaths.some((path) => within(path, folded))
+    const secretPathDenial = deny(`Refusing to read, write, search or stage a path [guards] secret_paths declares secret in ${posix.basename(resolved.configPath)}: it holds data agents are kept from, as an .env file is. Work with the files beside it, or a person handles it.`)
+    // A checkout `[guards] related_checkouts` names is read and inspected, never changed, from this cockpit.
+    const relatedCheckouts = (resolved.relatedCheckouts ?? []).map(fold)
+    const inRelatedCheckout = (lexical: string) => relatedCheckouts.some((path) => within(fold(lexical), path))
+    const relatedDenial = deny(`Refusing to change a checkout [guards] related_checkouts names in ${posix.basename(resolved.configPath)}: agents read it and run read-only Git there, such as \`git -C <checkout> log\`, status, diff or show, but write, commit, push or run anything else there only from a session started in that checkout.`)
+    const writePaths = resolved.writePaths ?? []
+    // Sync writes a guard script at `.cockpit/guards`, and a Codex session runs the one it finds above it,
+    // so no agent writes such a path, nor a directory named `.cockpit` that one could be moved into, anywhere.
+    const guardScriptLocation = (folded: string) => {
+        const parts = folded.split('/')
+        return parts.at(-1) === '.cockpit' || parts.some((part, at) => part === '.cockpit' && parts[at + 1] === 'guards')
+    }
+    const guardScriptDenial = deny('Refusing to write a path below .cockpit/guards, or a directory named .cockpit: cockpit sync writes the guard script there, and a Codex session runs the one it finds above it. Agents never write one.')
+    // A file with another hard link is the same file under a name the guard may not protect: writing it
+    // writes that one too, the guard's own code or a control included, however each name is spelled.
+    const hardLinkDenial = deny('Refusing to write a file that has another hard link: the write changes every name of the file, and the guard cannot see the others. Write a new file instead, or a person removes the extra link.')
+    // The invocation being judged writes files whose names it chooses itself, such as an extraction or a clone.
+    let unseenMembers = false
+    // Spellings a related checkout is declared under, with their missing ancestors: nothing is written there.
+    const relatedReserved = (resolved.relatedReserved ?? []).map(fold)
+    const reservedForRelated = (lexical: string) => relatedReserved.some((path) => within(fold(lexical), path))
+    // A path spelled through /System/Volumes/Data or /Volumes reaches the cockpit, a related checkout or a write path
+    // under a name every rule here compares against the plain spelling, so it is refused rather than judged twice.
+    const aliasedLocation = (lexical: string) => {
+        const stripped = guardFirmlinkStripped(lexical)
+        if (stripped === lexical) return false
+        const folded = fold(stripped)
+        return [...resolved.allowedRoots, ...resolved.relatedCheckouts ?? [], ...relatedReserved, ...writePaths, ...resolved.secretPaths ?? []]
+            .some((path) => within(folded, fold(path)))
+    }
+    const aliasDenial = (path: string) => deny(`Refusing ${shownGuardWord(path)}: it names the cockpit, a related checkout or a write path through /System/Volumes/Data or /Volumes, a second spelling the guard does not judge. Name the path from /, as the cockpit does.`)
     const templates = new Set(resolved.templates.map(fold))
     // Documentation by its name or by the configuration; the guard checks spellings it was given, folded.
     const documentation = (folded: string) => templates.has(folded) || DOTENV_DOCUMENTATION.has(posix.basename(folded))
@@ -1774,7 +2019,10 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const canonicalPath = evidence !== undefined && record(evidence) ? evidence.canonicalPath : undefined
         const observedPath = canonicalPath ?? lexical
         const paths = listed && evidence !== undefined && record(evidence) ? evidence[listed] : null
-        return record(evidence) && keys(evidence, ['status', 'path', 'symlink', 'identity', 'ancestors', ...(listed ? [listed] : []), ...(canonicalPath === undefined ? [] : ['canonicalPath'])]) && evidence.status === 'resolved'
+        const linkCount = record(evidence) ? evidence.links : undefined
+        return record(evidence) && keys(evidence, ['status', 'path', 'symlink', 'identity', 'ancestors', ...(listed ? [listed] : []), ...(canonicalPath === undefined ? [] : ['canonicalPath']),
+            ...(linkCount === undefined ? [] : ['links'])]) && evidence.status === 'resolved'
+            && (linkCount === undefined || request.operation === 'write' && typeof linkCount === 'number' && Number.isSafeInteger(linkCount) && linkCount >= 1)
             && (canonicalPath === undefined || ['read', 'search', 'unignored-search'].includes(request.operation) && canonical(canonicalPath)
                 && resolved.allowedRoots.some(root => within(lexical, root)) && resolved.allowedRoots.some(root => within(canonicalPath, root)))
             && evidence.path === lexical && evidence.symlink === false && (evidence.identity === null || identity(evidence.identity))
@@ -1783,6 +2031,53 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
                 && paths.every((path) => canonical(path) && typeof observedPath === 'string' && within(path, observedPath))) ? evidence : undefined
     }
     let pathCount = input.paths.length + input.invocations.reduce((sum, item) => sum + item.redirects.length, 0)
+    const externalWriteDenial = (path: string, hazard: string) => deny(`Refusing to write ${shownGuardWord(path)}: [guards] write_paths admits writes below the paths it lists, but never into ${hazard}, which changes what agents, the shell or Git run later, or holds credentials. A person makes this change.`)
+    const outsideWriteRefusal = unavailable('Guard path escapes configured roots. This command writes outside every root this cockpit manages, and no [guards] write_paths entry covers where it lands: write inside the cockpit, or a person lists the location under [guards] write_paths and syncs, or runs the command.')
+    // A write outside the roots is admitted only where it lands below a write path, judged where its
+    // existing links lead (as the system resolves them, and from / for a Data volume spelling). One that
+    // lands in the roots is judged there; in a related checkout, a secret path or the code the guard runs,
+    // it is refused; below a write path the locations that change what runs later stay refused.
+    const judgeExternalWrite = (request: PathInspectionRequest, lexical: string) => {
+        if (!writePaths.length) {
+            hold(unavailable('Guard path escapes configured roots. This command writes outside every root this cockpit manages, and no [guards] allow rule grants a write there: write inside the cockpit, or a person runs the command.'))
+            return
+        }
+        let evidence: JsonSnapshot | undefined
+        try { evidence = snapshotJson(inspect({ path: request.path, cwd: request.cwd, operation: 'external-write' })) } catch (error) { inspectionFailure = errorCause(error) }
+        const reported = record(evidence) && evidence.status === 'resolved' && evidence.path === lexical && canonical(evidence.landsAt)
+            && (evidence.links === undefined || typeof evidence.links === 'number' && Number.isSafeInteger(evidence.links) && evidence.links >= 1) ? evidence.landsAt : undefined
+        if (reported === undefined) {
+            hold(unavailable(`Guard could not tell where a write outside the configured roots lands, so it cannot rule out a link into a location it protects: ${shownGuardWord(request.path)}. Write to a path that exists up to its parent directory, or a person runs it.`))
+            return
+        }
+        const landsAt = guardFirmlinkStripped(reported)
+        const folded = fold(landsAt)
+        if (inRelatedCheckout(landsAt) || reservedForRelated(landsAt)) { hold(relatedDenial); return }
+        if (resolved.allowedRoots.some((root) => within(folded, fold(root)))) {
+            // Another spelling of a root, such as its folded case, is judged once as that spelling: inspecting
+            // it again would find it outside the roots and come back here.
+            if (resolved.allowedRoots.some((root) => within(landsAt, root))) inspectPath({ path: landsAt, cwd: posix.dirname(landsAt), operation: 'write' }, true)
+            else hold(unavailable(`Refusing ${shownGuardWord(request.path)}: it names a configured root under another spelling, such as another case. Name it as the cockpit does.`))
+            return
+        }
+        if (guardScriptLocation(folded)) { hold(guardScriptDenial); return }
+        if (unseenMembers) {
+            hold(deny(`Refusing ${shownGuardWord(request.path)}: the command writes files whose names it chooses itself, as an extraction, a sync of a directory, a recursive copy, a clone or a download of an archive does, and outside the roots a write path admits only writes that name each file. Write it inside the cockpit and copy the files you need by name.`))
+            return
+        }
+        if (evidence !== undefined && record(evidence) && typeof evidence.links === 'number' && evidence.links > 1) { hold(hardLinkDenial); return }
+        if ([...resolved.guardRuntime ?? [], ...resolved.cockpitPackageDirectories ?? [], ...resolved.executionDirectories].some((path) => within(folded, fold(path)))) {
+            hold(executionDenial)
+            return
+        }
+        const area = writePaths.find((path) => within(landsAt, path))
+        if (area === undefined) { hold(outsideWriteRefusal); return }
+        const hazard = externalWriteHazard(fold(lexical), resolved.homeDirectory, resolved.externalSearchDirectories ?? [])
+            ?? externalWriteHazard(folded, resolved.homeDirectory, resolved.externalSearchDirectories ?? [])
+            // A dotfile directly in a write path is how a shell, an editor or an agent tool finds its configuration.
+            ?? (landsAt !== area && posix.relative(area, landsAt).split('/')[0]!.startsWith('.') ? 'a dotfile or dot-directory directly in a write path' : undefined)
+        if (hazard) hold(externalWriteDenial(request.path, hazard))
+    }
     const inspectPath = (request: PathInspectionRequest, controlCoverage = false, approvedReadCwd = false): JsonSnapshotObject | undefined => {
         if (!scalar(request.path) || Buffer.byteLength(request.path) > GUARD_INPUT_LIMITS.pathBytes || !canonical(request.cwd)) {
             hold(unavailable('Guard path or working directory is malformed.'))
@@ -1798,17 +2093,21 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const folded = fold(lexical)
         if (mutating && (folded.split('/').includes('.secrets') || (staging || removing) && within(fold(secretRoot), folded))) hold(staging && !folded.split('/').includes('.secrets') ? coveringStageDenial : secretDenial)
         // Held first, so a declared instance's own denial, held after it, is the one reported.
+        // Held before the control denials, so a control's own denial is the one reported.
+        if ((request.operation === 'write' || staging) && guardScriptLocation(folded)) hold(guardScriptDenial)
         if (mutating && dotenvSecret(folded)) hold(dotenvDenial)
+        if (mutating && (inSecretPath(folded) || (staging || removing) && coversSecretPath(folded))) hold(staging && !inSecretPath(folded) ? coveringStageDenial : secretPathDenial)
         if (mutating && resolved.instances.some((item) => folded === fold(item.path) || (staging || removing) && within(fold(item.path), folded))) hold(staging && !resolved.instances.some((item) => folded === fold(item.path)) ? coveringStageDenial : instanceDenial)
         if (request.operation === 'write' && (controlFiles.some((path) => folded === fold(path) || controlCoverage && within(fold(path), folded))
             || controlDirectories.some((path) => within(folded, fold(path)) || controlCoverage && within(fold(path), folded)))) hold(controlDenial)
         if (request.operation === 'write' && executes(folded, controlCoverage)) hold(executionDenial)
         if (request.operation === 'write' && posix.basename(folded) === '.npmrc') hold(npmrcDenial)
         if (mutating && folded.split('/').includes('.git')) hold(gitMetadataDenial)
+        if (aliasedLocation(lexical)) { hold(aliasDenial(request.path)); return }
+        if ((mutating || !approvedReadCwd) && inRelatedCheckout(lexical) || mutating && reservedForRelated(lexical)) { hold(relatedDenial); return }
         if (!resolved.allowedRoots.some((root) => within(lexical, root)) && !(request.operation === 'cwd' && approvedReadCwd)) {
-            hold(unavailable(request.operation === 'write'
-                ? 'Guard path escapes configured roots. This command writes outside every root this cockpit manages, and no [guards] allow rule grants a write there: write inside the cockpit, or a person runs the command.'
-                : request.operation === 'cwd'
+            if (request.operation === 'write') { judgeExternalWrite(request, lexical); return }
+            hold(unavailable(request.operation === 'cwd'
                     ? 'Guard path escapes configured roots. A working directory in this command is outside every root this cockpit manages. A person can admit one read-only Git command in a related checkout, such as `git -C <checkout> status --short` or `git -C <checkout> log`, by its complete argv with a managed cwd under [guards] allow and a sync; it then runs only as the whole command. Commands that print file content there, such as diff or show, stay refused. Otherwise work inside the cockpit, or a person runs the command.'
                     : 'Guard path escapes configured roots. A path in this command is outside every root this cockpit manages, which the guard does not judge: work inside the cockpit, or a person runs the command.'))
             return
@@ -1822,6 +2121,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             return
         }
         if (!mutating) return evidence
+        if (request.operation === 'write' && typeof evidence.links === 'number' && evidence.links > 1) hold(hardLinkDenial)
         // Identity catches every spelling the volume resolves to a protected entry, including ones
         // the shared normalisation does not equate, such as a hard link.
         const { is, below, covers } = evidenceFacts(evidence)
@@ -1829,6 +2129,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         else if ((staging || removing) && covers(secretRoot)) hold(staging ? coveringStageDenial : secretDenial)
         if (resolved.instances.some((item) => is(item.path))) hold(instanceDenial)
         else if ((staging || removing) && resolved.instances.some((item) => covers(item.path))) hold(staging ? coveringStageDenial : instanceDenial)
+        if (resolved.secretPaths?.some(below)) hold(secretPathDenial)
+        else if ((staging || removing) && resolved.secretPaths?.some(covers)) hold(staging ? coveringStageDenial : secretPathDenial)
         if (request.operation === 'write' && (controlFiles.some(is) || controlDirectories.some(below)
             || controlCoverage && (controlFiles.some(covers) || controlDirectories.some(covers)))) hold(controlDenial)
         return evidence
@@ -1860,7 +2162,14 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             return false
         }
         if (installedCode(fold(lexical), true)) { hold(executionDenial); return false }
-        if (!resolved.allowedRoots.some((root) => within(lexical, root))) return true
+        if (aliasedLocation(lexical)) { hold(aliasDenial(path)); return false }
+        if (inRelatedCheckout(lexical) || reservedForRelated(lexical)) { hold(relatedDenial); return false }
+        if (!resolved.allowedRoots.some((root) => within(lexical, root))) {
+            // Removing below a write path, as `mv` does to its source, is a write there; anywhere else outside it asks, as before.
+            if (!writePaths.length || !writePaths.some((area) => within(lexical, area))) return true
+            judgeExternalWrite({ path, cwd, operation: 'write' }, lexical)
+            return false
+        }
         const evidence = inspectPath({ path, cwd, operation: 'remove' })
         if (!evidence) return false
         const { below, covers } = evidenceFacts(evidence)
@@ -1904,7 +2213,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     }
     const inspectLinkSource = (invocation: ParsedInvocation, source: string, cwd: string, destinations: readonly string[], symbolic: boolean) => {
         if (!scalar(source) || Buffer.byteLength(source) > GUARD_INPUT_LIMITS.pathBytes) { hold(unavailable('Guard path or working directory is malformed.')); return }
-        const protectedTargets = [secretRoot, ...resolved.instances.map((item) => item.path), ...controlFiles, ...controlDirectories].map(fold)
+        const protectedTargets = [secretRoot, ...resolved.instances.map((item) => item.path), ...resolved.secretPaths ?? [], ...controlFiles, ...controlDirectories].map(fold)
         const bases = new Set([cwd, ...destinations.flatMap((path) => { const target = posix.resolve(cwd, path); return [target, posix.dirname(target)] })])
         for (const base of bases) {
             const folded = fold(posix.resolve(base, source))
@@ -1921,10 +2230,10 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const evidence = resolvedEvidence({ path: source, cwd, operation: 'read' })
         if (!evidence) return
         const { is, below, covers } = evidenceFacts(evidence)
-        if (secretFile(evidence) || [secretRoot, ...controlDirectories].some((path) => is(path) || below(path) || covers(path))
+        if (secretFile(evidence) || [secretRoot, ...resolved.secretPaths ?? [], ...controlDirectories].some((path) => is(path) || below(path) || covers(path))
             || [...resolved.instances.map((item) => item.path), ...controlFiles].some((path) => is(path) || covers(path))) hold(linkDenial)
     }
-    const searchedProtections = [secretRoot, ...resolved.instances.map((item) => item.path)]
+    const searchedProtections = [secretRoot, ...resolved.instances.map((item) => item.path), ...resolved.secretPaths ?? []]
     // Why the last inspected search was not safe, when one protected path is the reason.
     let searchBlocker: GuardDecision | undefined
     // A read-only command is allowed only when every path it touches is evidenced inside the
@@ -1933,7 +2242,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     // search runs, which is what lets an absent one be ignored.
     // A person's read paths, or native external reads, admit named reads outside the roots; the
     // application then admits only an existing regular file, or a directory to list.
-    const readableOutside = (lexical: string) => resolved.externalReads === 'native' || (resolved.readPaths ?? []).some(path => within(lexical, path))
+    const readableOutside = (lexical: string) => resolved.externalReads === 'native' || (resolved.readPaths ?? []).some(path => within(lexical, path)) || inRelatedCheckout(lexical)
     const inspectReadOnly = (access: ReadOnlyAccess, chainReadOnly = false, approvedExternalRead = false): boolean => {
         let safe = true
         searchBlocker = undefined
@@ -1948,6 +2257,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             if (kind !== 'listing' && dotenvSecret(folded)) hold(dotenvDenial)
             if (kind !== 'listing' && credential(folded)) hold(credentialDenial)
             if (kind !== 'listing' && protectedRead) hold(readDenial)
+            if (kind !== 'listing' && inSecretPath(folded)) hold(secretPathDenial)
             if (kind === 'read') holdGitConfigRead(lexical)
             const external = !resolved.allowedRoots.some((root) => within(lexical, root))
             // The application admits only an existing regular file, or a directory to list, there.
@@ -1975,8 +2285,10 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             if (kind !== 'listing' && dotenvSecret(canonicalName)) hold(dotenvDenial)
             if (kind !== 'listing' && credential(canonicalName)) hold(credentialDenial)
             if (kind !== 'listing' && canonicalName.split('/').includes('.secrets')) hold(readDenial)
+            if (kind !== 'listing' && inSecretPath(canonicalName)) hold(secretPathDenial)
             const { is, below, covers } = evidenceFacts(evidence)
             if (kind !== 'listing' && (is(secretRoot) || below(secretRoot) || secretFile(evidence) || resolved.instances.some((item) => is(item.path)))) hold(readDenial)
+            if (kind !== 'listing' && resolved.secretPaths?.some(below)) hold(secretPathDenial)
             if (kind !== 'tree') return
             // The search cannot be told which files to skip: ripgrep's hidden-file filter yields to a
             // whitelist in an agent-writable ignore file, and grep has none. So a tree that holds an
@@ -1996,7 +2308,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             safe = false
             const shown = (target: string) => posix.relative(access.cwd, target) || '.'
             searchBlocker = ask(present !== undefined
-                ? `A recursive search of ${path} would read ${shown(present)}, a declared environment instance or secrets directory. Search a path that does not contain it.`
+                ? `A recursive search of ${path} would read ${shown(present)}, ${(resolved.secretPaths ?? []).includes(present) ? 'a path [guards] secret_paths declares secret' : 'a declared environment instance or secrets directory'}. Search a path that does not contain it.`
                 : sensitive === null
                     ? `A recursive search of ${path} covers more than the guard walks to prove it reads no environment file or secrets directory. Search a narrower path.`
                     : unseen !== undefined
@@ -2093,6 +2405,45 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             && !inRoots(posix.resolve(item.cwd, value)) && !readableOutside(posix.resolve(item.cwd, value))).map(({ name }) => name)
     }))
     const references = (value: string) => [...value.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/g)].map(match => match[1]!)
+    // A glob in a path's last component that a declared secret path, instance or the secrets root could
+    // match, or that lies inside one: `rg KEY var/sess*` searches the secret directory it expands to.
+    const globReachesProtected = (word: string, cwd: string) => {
+        const folded = fold(posix.resolve(cwd, word))
+        if (inSecretPath(posix.dirname(folded))) return true
+        // Any bracket expression counts as any one character, so a negated class cannot hide a match.
+        const pattern = globExpression(posix.basename(folded).replace(/\[[^\]]*\]/g, '?'))
+        return [...secretPaths, fold(secretRoot), ...resolved.instances.map((item) => fold(item.path))]
+            .some((path) => posix.dirname(path) === posix.dirname(folded) && pattern.test(posix.basename(path)))
+    }
+    // A call that makes a symbolic link, or moves or copies an existing one, runs nothing else: its link
+    // can be moved to where its text reaches a guard control or a secret, and every other path in the call
+    // was judged before the link existed there. Commands in a pipeline or in the background run beside it,
+    // so the commands before it are held as well as those after.
+    const linkMakers = invocations.filter(invocation => {
+        const git = gitInvocation(invocation)
+        if (createsLink(invocation, git)) return true
+        const name = posix.basename(invocation.executable ?? '')
+        const sources = git?.verb === 'mv' ? transferOperands('mv', git.args).sources
+            : ['mv', 'cp', 'install'].includes(name) ? transferOperands(name as 'mv' | 'cp' | 'install', invocation.argv).sources : []
+        return sources.some(source => {
+            if (!scalar(source) || Buffer.byteLength(source) > GUARD_INPUT_LIMITS.pathBytes) return true
+            const evidence = resolvedEvidence({ path: source, cwd: git?.cwd ?? invocation.cwd, operation: 'read' })
+            return inspectedLink || evidence?.canonicalPath !== undefined
+        })
+    })
+    if (linkMakers.length && invocations.some(invocation => !linkMakers.includes(invocation) && (invocation.executable !== null || invocation.redirects.length))
+        || linkMakers.length > 1) {
+        hold(deny(`Refusing ${named(linkMakers[0]!)} with other commands in one call: it makes or moves a symbolic link, which a later command could move to where its text reaches a guard control or a secret, and the guard judges every other path against the filesystem before the call. Make or move the link on its own, then run the rest in a later call.`))
+    }
+    // Every path a call names, as a word, an option value, a redirect or a file tool's target, and every
+    // directory it runs in, is checked for the Data volume spelling of a location the guard protects.
+    for (const [cwd, word] of [[input.cwd, input.cwd] as const, ...input.paths.map(path => [input.cwd, path] as const),
+        ...invocations.flatMap(invocation => [invocation.cwd, ...invocation.executable === null ? [] : [invocation.executable], ...invocation.argv,
+            ...invocation.redirects.map(redirect => redirect.target)].map(word => [invocation.cwd, word] as const))]) {
+        for (const candidate of new Set([word, word.slice(word.indexOf('=') + 1), word.slice(word.lastIndexOf(':') + 1), word.slice(word.lastIndexOf('@') + 1)])) {
+            if (candidate && scalar(candidate) && aliasedLocation(posix.resolve(cwd, candidate))) hold(aliasDenial(candidate))
+        }
+    }
     inspectPath({ path: input.cwd, cwd: input.cwd, operation: 'cwd' })
     for (const path of input.removed) {
         if (inspectRemoval(path, input.cwd)) hold(unavailable('Removal path escapes configured roots.'))
@@ -2123,6 +2474,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             }
         }
         const git = gitInvocation(invocation)
+        unseenMembers = writesUnseenMembers(invocation, git)
         const executableName = posix.basename(invocation.executable ?? '')
         const removed = removedOperands(invocation, git)
         for (const path of removed?.paths ?? []) {
@@ -2181,10 +2533,13 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             pathCount++
             inspectPath({ path, cwd: invocation.cwd, operation: 'write' }, true)
         }
+        const naming = unseenMembers
+        unseenMembers = true
         for (const path of [...optioned?.covered ?? [], ...downloads?.directories ?? []]) {
             pathCount++
             inspectPath({ path, cwd: invocation.cwd, operation: 'write' }, true)
         }
+        unseenMembers = naming
         // gh writes downloads into a directory and clones into a new one: a clone is judged as a write
         // with what it would hold, and a download by the guard files its names could reach there.
         const ghWrites = ghDownloads(invocation)
@@ -2216,6 +2571,12 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
                 hold(unavailable(`${named(invocation)} names ${shownGuardWord(path)}, which leads through a link or could not be inspected, so the guard cannot tell where the write lands.`))
             }
         }
+        // Inside the roots what the writer writes is a full write, judged with everything it may cover:
+        // `rsync x node_modules/@b00dea/cockpit/dist/cli.js` replaced the guard's own code, and
+        // `rsync -a stage/ ./` would overwrite its script with whatever stage holds.
+        for (const path of !git ? created?.destinations ?? [] : []) {
+            if (inRoots(posix.resolve(created!.cwd, path))) inspectPath({ path, cwd: created!.cwd, operation: 'write' }, true)
+        }
         // Archivers, copiers and recursive diffs read every file below a source, as a recursive search does.
         const sources = sourceTrees(invocation)
         const othersReadOnly = invocations.every(other => other === invocation || accesses.get(other) !== undefined || other.executable === null && !other.redirects.some(redirect => redirect.write))
@@ -2234,7 +2595,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             && new Set(invocation.words.filter(word => word.dynamic).map(word => word.value)).size <= 1
         // A reader given a glob in its last component inside the roots reads what it matches, judged by the glob's own words.
         const globRead = READING_EXECUTABLES.has(executableName) && invocation.dynamic === true && !writes && !removed?.paths.length && !optioned && !git && !cockpitCommand(invocation)
-            && invocation.words.every(word => !word.dynamic || word.role === 'argument' && plainGlob(word) && inRoots(posix.resolve(invocation.cwd, word.value)))
+            && invocation.words.every(word => !word.dynamic || word.role === 'argument' && plainGlob(word) && inRoots(posix.resolve(invocation.cwd, word.value))
+                && !globReachesProtected(word.value, invocation.cwd))
         if (invocation.dynamic && !loopRead && !globRead && (writes || removed?.paths.length || optioned || git || READING_EXECUTABLES.has(executableName) || cockpitCommand(invocation)
             || NAME_READERS.has(executableName) || executableName === 'gh' && /^(?:gist (?:create|edit)|release (?:create|upload)|(?:secret|variable) set)$/.test(invocation.argv.slice(0, 2).join(' ')))) {
             const word = invocation.words.find(item => item.dynamic)?.value ?? ''
@@ -2333,7 +2695,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             const glob = (globs.includes(word) || held.includes(word) && plainGlob(word)) && new RegExp(`^${posix.basename(folded).split(/(\*+|\?|\[[^\]]*\])/).map((part, at) => at % 2
                 ? part.startsWith('*') ? '.*' : part === '?' ? '.' : part : part.replace(/[.+^${}()|\\]/g, '\\$&')).join('')}$`)
             const secret = glob ? SECRET_SAMPLES.some((name) => glob.test(name)) || credential(posix.dirname(folded))
-                : dotenvSecret(folded) || folded.split('/').includes('.secrets') || resolved.instances.some((item) => within(folded, fold(item.path))) || credential(folded)
+                : dotenvSecret(folded) || folded.split('/').includes('.secrets') || resolved.instances.some((item) => within(folded, fold(item.path))) || inSecretPath(folded) || credential(folded)
             if (secret && !approvalBarriers.has(invocation)) approvalBarriers.set(invocation, ask(`${invocation.executable === null ? 'This command' : named(invocation)} holds ${shownGuardWord(word.value)}, which names or can match an environment file, secrets directory, declared instance or credential store. Name the files it needs.`))
         }
         // A declared rule admits a command the profile cannot classify, but never past the secret names
@@ -2374,6 +2736,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
                         approvalBarriers.set(invocation, ask(`${named(invocation)} names ${shownGuardWord(candidate)}, outside the configured roots. A person can list the location under [guards] read_paths or set [guards] external_reads = "native", then sync; or a person runs it.`))
                     }
                     if (folded.split('/').includes('.secrets') || resolved.instances.some((item) => within(folded, fold(item.path)))) secretName(readDenial)
+                    if (inSecretPath(folded)) secretName(secretPathDenial)
                     if (READING_EXECUTABLES.has(invocation.executable!) && position !== scriptAt && !resolved.allowedRoots.some(root => within(lexical, root)) && !readableOutside(lexical) && !approvalBarriers.has(invocation)) {
                         approvalBarriers.set(invocation, ask(`${named(invocation)} names ${shownGuardWord(candidate)}, outside the configured roots, with words the read-only profile cannot classify, so a [guards] allow rule does not admit it. Run it as the rule names it, or a person reviews and admits this complete argv.`))
                     }
@@ -2394,7 +2757,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         // Native external reads leave a read-only Git command in a repository outside the roots to the
         // agent tool, as they do a named file. Its repository's configured helpers run with it, so as with
         // a grant it runs only as the whole call, and nothing else in the call can change what it prints.
-        const nativeGit = resolved.externalReads === 'native' && externalGit(invocation, access)
+        // A related checkout admits the same read-only Git there without a grant, as native external reads do everywhere.
+        const nativeGit = externalGit(invocation, access) && (resolved.externalReads === 'native' || inRelatedCheckout(access!.cwd))
         const alone = invocations.length === 1
         const approvedExternalRead = nativeGit && alone || !!approvedReadOnlyInvocation(invocation, resolved) && (chainReadOnly || externalGit(invocation, access) && alone)
         // A loop body reading `"$f"` is read-only when it is for each item the loop hands it.
@@ -2425,7 +2789,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         }
         if (external && (!approvedExternalRead || !readOnly.has(invocation))) approvalBarriers.set(invocation, searchBlocker
             ?? ask(nativeGit
-                ? `${named(invocation)} runs Git in a directory outside the configured roots. With native external reads the guard leaves a read-only Git command there to the agent tool only as the whole call, from a directory holding its own .git, with operands that name regular files or revisions rather than directories or links: run it on its own from the repository's top directory.`
+                ? `${named(invocation)} runs Git in a directory outside the configured roots. With native external reads or in a related checkout the guard admits a read-only Git command there only as the whole call, from a directory holding its own .git, with operands that name regular files or revisions rather than directories or links: run it on its own from the repository's top directory.`
                 : !exactGrant
                     ? `${named(invocation)} reads outside the configured roots. A person can list the location under [guards] read_paths, set [guards] external_reads = "native", or admit this complete command with an explicit managed cwd under [guards] allow, then sync; native permission still applies.`
                     : invocation.executable === 'git'
