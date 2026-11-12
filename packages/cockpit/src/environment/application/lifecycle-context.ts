@@ -14,7 +14,7 @@ import {
 } from '../contract.js'
 import type { ExecutableResolution } from '../executable.js'
 import { CockpitConfig, type EntrypointDerivative } from '../../schema.js'
-import { authenticateStateNamespace, type StateNamespace } from '../state.js'
+import { authenticateStateNamespace, takeStateLockReclaims, type StateNamespace } from '../state.js'
 import type { RuntimeInputs, LifecycleStageProjection } from '../lifecycle-stage.js'
 import { holderId as deriveHolderId, stackId as deriveStackId } from '../identity.js'
 import { consumeSetupCheckoutProjection, type ConsumedSetupCheckoutObservation, type SetupCheckoutProjection } from '../setup-observation.js'
@@ -209,6 +209,8 @@ export type UpCommandResult = EnvironmentCommandOutcome<Readonly<{
 export type SleepCommandResult = EnvironmentCommandOutcome<Readonly<{
     stackId: StackId
     change: 'retained' | 'released' | 'stopped' | 'unchanged'
+    /** With `retained`: whether only this checkout's own other holds keep the stack. Absent when it could not be read. */
+    remainingHolders?: 'this-checkout' | 'other-checkouts'
 }>>
 
 export type SessionCommandResult =
@@ -232,13 +234,24 @@ export function noticeLifecycleRun(context: LifecycleRunContext, diagnostic: Env
     lifecycleRunNotices.set(context, notices)
 }
 
+// A lock taken over from a killed command is said once: what that command was doing may be half done.
+function stateLockReclaimed(reclaim: Readonly<{ lock: string; holder: string; reason: string }>) {
+    return {
+        severity: 'warning' as const,
+        code: ENVIRONMENT_CODES.STATE_LOCK_RECLAIMED,
+        message: `took over the state lock from ${reclaim.holder}: ${reclaim.reason}, so that command stopped before releasing it and what it was doing may be unfinished`,
+        target: reclaim.lock,
+        fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config <your cockpit.toml> to check the stack',
+    }
+}
+
 export function withLifecycleRunNotices<Result extends { readonly diagnostics: readonly EnvironmentDiagnostic[] }>(
     context: LifecycleRunContext,
     result: Result,
 ): Result {
-    const notices = lifecycleRunNotices.get(context)
+    const notices = [...lifecycleRunNotices.get(context) ?? [], ...takeStateLockReclaims(context.namespace).map(stateLockReclaimed)]
     lifecycleRunNotices.delete(context)
-    return notices ? { ...result, diagnostics: [...result.diagnostics, ...notices] } : result
+    return notices.length > 0 ? { ...result, diagnostics: [...result.diagnostics, ...notices] } : result
 }
 const lifecycleConfigurationSources = new WeakMap<object, Readonly<{ source: SourceProvenance; siblingsRoot: string }>>()
 export const issuedDestructiveRuns = new WeakSet<object>()

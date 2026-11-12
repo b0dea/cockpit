@@ -23,7 +23,7 @@ import { leasePortFamily, observePortFamily } from './ports.js'
 import { observeEnvironmentKeys, observeSiblingPresence } from './templates.js'
 import { createRuntimeAdapter, observeRuntimeExecution } from './runtime.js'
 import { resolveGitExecutable, resolvedExecutable } from './executable.js'
-import { createGitObservationStep, observeGit } from './git-observation.js'
+import { createGitObservationStep, gitWorkingTreeDirty, observeGit } from './git-observation.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { observeStateSeed, recordLifecycleSeeded, recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage.js'
 import { checkoutId as deriveCheckoutId, cockpitId as deriveCockpitId, stackId as deriveStackId } from './identity.js'
@@ -805,7 +805,7 @@ describe('deterministic preflight and doctor', () => {
         expect(result.checks.filter(({ verdict }) => verdict === 'unavailable').length).toBeGreaterThan(0)
     })
 
-    it('names the differing measured fields when a checkout working tree fails', async () => {
+    it('passes a dirty working tree that has commits and keeps the change counts for the warning', async () => {
         const root = await mkdtemp(join(tmpdir(), 'cockpit-observation-git-'))
         temporaryPaths.push(root)
         execFileSync('git', ['init', '-b', 'main'], { cwd: root })
@@ -823,11 +823,9 @@ describe('deterministic preflight and doctor', () => {
         if (!step) throw new Error('fixture Git step unavailable')
         const observed = observeGit(step, await executeProbe(step), { stackId, checkoutId, source: root })
         if (observed.kind !== 'complete') throw new Error('fixture Git evidence unavailable')
-        expect(aggregateObservations([observed.observations], posture).checks.find(({ code }) => code === ENVIRONMENT_CODES.GIT_STATE_UNHEALTHY))
-            .toMatchObject({
-                verdict: 'fail',
-                reason: 'observed value does not satisfy the expectation: trackedDirtyCount is 1 (expected 0), untrackedCount is 2 (expected 0)',
-            })
+        const row = aggregateObservations([observed.observations], posture).checks.find(({ code }) => code === ENVIRONMENT_CODES.GIT_STATE_UNHEALTHY)
+        expect(row).toMatchObject({ verdict: 'pass', measured: { trackedDirtyCount: 1, untrackedCount: 2 } })
+        expect(gitWorkingTreeDirty(row!)).toEqual({ tracked: 1, untracked: 2 })
     })
 
     it('makes state seeding not applicable only under issued bootstrap authority', async () => {

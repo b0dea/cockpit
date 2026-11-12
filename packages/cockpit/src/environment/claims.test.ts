@@ -1,5 +1,6 @@
 import { chmod, link, mkdir, mkdtemp, open, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readlinkSync } from 'node:fs'
+import { hostname, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -1044,9 +1045,7 @@ describe('active stack inventory', () => {
         }, () => claimRecord([]))
         try {
             await prepared
-            await expect(readActiveStackInventory(state, {
-                observeHolder: async (holder) => holder.ownerId === holderA && holder.pid === process.pid ? 'live' : 'unknown',
-            })).resolves.toMatchObject({
+            await expect(readActiveStackInventory(state)).resolves.toMatchObject({
                 kind: 'refusal', diagnostics: [{
                     code: ENVIRONMENT_CODES.STATE_LOCKED,
                     message: 'coordination publication is in progress',
@@ -1084,8 +1083,9 @@ describe('active stack inventory', () => {
         ['dead', `${JSON.stringify({
             format: 'cockpit-state/v1', kind: 'state-lock', ownerId: holderA, pid: 2_147_483_647,
             acquiredAt: '2026-09-07T12:00:00.000Z', token: '12345678-1234-4123-8123-123456789abc',
-        })}\n`, async () => 'dead' as const],
-    ])('does not treat an abandoned %s lock as a live publication', async (_label, owner, observeHolder) => {
+            host: hostname(), ...(process.platform === 'linux' ? { pidNamespace: readlinkSync('/proc/self/ns/pid') } : {}),
+        })}\n`, async () => ({ state: 'absent' as const })],
+    ])('does not treat an abandoned %s lock as a live publication', async (_label, owner, observeProcess) => {
         const state = await namespace()
         const directory = dirname(state.paths.coordination(stackId).path)
         await mkdir(directory, { recursive: true })
@@ -1094,7 +1094,7 @@ describe('active stack inventory', () => {
         await mkdir(state.paths.stateLock, { recursive: true })
         if (owner !== undefined) await writeFile(join(state.paths.stateLock, 'owner.json'), owner)
 
-        await expect(readActiveStackInventory(state, { observeHolder })).resolves.toMatchObject({
+        await expect(readActiveStackInventory(state, { observeProcess })).resolves.toMatchObject({
             kind: 'refusal', diagnostics: [{
                 code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
                 message: 'coordination store contains an orphaned unverified publication residue',
@@ -1115,6 +1115,7 @@ describe('active stack inventory', () => {
         await writeFile(join(state.paths.stateLock, 'owner.json'), `${JSON.stringify({
             format: 'cockpit-state/v1', kind: 'state-lock', ownerId: holderA, pid: process.pid,
             acquiredAt: '2026-09-07T12:00:00.000Z', token: '12345678-1234-4123-8123-123456789abc',
+            host: hostname(), ...(process.platform === 'linux' ? { pidNamespace: readlinkSync('/proc/self/ns/pid') } : {}),
         })}\n`)
         let inspectionReached!: () => void
         let continueInspection!: () => void
@@ -1122,10 +1123,10 @@ describe('active stack inventory', () => {
         const continuation = new Promise<void>((resolve) => { continueInspection = resolve })
 
         const reading = readActiveStackInventory(state, {
-            observeHolder: async () => {
+            observeProcess: async () => {
                 inspectionReached()
                 await continuation
-                return 'unknown'
+                return { state: 'unknown' as const, reason: 'held for the test' }
             },
         })
         await reached

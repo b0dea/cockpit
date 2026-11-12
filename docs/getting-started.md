@@ -231,8 +231,9 @@ report the judgement, with the red run's output, in the hand-back. A gate that s
 break proves nothing about that behaviour, and the report says so. Adopting a new test framework in
 a product repository stays the human's call.
 
-The cockpit directory must be a Git working tree, committed and clean, before `preflight` passes; a
-new one reports `GIT_STATE_UNHEALTHY` until a person stages and commits it.
+The cockpit directory must be a Git working tree with at least one commit before `preflight` passes; a
+new one reports `GIT_STATE_UNHEALTHY` until a person stages and commits it. Later uncommitted changes
+only warn, with `GIT_WORKING_TREE_DIRTY`.
 
 ## The init interview
 
@@ -404,7 +405,7 @@ files needs Docker Compose.
 ```
 
 `setup` clones or verifies each declared repository and checks its remote. `up` starts or resumes
-the stack, but only `preflight` says it is healthy; it also fails with `GIT_STATE_UNHEALTHY` while
+the stack, but only `preflight` says it is healthy; it also warns with `GIT_WORKING_TREE_DIRTY` while
 the cockpit has uncommitted changes. With `--json`, `up` reports the stack identifier, whether it
 `started`, `resumed` or was `unchanged`, the leased port for each `[ports.bases]` name and the
 cold-start time of the services it started.

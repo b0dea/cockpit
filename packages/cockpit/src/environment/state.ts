@@ -1,9 +1,10 @@
-import { access, link, lstat, mkdir, open, opendir, readdir, realpath, rename, rm, rmdir, unlink } from 'node:fs/promises'
+import { access, link, lstat, mkdir, open, opendir, readdir, readlink, realpath, rename, rm, rmdir, unlink } from 'node:fs/promises'
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, renameSync, type BigIntStats } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { isProxy } from 'node:util/types'
+import { hostname } from 'node:os'
 import { z } from 'zod'
 import { loadCockpitConfig } from '../config/load.js'
 import { STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
@@ -12,6 +13,8 @@ import { SURFACE_TARGETS, type SurfaceTarget } from '../surfaces/contract.js'
 import { checkoutId as deriveCheckoutId, type BootstrapLockOwnerId } from './identity.js'
 import { redactSensitiveText } from './sensitive.js'
 import { sha256Hex } from '../sha256.js'
+import { executeProbe } from '../environment-exec/execute.js'
+import { isProcessGone, isProcessStart, observeProcessStart, processHost, type ProcessStartObservation } from './process-identity.js'
 import {
     hasErrorCode,
     ENVIRONMENT_CODES,
@@ -131,7 +134,14 @@ const StateLockSchema = z.object({
     pid: z.number().int().positive(),
     acquiredAt: z.string().refine(isCanonicalTimestamp),
     token: z.string().uuid(),
+    // Where the holder ran and which process it was, so a lock is judged gone only where its pid
+    // means something. A lock an earlier cockpit wrote has none of them and is never judged gone.
+    host: z.string().min(1).max(255).optional(),
+    pidNamespace: z.string().min(1).max(64).optional(),
+    start: z.string().refine(isProcessStart).optional(),
+    command: z.string().min(1).max(256).optional(),
 }).strict()
+type StateLockOwner = z.infer<typeof StateLockSchema>
 
 export type StateRecord = z.infer<typeof StateRecordSchema>
 type StateRecordKind = typeof RECORD_KINDS[number]
@@ -322,22 +332,28 @@ export interface SelectBootstrapStateRootInput {
 
 type LockHolderState = 'live' | 'dead' | 'unknown'
 
+// Another command's transaction holds the lock for moments at a time, so a caller that names no
+// bound waits this long before refusing: concurrent agents queue instead of failing.
+const DEFAULT_CONTENTION_TIMEOUT_MS = 10_000
+
 interface StateLockInspection {
     readonly holderState: LockHolderState | 'invalid'
     readonly description: string
     readonly recovery: string
+    readonly owner?: Readonly<{ bytes: string; value: StateLockOwner; reason: string }>
 }
+
+/** A lock whose holder was shown gone from this host and was taken over. */
+export type StateLockReclaim = Readonly<{ lock: string; holder: string; reason: string }>
 
 export interface StateTransactionOptions {
     readonly ownerId: HolderId | BootstrapLockOwnerId
-    readonly observeHolder?: (holder: {
-        readonly ownerId: HolderId | BootstrapLockOwnerId
-        readonly pid: number
-    }) => Promise<LockHolderState>
+    /** Reads a lock holder's pid on this host; production reads it with `observeProcessStart`. */
+    readonly observeProcess?: (pid: number) => Promise<ProcessStartObservation>
     readonly beforePublish?: (temporaryPath: string) => Promise<void>
     readonly beforeCommit?: () => StateTransactionAbort<unknown> | undefined
     readonly beforeRelease?: () => Promise<void>
-    readonly beforeLockMetadata?: (operation: 'owner-unlink' | 'tombstone-rmdir' | 'owner-restore-link' | 'backup-unlink') => Promise<void>
+    readonly beforeLockMetadata?: (operation: 'owner-unlink' | 'tombstone-rmdir' | 'owner-restore-link' | 'backup-unlink' | 'takeover-link' | 'takeover-rename') => Promise<void>
     readonly contentionTimeoutMs?: number
 }
 
@@ -625,7 +641,7 @@ export function issueStateScopedLock(namespace: StateNamespace, input: Readonly<
 }
 
 export async function withStateRootPortLock<T>(value: StateNamespace,
-    options: Pick<StateTransactionOptions, 'ownerId' | 'observeHolder' | 'contentionTimeoutMs' | 'beforeRelease' | 'beforeLockMetadata'>,
+    options: Pick<StateTransactionOptions, 'ownerId' | 'observeProcess' | 'contentionTimeoutMs' | 'beforeRelease' | 'beforeLockMetadata'>,
     operation: () => T | Promise<T>): Promise<StateResult<T>> {
     const authenticated = authenticateStateNamespace(value)
     if (!authenticated) return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'root port lock requires an issued state namespace', 'root port lock')
@@ -1533,48 +1549,126 @@ export async function restartBootstrapState(
     return 'aborted' in outcome ? outcome.value : outcome
 }
 
+// A pid means something only in the process table it came from: another host's, or another pid
+// namespace's (a container, or a sandbox such as bubblewrap that hides the host's processes), would
+// read a running holder as gone. macOS has no pid namespaces. An unreadable namespace leaves the
+// lock unjudged, which only keeps it held.
+async function currentPidNamespace(): Promise<string | undefined> {
+    if (process.platform !== 'linux') return undefined
+    try { return (await readlink('/proc/self/ns/pid')).slice(0, 64) }
+    catch (error) {
+        if (hasErrorCode(error, 'ENOENT') || hasErrorCode(error, 'EACCES') || hasErrorCode(error, 'EPERM')) return undefined
+        throw error
+    }
+}
+
+// What the holder writes about itself, read once per process. A pid alone cannot show a holder
+// gone once the pid is reused, so the start identity is recorded beside it (see observeProcessStart).
+let ownLockIdentity: Promise<Pick<StateLockOwner, 'host' | 'pidNamespace' | 'start' | 'command'>> | undefined
+function lockIdentity(): Promise<Pick<StateLockOwner, 'host' | 'pidNamespace' | 'start' | 'command'>> {
+    ownLockIdentity ??= (async () => {
+        const [started, pidNamespace] = await Promise.all([
+            observeProcessStart(process.pid, processHost(executeProbe)),
+            currentPidNamespace(),
+        ])
+        const command = redactSensitiveText([basename(process.argv[1] ?? process.argv0), ...process.argv.slice(2)].join(' ')).slice(0, 256)
+        return {
+            host: hostname().slice(0, 255),
+            ...(pidNamespace ? { pidNamespace } : {}),
+            ...(started.state === 'present' ? { start: started.start } : {}),
+            ...(command ? { command } : {}),
+        }
+    })()
+    return ownLockIdentity
+}
+
+const productionObserveProcess = (pid: number) => observeProcessStart(pid, processHost(executeProbe))
+
+type HolderJudgement = Readonly<{ state: LockHolderState; reason: string }>
+type HolderJudgements = Map<string, Readonly<{ judgement: HolderJudgement; at: number }>>
+// Judging runs child processes, so a waiting acquisition reuses a verdict for this long. A gone
+// holder stays gone; a running one is judged again, since it may be killed during the wait.
+const REJUDGE_AFTER_MS = 1_000
+
+// Gone only when this host and pid namespace wrote the lock and the pid is gone or names another
+// process; anything that cannot be shown is unknown, and unknown keeps the lock held.
+async function judgeLockHolder(owner: StateLockOwner, observe: (pid: number) => Promise<ProcessStartObservation>): Promise<HolderJudgement> {
+    const here = hostname()
+    if (owner.host === undefined) return { state: 'unknown', reason: 'the lock does not name the host that wrote it' }
+    if (owner.host !== here) return { state: 'unknown', reason: `the lock was written on host ${owner.host}, whose processes this host (${here}) cannot see` }
+    const namespace = await currentPidNamespace()
+    if (owner.pidNamespace !== namespace || process.platform === 'linux' && namespace === undefined) {
+        return { state: 'unknown', reason: 'the lock was written from another pid namespace, such as a container or sandbox, whose processes this one cannot see' }
+    }
+    const observed = await observe(owner.pid)
+    if (isProcessGone(owner.start, observed)) {
+        return { state: 'dead', reason: observed.state === 'absent'
+            ? `process ${owner.pid} is gone from this host` : `process ${owner.pid} is gone from this host and its pid now names another process` }
+    }
+    if (observed.state === 'unknown') return { state: 'unknown', reason: observed.reason }
+    return { state: 'live', reason: `process ${owner.pid} is still running` }
+}
+
+async function judgeOwner(owner: StateLockOwner, observeProcess: StateTransactionOptions['observeProcess']): Promise<HolderJudgement> {
+    try { return await judgeLockHolder(owner, observeProcess ?? productionObserveProcess) }
+    catch (error) { return { state: 'unknown', reason: `holder observation failed: ${errorCause(error)}` } }
+}
+
+function describeHolder(owner: StateLockOwner): string {
+    return `process ${owner.pid}${owner.command ? ` (${owner.command})` : ''}${owner.host ? ` on host ${owner.host}` : ''}, holder ${owner.ownerId}, since ${owner.acquiredAt}`
+}
+
 async function inspectLock(
     lockPath: string,
     stateRoot: string,
-    observeHolder: StateTransactionOptions['observeHolder'],
+    observeProcess: StateTransactionOptions['observeProcess'],
+    judged?: HolderJudgements,
 ): Promise<StateLockInspection> {
     const ownerPath = join(lockPath, 'owner.json')
+    let owner: StateLockOwner
+    let bytes: string
     try {
-        const bytes = await readRegularFileNoFollow(ownerPath, async () => {
-            const lock = await lstat(lockPath)
-            return lock.isDirectory() && !lock.isSymbolicLink() && privatelyOwned(lock) && await ownedPathIsSafe(stateRoot, ownerPath, 'file')
-        })
-        const source = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-        const parsed = StateLockSchema.safeParse(JSON.parse(source))
+        bytes = new TextDecoder('utf-8', { fatal: true }).decode(await readLockOwner(lockPath, stateRoot))
+        const parsed = StateLockSchema.safeParse(JSON.parse(bytes))
         if (!parsed.success) throw new RefusalError('invalid lock metadata')
-        let holderState: LockHolderState = 'unknown'
-        let observationFailure = ''
-        if (observeHolder) {
-            try {
-                holderState = await observeHolder({ ownerId: parsed.data.ownerId as HolderId | BootstrapLockOwnerId, pid: parsed.data.pid })
-            } catch (error) {
-                observationFailure = `; holder observation failed: ${errorCause(error)}`
-            }
-        }
-        return {
-            holderState,
-            description: `state is locked by ${parsed.data.ownerId} (${holderState}${observationFailure})`,
-            recovery: holderState === 'dead'
-                ? 'request explicit state-lock reclamation using the recorded holder evidence'
-                : 'inspect the named holder and retry after it releases the state lock',
-        }
+        owner = parsed.data
     } catch (error) {
         return {
             holderState: 'invalid',
             description: `state lock metadata is missing or malformed: ${errorCause(error)}`,
-            recovery: 'inspect the lock directory and establish positive holder evidence before explicit reclamation',
+            recovery: `inspect ${ownerPath}; once no cockpit command runs on this host, a person removes ${lockPath}`,
         }
     }
+    const cached = judged?.get(bytes)
+    let judgement = cached && (cached.judgement.state === 'dead' || Date.now() - cached.at < REJUDGE_AFTER_MS) ? cached.judgement : undefined
+    if (!judgement) {
+        judgement = await judgeOwner(owner, observeProcess)
+        judged?.set(bytes, { judgement, at: Date.now() })
+    }
+    const recovery = judgement.state === 'live'
+        ? `inspect the named holder and retry after it releases the state lock; \`ps -p ${owner.pid}\` shows whether it still runs`
+        : judgement.state === 'dead'
+            ? 'retry; cockpit takes over a lock whose holder is gone from this host'
+            : `inspect the named holder: cockpit cannot show it is gone, so once \`ps -p ${owner.pid}\` on ${owner.host ? `host ${owner.host}` : 'the host that ran it'} shows no cockpit command, a person removes ${lockPath}`
+    return {
+        holderState: judgement.state,
+        description: `state is locked by ${describeHolder(owner)}; ${judgement.reason}`,
+        recovery,
+        owner: { bytes, value: owner, reason: judgement.reason },
+    }
+}
+
+async function readLockOwner(lockPath: string, stateRoot: string): Promise<Buffer> {
+    const ownerPath = join(lockPath, 'owner.json')
+    return readRegularFileNoFollow(ownerPath, async () => {
+        const lock = await lstat(lockPath)
+        return lock.isDirectory() && !lock.isSymbolicLink() && privatelyOwned(lock) && await ownedPathIsSafe(stateRoot, ownerPath, 'file')
+    })
 }
 
 export async function inspectStateLock(
     namespace: StateNamespace | BootstrapStateNamespace,
-    observeHolder?: StateTransactionOptions['observeHolder'],
+    observeProcess?: StateTransactionOptions['observeProcess'],
 ): Promise<StateLockInspection> {
     const bootstrap = authenticateBootstrapStateNamespace(namespace)
     const stableNamespace = bootstrap
@@ -1587,13 +1681,154 @@ export async function inspectStateLock(
             recovery: 'inspect the state namespace before relying on lock ownership',
         }
     }
-    return inspectLock(stableNamespace.paths.stateLock, stableNamespace.root, observeHolder)
+    return inspectLock(stableNamespace.paths.stateLock, stableNamespace.root, observeProcess)
+}
+
+// A refusal no wait can clear, such as a lock directory this acquisition left behind: retrying
+// would replace its message with a vaguer one.
+const unwaitableRefusals = new WeakSet<object>()
+
+// Reclaims taken in this process, by state root, until the command reports them.
+const stateLockReclaims = new Map<string, StateLockReclaim[]>()
+
+/** The locks this process took over from a holder gone from this host, each reported once. */
+export function takeStateLockReclaims(namespace: StateNamespace): readonly StateLockReclaim[] {
+    const root = snapshotStateNamespace(namespace)?.root
+    if (root === undefined) return []
+    const taken = stateLockReclaims.get(root) ?? []
+    stateLockReclaims.delete(root)
+    return taken
+}
+
+// A dead holder's lock is taken over in place rather than removed, so no other acquisition slips in
+// between. Two acquisitions that both judged it dead must not both take it: each links its staged
+// owner at the takeover name, which only one can create, and that one replaces the owner only if it
+// still holds the bytes that were judged.
+async function takeOverLock(
+    lockPath: string,
+    stateRoot: string,
+    judgedBytes: string,
+    owner: Readonly<{ bytes: string; token: string }>,
+    options: Pick<StateTransactionOptions, 'observeProcess' | 'beforeLockMetadata'>,
+): Promise<'taken' | 'contended' | 'changed'> {
+    const takeover = `${lockPath}.takeover`
+    const staged = `${lockPath}.${owner.token}.staged`
+    const ownerPath = join(lockPath, 'owner.json')
+    const handle = await open(staged, 'wx', 0o600)
+    try {
+        await handle.writeFile(owner.bytes, 'utf8')
+        await handle.sync()
+    } finally {
+        await handle.close()
+    }
+    let linked = false
+    try {
+        await options.beforeLockMetadata?.('takeover-link')
+        linked = await linkExclusive(staged, takeover)
+            || await clearAbandonedTakeover(lockPath, stateRoot, options.observeProcess) && await linkExclusive(staged, takeover)
+        await rm(staged)
+    } catch (error) {
+        await rm(staged, { force: true })
+        if (linked) await removeIfHolding(takeover, stateRoot, owner.bytes)
+        throw error
+    }
+    if (!linked) return 'contended'
+    let replaced = false
+    try {
+        let current: string
+        try { current = await readLockFile(ownerPath, stateRoot) }
+        catch (error) {
+            // The holder judged gone may have been a command that released the lock and exited
+            // while it was judged; its lock is then simply free.
+            if (hasErrorCode(error, 'ENOENT')) return 'changed'
+            throw error
+        }
+        if (current !== judgedBytes) return 'changed'
+        await options.beforeLockMetadata?.('takeover-rename')
+        await rename(takeover, ownerPath)
+        replaced = true
+    } finally {
+        if (!replaced) await removeIfHolding(takeover, stateRoot, owner.bytes)
+    }
+    // The takeover name can be removed by hand and relinked by another command before the rename,
+    // which then lands that command's record: only this process's own record makes the lock ours.
+    if (await readLockFile(ownerPath, stateRoot) !== owner.bytes) return 'changed'
+    try { await syncDirectory(lockPath) }
+    catch (error) {
+        // The lock is held but the takeover may not survive a crash; releasing it before refusing
+        // keeps the failure from leaving a lock no command will release.
+        try { await releaseLock(lockPath, owner.bytes) }
+        catch (releaseError) {
+            throw new RefusalError(`${errorCause(error)}; the lock taken over at ${lockPath} could not be released either: ${errorCause(releaseError)}`)
+        }
+        throw error
+    }
+    return 'taken'
+}
+
+async function linkExclusive(existing: string, name: string): Promise<boolean> {
+    try { await link(existing, name) }
+    catch (error) {
+        if (hasErrorCode(error, 'EEXIST')) return false
+        throw error
+    }
+    return true
+}
+
+async function readLockFile(path: string, stateRoot: string): Promise<string> {
+    return new TextDecoder('utf-8', { fatal: true }).decode(await readRegularFileNoFollow(path, () => ownedPathIsSafe(stateRoot, path, 'file')))
+}
+
+async function removeIfHolding(path: string, stateRoot: string, bytes: string): Promise<void> {
+    let current: string
+    try { current = await readLockFile(path, stateRoot) }
+    catch (error) {
+        if (hasErrorCode(error, 'ENOENT')) return
+        throw error
+    }
+    if (current === bytes) await rm(path, { force: true })
+}
+
+// A command killed between linking the takeover name and renaming it into the lock leaves the name
+// behind, and it would refuse every later takeover. The name holds its writer's own record, so the
+// writer is judged by the same rule as a lock holder. One shown gone is cleared under a claim named
+// for its token, which only one clearer can create, and only while the name still holds the bytes
+// that were judged. True when the name is free afterwards.
+async function clearAbandonedTakeover(lockPath: string, stateRoot: string, observeProcess: StateTransactionOptions['observeProcess']): Promise<boolean> {
+    const takeover = `${lockPath}.takeover`
+    let bytes: string
+    try { bytes = await readLockFile(takeover, stateRoot) }
+    catch (error) {
+        if (hasErrorCode(error, 'ENOENT')) return true
+        throw error
+    }
+    let parsed: ReturnType<typeof StateLockSchema.safeParse>
+    try { parsed = StateLockSchema.safeParse(JSON.parse(bytes)) }
+    catch (error) {
+        if (error instanceof SyntaxError) return false
+        throw error
+    }
+    if (!parsed.success || (await judgeOwner(parsed.data, observeProcess)).state !== 'dead') return false
+    const claim = `${takeover}.clear-${parsed.data.token}`
+    try { await (await open(claim, 'wx', 0o600)).close() }
+    catch (error) {
+        if (hasErrorCode(error, 'EEXIST')) return false
+        throw error
+    }
+    try {
+        await removeIfHolding(takeover, stateRoot, bytes)
+        await rm(`${lockPath}.${parsed.data.token}.staged`, { force: true })
+    } finally {
+        await rm(claim, { force: true })
+    }
+    return true
 }
 
 async function acquireLock(
     namespace: { readonly root: string; readonly paths: { readonly stateLock: string } },
     options: StateTransactionOptions,
     ownerPattern = holderIdentity,
+    judged: HolderJudgements = new Map(),
 ): Promise<
     | { kind: 'acquired'; ownerBytes: string }
     | Extract<StateResult<never>, { kind: 'refusal' }>
@@ -1614,6 +1849,16 @@ async function acquireLock(
             await quarantineRecovery(existingQuarantine),
         ) as Extract<StateResult<never>, { kind: 'refusal' }>
     }
+    const owner = {
+        format: STATE_FORMAT,
+        kind: 'state-lock',
+        ownerId: options.ownerId,
+        pid: process.pid,
+        acquiredAt: new Date().toISOString(),
+        token: randomUUID(),
+        ...await lockIdentity(),
+    } as const
+    const ownerBytes = `${JSON.stringify(owner)}\n`
     let createdLock = false
     let createdNode: { readonly dev: number; readonly ino: number } | undefined
     try {
@@ -1645,22 +1890,15 @@ async function acquireLock(
                     leftover = `; the lock directory this acquisition created at ${namespace.paths.stateLock} could not be removed: ${errorCause(error)}`
                 }
             }
-            return refusal(
+            const raced = refusal(
                 ENVIRONMENT_CODES.STATE_LOCKED,
                 `state lock release raced with acquisition and remains quarantined${leftover}`,
                 concurrentQuarantine,
                 await quarantineRecovery(concurrentQuarantine),
             ) as Extract<StateResult<never>, { kind: 'refusal' }>
+            if (leftover) unwaitableRefusals.add(raced)
+            return raced
         }
-        const owner = {
-            format: STATE_FORMAT,
-            kind: 'state-lock',
-            ownerId: options.ownerId,
-            pid: process.pid,
-            acquiredAt: new Date().toISOString(),
-            token: randomUUID(),
-        } as const
-        const ownerBytes = `${JSON.stringify(owner)}\n`
         const handle = await open(join(namespace.paths.stateLock, 'owner.json'), 'wx', 0o600)
         try {
             await handle.writeFile(ownerBytes, 'utf8')
@@ -1688,7 +1926,23 @@ async function acquireLock(
             }
         }
         if (!hasErrorCode(error, 'EEXIST')) throw error
-        const observed = await inspectLock(namespace.paths.stateLock, namespace.root, options.observeHolder)
+        const observed = await inspectLock(namespace.paths.stateLock, namespace.root, options.observeProcess, judged)
+        if (observed.holderState === 'dead' && observed.owner) {
+            const takeover = await takeOverLock(namespace.paths.stateLock, namespace.root, observed.owner.bytes,
+                { bytes: ownerBytes, token: owner.token }, options)
+            if (takeover === 'taken') {
+                const reclaims = stateLockReclaims.get(namespace.root) ?? []
+                reclaims.push({ lock: namespace.paths.stateLock, holder: describeHolder(observed.owner.value), reason: observed.owner.reason })
+                stateLockReclaims.set(namespace.root, reclaims)
+                return { kind: 'acquired', ownerBytes }
+            }
+            if (takeover === 'contended') return refusal(
+                ENVIRONMENT_CODES.STATE_LOCKED,
+                `${observed.description}, and another cockpit command is taking the lock over`,
+                namespace.paths.stateLock,
+                `retry; cockpit clears ${namespace.paths.stateLock}.takeover once the command that wrote it is gone from this host`,
+            ) as Extract<StateResult<never>, { kind: 'refusal' }>
+        }
         return refusal(
             ENVIRONMENT_CODES.STATE_LOCKED,
             observed.description,
@@ -1907,7 +2161,7 @@ async function releaseLock(
 }
 
 export async function withStateScopedLock<T>(namespace: StateNamespace, scope: StateScopedLock,
-    options: Pick<StateTransactionOptions, 'ownerId' | 'observeHolder' | 'contentionTimeoutMs' | 'beforeRelease' | 'beforeLockMetadata'>,
+    options: Pick<StateTransactionOptions, 'ownerId' | 'observeProcess' | 'contentionTimeoutMs' | 'beforeRelease' | 'beforeLockMetadata'>,
     operation: () => T | Promise<T>): Promise<StateResult<T>> {
     const authenticated = authenticateStateNamespace(namespace)
     const binding = scope !== null && typeof scope === 'object' ? issuedScopedLocks.get(scope) : undefined
@@ -1916,18 +2170,18 @@ export async function withStateScopedLock<T>(namespace: StateNamespace, scope: S
         if (!options || typeof options !== 'object' || isProxy(options)
             || ![Object.prototype, null].includes(Object.getPrototypeOf(options))) throw new RefusalError('invalid options')
         const descriptors = Object.getOwnPropertyDescriptors(options)
-        const allowed = new Set(['ownerId', 'observeHolder', 'contentionTimeoutMs', 'beforeRelease', 'beforeLockMetadata'])
+        const allowed = new Set(['ownerId', 'observeProcess', 'contentionTimeoutMs', 'beforeRelease', 'beforeLockMetadata'])
         if (!descriptors.ownerId || !('value' in descriptors.ownerId)
             || Reflect.ownKeys(descriptors).some(key => typeof key !== 'string' || !allowed.has(key))
             || Object.values(descriptors).some(descriptor => !('value' in descriptor) || !descriptor.enumerable)) throw new RefusalError('invalid options')
         const values = Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]))
         if (typeof values.ownerId !== 'string'
-            || values.observeHolder !== undefined && typeof values.observeHolder !== 'function'
+            || values.observeProcess !== undefined && typeof values.observeProcess !== 'function'
             || values.contentionTimeoutMs !== undefined && typeof values.contentionTimeoutMs !== 'number'
             || values.beforeRelease !== undefined && typeof values.beforeRelease !== 'function'
             || values.beforeLockMetadata !== undefined && typeof values.beforeLockMetadata !== 'function') throw new RefusalError('invalid options')
         stableOptions = { ownerId: values.ownerId as HolderId,
-            ...(values.observeHolder ? { observeHolder: values.observeHolder as StateTransactionOptions['observeHolder'] } : {}),
+            ...(values.observeProcess ? { observeProcess: values.observeProcess as StateTransactionOptions['observeProcess'] } : {}),
             ...(values.contentionTimeoutMs !== undefined ? { contentionTimeoutMs: values.contentionTimeoutMs } : {}),
             ...(values.beforeRelease ? { beforeRelease: values.beforeRelease as StateTransactionOptions['beforeRelease'] } : {}),
             ...(values.beforeLockMetadata ? { beforeLockMetadata: values.beforeLockMetadata as StateTransactionOptions['beforeLockMetadata'] } : {}) }
@@ -1946,14 +2200,15 @@ export async function withStateScopedLock<T>(namespace: StateNamespace, scope: S
         return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'scoped state lock options are malformed', binding.path)
     }
     let acquired: Awaited<ReturnType<typeof acquireLock>>
-    const deadline = Date.now() + (stableOptions.contentionTimeoutMs ?? 0)
+    const deadline = Date.now() + (stableOptions.contentionTimeoutMs ?? DEFAULT_CONTENTION_TIMEOUT_MS)
+    const judged: HolderJudgements = new Map()
     let backoffMs = 5
     while (true) {
-        try { acquired = await acquireLock(stableNamespace, stableOptions) }
+        try { acquired = await acquireLock(stableNamespace, stableOptions, holderIdentity, judged) }
         catch (error) { return refusal(ENVIRONMENT_CODES.STATE_LOCKED, `scoped state lock could not be acquired safely: ${errorCause(error)}`, binding.path) }
-        if (acquired.kind === 'acquired' || acquired.code !== ENVIRONMENT_CODES.STATE_LOCKED) break
+        if (acquired.kind === 'acquired' || acquired.code !== ENVIRONMENT_CODES.STATE_LOCKED || unwaitableRefusals.has(acquired)) break
         const remainingMs = deadline - Date.now()
-        if (remainingMs <= 0 || stableOptions.contentionTimeoutMs === undefined) break
+        if (remainingMs <= 0) break
         await delay(Math.min(backoffMs, remainingMs))
         backoffMs = Math.min(backoffMs * 2, 50)
     }
@@ -2228,7 +2483,7 @@ export async function transactState<T>(
         stableOptions = {
             ownerId: options.ownerId,
             contentionTimeoutMs: options.contentionTimeoutMs,
-            observeHolder: options.observeHolder,
+            observeProcess: options.observeProcess,
             beforePublish: options.beforePublish,
             beforeCommit: options.beforeCommit,
             beforeRelease: options.beforeRelease,
@@ -2268,18 +2523,19 @@ export async function transactState<T>(
     }
 
     let acquired: Awaited<ReturnType<typeof acquireLock>>
-    const deadline = Date.now() + (stableOptions.contentionTimeoutMs ?? 0)
+    const deadline = Date.now() + (stableOptions.contentionTimeoutMs ?? DEFAULT_CONTENTION_TIMEOUT_MS)
+    const judged: HolderJudgements = new Map()
     let backoffMs = 5
     while (true) {
         try {
             acquired = await acquireLock(stableNamespace, stableOptions,
-                bootstrapTransaction ? bootstrapHolderIdentity : holderIdentity)
+                bootstrapTransaction ? bootstrapHolderIdentity : holderIdentity, judged)
         } catch (error) {
             return refusal(ENVIRONMENT_CODES.STATE_LOCKED, `state lock could not be acquired safely: ${errorCause(error)}`, stableNamespace.paths.stateLock)
         }
-        if (acquired.kind === 'acquired' || acquired.code !== ENVIRONMENT_CODES.STATE_LOCKED) break
+        if (acquired.kind === 'acquired' || acquired.code !== ENVIRONMENT_CODES.STATE_LOCKED || unwaitableRefusals.has(acquired)) break
         const remainingMs = deadline - Date.now()
-        if (remainingMs <= 0 || stableOptions.contentionTimeoutMs === undefined) break
+        if (remainingMs <= 0) break
         await delay(Math.min(backoffMs, remainingMs))
         backoffMs = Math.min(backoffMs * 2, 50)
     }

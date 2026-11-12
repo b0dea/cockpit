@@ -72,6 +72,9 @@ describe('env keys', () => {
             '# @type="not bare"',
             'QUOTED_TYPE=',
             '',
+            '# @required',
+            'NEEDS_VALUE= # a trailing comment',
+            '',
             '# detached by the blank line',
             '# @required',
             '',
@@ -112,7 +115,9 @@ describe('env keys', () => {
                 { name: 'EXPORTED', required: false, sensitive: false },
                 // A condition has no static answer, and still overrides the default.
                 { name: 'CONDITIONAL', sensitive: true, type: 'enum' },
-                { name: 'QUOTED_TYPE', required: false, sensitive: true },
+                // Written without a value, the schema leaves the name to the shell or a provider: the lead when preflight reports it missing.
+                { name: 'QUOTED_TYPE', required: false, sensitive: true, valueless: true },
+                { name: 'NEEDS_VALUE', required: true, sensitive: true, valueless: true },
                 { name: 'MULTI', required: false, sensitive: true },
                 { name: 'TRIPLE', required: false, sensitive: true },
                 { name: 'CALL', required: false, sensitive: true },

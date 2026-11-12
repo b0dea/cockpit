@@ -29,6 +29,7 @@ import { SURFACE_OBSERVATION_CODES } from '../generated-application/surface-obse
 import {
     createComparisonRemoteRefStep,
     createGitObservationStep,
+    gitWorkingTreeDirty,
     observeComparisonRemoteRef,
     observeComparisonRemoteRevalidation,
     observeComparisonRemoteUrl,
@@ -524,8 +525,19 @@ export function healthDiagnostics(health: HealthEvaluation): readonly Environmen
         target: schema,
         fix: 'unset those variables in the shell, then rerun this command to check the schema\'s own sources',
     })))
+    // A dirty working tree on a repository with commits is work in progress, not a broken checkout.
+    const dirty = health.preflight.checks.flatMap((check) => {
+        const changes = gitWorkingTreeDirty(check)
+        return changes ? [{
+            severity: 'warning' as const,
+            code: ENVIRONMENT_CODES.GIT_WORKING_TREE_DIRTY,
+            message: `the working tree has ${changes.tracked} tracked file(s) with changes and ${changes.untracked} untracked file(s), so a teammate's clone does not match what ran here`,
+            target: check.source,
+            fix: check.remedy,
+        } satisfies EnvironmentDiagnostic] : []
+    })
     return [...health.stopped === null ? [] : [health.stopped], ...health.notices,
-        ...health.producerRefusals, ...checks, ...advisories, ...uncommitted, ...overridden, ...producerFailures, ...comparisons]
+        ...health.producerRefusals, ...checks, ...dirty, ...advisories, ...uncommitted, ...overridden, ...producerFailures, ...comparisons]
 }
 
 function unavailablePreflight(message: string, forwarded?: readonly EnvironmentDiagnostic[]): PreflightCommandResult {

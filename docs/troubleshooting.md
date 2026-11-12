@@ -293,6 +293,14 @@ These records are how cockpit knows which containers and ports a stack owns. Do 
 hand, and do not delete them while the stack runs: its containers would keep running with nothing
 that knows about them.
 
+Every write to these records holds the state lock, `locks/state.lock` under the cockpit's folder. A
+command that finds another one holding it waits a few seconds before refusing with `STATE_LOCKED`,
+which names the holder's process and command. A command killed while holding it leaves the lock
+behind; the next command takes it over when the holder's process is gone from this host and reports
+`STATE_LOCK_RECLAIMED`. Cockpit never takes over a lock written on another host or from inside a
+container or sandbox, or one an earlier cockpit release wrote, since it cannot see that process: once
+no cockpit command runs, remove the lock directory the refusal names.
+
 A stack whose worktree was deleted, and state folders an earlier cockpit build left, are removed by
 `stacks prune`, which previews by default and removes only what no checkout can reach; see
 [List and prune stacks across the machine](environment.md#list-and-prune-stacks-across-the-machine).
@@ -429,6 +437,8 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SKILL_TOOL_EQUIVALENCE_MISSING` | [see above](#sibling-projection-and-skills) |
 | `STACKS_ORPHANED` | [see above](#clear-cockpit-state) |
 | `STATE_FORMAT_UNSUPPORTED` | [see above](#clear-cockpit-state) |
+| `STATE_LOCKED` | [see above](#clear-cockpit-state) |
+| `STATE_LOCK_RECLAIMED` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config <your cockpit.toml> to check the stack; [see above](#clear-cockpit-state) |
 | `STATE_RECORD_MALFORMED` | [see above](#clear-cockpit-state) |
 | `STATE_ROOT_UNAVAILABLE` | [see above](#clear-cockpit-state) |
 | `SURFACE_ADOPTION_REFUSED` | [see above](#merge-ownership-and-generation) |
