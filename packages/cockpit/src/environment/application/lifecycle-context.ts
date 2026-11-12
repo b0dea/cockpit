@@ -235,7 +235,7 @@ export function noticeLifecycleRun(context: LifecycleRunContext, diagnostic: Env
 }
 
 // A lock taken over from a killed command is said once: what that command was doing may be half done.
-function stateLockReclaimed(reclaim: Readonly<{ lock: string; holder: string; reason: string }>) {
+export function stateLockReclaimed(reclaim: Readonly<{ lock: string; holder: string; reason: string }>) {
     return {
         severity: 'warning' as const,
         code: ENVIRONMENT_CODES.STATE_LOCK_RECLAIMED,

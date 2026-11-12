@@ -48,7 +48,9 @@ import {
     type ResetCommandInput,
     type SleepCommandInput,
     type UpCommandInput,
+    stateLockReclaimed,
 } from './environment/application/lifecycle-context.js'
+import { takeAllStateLockReclaims } from './environment/state.js'
 import { runLogs as runLogsApplication } from './environment/application/logs.js'
 import { runDocsCheck } from './docs/check.js'
 import { runEnvKeys, runEnvSchema } from './environment/env-sources.js'
@@ -1805,6 +1807,11 @@ export async function runCli(
             }
         }
     }
+
+    // Every command that takes the state lock may take it over from a killed one, so the outcome says
+    // so here rather than each command remembering to; lifecycle commands have already reported theirs.
+    const reclaimed = takeAllStateLockReclaims().map(stateLockReclaimed)
+    if (reclaimed.length > 0) outcome = { ...outcome!, diagnostics: [...outcome!.diagnostics, ...reclaimed] }
 
     if (jsonRequested) {
         return finish(outcome!.status, outcome!)

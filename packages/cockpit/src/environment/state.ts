@@ -1700,6 +1700,13 @@ export function takeStateLockReclaims(namespace: StateNamespace): readonly State
     return taken
 }
 
+/** Every takeover not yet reported, whichever state root it was on: the command's outcome says them once. */
+export function takeAllStateLockReclaims(): readonly StateLockReclaim[] {
+    const taken = [...stateLockReclaims.values()].flat()
+    stateLockReclaims.clear()
+    return taken
+}
+
 // A dead holder's lock is taken over in place rather than removed, so no other acquisition slips in
 // between. Two acquisitions that both judged it dead must not both take it: each links its staged
 // owner at the takeover name, which only one can create, and that one replaces the owner only if it
