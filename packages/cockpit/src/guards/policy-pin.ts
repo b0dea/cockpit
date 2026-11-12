@@ -75,6 +75,19 @@ function proposedText(content: GuardFileContent, isConfig: (path: string) => boo
     return touched ? next : 'untouched'
 }
 
+// An editing tool's input is JSON, which decodes `\u2014` to the character before the tool sees it,
+// while a TOML basic string may keep the escape in the file. How an editor then matches one against the
+// other is the editor's own and unmeasured, so the guard does not guess the span: it names the cause.
+function escapedText(content: GuardFileContent, current: string): boolean {
+    if (content.kind !== 'replace' || !content.old || current.includes(content.old)) return false
+    const decoded = current.replace(/\\(\\|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})/g, (escape, body: string) => {
+        if (body === '\\') return escape
+        const point = Number.parseInt(body.slice(1), 16)
+        return point <= 0x10ffff && (point < 0xd800 || point > 0xdfff) ? String.fromCodePoint(point) : escape
+    })
+    return decoded !== current && decoded.includes(content.old)
+}
+
 const GIT_RECORDING = new Set(['add', 'commit', 'diff', 'log', 'show', 'status', 'blame'])
 // Programs that write the files they name, by basename, whatever runs them (`timeout`, `xargs`, `find
 // -exec`). `git` here is every other Git command and any program spelled `git` by path.
@@ -169,7 +182,9 @@ export function pinnedPolicyDenial(input: Readonly<{
     if (!input.content) return denial(`Refusing an edit of the cockpit configuration whose new text the guard was not given, so it cannot prove the change to ${PINNED} is permitted.`)
     const proposed = proposedText(input.content, resolved(input.cwd), current)
     if (proposed === 'untouched') return undefined
-    if (proposed === undefined) return denial(`Refusing an edit of the cockpit configuration that does not apply exactly once to its current text, so the guard cannot prove the change to ${PINNED} is permitted.`)
+    if (proposed === undefined) return denial(escapedText(input.content, current)
+        ? `Refusing an edit of the cockpit configuration whose old text matches its current text only once the file's TOML \\u escapes are read as the characters they stand for: the file spells a character as an escape such as \\u2014, and the edit's old text holds the character itself, which tool input decodes from \\u2014. The guard matches the text exactly, so it cannot prove which span changes and whether the change to ${PINNED} is permitted. Spell the escape with its backslash in the old and new text (\\\\u2014 inside the tool's JSON), or edit a span without escapes.`
+        : `Refusing an edit of the cockpit configuration that does not apply exactly once to its current text, so the guard cannot prove the change to ${PINNED} is permitted.`)
     const before = pinnedPolicyTables(current)
     const after = pinnedPolicyTables(proposed)
     if (!before || !after) return denial(`Refusing an edit that leaves the cockpit configuration unparseable, so the guard cannot prove the change to ${PINNED} is permitted.`)
