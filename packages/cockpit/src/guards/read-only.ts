@@ -21,9 +21,11 @@ export interface ReadOnlyAccess {
     readonly skipsIgnored?: boolean
     /**
      * The command prints the content of files in the repository at `cwd`, its index or history: only
-     * below these paths, relative to `cwd`, or anywhere when null.
+     * below these paths, relative to `cwd`, or anywhere when null. With `history` it can print a commit,
+     * so a file the index no longer holds but some commit does is printed too; `revisions` are the
+     * commits it names, which no ref may reach, such as FETCH_HEAD or a dropped stash.
      */
-    readonly trackedContent?: { readonly limitedTo: readonly string[] | null }
+    readonly trackedContent?: { readonly limitedTo: readonly string[] | null; readonly history?: true; readonly revisions?: readonly string[] }
     /** A `reads` operand may name a revision instead, so one that names no existing path reads nothing. */
     readonly revisionOperands?: boolean
     /** The command follows links below its `trees`, which a walk that does not follow them cannot vouch for. */
@@ -54,17 +56,19 @@ interface OptionTable {
 
 const set = (...values: string[]) => new Set(values)
 
-interface Options { readonly positionals: string[]; readonly present: Set<string>; readonly files: string[] }
+/** `terminator` is the index of the `--` that ends the options, or -1; a `--` taken as an option's value is not one. */
+interface Options { readonly positionals: string[]; readonly present: Set<string>; readonly files: string[]; readonly terminator: number }
 
 function parseOptions(argv: readonly string[], table: OptionTable): Options | undefined {
     const positionals: string[] = []
     const present = new Set<string>()
     const files: string[] = []
     let options = true
+    let terminator = -1
     for (let index = 0; index < argv.length; index++) {
         const word = argv[index]!
         if (!options || word === '-' || !word.startsWith('-')) { positionals.push(word); continue }
-        if (word === '--') { options = false; continue }
+        if (word === '--') { options = false; terminator = index; continue }
         const long = word.startsWith('--')
         const equals = long ? word.indexOf('=') : -1
         // `-n5` attaches a short option's value; `--lines=5` attaches a long one's.
@@ -82,7 +86,7 @@ function parseOptions(argv: readonly string[], table: OptionTable): Options | un
         else if (equals < 0 && table.cluster?.test(word)) for (const flag of word.slice(1)) present.add(`-${flag}`)
         else return undefined
     }
-    return { positionals, present, files }
+    return { positionals, present, files, terminator }
 }
 
 const LS: OptionTable = { flags: set('--all', '--almost-all', '--classify', '--human-readable', '--recursive', '--reverse'), values: set(), attachedOnly: set('--color'), cluster: /^-[1aAbBcCdFfghiklLmnopqrRsStTuUvwxX@]+$/ }
@@ -300,22 +304,79 @@ const GIT_NAME_ONLY = set('--stat', '--numstat', '--shortstat', '--name-only', '
 // counts, at the cost of asking for an attached `-S` pickaxe value.
 const GIT_PATCH = /^(?:--patch(?:-with-(?:stat|raw))?|--cc|--dd|--remerge-diff|--diff-merges|--word-diff|--color-words|--function-context|--unified|--binary|--check)$/
 
+// Options of `git diff`, `log` and `show` that take the next word as their value, a pattern, date,
+// count or object name and never a path; measured with Git 2.54, where each left that word out of the
+// revisions. Options that take only an attached value, such as `-U3` or `--relative=dir`, are not listed.
+const GIT_SEPARATE_VALUES = set('--grep', '--author', '--committer', '--since', '--until', '--after', '--before', '--max-count', '--skip', '--date', '--encoding',
+    '--diff-filter', '--word-diff-regex', '--stat-width', '--anchored', '--output-indicator-new', '--output-indicator-old', '--output-indicator-context', '--find-object',
+    '-I', '-S', '-G', '-n', '-l')
+// The same for `git grep`, whose `-f` value is a file it reads, so it is not listed.
+const GIT_GREP_SEPARATE_VALUES = set('-e', '--regexp', '-A', '-B', '-C', '--after-context', '--before-context', '--context', '-m', '--max-count', '--max-depth')
+
+/**
+ * The words of a Git command that prints content which can name a revision or a path: before the
+ * first `--`, every word that is neither an option nor an option's value, and for `grep` not its
+ * pattern; after it, every pathspec. An archive's or patch series' output option takes a path that is
+ * written, judged as a write elsewhere.
+ */
+export function gitContentOperands(verb: string, args: readonly string[]): { readonly revisions: readonly string[]; readonly pathspecs: readonly string[] | null } {
+    const values = verb === 'grep' ? GIT_GREP_SEPARATE_VALUES : GIT_SEPARATE_VALUES
+    const revisions: string[] = []
+    let explicitPattern = false
+    let at = 0
+    for (; at < args.length && args[at] !== '--'; at++) {
+        const arg = args[at]!
+        if (!arg.startsWith('-')) { revisions.push(arg); continue }
+        if (verb === 'grep' && /^(?:-[a-zA-Z]*[ef]|--(?:regexp|file))(?:=|$)/.test(arg)) explicitPattern = true
+        if (values.has(arg) || ['archive', 'format-patch'].includes(verb) && /^(?:-[a-zA-Z]*o|--o[a-z-]*)$/.test(arg)) at++
+    }
+    return { revisions: verb === 'grep' && !explicitPattern ? revisions.slice(1) : revisions, pathspecs: at < args.length ? args.slice(at + 1) : null }
+}
+
+/**
+ * The commits a revision expression names, each as a positive revision: a range's two ends, and an
+ * excluded `^rev` as the rev itself, so a walk of them can only cover more. `rev:path` names `rev`.
+ */
+function namedCommits(expression: string): readonly string[] {
+    return expression.replace(/:.*$/s, '').split(/\.{2,3}/).map(end => end.replace(/^\^+/, '').replace(/\^(?:!|@|-\d*)$/, '')).filter(Boolean)
+}
+
+/**
+ * The path a `rev:path` object name names, from the work tree's top, which `requires` makes the
+ * working directory; '' for the revision's whole tree. Undefined for a form the inspection cannot
+ * place: `:path` and `:N:path` name the index, `:/text` a commit, `./` and `../` are relative to a
+ * directory the guard does not know, and a stash's commits hold untracked files.
+ */
+function committedPath(object: string): string | undefined {
+    const at = object.indexOf(':')
+    const file = object.slice(at + 1)
+    if (at <= 0 || object.startsWith('-') || file.includes(':') || /^\.\.?(?:\/|$)/.test(file) || file.startsWith('/') || /[*?[\\]/.test(file)
+        || /(?:^|[^\w])stash(?:@|$|\^|~)/.test(object.slice(0, at))) return undefined
+    return file
+}
+
 /** What file content `git diff`, `show` or `log` prints, or undefined when it prints none. */
 function gitTrackedContent(verb: string, args: readonly string[]): ReadOnlyAccess['trackedContent'] {
     const end = args.indexOf('--')
     const options = end < 0 ? args : args.slice(0, end)
     const name = (arg: string) => arg.split('=')[0]!
     const patch = options.some(arg => GIT_PATCH.test(name(arg)) || /^-[^-]/.test(arg) && /[pucmWU]/.test(arg.slice(1)))
-    const revisions = options.some(arg => !arg.startsWith('-'))
+    const named = gitContentOperands(verb, args).revisions
+    const revisions = named.length > 0
     const nameOnly = options.some(arg => GIT_NAME_ONLY.has(name(arg)))
+    // Only a plain diff, of the work tree against the index, prints no commit: log and show print
+    // commits, and a revision or `--cached` compares with one, which can hold a file the index no longer does.
+    const history = verb !== 'diff' || revisions || options.some(arg => ['--cached', '--staged', '--merge-base'].includes(name(arg)))
     // `git show` prints a named blob whatever its options, and `diff` and `show` print a named blob
     // whatever pathspec follows, so only a revision-free command is limited by its pathspecs.
     if (!(verb === 'log' ? patch : patch || !nameOnly || verb === 'show' && revisions)) return undefined
     const pathspecs = end < 0 ? null : args.slice(end + 1)
     // Magic and wildcard pathspecs match more than their spelling, so they limit nothing.
-    // `--full-diff` prints every file a commit the pathspec selects changed.
-    return { limitedTo: pathspecs === null || verb !== 'log' && revisions || pathspecs.length === 0 || options.includes('--full-diff')
-        || pathspecs.some(spec => spec.startsWith(':') || /[*?[\\]/.test(spec)) ? null : pathspecs }
+    // `--full-diff` prints every file a commit the pathspec selects changed, and `--follow` the file
+    // under every name it had, an environment file's included.
+    return { limitedTo: pathspecs === null || verb !== 'log' && revisions || pathspecs.length === 0 || options.includes('--full-diff') || options.includes('--follow')
+        || pathspecs.some(spec => spec.startsWith(':') || /[*?[\\]/.test(spec)) ? null : pathspecs,
+        ...history ? { history: true as const, revisions: named.flatMap(namedCommits) } : {} }
 }
 
 // Git discovers an implicit bare repository in any directory holding HEAD, objects and refs, and runs
@@ -362,22 +423,39 @@ function git(argv: readonly string[], cwd: string): ReadOnlyAccess | undefined {
         const listings = [...options.filter(arg => !arg.startsWith('-')), ...end < 0 ? [] : args.slice(end + 1)]
         return options.every(arg => !arg.startsWith('-') || GIT_LS_FILES.has(arg)) ? { cwd: directory, reads: [], trees: [], listings, requires } : undefined
     }
-    // One object, by type, size, existence or pretty-printed content. A `rev:path` blob name prints a
-    // path the inspection cannot see, and `--batch`, `--filters` and `--textconv` are absent.
+    // One object, by type, size, existence or pretty-printed content. A `rev:path` blob name prints that
+    // committed file, judged by its path as `git show rev:path` is, and HEAD and its ancestors are
+    // commits. Any other object printed may be a blob nothing names, such as an environment file staged
+    // once and unstaged, or a tag pointing at one, so it is not read-only. `--batch`, `--filters` and
+    // `--textconv` are absent.
     if (verb === 'cat-file') {
         const [mode, object, ...rest] = args
-        if (!['-t', '-s', '-e', '-p'].includes(mode ?? '') || object === undefined || object.startsWith('-') || object.includes(':') || rest.length) return undefined
-        return { cwd: directory, reads: [], trees: [], listings: [], requires, ...(mode === '-p' ? { trackedContent: { limitedTo: null } } : {}) }
+        if (!['-t', '-s', '-e', '-p'].includes(mode ?? '') || object === undefined || object.startsWith('-') || rest.length) return undefined
+        if (!object.includes(':')) {
+            if (mode !== '-p') return { cwd: directory, reads: [], trees: [], listings: [], requires }
+            return /^(?:HEAD|@)(?:[~^]\d*)*$/.test(object) ? { cwd: directory, reads: [], trees: [], listings: [], requires, trackedContent: { limitedTo: null, history: true, revisions: [object] } } : undefined
+        }
+        const file = committedPath(object)
+        return !file ? undefined : { cwd: directory, reads: [file], trees: [], listings: [], requires, revisionOperands: true,
+            ...(mode === '-p' ? { trackedContent: { limitedTo: [file], history: true, revisions: namedCommits(object) } } : {}) }
     }
     // grep prints matching lines of tracked files, and blame one tracked file's lines: committed content,
     // limited to the pathspecs after `--` or the blamed file. `--untracked` and `--no-index` read files
     // the index does not hold, and `-O` and `--textconv` run programs, so neither table lists them.
+    // Without `-e` or `-f` the first operand is the pattern. Every other operand names a path, or before
+    // `--` a revision it searches, whose `rev:path` names a path in it; each is inspected as a read.
     if (verb === 'grep') {
         const parsed = parseOptions(args, GIT_GREP)
-        const end = args.indexOf('--')
-        const pathspecs = end < 0 ? null : args.slice(end + 1)
-        if (!parsed || pathspecs?.some(spec => spec.startsWith(':') || /[*?[\\]/.test(spec))) return undefined
-        return { cwd: directory, reads: parsed.files, trees: [], listings: [], requires, trackedContent: { limitedTo: pathspecs?.length ? pathspecs : null } }
+        if (!parsed) return undefined
+        const pathspecs = parsed.terminator < 0 ? null : args.slice(parsed.terminator + 1)
+        const operands = parsed.positionals.slice(parsed.present.has('-e') || parsed.present.has('-f') ? 0 : 1)
+        if (operands.some(spec => spec.startsWith(':') || /[*?[\\]/.test(spec))) return undefined
+        const reads = operands.map(word => word.includes(':') ? committedPath(word) : word)
+        if (reads.some(read => read === undefined)) return undefined
+        const searched = reads.filter(read => read !== '') as string[]
+        const revisions = operands.slice(0, operands.length - (pathspecs?.length ?? 0))
+        return { cwd: directory, reads: [...parsed.files, ...searched], trees: [], listings: [], requires, revisionOperands: true,
+            trackedContent: { limitedTo: pathspecs?.length ? pathspecs : null, ...revisions.length ? { history: true as const, revisions: revisions.flatMap(namedCommits) } : {} } }
     }
     if (verb === 'blame') {
         const parsed = parseOptions(args, GIT_BLAME)
@@ -388,22 +466,25 @@ function git(argv: readonly string[], cwd: string): ReadOnlyAccess | undefined {
     // `git show REV:PATH` prints one committed file, judged by its path; the work tree's top is the
     // working directory, which `requires` proves, so the path resolves from there.
     if (verb === 'show' && args.length === 1 && /^[^-:][^:]*:[^:/]/.test(args[0]!) && !/(?:^|[^\w])stash(?:@|$|\^|~|:)/.test(args[0]!)) {
-        const file = args[0]!.slice(args[0]!.indexOf(':') + 1)
-        if (/^\.\.?(?:\/|$)/.test(file) || /[*?[\\]/.test(file)) return undefined
-        return { cwd: directory, reads: [file], trees: [], listings: [], requires, revisionOperands: true, trackedContent: { limitedTo: [file] } }
+        const file = committedPath(args[0]!)
+        if (file === undefined) return undefined
+        return { cwd: directory, reads: [file], trees: [], listings: [], requires, revisionOperands: true, trackedContent: { limitedTo: [file], history: true, revisions: namedCommits(args[0]!) } }
     }
     if (verb === undefined || !GIT_READ_VERBS.has(verb)) return undefined
     // --output writes a file, an external diff driver runs a program, and --no-index prints any file.
     if (args.some(arg => /^--(?:output|ext-diff|textconv|no-index)(?:=|$)/.test(arg))) return undefined
+    // An option's value, such as a `--grep` pattern, names nothing; every other word may.
+    const { revisions, pathspecs } = gitContentOperands(verb, args)
+    const operands = [...revisions, ...pathspecs ?? []]
     // Revision operands that name a blob (`HEAD:path`) print content the path inspection cannot see, and
     // so does `git log -L<range>:<path>`, whose path is attached to the option.
-    if (args.some(arg => !arg.startsWith('-') && arg.includes(':') || /^-L/.test(arg))) return undefined
+    if (operands.some(arg => arg.includes(':')) || args.some(arg => /^-L/.test(arg))) return undefined
     // A path outside the repository turns `git diff` into a `--no-index` comparison that prints whole
     // trees, and `requires` makes the directory the repository's top, so no operand may leave it.
-    if (args.some(arg => !arg.startsWith('-') && /^\.\.(?:\/|$)/.test(posix.relative(directory, posix.resolve(directory, arg))))) return undefined
+    if (operands.some(arg => /^\.\.(?:\/|$)/.test(posix.relative(directory, posix.resolve(directory, arg))))) return undefined
     // Operands may be pathspecs whose content is printed, so every operand is inspected as a read.
     const trackedContent = verb === 'status' ? undefined : gitTrackedContent(verb, args)
-    return { cwd: directory, reads: args.filter(arg => !arg.startsWith('-')), trees: [], listings: [], requires, revisionOperands: true, ...(trackedContent ? { trackedContent } : {}) }
+    return { cwd: directory, reads: operands, trees: [], listings: [], requires, revisionOperands: true, ...(trackedContent ? { trackedContent } : {}) }
 }
 
 /**
@@ -429,34 +510,53 @@ export function cockpitLauncherPrefix(executable: string, argv: readonly string[
 }
 
 // gh commands that only read the repository's host. Every option they take formats or selects what is printed; `--web`
-// starts a browser instead, so it is left out.
-// `pr diff` is left out: a pull request can add an environment file, which its diff prints.
-const GH_READS = new Set(['pr view', 'pr list', 'pr checks', 'pr status', 'run view', 'run list', 'run watch', 'issue view', 'issue list', 'issue status', 'repo view', 'auth status'])
+// starts a browser instead, so it is left out. `pr diff` prints committed content, judged below as `git diff` is.
+const GH_READS = new Set(['pr view', 'pr list', 'pr checks', 'pr status', 'pr diff', 'run view', 'run list', 'run watch', 'issue view', 'issue list', 'issue status', 'repo view', 'auth status'])
 // gh's options that take the next word, as they appear on its read commands.
-const GH_VALUES = new Set(['-R', '--repo', '-q', '--jq', '-t', '--template', '--json', '-s', '--state', '-L', '--limit', '-A', '--author', '-a', '--assignee',
+const GH_VALUES = new Set(['-R', '--repo', '-q', '--jq', '-t', '--template', '--json', '-s', '--state', '-L', '--limit', '-A', '--author', '-a', '--assignee', '--color', '--exclude',
     '-l', '--label', '-B', '--base', '-H', '--head', '--search', '-S', '-b', '--branch', '-u', '--user', '-w', '--workflow', '-e', '--event', '-c', '--commit',
     '-j', '--job', '-i', '--interval', '--created', '--status', '--app', '--milestone', '--mention'])
+
+/**
+ * gh's words as its parser reads them: the operands, each option's name, and whether every option has
+ * a known shape. A value option takes the next word whatever it is, so `-e --name-only` excludes the
+ * glob `--name-only` and is no `--name-only` flag.
+ */
+export function ghWords(argv: readonly string[]): { readonly operands: readonly string[]; readonly flags: readonly string[]; readonly exact: boolean } {
+    const operands: string[] = []
+    const flags: string[] = []
+    let exact = true
+    for (let index = 0; index < argv.length; index++) {
+        const word = argv[index]!
+        if (!word.startsWith('-') || word === '-') { operands.push(word); continue }
+        const [name, attached] = word.split(/=(.*)/s)
+        flags.push(name!)
+        if (GH_VALUES.has(name!)) {
+            if (attached === undefined && argv[++index] === undefined) exact = false
+        } else if (attached !== undefined || !/^--[a-z][a-z-]*$|^-[a-zA-Z]$/.test(word)) exact = false
+    }
+    return { operands, flags, exact }
+}
 
 /**
  * gh reading its host: one of the read commands above, or `gh auth status` without the token. `gh api` is left out: a GET
  * returns any file the repository holds, under any spelling of its name, as a blob, a commit, a compare or an archive.
  */
 function gh(argv: readonly string[]): Classified {
-    const operands: string[] = []
-    for (let index = 0; index < argv.length; index++) {
-        const word = argv[index]!
-        if (!word.startsWith('-') || word === '-') { operands.push(word); continue }
-        const [name, attached] = word.split(/=(.*)/s)
-        // `--web` starts a browser and `--show-token` prints the token.
-        if (/^--(?:web|show-token)$/.test(name!)) return undefined
-        if (GH_VALUES.has(name!)) {
-            if (attached === undefined && argv[++index] === undefined) return undefined
-        } else if (attached !== undefined || !/^--[a-z][a-z-]*$|^-[a-zA-Z]$/.test(word)) return undefined
-    }
+    const { operands, flags, exact } = ghWords(argv)
+    // `--web` starts a browser and `--show-token` prints the token.
+    if (!exact || flags.some(flag => /^--(?:web|show-token)$/.test(flag))) return undefined
     const command = operands.slice(0, 2).join(' ')
     // `-w` names a workflow on `run list` and starts a browser everywhere else.
-    if (!GH_READS.has(command) || argv.includes('-w') && command !== 'run list') return undefined
+    if (!GH_READS.has(command) || flags.includes('-w') && command !== 'run list') return undefined
     if (command === 'auth status' && argv.some((word) => /^-[a-zA-Z]*t/.test(word) && !word.startsWith('--'))) return undefined
+    if (command === 'pr diff' && !flags.includes('--name-only')) {
+        // A pull request's diff prints committed changes as `git diff` does, so it is judged by what this
+        // checkout's repository tracks and once committed, from its top. Another repository's, named by
+        // `--repo` or a URL, is not this checkout's to describe.
+        if (flags.some(flag => ['-R', '--repo'].includes(flag)) || operands.slice(2).some(word => word.includes(':'))) return undefined
+        return { reads: [], trees: [], listings: [], requires: ['.git'], trackedContent: { limitedTo: null, history: true } }
+    }
     return { reads: [], trees: [], listings: [] }
 }
 

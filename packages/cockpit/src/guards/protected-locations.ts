@@ -352,13 +352,36 @@ export async function guardUnignoredSensitivePaths(path: string, watched: readon
 /**
  * Every path `repository`'s index holds that is named `.env*`, lies below a `.secrets` or `.env*`
  * directory or is one of `watched`, or null past the sensitive path bound or when Git did not
- * answer. Only the index is asked: a file removed from it stays in history, which this does not walk.
+ * answer. Only the index is asked; `guardCommittedSensitivePaths` walks history.
  */
 export async function guardTrackedSensitivePaths(repository: string, watched: readonly string[], git: ResolvedExecutable, execute: GuardExecute): Promise<readonly string[] | null> {
-    const inside = watched.map(path => relative(repository, path)).filter(path => path !== '' && !path.startsWith('..'))
-    const tracked = await gitPaths(git, repository, ['ls-files', '-z', '--', ':(icase,glob)**/.env*', ':(icase,glob)**/.env*/**', ':(icase,glob)**/.secrets/**',
-        ...inside.map(path => `:(icase,literal)${path}`)], execute)
+    const tracked = await gitPaths(git, repository, ['ls-files', '-z', '--', ...sensitivePathspecs(repository, watched)], execute)
     return tracked === null || tracked.length > GUARD_LOCATION_LIMITS.sensitivePaths ? null : tracked.map(path => join(repository, path)).sort()
+}
+
+/**
+ * Every path named as `guardTrackedSensitivePaths` names them that a commit reachable from a ref, a
+ * reflog or one of `revisions` changes, merges and root commits included, so every such path any of
+ * those commits holds; null past the sensitive path bound or when Git did not answer in time. The
+ * revisions are the commits a command names, such as FETCH_HEAD or a dropped stash's, which no ref
+ * reaches; one that names no commit, such as a path, is skipped. A blob is not walked.
+ */
+export async function guardCommittedSensitivePaths(repository: string, watched: readonly string[], git: ResolvedExecutable, execute: GuardExecute,
+    revisions: readonly string[] = []): Promise<readonly string[] | null> {
+    // Without rename detection a renamed file is listed under every name it had. The overrides keep a
+    // person's configuration from narrowing `-m` to first parents, skipping the root commit's files, or
+    // printing signature lines among the names. `--end-of-options` keeps a revision from reading as an option.
+    const committed = await gitPaths(git, repository, ['-c', 'log.diffMerges=separate', '-c', 'log.showRoot=true', '-c', 'log.showSignature=false',
+        'log', '--all', '--reflog', '--ignore-missing', '-m', '--no-renames', '--format=', '--name-only', '-z', '--end-of-options', ...revisions, '--',
+        ...sensitivePathspecs(repository, watched)], execute)
+    const unique = committed === null ? null : [...new Set(committed)]
+    return unique === null || unique.length > GUARD_LOCATION_LIMITS.sensitivePaths ? null : unique.map(path => join(repository, path)).sort()
+}
+
+/** Environment and secrets names anywhere, and each watched path inside `repository`, as Git pathspecs. */
+function sensitivePathspecs(repository: string, watched: readonly string[]): readonly string[] {
+    const inside = watched.map(path => relative(repository, path)).filter(path => path !== '' && !path.startsWith('..'))
+    return [':(icase,glob)**/.env*', ':(icase,glob)**/.env*/**', ':(icase,glob)**/.secrets/**', ...inside.map(path => `:(icase,literal)${path}`)]
 }
 
 /**

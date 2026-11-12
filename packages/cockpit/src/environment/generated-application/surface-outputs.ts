@@ -163,22 +163,31 @@ export function emptyGeneration(): Extract<SurfaceGenerationOutcome, { kind: 'co
  *
  * Every `.env` and `.env.*` file is denied too. Claude's filesystem-root deny rules cannot carve out
  * the documentation names the guard exempts. Native file tools and recognized shell reads refuse
- * those names; a guard approval cannot override the native denial. Keep the broad protection until
- * a supported exception can preserve instance denials across sibling directories.
+ * those names; a guard approval cannot override the native denial. Measured on Claude Code 2.1.322,
+ * 2026-11-12: a `!` rule carves only out of cwd-relative rules, never `//**` ones, and a character
+ * class reads `!` literally, so the only `//**` set that spared `.env.schema` was positive ranges,
+ * which leave readable any suffix character they do not list. Keep the broad protection until a
+ * supported exception can preserve instance denials across sibling directories.
  */
 function claudeReadDenials(
     siblings: readonly { slug: string; path: string }[],
     instances: readonly { slug: string; path: string }[],
     secretPaths: readonly string[] = [],
 ): readonly string[] {
-    const rules = ['//**/.secrets/**', '//**/.env', '//**/.env.*', ...instanceReadPaths(siblings, instances).map(claudePathRule),
+    const rules = ['//**/.secrets/**', '//**/.env', '//**/.env.*', ...instanceReadPaths(siblings, instances).flatMap(claudePathRules),
         ...claudeSecretPathDenials(siblings, secretPaths)]
     return [...new Set(rules)].sort(compareCodeUnits)
 }
 
-function claudePathRule(row: Readonly<{ inRoot: boolean; path: string }>): string {
+/**
+ * A path's rule under both Unicode normal forms. Claude Code matches rules case-insensitively but
+ * compares Unicode spellings literally, while APFS resolves either form to the same file: measured on
+ * Claude Code 2.1.322, macOS, 2026-11-12, a rule spelled NFD let the Read tool return the file asked
+ * for in NFC, while upper- and mixed-case spellings of a ruled path were refused.
+ */
+function claudePathRules(row: Readonly<{ inRoot: boolean; path: string }>): readonly string[] {
     const literal = row.path.replace(/[*?[\]\\!#()]/g, '?')
-    return row.inRoot ? `/${literal}` : `//**/${literal}`
+    return [...new Set([literal.normalize('NFC'), literal.normalize('NFD')])].map(spelling => row.inRoot ? `/${spelling}` : `//**/${spelling}`)
 }
 
 /**
@@ -188,7 +197,7 @@ function claudePathRule(row: Readonly<{ inRoot: boolean; path: string }>): strin
  * the read and the edit rules: the hook still refuses an edit if a rule is missing, the rule refuses a read the hook never sees.
  */
 function claudeSecretPathDenials(siblings: readonly { slug: string; path: string }[], secretPaths: readonly string[]): readonly string[] {
-    return declaredSecretPaths(siblings, secretPaths).flatMap(row => [claudePathRule(row), `${claudePathRule(row)}/**`])
+    return declaredSecretPaths(siblings, secretPaths).flatMap(row => claudePathRules(row).flatMap(rule => [rule, `${rule}/**`]))
 }
 
 /** Each declared secret path by the path that is the same in every clone, as an instance's is. */

@@ -376,6 +376,7 @@ describe('public surface publication transaction', () => {
             await mkdir(hosted)
             await writeFile(join(hosted, '.env.example'), 'SYNTHETIC_TOKEN=\n')
             await writeFile(join(fixture.root, 'local[1].env.example'), 'SYNTHETIC_TOKEN=\n')
+            await writeFile(join(fixture.root, 'caf\u00e9.example'), 'SYNTHETIC_TOKEN=\n')
             expect(spawnSync('git', ['init', '--quiet', fixture.root]).status).toBe(0)
             await writeFile(join(fixture.root, 'app/package-lock.json'), '{}\n')
             const declaration = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
@@ -386,14 +387,16 @@ describe('public surface publication transaction', () => {
             declaration.sibling.push(CockpitConfig.shape.sibling.element.parse({ slug: 'hosted', dir: 'hosted', mount: 'host', host_reason: 'Synthetic host-only service', gate: 'operator', acquire: 'none',
                 var: 'HOSTED_DIR', purpose: 'Synthetic host-mounted service', environment_files: [{ template: '.env.example', instance: '.env' }] }))
             declaration.sibling.push(CockpitConfig.shape.sibling.element.parse({ slug: 'self', dir: relative(estate, fixture.root), mount: 'none', acquire: 'none',
-                var: 'SELF_DIR', purpose: 'The cockpit checkout itself', environment_files: [{ template: 'local[1].env.example', instance: 'local[1].env' }] }))
+                var: 'SELF_DIR', purpose: 'The cockpit checkout itself', environment_files: [{ template: 'local[1].env.example', instance: 'local[1].env' }, { template: 'caf\u00e9.example', instance: 'caf\u00e9.conf' }] }))
             await writeFile(fixture.configPath, stringifyToml(CockpitConfig.parse(declaration)))
 
             const synchronized = await syncGeneratedEnvironment({ configPath: fixture.configPath })
             expect(synchronized, JSON.stringify(synchronized.diagnostics)).toMatchObject({ kind: 'complete' })
             const settings = JSON.parse(await readFile(join(fixture.root, '.claude/settings.json'), 'utf8')) as { permissions: { deny?: string[] } }
             // `/` anchors a rule at the project root; measured on Claude Code 2.1.314, 2026-10-30, with an unruled control beside it.
-            expect(settings.permissions.deny!.filter(rule => rule.startsWith('Read('))).toEqual(['Read(//**/.env)', 'Read(//**/.env.*)', 'Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/hosted/.env)', 'Read(/local?1?.env)'])
+            // A non-ASCII name is denied under both Unicode normal forms, which Claude Code compares literally.
+            expect(settings.permissions.deny!.filter(rule => rule.startsWith('Read('))).toEqual(['Read(//**/.env)', 'Read(//**/.env.*)', 'Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/hosted/.env)',
+                'Read(/cafe\u0301.conf)', 'Read(/caf\u00e9.conf)', 'Read(/local?1?.env)'])
             expect(settings.permissions.deny).toContain('Edit(/.cockpit/guards/bash-guard.sh)')
             const openCode = JSON.parse((await readFile(join(fixture.root, 'opencode.jsonc'), 'utf8')).replace(/\/\* cockpit:owner:[^*]+ \*\//g, '')) as {
                 permission: { external_directory: Record<string, 'allow'>; read: Record<string, 'deny'>; edit: Record<string, 'deny'> }

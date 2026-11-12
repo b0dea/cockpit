@@ -57,6 +57,7 @@ import {
     guardPatchTargets,
     guardRemoteCredentials,
     guardWorktreeChanges,
+    guardCommittedSensitivePaths,
     guardTrackedSensitivePaths,
     guardUnignoredSensitivePaths,
 } from '../../guards/protected-locations.js'
@@ -496,6 +497,10 @@ export async function runGuardEvaluationApplication(
         // Each entry starts as the answer for Git not answering and is replaced by Git's.
         const unignored = new Map<string, readonly string[] | null | undefined>()
         const tracked = new Map<string, readonly string[] | null>()
+        // What history ever held, asked only for a command that can print a commit: it walks every commit.
+        const committed = new Map<string, readonly string[] | null>()
+        // The commits each repository's history commands name, walked beside every ref.
+        const walkedRevisions = new Map<string, Set<string>>()
         const queries: Array<() => Promise<void>> = []
         // Which branch a push or a history rewrite acts on is Git's to say, in a repository inside the roots.
         // Git's answers rest on the person's global configuration too, as the agent's own Git commands do.
@@ -535,9 +540,16 @@ export async function runGuardEvaluationApplication(
         }
         for (const invocation of parsed.invocations) {
             const access = classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: data.ripgrepConfigActive === true })
-            if (access?.trackedContent && (allowed(access.cwd) || nativeGit(access.cwd) && parsed.invocations.length === 1) && !tracked.has(access.cwd)) {
-                tracked.set(access.cwd, null)
-                queries.push(async () => { tracked.set(access.cwd, await guardTrackedSensitivePaths(access.cwd, watchedPaths, git.value, adapters.execute ?? executeProbe)) })
+            if (access?.trackedContent && (allowed(access.cwd) || nativeGit(access.cwd) && parsed.invocations.length === 1)) {
+                if (!tracked.has(access.cwd)) {
+                    tracked.set(access.cwd, null)
+                    queries.push(async () => { tracked.set(access.cwd, await guardTrackedSensitivePaths(access.cwd, watchedPaths, git.value, adapters.execute ?? executeProbe)) })
+                }
+                if (access.trackedContent.history) {
+                    const named = walkedRevisions.get(access.cwd) ?? new Set<string>()
+                    for (const revision of access.trackedContent.revisions ?? []) named.add(revision)
+                    walkedRevisions.set(access.cwd, named)
+                }
             }
             for (const tree of access?.skipsIgnored ? access.trees : []) {
                 const path = resolve(access!.cwd, tree)
@@ -545,6 +557,10 @@ export async function runGuardEvaluationApplication(
                 unignored.set(path, undefined)
                 queries.push(async () => { unignored.set(path, await guardUnignoredSensitivePaths(path, watchedPaths, git.value, adapters.execute ?? executeProbe)) })
             }
+        }
+        for (const [cwd, revisions] of walkedRevisions) {
+            committed.set(cwd, null)
+            queries.push(async () => { committed.set(cwd, await guardCommittedSensitivePaths(cwd, watchedPaths, git.value, adapters.execute ?? executeProbe, [...revisions].sort())) })
         }
         // A query starts up to four Git processes, so a command naming many trees is asked about a few
         // at a time, and a failed one stops the rest from starting.
@@ -683,7 +699,7 @@ export async function runGuardEvaluationApplication(
             const search = request.operation === 'search' || request.operation === 'unignored-search'
             return { status: 'resolved', path, symlink: false, identity: exists ? chain.at(-1)! : null, ancestors: exists ? chain.slice(0, -1) : chain,
                 ...(search ? { sensitive: exists ? searched(path, request.operation === 'unignored-search', request.followsLinks === true) : [] } : {}),
-                ...(request.operation === 'repository' ? { tracked: tracked.get(path) ?? null } : {}),
+                ...(request.operation === 'repository' ? { tracked: tracked.get(path) ?? null, ...request.history ? { committed: committed.get(path) ?? null } : {} } : {}),
                 ...(request.operation === 'write' && exists && inspected.get(path)!.isFile() ? { links: inspected.get(path)!.nlink } : {}) }
         }
         const cockpitInvocations: GuardInvocationProfile[] = []
