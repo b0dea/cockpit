@@ -556,6 +556,70 @@ describe('guard policy construction', () => {
         }
     }, 120_000)
 
+    it('judges a move or copy onto an existing file as a write of that file, through the installed guard', async () => {
+        const { root, request, adapters } = await installedGuardRequest()
+        mkdirSync(join(root, 'notes'), { recursive: true })
+        writeFileSync(join(root, 'notes/page.md'), 'old\n')
+        writeFileSync(join(root, 'notes/page.md.new'), 'new\n')
+        const outside = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-move-target-')))
+        scratch.push(outside)
+        writeFileSync(join(outside, 'page.md'), 'outside\n')
+        try {
+            const decide = async (command: string) => (await runGuardEvaluationApplication({ ...request, payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+            // The destination is a regular file, so nothing is written below it as it would be below a directory.
+            for (const command of ['mv notes/page.md.new notes/page.md', 'cp notes/page.md.new notes/page.md',
+                "awk '{print}' notes/page.md > notes/page.md.next && mv notes/page.md.next notes/page.md"]) {
+                expect(await decide(command), command).toMatchObject({ decision: 'allow' })
+            }
+            expect(await decide('cp notes/page.md.new .cockpit/guards/bash-guard.sh')).toMatchObject({ decision: 'deny' })
+            expect(await decide(`cp notes/page.md.new ${join(outside, 'page.md')}`)).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('escapes configured roots') })
+        } finally { rmSync(join(root, 'notes'), { recursive: true, force: true }) }
+    }, 120_000)
+
+    it('prints a configured remote URL only while none carries a credential, through the installed guard', async () => {
+        const { root, request, adapters } = await installedGuardRequest()
+        const repository = join(root, 'remote-probe')
+        execFileSync('git', ['init', '--quiet', repository])
+        try {
+            execFileSync('git', ['-C', repository, 'remote', 'add', 'origin', 'https://example.test/synthetic/repository.git'])
+            const decide = async (command: string) => (await runGuardEvaluationApplication({ ...request, payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+            const commands = ['git -C remote-probe remote get-url origin', 'git -C remote-probe ls-remote --get-url origin', 'git -C remote-probe remote -v']
+            for (const command of commands) expect(await decide(command), command).toMatchObject({ decision: 'allow' })
+            // Synthetic user information with a secret part, assembled so no credential-shaped literal is committed.
+            const userinfo = ['synthetic', 'not-a-real-secret'].join(':')
+            execFileSync('git', ['-C', repository, 'remote', 'set-url', 'origin', `https://${userinfo}@example.test/synthetic/repository.git`])
+            for (const command of commands) expect(await decide(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('carries a credential') })
+        } finally { rmSync(repository, { recursive: true, force: true }) }
+    }, 120_000)
+
+    it('names both directories when a call reports another working directory than the one the guard runs in', async () => {
+        const { root, request, adapters } = await installedGuardRequest()
+        const reported = join(root, 'fixtures')
+        expect(await runGuardEvaluationApplication({ ...request, payload: shellPayload('ls', reported), searchPath: '/usr/bin:/bin' }, adapters))
+            .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringMatching(new RegExp(`${JSON.stringify(reported)}.*${JSON.stringify(root)}`)) } })
+    }, 120_000)
+
+    it('runs a read from a working directory reached through a package link inside the roots, through the installed guard', async () => {
+        const { root, request, adapters } = await installedGuardRequest()
+        // Package managers such as pnpm link an installed package into a store inside the checkout.
+        mkdirSync(join(root, 'store/pkg/docs'), { recursive: true })
+        writeFileSync(join(root, 'store/pkg/docs/guide.md'), 'needle\n')
+        mkdirSync(join(root, 'vendor'), { recursive: true })
+        symlinkSync('../store/pkg', join(root, 'vendor/pkg'))
+        try {
+            const decide = async (command: string) => (await runGuardEvaluationApplication({ ...request, payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+            const linked = join(root, 'vendor/pkg/docs')
+            expect(await decide(`cd ${linked} && rg -n needle guide.md`)).toMatchObject({ decision: 'allow' })
+            // A write there still meets the link, and a link leading out of the roots is not followed.
+            expect(await decide(`cd ${linked} && touch new.md`)).not.toMatchObject({ decision: 'allow' })
+            expect(await decide(`cd ${linked} && rg -n needle ../../../store/pkg/docs/guide.md`)).not.toMatchObject({ decision: 'allow' })
+            expect(await decide(`cd ${join(root, 'node_modules/@b00dea/cockpit/docs')} && rg -n needle README.md`)).not.toMatchObject({ decision: 'allow' })
+        } finally {
+            rmSync(join(root, 'vendor'), { recursive: true, force: true })
+            rmSync(join(root, 'store'), { recursive: true, force: true })
+        }
+    }, 120_000)
+
     it('asks Git which protected files a default ripgrep search reads and a Git command prints, through the installed guard', async () => {
         const { root, request, adapters } = await installedGuardRequest()
         const decide = async (command: string) => (await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin',

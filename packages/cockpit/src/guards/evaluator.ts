@@ -1,6 +1,6 @@
 import { posix } from 'node:path'
 import { DOTENV_DOCUMENTATION, errorCause, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
-import { GUARD_INPUT_LIMITS, isParsedGuardInput, shownGuardWord, type ParsedInvocation } from './invocation-parser.js'
+import { GUARD_INPUT_LIMITS, isParsedGuardInput, shownGuardWord, XARGS_INPUT, type ParsedInvocation } from './invocation-parser.js'
 import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from './host.js'
 import { GuardCommandArgv, McpAllowedTools } from '../schema.js'
 import { renderGuardProjectCommand } from '../environment/install-policy.js'
@@ -227,6 +227,8 @@ const named = (invocation: ParsedInvocation) => {
     }
     return shown.length ? `\`${shown.join(' ')}${shown.length < words.length ? ' …' : ''}\`` : 'This command'
 }
+// A word whose value the guard cannot see, as a refusal names it.
+const unseen = (value: string) => value === XARGS_INPUT ? 'the arguments xargs reads from standard input' : shownGuardWord(value)
 const allowed: GuardDecision = Object.freeze({ decision: 'allow', reason: 'Every invocation matches an exact permitted profile or bounded data operation.' })
 function record(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -1077,6 +1079,9 @@ function optionWrites(invocation: ParsedInvocation, git: GitInvocation | undefin
 }
 
 const URL_OPERAND = /^[a-z][a-z0-9+.-]*:\/\//i
+// A descriptor names no file in a tree: `<(…)` hands its command a pipe whose commands are judged on their own, and any
+// other descriptor was opened by a redirect, judged as a read or a write.
+const descriptor = (path: string) => /^\/dev\/fd\/\d+$/.test(path)
 /**
  * Where a download that names its own file writes: `curl -O` and a `wget` without `-O` use the URL's
  * last path segment in the working directory, curl's `--output-dir` or wget's `-P`. `paths` are those
@@ -1201,18 +1206,24 @@ const CREDENTIAL_PRINTERS: ReadonlyArray<readonly string[]> = [['gh', 'auth', 't
     ['aws', 'configure', 'export-credentials'], ['aws', 'sts', 'get-session-token'], ['aws', 'sts', 'assume-role'], ['aws', 'sts', 'assume-role-with-web-identity'],
     ['aws', 'sts', 'assume-role-with-saml'], ['aws', 'sts', 'get-federation-token'], ['aws', 'sso', 'get-role-credentials'], ['aws', 'ecr', 'get-login-password'],
     ['gcloud', 'auth', 'print-access-token'], ['gcloud', 'auth', 'print-identity-token'], ['gcloud', 'auth', 'application-default', 'print-access-token'],
-    ['gcloud', 'config', 'config-helper'], ['az', 'account', 'get-access-token'], ['git', 'remote', 'get-url'], ['git', 'remote', 'show'], ['git', 'ls-remote', '--get-url'],
+    ['gcloud', 'config', 'config-helper'], ['az', 'account', 'get-access-token'], ['git', 'remote', 'show'],
     ['op', 'read'], ['op', 'item', 'get'], ['pass', 'show'], ['docker', 'compose', 'config'], ['docker-compose', 'config']]
 
-/** Whether an invocation prints a credential. `git remote -v` prints remote URLs, which hold one only when `remoteCredentials` says so. */
-function printsCredential(invocation: ParsedInvocation, git: GitInvocation | undefined, remoteCredentials: (cwd: string) => boolean): boolean {
+/** Whether an invocation prints a remote URL Git has configured: `git remote -v`, `git remote get-url` and `git ls-remote --get-url`. */
+function printsRemoteUrl(git: GitInvocation | undefined): boolean {
+    const [first, ...rest] = git?.args ?? []
+    return git?.verb === 'remote' && (first === 'get-url' || [first, ...rest].some(word => word !== undefined && /^(?:-v+|--verbose)$/.test(word)))
+        || git?.verb === 'ls-remote' && git.args.includes('--get-url')
+}
+
+/** Whether an invocation prints a credential without naming a file. */
+function printsCredential(invocation: ParsedInvocation, git: GitInvocation | undefined): boolean {
     if (invocation.executable === null) return false
     const words = git ? ['git', git.verb, ...git.args] : [posix.basename(invocation.executable), ...invocation.argv]
     if (CREDENTIAL_PRINTERS.some(prefix => prefix.every((word, index) => words[index] === word))) return true
     const [program, first, second, ...rest] = words
     // Git's credential helpers, `git credential` and its `git-credential-*` programs, print what they store, as Docker's do.
     if (program === 'git' && first?.startsWith('credential') || /^(?:git|docker)-credential(?:-|$)/.test(program ?? '')) return true
-    if (program === 'git' && first === 'remote' && [second, ...rest].some(word => word !== undefined && /^(?:-v+|--verbose)$/.test(word))) return remoteCredentials(git!.cwd)
     // `git var -l` prints every configuration value, remote URLs and http headers included.
     if (program === 'git' && first === 'var' && [second, ...rest].includes('-l')) return true
     if (program === 'gh' && first === 'auth' && second === 'status') return rest.some(word => word === '--show-token' || /^-[a-zA-Z]*t/.test(word))
@@ -1225,6 +1236,10 @@ function printsCredential(invocation: ParsedInvocation, git: GitInvocation | und
     // `-g` prints the attributes and the password, `-w` the password alone, also bundled as `-gw` or `-ga`.
     return program === 'security' && /^find-(?:generic|internet)-password$/.test(first ?? '') && [second, ...rest].some(word => word !== undefined && /^-[a-zA-Z]*[gw]/.test(word))
 }
+
+// A live payment secret or restricted key, as the payment processor issues it: a pasted one lands in shell
+// history and transcripts. Test keys of the same shape reach only test data.
+const LIVE_SECRET_KEY = /[sr]k_live_[A-Za-z0-9]{24,}/
 
 // Names a glob is tried against: a pattern that can match one of them may reach a secret.
 const SECRET_SAMPLES = ['.env', '.env.local', '.env.production', '.secrets', 'id_rsa', 'id_ed25519', 'credentials', 'server.pem', 'server.key', '.npmrc', '.netrc',
@@ -1256,6 +1271,8 @@ function dumpsEnvironment(invocation: ParsedInvocation): boolean {
     // `make -p` prints its database, every environment variable included; -C, -f, -I, -j, -l, -o, -W and -E take a value.
     if (program === 'make') return argv.some(arg => arg === '--print-data-base' || /^-[a-zA-Z]+$/.test(arg) && /^[^CfIjloWE]*p/.test(arg.slice(1)))
     if (['awk', 'gawk', 'mawk', 'nawk'].includes(program)) return argv.some(arg => arg.includes('ENVIRON'))
+    // gh's jq filter reads its own environment, the token included, through `env` and `$ENV`.
+    if (program === 'gh') return argv.some((arg, at) => (['-q', '--jq'].includes(argv[at - 1] ?? '') || /^--jq=/.test(arg)) && /\benv\b|\$ENV\b/.test(arg))
     // BSD `ps e` and macOS `ps -E` print each process's environment.
     // A bare letter cluster is BSD syntax; a word after -o, -p and the like is that option's value.
     if (program === 'ps') return argv.some((arg, at) => /^[A-Za-z]+$/.test(arg) && arg.includes('e') && !/^-[A-Za-z]*[oOpqUuGgtk]$/.test(argv[at - 1] ?? '')
@@ -1345,6 +1362,9 @@ function sourceTrees(invocation: ParsedInvocation): readonly string[] | undefine
     if (name === 'diff') return operands
     return undefined
 }
+
+// gh commands that publish a release, secret or variable, delete from the host, or start workflow runs, which spend CI minutes.
+const GH_PUBLISHES = /^(?:run (?:rerun|delete)|workflow (?:run|enable|disable)|release (?:create|upload|edit|delete|delete-asset)|issue (?:delete|transfer)|cache delete|(?:secret|variable) (?:set|delete|remove)|gist delete|label delete)$/
 
 /** A `gh api` call's endpoint, method, fields, and whether it writes: any method but GET, or a GraphQL mutation or query the guard cannot read. */
 function ghApiCall(args: readonly string[]): { readonly endpoint: string; readonly method: string; readonly fields: readonly string[]; readonly writes: boolean } {
@@ -1739,7 +1759,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const observedPath = canonicalPath ?? lexical
         const paths = listed && evidence !== undefined && record(evidence) ? evidence[listed] : null
         return record(evidence) && keys(evidence, ['status', 'path', 'symlink', 'identity', 'ancestors', ...(listed ? [listed] : []), ...(canonicalPath === undefined ? [] : ['canonicalPath'])]) && evidence.status === 'resolved'
-            && (canonicalPath === undefined || ['read', 'search', 'unignored-search'].includes(request.operation) && canonical(canonicalPath)
+            && (canonicalPath === undefined || ['read', 'search', 'unignored-search', 'cwd'].includes(request.operation) && canonical(canonicalPath)
                 && resolved.allowedRoots.some(root => within(lexical, root)) && resolved.allowedRoots.some(root => within(canonicalPath, root)))
             && evidence.path === lexical && evidence.symlink === false && (evidence.identity === null || identity(evidence.identity))
             && Array.isArray(evidence.ancestors) && evidence.ancestors.every(identity)
@@ -1899,6 +1919,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         let safe = true
         searchBlocker = undefined
         const visit = (path: string, kind: 'read' | 'tree' | 'listing') => {
+            if (descriptor(path)) return
             if (!scalar(path) || Buffer.byteLength(path) > GUARD_INPUT_LIMITS.pathBytes) { safe = false; return }
             const lexical = posix.resolve(access.cwd, path)
             const folded = fold(lexical)
@@ -2062,6 +2083,9 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         // A host passed to printf is still an argument and remains a hard denial.
         // `curl -K -` and `wget -i -` read their URLs from a heredoc.
         const fetcher = ['curl', 'wget'].includes(posix.basename(invocation.executable ?? ''))
+        if (invocation.words.some(word => ['executable', 'argument', 'environment-assignment-value', 'wrapper-option-value'].includes(word.role) && LIVE_SECRET_KEY.test(word.value))) {
+            hold(deny('Refusing a live secret key written into the command: a command line lands in shell history and agent transcripts. Read the key from the environment the process runs with, for example through `varlock run -- <command>`, and never paste it.'))
+        }
         for (const word of invocation.words) {
             if (!['executable', 'argument', 'environment-assignment-value', ...fetcher ? ['heredoc-body'] : []].includes(word.role)) continue
             if (resolved.hostedDatabaseHosts.some((host) => hostUsed(word.value, host))) hold(deny('Refusing executable use of a declared hosted database host.'))
@@ -2193,13 +2217,15 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (invocation.dynamic && !loopRead && !globRead && (writes || removed?.paths.length || optioned || git || READING_EXECUTABLES.has(executableName) || cockpitCommand(invocation)
             || NAME_READERS.has(executableName) || executableName === 'gh' && /^(?:gist (?:create|edit)|release (?:create|upload)|(?:secret|variable) set)$/.test(invocation.argv.slice(0, 2).join(' ')))) {
             const word = invocation.words.find(item => item.dynamic)?.value ?? ''
-            holdBoundary(invocation, ask(`${named(invocation)} holds ${shownGuardWord(word)}, whose value the guard cannot see, where it decides which file is read or written or which branch is pushed. Write the value out.`))
+            holdBoundary(invocation, ask(`${named(invocation)} holds ${unseen(word)}, whose value the guard cannot see, where it decides which file is read or written or which branch is pushed. Write the value out.`))
         }
         // Any program may read what an argument names, so one holding a command substitution, or a variable this
         // call set to one or to a path outside the roots, names a file the guard cannot see; echo and printf only print it.
         const hidden = open && invocation.executable !== null && !['echo', 'printf'].includes(executableName) ? invocation.words.find(word => word.role === 'argument' && word.dynamic
             && (/\$\(|`/.test(word.value) || references(word.value).some(name => opaqueNames.has(name)))) : undefined
-        if (hidden) holdBoundary(invocation, ask(`${named(invocation)} holds ${shownGuardWord(hidden.value)}, a command substitution or a variable set to one or to a path outside the configured roots, so the guard cannot see which file it names. Write the value out.`))
+        if (hidden) holdBoundary(invocation, ask(hidden.value === XARGS_INPUT
+            ? `${named(invocation)} takes the arguments xargs reads from standard input, so the guard cannot see which file they name. Name the files, or run the command on each by name.`
+            : `${named(invocation)} holds ${shownGuardWord(hidden.value)}, a command substitution or a variable set to one or to a path outside the configured roots, so the guard cannot see which file it names. Write the value out.`))
         // A variable joined to literal text spells a name neither part shows: `"${F}nv"` with F=app/.e is app/.env.
         const joined = open && invocation.executable !== null && !(executableName === 'echo' || executableName === 'printf' && invocation.argv[0] !== '-v')
             ? invocation.words.find(word => word.role === 'argument' && word.dynamic && !word.value.startsWith('-') && word.value.includes('$')
@@ -2218,7 +2244,11 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (['pre-commit', 'husky', 'lefthook'].includes(posix.basename(invocation.executable ?? '')) && invocation.argv.includes('uninstall')) {
             hold(deny(`Refusing ${named(invocation)}: it removes the repository's hooks, so later commits skip them. A person runs it.`))
         }
-        if (printsCredential(invocation, git, remoteCredentials)) hold(deny(`Refusing ${named(invocation)}: it prints a credential or a URL that can carry one. A person runs it.`))
+        if (printsCredential(invocation, git)) hold(deny(`Refusing ${named(invocation)}: it prints a credential or a URL that can carry one. A person runs it.`))
+        // A remote URL is printed as configured, so it is refused only when one carries a password or token.
+        else if (printsRemoteUrl(git) && remoteCredentials(git!.cwd)) {
+            hold(deny(`Refusing ${named(invocation)}: a remote URL or http header this repository configures carries a credential, which it would print. A person reads it, or moves the credential into a credential helper.`))
+        }
         // A copy of cockpit run by node is cockpit under another path: its sync would bind the guard to that
         // copy, which the agent can edit, so sync and upgrade run only from the installed package.
         const nodeScript = ['node', 'nodejs'].includes(executableName) ? invocation.argv.find(arg => !arg.startsWith('-')) : undefined
@@ -2249,6 +2279,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             holdBoundary(invocation, ask(`${named(invocation)} merges into the pull request's base branch, which is usually protected and which the guard cannot see. Merging is a person's or CI's decision: a person runs it, or approves it here.`))
         } else if (['repo edit', 'repo rename', 'repo archive', 'repo unarchive'].includes(gh)) {
             holdBoundary(invocation, ask(`${named(invocation)} changes the repository on its host. A person runs it, or approves it here.`))
+        } else if (GH_PUBLISHES.test(gh)) {
+            holdBoundary(invocation, ask(`${named(invocation)} publishes a release or a secret, deletes from the repository's host, or starts CI runs that spend its minutes. A person runs it, or approves it here.`))
         }
         const prefixed = (invocation.words.filter((word) => word.role === 'environment-assignment-value') as ReadonlyArray<{ readonly value: string; readonly name?: string }>).find(steers)
         if (open && prefixed) holdBoundary(invocation, ask(prefixed.name === undefined ? 'An environment assignment the guard could not name requires human approval.'
@@ -2330,6 +2362,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const externalAccess = access ?? classifyReadOnlyInvocation({ ...invocation, redirects: invocation.redirects.filter(item => !item.write) }, { ripgrepConfigActive: resolved.ripgrepConfigActive })
         const outsideRoots = (read: ReadOnlyAccess | undefined) => read && ([read.cwd].some(path => !resolved.allowedRoots.some(root => within(posix.resolve(read.cwd, path), root)))
             || [...read.reads, ...read.trees, ...read.listings].some(path => { const lexical = posix.resolve(read.cwd, path)
+                if (descriptor(lexical)) return false
                 return !resolved.allowedRoots.some(root => within(lexical, root)) && !readableOutside(lexical) }))
         // Ambient configuration such as RIPGREP_CONFIG_PATH must not turn an external read grant into generic execution.
         const externalGrant = resolved.declaredAllows.some(rule => rule.cwd === invocation.cwd && ruleMatches(invocation, rule)

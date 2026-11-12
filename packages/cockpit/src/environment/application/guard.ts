@@ -367,7 +367,10 @@ export async function runGuardEvaluationApplication(
         // refuses it only where it decides what is read, written or pushed.
         const parsed = parseGuardInput(data.payload, { dynamicWords: config.guards.default === 'allow' ? 'mark' : 'refuse', home: homedir() })
         if (parsed.status !== 'parsed') return unavailable(parsed.reason)
-        if (parsed.cwd !== data.cwd) return unavailable('Guard request cwd does not match its invocation authority.')
+        // The harness reports the agent's working directory and starts the guard in a canonical one; they differ when
+        // the agent's shell changed directory through a link or under another spelling.
+        if (parsed.cwd !== data.cwd) return unavailable(`The call reports the working directory ${JSON.stringify(parsed.cwd)}, but the guard runs in ${JSON.stringify(data.cwd)}: `
+            + `paths are judged from one directory only. Change to ${JSON.stringify(data.cwd)} itself, then run the command.`)
         // The policy pin and the restoration both apply an edit to exactly these bytes, which must be the text the policy is built from.
         const configRead = publication.get(configName)!
         if (configRead.sha256 !== configSha256) return unavailable('Guard configuration changed during evaluation.')
@@ -441,7 +444,7 @@ export async function runGuardEvaluationApplication(
         }
         for (const invocation of parsed.invocations) {
             const command = gitInvocation(invocation)
-            if (command?.verb === 'remote' && !command.uncertain) askRemotes(command.cwd)
+            if ((command?.verb === 'remote' || command?.verb === 'ls-remote') && !command.uncertain) askRemotes(command.cwd)
             for (const path of classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: data.ripgrepConfigActive === true })?.reads ?? []) {
                 const read = resolve(invocation.cwd, path)
                 if (foldGuardSpelling(basename(read)) === 'config' && foldGuardSpelling(basename(dirname(read))) === '.git') askRemotes(dirname(dirname(read)))
@@ -545,16 +548,19 @@ export async function runGuardEvaluationApplication(
                 let status: Stats
                 try { status = lstatSync(cursor) }
                 catch (error) {
-                    // A component longer than the volume allows names nothing, as a missing one does.
-                    if (hasErrorCode(error, 'ENOENT', 'ENAMETOOLONG')) { exists = false; break }
+                    // A component longer than the volume allows names nothing, as a missing one does, and
+                    // neither does one below a file: `mv a docs/page.md` names `docs/page.md/a` only in case
+                    // the destination were a directory.
+                    if (hasErrorCode(error, 'ENOENT', 'ENAMETOOLONG', 'ENOTDIR')) { exists = false; break }
                     throw error
                 }
                 if (status.isSymbolicLink()) {
                     // Package managers link installed packages into a store inside the checkout. A named
-                    // file read, or a search of a file or directory, follows that link to a target inside
-                    // the roots and is judged there, a search by the same secret walk as any other.
-                    // External grants never follow one.
-                    if (managedRoot && ['read', 'search', 'unignored-search'].includes(request.operation)) {
+                    // file read, a search of a file or directory, or a working directory follows that link to
+                    // a target inside the roots and is judged there, a search by the same secret walk as any
+                    // other. A path below such a working directory still meets the link, so a write there is
+                    // refused and a `..` leaving it is caught above. External grants never follow one.
+                    if (managedRoot && ['read', 'search', 'unignored-search', 'cwd'].includes(request.operation)) {
                         inspected.set(cursor, status)
                         const target = realpathSync(path)
                         const leads = allowed(target) ? lstatSync(target) : undefined

@@ -58,7 +58,7 @@ describe('guard invocation capture', () => {
         ] })
         expect(literal.status === 'parsed' && literal.invocations.map((item) => Object.hasOwn(item, 'expandsStatus'))).toEqual([false, true, false, true])
         // zsh, the default macOS shell, expands a word starting with `=` to a command's path.
-        for (const command of ['printf {a,{b}}', 'printf ~/x', 'printf a=~/x', 'printf ok > out$?', '$? push origin main', 'echo "$HOME"', 'git add *', 'eval "git push origin main"', 'printf `date`', 'printf x\\', 'printf "x', 'echo x &&', '(echo x)', 'cd tmp; git status', 'printf\vok',
+        for (const command of ['printf {a,{b}}', 'printf ~/x', 'printf a=~/x', 'printf ok > out$?', '$? push origin main', 'echo "$HOME"', 'git add *', 'eval "git push origin main"', 'printf `date`', 'printf x\\', 'printf "x', 'echo x &&', '((x = 1))', 'cd tmp; git status', 'printf\vok',
             'cat =cockpit', 'env -C $? cat x', 'env --chdir=$? cat x', 'env -C ./link/.. cat x', 'builtin cd .. && ls']) {
             expect(parseGuardInput(shellPayload(command)), command).toMatchObject({ status: 'unavailable', reason: expect.any(String) })
         }
@@ -355,7 +355,7 @@ describe('guard invocation capture', () => {
         ] })
         expect(parseGuardInput(shellPayload('for a in x; do for b in y; do echo done; done; done'), mark)).toMatchObject({ status: 'parsed',
             invocations: [{ executable: null }, { executable: null }, { executable: 'echo', argv: ['done'] }] })
-        for (const command of ['for d in a b; do cd ./a; done', 'for x; do ls; done', 'for x in a; do ls; done > out', 'while true; do ls; done', 'if true; then ls; fi', 'for x in a; do ls']) {
+        for (const command of ['for d in a b; do cd ./a; done', 'for x; do ls; done', 'for x in a; do ls; done out', 'while true; do cd ./a; done', 'if true; then ls; fi', 'for x in a; do ls']) {
             expect(parseGuardInput(shellPayload(command), mark), command).toMatchObject({ status: 'unavailable' })
         }
         const cdpath = { cdpath: '' }
@@ -365,6 +365,27 @@ describe('guard invocation capture', () => {
             expect(parseGuardInput(shellPayload(command), cdpath), command).toMatchObject({ status: 'unavailable', reason: expect.stringContaining('cd is judged only as') })
         }
         expect(parseGuardInput(shellPayload('cd api/../web && ls'), cdpath)).toMatchObject({ status: 'unavailable', reason: expect.stringContaining('A .. after a directory name') })
+    })
+
+    it('reads the commands inside while and until loops, subshells, piped groups, process substitutions and xargs, and the redirects after a loop', () => {
+        const mark = { dynamicWords: 'mark' } as const
+        expect(parseGuardInput(shellPayload('for x in a; do ls; done 2>/dev/null > out | sort'), mark)).toMatchObject({ status: 'parsed', invocations: [
+            { executable: null }, { executable: 'ls' }, { executable: null, redirects: [{ target: 'out', write: true, truncate: true }] }, { executable: 'sort' }] })
+        expect(parseGuardInput(shellPayload('until test -f x; do sleep 1; done < in'))).toMatchObject({ status: 'parsed', invocations: [
+            { executable: 'test' }, { executable: 'sleep' }, { executable: null, redirects: [{ target: 'in', write: false }] }] })
+        // A subshell's cd moves only the subshell.
+        expect(parseGuardInput(shellPayload('(cd ./src && ls) && pwd'))).toMatchObject({ status: 'parsed', invocations: [
+            { executable: null, cwd: '/workspace/project/src' }, { executable: 'ls', cwd: '/workspace/project/src' }, { executable: 'pwd', cwd: '/workspace/project' }] })
+        expect(parseGuardInput(shellPayload('{ ls; pwd; } | sort'))).toMatchObject({ status: 'parsed', invocations: [{ executable: 'ls' }, { executable: 'pwd' }, { executable: 'sort' }] })
+        expect(parseGuardInput(shellPayload('diff <(ls src) b'))).toMatchObject({ status: 'parsed', invocations: [{ executable: 'ls', argv: ['src'] }, { executable: 'diff', argv: ['/dev/fd/63', 'b'] }] })
+        expect(parseGuardInput(shellPayload('ls | xargs -0 -n1 wc -l'), mark)).toMatchObject({ status: 'parsed', invocations: [
+            { executable: 'ls' }, { executable: 'wc', argv: ['-l', '$(xargs input)'], wrapped: true, dynamic: true }] })
+        expect(parseGuardInput(shellPayload('out=build; ls > "$out/list.txt"'))).toMatchObject({ status: 'parsed', invocations: [
+            { executable: null }, { executable: 'ls', redirects: [{ target: 'build/list.txt' }] }] })
+        for (const [command, reason] of [['echo a<(ls)', 'whole word'], ['tee >(cat)', 'whole word'], ['ls | xargs -I{} cat {}', '-I and -J'], ['ls | xargs', 'Missing xargs'],
+            ['ls | xargs wc', 'Dynamic command construction'], ['{ cd ./src; } | sort', 'feeds a pipeline'], ['(ls) extra', 'subshell is parsed only']] as const) {
+            expect(parseGuardInput(shellPayload(command)), command).toMatchObject({ status: 'unavailable', reason: expect.stringContaining(reason) })
+        }
     })
 
     it('refuses privilege escalation, downloaded code and an environment dump with a reason naming the way forward, in either mode', () => {
