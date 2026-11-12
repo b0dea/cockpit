@@ -342,7 +342,7 @@ describe('guard policy construction', () => {
         for (const command of ['cat var/notes.md', 'ls var/sessions', 'echo x > var/other.md']) expect(await judge(shellPayload(command, root)), command).toMatchObject({ decision: 'allow' })
     }, 120_000)
 
-    it('reads a related checkout without changing it, and leaves other writes outside the roots to the agent tool under native external writes', async () => {
+    it('reads a related checkout without changing it, and writes outside the roots only below a write path', async () => {
         const { root, configPath } = await observedPolicy()
         const upstream = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-related-checkout-')))
         const outside = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-external-writes-')))
@@ -356,7 +356,9 @@ describe('guard policy construction', () => {
         const config = CockpitConfig.parse(parse(readFileSync(configPath, 'utf8')))
         config.guards.related_checkouts = [upstream]
         config.guards.external_reads = 'native'
-        config.guards.external_writes = 'native'
+        config.guards.write_paths = [{ path: outside, reason: 'Inputs a person drops in.' }]
+        const unlisted = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-unlisted-writes-')))
+        scratch.push(unlisted)
         writeFileSync(configPath, stringify(config))
         expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
         const identity = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
@@ -370,7 +372,43 @@ describe('guard policy construction', () => {
         }
         for (const command of [`echo x > '${upstream}/notes.md'`, `git -C '${upstream}' commit --allow-empty -m x`, `cp notes.md '${outside}/guards-link/bash-guard.sh'`,
             `echo x >> '${homedir()}/.zshrc'`, `cp notes.md '${homedir()}/.claude/settings.json'`]) {
-            expect(await decide(command), command).toMatchObject({ decision: 'deny' })
+            expect((await decide(command)).decision, command).not.toBe('allow')
+        }
+        // Outside a write path, and through the Data volume's spelling of the cockpit, a write stays refused.
+        expect((await decide(`cp notes.md '${unlisted}/copy.md'`)).decision).not.toBe('allow')
+        expect(await decide(`cp notes.md '/System/Volumes/Data${root}/node_modules/copy.md'`)).toMatchObject({ decision: 'deny' })
+        expect(await decide(`cp notes.md '${outside}/.toolrc'`)).toMatchObject({ decision: 'deny' })
+    }, 120_000)
+
+    it('grants a related checkout only where it exists under its declared spelling, and keeps the agent from creating one', async () => {
+        const { root, configPath } = await observedPolicy()
+        const upstream = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-related-target-')))
+        const parent = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-related-parent-')))
+        scratch.push(upstream, parent)
+        execFileSync('git', ['init', '--quiet', upstream])
+        writeFileSync(join(upstream, 'README.md'), 'synthetic upstream\n')
+        const declared = join(parent, 'later/checkout')
+        const config = CockpitConfig.parse(parse(readFileSync(configPath, 'utf8')))
+        config.guards.related_checkouts = [declared]
+        config.guards.write_paths = [{ path: parent, reason: 'A scratch area.' }]
+        writeFileSync(configPath, stringify(config))
+        expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        const identity = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
+        const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
+            resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }) }
+        const decide = async (command: string) => (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'codexcli', cwd: root,
+            payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+        // The missing spelling and its missing parent are never written, so the agent cannot plant a link there.
+        for (const command of [`mkdir -p '${join(parent, 'later')}'`, `ln -s '${upstream}' '${declared}'`, `touch '${join(parent, 'later/notes.md')}'`]) {
+            expect(await decide(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('[guards] related_checkouts') })
+        }
+        expect(await decide(`touch '${join(parent, 'other.md')}'`)).toMatchObject({ decision: 'allow' })
+        // A link someone else put there grants nothing: the checkout is read only under the spelling declared.
+        mkdirSync(join(parent, 'later'))
+        symlinkSync(upstream, declared)
+        // Nor does the directory it leads to become one, under either spelling.
+        for (const command of [`git -C '${declared}' log -1`, `cat '${declared}/README.md'`, `git -C '${upstream}' log -1`, `cat '${upstream}/README.md'`]) {
+            expect((await decide(command)).decision, command).not.toBe('allow')
         }
     }, 120_000)
 
@@ -1196,7 +1234,7 @@ describe('guard policy construction', () => {
             declaredAllows: [{ argv: ['make', 'verify'], reason: 'Repository verification is safe.', cwd: root }],
             declaredDenies: [{ match: 'contains', argv: ['--environment', 'shared'], reason: 'Shared environments are human-operated.', fix: 'Use a local environment.' }],
             ripgrepConfigActive: false, externalReads: 'grant', readPaths: [], defaultDecision: 'allow', homeDirectory: realpathSync(homedir()),
-            secretPaths: [], relatedCheckouts: [], unresolved: 'ask', externalWrites: 'guard',
+            secretPaths: [], relatedCheckouts: [], relatedReserved: [], writePaths: [], unresolved: 'ask',
             // The running package lives outside this checkout, so no installed directory is in reach; the
             // package itself is carried wherever it is, since a path into it runs cockpit.
             executionDirectories: [], cockpitPackageDirectories: [realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), '../..'))], searchDirectories: [], searchPathRelativeEntry: null, secretFileIdentities: [], protectedFilesLinked: false,

@@ -42,7 +42,7 @@ The values cockpit uses for a key the configuration leaves out.
     "secret_paths": [],
     "related_checkouts": [],
     "unresolved": "ask",
-    "external_writes": "guard",
+    "write_paths": [],
     "external_reads": "grant"
   },
   "mcp": {
@@ -177,7 +177,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `secret_paths` | Files and directories, relative to the cockpit or as <sibling slug>:path in a sibling, that agents never read, write, search or stage, as an .env file is kept from them; the guard refuses them on every agent tool and Claude Code's own file tools are denied them too. | array of string | `[]` | at most 64 items; each item: pattern [P5](#patterns), at most 1024 characters |
 | `related_checkouts` | Other checkouts agents may read, search and inspect with read-only Git, such as the upstream of a tool this cockpit installs: an absolute path, a ~/ path or a path relative to the cockpit. Writes there, Git commands that change them, and secret names stay refused. | array of string | `[]` | at most 16 items; each item: pattern `^(?:\/\|~\/\|(?:\.\.\/)*)[^\x00-\x1f\x7f]+$`, at most 4096 characters |
 | `unresolved` | What the guard does with a command it would ask a person about: ask prompts where the agent tool can (Claude Code) and refuses where it cannot; deny refuses everywhere, naming the reason and the route, so an autonomous session continues another way instead of waiting. | string | `"ask"` | one of `"ask"`, `"deny"` |
-| `external_writes` | Who decides a write or working directory outside the cockpit: guard refuses it; native leaves it to the agent tool's own permission, except the agent tools' configuration, shell startup files, credential stores, secret names, guard controls, Git hooks and scheduled jobs, which stay refused. | string | `"guard"` | one of `"guard"`, `"native"` |
+| `write_paths` | Files and directories outside the cockpit where agents may write, create and remove files, such as a drop folder; never a working directory, Git hooks, a guard, an agent tool's or the shell's configuration, or a secret name. | array of table: [`[[guards.write_paths]]`](#guardswrite_paths) | `[]` | at most 64 items |
 | `external_reads` | Who admits a shell read outside the cockpit, of a named file or by a read-only Git command run alone in another repository: grant needs its complete command under allow; native leaves it to the agent tool's own permissions. Secret names, recursive searches and writes stay guarded either way. | string | `"grant"` | one of `"grant"`, `"native"` |
 
 ### `[[guards.allow]]`
@@ -210,6 +210,13 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | --- | --- | --- | --- | --- |
 | `path` | File or directory outside the cockpit, absolute or starting with ~/ for the home directory of whoever runs the agent. | string |  | required; pattern `^(?:\/\|~\/)[^\x00-\x1f\x7f]+$`; at most 4096 characters |
 | `reason` | Why agents may read it. | string |  | required; 1–512 characters; pattern `\S`; pattern `^[^\x00-\x1f\x7f-\x9f]+$` |
+
+### `[[guards.write_paths]]`
+
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `path` | File or directory outside the cockpit, absolute or starting with ~/ for the home directory of whoever runs the agent. | string |  | required; pattern `^(?:\/\|~\/)[^\x00-\x1f\x7f]+$`; at most 4096 characters |
+| `reason` | Why agents may write there. | string |  | required; 1–512 characters; pattern `\S`; pattern `^[^\x00-\x1f\x7f-\x9f]+$` |
 
 ### `[mcp]`
 

@@ -74,7 +74,7 @@ The blocked list below is refused in every mode, and no `[[guards.allow]]` rule 
 | Blocked | What the guard checks |
 | --- | --- |
 | Secrets | A command that names an `.env*` file (other than documentation names and declared templates), a `.secrets` directory, a declared instance, a [`[guards] secret_paths`](#instances-secrets-and-hosted-endpoints) entry or a credential store: in its arguments (including `--body-file`, `-T` and `@file` values), an input or output redirect, a link source, an assignment value, a loop item, an unexpanded glob that can match one, or a file tool's path. Any known tool given such a name is refused, whether it reads, prints, copies or sends the file (`sort`, `xxd`, `awk`, `curl -T`, `gh gist create`); only a program the guard does not know, such as `docker compose --env-file .env up`, asks, because it may only pass the name on. Credential stores are the files and directories below the home directory that hold tokens and keys, such as `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh/hosts.yml`, `~/.netrc`, `~/.npmrc`, `~/.pgpass`, `~/.docker/config.json`, `~/.kube/config` and `~/.codex/auth.json`, the logins of other agent tools and deployment CLIs (opencode's `auth.json`, `~/.claude.json`, GitHub Copilot's `~/.config/github-copilot`, Vercel, including `~/.vercel`, Wrangler, Stripe, Supabase, Fly, Netlify, including `~/.netlify`, Firebase, Heroku's `~/.heroku`, `sentry-cli`, `hub` and `doctl`; older locations a tool may no longer write are listed too), shell histories (`~/.zsh_history`, `~/.bash_history`, fish's history), any directory above them, and `.pem`, `.p12`, `.pfx`, `.key` and `id_*` key files anywhere; the [evaluator](../packages/cockpit/src/guards/evaluator.ts) holds the full list. Also refused: a live payment secret or restricted key (`sk` or `rk`, then `_live_` and 24 or more letters and digits) written into a command's arguments or assignments, since a command line lands in shell history and transcripts, while a test key of the same shape runs; commands that print a credential without naming a file (`gh auth token`, `git credential`, `git remote -v`, `git remote get-url` and `git ls-remote --get-url` while a configured remote URL or http header carries a credential, `aws configure get` of a secret, `gcloud auth print-access-token`, `az account get-access-token`, `security find-generic-password -w`, `op read`, `git var -l`), environment dumps (`env`, `printenv`, `export -p`, `declare -x`, `set`, `ps e`, `npm run env` and its `yarn` and `pnpm` forms, `make -p`, an `awk` program that reads `ENVIRON`, a `gh` `--jq` filter that reads `env` or `$ENV`, and `declare -p` or `typeset -p` of a secret's name) and printing a variable whose name holds TOKEN, SECRET, KEY, PASS, PASSWORD, PAT or CREDENTIAL. |
-| Writes outside the cockpit | Redirects, writer destinations (`cp`, `mv`, `tee`, `touch`, `mkdir`, `ln`, `dd`, `tar -x`, removers), write options (`--output`, `curl -o`, `wget -O`, `sort -o`, `sed -i`, `perl -i`; for `curl` also `-w '%output{file}'`, a `#N` output template with a URL glob, `-O`, `-J`, `--etag-save`, `--hsts`, `--alt-svc` and `--libcurl`; for `wget` the names it writes into the working directory or its `-P` directory, and its recursive forms; for decompressors the operand's name without its suffix; for `gh release download` and `gh run download` the `-D` directory, refused when the `-p` patterns could match a guard file there and asked when the names are unknown; and the directory `gh repo clone` and `gh gist clone` create), any operand outside the cockpit of `rsync`, `ditto`, `scp`, `unzip`, `patch`, `uniq`, `split` and similar writers, the new repository, worktree or bundle of `git clone`, `init`, `worktree add` and `bundle create`, and a working directory outside the cockpit and its siblings. Writing to `/dev/null`, `/dev/stdout` or `/dev/stderr` is exempt. Under the allow default any command that names a path outside the cockpit follows `[guards] external_reads`. `[guards] external_writes = "native"` leaves these writes to the agent tool, except the locations [Writes outside the roots](#writes-outside-the-roots) lists. |
+| Writes outside the cockpit | Redirects, writer destinations (`cp`, `mv`, `tee`, `touch`, `mkdir`, `ln`, `dd`, `tar -x`, removers), write options (`--output`, `curl -o`, `wget -O`, `sort -o`, `sed -i`, `perl -i`; for `curl` also `-w '%output{file}'`, a `#N` output template with a URL glob, `-O`, `-J`, `--etag-save`, `--hsts`, `--alt-svc` and `--libcurl`; for `wget` the names it writes into the working directory or its `-P` directory, and its recursive forms; for decompressors the operand's name without its suffix; for `gh release download` and `gh run download` the `-D` directory, refused when the `-p` patterns could match a guard file there and asked when the names are unknown; and the directory `gh repo clone` and `gh gist clone` create), any operand outside the cockpit of `rsync`, `ditto`, `scp`, `unzip`, `patch`, `uniq`, `split` and similar writers, the new repository, worktree or bundle of `git clone`, `init`, `worktree add` and `bundle create`, and a working directory outside the cockpit and its siblings. Writing to `/dev/null`, `/dev/stdout` or `/dev/stderr` is exempt. Under the allow default any command that names a path outside the cockpit follows `[guards] external_reads`. A [`[guards] write_paths`](#writes-outside-the-roots) entry admits the writes that land below it, except the locations that section lists. |
 | Branches and history | Force pushes of any branch (`--force`, `--force-with-lease`, a `+` refspec), pushes to a protected branch, remote branch deletion (`--delete`, `:branch`, `--prune`, `--mirror`), and rewriting a protected branch's history (`commit --amend`, `rebase`, `reset` to another commit, `update-ref HEAD`, `filter-branch`, `rebase <upstream> <protected>`, `rebase --onto <base> <upstream> <protected>`) or moving, resetting or deleting it, including `heads/<branch>` destinations, a fetch refspec into it (`git fetch . +topic:main`), `git send-pack` and GitHub API writes to a protected branch's ref. Force flags count when bundled or abbreviated (`-uf`, `--forc`). A push option the guard does not know asks. A push that names no destination is resolved from the repository's `@{push}`; one Git cannot resolve asks, and so does a push or rewrite that rests on the current branch after an earlier command in the same call that could move it. |
 | Declared hosts | Any spelled use of a `hosted_db_hosts` or `vendor_endpoint_hosts` name. The match is lexical: a CLI with a built-in endpoint, such as `gh`, reaches its host without naming it. |
 | The guard itself | Writes to hook registrations, `.cockpit/guards`, `.cockpit/local`, the installed cockpit, `node_modules/.bin` and `.npmrc`, including through glob or magic Git pathspecs and `--cacheinfo`; widening edits to `cockpit.toml`, which wait for a person's `sync`, and an agent's `sync` or `upgrade` while one waits; `node <copy>/dist/cli.js sync` or `upgrade` from a copy of cockpit inside the roots, which would make the guard run that copy; cockpit commands its own table does not admit (`sync --interactive`, `sync --adopt`, `sibling add` and the rest), however spelled (`npm run cockpit:sync`, `pnpm exec cockpit`, a path to `cockpit.mjs`), which ask and which no rule admits; direct `.git` writes; `git config` keys that choose a program (hooks, fsmonitor, pagers, editors, helpers, aliases, filters, drivers, includes, remotes, templates, submodules); `git -c` with such a key; `--no-verify` and its abbreviations; `pre-commit`, `husky` and `lefthook` `uninstall`; `git init` and `clone` with `--template`; transfer options that name a program (`--upload-pack`, `--receive-pack`, `--exec`); and assignments, prefixed or exported, that steer Git, its hooks or the command search path (`GIT_*`, `HOME`, `XDG_CONFIG_HOME`, `HUSKY`, `SKIP`, `LEFTHOOK`, a relative `PATH` entry, `set -a`). |
@@ -360,7 +360,11 @@ Visible source files for bounded `cp`, `install`, `dd` and `tar` forms get the s
 check as read-only commands.
 
 A hard or symbolic `ln` whose target is, contains or lies inside a secrets directory, a declared
-instance, a guard control or the installed cockpit is a hard denial. A symbolic link's target is
+instance, a guard control or the installed cockpit is a hard denial. A call that makes a symbolic
+link (`ln`, `cp -s`, a copy that keeps links, `rsync`, an extraction, or Git writing a revision's
+files) or moves or copies an existing one runs nothing else: a link's text resolves where the link
+lies, so one moved within the call could reach a guard control or a secret, and the guard judged the
+call's other paths against the filesystem before it ran. A symbolic link's target is
 checked from both the working directory and the link's own directory.
 
 These are `unavailable`: every unsupported `tar` or `ln` mode or option, and a command whose visible
@@ -555,10 +559,12 @@ guard admits what it admits inside the cockpit for reading: named files, listing
 searches walked for secrets, and a read-only Git command run alone with `git -C <checkout>`, such as
 `log`, `status`, `diff` or `show`, under the same proofs as with native external reads, below.
 Every write there, every other Git command (`commit`, `push`, `checkout`) and every other program run
-with its working directory there is a hard denial, whatever `external_writes` says; change it from a
-session started in that checkout. Secret names stay refused there as anywhere. A listed checkout that
-does not exist, the home directory, a directory above it and one overlapping a managed root grant
-nothing. Adding one widens what agents may read and waits for a person's sync.
+with its working directory there is a hard denial, whatever `write_paths` says; change it from a
+session started in that checkout. Secret names stay refused there as anywhere. A checkout is granted
+only where it exists as a directory under exactly the spelling declared: one that is missing, or
+reached through a link, grants nothing, and the declared spelling and its missing ancestors are never
+written, so an agent cannot plant a link there. The home directory, a directory above it and one
+overlapping a managed root grant nothing. Adding one widens what agents may read and waits for a person's sync.
 
 `~/` means the home directory of whoever runs the agent. A listed path that does not exist grants
 nothing, and `/` or the home directory itself is never granted. In every mode the guard still
@@ -662,20 +668,26 @@ ran. These runs establish behaviour for these versions only; cockpit imports no 
 
 #### Writes outside the roots
 
-By default a write outside the cockpit and its siblings, or a working directory there, is refused.
-`[guards] external_writes = "native"` leaves both to the agent tool's own permission instead: Claude
-Code's prompt or auto-mode classifier, Codex's sandbox and approval policy, OpenCode's
-`external_directory`. With `external_reads = "native"` too, `mv ~/Downloads/a.png public/img/a.png`
-runs as the tool allows it.
+A write outside the cockpit and its siblings, or a working directory there, is refused unless the
+write lands below a `[guards] write_paths` entry. The entries follow the rules of `read_paths`: `~/`
+is the home directory of whoever runs the agent, a missing path grants nothing, a linked one is held
+to where it leads, and neither `/` nor the home directory, nor a directory above it, is ever granted.
+With `~/Downloads` readable too, `mv ~/Downloads/a.png public/img/a.png` runs, removing the source
+being a write below the write path.
 
 ```toml
 [guards]
-external_reads = "native"
-external_writes = "native"
+read_paths = [{ path = "~/Downloads", reason = "Inputs the person drops in." }]
+write_paths = [{ path = "~/Downloads", reason = "Inputs the person drops in." }]
 ```
 
-These stay hard denials outside the roots in every mode, judged as spelled and again where the
-path's existing links lead, so a link cannot carry a write past them: the agent tools' own
+A write is judged where it lands: the system's own resolution of every existing link on its way,
+read from `/` when it is spelled through `/System/Volumes/Data` or `/Volumes`. One that lands in the
+cockpit or a sibling is judged there as any write is; in a related checkout, or in the Node or cockpit
+the guard runs, it is refused; and outside every write path it is refused as before. A working
+directory outside the roots stays refused, as does staging there, which the guard cannot walk for
+secrets. A dotfile or dot-directory directly in a write path is refused, and below one these stay
+hard denials, judged as spelled and again where the path's existing links lead: the agent tools' own
 configuration (`~/.claude`, `~/.claude.json`, `~/.codex`, `~/.config/opencode`, `~/.cursor` and the
 others the guard knows, `~/.agents`, a `.mcp.json`); shell startup files (`~/.zshrc`, `~/.zprofile`,
 `~/.zshenv`, `~/.bashrc`, `~/.bash_profile`, `~/.profile`, `~/.config/fish` and the like) and
@@ -684,16 +696,15 @@ and `~/.config/gh`; the credential stores of the blocked list; `.env*` and `.sec
 anywhere; any cockpit's guard controls and generated hooks, as a `.cockpit`, `.claude`, `.codex` or
 `.opencode` directory anywhere; Git hooks, as a `.git`, `.husky` or `.githooks` directory anywhere;
 command search path directories; launch agents and daemons, cron and the system's own directories
-(`/etc`, `/Library`, `/System`, `/usr`). A related checkout stays read-only. A link that leads back
-into the roots is judged there as any write is. The list is the `externalWriteHazard` rule in the
-[evaluator](../packages/cockpit/src/guards/evaluator.ts). A file a dotfiles manager links into one of
-these locations is protected only through the link; writing the linked file under its own name is
-the agent tool's to judge.
+(`/etc`, `/Library`, `/System`, `/usr`). The list is the `externalWriteHazard` rule in the
+[evaluator](../packages/cockpit/src/guards/evaluator.ts). Naming a path outside the roots still
+follows `external_reads`, since any command may read what it names. Adding a write path widens what
+agents may do and waits for a person's sync; removing one narrows.
 
-Staging in a repository outside the roots stays refused, because the guard cannot walk it for
-secrets. Naming a path outside the roots still follows `external_reads`, since any command may read
-what it names. Enabling native external writes widens what agents may do and waits for a person's
-sync; returning to `guard` narrows.
+A path spelled through `/System/Volumes/Data` or `/Volumes` that reaches the cockpit, a sibling, a
+related checkout, a secret path or a write path is refused wherever a call names it, as a word, an
+option value, a redirect, a file tool's target or a working directory: it is the same location under
+a second spelling the guard's rules do not compare. Name it from `/`.
 
 ### Cockpit commands an agent can run
 
@@ -1019,7 +1030,7 @@ An edit does not widen only when every difference is one of these:
 - removed guard allow rules, read paths and related checkouts, and unchanged MCP approvals, added or
   narrowed MCP tool allowlists; added guard deny rules, secret paths, protected branches, hosted
   database hosts and vendor endpoint hosts; `unresolved` moved to `deny`, and `external_reads` and
-  `external_writes` returned to the guard;
+  removed write paths;
 - any change to `[mcp.approved]` while `mcp_approve = "agent"` in both configurations.
 
 Every other difference widens. That includes any change, in either direction, to `[work]`,
@@ -1048,8 +1059,10 @@ decision without adding grants or weakening hard boundaries:
 
 Unavailable or malformed decisions exit 2 on every target, so adapter exit 0 alone does not mean
 permission was granted. Claude Code prints the hook command beside every refusal it reports, so the
-generated Claude Code and Codex commands are one short line that runs the committed guard script,
-which holds the recovery text; a script that is missing or exits with any status but 0 or 2 blocks
+generated Claude Code and Codex commands are one line that runs the committed guard script, which
+holds the recovery text. Claude Code's finds it through `CLAUDE_PROJECT_DIR`; Codex's takes the
+outermost directory at or above the session's that holds the guard script, since one below the
+cockpit could be a script an agent wrote, and the directories above it lie outside every root; a script that is missing or exits with any status but 0 or 2 blocks
 the call with `cockpit guard failed (<status>): <script>; sync the cockpit`. The generated Claude Code and Codex registrations give the guard hook a
 `timeout` of 30 seconds; a guard call spawns several Node and Git processes and was seen to exceed
 Codex's 5-second default on a loaded machine. What either harness does with the call when that

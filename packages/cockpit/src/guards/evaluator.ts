@@ -116,10 +116,17 @@ export interface GuardEvaluationPolicy {
     readonly relatedCheckouts?: readonly string[]
     /** `deny` refuses what would otherwise ask, naming the route; absent means `ask`. */
     readonly unresolved?: 'ask' | 'deny'
-    /** `native` leaves a write or working directory outside the roots to the agent tool, except the hard denials. */
-    readonly externalWrites?: 'guard' | 'native'
+    /** Canonical files and directories outside the roots below which agents may write. */
+    readonly writePaths?: readonly string[]
+    /**
+     * Every `[guards] related_checkouts` spelling, granted or not, with each ancestor of it that does not
+     * exist: writing there could plant a link that a later call would grant as a related checkout.
+     */
+    readonly relatedReserved?: readonly string[]
     /** Command search path directories outside the roots, where a planted file shadows a command everywhere. */
     readonly externalSearchDirectories?: readonly string[]
+    /** The Node executable and install prefix the guard runs with, wherever they are. */
+    readonly guardRuntime?: readonly string[]
 }
 interface PathInspectionRequest {
     readonly path: string
@@ -279,11 +286,13 @@ function projectTuple(value: JsonSnapshotObject): boolean {
 function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     const p = snapshotJson(value)
     if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'searchPathRelativeEntry', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands', ...p.mcpAllowedTools === undefined ? [] : ['mcpAllowedTools'], ...p.externalReads === undefined ? [] : ['externalReads'], ...p.readPaths === undefined ? [] : ['readPaths'], ...p.defaultDecision === undefined ? [] : ['defaultDecision'], ...p.homeDirectory === undefined ? [] : ['homeDirectory'], ...p.cockpitPackageDirectories === undefined ? [] : ['cockpitPackageDirectories'],
-        ...['secretPaths', 'relatedCheckouts', 'unresolved', 'externalWrites', 'externalSearchDirectories'].filter(key => p[key] !== undefined)])
+        ...['secretPaths', 'relatedCheckouts', 'unresolved', 'writePaths', 'relatedReserved', 'externalSearchDirectories', 'guardRuntime'].filter(key => p[key] !== undefined)])
         || p.readPaths !== undefined && (!strings(p.readPaths) || p.readPaths.length > 64 || !p.readPaths.every(canonical))
         || p.externalReads !== undefined && p.externalReads !== 'grant' && p.externalReads !== 'native'
         || p.unresolved !== undefined && p.unresolved !== 'ask' && p.unresolved !== 'deny'
-        || p.externalWrites !== undefined && p.externalWrites !== 'guard' && p.externalWrites !== 'native'
+        || [p.writePaths, p.relatedReserved, p.guardRuntime].some(list => list !== undefined && (!strings(list) || list.length > 64 * 16 || !list.every(canonical)))
+        // A write path that is the home directory or above it would admit every shell startup file below.
+        || Array.isArray(p.writePaths) && typeof p.homeDirectory === 'string' && (p.writePaths as string[]).some(path => within(p.homeDirectory as string, path))
         || p.secretPaths !== undefined && (!strings(p.secretPaths) || p.secretPaths.length > GUARD_LOCATION_LIMITS.secretPaths || !p.secretPaths.every(canonical))
         || p.relatedCheckouts !== undefined && (!strings(p.relatedCheckouts) || p.relatedCheckouts.length > 16 || !p.relatedCheckouts.every(canonical))
         || p.externalSearchDirectories !== undefined && (!strings(p.externalSearchDirectories) || p.externalSearchDirectories.length > GUARD_LOCATION_LIMITS.searchPathDirectories
@@ -1066,6 +1075,12 @@ const KEY_FILE = /^(?:.*\.(?:pem|p12|pfx|key)|id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk
 const unfirmlinked = (folded: string) => folded === '/system/volumes/data' ? '/' : folded.startsWith('/system/volumes/data/') ? folded.slice('/system/volumes/data'.length)
     : /^\/volumes\/[^/]+(?:\/|$)/.test(folded) ? folded.replace(/^\/volumes\/[^/]+/, '') || '/' : folded
 
+/** A path spelled through the Data volume's firmlink or a volume under /Volumes, as the same path from `/`; any other path as it is. */
+export function guardFirmlinkStripped(path: string): string {
+    const stripped = path.replace(/^\/system\/volumes\/data(?=\/|$)/i, '').replace(/^\/volumes\/[^/]+(?=\/|$)/i, '')
+    return stripped === path ? path : stripped || '/'
+}
+
 function credentialStore(spelled: string, home: string | undefined): boolean {
     const folded = unfirmlinked(spelled)
     if (KEY_FILE.test(posix.basename(folded))) return true
@@ -1799,7 +1814,20 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const relatedCheckouts = (resolved.relatedCheckouts ?? []).map(fold)
     const inRelatedCheckout = (lexical: string) => relatedCheckouts.some((path) => within(fold(lexical), path))
     const relatedDenial = deny(`Refusing to change a checkout [guards] related_checkouts names in ${posix.basename(resolved.configPath)}: agents read it and run read-only Git there, such as \`git -C <checkout> log\`, status, diff or show, but write, commit, push or run anything else there only from a session started in that checkout.`)
-    const nativeWrites = resolved.externalWrites === 'native'
+    const writePaths = resolved.writePaths ?? []
+    // Spellings a related checkout is declared under, with their missing ancestors: nothing is written there.
+    const relatedReserved = (resolved.relatedReserved ?? []).map(fold)
+    const reservedForRelated = (lexical: string) => relatedReserved.some((path) => within(fold(lexical), path))
+    // A path spelled through /System/Volumes/Data or /Volumes reaches the cockpit, a related checkout or a write path
+    // under a name every rule here compares against the plain spelling, so it is refused rather than judged twice.
+    const aliasedLocation = (lexical: string) => {
+        const stripped = guardFirmlinkStripped(lexical)
+        if (stripped === lexical) return false
+        const folded = fold(stripped)
+        return [...resolved.allowedRoots, ...resolved.relatedCheckouts ?? [], ...relatedReserved, ...writePaths, ...resolved.secretPaths ?? []]
+            .some((path) => within(folded, fold(path)))
+    }
+    const aliasDenial = (path: string) => deny(`Refusing ${shownGuardWord(path)}: it names the cockpit, a related checkout or a write path through /System/Volumes/Data or /Volumes, a second spelling the guard does not judge. Name the path from /, as the cockpit does.`)
     const templates = new Set(resolved.templates.map(fold))
     // Documentation by its name or by the configuration; the guard checks spellings it was given, folded.
     const documentation = (folded: string) => templates.has(folded) || DOTENV_DOCUMENTATION.has(posix.basename(folded))
@@ -1928,28 +1956,42 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 && paths.every((path) => canonical(path) && typeof observedPath === 'string' && within(path, observedPath))) ? evidence : undefined
     }
     let pathCount = input.paths.length + input.invocations.reduce((sum, item) => sum + item.redirects.length, 0)
-    const externalWriteDenial = (path: string, hazard: string) => deny(`Refusing to write ${shownGuardWord(path)}: [guards] external_writes = "native" leaves a write outside the configured roots to the agent tool's own permission, but not into ${hazard}, which changes what agents, the shell or Git run later, or holds credentials. A person makes this change.`)
-    // A write outside the roots under native external writes: refused only where it lands in a location
-    // that changes what runs later, judged as spelled and again where its existing links lead. One that
-    // a link carries back into the roots is judged there as any write is.
+    const externalWriteDenial = (path: string, hazard: string) => deny(`Refusing to write ${shownGuardWord(path)}: [guards] write_paths admits writes below the paths it lists, but never into ${hazard}, which changes what agents, the shell or Git run later, or holds credentials. A person makes this change.`)
+    const outsideWriteRefusal = unavailable('Guard path escapes configured roots. This command writes outside every root this cockpit manages, and no [guards] write_paths entry covers where it lands: write inside the cockpit, or a person lists the location under [guards] write_paths and syncs, or runs the command.')
+    // A write outside the roots is admitted only where it lands below a write path, judged where its
+    // existing links lead (as the system resolves them, and from / for a Data volume spelling). One that
+    // lands in the roots is judged there; in a related checkout, a secret path or the code the guard runs,
+    // it is refused; below a write path the locations that change what runs later stay refused.
     const judgeExternalWrite = (request: PathInspectionRequest, lexical: string) => {
-        const hazard = externalWriteHazard(fold(lexical), resolved.homeDirectory, resolved.externalSearchDirectories ?? [])
-        if (hazard) { hold(externalWriteDenial(request.path, hazard)); return }
+        if (!writePaths.length) {
+            hold(unavailable('Guard path escapes configured roots. This command writes outside every root this cockpit manages, and no [guards] allow rule grants a write there: write inside the cockpit, or a person runs the command.'))
+            return
+        }
         let evidence: JsonSnapshot | undefined
         try { evidence = snapshotJson(inspect({ path: request.path, cwd: request.cwd, operation: 'external-write' })) } catch (error) { inspectionFailure = errorCause(error) }
-        const landsAt = record(evidence) && evidence.status === 'resolved' && evidence.path === lexical && canonical(evidence.landsAt) ? evidence.landsAt : undefined
-        if (landsAt === undefined) {
+        const reported = record(evidence) && evidence.status === 'resolved' && evidence.path === lexical && canonical(evidence.landsAt) ? evidence.landsAt : undefined
+        if (reported === undefined) {
             hold(unavailable(`Guard could not tell where a write outside the configured roots lands, so it cannot rule out a link into a location it protects: ${shownGuardWord(request.path)}. Write to a path that exists up to its parent directory, or a person runs it.`))
             return
         }
-        if (landsAt === lexical) return
-        if (inRelatedCheckout(landsAt)) { hold(relatedDenial); return }
-        if (resolved.allowedRoots.some((root) => within(landsAt, root))) {
-            inspectPath({ path: landsAt, cwd: posix.dirname(landsAt), operation: request.operation === 'cwd' ? 'cwd' : 'write' }, true)
+        const landsAt = guardFirmlinkStripped(reported)
+        const folded = fold(landsAt)
+        if (inRelatedCheckout(landsAt) || reservedForRelated(landsAt)) { hold(relatedDenial); return }
+        if (resolved.allowedRoots.some((root) => within(folded, fold(root)))) {
+            inspectPath({ path: landsAt, cwd: posix.dirname(landsAt), operation: 'write' }, true)
             return
         }
-        const followed = externalWriteHazard(fold(landsAt), resolved.homeDirectory, resolved.externalSearchDirectories ?? [])
-        if (followed) hold(externalWriteDenial(request.path, followed))
+        if ([...resolved.guardRuntime ?? [], ...resolved.cockpitPackageDirectories ?? [], ...resolved.executionDirectories].some((path) => within(folded, fold(path)))) {
+            hold(executionDenial)
+            return
+        }
+        const area = writePaths.find((path) => within(landsAt, path))
+        if (area === undefined) { hold(outsideWriteRefusal); return }
+        const hazard = externalWriteHazard(fold(lexical), resolved.homeDirectory, resolved.externalSearchDirectories ?? [])
+            ?? externalWriteHazard(folded, resolved.homeDirectory, resolved.externalSearchDirectories ?? [])
+            // A dotfile directly in a write path is how a shell, an editor or an agent tool finds its configuration.
+            ?? (landsAt !== area && posix.relative(area, landsAt).split('/')[0]!.startsWith('.') ? 'a dotfile or dot-directory directly in a write path' : undefined)
+        if (hazard) hold(externalWriteDenial(request.path, hazard))
     }
     const inspectPath = (request: PathInspectionRequest, controlCoverage = false, approvedReadCwd = false): JsonSnapshotObject | undefined => {
         if (!scalar(request.path) || Buffer.byteLength(request.path) > GUARD_INPUT_LIMITS.pathBytes || !canonical(request.cwd)) {
@@ -1974,14 +2016,11 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (request.operation === 'write' && executes(folded, controlCoverage)) hold(executionDenial)
         if (request.operation === 'write' && posix.basename(folded) === '.npmrc') hold(npmrcDenial)
         if (mutating && folded.split('/').includes('.git')) hold(gitMetadataDenial)
-        if ((mutating || !approvedReadCwd) && inRelatedCheckout(lexical)) { hold(relatedDenial); return }
+        if (aliasedLocation(lexical)) { hold(aliasDenial(request.path)); return }
+        if ((mutating || !approvedReadCwd) && inRelatedCheckout(lexical) || mutating && reservedForRelated(lexical)) { hold(relatedDenial); return }
         if (!resolved.allowedRoots.some((root) => within(lexical, root)) && !(request.operation === 'cwd' && approvedReadCwd)) {
-            // With native external writes the agent tool's own permission decides a write or working
-            // directory outside the roots; only the locations that change what runs later stay refused.
-            if (nativeWrites && ['write', 'cwd'].includes(request.operation)) { judgeExternalWrite(request, lexical); return }
-            hold(unavailable(request.operation === 'write'
-                ? 'Guard path escapes configured roots. This command writes outside every root this cockpit manages, and no [guards] allow rule grants a write there: write inside the cockpit, or a person runs the command.'
-                : request.operation === 'cwd'
+            if (request.operation === 'write') { judgeExternalWrite(request, lexical); return }
+            hold(unavailable(request.operation === 'cwd'
                     ? 'Guard path escapes configured roots. A working directory in this command is outside every root this cockpit manages. A person can admit one read-only Git command in a related checkout, such as `git -C <checkout> status --short` or `git -C <checkout> log`, by its complete argv with a managed cwd under [guards] allow and a sync; it then runs only as the whole command. Commands that print file content there, such as diff or show, stay refused. Otherwise work inside the cockpit, or a person runs the command.'
                     : 'Guard path escapes configured roots. A path in this command is outside every root this cockpit manages, which the guard does not judge: work inside the cockpit, or a person runs the command.'))
             return
@@ -2035,9 +2074,11 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             return false
         }
         if (installedCode(fold(lexical), true)) { hold(executionDenial); return false }
-        if (inRelatedCheckout(lexical)) { hold(relatedDenial); return false }
+        if (aliasedLocation(lexical)) { hold(aliasDenial(path)); return false }
+        if (inRelatedCheckout(lexical) || reservedForRelated(lexical)) { hold(relatedDenial); return false }
         if (!resolved.allowedRoots.some((root) => within(lexical, root))) {
-            if (!nativeWrites) return true
+            // Removing below a write path, as `mv` does to its source, is a write there; anywhere else outside it asks, as before.
+            if (!writePaths.length || !writePaths.some((area) => within(lexical, area))) return true
             judgeExternalWrite({ path, cwd, operation: 'write' }, lexical)
             return false
         }
@@ -2305,6 +2346,15 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     if (linkMakers.length && invocations.some(invocation => !linkMakers.includes(invocation) && (invocation.executable !== null || invocation.redirects.length))
         || linkMakers.length > 1) {
         hold(deny(`Refusing ${named(linkMakers[0]!)} with other commands in one call: it makes or moves a symbolic link, which a later command could move to where its text reaches a guard control or a secret, and the guard judges every other path against the filesystem before the call. Make or move the link on its own, then run the rest in a later call.`))
+    }
+    // Every path a call names, as a word, an option value, a redirect or a file tool's target, and every
+    // directory it runs in, is checked for the Data volume spelling of a location the guard protects.
+    for (const [cwd, word] of [[input.cwd, input.cwd] as const, ...input.paths.map(path => [input.cwd, path] as const),
+        ...invocations.flatMap(invocation => [invocation.cwd, ...invocation.executable === null ? [] : [invocation.executable], ...invocation.argv,
+            ...invocation.redirects.map(redirect => redirect.target)].map(word => [invocation.cwd, word] as const))]) {
+        for (const candidate of new Set([word, word.slice(word.indexOf('=') + 1), word.slice(word.lastIndexOf(':') + 1), word.slice(word.lastIndexOf('@') + 1)])) {
+            if (candidate && scalar(candidate) && aliasedLocation(posix.resolve(cwd, candidate))) hold(aliasDenial(candidate))
+        }
     }
     inspectPath({ path: input.cwd, cwd: input.cwd, operation: 'cwd' })
     for (const path of input.removed) {

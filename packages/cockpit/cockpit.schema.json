@@ -753,14 +753,43 @@
             "deny"
           ]
         },
-        "external_writes": {
-          "default": "guard",
-          "description": "Who decides a write or working directory outside the cockpit: guard refuses it; native leaves it to the agent tool's own permission, except the agent tools' configuration, shell startup files, credential stores, secret names, guard controls, Git hooks and scheduled jobs, which stay refused.",
-          "type": "string",
-          "enum": [
-            "guard",
-            "native"
-          ]
+        "write_paths": {
+          "default": [],
+          "description": "Files and directories outside the cockpit where agents may write, create and remove files, such as a drop folder; never a working directory, Git hooks, a guard, an agent tool's or the shell's configuration, or a secret name.",
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "maxLength": 4096,
+                "pattern": "^(?:\\/|~\\/)[^\\x00-\\x1f\\x7f]+$",
+                "description": "File or directory outside the cockpit, absolute or starting with ~/ for the home directory of whoever runs the agent."
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "allOf": [
+                  {
+                    "type": "string",
+                    "pattern": "\\S"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]+$"
+                  }
+                ],
+                "description": "Why agents may write there."
+              }
+            },
+            "required": [
+              "path",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
         },
         "external_reads": {
           "default": "grant",

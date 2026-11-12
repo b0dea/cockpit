@@ -719,7 +719,7 @@ describe('built-in read-only profile', () => {
             `cat ${upstream}/.env`, `cat ${upstream}/.secrets/token`]) {
             expect(run(command), command).toMatchObject({ decision: 'deny' })
         }
-        expect(run(`echo x > ${upstream}/notes.md`, { ...related, externalWrites: 'native' })).toMatchObject({ decision: 'deny', reason: expect.stringContaining('[guards] related_checkouts') })
+        expect(run(`echo x > ${upstream}/notes.md`, { ...related, writePaths: [upstream] })).toMatchObject({ decision: 'deny', reason: expect.stringContaining('[guards] related_checkouts') })
         expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: `${upstream}/x.md`, content: 'x' } }), related, present))
             .toMatchObject({ decision: 'deny' })
         // Its configured helpers run with Git, so Git runs there only as the whole call, and a search that would read a secret asks.
@@ -729,6 +729,15 @@ describe('built-in read-only profile', () => {
         // Without the key nothing there is the agent's.
         expect(run(`git -C ${upstream} log -1`, { ...related, relatedCheckouts: undefined }).decision).not.toBe('allow')
         expect(run(`cat ${upstream}/README.md`, { ...related, relatedCheckouts: undefined }).decision).not.toBe('allow')
+        // A declared checkout that does not exist yet, and its missing ancestors, are never written: a link
+        // planted there would be granted as the checkout on the next call.
+        const reserved = { ...related, relatedCheckouts: [], relatedReserved: [`${root}/vendor/upstream`, `${root}/vendor`, '/workspace/tools/cockpit'], writePaths: ['/workspace/tools'] }
+        for (const command of ['ln -s /workspace/person/Documents vendor/upstream', 'mkdir -p vendor/upstream', 'touch vendor/notes.md',
+            'ln -s /workspace/person/Documents /workspace/tools/cockpit', 'mkdir /workspace/tools/cockpit']) {
+            expect(run(command, reserved), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('[guards] related_checkouts') })
+        }
+        expect(run('touch /workspace/tools/other.md', reserved, request => request.operation === 'external-write'
+            ? { status: 'resolved', path: posix.resolve(request.cwd, request.path), landsAt: posix.resolve(request.cwd, request.path) } : present(request))).toMatchObject({ decision: 'allow' })
         // A related checkout overlapping a managed root is refused as a malformed policy.
         expect(run('pwd', { ...related, relatedCheckouts: ['/workspace'] }).decision).toBe('unavailable')
     })
@@ -1238,8 +1247,11 @@ describe('allow by default', () => {
         expect(judge(payload('Write', { file_path: `${root}/var/notes.md`, content: 'x' }))).toMatchObject({ decision: 'allow' })
     })
 
-    it('leaves a write outside the roots to the agent tool under native external writes, except where it changes what runs later', () => {
-        const native = { ...open(), externalReads: 'native' as const, externalWrites: 'native' as const, externalSearchDirectories: ['/opt/tools/bin'] }
+    it('writes outside the roots only below a write path, and never there into what changes what runs later', () => {
+        // Each write path covers a location a case below writes; the home directory itself is never one.
+        const native = { ...open(), externalReads: 'native' as const, externalSearchDirectories: ['/opt/tools/bin'],
+            writePaths: [`${home}/Downloads`, `${home}/Desktop`, '/tmp/scratch', '/elsewhere', `${home}/src`, `${home}/project-link`, `${home}/notes-link`,
+                `${home}/dotfiles`, `${home}/Library`, '/etc', '/opt/tools/bin'] }
         // Where each write lands once existing links are followed, as the application reports it.
         const links: Record<string, string> = { [`${home}/dotfiles/settings.json`]: `${home}/.claude/settings.json`, [`${home}/project-link/.cockpit/guards/bash-guard.sh`]: `${root}/.cockpit/guards/bash-guard.sh`,
             [`${home}/notes-link/out.md`]: `${root}/README.md` }
@@ -1250,27 +1262,66 @@ describe('allow by default', () => {
         }
         const run = (command: string, configured: object = native, evidence: PathInspection = lands) => evaluateGuard(parseGuardInput(shellPayload(command)), configured, evidence)
         for (const command of [`mv ${home}/Downloads/a.png public/img/a.png`, `cp build/out.png ${home}/Desktop/out.png`, 'echo x > /tmp/scratch/out.log',
-            `rm ${home}/Downloads/a.png`, 'cd /tmp/scratch && touch run.log', `git clone ../origin ${home}/src/copy`]) {
+            `rm ${home}/Downloads/a.png`, `git clone ../origin ${home}/src/copy`]) {
             expect(run(command), command).toMatchObject({ decision: 'allow' })
         }
         expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: '/tmp/scratch/notes.md', content: 'x' } }), native, lands))
             .toMatchObject({ decision: 'allow' })
-        for (const command of [`echo x >> ${home}/.zshrc`, `cp x ${home}/.claude/settings.json`, `cp x ${home}/.codex/hooks.json`, `echo x > ${home}/.config/opencode/opencode.json`,
+        const hazards = [`echo x >>${home}/.zshrc`, `cp x ${home}/.claude/settings.json`, `cp x ${home}/.codex/hooks.json`, `echo x > ${home}/.config/opencode/opencode.json`,
             `cp x ${home}/.ZSHRC`, `cp x /System/Volumes/Data${home}/.bash_profile`, `cp x ${home}/.config/fish/config.fish`, `cp x ${home}/.ssh/authorized_keys`,
             `cp x ${home}/.gitconfig`, `cp x /elsewhere/project/.claude/settings.json`, `echo x > /elsewhere/project/.codex/hooks.json`,
             `touch /elsewhere/project/.cockpit/guards/bash-guard.sh`, `cp x /elsewhere/project/.git/hooks/pre-commit`, `cp x /elsewhere/project/.husky/pre-commit`,
             `cp x ${home}/Library/LaunchAgents/job.plist`, 'echo x > /etc/cron.d/job', 'cp x /elsewhere/.env', 'cp x /elsewhere/.envrc', 'cp x /opt/tools/bin/git',
-            `rm -rf ${home}/.codex`, `cp x ${home}/dotfiles/settings.json`, `cd ${home}/.claude && touch x`]) {
-            expect(run(command), command).toMatchObject({ decision: 'deny' })
-        }
+            `rm -rf ${home}/.codex`, `cp x ${home}/dotfiles/settings.json`, `cd ${home}/.claude && touch x`]
+        // Outside every write path each stays refused as before; below one, it is a hard denial.
+        for (const command of hazards) expect(run(command).decision, command).not.toBe('allow')
+        const listed = (command: string) => native.writePaths.some(area => command.includes(` ${area}/`)) && !command.includes('/dotfiles/')
+        for (const command of hazards.filter(listed)) expect(run(command), command).toMatchObject({ decision: 'deny' })
+        expect(hazards.filter(listed).length).toBeGreaterThanOrEqual(8)
         // A link that carries the write back into the roots is judged there.
         expect(run(`cp x ${home}/project-link/.cockpit/guards/bash-guard.sh`)).toMatchObject({ decision: 'deny', reason: expect.stringContaining('guard') })
         expect(run(`cp x ${home}/notes-link/out.md`)).toMatchObject({ decision: 'allow' })
         // Without an answer about links the guard cannot rule one out.
         expect(run('echo x > /tmp/scratch/out.log', native, request => request.operation === 'external-write' ? { status: 'unavailable', path: request.path } : lands(request)).decision).toBe('unavailable')
-        // The default keeps every write outside the roots refused.
-        expect(run('echo x > /tmp/scratch/out.log', { ...native, externalWrites: 'guard' })).toEqual({ decision: 'unavailable', reason: expect.stringContaining('writes outside every root') })
-        expect(run(`mv ${home}/Downloads/a.png public/img/a.png`, { ...native, externalWrites: undefined }).decision).not.toBe('allow')
+        // Without write paths every write outside the roots stays refused, as does a working directory there with them.
+        expect(run('echo x > /tmp/scratch/out.log', { ...native, writePaths: [] })).toEqual({ decision: 'unavailable', reason: expect.stringContaining('writes outside every root') })
+        expect(run(`mv ${home}/Downloads/a.png public/img/a.png`, { ...native, writePaths: [] }).decision).not.toBe('allow')
+        expect(run('cd /tmp/scratch && touch run.log').decision).not.toBe('allow')
+        expect(run(`cp x ${home}/Documents/x`).decision).not.toBe('allow')
+        // A dotfile directly in a write path, and a link out of one to a location no write path covers, stay refused.
+        expect(run(`cp x ${home}/Downloads/.toolrc`)).toMatchObject({ decision: 'deny' })
+        expect(run(`cp x ${home}/Downloads/elsewhere/x`, native, request => request.operation === 'external-write'
+            ? { status: 'resolved', path: posix.resolve(request.cwd, request.path), landsAt: `${home}/Documents/x` } : lands(request)).decision).not.toBe('allow')
+        // A write path never reaches the Node or the cockpit the guard runs.
+        for (const area of ['/opt/node/22', '/opt/cockpit-package']) {
+            const covering = { ...native, writePaths: [...native.writePaths, area], guardRuntime: ['/opt/node/22/bin/node', '/opt/node/22'], cockpitPackageDirectories: ['/opt/cockpit-package'] }
+            expect(run(`cp x ${area}/x`, covering), area).toMatchObject({ decision: 'deny' })
+        }
+        // One holding the home directory is no policy.
+        expect(run('pwd', { ...native, writePaths: ['/workspace'] }).decision).toBe('unavailable')
+    })
+
+    it('refuses the Data volume spelling of the cockpit, a related checkout or a write path, never judging it as outside', () => {
+        const configured = { ...policy(), defaultDecision: 'allow' as const, homeDirectory: '/workspace/home', externalReads: 'native' as const,
+            writePaths: ['/workspace/person/Downloads'], relatedCheckouts: ['/workspace/upstream'], secretPaths: [`${root}/var/sessions`],
+            protectedIdentities: [...policy().protectedIdentities, { path: `${root}/var/sessions`, identity: null, ancestors: [] }] }
+        const evidence: PathInspection = request => request.operation === 'external-write'
+            ? { status: 'resolved', path: posix.resolve(request.cwd, request.path), landsAt: posix.resolve(request.cwd, request.path) } : withGit(request)
+        const run = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command)), configured, evidence)
+        for (const command of [`cp x /System/Volumes/Data${root}/node_modules/.bin/x`, `echo x > /System/Volumes/Data${root}/.cockpit/guards/bash-guard.sh`,
+            `cat /System/Volumes/Data${root}/config/active.instance`, `cat /system/volumes/data${root}/var/sessions/owner.json`, `cd /System/Volumes/Data${root} && cat README.md`,
+            `rg needle /Volumes/Startup${root}/src`, 'cp x /System/Volumes/Data/workspace/person/Downloads/a.png', 'cat /System/Volumes/Data/workspace/upstream/README.md',
+            `node build.js --out=/System/Volumes/Data${root}/dist`]) {
+            expect(run(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('/System/Volumes/Data or /Volumes') })
+        }
+        expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: `/System/Volumes/Data${root}/src/a.ts`, content: 'x' } }), configured, evidence))
+            .toMatchObject({ decision: 'deny' })
+        // A write whose links lead to the Data volume spelling of a root is judged there.
+        expect(evaluateGuard(parseGuardInput(shellPayload('cp x /workspace/person/Downloads/a')), configured, request => request.operation === 'external-write'
+            ? { status: 'resolved', path: posix.resolve(request.cwd, request.path), landsAt: `/System/Volumes/Data${root}/.cockpit/guards/bash-guard.sh` } : withGit(request)))
+            .toMatchObject({ decision: 'deny' })
+        // A volume path that leads nowhere protected is judged as the outside path it is.
+        expect(run('cat /Volumes/Backup/archive/notes.md').reason).not.toContain('/System/Volumes/Data or /Volumes')
     })
 
     it('names the exact allow entry that would admit an asked command, and refuses instead of asking under unresolved = "deny"', () => {

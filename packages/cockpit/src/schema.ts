@@ -409,12 +409,18 @@ const GuardAllow = z.object({
     reason: GuardRuleText.describe('Why the command is allowed.'),
     cwd: z.union([z.literal('.'), SafeRelativePath.max(4096)]).optional().describe('Allow only when run from this directory, relative to the cockpit.'),
 }).strict()
+const GuardOutsidePath = z.string().max(4096).regex(/^(?:\/|~\/)[^\x00-\x1f\x7f]+$/u)
+    .refine(path => !path.endsWith('/') && !path.split('/').slice(1).some(part => ['', '.', '..'].includes(part)), 'write the path without empty, . or .. segments or a trailing slash')
+    .describe('File or directory outside the cockpit, absolute or starting with ~/ for the home directory of whoever runs the agent.')
 // A location a person lets agents read, as a native additional-directory grant would, but held by the guard.
 const GuardReadPath = z.object({
-    path: z.string().max(4096).regex(/^(?:\/|~\/)[^\x00-\x1f\x7f]+$/u)
-        .refine(path => !path.endsWith('/') && !path.split('/').slice(1).some(part => ['', '.', '..'].includes(part)), 'write the path without empty, . or .. segments or a trailing slash')
-        .describe('File or directory outside the cockpit, absolute or starting with ~/ for the home directory of whoever runs the agent.'),
+    path: GuardOutsidePath,
     reason: GuardRuleText.describe('Why agents may read it.'),
+}).strict()
+// A location a person lets agents write, such as a folder they collect inputs from.
+const GuardWritePath = z.object({
+    path: GuardOutsidePath,
+    reason: GuardRuleText.describe('Why agents may write there.'),
 }).strict()
 // A path whose contents agents never read or write, as `.env` files and `.secrets` directories are kept from
 // them: `path` in the cockpit's own checkout or `<sibling slug>:path` in each checkout of a sibling.
@@ -441,7 +447,7 @@ export const Guards = z
         secret_paths: z.array(GuardSecretPath).max(64).default([]).describe('Files and directories, relative to the cockpit or as <sibling slug>:path in a sibling, that agents never read, write, search or stage, as an .env file is kept from them; the guard refuses them on every agent tool and Claude Code\'s own file tools are denied them too.'),
         related_checkouts: z.array(GuardRelatedCheckout).max(16).default([]).describe('Other checkouts agents may read, search and inspect with read-only Git, such as the upstream of a tool this cockpit installs: an absolute path, a ~/ path or a path relative to the cockpit. Writes there, Git commands that change them, and secret names stay refused.'),
         unresolved: z.enum(['ask', 'deny']).default('ask').describe('What the guard does with a command it would ask a person about: ask prompts where the agent tool can (Claude Code) and refuses where it cannot; deny refuses everywhere, naming the reason and the route, so an autonomous session continues another way instead of waiting.'),
-        external_writes: z.enum(['guard', 'native']).default('guard').describe('Who decides a write or working directory outside the cockpit: guard refuses it; native leaves it to the agent tool\'s own permission, except the agent tools\' configuration, shell startup files, credential stores, secret names, guard controls, Git hooks and scheduled jobs, which stay refused.'),
+        write_paths: z.array(GuardWritePath).max(64).default([]).describe('Files and directories outside the cockpit where agents may write, create and remove files, such as a drop folder; never a working directory, Git hooks, a guard, an agent tool\'s or the shell\'s configuration, or a secret name.'),
         external_reads: z.enum(['grant', 'native']).default('grant').describe('Who admits a shell read outside the cockpit, of a named file or by a read-only Git command run alone in another repository: grant needs its complete command under allow; native leaves it to the agent tool\'s own permissions. Secret names, recursive searches and writes stay guarded either way.'),
     })
     .strict()

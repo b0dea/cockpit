@@ -133,8 +133,8 @@ const CHANGE_RULES: Rules = {
     'guards.related_checkouts': onlyRemoves,
     // Refusing what would ask narrows; going back to asking lets a person approve, which widens.
     'guards.unresolved': (before: string | undefined, after: string | undefined, at: string) => before === 'deny' && after !== 'deny' ? [at] : [],
-    // Handing writes outside the roots to the agent tool's own permissions widens; returning to the guard narrows.
-    'guards.external_writes': (before: string | undefined, after: string | undefined, at: string) => after === 'native' && before !== 'native' ? [at] : [],
+    // A write path is a location outside the roots agents may write.
+    'guards.write_paths': onlyRemoves,
     // Allowing by default admits every command outside the blocked list; returning to ask narrows.
     'guards.default': (before: string | undefined, after: string | undefined, at: string) => after === 'allow' && before !== 'allow' ? [at] : [],
     'guards.hosted_db_hosts': onlyAdds,

@@ -756,8 +756,9 @@ export async function runGuardEvaluationApplication(
             mcpAllowedTools: config.mcp.allowed_tools,
             cockpitLaunchers: launched.map(({ executable, cwd, argv, prefix }) => ({ executable, cwd, argv: argv.slice(0, prefix) })),
             searchDirectories: guardSearchDirectories(searchPath, prepared.result.policy.allowedRoots),
-            // Native external writes still never plant a program in a search path directory outside the roots.
-            ...policy.externalWrites === 'native' ? { externalSearchDirectories: externalSearchDirectories(searchPath, policy.allowedRoots) } : {},
+            // A write path still never takes a program planted in a search path directory, nor the Node the guard runs.
+            ...policy.writePaths?.length ? { externalSearchDirectories: externalSearchDirectories(searchPath, policy.allowedRoots),
+                guardRuntime: [...new Set([identity.node, dirname(dirname(identity.node)), process.execPath])].filter(path => path !== '/') } : {},
             searchPathRelativeEntry: guardSearchPathRelativeEntry(searchPath),
             ripgrepConfigActive: data.ripgrepConfigActive === true }, inspect)
         const current = await adapters.loadConfig(identity.configPath)
@@ -780,6 +781,19 @@ export async function runGuardEvaluationApplication(
         if (error instanceof CallPathUnreadable) return unavailable(error.message)
         return unavailable(`Guard authority could not be read or revalidated: ${errorCause(error)}`)
     }
+}
+
+/**
+ * Read and write paths as the guard holds them: `~/` is the home directory of whoever runs the agent, a
+ * missing location grants nothing, a linked one is held to where it leads, and neither `/` nor the home
+ * directory itself is ever granted.
+ */
+function canonicalOutsidePaths(paths: readonly Readonly<{ path: string }>[]): readonly string[] {
+    const home = realpathSync(homedir())
+    return paths.flatMap(({ path }) => {
+        const spelled = path.startsWith('~/') ? join(homedir(), path.slice(2)) : path
+        try { return [realpathSync(spelled)] } catch (error) { if (hasErrorCode(error, 'ENOENT')) return []; throw error }
+    }).filter(path => path !== '/' && path !== home)
 }
 
 /** Absolute command search path directories, as spelled and as resolved, that lie outside every managed root. */
@@ -954,6 +968,7 @@ export async function prepareGuardEvaluationPolicy(
                 }
             }
             if (allowedRoots.size > 256 || instances.length > 256) throw new RefusalError('guard policy exceeds restriction root or instance bounds')
+            const relatedSpellings = config.guards.related_checkouts.map(spelled => spelled.startsWith('~/') ? join(homedir(), spelled.slice(2)) : resolve(canonicalRoot, spelled))
             // A declared secret path lies in the cockpit, or in every checkout of the sibling it names.
             const secretPaths: string[] = []
             for (const declared of config.guards.secret_paths) {
@@ -1001,25 +1016,29 @@ export async function prepareGuardEvaluationPolicy(
                     ...(rule.fix === undefined ? {} : { fix: rule.fix }),
                 })),
                 ripgrepConfigActive: false, externalReads: config.guards.external_reads, defaultDecision: config.guards.default,
-                unresolved: config.guards.unresolved, externalWrites: config.guards.external_writes,
+                unresolved: config.guards.unresolved,
                 homeDirectory: realpathSync(homedir()),
-                relatedCheckouts: config.guards.related_checkouts.flatMap(spelled => {
-                    const path = spelled.startsWith('~/') ? join(homedir(), spelled.slice(2)) : resolve(canonicalRoot, spelled)
+                // A related checkout is granted only where it already exists under exactly the spelling declared: a
+                // missing one, or one reached through a link, could be a link an agent made to anywhere it likes.
+                relatedCheckouts: relatedSpellings.flatMap(path => {
                     let real: string
-                    // A missing checkout grants nothing; a linked one is held to where it leads.
-                    try { real = realpathSync(path) } catch (error) { if (hasErrorCode(error, 'ENOENT')) return []; throw error }
+                    try { real = realpathSync(path) } catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return []; throw error }
                     const home = realpathSync(homedir())
                     // The filesystem root, the home directory or a directory above it is no checkout, and one
                     // overlapping a managed root would make that root read-only.
-                    if (!lstatSync(real).isDirectory() || real === '/' || confinedPath(real, home)
+                    if (real !== path || !lstatSync(real).isDirectory() || real === '/' || confinedPath(real, home)
                         || [...allowedRoots].some(root => confinedPath(root, real) || confinedPath(real, root))) return []
                     return [real]
                 }),
-                readPaths: config.guards.read_paths.flatMap(({ path }) => {
-                    const spelled = path.startsWith('~/') ? join(homedir(), path.slice(2)) : path
-                    // A missing location grants nothing; a linked one is held to where it leads.
-                    try { return [realpathSync(spelled)] } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error }
-                }).filter(path => path !== '/' && path !== realpathSync(homedir())),
+                // Every declared spelling and its missing ancestors stay unwritten, so no agent can create one.
+                relatedReserved: [...new Set(relatedSpellings.flatMap(path => {
+                    const reserved = [path]
+                    for (let cursor = dirname(path); cursor !== '/' && !lstatIfPresentSync(cursor); cursor = dirname(cursor)) reserved.push(cursor)
+                    return reserved
+                }))],
+                // One holding the home directory would admit every shell startup file below it.
+                writePaths: canonicalOutsidePaths(config.guards.write_paths).filter(path => !confinedPath(path, realpathSync(homedir()))),
+                readPaths: canonicalOutsidePaths(config.guards.read_paths),
                 secretPaths,
                 executionDirectories, cockpitPackageDirectories, searchDirectories: [], searchPathRelativeEntry: null,
                 secretFileIdentities: secretFiles.identities && [...secretFiles.identities], protectedFilesLinked,

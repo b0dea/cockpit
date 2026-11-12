@@ -65,7 +65,7 @@ describe('policyChange', () => {
         ['a removed secret path', config => { config.guards.secret_paths = [] }, ['guards.secret_paths']],
         ['a new related checkout', config => config.guards.related_checkouts.push('~/src/tool'), ['guards.related_checkouts']],
         ['unresolved commands asking again', config => { config.guards.unresolved = 'ask' }, ['guards.unresolved']],
-        ['external writes handed to the agent tools', config => { config.guards.external_writes = 'native' }, ['guards.external_writes']],
+        ['a new write path', config => { config.guards.write_paths = [{ path: '~/Downloads', reason: 'Inputs a person drops in.' }] }, ['guards.write_paths']],
         ['strict mode turned into the allow default', config => { config.guards.default = 'allow' }, ['guards.default']],
         ['an autonomy decision moved toward agent', config => { config.autonomy = { reset: 'agent' } }, ['autonomy.reset']],
         ['a work gate moved toward agent', config => { config.work.gates.accept = 'agent' }, ['work.gates.accept']],
@@ -136,10 +136,10 @@ describe('policyChange', () => {
         expect(changed(edit)).toEqual({ kind: 'non-widening' })
     })
 
-    it('narrows when external reads and writes return to the guard, unresolved commands are refused and a read path is removed', () => {
+    it('narrows when external reads return to grants, unresolved commands are refused and a read path and a write path are removed', () => {
         const wide = structuredClone(declared)
         wide.guards.external_reads = 'native'
-        wide.guards.external_writes = 'native'
+        wide.guards.write_paths = [{ path: '~/Downloads', reason: 'Inputs a person drops in.' }]
         wide.guards.unresolved = 'ask'
         wide.guards.read_paths = [{ path: '~/Downloads', reason: 'Inputs a person drops in.' }]
         expect(policyChange(CockpitConfig.parse(wide), before)).toEqual({ kind: 'non-widening' })
