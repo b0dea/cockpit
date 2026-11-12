@@ -367,7 +367,10 @@ export async function runGuardEvaluationApplication(
         // refuses it only where it decides what is read, written or pushed.
         const parsed = parseGuardInput(data.payload, { dynamicWords: config.guards.default === 'allow' ? 'mark' : 'refuse', home: homedir() })
         if (parsed.status !== 'parsed') return unavailable(parsed.reason)
-        if (parsed.cwd !== data.cwd) return unavailable('Guard request cwd does not match its invocation authority.')
+        // The harness reports the agent's working directory and starts the guard in a canonical one; they differ when
+        // the agent's shell changed directory through a link or under another spelling.
+        if (parsed.cwd !== data.cwd) return unavailable(`The call reports the working directory ${JSON.stringify(parsed.cwd)}, but the guard runs in ${JSON.stringify(data.cwd)}: `
+            + `paths are judged from one directory only. Change to ${JSON.stringify(data.cwd)} itself, then run the command.`)
         // The policy pin and the restoration both apply an edit to exactly these bytes, which must be the text the policy is built from.
         const configRead = publication.get(configName)!
         if (configRead.sha256 !== configSha256) return unavailable('Guard configuration changed during evaluation.')
@@ -441,7 +444,7 @@ export async function runGuardEvaluationApplication(
         }
         for (const invocation of parsed.invocations) {
             const command = gitInvocation(invocation)
-            if (command?.verb === 'remote' && !command.uncertain) askRemotes(command.cwd)
+            if ((command?.verb === 'remote' || command?.verb === 'ls-remote') && !command.uncertain) askRemotes(command.cwd)
             for (const path of classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: data.ripgrepConfigActive === true })?.reads ?? []) {
                 const read = resolve(invocation.cwd, path)
                 if (foldGuardSpelling(basename(read)) === 'config' && foldGuardSpelling(basename(dirname(read))) === '.git') askRemotes(dirname(dirname(read)))
@@ -470,11 +473,12 @@ export async function runGuardEvaluationApplication(
         }
         await Promise.all([worker(), worker(), worker(), worker()])
         const walks = new Map<string, readonly string[] | null>()
-        const searched = (path: string, unignoredOnly: boolean): readonly string[] | null => {
+        const searched = (path: string, unignoredOnly: boolean, followsLinks: boolean): readonly string[] | null => {
             const listed = unignoredOnly ? unignored.get(path) : undefined
             if (listed !== undefined) return listed
-            let walked = walks.get(path)
-            if (walked === undefined) walks.set(path, walked = guardSensitivePathsBelow(path))
+            const key = `${followsLinks}\0${path}`
+            let walked = walks.get(key)
+            if (walked === undefined) walks.set(key, walked = guardSensitivePathsBelow(path, undefined, followsLinks))
             // The walk names environment and secrets names; an ignore-aware search also needs the instances it reads.
             if (!unignoredOnly || walked === null) return walked
             const found = [...new Set([...walked, ...instancePaths.filter(item => confinedPath(path, item) && present(item))])].sort()
@@ -545,14 +549,17 @@ export async function runGuardEvaluationApplication(
                 let status: Stats
                 try { status = lstatSync(cursor) }
                 catch (error) {
-                    // A component longer than the volume allows names nothing, as a missing one does.
-                    if (hasErrorCode(error, 'ENOENT', 'ENAMETOOLONG')) { exists = false; break }
+                    // A component longer than the volume allows names nothing, as a missing one does, and
+                    // neither does one below a file: `mv a docs/page.md` names `docs/page.md/a` only in case
+                    // the destination were a directory.
+                    if (hasErrorCode(error, 'ENOENT', 'ENAMETOOLONG', 'ENOTDIR')) { exists = false; break }
                     throw error
                 }
                 if (status.isSymbolicLink()) {
                     // Package managers link installed packages into a store inside the checkout. A named
                     // file read, or a search of a file or directory, follows that link to a target inside
-                    // the roots and is judged there, a search by the same secret walk as any other.
+                    // the roots and is judged there, a search by the same secret walk as any other. A working
+                    // directory does not: its relative paths and program paths resolve where the link leads.
                     // External grants never follow one.
                     if (managedRoot && ['read', 'search', 'unignored-search'].includes(request.operation)) {
                         inspected.set(cursor, status)
@@ -575,7 +582,7 @@ export async function runGuardEvaluationApplication(
                 && !(request.operation === 'list' && inspected.get(path)!.isDirectory())) return { status: 'unavailable', path, symlink: false }
             const search = request.operation === 'search' || request.operation === 'unignored-search'
             return { status: 'resolved', path, symlink: false, identity: exists ? chain.at(-1)! : null, ancestors: exists ? chain.slice(0, -1) : chain,
-                ...(search ? { sensitive: exists ? searched(path, request.operation === 'unignored-search') : [] } : {}),
+                ...(search ? { sensitive: exists ? searched(path, request.operation === 'unignored-search', request.followsLinks === true) : [] } : {}),
                 ...(request.operation === 'repository' ? { tracked: tracked.get(path) ?? null } : {}) }
         }
         const cockpitInvocations: GuardInvocationProfile[] = []

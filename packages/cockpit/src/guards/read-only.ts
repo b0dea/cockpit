@@ -26,6 +26,8 @@ export interface ReadOnlyAccess {
     readonly trackedContent?: { readonly limitedTo: readonly string[] | null }
     /** A `reads` operand may name a revision instead, so one that names no existing path reads nothing. */
     readonly revisionOperands?: boolean
+    /** The command follows links below its `trees`, which a walk that does not follow them cannot vouch for. */
+    readonly followsLinks?: true
 }
 
 type Classified = Omit<ReadOnlyAccess, 'cwd'> | undefined
@@ -140,6 +142,19 @@ const FD: OptionTable = {
     values: set('-t', '--type', '-e', '--extension', '-d', '--max-depth', '--min-depth', '-E', '--exclude', '--max-results', '--color'),
     cluster: /^-[HIsigFap01]+$/,
 }
+// Byte comparison of two files: `-i` and `-n` take only counts, and the skips after the files are counts too.
+const CMP: OptionTable = { flags: set('-b', '-l', '-s', '--print-bytes', '--verbose', '--quiet', '--silent'), values: set('-i', '-n', '--ignore-initial', '--bytes'),
+    countValues: set('-i', '-n', '--ignore-initial', '--bytes'), cluster: /^-[bls]+$/ }
+// Output and comparison shaping only: `-X` and `--from-file`/`--to-file` read more files, and BSD's `-l` pipes the output through pr.
+const DIFF: OptionTable = {
+    flags: set('--brief', '--report-identical-files', '--recursive', '--new-file', '--unidirectional-new-file', '--ignore-case', '--ignore-all-space',
+        '--ignore-space-change', '--ignore-blank-lines', '--ignore-tab-expansion', '--ignore-trailing-space', '--strip-trailing-cr', '--text', '--expand-tabs',
+        '--side-by-side', '--suppress-common-lines', '--left-column', '--normal', '--show-c-function', '--minimal', '--speed-large-files', '--initial-tab'),
+    values: set('-U', '-C', '-I', '-L', '-W', '-x', '--ignore-matching-lines', '--label', '--width', '--exclude', '--show-function-line'),
+    countValues: set('-U', '-C', '-W', '--width'),
+    attachedOnly: set('--color', '--unified', '--context'),
+    cluster: /^-[uqsrNPiwbBEZTatycpd]+$/,
+}
 const FIND_VALUE = set('-name', '-iname', '-path', '-ipath', '-wholename', '-iwholename', '-regex', '-iregex', '-type', '-maxdepth', '-mindepth',
     '-mtime', '-mmin', '-atime', '-amin', '-ctime', '-cmin', '-size', '-user', '-group', '-perm', '-newer')
 const FIND_FLAG = set('-print', '-print0', '-prune', '-empty', '-not', '!', '-a', '-and', '-o', '-or', '(', ')', '-depth', '-xdev', '-mount', '-true', '-false', '-quit')
@@ -199,6 +214,23 @@ function sed(argv: readonly string[]): Classified {
     // Without -e the first operand is the script.
     if (!scripts.length && operands.length) scripts.push(operands.shift()!)
     return scripts.length && scripts.every(script => SED_PRINT.test(script)) ? { reads: operands, trees: [], listings: [] } : undefined
+}
+
+/** cmp reads its one or two files; the words after them are byte counts to skip. */
+function cmp(argv: readonly string[]): Classified {
+    const parsed = parseOptions(argv, CMP)
+    if (!parsed || !parsed.positionals.length || parsed.positionals.length > 4 || parsed.positionals.slice(2).some(skip => !/^\d+[kKmMgG]?$/.test(skip))) return undefined
+    return { reads: parsed.positionals.slice(0, 2), trees: [], listings: [] }
+}
+
+/**
+ * diff compares two files, or the files directly inside two directories and with -r everything below them, so each
+ * operand is judged as a tree: what lies below it may be printed. It follows links there, which the evaluator's
+ * source-tree check judges.
+ */
+function diff(argv: readonly string[]): Classified {
+    const parsed = parseOptions(argv, DIFF)
+    return parsed && parsed.positionals.length === 2 ? { reads: [], trees: parsed.positionals, listings: [] } : undefined
 }
 
 function files(argv: readonly string[], table: OptionTable): Classified {
@@ -396,6 +428,38 @@ export function cockpitLauncherPrefix(executable: string, argv: readonly string[
     return argv[1] === 'cockpit' && argv[2] !== undefined && !argv[2].startsWith('-') ? 2 : undefined
 }
 
+// gh commands that only read the repository's host. Every option they take formats or selects what is printed; `--web`
+// starts a browser instead, so it is left out.
+// `pr diff` is left out: a pull request can add an environment file, which its diff prints.
+const GH_READS = new Set(['pr view', 'pr list', 'pr checks', 'pr status', 'run view', 'run list', 'run watch', 'issue view', 'issue list', 'issue status', 'repo view', 'auth status'])
+// gh's options that take the next word, as they appear on its read commands.
+const GH_VALUES = new Set(['-R', '--repo', '-q', '--jq', '-t', '--template', '--json', '-s', '--state', '-L', '--limit', '-A', '--author', '-a', '--assignee',
+    '-l', '--label', '-B', '--base', '-H', '--head', '--search', '-S', '-b', '--branch', '-u', '--user', '-w', '--workflow', '-e', '--event', '-c', '--commit',
+    '-j', '--job', '-i', '--interval', '--created', '--status', '--app', '--milestone', '--mention'])
+
+/**
+ * gh reading its host: one of the read commands above, or `gh auth status` without the token. `gh api` is left out: a GET
+ * returns any file the repository holds, under any spelling of its name, as a blob, a commit, a compare or an archive.
+ */
+function gh(argv: readonly string[]): Classified {
+    const operands: string[] = []
+    for (let index = 0; index < argv.length; index++) {
+        const word = argv[index]!
+        if (!word.startsWith('-') || word === '-') { operands.push(word); continue }
+        const [name, attached] = word.split(/=(.*)/s)
+        // `--web` starts a browser and `--show-token` prints the token.
+        if (/^--(?:web|show-token)$/.test(name!)) return undefined
+        if (GH_VALUES.has(name!)) {
+            if (attached === undefined && argv[++index] === undefined) return undefined
+        } else if (attached !== undefined || !/^--[a-z][a-z-]*$|^-[a-zA-Z]$/.test(word)) return undefined
+    }
+    const command = operands.slice(0, 2).join(' ')
+    // `-w` names a workflow on `run list` and starts a browser everywhere else.
+    if (!GH_READS.has(command) || argv.includes('-w') && command !== 'run list') return undefined
+    if (command === 'auth status' && argv.some((word) => /^-[a-zA-Z]*t/.test(word) && !word.startsWith('--'))) return undefined
+    return { reads: [], trees: [], listings: [] }
+}
+
 const COCKPIT_READ_VERBS = set('check', 'doctor')
 
 // Help and version print and exit before any command runs; `<verb> --help` and, for a command
@@ -450,6 +514,8 @@ function classify(invocation: ParsedInvocation, environment: { readonly ripgrepC
         case 'tail': return shape(files(argv, TAIL))
         case 'jq': return shape(jq(argv))
         case 'wc': return shape(files(argv, WC))
+        case 'cmp': return shape(cmp(argv))
+        case 'diff': return shape(diff(argv))
         case 'shasum': {
             // Check mode reads filenames from a manifest, so only direct file hashing is classified.
             // shasum is Perl, whose option parser also takes `+` as a prefix: `shasum +c` checks.
@@ -471,6 +537,7 @@ function classify(invocation: ParsedInvocation, environment: { readonly ripgrepC
             return parsed && shape({ reads: [], trees: [], listings: parsed.positionals.length > 1 ? parsed.positionals.slice(1) : ['.'] })
         }
         case 'find': return shape(find(argv))
+        case 'gh': return shape(gh(argv))
         case 'git': {
             const access = git(argv, invocation.cwd)
             return access && inputs.length === 0 ? access : undefined
