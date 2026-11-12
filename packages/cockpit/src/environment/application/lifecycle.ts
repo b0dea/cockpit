@@ -12,7 +12,7 @@ import {
     type LifecycleProgress,
     forwardedRefusal,
 } from '../contract.js'
-import { cockpitCommand } from '../../fix-catalogue.js'
+import { cockpitCommand, formatShellCommand } from '../../fix-catalogue.js'
 import {
     decodeLifecycleRecord,
     earlierNameRefusalMessage,
@@ -60,7 +60,9 @@ import {
     observeProcessStart,
     processHost,
     releaseDeadSessionHolders,
+    decodeCoordinationRecord,
 } from '../claims.js'
+import { readState } from '../state.js'
 import { observationSatisfiesExpectation } from '../observations.js'
 import {
     type AcquiredPorts,
@@ -191,7 +193,7 @@ async function reportFailedService(
     adapters: UpCommandAdapters,
     stop?: ExecutionStep,
 ): Promise<readonly EnvironmentDiagnostic[]> {
-    const logs = await collectFailureLogs(evidence, service, adapters)
+    const logs = await collectFailureLogs(evidence, service, adapters, context.source.path)
     const stopped = stop ? (await adapters.execute(stop)).kind === 'complete' : undefined
     const next = `fix the error in the log excerpt, then run \`${lifecycleSuggestion(context, 'up')}\` to resume, or \`${lifecycleSuggestion(context, 'down')}\` to remove the stack`
     const fix = stopped ? `cockpit stopped the failed container and kept it with its logs; ${next}` : next
@@ -207,17 +209,22 @@ export async function collectFailureLogs(
     evidence: RuntimeServiceFailureEvidence | RuntimeServiceObservation | undefined,
     service: string,
     adapters: Pick<UpCommandAdapters, 'execute'>,
+    configPath: string,
 ): Promise<readonly EnvironmentDiagnostic[]> {
+    // The excerpt is bounded and read once; the service's own log command reads what it left.
+    const readLogs = cockpitCommand('logs', { config: configPath, args: `--service ${formatShellCommand([service])}` })
     if (!evidence) return [ownerDiagnostic(
         ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
         'bounded failure logs are unavailable',
         service,
+        readLogs,
     )]
     const plan = planFailureLogs({ evidence, tail: 200, timeoutMs: 10_000, outputLimitBytes: 1_048_576 })
     if (plan.kind !== 'planned') return [ownerDiagnostic(
         ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
         plan.reason,
         service,
+        readLogs,
     )]
     const outcome = await adapters.execute(plan.step)
     const admitted = admitFailureLogs({ plan, outcome })
@@ -228,6 +235,7 @@ export async function collectFailureLogs(
             ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
             'bounded failure logs contained no records',
             service,
+            readLogs,
         )]
         return [ownerDiagnostic(ENVIRONMENT_CODES.EXECUTION_STEP_FAILED, failureLogExcerpt(service, records), service)]
     }
@@ -235,6 +243,7 @@ export async function collectFailureLogs(
         'code' in admitted ? admitted.code : ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
         'code' in admitted ? 'failure log collection failed' : 'failure log output could not be admitted',
         'service' in admitted ? admitted.service : service,
+        readLogs,
     )]
 }
 
@@ -744,13 +753,15 @@ function sessionChildEnvironment(
     }
 }
 
-// A session over a stack an earlier up still holds ends with the containers running, which read as a
-// failed release when nothing said why. Literals, so the diagnostic inventory captures the fix.
+// A session over a stack an earlier up from this checkout still holds ends with the containers running,
+// which read as a failed release when nothing said why. Only this checkout's own hold is its to release:
+// told to sleep while another checkout holds the stack, an agent would chase a hold it cannot clear.
+// Literals, so the diagnostic inventory captures the fix.
 function sessionStackRetained(stackId: string) {
     return {
         severity: 'info' as const,
         code: 'SESSION_STACK_RETAINED' as const satisfies typeof ENVIRONMENT_CODES.SESSION_STACK_RETAINED,
-        message: 'the session released its hold, and the stack keeps running because another holder, such as an earlier up from this checkout, still holds it',
+        message: 'the session released its hold, and the stack keeps running because an earlier up from this checkout still holds it',
         target: stackId,
         fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config <your cockpit.toml> to release this checkout\'s remaining hold',
     }
@@ -833,7 +844,7 @@ export async function runSession(
             ...sleep.diagnostics,
         ],
     }
-    const retained = sleep.result.change === 'retained' ? [sessionStackRetained(sleep.result.stackId)] : []
+    const retained = sleep.result.change === 'retained' && sleep.result.remainingHolders === 'this-checkout' ? [sessionStackRetained(sleep.result.stackId)] : []
     return {
         kind: 'complete' as const,
         status: childStatus,
@@ -870,6 +881,16 @@ export async function runSleep(
     // A stopped stack runs nothing a later doctor could call stale.
     const forgotten = outcome.kind === 'complete' && outcome.result.change === 'stopped' ? await forgetStackInputs(dirname(context.source.path)) : []
     return withLifecycleRunNotices(context, forgotten.length === 0 ? outcome : { ...outcome, diagnostics: uniqueDiagnostics([...outcome.diagnostics, ...forgotten]) })
+}
+
+// Read after the release, so the holders left are the ones that keep the stack. An unreadable record
+// says nothing rather than guessing, since the answer decides whether an agent is told to run sleep.
+async function remainingHolderKind(context: LifecycleRunContext): Promise<'this-checkout' | 'other-checkouts' | undefined> {
+    const stored = await readState(context.namespace.paths.coordination(context.stackId))
+    if (stored.kind !== 'complete') return undefined
+    const coordination = decodeCoordinationRecord(stored.value, context.stackId)
+    if (!coordination || coordination.holders.length === 0) return undefined
+    return coordination.holders.every((holder) => holder.checkoutId === context.checkoutId) ? 'this-checkout' : 'other-checkouts'
 }
 
 async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCommandAdapters): Promise<SleepCommandResult> {
@@ -976,9 +997,10 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
                 'shared lifecycle ownership changed before release',
                 context.stackId,
             )
+            const remainingHolders = await remainingHolderKind(context)
             return {
                 kind: 'complete' as const, status: 0 as const, diagnostics: planned.plan.diagnostics,
-                result: { stackId: context.stackId, change: 'retained' as const },
+                result: { stackId: context.stackId, change: 'retained' as const, ...(remainingHolders ? { remainingHolders } : {}) },
             }
         }
         if (!issuance.drainRequest) return lifecycleRefusal(

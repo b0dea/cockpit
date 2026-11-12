@@ -242,9 +242,10 @@ export function decodeGitObservation(
         freshness: { state: 'current' as const },
     }
     const workingTreeValue = { revision: committed, branch, trackedDirtyCount, untrackedCount }
-    const workingTreeExpected = { revision: committed, branch, trackedDirtyCount: 0, untrackedCount: 0 }
     // Without a commit there is no revision for the working tree to be clean against, so the missing
     // commit is the one cause reported rather than a count of files that are all simply uncommitted.
+    // With one, changes are ordinary work in progress: the row passes and carries the counts, and the
+    // health diagnostics turn them into a warning.
     const workingTreeObserved = unborn
         ? { state: 'failed' as const, reason: `the repository at ${context.checkoutRoot} has no commits yet (${trackedDirtyCount} staged, ${untrackedCount} untracked), so there is no committed revision for its working tree to match`, observedAt: common.observedAt }
         : { state: 'available' as const, value: workingTreeValue, observedAt: common.observedAt }
@@ -258,7 +259,7 @@ export function decodeGitObservation(
             stackId: common.stackId,
             source: `${context.source}:working-tree`,
             observed: workingTreeObserved,
-            expectation: { kind: 'equal', value: workingTreeExpected },
+            expectation: { kind: 'equal', value: workingTreeValue },
             applicability: common.applicability,
             freshness: common.freshness,
             remedy: workingTreeRemedy,
@@ -276,6 +277,21 @@ export function decodeGitObservation(
         },
     ]
     return { kind: 'complete', evidence, observations }
+}
+
+/** Changes a passing working-tree row saw on a repository with commits, for the warning that names them. */
+export function gitWorkingTreeDirty(check: {
+    readonly code: string
+    readonly owner: string
+    readonly verdict: string
+    readonly measured?: unknown
+}): Readonly<{ tracked: number; untracked: number }> | undefined {
+    if (check.owner !== OWNER || check.code !== ENVIRONMENT_CODES.GIT_STATE_UNHEALTHY || check.verdict !== 'pass') return undefined
+    const measured = check.measured
+    if (measured === null || typeof measured !== 'object') return undefined
+    const { trackedDirtyCount: tracked, untrackedCount: untracked } = measured as { trackedDirtyCount?: unknown; untrackedCount?: unknown }
+    if (typeof tracked !== 'number' || typeof untracked !== 'number' || tracked + untracked === 0) return undefined
+    return { tracked, untracked }
 }
 
 export function observeGit(

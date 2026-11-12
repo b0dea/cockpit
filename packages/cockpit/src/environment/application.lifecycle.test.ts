@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { hostname, tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { executeForegroundProcess } from '../environment-exec/execute.js'
@@ -172,7 +172,11 @@ describe('lifecycle application contracts', () => {
             result: { child, sleep: { change: 'stopped' } } })
     })
 
-    it('says why the stack keeps running when another holder outlives the session', async () => {
+    it.each([
+        ['an earlier up from this checkout', 'this-checkout' as const, true],
+        ['another checkout', 'other-checkouts' as const, false],
+        ['holders that could not be told apart', undefined, false],
+    ])('points at sleep only when %s is what still holds the stack', async (_case, remainingHolders, advised) => {
         const stack = `stack:${'8'.repeat(64)}` as StackId
         const env = { PATH: '/usr/bin:/bin' }
         const outcome = await runSession({
@@ -183,12 +187,15 @@ describe('lifecycle application contracts', () => {
             } }),
             resolveExecutable: (name) => resolveExecutable(name, env),
             executeForeground: executeForegroundProcess,
-            sleep: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: { stackId: stack, change: 'retained' } }),
+            sleep: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: {
+                stackId: stack, change: 'retained', ...(remainingHolders ? { remainingHolders } : {}) } }),
         })
 
-        expect(outcome).toMatchObject({ kind: 'complete', status: 0, result: { sleep: { change: 'retained' } },
-            diagnostics: [{ severity: 'info', code: 'SESSION_STACK_RETAINED', target: stack,
-                fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config <your cockpit.toml> to release this checkout\'s remaining hold' }] })
+        expect(outcome).toMatchObject({ kind: 'complete', status: 0, result: { sleep: { change: 'retained' } } })
+        expect(outcome.diagnostics).toEqual(advised ? [expect.objectContaining({
+            severity: 'info', code: 'SESSION_STACK_RETAINED', target: stack,
+            fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config <your cockpit.toml> to release this checkout\'s remaining hold',
+        })] : [])
     })
 
     it('hands the supervised command the leased ports and entrypoints, over values its caller set', async () => {
@@ -461,6 +468,30 @@ describe('lifecycle application contracts', () => {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: sleeping.context }),
         } as never)
         expect(slept.diagnostics.filter(({ code, severity }) => code === 'STATE_RECORD_MALFORMED' && severity === 'warning')).toEqual([])
+    })
+
+    it('reports a state lock it took over from a command gone from this host', async () => {
+        const fixture = await lifecycleContextFixture()
+        const dead = execFileSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' })
+        mkdirSync(fixture.context.namespace.paths.stateLock, { recursive: true, mode: 0o700 })
+        writeFileSync(join(fixture.context.namespace.paths.stateLock, 'owner.json'), `${JSON.stringify({
+            format: 'cockpit-state/v1', kind: 'state-lock', ownerId: `holder:${'d'.repeat(64)}:session`, pid: Number(dead),
+            acquiredAt: '2026-09-07T12:00:00.000Z', token: randomUUID(), command: 'cockpit.mjs session',
+            host: hostname(), ...(process.platform === 'linux' ? { pidNamespace: readlinkSync('/proc/self/ns/pid') } : {}),
+        })}\n`, { mode: 0o600 })
+
+        // A state write takes the lock over; the next command outcome from this process says so.
+        expect(await recordLifecycleStarted({ namespace: fixture.context.namespace, stackId: fixture.context.stackId,
+            holderId: fixture.context.holderId, observedAt: new Date().toISOString() })).toMatchObject({ kind: 'complete' })
+        const up = await runUp({ configPath: fixture.configPath }, {
+            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: fixture.context }),
+            ...unavailableRuntimeUpAdapters(fixture.context, async () => undefined),
+        } as never)
+
+        expect(up.diagnostics).toContainEqual(expect.objectContaining({
+            severity: 'warning', code: 'STATE_LOCK_RECLAIMED', target: fixture.context.namespace.paths.stateLock,
+            message: expect.stringContaining(`process ${dead} (cockpit.mjs session)`),
+        }))
     })
 
     it('refuses before execution when runtime readiness is absent', async () => {

@@ -28,7 +28,7 @@ import {
     type JsonSnapshot,
     type StackId,
 } from './contract.js'
-import { formatShellCommand } from '../fix-catalogue.js'
+import { cockpitCommand, formatShellCommand } from '../fix-catalogue.js'
 import { resolveExecutable, type ResolvedExecutable } from './executable.js'
 import { inspectSchemaCommit, listTrackedEnvSchemas, mainCheckoutDirectory, type SchemaCommitState, type TrackedEnvSchemas } from './git-observation.js'
 
@@ -417,7 +417,7 @@ export async function observeEnvSchemas(
     const invalid = statuses.flatMap(([schema, status]) => status.state === 'invalid' ? [[schema, status] as const] : [])
     const unavailable = statuses.flatMap(([schema, status]) => status.state === 'unavailable' ? [[schema, status] as const] : [])
     const uncheckable = unavailable.map(([schema, status]) => `${reasonName(schema)}: ${status.cause}`).join('; ')
-    const diagnosis = `have a person run \`VARLOCK_TELEMETRY_DISABLED=true varlock load --path <schema directory> --path <cockpit root>/${store.join('/')}/<slug>[/<relative dir>]\` for each named schema, leaving out the second path where that directory does not exist and using ${store.join('/')} itself for the cockpit root's own schema, and fix the reported keys; agents use cockpit preflight, or cockpit doctor on a cockpit that declares no runtime, for key-only status`
+    const diagnosis = `have a person run \`VARLOCK_TELEMETRY_DISABLED=true varlock load --path <schema directory> --path <cockpit root>/${store.join('/')}/<slug>[/<relative dir>]\` for each named schema, leaving out the second path where that directory does not exist and using ${store.join('/')} itself for the cockpit root's own schema, and fix the reported keys; agents use cockpit preflight, or cockpit doctor on a cockpit that declares no runtime, for key-only status, and list every declared name with \`${cockpitCommand('env keys')}\`, which marks those a schema writes no value for`
     const unresolved = unavailable.length > 0 || invalid.some(([, status]) => status.failures.some(({ problem }) => problem !== 'missing-required'))
     const remedy = unresolved ? `a secret provider may be signed out or unreachable: sign in to it, then rerun this command. Otherwise ${diagnosis}` : diagnosis
     if (invalid.length > 0) {

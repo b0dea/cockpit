@@ -186,8 +186,9 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
      `STATE_UNSEEDED` (exit 2, stage `draft-observed`); the diagnostics beside it name every other
      gap found without a running stack. Bring the stack up as step 7 of **Create a local setup**
      describes.
-   - Preflight passes only once the cockpit repository is committed and clean, so a new one reports
-     `GIT_STATE_UNHEALTHY`, whose guidance is to review `git status --short` and commit; a cockpit
+   - Preflight passes only once the cockpit repository has a commit, so a new one reports
+     `GIT_STATE_UNHEALTHY`, whose guidance is to review `git status --short` and commit; later
+     uncommitted changes are only a `GIT_WORKING_TREE_DIRTY` warning. A cockpit
      that declares no runtime reaches `surfaces-verified` without it, and `doctor` reports it as the
      required `cockpit-committed` gap. A person approves or
      runs the staging and the commit, not you: the guard asks on `git add <paths>`, denies a broad

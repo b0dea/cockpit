@@ -77,7 +77,7 @@ export async function runServiceRestart(
     const evidence = outcome.kind === 'observed' ? admitRuntimeServiceHealth(outcome.observation) : undefined
     if (!evidence) {
         const logs = await collectFailureLogs(outcome.kind === 'observed' ? outcome.observation
-            : outcome.kind === 'failure' ? outcome.logs : undefined, input.service, adapters)
+            : outcome.kind === 'failure' ? outcome.logs : undefined, input.service, adapters, input.configPath)
         return forwardedRefusal([
             { severity: 'error', code: ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, target: input.service,
                 message: `service ${input.service} did not become healthy after ${input.verb}`,

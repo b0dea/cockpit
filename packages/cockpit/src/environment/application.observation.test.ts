@@ -45,7 +45,7 @@ vi.mock('./git-observation.js', async (importOriginal) => {
 import { loadCockpitConfig } from '../config/load.js'
 import { runDoctor, type DoctorSurfaceOverrideInspection } from './application/doctor.js'
 import { runtimeNotDeclared } from './declaration.js'
-import { runPreflight, type HealthObservationSource, type HealthObservationSourceInput } from './application/health.js'
+import { healthDiagnostics, runPreflight, type HealthObservationSource, type HealthObservationSourceInput } from './application/health.js'
 import { runLogs } from './application/logs.js'
 import {
     observeSetupCheckout,
@@ -351,6 +351,25 @@ describe('observation application runners', () => {
             expect((await result).result.surfaceOverrides).toEqual(inspection)
         },
     )
+
+    it('warns, rather than fails, on a working tree with changes and names how to settle them', () => {
+        const check = {
+            code: 'GIT_STATE_UNHEALTHY' as const, owner: 'git-observation', stackId: `stack:${'3'.repeat(64)}` as never,
+            source: '/workspace:working-tree', verdict: 'pass' as const, reason: 'expectation satisfied',
+            remedy: 'review the changes with `git -C /workspace status --short`, then commit them, ignore them in .gitignore, or discard them',
+            observedAt: '2026-09-25T00:00:00.000Z', expected: { kind: 'present' as const },
+            measured: { revision: 'a'.repeat(40), branch: 'main', trackedDirtyCount: 2, untrackedCount: 1 },
+        }
+        const health = { preflight: { verdict: 'pass', revision: '', checks: [check] }, comparisons: [], producerFailures: [],
+            producerRefusals: [], verdict: 'pass', stopped: null, notices: [] }
+
+        expect(healthDiagnostics(health as never)).toEqual([expect.objectContaining({
+            severity: 'warning', code: 'GIT_WORKING_TREE_DIRTY', target: '/workspace:working-tree',
+            message: expect.stringContaining('2 tracked'), fix: check.remedy,
+        })])
+        const clean = { ...check, measured: { ...check.measured, trackedDirtyCount: 0, untrackedCount: 0 } }
+        expect(healthDiagnostics({ ...health, preflight: { ...health.preflight, checks: [clean] } } as never)).toEqual([])
+    })
 
     it('uses one shared evaluation for blocking preflight and read-only doctor', async () => {
         const evaluation = Object.freeze({

@@ -1,8 +1,8 @@
 import { execFile, spawn } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { chmodSync, readdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { chmod, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { hostname, tmpdir } from 'node:os'
 import { dirname, join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -24,6 +24,7 @@ import {
     selectMachineStateRoot,
     selectStateRoot,
     snapshotBootstrapStateNamespace,
+    takeStateLockReclaims,
     transactState,
     withStateScopedLock,
     withStateRootPortLock,
@@ -35,6 +36,8 @@ import {
     type StateRecord,
 } from './state.js'
 import { bootstrapHolderId, checkoutId as deriveCheckoutId } from './identity.js'
+import { observeProcessStart, processHost } from './process-identity.js'
+import { executeProbe } from '../environment-exec/execute.js'
 
 const executeFile = promisify(execFile)
 
@@ -112,6 +115,22 @@ Promise<{ namespace: BootstrapStateNamespace; address: BootstrapStateAddress }> 
     const selected = await selectBootstrapStateRoot({ platform: 'linux', home, checkoutRoot, target })
     if (selected.kind !== 'complete') throw new Error('expected a selected bootstrap state root')
     return { namespace: selected.value, address: selected.value.paths.bootstrap(target) }
+}
+
+// A lock is judged only where its pid means something: the host and, on Linux, the pid namespace that wrote it.
+async function localLockPlacement(): Promise<Readonly<{ host: string; pidNamespace?: string }>> {
+    return { host: hostname(), ...(process.platform === 'linux' ? { pidNamespace: await readlink('/proc/self/ns/pid') } : {}) }
+}
+
+async function exitedPid(): Promise<number> {
+    const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' })
+    await new Promise((resolve) => child.once('exit', resolve))
+    return child.pid!
+}
+
+function lockOwner(fields: Readonly<Record<string, unknown>>): string {
+    return `${JSON.stringify({ format: 'cockpit-state/v1', kind: 'state-lock', ownerId: holderA, pid: 4242,
+        acquiredAt: '2000-01-01T00:00:00.000Z', token: randomUUID(), ...fields })}\n`
 }
 
 function lifecycleRecord(revision: number, count: number): StateRecord {
@@ -1196,13 +1215,32 @@ describe('transactState', () => {
             return lifecycleRecord(0, 1)
         })
         await lockHeld
-        const second = transactState(namespace, address, { ownerId: holderB, contentionTimeoutMs: 1_000 }, (current) => (
+        // No timeout given: a busy holder is waited for by default rather than refused at once.
+        const second = transactState(namespace, address, { ownerId: holderB }, (current) => (
             lifecycleRecord((current?.revision ?? -1) + 1, 2)
         ))
         setTimeout(release, 30)
 
         expect(await second).toMatchObject({ kind: 'complete', value: { revision: 1 } })
         await first
+
+        let finish!: () => void
+        let held!: () => void
+        const holding = new Promise<void>((resolve) => { held = resolve })
+        const busy = transactState(namespace, address, { ownerId: holderA }, async (current) => {
+            held()
+            await new Promise<void>((resolve) => { finish = resolve })
+            return lifecycleRecord((current?.revision ?? -1) + 1, 3)
+        })
+        await holding
+        const owner = JSON.parse(await readFile(join(namespace.paths.stateLock, 'owner.json'), 'utf8')) as { command: string }
+        const late = await transactState(namespace, address, { ownerId: holderB, contentionTimeoutMs: 50 }, () => lifecycleRecord(9, 9))
+        finish()
+        await busy
+
+        expect(owner.command).not.toBe('')
+        expect(late).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_LOCKED,
+            message: expect.stringContaining(`process ${process.pid} (${owner.command})`) })
     })
 
     it('validates before publication and preserves the prior bytes on failure', async () => {
@@ -1617,24 +1655,231 @@ describe('transactState', () => {
         await expect(readState(address)).resolves.toMatchObject({ kind: 'missing' })
     })
 
+    const started = 'lstart:2026-09-07T12:00:00.000Z'
     it.each([
-        ['malformed', '{', undefined],
-        ['old but positively dead', JSON.stringify({ format: 'cockpit-state/v1', kind: 'state-lock', ownerId: holderA, pid: 123, acquiredAt: '2000-01-01T00:00:00.000Z', token: '6de0e288-72c8-4f62-92e1-719d7c11bc1a' }), async () => 'dead' as const],
-    ])('does not take over a %s lock', async (_label, owner, observeHolder) => {
+        ['malformed', async () => '{', async () => ({ state: 'absent' as const })],
+        // An earlier cockpit recorded no host, so its pid cannot be placed on this machine.
+        ['hostless but positively dead', async () => lockOwner({}), async () => ({ state: 'absent' as const })],
+        ['foreign host\'s', async () => lockOwner({ ...await localLockPlacement(), host: 'other-host.invalid' }), async () => ({ state: 'absent' as const })],
+        ['foreign pid namespace\'s', async () => lockOwner({ ...await localLockPlacement(), pidNamespace: 'pid:[1]' }), async () => ({ state: 'absent' as const })],
+        ['live', async () => lockOwner({ ...await localLockPlacement(), start: started }), async () => ({ state: 'present' as const, start: started })],
+        ['unobservable', async () => lockOwner({ ...await localLockPlacement(), start: started }), async () => ({ state: 'unknown' as const, reason: 'ps is not installed' })],
+    ])('does not take over a %s lock', async (_label, owner, observeProcess) => {
         const { namespace, address } = await selectedNamespace()
+        const bytes = await owner()
         await mkdir(namespace.paths.stateLock, { recursive: true })
-        await writeFile(join(namespace.paths.stateLock, 'owner.json'), owner)
+        await writeFile(join(namespace.paths.stateLock, 'owner.json'), bytes)
 
         const result = await transactState(
             namespace,
             address,
-            { ownerId: holderB, observeHolder },
+            { ownerId: holderB, observeProcess, contentionTimeoutMs: 0 },
             () => lifecycleRecord(0, 1),
         )
 
         expect(result).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_LOCKED })
-        expect(await readFile(join(namespace.paths.stateLock, 'owner.json'), 'utf8')).toBe(owner)
+        expect(await readFile(join(namespace.paths.stateLock, 'owner.json'), 'utf8')).toBe(bytes)
         expect(JSON.stringify(result)).toContain('recovery')
+        expect(takeStateLockReclaims(namespace)).toEqual([])
+    })
+
+    it('reclaims, once, a lock whose holder is gone from this host, and reports it', async () => {
+        const home = join(await temporaryDirectory(), 'home')
+        await mkdir(home)
+        const selected = await selectStateRoot({ platform: 'linux', home, cockpitId })
+        if (selected.kind !== 'complete') throw new Error('expected a selected state root')
+        const namespace = selected.value
+        const address = namespace.paths.lifecycle(stackId)
+        const dead = await exitedPid()
+        await mkdir(namespace.paths.stateLock, { recursive: true })
+        await writeFile(join(namespace.paths.stateLock, 'owner.json'),
+            lockOwner({ ...await localLockPlacement(), pid: dead, command: 'cockpit.mjs session --config cockpit.toml -- sleep 60' }))
+        const stateModule = new URL('./state.ts', import.meta.url).href
+        // Each worker increments the record while holding the lock; two that both took the dead
+        // lock over would hold it at once and lose one increment.
+        const worker = `
+            import { selectStateRoot, takeStateLockReclaims, transactState } from ${JSON.stringify(stateModule)}
+            const selected = await selectStateRoot({ platform: 'linux', home: process.argv[1], cockpitId: process.argv[2] })
+            const namespace = selected.value
+            const address = namespace.paths.lifecycle(process.argv[3])
+            const result = await transactState(namespace, address, { ownerId: process.argv[4], contentionTimeoutMs: 5_000 }, async (current) => {
+                await new Promise((resolve) => setTimeout(resolve, 100))
+                return {
+                    format: 'cockpit-state/v1', kind: address.kind, cockpitId: address.cockpitId,
+                    subjectId: address.subjectId, revision: (current?.revision ?? -1) + 1,
+                    updatedAt: '2026-09-07T12:00:00.000Z', value: { count: (current?.value?.count ?? 0) + 1 },
+                }
+            })
+            if (result.kind !== 'complete') throw new Error(JSON.stringify(result))
+            process.stdout.write(JSON.stringify(takeStateLockReclaims(namespace)))
+        `
+        const args = ['--import', 'tsx', '--input-type=module', '--eval', worker, home, cockpitId, stackId]
+
+        const outputs = await Promise.all([
+            executeFile(process.execPath, [...args, holderA], { cwd: process.cwd() }),
+            executeFile(process.execPath, [...args, holderB], { cwd: process.cwd() }),
+        ])
+
+        expect(await readState(address)).toMatchObject({ kind: 'complete', value: { revision: 1, value: { count: 2 } } })
+        const reclaims = outputs.flatMap(({ stdout }) => JSON.parse(stdout) as unknown[])
+        expect(reclaims).toEqual([expect.objectContaining({
+            lock: namespace.paths.stateLock,
+            holder: expect.stringContaining(`process ${dead} (cockpit.mjs session --config cockpit.toml -- sleep 60)`),
+            reason: expect.stringContaining(`process ${dead} is gone`),
+        })])
+        expect(await readdir(dirname(namespace.paths.stateLock))).toEqual([])
+    }, 20_000)
+
+    it('lets one acquisition take a dead holder\'s lock over and refuses the others, however they interleave', async () => {
+        const home = join(await temporaryDirectory(), 'home')
+        const markers = await temporaryDirectory()
+        await mkdir(home)
+        const selected = await selectStateRoot({ platform: 'linux', home, cockpitId })
+        if (selected.kind !== 'complete') throw new Error('expected a selected state root')
+        const namespace = selected.value
+        const address = namespace.paths.lifecycle(stackId)
+        await mkdir(namespace.paths.stateLock, { recursive: true })
+        await writeFile(join(namespace.paths.stateLock, 'owner.json'), lockOwner({ ...await localLockPlacement(), pid: await exitedPid() }))
+        const stateModule = new URL('./state.ts', import.meta.url).href
+        const worker = `
+            import { readFile, writeFile } from 'node:fs/promises'
+            import { selectStateRoot, takeStateLockReclaims, transactState } from ${JSON.stringify(stateModule)}
+            const [home, cockpitId, stack, ownerId, markers] = process.argv.slice(1)
+            const reach = (name) => writeFile(markers + '/' + name, '')
+            const await_ = async (name) => { for (;;) { try { return await readFile(markers + '/' + name) } catch { await new Promise((resolve) => setTimeout(resolve, 10)) } } }
+            const namespace = (await selectStateRoot({ platform: 'linux', home, cockpitId })).value
+            const address = namespace.paths.lifecycle(stack)
+            const result = await transactState(namespace, address, { ownerId, contentionTimeoutMs: 0,
+                beforeLockMetadata: async (operation) => { if (operation === 'takeover-rename') { await reach('at-rename'); await await_('rename') } },
+            }, async (current) => {
+                await reach('holding'); await await_('finish')
+                return { format: 'cockpit-state/v1', kind: address.kind, cockpitId: address.cockpitId, subjectId: address.subjectId,
+                    revision: (current?.revision ?? -1) + 1, updatedAt: '2026-09-07T12:00:00.000Z', value: { count: 1 } }
+            })
+            process.stdout.write(JSON.stringify({ kind: result.kind, reclaims: takeStateLockReclaims(namespace) }))
+        `
+        const awaitMarker = async (name: string) => {
+            for (let attempt = 0; attempt < 1_000; attempt += 1) {
+                try { return await readFile(join(markers, name)) } catch { await new Promise((resolve) => setTimeout(resolve, 10)) }
+            }
+            throw new Error(`the worker never reached ${name}`)
+        }
+        const first = executeFile(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', worker,
+            home, cockpitId, stackId, holderA, markers], { cwd: process.cwd() })
+        await awaitMarker('at-rename')
+
+        // The first holds the takeover name: a second acquisition sees it taken.
+        const contended = await transactState(namespace, address, { ownerId: holderB, contentionTimeoutMs: 0 }, () => lifecycleRecord(0, 9))
+        // A third judged the dead holder before the first replaced it, and links once the name is free.
+        let atLink!: () => void
+        let link!: () => void
+        const linking = new Promise<void>((resolve) => { atLink = resolve })
+        const linked = new Promise<void>((resolve) => { link = resolve })
+        const late = transactState(namespace, address, { ownerId: holderB, contentionTimeoutMs: 0,
+            beforeLockMetadata: async (operation) => { if (operation === 'takeover-link') { atLink(); await linked } } }, () => lifecycleRecord(0, 9))
+        await linking
+        await writeFile(join(markers, 'rename'), '')
+        await awaitMarker('holding')
+        link()
+        const lateResult = await late
+        await writeFile(join(markers, 'finish'), '')
+        const firstResult = JSON.parse((await first).stdout) as { kind: string; reclaims: unknown[] }
+
+        expect(contended).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_LOCKED,
+            message: expect.stringContaining('another cockpit command is taking the lock over') })
+        expect(lateResult).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_LOCKED })
+        expect(firstResult).toMatchObject({ kind: 'complete', reclaims: [expect.objectContaining({ lock: namespace.paths.stateLock })] })
+        expect(takeStateLockReclaims(namespace)).toEqual([])
+        expect(await readState(address)).toMatchObject({ kind: 'complete', value: { revision: 0, value: { count: 1 } } })
+        expect(await readdir(dirname(namespace.paths.stateLock))).toEqual([])
+    }, 20_000)
+
+    it('takes over, within one wait, a holder that was running when first judged and is killed during the wait', async () => {
+        const { namespace, address } = await selectedNamespace()
+        const holder = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1_000)'], { stdio: 'ignore' })
+        const exited = new Promise((resolve) => holder.once('exit', resolve))
+        try {
+            const started = await observeProcessStart(holder.pid!, processHost(executeProbe))
+            if (started.state !== 'present') throw new Error('expected the holder to be observable')
+            await mkdir(namespace.paths.stateLock, { recursive: true })
+            await writeFile(join(namespace.paths.stateLock, 'owner.json'),
+                lockOwner({ ...await localLockPlacement(), pid: holder.pid, start: started.start }))
+            const waiting = transactState(namespace, address, { ownerId: holderB, contentionTimeoutMs: 6_000 }, () => lifecycleRecord(0, 1))
+            setTimeout(() => holder.kill('SIGKILL'), 300)
+
+            expect(await waiting).toMatchObject({ kind: 'complete' })
+            expect(takeStateLockReclaims(namespace)).toEqual([expect.objectContaining({ reason: expect.stringContaining(`process ${holder.pid} is gone`) })])
+        } finally {
+            holder.kill('SIGKILL')
+            await exited
+        }
+    }, 15_000)
+
+    it('clears a takeover a gone command left half done, and keeps one a running command holds', async () => {
+        const { namespace, address } = await selectedNamespace()
+        const lock = namespace.paths.stateLock
+        const placement = await localLockPlacement()
+        await mkdir(lock, { recursive: true })
+        await writeFile(join(lock, 'owner.json'), lockOwner({ ...placement, pid: await exitedPid() }))
+        const running = await observeProcessStart(process.pid, processHost(executeProbe))
+        if (running.state !== 'present') throw new Error('expected this process to be observable')
+        const live = lockOwner({ ...placement, pid: process.pid, start: running.start, token: randomUUID() })
+        await writeFile(`${lock}.takeover`, live)
+
+        const kept = await transactState(namespace, address, { ownerId: holderB, contentionTimeoutMs: 0 }, () => lifecycleRecord(0, 1))
+        expect(kept).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_LOCKED,
+            message: expect.stringContaining('another cockpit command is taking the lock over') })
+        expect(await readFile(`${lock}.takeover`, 'utf8')).toBe(live)
+
+        const token = randomUUID()
+        const crashed = lockOwner({ ...placement, pid: await exitedPid(), token })
+        await writeFile(`${lock}.takeover`, crashed)
+        await writeFile(`${lock}.${token}.staged`, crashed)
+        const cleared = await transactState(namespace, address, { ownerId: holderB, contentionTimeoutMs: 0 }, () => lifecycleRecord(0, 1))
+
+        expect(cleared).toMatchObject({ kind: 'complete' })
+        expect(takeStateLockReclaims(namespace)).toHaveLength(1)
+        expect(await readdir(dirname(lock))).toEqual([])
+    }, 15_000)
+
+    it('releases a lock it took over when the takeover cannot be made durable', async () => {
+        const { namespace, address } = await selectedNamespace()
+        await mkdir(namespace.paths.stateLock, { recursive: true })
+        await writeFile(join(namespace.paths.stateLock, 'owner.json'), lockOwner({ ...await localLockPlacement(), pid: await exitedPid() }))
+        const interception = await interceptDirectorySync(namespace.paths.stateLock, (call) => {
+            if (call === 1) throw Object.assign(new Error('EIO: injected directory sync failure'), { code: 'EIO', syscall: 'fsync' })
+        })
+        let result: unknown
+        try {
+            result = await transactState(namespace, address, { ownerId: holderB, contentionTimeoutMs: 0 }, () => lifecycleRecord(0, 1))
+        } finally {
+            interception.restore()
+        }
+
+        expect(result).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_LOCKED,
+            message: expect.stringContaining('injected directory sync failure') })
+        expect(await transactState(namespace, address, { ownerId: holderA, contentionTimeoutMs: 0 }, () => lifecycleRecord(0, 2)))
+            .toMatchObject({ kind: 'complete' })
+    })
+
+    it('does not claim a takeover whose owner record was replaced before it landed', async () => {
+        const { namespace, address } = await selectedNamespace()
+        const lock = namespace.paths.stateLock
+        await mkdir(lock, { recursive: true })
+        await writeFile(join(lock, 'owner.json'), lockOwner({ ...await localLockPlacement(), pid: await exitedPid() }))
+        const foreign = lockOwner({ ...await localLockPlacement(), pid: process.pid, token: randomUUID() })
+
+        // A person removed the takeover name and another command linked its own record there.
+        const result = await transactState(namespace, address, { ownerId: holderB, contentionTimeoutMs: 0,
+            beforeLockMetadata: async (operation) => {
+                if (operation !== 'takeover-rename') return
+                await rm(`${lock}.takeover`)
+                await writeFile(`${lock}.takeover`, foreign)
+            } }, () => lifecycleRecord(0, 1))
+
+        expect(result).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_LOCKED })
+        expect(await readFile(join(lock, 'owner.json'), 'utf8')).toBe(foreign)
+        expect(takeStateLockReclaims(namespace)).toEqual([])
     })
 
     it('refuses an arbitrary lock owner label even when cast to the branded boundary', async () => {
@@ -1732,14 +1977,14 @@ describe('transactState', () => {
         expect(await readFile(join(originalLock, 'owner.json'), 'utf8')).toContain(holderA)
 
         let updateCalled = false
-        const retry = await transactState(namespace, address, { ownerId: holderA }, (current) => {
+        const retry = await transactState(namespace, address, { ownerId: holderA, contentionTimeoutMs: 0 }, (current) => {
             updateCalled = true
             return lifecycleRecord((current?.revision ?? -1) + 1, 2)
         })
         expect(retry).toMatchObject({
             kind: 'refusal',
             code: ENVIRONMENT_CODES.STATE_LOCKED,
-            message: `state is locked by ${holderB} (unknown)`,
+            message: `state is locked by process ${process.pid}, holder ${holderB}, since 2026-09-07T12:00:00.000Z; the lock does not name the host that wrote it`,
             target: namespace.paths.stateLock,
         })
         expect(await readFile(join(namespace.paths.stateLock, 'owner.json'), 'utf8')).toBe(replacementOwner)
@@ -1951,7 +2196,7 @@ describe('state permission revalidation', () => {
             acquiredAt: '2026-09-07T12:00:00.000Z', token: crypto.randomUUID(),
         }))
         await chmod(namespace.cockpitRoot, 0o777)
-        const observe = vi.fn(async () => 'dead' as const)
+        const observe = vi.fn(async () => ({ state: 'absent' as const }))
         expect(await inspectStateLock(namespace, observe)).toMatchObject({ holderState: 'invalid' })
         expect(observe).not.toHaveBeenCalled()
     })

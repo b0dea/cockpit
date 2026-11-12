@@ -71,7 +71,7 @@ vi.mock('./ports.js', async (importOriginal) => {
     }
 })
 import { loadCockpitConfig } from '../config/load.js'
-import { runSleep, runUp } from './application/lifecycle.js'
+import { collectFailureLogs, runSleep, runUp } from './application/lifecycle.js'
 import { type LifecycleRunContext } from './application/lifecycle-context.js'
 import { readState, transactState } from './state.js'
 import { recordLifecycleStarted } from './lifecycle-stage.js'
@@ -611,8 +611,13 @@ describe('lifecycle application contracts', () => {
 
         expect(result).toMatchObject({
             kind: 'refusal',
-            diagnostics: expect.arrayContaining([expect.objectContaining({ message: expect.stringContaining('failure log collection failed'), target: 'api' })]),
+            diagnostics: expect.arrayContaining([expect.objectContaining({ message: expect.stringContaining('failure log collection failed'), target: 'api',
+                fix: `./node_modules/@b00dea/cockpit/bin/cockpit.mjs logs --config ${configPath} --service api` })]),
         })
+        // With no evidence at all there is nothing to plan from, and the diagnostic still names where the logs are.
+        expect(await collectFailureLogs(undefined, 'api', { execute: vi.fn() }, configPath)).toEqual([expect.objectContaining({
+            message: 'bounded failure logs are unavailable', target: 'api',
+            fix: `./node_modules/@b00dea/cockpit/bin/cockpit.mjs logs --config ${configPath} --service api` })])
     })
 
     // A failed up left the failing container restart-looping until down, and turned each of its
@@ -778,8 +783,26 @@ describe('lifecycle application contracts', () => {
         })
     })
 
-    it('releases only the calling holder when another holder retains the runtime', async () => {
+    it.each([
+        ['an earlier hold from the same checkout', true, 'this-checkout'],
+        ['a hold from another checkout', false, 'other-checkouts'],
+    ] as const)('releases only the calling holder and reports %s as what retains the runtime', async (_case, sameCheckout, remaining) => {
         const { configPath, context } = await lifecycleContextFixture()
+        const now = new Date().toISOString()
+        await transactState(context.namespace, context.namespace.paths.coordination(context.stackId), { ownerId: context.holderId }, () => ({
+            format: 'cockpit-state/v1', kind: 'coordination', cockpitId: context.cockpitId,
+            subjectId: context.stackId, revision: 0, updatedAt: now,
+            value: {
+                holders: [{
+                    holderId: `holder:${'f'.repeat(64)}:session`,
+                    checkoutId: sameCheckout ? context.checkoutId : `checkout:${'e'.repeat(64)}`, claimedAt: now,
+                }],
+                lease: { offset: 0, ports: { APP_PORT: 4100 }, released: false,
+                    declaration: { step: context.ports.step, count: context.ports.count, bases: { ...context.ports.bases } } },
+                lastReleasedHolder: null,
+                drain: null,
+            },
+        }))
         const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
         const retained = Object.freeze({ kind: 'complete' as const, holderId: context.holderId, recordRevision: 4, lease })
         const entrypointResult = Object.freeze({ kind: 'complete' as const, values: Object.freeze([]), diagnostics: Object.freeze([]) })
@@ -803,7 +826,7 @@ describe('lifecycle application contracts', () => {
         })
 
         expect(execute).not.toHaveBeenCalled()
-        expect(result).toMatchObject({ kind: 'complete', result: { stackId: context.stackId, change: 'retained' } })
+        expect(result).toMatchObject({ kind: 'complete', result: { stackId: context.stackId, change: 'retained', remainingHolders: remaining } })
     })
 
     it('stops the final-holder runtime after its drain attempt is durable', async () => {

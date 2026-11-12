@@ -52,6 +52,8 @@ export interface EnvKey {
     readonly required?: boolean
     readonly sensitive?: boolean
     readonly type?: string
+    /** The schema writes no value for the name, so only the shell or a provider can supply it. */
+    readonly valueless?: true
 }
 type DecoratorValue =
     | Readonly<{ kind: 'none' }>
@@ -230,7 +232,8 @@ export function parseEnvKeys(text: string): Readonly<{ keys: readonly EnvKey[]; 
         header = []
         const equal = line.indexOf('=')
         const lineStart = cursor + text.slice(cursor, end).indexOf(line)
-        const value = valueEnd(text, equal < 0 ? lineStart : lineStart + equal + 1)
+        const valueStart = equal < 0 ? lineStart : lineStart + equal + 1
+        const value = valueEnd(text, valueStart)
         if (value === undefined) {
             // A value that never closes leaves no way to tell keys from its content, so reading stops.
             unparsed++
@@ -247,8 +250,12 @@ export function parseEnvKeys(text: string): Readonly<{ keys: readonly EnvKey[]; 
             const inline = /(?:^|\s)#\s*@/.test(text.slice(value.rest, lastEnd))
             const required = 'required' in own ? own.required : inline ? undefined : defaults.required
             const sensitive = 'sensitive' in own ? own.sensitive : inline ? undefined : defaults.sensitive
+            // Only whether a value is written is kept, never what it says.
+            let valueAt = valueStart
+            while (text[valueAt] === ' ' || text[valueAt] === '\t') valueAt++
+            const valueless = value.rest === valueAt && (valueAt >= text.length || '\r\n#'.includes(text[valueAt]!))
             keys.set(name, { name, ...required === undefined ? {} : { required }, ...sensitive === undefined ? {} : { sensitive },
-                ...own.type === undefined ? {} : { type: own.type } })
+                ...own.type === undefined ? {} : { type: own.type }, ...valueless ? { valueless: true as const } : {} })
         }
         attached = []
         cursor = lastEnd + 1

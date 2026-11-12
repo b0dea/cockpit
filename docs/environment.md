@@ -349,7 +349,8 @@ The command gets the stack's addresses in its environment:
 These replace a value of the same name in the calling shell, are read once at start, and do not
 follow a later `down` and `up`. When the command ends, the session releases only its own hold: a
 stack an earlier `up` from this checkout still holds keeps running, and the session says so with
-`SESSION_STACK_RETAINED`.
+`SESSION_STACK_RETAINED`, which names the `sleep` that releases it. A stack another checkout holds is
+not this checkout's to release, so the session adds no such guidance.
 
 A wrapper that dies without its closing `sleep`, from SIGKILL, a crash or a closed terminal, leaves
 its hold behind. A session records its wrapper's process ID and start identity (on Linux the start
@@ -758,7 +759,10 @@ For each `.env.schema`, or a directory's `.env.example`, `.env.sample` and `.env
 has none, it prints the path, whether it is a `schema` or `template` source, and each key's `name`.
 A key shows `required`, `sensitive` and a bare `type` only when a decorator directly above it
 declares them, or `@defaultRequired` or `@defaultSensitive` above the `# ---` divider does; a
-missing field means the file states no static answer, not false. A value, default, resolver
+missing field means the file states no static answer, not false. `valueless: true` marks a key the
+file writes no value for, such as `API_KEY=`: only the shell or a provider can supply it, so a required
+key marked so is where to look first when `ENV_SCHEMA_UNHEALTHY` reports a missing required name.
+Whether a value is written is the only thing read about it. A value, default, resolver
 expression, comment's text or unparsed line is never shown: `unparsed` counts those lines, which
 include any key name that is not a plain identifier. A symbolic or hard link is reported by name and
 warns with `ENV_KEYS_SOURCE_SKIPPED`. No source at all exits 0 and names what was looked for; a file

@@ -33,18 +33,20 @@ describe('readiness catalogue', () => {
         const report = readinessReport('surfaces-only', [
             { severity: 'error', code: 'GIT_STATE_UNHEALTHY', message: 'no commits yet', target: 'cockpit.toml', fix: 'commit it' },
             { severity: 'warning', code: 'COCKPIT_NOT_INSTALLED', message: 'not installed' },
+            { severity: 'warning', code: 'GIT_WORKING_TREE_DIRTY', message: 'uncommitted changes' },
             { severity: 'info', code: 'ENVIRONMENT_NOT_DECLARED', message: 'no runtime' },
             { severity: 'warning', code: 'CODEX_HOOK_SOURCE_MISMATCH', message: 'original checkout hooks differ', fix: 'review the source' },
         ], ['claudecode', 'codexcli', 'opencode'])
-        expect(report.gaps.map(({ id }) => id)).toEqual(['cockpit-committed', 'cockpit-installed', 'codex-hook-trusted'])
+        expect(report.gaps.map(({ id }) => id)).toEqual(['cockpit-committed', 'cockpit-clean', 'cockpit-installed', 'codex-hook-trusted'])
         expect(report.gaps[0]!.findings).toEqual([{ code: 'GIT_STATE_UNHEALTHY', severity: 'error', target: 'cockpit.toml',
             message: 'no commits yet', fix: 'commit it' }])
-        expect(report.gaps[1]!.findings[0]!.fix).toBe(READINESS_CATALOGUE.find(({ id }) => id === 'cockpit-installed')!.fix)
+        expect(report.gaps[1]).toMatchObject({ level: 'recommended' })
+        expect(report.gaps[2]!.findings[0]!.fix).toBe(READINESS_CATALOGUE.find(({ id }) => id === 'cockpit-installed')!.fix)
         // A runtime prerequisite does not apply where none is declared.
         expect(report.noFinding).not.toContain('machine-floor')
         expect(report.noFinding).toContain('siblings-present')
         // A prerequisite of one tool is reported only while that tool is listed.
-        expect(report.gaps[2]!.findings).toEqual([{ code: 'CODEX_HOOK_SOURCE_MISMATCH', severity: 'warning',
+        expect(report.gaps[3]!.findings).toEqual([{ code: 'CODEX_HOOK_SOURCE_MISMATCH', severity: 'warning',
             message: 'original checkout hooks differ', fix: 'review the source' }])
         expect(report.noFinding).not.toContain('codex-hook-trusted')
         expect(readinessReport('surfaces-only', [], ['claudecode']).noFinding).not.toContain('codex-hook-trusted')

@@ -1037,6 +1037,8 @@ describe('env schema health', () => {
             message: expect.stringMatching(/api .*missing required DATABASE_URL.*could not validate or resolve PORT/),
             fix: expect.stringContaining('have a person run `VARLOCK_TELEMETRY_DISABLED=true varlock load --path <schema directory> --path'),
         }))
+        // An agent is pointed at the names it can read itself.
+        expect(row(preflight)!.remedy).toContain('./node_modules/@b00dea/cockpit/bin/cockpit.mjs env keys --config <your cockpit.toml>')
     })
 
     it('blocks preflight on a provider it cannot resolve through, as unavailable and naming keys only', async () => {
