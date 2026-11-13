@@ -70,7 +70,9 @@ const AGENT_HOME_RULES: Readonly<Record<AgentHomeTool, readonly Rule[]>> = Objec
         [below('\\.tmp/plugins[^/]*'), 'control', INSTRUCTIONS],
         [below('shell_snapshots'), 'control', SOURCED],
         // The agent writes memory as notes, as Codex's own prompt directs; the consolidated memories load
-        // into every later session, so only Codex's own pipeline writes them.
+        // into every later session, so only Codex's own pipeline writes them. Unlike a Claude subagent's user
+        // memory, which asks, notes stay writable: for Codex an ask is a denial, which would stop the memory
+        // its prompt requires, and a note persists instructions only, granting no permission or hook.
         [below('memories[^/]*/extensions/ad_hoc/notes'), 'writable', ''],
         [below('memories[^/]*'), 'control', 'Codex loads its consolidated memories into every later session'],
         [below('(?:sessions|archived_sessions|log|history\\.jsonl?|session_index\\.jsonl[^/]*|cache|tmp|\\.tmp|attachments'

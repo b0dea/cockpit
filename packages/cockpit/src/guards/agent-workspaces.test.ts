@@ -4,7 +4,9 @@ import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 import { claudeProjectKey } from './agent-homes.js'
-import { guardAgentAreas } from './agent-workspaces.js'
+import { agentToolStart, guardAgentAreas, guardAgentStart } from './agent-workspaces.js'
+import { GUARD_EXECUTABLE_SEARCH_PATH, resolveExecutable } from '../environment/executable.js'
+import { executeProbe } from '../environment-exec/execute.js'
 
 describe('agent workspaces', () => {
     it('names a project as Claude Code does, hashing a path past 200 characters', () => {
@@ -14,6 +16,23 @@ describe('agent workspaces', () => {
         expect(measured).toHaveLength(264)
         expect(claudeProjectKey(measured)).toBe(`${measured.replace(/[^A-Za-z0-9]/g, '-').slice(0, 200)}-ycx1oj`)
         expect(claudeProjectKey('/workspace/my_project.v2')).toBe('-workspace-my-project-v2')
+    })
+
+    it('dates the agent tool by the first ancestor of the guard that is not a shell, as ps reports it', async () => {
+        // A hook runs through the tool's shell, which may start another before the guard.
+        const listing = ['  700     1 Fri Nov 13 09:00:05 2026     /opt/agent/bin/agent', '  710   700 Fri Nov 13 12:00:00 2026     /bin/sh',
+            '  720   710 Fri Nov 13 12:00:01 2026 -bash', '  730     1 Fri Nov 13 12:00:02 2026     sh'].join('\n')
+        expect(agentToolStart(listing, 720)).toBe(Date.UTC(2026, 10, 13, 9, 0, 5))
+        expect(agentToolStart(listing, 700)).toBe(Date.UTC(2026, 10, 13, 9, 0, 5))
+        // A process missing from the listing, a chain of shells only, or a start spelled otherwise is unknown.
+        expect(agentToolStart(listing, 999)).toBeUndefined()
+        expect(agentToolStart(listing, 730)).toBeUndefined()
+        expect(agentToolStart('  720     1 yesterday     agent', 720)).toBeUndefined()
+        const ps = await resolveExecutable('ps', { PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+        if (ps.state !== 'available') throw new Error(ps.reason)
+        const started = await guardAgentStart(ps.value, executeProbe, process.pid)
+        expect(started).toBeLessThanOrEqual(Date.now())
+        expect(started).toBeGreaterThan(Date.now() - 7 * 24 * 3_600_000)
     })
 
     it('locates each tool\'s own files from the payload, the harness variables and the machine', () => {

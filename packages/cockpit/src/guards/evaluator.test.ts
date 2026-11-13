@@ -398,6 +398,20 @@ describe('resolved guard evaluation', () => {
         expect(evaluateGuard(parseGuardInput(shellPayload('git worktree add pkg/wt')), policy(), withGit).reason).not.toContain('creates a Git repository inside the cockpit')
     })
 
+    it('asks before a shell or patch writes a skill, command or agent file, whose frontmatter it cannot read', () => {
+        // Write and Edit carry the text they leave, which the guard application judges.
+        const allowing = { ...policy(), defaultDecision: 'allow' as const }
+        const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
+        for (const command of [`printf x > ${other}/tools/skills/probe/SKILL.md`, "sed -i '' 's/a/b/' .claude/commands/run.md", 'cp build/a.md pkg/.claude/agents/reviewer.md',
+            'rsync -a build/skills/ pkg/.claude/skills/', 'mv build/probe .agents/skills/probe']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), allowing, withGit), command).toMatchObject({ decision: 'ask', reason: expect.stringContaining('frontmatter') })
+        }
+        expect(evaluateGuard(parseGuardInput(payload('apply_patch', { command: '*** Begin Patch\n*** Add File: tools/skills/probe/SKILL.md\n+x\n*** End Patch' })), allowing, withGit).decision).toBe('ask')
+        for (const input of [payload('Write', { file_path: `${root}/tools/skills/probe/SKILL.md`, content: 'x' }), shellPayload('printf x > docs/skill.txt'), shellPayload('rsync -a build/out/ pkg/dist/')]) {
+            expect(evaluateGuard(parseGuardInput(input), allowing, withGit).decision, JSON.stringify(input)).toBe('allow')
+        }
+    })
+
     it('judges what each spelling of a Git content writer checks out, refusing a planted control at any depth and asking for an agent instruction file', () => {
         // Agent tool settings, hooks and guard scripts reached the working tree through the object store and the
         // index, which no write names: `hash-object -w`, `update-index --cacheinfo`, then `checkout -- <dir>`.
@@ -1443,6 +1457,8 @@ describe('allow by default', () => {
             const path = posix.resolve(request.cwd, request.path)
             if (request.operation === 'external-write') return { status: 'resolved', path, landsAt: path.replace(/^\/tmp(?=\/)/, '/workspace/tmp'),
                 ...path.endsWith('/linked.txt') ? { links: 2 } : {} }
+            // Each temp entry is one this call makes.
+            if (request.operation === 'entry') return { status: 'resolved', path, exists: false }
             return { ...withGit(request), identity: path.startsWith(root) ? null : '8:2' }
         }
         const judge = (call: object, configured: object = agent) => evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', cwd: root, ...call }), configured, lands)
@@ -1464,6 +1480,24 @@ describe('allow by default', () => {
             }
             // Without the derived areas the same writes stay refused.
             for (const path of [`${claude}/projects/-workspace-project/memory/MEMORY.md`, `${made}/probe.txt`]) expect(write(path, open()).decision, path).not.toBe('allow')
+        })
+
+        it('admits an existing temp entry only when this user made it after the agent tool started, and asks when either time is unknown', () => {
+            // Another session's or user's `mktemp` entry was made before this tool started, or by someone else.
+            const started = Date.UTC(2026, 10, 13, 12)
+            const entry = (facts: object): PathInspection => request => request.operation === 'entry'
+                ? { status: 'resolved', path: posix.resolve(request.cwd, request.path), exists: true, ...facts } : lands(request)
+            const decide = (facts: object, configured: object = { ...agent, agentStartedAt: started }) =>
+                evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', cwd: root, tool_name: 'Write', tool_input: { file_path: `${made}/probe.txt`, content: 'x' } }), configured, entry(facts)).decision
+            expect(decide({ owned: true, bornMs: started + 1000 })).toBe('allow')
+            expect(decide({ owned: true, bornMs: started - 1000 })).not.toMatch(/^(?:allow|ask)$/)
+            expect(decide({ owned: false, bornMs: started + 1000 })).not.toMatch(/^(?:allow|ask)$/)
+            expect(decide({ owned: true, bornMs: null })).toBe('ask')
+            expect(decide({ owned: true, bornMs: started + 1000 }, agent)).toBe('ask')
+            // A name the call makes now is the agent's, as is its scratchpad, whatever its age.
+            expect(write(`${made}/probe.txt`, { ...agent, agentStartedAt: started })).toMatchObject({ decision: 'allow' })
+            expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', cwd: root, tool_name: 'Write', tool_input: { file_path: `${scratch}/a.md`, content: 'x' } }),
+                agent, entry({ owned: true, bornMs: null })).decision).toBe('allow')
         })
 
         it('refuses controls, credentials, what the tool writes itself, other projects\' memory and every write it cannot see', () => {

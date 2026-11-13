@@ -16,9 +16,11 @@ import {
     snapshotJson,
     tryParseJson,
 } from '../contract.js'
-import { GUARD_EXECUTABLE_SEARCH_PATH, type ExecutableResolution, type ResolvedExecutable } from '../executable.js'
+import { GUARD_EXECUTABLE_SEARCH_PATH, resolveExecutable, type ExecutableResolution, type ResolvedExecutable } from '../executable.js'
 import { CockpitConfig } from '../../schema.js'
 import { correctsHeldConfiguration, pinnedPolicyDenial, restoresRecordedConfiguration } from '../../guards/policy-pin.js'
+import { instructionFrontmatterAsk } from '../../guards/instruction-frontmatter.js'
+import { readBoundedFile } from '../../bounded-read.js'
 import { GUARD_RESTORE_LIMIT, guardConfigChange, guardConfigHeldReason } from '../../guards/policy-change.js'
 import {
     evaluateGuard,
@@ -83,7 +85,7 @@ import { browserPreapprovalRequested, loadCockpitConfig, consumeLoadedConfigProj
 import { deriveRegistry } from '../../registry-derivation.js'
 import { confinedPath, lifecycleRefusal, ownDataValues, sameSource } from './shared.js'
 import { splitRepositoryPath } from '../../repository-path.js'
-import { GUARD_AGENT_VARIABLES, guardAgentAreas, type GuardAgentEnvironment, type GuardAgentSession } from '../../guards/agent-workspaces.js'
+import { GUARD_AGENT_VARIABLES, guardAgentAreas, guardAgentStart, type GuardAgentEnvironment, type GuardAgentSession } from '../../guards/agent-workspaces.js'
 import { readSiblingCheckouts, servedSiblings, type ServedSibling, type SiblingCheckoutRecordRead } from '../sibling-checkouts.js'
 
 export interface GuardEvaluationApplicationInput {
@@ -542,6 +544,15 @@ export async function runGuardEvaluationApplication(
                 queries.push(async () => { trees.set(key, await guardWorktreeChanges(command!.cwd, target, protectedPaths, git.value, adapters.execute ?? executeProbe, gitEnvironment)) })
             }
         }
+        // When the agent tool started, which dates an existing mktemp entry, asked only of a call that names one.
+        const temps = agentAreas?.agentWorkspaces.filter(area => area.kind === 'temp').map(area => area.path) ?? []
+        let agentStartedAt: number | undefined
+        if (temps.length && /tmp\./i.test(JSON.stringify(data.payload))) {
+            queries.push(async () => {
+                const ps = await resolveExecutable('ps', { PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+                if (ps.state === 'available') agentStartedAt = await guardAgentStart(ps.value, adapters.execute ?? executeProbe, process.ppid)
+            })
+        }
         for (const invocation of parsed.invocations) {
             const command = gitInvocation(invocation)
             if ((command?.verb === 'remote' || command?.verb === 'ls-remote') && !command.uncertain) askRemotes(command.cwd)
@@ -634,6 +645,14 @@ export async function runGuardEvaluationApplication(
                 const facts = request.revision === undefined ? null : trees.get(treeKey(path, { ...request, revision: request.revision }))
                 return facts ? { status: 'resolved', path, revision: request.revision, ...request.from === undefined ? {} : { from: request.from }, ...facts }
                     : { status: 'unavailable', path, symlink: false }
+            }
+            if (request.operation === 'entry') {
+                if (!temps.includes(dirname(path))) return { status: 'unavailable', path, symlink: false }
+                let status: Stats | undefined
+                try { status = lstatIfPresentSync(path) } catch (error) { throw new CallPathUnreadable(path, error) }
+                // A system that keeps no birth time reports zero.
+                return status ? { status: 'resolved', path, exists: true, owned: status.uid === process.getuid?.(), bornMs: status.birthtimeMs > 0 ? Math.floor(status.birthtimeMs) : null }
+                    : { status: 'resolved', path, exists: false }
             }
             if (request.operation === 'external-write') {
                 // The system resolves `link/..` from where the link leads, so such a spelling lands somewhere its
@@ -798,11 +817,17 @@ export async function runGuardEvaluationApplication(
             cockpitLaunchers: launched.map(({ executable, cwd, argv, prefix }) => ({ executable, cwd, argv: argv.slice(0, prefix) })),
             searchDirectories: guardSearchDirectories(searchPath, prepared.result.policy.allowedRoots),
             // A write path still never takes a program planted in a search path directory, nor the Node the guard runs.
-            ...agentAreas,
+            ...agentAreas, ...agentStartedAt === undefined ? {} : { agentStartedAt },
             ...policy.writePaths?.length || agentRoots.length ? { externalSearchDirectories: externalSearchDirectories(searchPath, policy.allowedRoots),
                 guardRuntime: [...new Set([identity.node, dirname(dirname(identity.node)), process.execPath])].filter(path => path !== '/') } : {},
             searchPathRelativeEntry: guardSearchPathRelativeEntry(searchPath),
             ripgrepConfigActive: data.ripgrepConfigActive === true }, inspect)
+        // A Write or Edit of a skill, command or agent file is judged by the frontmatter it leaves; a file
+        // too large to read leaves no text an edit can be proven against.
+        const instruction = decision.decision === 'allow' ? instructionFrontmatterAsk(parsed, path => {
+            try { const read = readBoundedFile(path, 1_048_576); return read.kind === 'complete' ? read.bytes.toString('utf8') : undefined }
+            catch (error) { if (hasErrorCode(error, 'ENOENT')) return undefined; throw new CallPathUnreadable(path, error) }
+        }) : undefined
         const current = await adapters.loadConfig(identity.configPath)
         if (current.kind !== 'complete' || current.result.source.sha256 !== configSha256) return unavailable('Guard configuration changed during evaluation.')
         for (const [path, before] of [...roots, ...inspected]) {
@@ -818,7 +843,7 @@ export async function runGuardEvaluationApplication(
         }
         if ((await read(dirname(identity.module), basename(identity.module), 16_777_216)).sha256 !== identity.moduleSha256) return unavailable('Guard handler changed during evaluation.')
         if (launcherSha256 && (await read(dirname(launcher), basename(launcher), 65_536)).sha256 !== launcherSha256) return unavailable('Guard ordinary command executable changed during evaluation.')
-        return refused(decision)
+        return refused(instruction ?? decision)
     } catch (error) {
         if (error instanceof CallPathUnreadable) return unavailable(error.message)
         return unavailable(`Guard authority could not be read or revalidated: ${errorCause(error)}`)

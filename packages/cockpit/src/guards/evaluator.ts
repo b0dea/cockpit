@@ -138,6 +138,8 @@ export interface GuardEvaluationPolicy {
     readonly agentWorkspaces?: readonly GuardAgentWorkspace[]
     /** Directories the agent reads but does not write: its session's own temp tree. */
     readonly agentReadAreas?: readonly string[]
+    /** When the running agent tool's process started, in milliseconds since the epoch, to the second. */
+    readonly agentStartedAt?: number
 }
 export interface GuardAgentHome { readonly tool: AgentHomeTool; readonly path: string }
 export interface GuardAgentWorkspace { readonly kind: 'scratchpad' | 'temp'; readonly path: string }
@@ -161,10 +163,12 @@ interface PathInspectionRequest {
      * agent instruction files that differ. A
      * `manifest` is the nearest package.json at or above the path: its `name` and its `scripts` names.
      * An `external-write` is a path outside the roots a write may land on; its evidence carries
-     * `landsAt`, the path with every existing link on the way resolved.
+     * `landsAt`, the path with every existing link on the way resolved. An `entry` is a temp directory
+     * entry; its evidence carries `exists`, and for one that does, `owned`, whether the user running the
+     * guard owns it, and `bornMs`, its birth time, or null when the system does not keep one.
      */
     /** `list` reads names only; it is asked for a listing outside the roots, where a directory may be listed but not read. */
-    readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'list' | 'remove' | 'search' | 'unignored-search' | 'repository' | 'branch' | 'remote' | 'patch' | 'tree' | 'manifest' | 'external-write'
+    readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'list' | 'remove' | 'search' | 'unignored-search' | 'repository' | 'branch' | 'remote' | 'patch' | 'tree' | 'manifest' | 'external-write' | 'entry'
     readonly revision?: string
     readonly from?: string
     readonly paths?: readonly string[]
@@ -316,12 +320,13 @@ function agentAreas(p: JsonSnapshotObject): boolean {
         && (p.agentReadAreas === undefined || strings(p.agentReadAreas) && p.agentReadAreas.length <= 16 && p.agentReadAreas.every(path => canonical(path) && outsideHome(path)))
         && (p.agentMemoryKeys === undefined || strings(p.agentMemoryKeys) && p.agentMemoryKeys.length <= 512 && p.agentMemoryKeys.every(key => /^[A-Za-z0-9-]{1,255}$/.test(key)))
         && (p.agentType === undefined || typeof p.agentType === 'string' && AGENT_TYPE.test(p.agentType))
+        && (p.agentStartedAt === undefined || typeof p.agentStartedAt === 'number' && Number.isSafeInteger(p.agentStartedAt) && p.agentStartedAt >= 0)
 }
 function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     const p = snapshotJson(value)
     if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'searchPathRelativeEntry', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands', ...p.mcpAllowedTools === undefined ? [] : ['mcpAllowedTools'], ...p.externalReads === undefined ? [] : ['externalReads'], ...p.readPaths === undefined ? [] : ['readPaths'], ...p.defaultDecision === undefined ? [] : ['defaultDecision'], ...p.homeDirectory === undefined ? [] : ['homeDirectory'], ...p.cockpitPackageDirectories === undefined ? [] : ['cockpitPackageDirectories'],
         ...['secretPaths', 'relatedCheckouts', 'unresolved', 'writePaths', 'relatedReserved', 'externalSearchDirectories', 'guardRuntime',
-            'agentHomes', 'agentMemoryKeys', 'agentType', 'agentWorkspaces', 'agentReadAreas'].filter(key => p[key] !== undefined)])
+            'agentHomes', 'agentMemoryKeys', 'agentType', 'agentWorkspaces', 'agentReadAreas', 'agentStartedAt'].filter(key => p[key] !== undefined)])
         || p.readPaths !== undefined && (!strings(p.readPaths) || p.readPaths.length > 64 || !p.readPaths.every(canonical))
         || p.externalReads !== undefined && p.externalReads !== 'grant' && p.externalReads !== 'native'
         || p.unresolved !== undefined && p.unresolved !== 'ask' && p.unresolved !== 'deny'
@@ -2071,8 +2076,31 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const agentReadAreas = resolved.agentReadAreas ?? []
     const memoryKeys = new Set((resolved.agentMemoryKeys ?? []).map(fold))
     const agentHomeOf = (path: string) => agentHomes.find(home => within(path, home.path))
-    const agentWorkspaceOf = (path: string) => agentWorkspaces.find(area => within(path, area.path)
-        && (area.kind !== 'temp' || MKTEMP_NAME.test(fold(posix.relative(area.path, path)).split('/')[0]!)))
+    // A temp entry is the agent's when this call makes it, or the user made it after the agent tool started:
+    // an older one may be another session's or user's. Either time unknown, a person decides.
+    const entries = new Map<string, boolean>()
+    const madeByAgent = (entry: string) => {
+        let made = entries.get(entry)
+        if (made !== undefined) return made
+        let evidence: JsonSnapshot | undefined
+        try { evidence = snapshotJson(inspect({ path: entry, cwd: '/', operation: 'entry' })) } catch { evidence = undefined } // no answer is an unknown time, which asks
+        const fact = record(evidence) && evidence.status === 'resolved' && evidence.path === entry ? evidence : undefined
+        if (fact?.exists === false) made = true
+        else if (fact?.exists === true && fact.owned !== true) made = false
+        else if (fact?.exists === true && typeof fact.bornMs === 'number' && resolved.agentStartedAt !== undefined) made = fact.bornMs >= resolved.agentStartedAt
+        else {
+            unclassifiedAsk ??= ask(`${shownGuardWord(entry)} may already exist, and the guard could not tell whether this user made it after this agent tool started, so it may be another session's. A person decides, or the agent makes a new one with mktemp.`)
+            made = true
+        }
+        entries.set(entry, made)
+        return made
+    }
+    const agentWorkspaceOf = (path: string) => agentWorkspaces.find(area => {
+        if (!within(path, area.path)) return false
+        if (area.kind !== 'temp') return true
+        const name = posix.relative(area.path, path).split('/')[0]!
+        return MKTEMP_NAME.test(fold(name)) && madeByAgent(posix.join(area.path, name))
+    })
     // An agent reads its session's own areas, its workspaces, this cockpit's Claude Code projects, and what it may
     // write in its tool's home; never a credential. Everything else there, other projects' files included, asks.
     const agentReadable = (lexical: string) => {
@@ -2090,7 +2118,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     let linking = false
     let moving = false
     let settingExecutable = false
-    // A write into an entry of the tool's home that the table does not classify: a person decides it.
+    // A write a person decides, which no grant admits: an entry of the tool's home that the table does not
+    // classify, or an agent instruction file whose text the guard cannot read.
     let unclassifiedAsk: GuardDecision | undefined
     const nestedConfigurationDenial = deny('Refusing to write an agent tool\'s settings, hooks or MCP configuration (.claude/settings*.json, .claude/hooks, .mcp.json, .codex/config.toml or hooks.json, opencode.json, .opencode/plugins) at any depth: a session started in that directory loads it, and it can switch the guard off or start code there. A person makes this change.')
     const guardScriptDenial = deny('Refusing to write a path below .cockpit/guards, or a directory named .cockpit: cockpit sync writes the guard script there, and a Codex session runs the one it finds above it. Agents never write one.')
@@ -2381,6 +2410,12 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if ((request.operation === 'write' || staging) && guardScriptLocation(folded)) hold(guardScriptDenial)
         // A guard control's own denial, held before or below, names the stronger boundary.
         if (request.operation === 'write' && nestedAgentConfiguration(folded, controlCoverage) && !controlFiles.some(path => folded === fold(path)) && hardDeny === undefined) hold(nestedConfigurationDenial)
+        // Write and Edit carry the text they leave, which the guard application judges; any other writer,
+        // or one that may place a whole directory where agent tools keep instructions, carries none to read.
+        if (request.operation === 'write' && input.tool !== 'Write' && input.tool !== 'Edit'
+            && (agentInstructionFile(folded) || controlCoverage && folded.split('/').some(part => part === '.claude' || part === '.agents'))) {
+            unclassifiedAsk ??= ask(`${shownGuardWord(request.path)} is or may hold a skill, command or agent file, whose frontmatter can register hooks or MCP servers that Claude Code runs outside the guard, and this writer carries no text the guard can read. Use the Write or Edit tool, or a person approves it.`)
+        }
         if (mutating && dotenvSecret(folded)) hold(dotenvDenial)
         if (mutating && (inSecretPath(folded) || (staging || removing) && coversSecretPath(folded))) hold(staging && !inSecretPath(folded) ? coveringStageDenial : secretPathDenial)
         if (mutating && resolved.instances.some((item) => folded === fold(item.path) || (staging || removing) && within(fold(item.path), folded))) hold(staging && !resolved.instances.some((item) => folded === fold(item.path)) ? coveringStageDenial : instanceDenial)

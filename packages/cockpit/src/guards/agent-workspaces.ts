@@ -9,8 +9,12 @@
 import { lstatSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, normalize, resolve } from 'node:path'
 import { readBoundedFile } from '../bounded-read.js'
+import { snapshotExecutionStep, RefusalError } from '../environment/contract.js'
+import type { ResolvedExecutable } from '../environment/executable.js'
+import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { claudeProjectKey } from './agent-homes.js'
 import { AGENT_TYPE, type GuardAgentHome, type GuardAgentWorkspace } from './evaluator.js'
+import type { GuardExecute } from './protected-locations.js'
 
 /** What the hook payload says about the session, as the harness sent it. */
 export interface GuardAgentSession {
@@ -155,4 +159,44 @@ export function guardAgentAreas(
         agentWorkspaces: workspaces.filter(item => outsideHome(item.path)),
         agentReadAreas: readAreas.filter(outsideHome),
     }
+}
+
+// The shells a tool runs a hook through, which a hook command may start again; the first other ancestor is the tool.
+const HOOK_SHELLS = new Set(['sh', 'bash', 'zsh', 'dash'])
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/**
+ * When the agent tool that started process `pid` began, from `ps -A -o pid=,ppid=,lstart=,comm=` run
+ * with LC_ALL=C and TZ=UTC0: the start of the first process at or above `pid` that is not a shell, or
+ * undefined when the chain leaves the listing or a start does not parse.
+ */
+export function agentToolStart(listing: string, pid: number): number | undefined {
+    const processes = new Map<number, { ppid: number; started: number; name: string }>()
+    for (const line of listing.split('\n')) {
+        // procps separates the command by one space, macOS by several.
+        const row = /^\s*(\d+)\s+(\d+)\s+[A-Z][a-z]{2} ([A-Z][a-z]{2})\s+(\d{1,2}) (\d\d):(\d\d):(\d\d) (\d{4})\s+(\S.*)$/.exec(line)
+        const month = row ? MONTHS.indexOf(row[3]!) : -1
+        if (!row || month < 0) continue
+        processes.set(Number(row[1]), { ppid: Number(row[2]), name: basename(row[9]!.trim()).replace(/^-/, ''),
+            started: Date.UTC(Number(row[8]), month, Number(row[4]), Number(row[5]), Number(row[6]), Number(row[7])) })
+    }
+    for (let current = processes.get(pid), hops = 0; current && hops < 32; current = processes.get(current.ppid), hops++) {
+        if (!HOOK_SHELLS.has(current.name)) return current.started
+    }
+    return undefined
+}
+
+/** The start of the agent tool above process `pid`, as `ps` reports it, or undefined when it cannot be read. */
+export async function guardAgentStart(ps: ResolvedExecutable, execute: GuardExecute, pid: number): Promise<number | undefined> {
+    const step = snapshotExecutionStep({
+        id: 'guard-agent-start',
+        argv: [ps.canonicalPath, '-A', '-o', 'pid=,ppid=,lstart=,comm='],
+        argv0: ps.invocationPath, cwd: '/', env: { LC_ALL: 'C', TZ: 'UTC0' }, timeoutMs: 10_000,
+        stdoutLimitBytes: 4_194_304, stderrLimitBytes: 65_536, paths: [], ports: [], labels: { action: 'guard-agent-start' }, expected: [],
+        consumedFiles: [{ path: ps.canonicalPath, sha256: ps.sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: ps.executionMode }],
+        filesystemChecks: [], compensation: [],
+    })
+    if (!step) throw new RefusalError('the process listing that dates the agent tool could not be planned')
+    const outcome = authenticatedExecutionOutcome(await execute(step), step)
+    return outcome?.kind === 'complete' ? agentToolStart(outcome.stdout.toString('utf8'), pid) : undefined
 }
