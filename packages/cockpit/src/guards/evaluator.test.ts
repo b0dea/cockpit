@@ -1344,6 +1344,105 @@ describe('allow by default', () => {
         expect(run('pwd', { ...native, writePaths: ['/workspace'] }).decision).toBe('unavailable')
     })
 
+    describe('agent workspaces', () => {
+        // What the application derives per call: each tool home, this cockpit's Claude memory name, the
+        // session's scratchpad, the private temp directories and the session's own temp tree.
+        const claude = `${home}/.claude`
+        const codex = `${home}/.codex`
+        const opencode = `${home}/.local/share/opencode`
+        const session = '/workspace/tmp/claude-1000/-workspace-project/session-one'
+        const scratch = `${session}/scratchpad`
+        const agent = { ...open(), externalSearchDirectories: ['/workspace/tmp/bin'],
+            agentHomes: [{ tool: 'claude', path: claude }, { tool: 'codex', path: codex }, { tool: 'opencode-data', path: opencode },
+                { tool: 'opencode-config', path: `${home}/.config/opencode` }],
+            agentMemoryKeys: ['-workspace-project', '-Workspace-Sibling'], agentType: 'reviewer',
+            agentWorkspaces: [{ kind: 'scratchpad', path: scratch }, { kind: 'temp', path: '/workspace/tmp' }, { kind: 'temp', path: '/workspace/user-tmp' }],
+            agentReadAreas: [session] }
+        // `/tmp` leads to the temp directory, and one file there has a second name.
+        const lands: PathInspection = request => {
+            const path = posix.resolve(request.cwd, request.path)
+            if (request.operation === 'external-write') return { status: 'resolved', path, landsAt: path.replace(/^\/tmp(?=\/)/, '/workspace/tmp'),
+                ...path.endsWith('/linked.txt') ? { links: 2 } : {} }
+            return { ...withGit(request), identity: path.startsWith(root) ? null : '8:2' }
+        }
+        const judge = (call: object, configured: object = agent) => evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', cwd: root, ...call }), configured, lands)
+        const shell = (command: string, configured: object = agent) => judge({ tool_name: 'Bash', tool_input: { command } }, configured)
+        const write = (file_path: string, configured: object = agent) => judge({ tool_name: 'Write', tool_input: { file_path, content: 'x' } }, configured)
+
+        it('admits named writes to the agent tool\'s own data, its scratchpad and private temp', () => {
+            for (const path of [`${claude}/projects/-workspace-project/memory/MEMORY.md`, `${claude}/plans/bright-plan.md`, `${claude}/agent-memory/reviewer/MEMORY.md`,
+                `${claude}/projects/-WORKSPACE-project/session.jsonl`, `${claude}/projects/-Workspace-Sibling/memory/MEMORY.md`, `${codex}/memories/extensions/ad_hoc/notes/20261113T000000Z-tabs.md`,
+                `${opencode}/tool-output/out.txt`, `${scratch}/notes.md`, '/workspace/tmp/probe.txt', '/tmp/probe.txt', '/workspace/user-tmp/out.log']) {
+                expect(write(path), path).toMatchObject({ decision: 'allow' })
+            }
+            expect(judge({ tool_name: 'Edit', tool_input: { file_path: `${claude}/projects/-workspace-project/memory/topic.md`, old_string: 'a', new_string: 'b' } }))
+                .toMatchObject({ decision: 'allow' })
+            for (const command of [`mkdir -p ${codex}/memories/extensions/ad_hoc/notes && printf x > ${codex}/memories/extensions/ad_hoc/notes/a.md`,
+                `cat > ${claude}/plans/bright-plan.md <<'EOF'\nplan\nEOF`, `mkdir -p ${scratch}/sub`, 'cp build/out.log /tmp/out.log', 'rm /workspace/tmp/probe.txt',
+                'chmod 600 /workspace/tmp/probe.txt', `mv ${scratch}/a.md ${scratch}/b.md`]) {
+                expect(shell(command), command).toMatchObject({ decision: 'allow' })
+            }
+            // Without the derived areas the same writes stay refused.
+            for (const path of [`${claude}/projects/-workspace-project/memory/MEMORY.md`, '/workspace/tmp/probe.txt']) expect(write(path, open()).decision, path).not.toBe('allow')
+        })
+
+        it('refuses controls, credentials, other projects\' memory and every write it cannot see into the agent\'s own areas', () => {
+            const refusals: Record<string, string> = {
+                [`echo x > ${claude}/settings.json`]: 'a control', [`echo x > ${claude}/settings.local.json`]: 'a control',
+                [`echo x > ${claude}/CLAUDE.md`]: 'a control', [`echo x > ${claude}/hooks/pre.sh`]: 'a control', [`echo x > ${claude}/skills/a/SKILL.md`]: 'a control',
+                [`echo x > ${claude}/shell-snapshots/snapshot.sh`]: 'sources it', [`echo x > ${claude}/.credentials.json`]: 'a credential',
+                [`echo x > ${codex}/config.toml`]: 'a control', [`echo x > ${codex}/AGENTS.md`]: 'a control', [`echo x > ${codex}/hooks.json`]: 'a control',
+                [`echo x > ${codex}/memories/skills/a/SKILL.md`]: 'a control', [`echo x > ${codex}/auth.json`]: 'a credential',
+                [`echo x > ${opencode}/auth.json`]: 'a credential', [`echo x > ${home}/.config/opencode/opencode.json`]: 'a control',
+                [`echo x > ${claude}/projects/-workspace-elsewhere/memory/MEMORY.md`]: 'another project',
+                [`echo x > ${claude}/PROJECTS/-workspace-elsewhere/MEMORY/MEMORY.md`]: 'another project',
+                [`echo x > ${claude}/projects/-workspace-elsewhere/session.jsonl`]: 'another project',
+                [`echo x > ${claude}/agent-memory/planner/MEMORY.md`]: 'subagent other', [`echo x > ${claude}/file-history/session/a`]: 'a control',
+                [`echo x > ${codex}/memories/MEMORY.md`]: 'a control', [`echo x > ${opencode}/snapshot/project/config`]: 'a control',
+                [`mv ${scratch}/skills ${codex}/memories_v2`]: 'moves', [`mv ${claude}/projects/-workspace-project/memory/a.md /workspace/tmp/a.md`]: 'moves',
+                ['echo x > /workspace/tmp/proj/.agents/skills/a/SKILL.md']: 'loads from',
+                [`ln -s ${root}/README.md ${scratch}/link.md`]: 'link', [`ln ${root}/README.md /workspace/tmp/hard.md`]: 'link',
+                [`chmod +x ${scratch}/run.sh`]: 'executable', ['chmod 755 /workspace/tmp/run.sh']: 'executable', ['install build/tool /workspace/tmp/tool']: 'executable',
+                ['tar -xf build/a.tar -C /workspace/tmp/out']: 'names it chooses', ['cp -R src /workspace/tmp/src']: 'names it chooses',
+                ['echo x > /workspace/tmp/.env.local']: 'environment file', ['echo x > /workspace/tmp/.secrets/a']: 'environment file',
+                ['echo x > /workspace/tmp/id_ed25519']: 'credential', ['echo x > /workspace/tmp/x/.cockpit/guards/bash-guard.sh']: '.cockpit',
+                ['echo x > /workspace/tmp/proj/.claude/settings.json']: 'loads from', ['echo x > /workspace/tmp/proj/CLAUDE.md']: 'loads from',
+                ['echo x > /workspace/tmp/proj/.git/hooks/pre-commit']: 'Git', ['echo x > /workspace/tmp/bin/git']: 'search path',
+                ['echo x > /workspace/tmp/linked.txt']: 'hard link', ['rm -rf /workspace/user-tmp']: 'not the files', [`rm -rf ${claude}/projects`]: 'not the files',
+            }
+            for (const [command, reason] of Object.entries(refusals)) expect(shell(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining(reason) })
+            // A subagent writes its own memory.
+            expect(write(`${claude}/agent-memory/reviewer/MEMORY.md`)).toMatchObject({ decision: 'allow' })
+            // Claude Code's trees for other sessions, cockpit's own staging and caches programs load are no temp workspace.
+            for (const path of ['/workspace/tmp/claude-1000/-workspace-other/session-two/scratchpad/a.md', `${session}/tasks/b1.output`, '/workspace/user-tmp/cockpit-execution-1/0000-x',
+                '/workspace/tmp/moved/claude-1000/-workspace-other/session-two/tasks/b1.output', '/workspace/user-tmp/xcrun_db', '/workspace/user-tmp/node-compile-cache/v8/x']) {
+                expect(write(path).decision, path).not.toBe('allow')
+            }
+        })
+
+        it('asks before writing an entry of a tool home that it does not classify', () => {
+            for (const path of [`${claude}/daemon/state.json`, `${codex}/app-server-daemon/x`, `${opencode}/repos/a`]) {
+                expect(write(path), path).toMatchObject({ decision: 'ask', reason: expect.stringContaining('does not classify') })
+            }
+        })
+
+        it('reads back the agent\'s own data, controls and session files, never a credential', () => {
+            for (const command of [`cat ${claude}/projects/-workspace-elsewhere/session/tool-results/out.txt`, `rg needle ${session}/tasks/b1.output`,
+                `jq . ${claude}/projects/-workspace-project/session.jsonl`, `cat ${claude}/settings.json`, `cat ${codex}/memories/MEMORY.md`, 'cat /workspace/tmp/notes.txt',
+                `cat ${scratch}/notes.md`, `ls ${claude}/plans`]) {
+                expect(shell(command), command).toMatchObject({ decision: 'allow' })
+            }
+            for (const command of [`cat ${claude}/.credentials.json`, `cat ${codex}/auth.json`, `cat ${opencode}/auth.json`, `cat ${claude}/ide/1.lock`]) {
+                expect(shell(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('credential') })
+            }
+            // An unclassified entry, another session's temp tree and another tool's home are not the agent's own.
+            for (const command of [`cat ${claude}/daemon/state.json`, 'cat /workspace/tmp/claude-1000/-workspace-other/session-two/tasks/b1.output']) {
+                expect(shell(command), command).toMatchObject({ decision: 'ask' })
+            }
+            expect(shell(`cat ${home}/.cursor/state.json`).decision).not.toBe('allow')
+        })
+    })
+
     it('refuses the Data volume spelling of the cockpit, a related checkout or a write path, never judging it as outside', () => {
         const configured = { ...policy(), defaultDecision: 'allow' as const, homeDirectory: '/workspace/home', externalReads: 'native' as const,
             writePaths: ['/workspace/person/Downloads'], relatedCheckouts: ['/workspace/upstream'], secretPaths: [`${root}/var/sessions`],

@@ -82,6 +82,7 @@ import { browserPreapprovalRequested, loadCockpitConfig, consumeLoadedConfigProj
 import { deriveRegistry } from '../../registry-derivation.js'
 import { confinedPath, lifecycleRefusal, ownDataValues, sameSource } from './shared.js'
 import { splitRepositoryPath } from '../../repository-path.js'
+import { GUARD_AGENT_VARIABLES, guardAgentAreas, type GuardAgentEnvironment, type GuardAgentSession } from '../../guards/agent-workspaces.js'
 import { readSiblingCheckouts, servedSiblings, type ServedSibling, type SiblingCheckoutRecordRead } from '../sibling-checkouts.js'
 
 export interface GuardEvaluationApplicationInput {
@@ -98,6 +99,10 @@ export interface GuardEvaluationApplicationInput {
     /** HOME and XDG_CONFIG_HOME of the harness, where Git reads the person's global configuration. */
     readonly home?: string
     readonly xdgConfigHome?: string
+    /** What the hook payload says about the agent's session, which locates its own files. */
+    readonly agentSession?: GuardAgentSession
+    /** The harness's variables that move the agent tool's own files. */
+    readonly agentEnvironment?: GuardAgentEnvironment
 }
 
 interface GuardEvaluationApplicationAdapters {
@@ -257,7 +262,7 @@ export async function runGuardEvaluationApplication(
         return { decision: { ...decision, reason }, diagnostics: [{ severity: 'error', code: 'GUARD_REFUSED', message: reason, target: 'guard' }] }
     }
     try {
-        const data = ownDataValues(snapshotJson(input), ['cwd', 'guardRoot', 'harness', 'identity', 'payload'], ['askIsDeny', 'ripgrepConfigActive', 'searchPath', 'home', 'xdgConfigHome'])
+        const data = ownDataValues(snapshotJson(input), ['cwd', 'guardRoot', 'harness', 'identity', 'payload'], ['askIsDeny', 'ripgrepConfigActive', 'searchPath', 'home', 'xdgConfigHome', 'agentSession', 'agentEnvironment'])
         const directory = (value: unknown) => value === undefined || typeof value === 'string' && isAbsolute(value) && !/[\x00-\x1f\x7f]/.test(value)
             && Buffer.byteLength(value) <= GUARD_INPUT_LIMITS.pathBytes
         if (!data || !directory(data.home) || !directory(data.xdgConfigHome)
@@ -265,6 +270,10 @@ export async function runGuardEvaluationApplication(
             || data.askIsDeny !== undefined && typeof data.askIsDeny !== 'boolean'
             || data.ripgrepConfigActive !== undefined && typeof data.ripgrepConfigActive !== 'boolean'
             || !isGuardSurfaceTarget(data.harness)) return unavailable('Guard request is malformed.')
+        const agentSession = data.agentSession === undefined ? {} : ownDataValues(data.agentSession, [], ['transcriptPath', 'sessionId', 'scratchpadDir', 'agentType'])
+        const agentEnvironment = data.agentEnvironment === undefined ? {} : ownDataValues(data.agentEnvironment, [], GUARD_AGENT_VARIABLES)
+        if (!agentSession || !agentEnvironment || ![...Object.values(agentSession), ...Object.values(agentEnvironment)]
+            .every(value => typeof value === 'string' && !/[\x00-\x1f\x7f]/.test(value) && Buffer.byteLength(value) <= GUARD_INPUT_LIMITS.pathBytes)) return unavailable('Guard request is malformed.')
         const harness = data.harness
         const captured = ownDataValues(snapshotJson(data.identity), ['root', 'rootInode', 'configPath', 'configSha256', 'configInode', 'node', 'nodeSha256', 'nodeFingerprint', 'module', 'moduleSha256'])
         if (!captured
@@ -466,6 +475,11 @@ export async function runGuardEvaluationApplication(
         // paths a default ripgrep search reads, and which a repository's index holds for a Git command
         // that prints committed content. A request not asked here gets the walk, or no answer.
         const policy = prepared.result.policy
+        // The agent tool's own files, located from this call's payload and the harness's variables.
+        const agentAreas = harness === 'claudecode' || harness === 'codexcli' || harness === 'opencode'
+            ? guardAgentAreas(harness, agentSession as GuardAgentSession, { home: realpathSync(homedir()), uid: process.getuid?.() ?? -1, env: agentEnvironment as GuardAgentEnvironment }, policy.allowedRoots)
+            : undefined
+        const agentRoots = agentAreas ? [...agentAreas.agentHomes.map(home => home.path), ...agentAreas.agentWorkspaces.map(area => area.path), ...agentAreas.agentReadAreas] : []
         const instancePaths = policy.instances.map(item => item.path)
         // What Git is asked to list beside environment and secrets names: every declared instance and secret path.
         const watchedPaths = [...instancePaths, ...policy.secretPaths ?? []]
@@ -621,6 +635,9 @@ export async function runGuardEvaluationApplication(
                     : { status: 'unavailable', path, symlink: false }
             }
             if (request.operation === 'external-write') {
+                // The system resolves `link/..` from where the link leads, so such a spelling lands somewhere its
+                // lexical path does not say: no landing is reported, and the write is refused.
+                if (leavesLink(request.cwd, request.path)) return { status: 'unavailable', path, symlink: true }
                 // Where a write outside the roots lands: the deepest existing ancestor through its links, then the rest as spelled.
                 let cursor = path
                 const rest: string[] = []
@@ -645,12 +662,15 @@ export async function runGuardEvaluationApplication(
             const reading = ['read', 'list', 'search', 'unignored-search'].includes(request.operation)
             // A related checkout is read as a root is: a named file, a listing or a search walked for secrets.
             const relatedRoot = !managedRoot && reading ? policy.relatedCheckouts?.find(root => confinedPath(root, path)) : undefined
+            // The agent's own files are read from the area that holds them, through the spelling that leads there,
+            // such as /tmp; the evaluator decides which of them may be read.
+            const agentRoot = !managedRoot && !relatedRoot && reading ? agentRoots.filter(root => confinedPath(root, path)).sort((a, b) => b.length - a.length)[0] : undefined
             // A person's read path admits this read, or with native external reads the agent tool's own permission decided it.
             const declaredRead = !managedRoot && reading
                 && (policy.externalReads === 'native' || (policy.readPaths ?? []).some(root => confinedPath(root, path)))
             const externalRead = reading && (approvedReads.has(path) || approvedRequirements.has(path)) || declaredRead
                 || request.operation === 'cwd' && approvedDirectories.has(path) || request.operation === 'repository' && tracked.has(path)
-            const root = managedRoot ?? relatedRoot ?? (externalRead ? '/' : undefined)
+            const root = managedRoot ?? relatedRoot ?? agentRoot ?? (externalRead ? '/' : undefined)
             if (!root) return { status: 'unavailable', path, symlink: false }
             if (leavesLink(request.cwd, request.path)) return { status: 'resolved', path, symlink: true }
             let cursor = root
@@ -777,7 +797,8 @@ export async function runGuardEvaluationApplication(
             cockpitLaunchers: launched.map(({ executable, cwd, argv, prefix }) => ({ executable, cwd, argv: argv.slice(0, prefix) })),
             searchDirectories: guardSearchDirectories(searchPath, prepared.result.policy.allowedRoots),
             // A write path still never takes a program planted in a search path directory, nor the Node the guard runs.
-            ...policy.writePaths?.length ? { externalSearchDirectories: externalSearchDirectories(searchPath, policy.allowedRoots),
+            ...agentAreas,
+            ...policy.writePaths?.length || agentRoots.length ? { externalSearchDirectories: externalSearchDirectories(searchPath, policy.allowedRoots),
                 guardRuntime: [...new Set([identity.node, dirname(dirname(identity.node)), process.execPath])].filter(path => path !== '/') } : {},
             searchPathRelativeEntry: guardSearchPathRelativeEntry(searchPath),
             ripgrepConfigActive: data.ripgrepConfigActive === true }, inspect)

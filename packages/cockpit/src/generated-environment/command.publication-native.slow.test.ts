@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { readFile, rm, stat, writeFile, mkdir, realpath, lstat } from 'node:fs/promises'
+import { symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { mkdtemp } from 'node:fs/promises'
@@ -22,6 +23,7 @@ import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './command.j
 import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
 import { writeSiblingCheckouts } from '../environment/sibling-checkouts.js'
 import { stubComposeTopology } from '../../test-support/compose-topology-docker.js'
+import { claudeProjectKey } from '../guards/agent-homes.js'
 
 const { roots, cleanup, surfaceConsumer, digest, runGeneratedGuard, bytes } = createGeneratedCommandFixture()
 afterEach(cleanup)
@@ -67,6 +69,62 @@ describe('public surface publication transaction', () => {
             expect(stale.status, stale.stderr).toBe(0)
             expect(JSON.parse(stale.stdout).hookSpecificOutput).toMatchObject({ permissionDecision: 'deny',
                 permissionDecisionReason: expect.stringContaining('has an unapproved edit that widens what agents may do') })
+        })
+
+        it('admits each agent tool\'s own files through the installed hook from the session the payload names', async () => {
+            const fixture = await surfaceConsumer('agent-workspaces')
+            expect(spawnSync('git', ['init', '--quiet', fixture.root]).status).toBe(0)
+            await writeFile(join(fixture.siblingDirectory, 'package-lock.json'), '{}')
+            const synced = await syncGeneratedEnvironment({ configPath: fixture.configPath })
+            expect(synced, JSON.stringify(synced.diagnostics)).toMatchObject({ kind: 'complete' })
+            const root = await realpath(fixture.root)
+            const home = await realpath(await mkdtemp(join(tmpdir(), 'agent-home-')))
+            roots.push(home)
+            const claudeHome = join(home, '.claude')
+            const codexHome = join(home, '.codex')
+            const project = claudeProjectKey(root)
+            const session = { transcript_path: join(claudeHome, 'projects', project, 'session-one.jsonl'), session_id: 'session-one' }
+            const guard = (harness: string, call: object) => {
+                const run = spawnSync('/bin/bash', [join(root, '.cockpit/guards/bash-guard.sh'), '--harness', harness], {
+                    cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home },
+                    input: JSON.stringify({ hook_event_name: 'PreToolUse', cwd: root, ...call }),
+                })
+                // A decision the guard cannot reach exits 2 with its reason, which refuses the call.
+                if (run.status === 2) return { permissionDecision: 'unavailable', permissionDecisionReason: run.stderr }
+                expect(run.status, run.stderr).toBe(0)
+                return run.stdout ? JSON.parse(run.stdout).hookSpecificOutput : { permissionDecision: 'allow' }
+            }
+            const write = (file_path: string, facts: object = session) => guard('claudecode', { ...facts, tool_name: 'Write', tool_input: { file_path, content: 'synthetic' } })
+            const scratchpad = join(await realpath('/tmp'), `claude-${process.getuid!()}`, project, 'session-one', 'scratchpad', 'notes.md')
+            for (const path of [join(claudeHome, 'projects', project, 'memory', 'MEMORY.md'), join(claudeHome, 'plans', 'bright-plan.md'), scratchpad]) {
+                expect(write(path), path).toMatchObject({ permissionDecision: 'allow' })
+            }
+            expect(write(join(claudeHome, 'settings.json'))).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: expect.stringContaining('a control') })
+            expect(write(join(claudeHome, 'projects', '-workspace-other', 'memory', 'MEMORY.md'))).toMatchObject({ permissionDecision: 'deny',
+                permissionDecisionReason: expect.stringContaining('another project') })
+            // Without the session's facts its scratchpad is no workspace.
+            expect(write(scratchpad, {}).permissionDecision).not.toBe('allow')
+            // A spelling that leaves a link through `..` lands where the link leads, not in temp.
+            const shared = await realpath(await mkdtemp(join(await realpath('/tmp'), 'agent-escape-')))
+            roots.push(shared)
+            await mkdir(join(shared, 'd'))
+            await symlink(home, join(shared, 'd', 'l'))
+            const shell = (command: string) => guard('claudecode', { ...session, tool_name: 'Bash', tool_input: { command } })
+            expect(shell(`echo x > ${shared}/d/kept.txt`)).toMatchObject({ permissionDecision: 'allow' })
+            expect(shell(`echo x > ${shared}/d/l/../escape.txt`).permissionDecision).not.toBe('allow')
+            // The agent reads back a spilled tool output, never the login beside it.
+            const spilled = join(claudeHome, 'projects', project, 'session-one', 'tool-results', 'out.txt')
+            await mkdir(dirname(spilled), { recursive: true })
+            await writeFile(spilled, 'synthetic output\n')
+            await writeFile(join(claudeHome, '.credentials.json'), '{}')
+            const read = (command: string) => guard('claudecode', { ...session, tool_name: 'Bash', tool_input: { command } })
+            expect(read(`rg synthetic ${spilled}`)).toMatchObject({ permissionDecision: 'allow' })
+            expect(read(`cat ${join(claudeHome, '.credentials.json')}`)).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: expect.stringContaining('credential') })
+            const notes = join(codexHome, 'memories', 'extensions', 'ad_hoc', 'notes')
+            const codex = (command: string) => guard('codexcli', { session_id: 'session-two', tool_name: 'Bash', tool_input: { command },
+                transcript_path: join(codexHome, 'sessions', '2026', '11', '13', 'rollout-2026-11-13T08-00-00-session-two.jsonl') })
+            expect(codex(`mkdir -p ${notes} && printf x > ${join(notes, 'a.md')}`)).toMatchObject({ permissionDecision: 'allow' })
+            expect(codex(`printf x > ${join(codexHome, 'config.toml')}`)).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: expect.stringContaining('a control') })
         })
 
         it('applies a tool restriction under stale_delete = person, removing only the unchanged MCP file of a tool still listed', async () => {

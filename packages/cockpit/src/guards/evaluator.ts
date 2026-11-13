@@ -7,6 +7,7 @@ import { renderGuardProjectCommand } from '../environment/install-policy.js'
 import { GUARD_LOCAL_PATHS } from './local-identity.js'
 import { classifyReadOnlyInvocation, cockpitLauncherPrefix, ghWords, gitContentOperands, type ReadOnlyAccess } from './read-only.js'
 import { SURFACE_EXECUTION_CONTROL_PATHS } from '../surfaces/harness-registry.js'
+import { AGENT_HOME_TOOLS, classifyAgentHomeEntry, type AgentHomeTool } from './agent-homes.js'
 
 /**
  * The cockpit commands that run the words after their `--` as a command of their own, and where it
@@ -127,7 +128,19 @@ export interface GuardEvaluationPolicy {
     readonly externalSearchDirectories?: readonly string[]
     /** The Node executable and install prefix the guard runs with, wherever they are. */
     readonly guardRuntime?: readonly string[]
+    /** The running agent tool's own directories, canonical, each classified by the table for its tool. */
+    readonly agentHomes?: readonly GuardAgentHome[]
+    /** Claude Code project names whose auto memory this cockpit's agents write: the main checkout of each root. */
+    readonly agentMemoryKeys?: readonly string[]
+    /** The subagent the payload names, whose own memory it writes. */
+    readonly agentType?: string
+    /** The session's scratchpad and the private temp directories, and the spellings that lead to them. */
+    readonly agentWorkspaces?: readonly GuardAgentWorkspace[]
+    /** Directories the agent reads but does not write: its session's own temp tree. */
+    readonly agentReadAreas?: readonly string[]
 }
+export interface GuardAgentHome { readonly tool: AgentHomeTool; readonly path: string }
+export interface GuardAgentWorkspace { readonly kind: 'scratchpad' | 'temp'; readonly path: string }
 interface PathInspectionRequest {
     readonly path: string
     readonly cwd: string
@@ -286,16 +299,32 @@ function projectTuple(value: JsonSnapshotObject): boolean {
     const tuple = GuardCommandArgv.safeParse([value.executable, ...value.argv])
     return tuple.success && renderGuardProjectCommand(tuple.data).kind === 'complete'
 }
+// The agent's own areas are derived per call from what the harness reports; none is the home directory
+// or above it, which would admit every shell startup file below.
+/** A subagent name as Claude Code reports it in `agent_type` and names its memory directory. */
+export const AGENT_TYPE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/
+function agentAreas(p: JsonSnapshotObject): boolean {
+    const outsideHome = (path: string) => typeof p.homeDirectory !== 'string' || !within(p.homeDirectory, path)
+    const located = (value: JsonSnapshot | undefined, kinds: readonly string[], kind: 'tool' | 'kind') => record(value) && keys(value, [kind, 'path'])
+        && kinds.includes(String(value[kind])) && canonical(value.path) && outsideHome(value.path)
+    return (p.agentHomes === undefined || Array.isArray(p.agentHomes) && p.agentHomes.length <= 8 && p.agentHomes.every(item => located(item, AGENT_HOME_TOOLS, 'tool')))
+        && (p.agentWorkspaces === undefined || Array.isArray(p.agentWorkspaces) && p.agentWorkspaces.length <= 16 && p.agentWorkspaces.every(item => located(item, ['scratchpad', 'temp'], 'kind')))
+        && (p.agentReadAreas === undefined || strings(p.agentReadAreas) && p.agentReadAreas.length <= 16 && p.agentReadAreas.every(path => canonical(path) && outsideHome(path)))
+        && (p.agentMemoryKeys === undefined || strings(p.agentMemoryKeys) && p.agentMemoryKeys.length <= 512 && p.agentMemoryKeys.every(key => /^[A-Za-z0-9-]{1,255}$/.test(key)))
+        && (p.agentType === undefined || typeof p.agentType === 'string' && AGENT_TYPE.test(p.agentType))
+}
 function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     const p = snapshotJson(value)
     if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'searchPathRelativeEntry', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands', ...p.mcpAllowedTools === undefined ? [] : ['mcpAllowedTools'], ...p.externalReads === undefined ? [] : ['externalReads'], ...p.readPaths === undefined ? [] : ['readPaths'], ...p.defaultDecision === undefined ? [] : ['defaultDecision'], ...p.homeDirectory === undefined ? [] : ['homeDirectory'], ...p.cockpitPackageDirectories === undefined ? [] : ['cockpitPackageDirectories'],
-        ...['secretPaths', 'relatedCheckouts', 'unresolved', 'writePaths', 'relatedReserved', 'externalSearchDirectories', 'guardRuntime'].filter(key => p[key] !== undefined)])
+        ...['secretPaths', 'relatedCheckouts', 'unresolved', 'writePaths', 'relatedReserved', 'externalSearchDirectories', 'guardRuntime',
+            'agentHomes', 'agentMemoryKeys', 'agentType', 'agentWorkspaces', 'agentReadAreas'].filter(key => p[key] !== undefined)])
         || p.readPaths !== undefined && (!strings(p.readPaths) || p.readPaths.length > 64 || !p.readPaths.every(canonical))
         || p.externalReads !== undefined && p.externalReads !== 'grant' && p.externalReads !== 'native'
         || p.unresolved !== undefined && p.unresolved !== 'ask' && p.unresolved !== 'deny'
         || [p.writePaths, p.relatedReserved, p.guardRuntime].some(list => list !== undefined && (!strings(list) || list.length > 64 * 16 || !list.every(canonical)))
         // A write path that is the home directory or above it would admit every shell startup file below.
         || Array.isArray(p.writePaths) && typeof p.homeDirectory === 'string' && (p.writePaths as string[]).some(path => within(p.homeDirectory as string, path))
+        || !agentAreas(p)
         || p.secretPaths !== undefined && (!strings(p.secretPaths) || p.secretPaths.length > GUARD_LOCATION_LIMITS.secretPaths || !p.secretPaths.every(canonical))
         || p.relatedCheckouts !== undefined && (!strings(p.relatedCheckouts) || p.relatedCheckouts.length > 16 || !p.relatedCheckouts.every(canonical))
         || p.externalSearchDirectories !== undefined && (!strings(p.externalSearchDirectories) || p.externalSearchDirectories.length > GUARD_LOCATION_LIMITS.searchPathDirectories
@@ -826,6 +855,11 @@ function unzipWrites(args: readonly string[]): VisibleWrites | undefined {
     return { paths: [destination], reads: archive === undefined ? [] : [archive], removes: false, uncertain: uncertain || archive === undefined }
 }
 
+const AGENT_HOME_NAMES: Readonly<Record<AgentHomeTool, string>> = Object.freeze({
+    claude: 'Claude Code\'s own directory', codex: 'Codex\'s own directory',
+    'opencode-data': 'OpenCode\'s data directory', 'opencode-config': 'OpenCode\'s configuration directory',
+})
+
 const CHMOD_CLAUSE = '[ugoa]*(?:[-+=][rwxXstugo]*)+'
 const CHMOD_MODE = new RegExp(`^(?:[0-7]{1,4}|${CHMOD_CLAUSE}(?:,${CHMOD_CLAUSE})*)$`)
 
@@ -838,6 +872,28 @@ function keepsOwnerRead(mode: string): boolean {
         return [...match[2]!.matchAll(/([-+=])([rwxXst]*)/g)].every(([, operator, permissions]) =>
             operator === '+' || operator === '-' && !permissions!.includes('r') || operator === '=' && permissions!.includes('r'))
     })
+}
+
+// Whether a mode sets an execute, set-id or sticky bit, or copies one from another class; a mode the
+// guard cannot read counts as setting one.
+function executableMode(mode: string | undefined): boolean {
+    if (mode === undefined || !CHMOD_MODE.test(mode)) return true
+    if (/^[0-7]+$/.test(mode)) return (Number.parseInt(mode, 8) & 0o7111) !== 0
+    return mode.split(',').some(clause => /[+=][rwxXstugo]*[xXstugo]/.test(clause))
+}
+
+/** Whether a writer leaves a file it names executable: `chmod` with such a mode, or `install`, whose default mode is 0755. */
+function setsExecutableBit(invocation: ParsedInvocation): boolean {
+    const name = posix.basename(invocation.executable ?? '')
+    const args = invocation.argv
+    if (name === 'chmod') {
+        if (args.some(arg => arg.startsWith('--reference'))) return true
+        return executableMode(args.find(arg => !/^-[fhvRHLPECNiI]+$/.test(arg) && arg !== '--'))
+    }
+    if (name !== 'install' || args.some(arg => arg === '-d' || arg === '--directory' || /^-[A-Za-z]*d/.test(arg) && !arg.startsWith('--'))) return false
+    const at = args.findIndex(arg => arg === '-m' || arg === '--mode')
+    const attached = args.find(arg => /^-m./.test(arg) || arg.startsWith('--mode='))
+    return executableMode(at >= 0 ? args[at + 1] : attached?.replace(/^-m|^--mode=/, ''))
 }
 
 const GIT_CONFIG_READ_ACTIONS = new Set(['--get', '--get-all', '--get-regexp', '--get-urlmatch', '--get-color', '--get-colorbool', '--list', '-l'])
@@ -1120,6 +1176,14 @@ export function guardFirmlinkStripped(path: string): string {
     return stripped === path ? path : stripped || '/'
 }
 
+/** A credential by its own name: a key file anywhere, or a store below the home directory, not the directories holding them. */
+function credentialName(spelled: string, home: string | undefined): boolean {
+    const folded = unfirmlinked(spelled)
+    if (KEY_FILE.test(posix.basename(folded))) return true
+    if (home === undefined || !within(folded, fold(home)) || folded === fold(home)) return false
+    return HOME_CREDENTIALS.some(pattern => pattern.test(folded.slice(fold(home).length + 1)))
+}
+
 function credentialStore(spelled: string, home: string | undefined): boolean {
     const folded = unfirmlinked(spelled)
     if (KEY_FILE.test(posix.basename(folded))) return true
@@ -1149,6 +1213,13 @@ const SYSTEM_RUN_CONFIGURATION = ['/etc', '/private/etc', '/library', '/system',
 // them, and direnv's `.envrc`, which runs when a shell enters its directory.
 const NAMED_RUN_CONFIGURATION = new Set(['.cockpit', '.claude', '.codex', '.opencode', '.cursor', '.grok', '.gemini', '.git', '.husky', '.githooks'])
 const NAMED_RUN_FILES = new Set(['opencode.json', 'opencode.jsonc', '.envrc', '.mcp.json'])
+// What an agent tool loads from the directory a session starts in, beyond its configuration directory.
+const NAMED_INSTRUCTION_FILES = new Set(['claude.md', 'claude.local.md', 'agents.md', 'agents.override.md'])
+// Below a temp directory: Claude Code's own trees for every session (`claude-<uid>`, wherever
+// CLAUDE_CODE_TMPDIR puts them), whose current session's scratchpad is admitted on its own; the
+// staging cockpit itself creates and then runs; and caches programs load as code or paths, such as
+// the developer-tools lookup the system Git consults and Node's compile cache.
+const TEMP_RESERVED = /(?:^|\/)claude-\d+(?:\/|$)|^(?:cockpit-[^/]*|xcrun_db[^/]*|node-compile-cache)(?:\/|$)/
 
 function externalWriteHazard(spelled: string, home: string | undefined, searchDirectories: readonly string[]): string | undefined {
     const folded = unfirmlinked(spelled)
@@ -1917,6 +1988,29 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const inRelatedCheckout = (lexical: string) => relatedCheckouts.some((path) => within(fold(lexical), path))
     const relatedDenial = deny(`Refusing to change a checkout [guards] related_checkouts names in ${posix.basename(resolved.configPath)}: agents read it and run read-only Git there, such as \`git -C <checkout> log\`, status, diff or show, but write, commit, push or run anything else there only from a session started in that checkout.`)
     const writePaths = resolved.writePaths ?? []
+    // The running agent tool's own directories and workspaces, judged on where a path lands as write paths are.
+    const agentHomes = resolved.agentHomes ?? []
+    const agentWorkspaces = resolved.agentWorkspaces ?? []
+    const agentReadAreas = resolved.agentReadAreas ?? []
+    const memoryKeys = new Set((resolved.agentMemoryKeys ?? []).map(fold))
+    const agentHomeOf = (path: string) => agentHomes.find(home => within(path, home.path))
+    const agentWorkspaceOf = (path: string) => agentWorkspaces.find(area => within(path, area.path)
+        && !(area.kind === 'temp' && TEMP_RESERVED.test(fold(posix.relative(area.path, path)))))
+    // An agent reads its tool's data and controls, its workspaces and its session's temp tree; never a credential, and
+    // an entry the table does not classify asks.
+    const agentReadable = (lexical: string) => {
+        const home = agentHomeOf(lexical)
+        if (!home) return agentWorkspaceOf(lexical) !== undefined || agentReadAreas.some(area => within(lexical, area))
+        const relative = fold(posix.relative(home.path, lexical))
+        const entry = relative ? classifyAgentHomeEntry(home.tool, relative) : undefined
+        return relative === '' || entry !== undefined && entry.kind !== 'credential'
+    }
+    // Set while the invocation being judged makes or moves a link, moves a file or directory, or leaves a file it names executable.
+    let linking = false
+    let moving = false
+    let settingExecutable = false
+    // A write into an entry of the tool's home that the table does not classify: a person decides it.
+    let unclassifiedAsk: GuardDecision | undefined
     // Sync writes a guard script at `.cockpit/guards`, and a Codex session runs the one it finds above it,
     // so no agent writes such a path, nor a directory named `.cockpit` that one could be moved into, anywhere.
     const guardScriptLocation = (folded: string) => {
@@ -1938,7 +2032,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const stripped = guardFirmlinkStripped(lexical)
         if (stripped === lexical) return false
         const folded = fold(stripped)
-        return [...resolved.allowedRoots, ...resolved.relatedCheckouts ?? [], ...relatedReserved, ...writePaths, ...resolved.secretPaths ?? []]
+        return [...resolved.allowedRoots, ...resolved.relatedCheckouts ?? [], ...relatedReserved, ...writePaths, ...resolved.secretPaths ?? [],
+            ...agentHomes.map(home => home.path), ...agentWorkspaces.map(area => area.path)]
             .some((path) => within(folded, fold(path)))
     }
     const aliasDenial = (path: string) => deny(`Refusing ${shownGuardWord(path)}: it names the cockpit, a related checkout or a write path through /System/Volumes/Data or /Volumes, a second spelling the guard does not judge. Name the path from /, as the cockpit does.`)
@@ -1987,7 +2082,17 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (!boundaryAsks.has(invocation)) boundaryAsks.set(invocation, decision)
     }
     const open = resolved.defaultDecision === 'allow'
-    const credential = (folded: string) => credentialStore(folded, resolved.homeDirectory)
+    // In the agent tool's own directories only the credential entries and key-file names are credentials; the
+    // directory as a whole is not, or the agent could not read back its own memory and tool output.
+    const credential = (folded: string) => {
+        const home = agentHomes.find(item => within(folded, fold(item.path)))
+        if (home) {
+            const relative = posix.relative(fold(home.path), folded)
+            return relative !== '' && classifyAgentHomeEntry(home.tool, relative)?.kind === 'credential' || credentialName(folded, resolved.homeDirectory)
+        }
+        if ([...agentWorkspaces.map(area => area.path), ...agentReadAreas].some(area => within(folded, fold(area)))) return credentialName(folded, resolved.homeDirectory)
+        return credentialStore(folded, resolved.homeDirectory)
+    }
     const credentialDenial = deny('Refusing to read, print or send a credential store: SSH and cloud keys, token files such as ~/.npmrc, ~/.netrc or ~/.codex/auth.json, agent tool and deployment CLI logins, shell histories, and .pem, .p12 or id_* key files hold credentials. A person handles them.')
     // The current branch and where a bare push goes, for the repository at `cwd`, as Git reports them.
     const branchFacts = (cwd: string): BranchFacts | undefined => {
@@ -2080,20 +2185,75 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     // existing links lead (as the system resolves them, and from / for a Data volume spelling). One that
     // lands in the roots is judged there; in a related checkout, a secret path or the code the guard runs,
     // it is refused; below a write path the locations that change what runs later stay refused.
-    const judgeExternalWrite = (request: PathInspectionRequest, lexical: string) => {
-        if (!writePaths.length) {
-            hold(unavailable('Guard path escapes configured roots. This command writes outside every root this cockpit manages, and no [guards] allow rule grants a write there: write inside the cockpit, or a person runs the command.'))
-            return
-        }
+    const noWritePath = unavailable('Guard path escapes configured roots. This command writes outside every root this cockpit manages, and no [guards] allow rule grants a write there: write inside the cockpit, or a person runs the command.')
+    // Where a write outside the roots lands once existing links are followed, and how many names the file has.
+    const externalLanding = (request: PathInspectionRequest, lexical: string): { readonly landsAt: string; readonly links?: number } | undefined => {
         let evidence: JsonSnapshot | undefined
         try { evidence = snapshotJson(inspect({ path: request.path, cwd: request.cwd, operation: 'external-write' })) } catch (error) { inspectionFailure = errorCause(error) }
-        const reported = record(evidence) && evidence.status === 'resolved' && evidence.path === lexical && canonical(evidence.landsAt)
-            && (evidence.links === undefined || typeof evidence.links === 'number' && Number.isSafeInteger(evidence.links) && evidence.links >= 1) ? evidence.landsAt : undefined
-        if (reported === undefined) {
+        return record(evidence) && evidence.status === 'resolved' && evidence.path === lexical && canonical(evidence.landsAt)
+            && (evidence.links === undefined || typeof evidence.links === 'number' && Number.isSafeInteger(evidence.links) && evidence.links >= 1)
+            ? { landsAt: guardFirmlinkStripped(evidence.landsAt), ...typeof evidence.links === 'number' ? { links: evidence.links } : {} } : undefined
+    }
+    // The agent tool's own data and workspaces take named files only: no link, no executable, nothing a tool,
+    // a shell or Git loads as configuration, and in the tool's home only the entries its table names as data.
+    // Returns whether the write lands in one of them, so no other rule judges it.
+    const judgeAgentWrite = (request: PathInspectionRequest, lexical: string, landsAt: string, removing: boolean): boolean => {
+        const home = agentHomeOf(landsAt)
+        const workspace = home ? undefined : agentWorkspaceOf(landsAt)
+        if (!home && !workspace) return false
+        const owner = home ? AGENT_HOME_NAMES[home.tool] : workspace!.kind === 'scratchpad' ? 'the session scratchpad' : 'a temp directory'
+        const refuse = (why: string) => { hold(deny(`Refusing to write ${shownGuardWord(request.path)}: ${why}. A person makes this change.`)); return true }
+        if (linking) return refuse(`the command makes or moves a link in ${owner}, which a later write could follow anywhere`)
+        if (settingExecutable) return refuse(`the command leaves a file in ${owner} executable, which a later command could run in place of a program the guard judges`)
+        // A move carries a whole directory, whose files the guard does not see, into or out of an entry it classified by name.
+        if (home && moving) return refuse(`the command moves files into or out of ${owner}, and a moved directory carries files the guard does not see`)
+        const folded = fold(landsAt)
+        for (const spelled of [fold(lexical), folded]) {
+            if (credentialName(spelled, resolved.homeDirectory)) return refuse('it names a credential store or key file')
+            if (dotenvName(posix.basename(spelled)) || spelled.split('/').includes('.secrets')) return refuse('it names an environment file or secrets directory')
+        }
+        if ((resolved.externalSearchDirectories ?? []).some(directory => posix.dirname(folded) === fold(directory) || within(fold(directory), folded))) {
+            return refuse('it lands in a command search path directory, where a file runs in place of a command')
+        }
+        const relative = fold(posix.relative(home?.path ?? workspace!.path, landsAt))
+        const segments = relative ? relative.split('/') : []
+        if (removing && segments.length <= (home ? 1 : 0)) return refuse(`it removes ${home ? 'a whole entry of ' : ''}${owner}, not the files in it`)
+        const entry = home && segments.length ? classifyAgentHomeEntry(home.tool, relative) : undefined
+        if (entry && entry.kind !== 'data') return refuse(`it is ${entry.kind === 'credential' ? 'a credential' : 'a control'} in ${owner}: ${entry.why}`)
+        if (segments.some(name => NAMED_RUN_CONFIGURATION.has(name)) || NAMED_RUN_FILES.has(segments.at(-1) ?? '')
+            || !home && (NAMED_INSTRUCTION_FILES.has(segments.at(-1) ?? '') || segments.includes('.agents'))) {
+            return refuse(`it is configuration, instructions or Git hooks that an agent tool, a shell or Git loads from ${owner}`)
+        }
+        // A temp directory is judged as any location outside the roots: what a shell, Git or the system runs later stays refused.
+        const hazard = home ? undefined : externalWriteHazard(folded, resolved.homeDirectory, [])
+        if (hazard) return refuse(`it is ${hazard}`)
+        // The home directory itself, as `mkdir -p` names it on the way to an entry.
+        if (!home || !segments.length) return true
+        if (!entry) {
+            unclassifiedAsk ??= ask(`${shownGuardWord(request.path)} is in ${owner} under ${segments[0]}, which cockpit does not classify as the tool's data, a control or a credential, so a person decides whether an agent writes it.`)
+            return true
+        }
+        if (home.tool !== 'claude') return true
+        // Claude Code loads a project's MEMORY.md and resumes its transcripts in every session there, so another
+        // project's files steer sessions this cockpit never sees.
+        const project = /^projects\/([^/]+)/.exec(relative)?.[1]
+        if (project !== undefined && !memoryKeys.has(project)) return refuse('it is another project\'s Claude Code memory or transcripts, which load into that project\'s sessions; agents here write only this cockpit\'s own projects')
+        // A subagent's memory loads into that subagent in every project, so only the subagent the payload names writes its own.
+        const subagent = /^agent-memory\/([^/]+)/.exec(relative)?.[1]
+        if (subagent !== undefined && subagent !== fold(resolved.agentType ?? '')) return refuse('it is the memory of a subagent other than the one making this call, which loads into that subagent in every project')
+        return true
+    }
+    const judgeExternalWrite = (request: PathInspectionRequest, lexical: string, removing = false) => {
+        if (!writePaths.length && !agentHomes.length && !agentWorkspaces.length) {
+            hold(noWritePath)
+            return
+        }
+        const landing = externalLanding(request, lexical)
+        if (landing === undefined) {
             hold(unavailable(`Guard could not tell where a write outside the configured roots lands, so it cannot rule out a link into a location it protects: ${shownGuardWord(request.path)}. Write to a path that exists up to its parent directory, or a person runs it.`))
             return
         }
-        const landsAt = guardFirmlinkStripped(reported)
+        const { landsAt } = landing
         const folded = fold(landsAt)
         if (inRelatedCheckout(landsAt) || reservedForRelated(landsAt)) { hold(relatedDenial); return }
         if (resolved.allowedRoots.some((root) => within(folded, fold(root)))) {
@@ -2105,14 +2265,16 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         }
         if (guardScriptLocation(folded)) { hold(guardScriptDenial); return }
         if (unseenMembers) {
-            hold(deny(`Refusing ${shownGuardWord(request.path)}: the command writes files whose names it chooses itself, as an extraction, a sync of a directory, a recursive copy, a clone or a download of an archive does, and outside the roots a write path admits only writes that name each file. Write it inside the cockpit and copy the files you need by name.`))
+            hold(deny(`Refusing ${shownGuardWord(request.path)}: the command writes files whose names it chooses itself, as an extraction, a sync of a directory, a recursive copy, a clone or a download of an archive does, and outside the roots a write path or agent workspace admits only writes that name each file. Write it inside the cockpit and copy the files you need by name.`))
             return
         }
-        if (evidence !== undefined && record(evidence) && typeof evidence.links === 'number' && evidence.links > 1) { hold(hardLinkDenial); return }
+        if (landing.links !== undefined && landing.links > 1) { hold(hardLinkDenial); return }
         if ([...resolved.guardRuntime ?? [], ...resolved.cockpitPackageDirectories ?? [], ...resolved.executionDirectories].some((path) => within(folded, fold(path)))) {
             hold(executionDenial)
             return
         }
+        if (judgeAgentWrite(request, lexical, landsAt, removing)) return
+        if (!writePaths.length) { hold(noWritePath); return }
         const area = writePaths.find((path) => within(landsAt, path))
         if (area === undefined) { hold(outsideWriteRefusal); return }
         const hazard = externalWriteHazard(fold(lexical), resolved.homeDirectory, resolved.externalSearchDirectories ?? [])
@@ -2208,9 +2370,12 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (aliasedLocation(lexical)) { hold(aliasDenial(path)); return false }
         if (inRelatedCheckout(lexical) || reservedForRelated(lexical)) { hold(relatedDenial); return false }
         if (!resolved.allowedRoots.some((root) => within(lexical, root))) {
-            // Removing below a write path, as `mv` does to its source, is a write there; anywhere else outside it asks, as before.
-            if (!writePaths.length || !writePaths.some((area) => within(lexical, area))) return true
-            judgeExternalWrite({ path, cwd, operation: 'write' }, lexical)
+            // Removing in the agent's own data or workspaces, or below a write path, as `mv` does to its source, is a
+            // write there; anywhere else outside it asks, as before.
+            const landing = agentHomes.length || agentWorkspaces.length ? externalLanding({ path, cwd, operation: 'write' }, lexical) : undefined
+            const agentOwn = landing !== undefined && (agentHomeOf(landing.landsAt) !== undefined || agentWorkspaceOf(landing.landsAt) !== undefined)
+            if (!agentOwn && (!writePaths.length || !writePaths.some((area) => within(lexical, area)))) return true
+            judgeExternalWrite({ path, cwd, operation: 'write' }, lexical, true)
             return false
         }
         const evidence = inspectPath({ path, cwd, operation: 'remove' })
@@ -2286,6 +2451,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     // A person's read paths, or native external reads, admit named reads outside the roots; the
     // application then admits only an existing regular file, or a directory to list.
     const readableOutside = (lexical: string) => resolved.externalReads === 'native' || (resolved.readPaths ?? []).some(path => within(lexical, path)) || inRelatedCheckout(lexical)
+        || agentReadable(lexical)
     const inspectReadOnly = (access: ReadOnlyAccess, chainReadOnly = false, approvedExternalRead = false): boolean => {
         let safe = true
         searchBlocker = undefined
@@ -2514,6 +2680,10 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (resolved.vendorHosts.some((host) => hostUsed(word.value, host))) hold(deny('Refusing executable use of a declared vendor host.'))
         }
         inspectPath({ path: invocation.cwd, cwd: invocation.cwd, operation: 'cwd' })
+        // A redirect writes the file it names, whatever the command does to its operands.
+        linking = false
+        moving = false
+        settingExecutable = false
         for (const redirect of invocation.redirects) {
             // A control file's own denial names the stronger boundary, so it is held last.
             if (redirect.truncate) inspectRemoval(redirect.target, invocation.cwd)
@@ -2526,6 +2696,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         }
         const git = gitInvocation(invocation)
         unseenMembers = writesUnseenMembers(invocation, git)
+        linking = linkMakers.includes(invocation)
+        moving = git?.verb === 'mv' || posix.basename(invocation.executable ?? '') === 'mv'
+        settingExecutable = setsExecutableBit(invocation)
         const executableName = posix.basename(invocation.executable ?? '')
         const removed = removedOperands(invocation, git)
         for (const path of removed?.paths ?? []) {
@@ -3033,6 +3206,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (!operands) holdBoundary(invocation, ask('Staging without explicit paths requires human approval.'))
         }
     }
+    linking = false
+    moving = false
+    settingExecutable = false
     if (pathCount > GUARD_INPUT_LIMITS.paths) hold(unavailable('Guard path limit exceeded.'))
     if (hardDeny) return hardDeny
     for (const invocation of invocations) {
@@ -3040,6 +3216,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (declared) return deny(`${declared.reason}${declared.fix ? ` Fix: ${declared.fix}` : ''}`)
     }
     if (authorityUnavailable) return authorityUnavailable
+    if (unclassifiedAsk) return unclassifiedAsk
     const declaredReasons: string[] = []
     for (const invocation of invocations) {
         const barrier = approvalBarriers.get(invocation)

@@ -74,7 +74,7 @@ The blocked list below is refused in every mode, and no `[[guards.allow]]` rule 
 | Blocked | What the guard checks |
 | --- | --- |
 | Secrets | A command that names an `.env*` file (other than documentation names and declared templates), a `.secrets` directory, a declared instance, a [`[guards] secret_paths`](#instances-secrets-and-hosted-endpoints) entry or a credential store: in its arguments (including `--body-file`, `-T` and `@file` values), an input or output redirect, a link source, an assignment value, a loop item, an unexpanded glob that can match one, or a file tool's path. Any known tool given such a name is refused, whether it reads, prints, copies or sends the file (`sort`, `xxd`, `awk`, `curl -T`, `gh gist create`); only a program the guard does not know, such as `docker compose --env-file .env up`, asks, because it may only pass the name on. Credential stores are the files and directories below the home directory that hold tokens and keys, such as `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh/hosts.yml`, `~/.netrc`, `~/.npmrc`, `~/.pgpass`, `~/.docker/config.json`, `~/.kube/config` and `~/.codex/auth.json`, the logins of other agent tools and deployment CLIs (opencode's `auth.json`, `~/.claude.json`, GitHub Copilot's `~/.config/github-copilot`, Vercel, including `~/.vercel`, Wrangler, Stripe, Supabase, Fly, Netlify, including `~/.netlify`, Firebase, Heroku's `~/.heroku`, `sentry-cli`, `hub` and `doctl`; older locations a tool may no longer write are listed too), shell histories (`~/.zsh_history`, `~/.bash_history`, fish's history), any directory above them, and `.pem`, `.p12`, `.pfx`, `.key` and `id_*` key files anywhere; the [evaluator](../packages/cockpit/src/guards/evaluator.ts) holds the full list. Also refused: a live payment secret or restricted key (`sk` or `rk`, then `_live_` and 24 or more letters and digits) written into a command's arguments or assignments, since a command line lands in shell history and transcripts, while a test key of the same shape runs; commands that print a credential without naming a file (`gh auth token`, `git credential`, `git remote -v`, `git remote get-url` and `git ls-remote --get-url` while a configured remote URL or http header carries a credential, `aws configure get` of a secret, `gcloud auth print-access-token`, `az account get-access-token`, `security find-generic-password -w`, `op read`, `git var -l`), environment dumps (`env`, `printenv`, `export -p`, `declare -x`, `set`, `ps e`, `npm run env` and its `yarn` and `pnpm` forms, `make -p`, an `awk` program that reads `ENVIRON`, a `gh` `--jq` filter that reads `env` or `$ENV`, and `declare -p` or `typeset -p` of a secret's name) and printing a variable whose name holds TOKEN, SECRET, KEY, PASS, PASSWORD, PAT or CREDENTIAL. |
-| Writes outside the cockpit | Redirects, writer destinations (`cp`, `mv`, `tee`, `touch`, `mkdir`, `ln`, `dd`, `tar -x`, removers), write options (`--output`, `curl -o`, `wget -O`, `sort -o`, `sed -i`, `perl -i`; for `curl` also `-w '%output{file}'`, a `#N` output template with a URL glob, `-O`, `-J`, `--etag-save`, `--hsts`, `--alt-svc` and `--libcurl`; for `wget` the names it writes into the working directory or its `-P` directory, and its recursive forms; for decompressors the operand's name without its suffix; for `gh release download` and `gh run download` the `-D` directory, refused when the `-p` patterns could match a guard file there and asked when the names are unknown; and the directory `gh repo clone` and `gh gist clone` create), any operand outside the cockpit of `rsync`, `ditto`, `scp`, `unzip`, `patch`, `uniq`, `split` and similar writers, the new repository, worktree or bundle of `git clone`, `init`, `worktree add` and `bundle create`, and a working directory outside the cockpit and its siblings. Writing to `/dev/null`, `/dev/stdout` or `/dev/stderr` is exempt. Under the allow default any command that names a path outside the cockpit follows `[guards] external_reads`. A [`[guards] write_paths`](#writes-outside-the-roots) entry admits the writes that land below it, except the locations that section lists. |
+| Writes outside the cockpit | Redirects, writer destinations (`cp`, `mv`, `tee`, `touch`, `mkdir`, `ln`, `dd`, `tar -x`, removers), write options (`--output`, `curl -o`, `wget -O`, `sort -o`, `sed -i`, `perl -i`; for `curl` also `-w '%output{file}'`, a `#N` output template with a URL glob, `-O`, `-J`, `--etag-save`, `--hsts`, `--alt-svc` and `--libcurl`; for `wget` the names it writes into the working directory or its `-P` directory, and its recursive forms; for decompressors the operand's name without its suffix; for `gh release download` and `gh run download` the `-D` directory, refused when the `-p` patterns could match a guard file there and asked when the names are unknown; and the directory `gh repo clone` and `gh gist clone` create), any operand outside the cockpit of `rsync`, `ditto`, `scp`, `unzip`, `patch`, `uniq`, `split` and similar writers, the new repository, worktree or bundle of `git clone`, `init`, `worktree add` and `bundle create`, and a working directory outside the cockpit and its siblings. Writing to `/dev/null`, `/dev/stdout` or `/dev/stderr` is exempt. Under the allow default any command that names a path outside the cockpit follows `[guards] external_reads`. A [`[guards] write_paths`](#writes-outside-the-roots) entry admits the writes that land below it, except the locations that section lists, and the running agent tool's own files are admitted without one, as [Agent workspaces](#agent-workspaces) describes. |
 | Branches and history | Force pushes of any branch (`--force`, `--force-with-lease`, a `+` refspec), pushes to a protected branch, remote branch deletion (`--delete`, `:branch`, `--prune`, `--mirror`), and rewriting a protected branch's history (`commit --amend`, `rebase`, `reset` to another commit, `update-ref HEAD`, `filter-branch`, `rebase <upstream> <protected>`, `rebase --onto <base> <upstream> <protected>`) or moving, resetting or deleting it, including `heads/<branch>` destinations, a fetch refspec into it (`git fetch . +topic:main`), `git send-pack` and GitHub API writes to a protected branch's ref. Force flags count when bundled or abbreviated (`-uf`, `--forc`). A push option the guard does not know asks. A push that names no destination is resolved from the repository's `@{push}`; one Git cannot resolve asks, and so does a push or rewrite that rests on the current branch after an earlier command in the same call that could move it. |
 | Declared hosts | Any spelled use of a `hosted_db_hosts` or `vendor_endpoint_hosts` name. The match is lexical: a CLI with a built-in endpoint, such as `gh`, reaches its host without naming it. |
 | The guard itself | Writes to hook registrations, `.cockpit/guards`, `.cockpit/local`, the installed cockpit, `node_modules/.bin` and `.npmrc`, including through glob or magic Git pathspecs and `--cacheinfo`; widening edits to `cockpit.toml`, which wait for a person's `sync`, and an agent's `sync` or `upgrade` while one waits; `node <copy>/dist/cli.js sync` or `upgrade` from a copy of cockpit inside the roots, which would make the guard run that copy; cockpit commands its own table does not admit (`sync --interactive`, `sync --adopt`, `sibling add` and the rest), however spelled (`npm run cockpit:sync`, `pnpm exec cockpit`, a path to `cockpit.mjs`), which ask and which no rule admits; direct `.git` writes; `git config` keys that choose a program (hooks, fsmonitor, pagers, editors, helpers, aliases, filters, drivers, includes, remotes, templates, submodules); `git -c` with such a key; `--no-verify` and its abbreviations; `pre-commit`, `husky` and `lefthook` `uninstall`; `git init` and `clone` with `--template`; transfer options that name a program (`--upload-pack`, `--receive-pack`, `--exec`); and assignments, prefixed or exported, that steer Git, its hooks or the command search path (`GIT_*`, `HOME`, `XDG_CONFIG_HOME`, `HUSKY`, `SKIP`, `LEFTHOOK`, a relative `PATH` entry, `set -a`). |
@@ -108,6 +108,16 @@ Limits, stated plainly:
   `workspace-write` sandbox, which cockpit selects once a sibling is granted to Codex, keeps `.codex`
   read-only to a Codex agent; an agent in another tool can still rewrite it where that tool's
   protection does not cover the shell.
+- Claude Code reads a project's `.claude/settings.json` only from the directory a session starts in.
+  Started in a subdirectory of the cockpit, it does not load the cockpit's hook registration, so the
+  guard does not run for that session: start Claude Code at the cockpit root. Measured on 2026-11-13
+  with Claude Code 2.1.323: `claude -p --setting-sources project` started in the root of a throwaway
+  repository ran the root's logging hook, and started one or two directories below it ran none,
+  while the shell command still ran. With the root file replaced by malformed JSON, the debug log
+  named it as invalid from the root and never named it from the subdirectory. A
+  `.claude/settings.json` in the subdirectory ran there, and so did a hook in the root's
+  `.claude/settings.local.json` with `--setting-sources project,local`, whose malformed twin was
+  named from the subdirectory too.
 - What a harness does when its hook timeout fires is not measured. The guard keeps its own 25-second
   deadline and refuses at it ([Native adapter behavior](#native-adapter-behavior)).
 
@@ -714,13 +724,90 @@ anywhere; any cockpit's guard controls and generated hooks, as a `.cockpit`, `.c
 command search path directories; launch agents and daemons, cron and the system's own directories
 (`/etc`, `/Library`, `/System`, `/usr`). The list is the `externalWriteHazard` rule in the
 [evaluator](../packages/cockpit/src/guards/evaluator.ts). Naming a path outside the roots still
-follows `external_reads`, since any command may read what it names. Adding a write path widens what
+follows `external_reads`, since any command may read what it names. The running agent tool's own
+files are admitted apart from write paths, as [Agent workspaces](#agent-workspaces) describes. Adding a write path widens what
 agents may do and waits for a person's sync; removing one narrows.
 
 A path spelled through `/System/Volumes/Data` or `/Volumes` that reaches the cockpit, a sibling, a
 related checkout, a secret path or a write path is refused wherever a call names it, as a word, an
 option value, a redirect, a file tool's target or a working directory: it is the same location under
 a second spelling the guard's rules do not compare. Name it from `/`.
+
+### Agent workspaces
+
+An agent tool keeps its own working files outside the cockpit: Claude Code's auto memory, plans,
+transcripts and spilled tool output, Codex's memory notes and sessions, OpenCode's tool output, and
+each tool's temp files. The guard admits them by default, in every mode and with no configuration,
+so an agent's memory, plans, scratch and temp files never wait for a person. Each location is
+derived on every call from what the harness reports, never from a guessed layout:
+
+| Area | Where | Derived from |
+| --- | --- | --- |
+| The running tool's home | Claude Code: `CLAUDE_CONFIG_DIR`, else `~/.claude`. Codex: `CODEX_HOME`, else the directory above `sessions/` in the payload's `transcript_path`, else `~/.codex`. OpenCode: `opencode` below `XDG_DATA_HOME` (else `~/.local/share`) and below `XDG_CONFIG_HOME` (else `~/.config`). | The hook's environment and payload |
+| Claude Code's session scratchpad | The payload's `scratchpad_dir`; otherwise `claude-<uid>/<project>/<session_id>/scratchpad` below `CLAUDE_CODE_TMPDIR` or `/tmp`, where `<project>` names the transcript's directory | The payload's `transcript_path` and `session_id`, and the user id |
+| Claude Code's session temp tree, read only | The directory holding that scratchpad, where task output lands | As above |
+| Temp | `TMPDIR` when it is a directory the user owns that no one else may enter, and `/tmp`, each also under the spelling that leads there, such as `/tmp` for `/private/tmp` | The hook's environment and the directory's owner and mode |
+
+Only the running tool's own home counts: a Codex session does not write Claude Code's files. Below a
+home, each entry is classified by the table in
+[`agent-homes.ts`](../packages/cockpit/src/guards/agent-homes.ts):
+
+| Class | Read | Write | Claude Code | Codex | OpenCode |
+| --- | --- | --- | --- | --- | --- |
+| Data | allowed | allowed, file by file | `projects/` (transcripts, spilled tool output, auto memory), `plans/`, `tasks/`, `agent-memory/`, `debug/`, `paste-cache/`, `uploads/`, `feedback/`, `usage-data/`, `cache/`, `sessions/`, `history.jsonl`, `stats-cache.json` and the legacy `todos/`, `statsig/`, `logs/`, `image-cache/` | memory notes (`memories*/extensions/ad_hoc/notes/`), `sessions/`, `archived_sessions/`, `log/`, `history.jsonl`, `session_index.jsonl`, `cache/`, `tmp/`, `.tmp/`, `attachments/`, `generated_images/` and the state databases | data directory: `opencode.db*`, `log/`, `tool-output/`, `storage/` |
+| Control | allowed | refused | `settings*`, `CLAUDE.md`, `rules/`, `skills/`, `commands/`, `output-styles/`, `agents/`, `workflows/`, `hooks/`, `plugins/`, `dev-mods/`, `keybindings.json`, `themes/`, `statusline*`, remote and policy settings; `shell-snapshots/` and `session-env/`, which the shell sources before each command; `file-history/`, which a checkpoint restore writes back into project files | `config.toml` and its copies and profiles, `hooks.json`, `AGENTS.md`, `instructions.md`, `prompts/`, `rules/`, `skills/`, `plugins/`, `packages/`, `vendor_imports/`, `shell_snapshots/`, the global state file, plugins below `.tmp`, and the rest of `memories*`, whose consolidated memories load into every later session | the whole configuration directory, and the data directory's `snapshot/`, Git directories OpenCode runs Git against |
+| Credential | refused | refused | `.credentials.json`, `.claude.json` (and `~/.claude.json`), `backups/` (copies of it) and `ide/` (IDE connection tokens) | `auth.json`, `auth.lock`, `mcp-oauth-locks/`, `app-server-control/`, `ipc/` | `auth.json`, `mcp-auth.json` |
+| Unknown | asks | asks | any other entry | any other entry | any other entry in the data directory |
+
+An unknown entry, such as one a tool update adds, asks rather than opening or closing silently.
+Writes below `projects/<project>/` are admitted only for this cockpit's own projects: the main
+checkout of the cockpit and of each sibling, named as Claude Code names it (each character other
+than a letter or digit becomes `-`; a name past 200 characters keeps 200, then `-` and a hash), and
+compared without regard to case. Claude Code loads a project's `MEMORY.md` and resumes its
+transcripts in every session there, so another project's files steer sessions this cockpit never
+sees. A session in a linked worktree writes its main checkout's memory. A subagent writes
+`agent-memory/<name>/` only for the `agent_type` its own calls carry, since that memory loads into
+the subagent in every project. A move into or out of a tool's home is refused: a moved directory
+carries files the guard does not see past the entry it classified.
+
+In every area, and in the temp directories, writes name each file, and these stay refused: a link
+(symbolic or hard) or a moved link, a writer whose files the guard cannot see (an extraction, a
+recursive copy, a sync of a directory), a mode with an execute, set-id or sticky bit (`chmod +x`,
+`chmod 755`, `install` without a plain mode), `.env*` and `.secrets` names, key files, a `.cockpit/guards`
+path, a file with another hard link, a command search path directory, a `.git`, `.claude`, `.codex`
+or other tool directory below the area, removing a whole area or a whole entry of a home, and in
+temp and the scratchpad also a `CLAUDE.md`, `AGENTS.md` or `.agents/` a session started there would
+load and every location the [write path list](#writes-outside-the-roots) refuses. In the temp
+directories Claude Code's own trees for every session (`claude-<uid>`, at any depth), cockpit's own
+staging (`cockpit-*`) and caches programs load (`xcrun_db*`, which the system Git consults, and
+`node-compile-cache`) are not admitted; the current session's scratchpad is, on its own. Containment
+is judged on where a path lands once every existing link is followed, as for write paths, and a
+spelling that leaves a link through `..` is refused, since the system resolves it from where the
+link leads. A file
+copied in keeps its mode, so `cp` of an executable script still leaves an executable copy: the guard
+judges modes only where a command sets one.
+
+The agent tool's own permissions still apply. Claude Code allowed auto memory writes without a
+prompt, and refused a headless write to `/tmp` itself; OpenCode asks before writing outside the
+project (`external_directory`). Cockpit writes no native permission for these areas, since none was
+needed for the guard to stop blocking them.
+
+Measured on 2026-11-13 on macOS with Claude Code 2.1.323, Codex CLI 0.168.0 and OpenCode 1.19.5. A
+throwaway repository's logging hook (a plugin for OpenCode) recorded every payload and environment
+while each tool was asked to use the feature for real:
+
+- Claude Code wrote auto memory with `Write` and `Edit` under the main repository's project name,
+  from a linked worktree and from a subdirectory too, a subagent's memory under `agent-memory/<agent>/`
+  (with `agent_type` in the payload) and a plan under `plans/`; a background command's output landed
+  in the session temp tree. A session started in a 264-character directory was named by the hashed
+  rule above. Headless sessions had no scratchpad; this session's interactive one matched the
+  derivation from its transcript, but `scratchpad_dir` in an interactive payload is documented, not
+  measured.
+- Codex wrote a memory note with its shell under `memories/extensions/ad_hoc/notes/`, as its own
+  prompt directs; its payload's `transcript_path` sits below `CODEX_HOME`.
+- OpenCode wrote nothing of its own through the hook but todos, which it stores in its database.
+- The home entries were classified from each tool's documentation and the entries present on the
+  machine, read by name only. Linux was not measured.
 
 ### Cockpit commands an agent can run
 

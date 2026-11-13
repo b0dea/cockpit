@@ -9,6 +9,7 @@ import { observeSetupCheckout } from './environment/setup-observation.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolveDockerExecutable, resolveGitExecutable } from './environment/executable.js'
 import { executeProbe, runUntilDeadline } from './environment-exec/execute.js'
 import { loadCockpitConfig } from './config/load.js'
+import { GUARD_AGENT_VARIABLES } from './guards/agent-workspaces.js'
 
 // MCP arguments are opaque to a tool-name policy; bound the native envelope before parsing it.
 const NATIVE_INPUT_BYTES = 1_048_576
@@ -59,10 +60,15 @@ export async function runGuardCommand(
             const guardRoot = env.COCKPIT_GUARD_ROOT
             if (!guardRoot) throw new RefusalError('Installed guard root is missing.')
             const guardEnvironment = env
+            // Claude Code and Codex name the session's transcript and id, and Claude Code its scratchpad and the subagent making the call; they locate the agent's own files.
+            const reported = (key: string) => typeof native?.[key] === 'string' ? native[key] as string : undefined
+            const agentSession = Object.fromEntries(([['transcriptPath', 'transcript_path'], ['sessionId', 'session_id'], ['scratchpadDir', 'scratchpad_dir'], ['agentType', 'agent_type']] as const)
+                .flatMap(([name, key]) => reported(key) === undefined ? [] : [[name, reported(key)]]))
+            const agentEnvironment = Object.fromEntries(GUARD_AGENT_VARIABLES.flatMap(name => guardEnvironment[name] ? [[name, guardEnvironment[name]]] : []))
             return await runGuardEvaluationApplication({ identity: JSON.parse(identityBytes), guardRoot, payload, harness, cwd: process.cwd(),
                 askIsDeny: guardEnvironment.COCKPIT_ASK_IS_DENY === '1',
                 ripgrepConfigActive: Object.hasOwn(guardEnvironment, 'RIPGREP_CONFIG_PATH') || guardEnvironment.COCKPIT_RIPGREP_CONFIG_ACTIVE === '1',
-                searchPath: guardEnvironment.PATH ?? '',
+                searchPath: guardEnvironment.PATH ?? '', agentSession, agentEnvironment,
                 ...guardEnvironment.HOME ? { home: guardEnvironment.HOME } : {}, ...guardEnvironment.XDG_CONFIG_HOME ? { xdgConfigHome: guardEnvironment.XDG_CONFIG_HOME } : {} }, {
                 loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
                 resolveGit: () => resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }),
