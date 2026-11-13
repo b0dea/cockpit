@@ -429,12 +429,12 @@ describe('resolved guard evaluation', () => {
         const decide = (command: string, facts?: Parameters<typeof answering>[0]) => evaluateGuard(parseGuardInput(shellPayload(command)), allowing, answering(facts)).decision
         const targets = (command: string) => { asked.length = 0; decide(command); return [...asked] }
         for (const command of ['git checkout -b feat evil', 'git checkout -B feat evil', 'git switch -c feat evil', 'git switch --create feat evil', 'git checkout --orphan feat evil']) {
-            expect(targets(command), command).toEqual([{ revision: 'evil' }])
+            expect(targets(command), command).toEqual([{ revision: 'evil', from: 'worktree' }])
             expect(decide(command, { changed: ['.cockpit/guards/bash-guard.sh'] }), command).toBe('deny')
         }
         // `checkout <rev> --` names no path: it switches branches. A stash is named by its number too.
-        expect(targets('git checkout evil --')).toEqual([{ revision: 'evil' }])
-        expect(targets('git stash apply 1')).toEqual([{ revision: 'stash@{1}', from: 'stash@{1}^1' }, { revision: 'stash@{1}^3', from: 'stash@{1}^3^', optional: true }])
+        expect(targets('git checkout evil --')).toEqual([{ revision: 'evil', from: 'worktree' }])
+        expect(targets('git stash apply 1')).toEqual([{ revision: 'stash@{1}', from: 'stash@{1}^1' }, { revision: 'stash@{1}^3', from: ':empty', optional: true }])
         // A revision Git does not resolve asks, whatever the verb.
         for (const command of ['git checkout -b feat nowhere', 'git merge nowhere', 'git switch nowhere', 'git worktree add pkg/wt nowhere']) {
             expect(decide(command, { unresolved: true }), command).toBe('ask')
@@ -451,7 +451,7 @@ describe('resolved guard evaluation', () => {
             expect(decide(command), command).toBe('ask')
         }
         // What does not touch the work tree stays allowed; what later brings it there is judged.
-        for (const command of ['git fetch origin', 'git update-ref refs/heads/topic HEAD', 'git commit-tree HEAD^{tree} -m x', 'git write-tree', 'git hash-object -w src/a.ts',
+        for (const command of ['git fetch origin', 'git write-tree', 'git hash-object -w src/a.ts',
             'git bisect log', 'git submodule status', 'git stash list', 'git stash drop']) {
             expect(decide(command), command).toBe('allow')
         }
@@ -494,15 +494,12 @@ describe('resolved guard evaluation', () => {
             ['git checkout -- deep', { revision: ':index', from: 'worktree', paths: ['deep'] }],
             ['git checkout planted -- deep', { revision: 'planted', from: 'worktree', paths: ['deep'] }],
             // Without `--`, checkout reads a first word that names no commit as a path written from the index.
-            ['git checkout deep', { revision: 'deep', fallback: 'index' }],
+            ['git checkout deep', { revision: 'deep', from: 'worktree', fallback: 'index' }],
             ['git checkout planted deep', { revision: 'planted', from: 'worktree', paths: ['deep'], fallback: 'index' }],
             ['git restore deep', { revision: ':index', from: 'worktree', paths: ['deep'] }],
             ['git restore --source planted deep', { revision: 'planted', from: 'worktree', paths: ['deep'] }],
             ['git restore -s planted -W -S deep', { revision: 'planted', from: 'worktree', paths: ['deep'] }],
             ['git checkout-index -f -- deep/x', { revision: ':index', from: 'worktree', paths: ['deep/x'] }],
-            // A new worktree holds what the revision adds to the current one's HEAD; without one, the branch named like its directory.
-            ['git worktree add pkg/old HEAD~1', { revision: 'HEAD~1' }],
-            ['git worktree add pkg/old', { revision: 'old' }],
             ['git merge planted', { revision: 'planted' }],
         ] as const) {
             asked.length = 0
@@ -511,8 +508,8 @@ describe('resolved guard evaluation', () => {
             expect(decide(command, [], ['tools/skills/probe/SKILL.md']), command).toBe('ask')
             expect(decide(command, []), command).toBe('allow')
         }
-        // Staging writes only the index, and a worktree on a new branch at HEAD holds what this one does.
-        for (const command of ['git restore --staged deep', 'git worktree add worktrees/topic -b topic', 'git worktree add --detach pkg/wt']) {
+        // Staging writes only the index.
+        for (const command of ['git restore --staged deep']) {
             asked.length = 0
             expect(decide(command, ['deep/.claude/settings.json']), command).toBe('allow')
             expect(asked, command).toEqual([])
@@ -1355,6 +1352,49 @@ describe('allow by default', () => {
         const strict = { ...open(), defaultDecision: 'ask' as const }
         for (const command of ['git commit -m done', 'npm run build', 'node --test verify.mjs', 'mkdir -p build', 'gh pr create --title Fix --body Done']) {
             expect(run(command, strict).decision, command).toBe('ask')
+        }
+    })
+
+    it('judges forced checkouts, aborts and new worktrees against the files on disk, and asks for plumbing that moves HEAD under them', () => {
+        // HEAD moved onto a crafted commit (`reset --soft`), then a forced checkout, wrote agent settings over the
+        // ones on disk while every comparison with HEAD found nothing.
+        const asked: object[] = []
+        const answering = (facts: { changed?: readonly string[]; unsettled?: readonly string[] } = {}) => (request: Parameters<PathInspection>[0]) => {
+            if (request.operation !== 'tree') return withGit(request)
+            asked.push({ revision: request.revision, ...request.from === undefined ? {} : { from: request.from }, ...request.fallback === undefined ? {} : { fallback: request.fallback },
+                ...request.optional === undefined ? {} : { optional: request.optional } })
+            return { status: 'resolved', path: posix.resolve(request.cwd, request.path), revision: request.revision, ...request.from === undefined ? {} : { from: request.from },
+                guarded: true, changed: (facts.changed ?? []).map(changed => `${root}/${changed}`), ...facts.unsettled ? { unsettled: facts.unsettled.map(path => `${root}/${path}`) } : {} }
+        }
+        const run = (command: string, facts?: Parameters<typeof answering>[0]) => evaluateGuard(parseGuardInput(shellPayload(command)), open(), (request) =>
+            request.operation === 'branch' ? onBranch('refs/heads/topic')(request) : answering(facts)(request))
+        const targets = (command: string) => { asked.length = 0; run(command); return [...asked] }
+        const disk = { from: 'worktree' }
+        for (const [command, expected] of [
+            ['git checkout -f', [{ revision: 'HEAD', ...disk }]], ['git checkout --force', [{ revision: 'HEAD', ...disk }]],
+            ['git checkout -f HEAD', [{ revision: 'HEAD', ...disk, fallback: 'index' }]], ['git switch -f main', [{ revision: 'main', ...disk }]],
+            ['git switch --discard-changes topic', [{ revision: 'topic', ...disk }]], ['git checkout -b feat evil', [{ revision: 'evil', ...disk }]],
+            ['git merge --abort', [{ revision: 'HEAD', ...disk }]],
+            ['git stash apply', [{ revision: 'stash@{0}', from: 'stash@{0}^1' }, { revision: 'stash@{0}^3', from: ':empty', optional: true }]],
+            ['git worktree add -b x pkg/wt', [{ revision: 'HEAD', ...disk }]], ['git worktree add -d pkg/wt', [{ revision: 'HEAD', ...disk }]],
+            ['git worktree add pkg/wt', [{ revision: 'wt', ...disk, fallback: 'head' }]], ['git worktree add pkg/old HEAD~1', [{ revision: 'HEAD~1', ...disk }]],
+            ['git merge --quit', []], ['git rebase --quit', []],
+        ] as const) expect(targets(command), command).toEqual(expected)
+        expect(run('git checkout -f', { changed: ['.claude/settings.local.json'] }).decision).toBe('deny')
+        // A new worktree holding a control that differs from this checkout's asks; HEAD moved off the files on disk asks.
+        expect(run('git worktree add -b x pkg/wt', { changed: ['api/.claude/settings.json'] }).decision).toBe('ask')
+        expect(run('git merge main', { unsettled: ['.claude/settings.json'] }).decision).toBe('ask')
+        // A sequence's own state records what it continues, skips or aborts to, which the guard does not read.
+        for (const command of ['git rebase --continue', 'git rebase --abort', 'git rebase --skip', 'git cherry-pick --abort', 'git cherry-pick --continue', 'git revert --skip']) {
+            expect(run(command).decision, command).toBe('ask')
+        }
+        // Plumbing that crafts objects or moves refs is what moved HEAD under the checkout, so in the cockpit it asks.
+        for (const command of ['git commit-tree HEAD^{tree} -m x', 'git mktree', 'git update-ref refs/heads/x HEAD', 'git symbolic-ref HEAD refs/heads/x', 'git stash store abc1234',
+            'git replace abc1234 def5678', 'git branch -f x HEAD~1', 'git branch -M x', 'git branch -C a b', 'git notes add -m x', 'git filter-branch', 'git filter-repo', 'git fast-import']) {
+            expect(run(command).decision, command).toBe('ask')
+        }
+        for (const command of ['git symbolic-ref HEAD', 'git notes list', 'git replace -l', 'git branch -m renamed', 'git reset --soft HEAD~1', 'git reset HEAD~1', 'git write-tree']) {
+            expect(run(command).decision, command).toBe('allow')
         }
     })
 

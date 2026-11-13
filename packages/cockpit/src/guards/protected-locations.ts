@@ -469,14 +469,18 @@ const AGENT_CONTROL_PATHSPECS = ['**/.claude/**', '**/.codex/**', '**/.opencode/
 
 /**
  * Which of `protectedPaths` the work tree holding `cwd` contains (`guarded`); which of them, or of the
- * agent controls at any depth, differ between the target's `from` and `revision` below its `paths`
- * (`changed`); and which agent instruction files do (`instructions`, when any). Null when Git could not
- * answer. A revision that names no commit writes nothing, since Git refuses it, unless the target falls
- * back to the index as checkout does; a `from` that names none compares with nothing, listing every
- * such path the revision holds.
+ * agent controls at any depth, a Git verb would write or remove (`changed`); which agent instruction
+ * files it would write that run, register or grant something, or that a Git filter would rewrite on
+ * checkout (`instructions`); and, for a verb that applies another revision's changes to HEAD, which of
+ * those paths differ between HEAD and the files on disk (`unsettled`), since its changes are then not
+ * judged against what it writes over. A target whose `from` is `worktree` is compared with the files on
+ * disk, which is what the verb overwrites: HEAD can be moved without touching them. Null when Git could
+ * not answer. A revision that names no commit is unresolved, unless the target falls back to the index
+ * or to HEAD as checkout and `worktree add` do, or is optional; a `from` that names none compares with
+ * nothing, listing every such path the revision holds.
  */
 export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, protectedPaths: readonly string[], git: ResolvedExecutable, execute: GuardExecute,
-    env: GuardGitEnvironment = {}): Promise<{ readonly guarded: boolean; readonly changed: readonly string[]; readonly instructions?: readonly string[] } | null> {
+    env: GuardGitEnvironment = {}): Promise<Readonly<{ guarded: boolean; changed: readonly string[]; instructions?: readonly string[]; unsettled?: readonly string[] }> | null> {
     const top = repositoryAbove(cwd)
     if (top === undefined) return null
     const inside = protectedPaths.filter(path => path === top || path.startsWith(`${top}/`)).map(path => relative(top, path)).filter(Boolean)
@@ -491,48 +495,68 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
     let { from, paths } = target
     let to = revision === ':index' ? revision : await commit(revision)
     if (to === null) return null
-    // A revision that names no commit is refused by Git or read as a path; only a stash's optional part writes
-    // nothing then. Any other is unresolved, which asks.
     if (to === undefined) {
         if (target.optional) return { guarded, changed: [] }
-        if (target.fallback !== 'index') return null
-        paths = [revision, ...paths ?? []]
-        to = ':index'
-        from = 'worktree'
+        if (target.fallback === 'head') to = await commit('HEAD')
+        else if (target.fallback === 'index') {
+            paths = [revision, ...paths ?? []]
+            to = ':index'
+            from = 'worktree'
+        }
+        if (!to) return null
     }
     const pathspecs = ['--', ...inside.map(path => `:(literal)${path}`), ...AGENT_CONTROL_PATHSPECS]
     // Status and name pairs, so a file the verb removes is told from one it writes.
     const diff = ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-status', '-z']
     let names: readonly string[] | null
-    if (to === ':index') names = await run([...diff, ...pathspecs])
-    else if (from === 'worktree') names = await run([...diff, to, ...pathspecs])
+    // Against the files on disk a path only they hold is one the verb removes; between revisions, one only the first holds.
+    let removed: string
+    if (to === ':index') { names = await run([...diff, ...pathspecs]); removed = '' }
+    else if (from === 'worktree') { names = await run([...diff, to, ...pathspecs]); removed = 'A' }
     else {
         const base = await commit(from ?? 'HEAD')
         if (base === null) return null
         const empty = base ?? (await run(['hash-object', '-t', 'tree', '/dev/null']))?.join('').trim()
         names = empty ? await run([...diff, empty, to, ...pathspecs]) : null
+        removed = 'D'
     }
     if (names === null) return null
     // Paths spelled as globs or magic, or reaching past the repository, leave the whole tree in scope.
     const scope = paths?.length && paths.every(path => !/^:|[*?[\\]/.test(path)) ? paths.map(path => foldGuardSpelling(relative(top, resolve(cwd, path)))) : undefined
     const inScope = (name: string) => scope === undefined || scope.some(path => path === '' || path === '..' || path.startsWith('../') || name === path || name.startsWith(`${path}/`))
+    const protectedName = (name: string) => inside.some(path => name === path || name.startsWith(`${path}/`))
+    const pairs = (listed: readonly string[]) => Array.from({ length: Math.floor(listed.length / 2) }, (_, at) => [listed[at * 2]!, listed[at * 2 + 1]!] as const)
     const changed: string[] = []
     const written: string[] = []
-    for (let at = 0; at + 1 < names.length; at += 2) {
-        const [status, name] = [names[at]!, names[at + 1]!]
+    for (const [status, name] of pairs(names)) {
         const folded = foldGuardSpelling(name)
         if (!inScope(folded)) continue
-        if (inside.some(path => name === path || name.startsWith(`${path}/`)) || plantedAgentControl(folded)) changed.push(join(top, name))
-        else if (agentInstructionFile(folded) && status !== 'D') written.push(name)
+        // Removing a nested agent setting or an instruction file takes nothing from the guard; removing a protected path does.
+        if (protectedName(name) || plantedAgentControl(folded) && status !== removed) changed.push(join(top, name))
+        else if (agentInstructionFile(folded) && status !== removed) written.push(name)
     }
     if (changed.length + written.length > GUARD_LOCATION_LIMITS.sensitivePaths) return null
-    // Each instruction file is read as the verb would write it: one that runs or registers nothing passes.
+    const unsettled: string[] = []
+    if (from !== 'worktree' && to !== ':index') {
+        const moved = await run([...diff, 'HEAD', ...pathspecs])
+        if (moved === null) return null
+        for (const [, name] of pairs(moved)) {
+            const folded = foldGuardSpelling(name)
+            if (inScope(folded) && (protectedName(name) || plantedAgentControl(folded) || agentInstructionFile(folded))) unsettled.push(join(top, name))
+        }
+    }
+    // Each instruction file is read as the verb would write it, and passes when it runs, registers and grants
+    // nothing. A Git filter rewrites a file on checkout from the blob read here, so a filtered one is not read.
     const instructions: string[] = []
+    const filters = written.length ? await run(['check-attr', '-z', ...to === ':index' ? ['--cached'] : ['--source', to], 'filter', '--', ...written]) : []
+    if (filters === null) return null
+    const filtered = new Set(Array.from({ length: Math.floor(filters.length / 3) }, (_, at) => filters.slice(at * 3, at * 3 + 3))
+        .filter(([, , value]) => value !== 'unspecified' && value !== 'unset').map(([name]) => name))
     for (const name of written) {
-        const text = await run(['cat-file', '-p', to === ':index' ? `:${name}` : `${to}:${name}`])
+        const text = filtered.has(name) ? null : await run(['cat-file', '-p', to === ':index' ? `:${name}` : `${to}:${name}`])
         if (text === null || instructionRisk(text.join('\0')) !== undefined) instructions.push(join(top, name))
     }
-    return { guarded, changed: changed.sort(), ...instructions.length ? { instructions: instructions.sort() } : {} }
+    return { guarded, changed: changed.sort(), ...instructions.length ? { instructions: instructions.sort() } : {}, ...unsettled.length ? { unsettled: unsettled.sort() } : {} }
 }
 
 // A package manifest is a few kilobytes; a larger one is not read.

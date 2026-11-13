@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -11,6 +11,11 @@ const scratch: string[] = []
 afterEach(() => { for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }) })
 
 describe('test git isolation', () => {
+    it('gives each test file a home of its own below the temp directory, so nothing a test syncs reaches the developer\'s', () => {
+        expect(homedir().startsWith(`${realpathSync(tmpdir())}/cockpit-test-home-`)).toBe(true)
+        expect(process.env.XDG_STATE_HOME).toBeUndefined()
+    })
+
     it('keeps fixture git writes away from the repository named by an inherited GIT_DIR', () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-git-isolation-'))
         scratch.push(directory)

@@ -477,6 +477,13 @@ describe('guard policy construction', () => {
         for (const command of ['git merge evil', 'git checkout evil', 'git reset --hard evil', 'git cherry-pick evil', 'git checkout -b feat evil', 'git switch -c feat evil']) {
             expect(await decide(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('.cockpit/guards/bash-guard.sh') })
         }
+        // HEAD moved onto it without touching the files on disk: a forced checkout of HEAD writes it over them.
+        git('reset', '--soft', 'evil')
+        for (const command of ['git checkout -f', 'git checkout -f HEAD', 'git switch -f topic', 'git reset --hard']) {
+            expect(await decide(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('.cockpit/guards/bash-guard.sh') })
+        }
+        expect((await decide('git merge main')).decision).not.toBe('allow')
+        git('reset', '--soft', 'HEAD@{1}')
         expect(await decide('git merge main')).toMatchObject({ decision: 'allow' })
         await configure('ask')
         expect((await decide('git commit -m done')).decision).toBe('ask')

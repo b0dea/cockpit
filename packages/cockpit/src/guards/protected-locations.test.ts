@@ -236,7 +236,7 @@ describe('guard protected locations', () => {
         writeFileSync(guard, 'edited\n')
         expect(await changes('HEAD', 'worktree')).toEqual({ guarded: true, changed: [guard] })
         // A from that names no commit lists what the revision holds, as a stash's untracked files are restored.
-        expect(await changes('evil', 'evil~5')).toEqual({ guarded: true, changed: [guard] })
+        expect(await changes('evil', 'evil~5')).toEqual({ guarded: true, changed: [guard], unsettled: [guard] })
         // A repository whose work tree holds no protected path is not guarded; one with no commit names no HEAD.
         const sibling = scratch()
         execFileSync('git', ['init', '-q', sibling])
@@ -260,7 +260,9 @@ describe('guard protected locations', () => {
         run('switch', '-qc', 'planted')
         for (const [path, text] of Object.entries({ 'deep/.claude/settings.json': '{}', 'deep/sub/.codex/hooks.json': '{}', 'pkg/.cockpit/guards/bash-guard.sh': 'exit 0',
             'pkg/.opencode/plugins/a.js': '', 'pkg/.opencode/tools/t.ts': '', 'tools/skills/probe/SKILL.md': '---\nname: probe\nhooks: {}\n---\n',
-            'tools/.claude/commands/run.md': 'Today is !`date`.', 'tools/skills/plain/SKILL.md': '---\nname: plain\n---\nBody.' })) {
+            'tools/.claude/commands/run.md': 'Today is !`date`.', 'tools/skills/plain/SKILL.md': '---\nname: plain\n---\nBody.',
+            // A Git filter rewrites a file on checkout from the blob the guard would read.
+            'tools/skills/filtered/SKILL.md': '---\nname: filtered\n---\nBody.', '.gitattributes': 'tools/skills/filtered/SKILL.md filter=synthetic' })) {
             mkdirSync(join(root, path, '..'), { recursive: true })
             writeFileSync(join(root, path), `${text}\n`)
         }
@@ -270,7 +272,7 @@ describe('guard protected locations', () => {
         const planted = [join(root, 'deep/.claude/settings.json'), join(root, 'deep/sub/.codex/hooks.json'), join(root, 'pkg/.cockpit/guards/bash-guard.sh'),
             join(root, 'pkg/.opencode/plugins/a.js'), join(root, 'pkg/.opencode/tools/t.ts')]
         // The plain skill is read and passes; one Git removes is not judged as an instruction.
-        const skill = [join(root, 'tools/.claude/commands/run.md'), join(root, 'tools/skills/probe/SKILL.md')]
+        const skill = [join(root, 'tools/.claude/commands/run.md'), join(root, 'tools/skills/filtered/SKILL.md'), join(root, 'tools/skills/probe/SKILL.md')]
         const changes = (target: Parameters<typeof guardWorktreeChanges>[1]) => guardWorktreeChanges(root, target, [], git, executeProbe)
         // A checkout or merge of the revision, a restore of a directory from it, and a worktree of it.
         expect(await changes({ revision: 'planted' })).toEqual({ guarded: false, changed: planted, instructions: skill })
@@ -283,6 +285,39 @@ describe('guard protected locations', () => {
         expect(await changes({ revision: 'deep', fallback: 'index' })).toEqual({ guarded: false, changed: [planted[0], planted[1]] })
         run('read-tree', 'work')
         expect(await changes({ revision: 'work', from: 'worktree', paths: ['notes.md'] })).toEqual({ guarded: false, changed: [] })
+    })
+
+    it('judges what a verb writes against the working tree, so a HEAD moved under it hides nothing', async () => {
+        const resolution = await resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+        if (resolution.state !== 'available') throw new Error(resolution.reason)
+        const git = resolution.value
+        const root = scratch()
+        const run = (args: string[], input?: string) => execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args],
+            { encoding: 'utf8', ...input === undefined ? {} : { input } }).trim()
+        mkdirSync(join(root, '.claude'), { recursive: true })
+        writeFileSync(join(root, '.claude/settings.json'), '{"hooks":{}}\n')
+        writeFileSync(join(root, '.gitignore'), '.claude/settings.local.json\n')
+        run(['init', '-q', '-b', 'work'])
+        run(['add', '.'])
+        run(['commit', '-qm', 'base'])
+        run(['branch', 'topic'])
+        writeFileSync(join(root, '.claude/settings.local.json'), '{}\n')
+        // A commit crafted from objects alone, with HEAD moved onto it: the index and the files on disk still hold the guard.
+        const blob = (text: string) => run(['hash-object', '-w', '--stdin'], text)
+        const tree = (entries: string) => run(['mktree'], entries)
+        const claude = tree(`100644 blob ${blob('{}\n')}\tsettings.json\n100644 blob ${blob('{"disableAllHooks":true}\n')}\tsettings.local.json\n`)
+        const api = tree(`040000 tree ${tree(`100644 blob ${blob('{}\n')}\tsettings.json\n`)}\t.claude\n`)
+        const crafted = run(['commit-tree', tree(`040000 tree ${claude}\t.claude\n040000 tree ${api}\tapi\n100644 blob ${blob('.claude/settings.local.json\n')}\t.gitignore\n`), '-p', 'HEAD', '-m', 'crafted'])
+        run(['reset', '--soft', crafted])
+        const changes = (target: Parameters<typeof guardWorktreeChanges>[1]) => guardWorktreeChanges(root, target, [], git, executeProbe)
+        const planted = [join(root, '.claude/settings.json'), join(root, '.claude/settings.local.json'), join(root, 'api/.claude/settings.json')]
+        // A forced checkout of HEAD, and a new worktree of it, write the crafted files over the ones on disk.
+        expect(await changes({ revision: 'HEAD', from: 'worktree' })).toEqual({ guarded: false, changed: planted })
+        // A merge applies another revision's changes to HEAD: with HEAD moved off what is on disk, what it writes is not
+        // judged by them, so every control that differs is named.
+        expect(await changes({ revision: 'HEAD' })).toEqual({ guarded: false, changed: [], unsettled: planted })
+        // A new worktree named for a branch that does not exist starts at HEAD.
+        expect(await changes({ revision: 'nowhere', from: 'worktree', fallback: 'head' })).toEqual({ guarded: false, changed: planted })
     })
 
     it('lists the members a tar or zip archive would extract, and none from one it cannot read', async () => {

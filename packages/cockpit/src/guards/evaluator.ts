@@ -170,7 +170,7 @@ interface PathInspectionRequest {
     readonly revision?: string
     readonly from?: string
     readonly paths?: readonly string[]
-    readonly fallback?: 'index'
+    readonly fallback?: 'index' | 'head'
     readonly optional?: true
     /** For a `manifest`, also the scripts any package of the enclosing workspace declares, as `workspace`. */
     readonly workspace?: true
@@ -579,8 +579,11 @@ export interface GitTreeTarget {
     readonly from?: string
     /** The pathspecs a verb names, as spelled; absent for the whole tree. */
     readonly paths?: readonly string[]
-    /** `index` when a revision that names no commit makes it, and `paths`, pathspecs written from the index, as checkout reads them. */
-    readonly fallback?: 'index'
+    /**
+     * What a revision that names no commit stands for: `index`, which makes it and `paths` pathspecs
+     * written from the index, as checkout reads them; or `head`, as `worktree add` starts a branch there.
+     */
+    readonly fallback?: 'index' | 'head'
     /** A revision that may not exist and then writes nothing, as a stash without untracked files has none. */
     readonly optional?: true
 }
@@ -594,6 +597,9 @@ export type GitContentWrite = Readonly<{ targets: readonly GitTreeTarget[]; unna
 export function gitTreeTargets(git: GitInvocation): GitContentWrite | undefined {
     const control = git.args.some(arg => /^--(?:abort|continue|skip|quit|edit-todo|show-current-patch)$/.test(arg))
     const head = (revisions: readonly string[]) => ({ targets: revisions.map(revision => ({ revision })), unnamed: false })
+    // A checkout writes the revision's files over what is on disk, which is what it is compared with: HEAD can
+    // be moved under them without touching them.
+    const onDisk = (revision: string, extra: Partial<GitTreeTarget> = {}) => ({ targets: [{ revision, from: 'worktree', ...extra }], unnamed: false })
     const previous = (revision: string) => revision === '-' ? '@{-1}' : revision
     const unmodelled = (why: string) => ({ unmodelled: why })
     const subcommand = gitOperands(git.args, [])[0]
@@ -605,6 +611,12 @@ export function gitTreeTargets(git: GitInvocation): GitContentWrite | undefined 
     // Paths read from a file are not named, so the whole tree is judged.
     const named = (paths: readonly string[]) => git.args.some(arg => arg.startsWith('--pathspec-from-file')) ? {} : { paths }
     const index = (target: GitTreeTarget) => ({ targets: [{ from: 'worktree', ...target }], unnamed: false })
+    // Aborting a merge resets to HEAD. A sequence continues, skips or aborts to what its own state records,
+    // which the guard does not read; quitting forgets it and writes nothing.
+    if (git.verb === 'merge' && git.args.includes('--abort')) return onDisk('HEAD')
+    if (['rebase', 'cherry-pick', 'revert', 'am'].includes(git.verb) && git.args.some(arg => /^--(?:abort|continue|skip)$/.test(arg))) {
+        return unmodelled('continues, skips or aborts a sequence to what its own state records, which the guard does not read')
+    }
     if (git.verb === 'merge' && !control) {
         const revisions = gitOperands(git.args, ['-m', '-F', '-s', '-X', '--strategy', '--strategy-option', '--file', '--message', '--into-name', '--cleanup', '-S', '--gpg-sign'])
         if (walked(revisions)) return unmodelled('names commits by a range the guard does not list')
@@ -618,17 +630,18 @@ export function gitTreeTargets(git: GitInvocation): GitContentWrite | undefined 
         if (before.some((arg, at) => creating.includes(arg) && (before[at + 1] === undefined || before[at + 1]!.startsWith('-')))) return unmodelled('names no branch to create')
         const operands = gitOperands(before, [...creating, '--conflict', '--pathspec-from-file'])
         const paths = end < 0 ? undefined : git.args.slice(end + 1)
+        const forced = before.some(arg => ['-f', '--force', '--discard-changes'].includes(arg) || /^-[a-zA-Z]*f/.test(arg) && !arg.startsWith('--'))
         // A new branch starts at its start point, checked out; one at HEAD writes nothing.
-        if (created) return operands.length > 1 || paths?.length ? unmodelled('names paths beside a new branch') : operands[0] === undefined ? undefined : head([previous(operands[0])])
-        // `checkout <rev> --` names no path: it switches to the revision.
+        if (created) return operands.length > 1 || paths?.length ? unmodelled('names paths beside a new branch') : operands[0] === undefined ? undefined : onDisk(previous(operands[0]))
+        // `checkout <rev> --` names no path: it switches to the revision; a forced checkout with none rewrites HEAD's files.
         if (paths !== undefined && !paths.length && !git.args.some(arg => arg.startsWith('--pathspec-from-file'))) {
-            return operands.length > 1 ? unmodelled('names more than one revision') : operands[0] === undefined ? undefined : head([previous(operands[0])])
+            return operands.length > 1 ? unmodelled('names more than one revision') : operands[0] === undefined ? (forced ? onDisk('HEAD') : undefined) : onDisk(previous(operands[0]))
         }
         if (paths !== undefined) return operands.length > 1 ? unmodelled('names more than one revision') : index({ revision: operands[0] ?? ':index', ...named(paths) })
         if (git.verb === 'checkout' && operands.length > 1) return index({ revision: operands[0]!, ...named(operands.slice(1)), fallback: 'index' })
         if (operands.length > 1) return unmodelled('names more than one revision')
-        if (operands[0] === undefined) return undefined
-        return { targets: [{ revision: previous(operands[0]), ...git.verb === 'checkout' ? { fallback: 'index' as const } : {} }], unnamed: false }
+        if (operands[0] === undefined) return forced ? onDisk('HEAD') : undefined
+        return onDisk(previous(operands[0]), git.verb === 'checkout' ? { fallback: 'index' } : {})
     }
     if (git.verb === 'restore') {
         const staged = git.args.some(arg => arg === '--staged' || /^-[a-zA-Z]*S/.test(arg) && !arg.startsWith('--'))
@@ -642,10 +655,12 @@ export function gitTreeTargets(git: GitInvocation): GitContentWrite | undefined 
     if (git.verb === 'worktree' && subcommand === 'add') {
         const rest = git.args.slice(git.args.indexOf('add') + 1)
         if (rest.some(arg => ['--no-checkout', '--orphan'].includes(arg))) return unmodelled('makes a worktree without checking out a revision, which a later command fills unseen')
-        // Without a revision, a new worktree checks out the branch named like its directory, or starts one at HEAD.
+        // A new worktree checks out its revision; without one, a new branch at HEAD or the branch named like its
+        // directory, else HEAD. It is compared with this checkout's files, since a session there loads it.
         const [path, revision] = gitOperands(rest, ['-b', '-B', '--reason'])
-        const branch = revision ?? (path === undefined || rest.some(arg => ['-b', '-B', '-d', '--detach'].includes(arg)) ? undefined : posix.basename(path))
-        return branch === undefined ? undefined : head([branch])
+        if (path === undefined) return undefined
+        if (revision !== undefined) return onDisk(revision)
+        return rest.some(arg => ['-b', '-B', '-d', '--detach'].includes(arg)) ? onDisk('HEAD') : onDisk(posix.basename(path), { fallback: 'head' })
     }
     if (git.verb === 'reset' && git.args.some(arg => /^--(?:hard|merge|keep)$/.test(arg))) {
         const end = git.args.indexOf('--')
@@ -674,7 +689,7 @@ export function gitTreeTargets(git: GitInvocation): GitContentWrite | undefined 
         // Git reads a bare number as that stash entry.
         const stash = /^\d+$/.test(named) ? `stash@{${named}}` : named
         // Applying a stash applies what it changed against its base, and restores the untracked files it took, when it took any.
-        if (['pop', 'apply'].includes(verb ?? '')) return { targets: [{ revision: stash, from: `${stash}^1` }, { revision: `${stash}^3`, from: `${stash}^3^`, optional: true }], unnamed: false }
+        if (['pop', 'apply'].includes(verb ?? '')) return { targets: [{ revision: stash, from: `${stash}^1` }, { revision: `${stash}^3`, from: ':empty', optional: true }], unnamed: false }
         // Stashing returns the working tree to HEAD.
         if (verb === undefined || ['push', 'save'].includes(verb)) return { targets: [{ revision: 'HEAD', from: 'worktree' }], unnamed: false }
         if (['list', 'show', 'drop', 'clear', 'create', 'store'].includes(verb)) return undefined
@@ -692,6 +707,18 @@ export function gitTreeTargets(git: GitInvocation): GitContentWrite | undefined 
     if (git.verb === 'submodule' && !['status', 'summary'].includes(subcommand ?? '')) return unmodelled('checks out or moves a nested repository, which a session there would load without the guard')
     if (git.verb === 'read-tree') return unmodelled('replaces the index with a tree that a later checkout writes')
     return undefined
+}
+
+/** Plumbing that crafts objects or moves refs, beside what reads them. */
+function plumbingWrite(git: GitInvocation): boolean {
+    const operands = gitOperands(git.args, ['-m', '-F', '--message', '--file', '-C', '-c'])
+    if (['commit-tree', 'mktree', 'update-ref', 'fast-import', 'filter-branch', 'filter-repo'].includes(git.verb)) return true
+    if (git.verb === 'symbolic-ref') return operands.length > 1 || git.args.some(arg => arg === '-d' || arg === '--delete')
+    if (git.verb === 'stash') return operands[0] === 'store'
+    if (git.verb === 'replace') return !(git.args.length === 0 || git.args.some(arg => arg === '-l' || arg === '--list' || arg.startsWith('--format')))
+    if (git.verb === 'branch') return git.args.some(arg => arg === '--force' || /^-[a-zA-Z]*[fMC]/.test(arg) && !arg.startsWith('--'))
+    if (git.verb === 'notes') return !['list', 'show', undefined].includes(operands[0])
+    return false
 }
 
 const REMOVERS = new Set(['rm', 'unlink', 'rmdir', 'shred', 'trash', 'rimraf', 'del-cli'])
@@ -2302,14 +2329,15 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 pushRefspecs: evidence.pushRefspecs, pullRebase: evidence.pullRebase } : undefined
     }
     // Which protected paths a Git verb's revision would change in the working tree at `cwd`, and whether it holds any.
-    const treeFacts = (cwd: string, target: GitTreeTarget): { readonly guarded: boolean; readonly changed: readonly string[]; readonly instructions: readonly string[] } | undefined => {
+    const treeFacts = (cwd: string, target: GitTreeTarget): { readonly guarded: boolean; readonly changed: readonly string[]; readonly instructions: readonly string[]; readonly unsettled: readonly string[] } | undefined => {
         let evidence: JsonSnapshot | undefined
         try { evidence = snapshotJson(inspect({ path: '.', cwd, operation: 'tree', ...target })) }
         catch { return undefined } // no answer leaves the content unknown, which only ever asks
         const paths = (value: JsonSnapshot | undefined): value is readonly string[] => Array.isArray(value) && value.length <= GUARD_LOCATION_LIMITS.sensitivePaths && value.every(canonical)
         return record(evidence) && evidence.status === 'resolved' && evidence.path === cwd && evidence.revision === target.revision && evidence.from === target.from
             && typeof evidence.guarded === 'boolean' && paths(evidence.changed) && (evidence.instructions === undefined || paths(evidence.instructions))
-            ? { guarded: evidence.guarded, changed: evidence.changed, instructions: evidence.instructions ?? [] } : undefined
+            && (evidence.unsettled === undefined || paths(evidence.unsettled))
+            ? { guarded: evidence.guarded, changed: evidence.changed, instructions: evidence.instructions ?? [], unsettled: evidence.unsettled ?? [] } : undefined
     }
     // Every member name the archive an extraction reads lists.
     const archiveFacts = (archive: string, cwd: string, format: 'tar' | 'zip'): readonly string[] | undefined => {
@@ -3363,6 +3391,11 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const configuredRebase = git.verb === 'pull' && !rewritesHead && !git.args.some(arg => /^--(?:no-rebase|ff-only|rebase=false)$/.test(arg))
         if ((rewritesHead || configuredRebase) && headMayMove) holdBoundary(invocation, headMoved)
         if (git.verb === 'update-ref' && git.args.includes('--stdin')) holdBoundary(invocation, ask('`git update-ref --stdin` moves refs the guard cannot see. Name the ref on the command line.'))
+        // Crafting objects and moving refs is how HEAD was moved under a checkout that then wrote a crafted tree
+        // over the guard; in the cockpit's own repository a person runs such plumbing.
+        if (within(fold(git.cwd), fold(resolved.canonicalRoot)) && plumbingWrite(git)) {
+            holdBoundary(invocation, ask(`${named(invocation)} crafts Git objects or moves a ref in the cockpit's repository, which can put content under a later checkout the guard did not judge. A person runs it.`))
+        }
         // `git rebase <upstream> <branch>` rewrites that branch.
         if (git.verb === 'rebase' && protectedName(gitOperands(git.args, ['--onto', '-s', '--strategy', '-X', '--strategy-option'])[1])) hold(deny('Refusing to rewrite history on a declared protected branch. Switch to a work branch first.'))
         // A fetch refspec's destination is a local ref: `git fetch . +topic:main` moves or rewrites main.
@@ -3388,8 +3421,12 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const answers = tree.targets.map(target => treeFacts(git.cwd, target))
             const changed = answers.flatMap(answer => answer?.changed ?? [])
             const instructions = answers.flatMap(answer => answer?.instructions ?? [])
+            const unsettled = answers.flatMap(answer => answer?.unsettled ?? [])
             const guarded = answers.some(answer => answer?.guarded)
-            if (changed.length) hold(deny(`Refusing ${named(invocation)}: it would write ${shownGuardWord(posix.relative(git.cwd, changed[0]!) || changed[0]!)} into the working tree from the index or another revision, and that path is a guard control, an agent tool's settings, hooks or guard script at any depth, a secrets directory or a declared instance. A person runs it.`))
+            // A new worktree is a checkout a session there loads, not this one's files: a control in it that differs asks.
+            if (unsettled.length) holdBoundary(invocation, ask(`${named(invocation)} applies another revision's changes to HEAD, and HEAD differs from the files on disk at ${shownGuardWord(posix.relative(git.cwd, unsettled[0]!) || unsettled[0]!)}, a guard control or agent setting, so what it writes there cannot be judged. Restore the checkout first, or a person runs it.`))
+            if (changed.length && git.verb === 'worktree') holdBoundary(invocation, ask(`${named(invocation)} checks out ${shownGuardWord(posix.relative(git.cwd, changed[0]!) || changed[0]!)} different from this checkout's copy, an agent tool's settings, hooks or guard script a session started in the new worktree would load. A person runs it.`))
+            else if (changed.length) hold(deny(`Refusing ${named(invocation)}: it would write ${shownGuardWord(posix.relative(git.cwd, changed[0]!) || changed[0]!)} into the working tree from the index or another revision, and that path is a guard control, an agent tool's settings, hooks or guard script at any depth, a secrets directory or a declared instance. A person runs it.`))
             else if (instructions.length) holdBoundary(invocation, ask(`${named(invocation)} writes ${shownGuardWord(posix.relative(git.cwd, instructions[0]!) || instructions[0]!)} from the index or another revision: a skill, command or agent file whose frontmatter can register hooks or MCP servers that run outside the guard. A person runs it.`))
             else if (answers.some(answer => answer === undefined)) holdBoundary(invocation, ask(`${named(invocation)} writes another revision's files into the working tree, and the guard could not tell whether they include a guard control: the revision does not resolve, or Git did not answer. A person runs it.`))
             else if (guarded && tree.unnamed) holdBoundary(invocation, ask(`${named(invocation)} brings content into a working tree that holds guard controls, which the guard cannot inspect before it is fetched. Fetch first, then \`git merge --ff-only <remote>/<branch>\`; or a person runs it.`))
