@@ -320,6 +320,48 @@ describe('guard protected locations', () => {
         expect(await changes({ revision: 'nowhere', from: 'worktree', fallback: 'head' })).toEqual({ guarded: false, changed: planted })
     })
 
+    it('resolves a name Git reads as a remote branch, and a new worktree\'s branch, as Git does', async () => {
+        const resolution = await resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+        if (resolution.state !== 'available') throw new Error(resolution.reason)
+        const git = resolution.value
+        const root = scratch()
+        const run = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args], { encoding: 'utf8' }).trim()
+        writeFileSync(join(root, 'notes.md'), 'notes\n')
+        run('init', '-q', '-b', 'work')
+        run('add', '.')
+        run('commit', '-qm', 'base')
+        mkdirSync(join(root, 'api/.claude'), { recursive: true })
+        writeFileSync(join(root, 'api/.claude/settings.json'), '{}\n')
+        run('add', '.')
+        run('commit', '-qm', 'planted')
+        const planted = run('rev-parse', 'HEAD')
+        run('reset', '-q', '--hard', 'HEAD~1')
+        // The planted commit exists only as a remote branch, and as a tag and short hash a worktree's basename could name.
+        run('remote', 'add', 'origin', 'https://example.test/r.git')
+        run('update-ref', 'refs/remotes/origin/feat', planted)
+        run('tag', 'wt', planted)
+        const changes = (target: Parameters<typeof guardWorktreeChanges>[1]) => guardWorktreeChanges(root, target, [], git, executeProbe)
+        const settings = { guarded: false, changed: [join(root, 'api/.claude/settings.json')] }
+        // `git checkout feat` and `git switch feat` create feat from the one remote branch of that name.
+        expect(await changes({ revision: 'feat', from: 'worktree', fallback: 'index', remote: true })).toEqual(settings)
+        expect(await changes({ revision: 'feat', from: 'worktree', fallback: 'remote' })).toEqual(settings)
+        // A file of that name is the path checkout writes instead; without the remote guess it is only that.
+        writeFileSync(join(root, 'feat'), 'x\n')
+        expect(await changes({ revision: 'feat', from: 'worktree', fallback: 'index', remote: true })).toEqual({ guarded: false, changed: [] })
+        // A name two remotes hold is ambiguous, and Git refuses it.
+        run('remote', 'add', 'mirror', 'https://example.test/m.git')
+        run('update-ref', 'refs/remotes/mirror/feat', planted)
+        expect(await changes({ revision: 'feat', from: 'worktree', fallback: 'remote' })).toBeNull()
+        // A new worktree checks out the branch named like its directory, never a tag; else HEAD, or with the remote guess the one remote branch.
+        expect(await changes({ revision: 'refs/heads/wt', from: 'worktree', fallback: 'head' })).toEqual({ guarded: false, changed: [] })
+        run('config', 'worktree.guessRemote', 'true')
+        expect(await changes({ revision: 'refs/heads/feat', from: 'worktree', fallback: 'head', remote: 'config' })).toBeNull()
+        run('update-ref', '-d', 'refs/remotes/mirror/feat')
+        expect(await changes({ revision: 'refs/heads/feat', from: 'worktree', fallback: 'head', remote: 'config' })).toEqual(settings)
+        run('config', 'worktree.guessRemote', 'false')
+        expect(await changes({ revision: 'refs/heads/feat', from: 'worktree', fallback: 'head', remote: 'config' })).toEqual({ guarded: false, changed: [] })
+    })
+
     it('lists the members a tar or zip archive would extract, and none from one it cannot read', async () => {
         const root = scratch()
         for (const path of ['src/a.ts', 'pkg/.claude/settings.json']) {

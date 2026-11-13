@@ -170,7 +170,8 @@ interface PathInspectionRequest {
     readonly revision?: string
     readonly from?: string
     readonly paths?: readonly string[]
-    readonly fallback?: 'index' | 'head'
+    readonly fallback?: 'index' | 'remote' | 'head'
+    readonly remote?: true | 'config'
     readonly optional?: true
     /** For a `manifest`, also the scripts any package of the enclosing workspace declares, as `workspace`. */
     readonly workspace?: true
@@ -505,7 +506,33 @@ export function gitInvocation(invocation: ParsedInvocation): GitInvocation | und
             uncertain = true
         } else return { verb: '', args: [], cwd, directories, uncertain: true }
     }
-    return { verb: args[cursor++] ?? '', args: args.slice(cursor), cwd, directories, uncertain }
+    const verb = args[cursor++] ?? ''
+    return { verb, args: splitGitShortOptions(verb, args.slice(cursor)), cwd, directories, uncertain }
+}
+
+/**
+ * Short options split one per word, as Git reads them: `-qb x` is `-q -b x` and `-bx` is `-b x`, for a verb
+ * whose options the guard lists, so every later check sees each option. A bundle holding a letter the
+ * verb does not take is left whole, which that verb's option check refuses.
+ */
+function splitGitShortOptions(verb: string, args: readonly string[]): readonly string[] {
+    const options = GIT_WRITE_OPTIONS[verb === 'worktree' ? 'worktree add' : verb]
+    if (!options) return args
+    const split: string[] = []
+    for (let index = 0; index < args.length; index++) {
+        const arg = args[index]!
+        if (arg === '--') { split.push(...args.slice(index)); break }
+        if (!/^-[A-Za-z]{2,}/.test(arg)) { split.push(arg); continue }
+        const words: string[] = []
+        let known = true
+        for (const [at, letter] of [...arg.slice(1)].entries()) {
+            if (options.valued.has(`-${letter}`)) { words.push(`-${letter}`, ...arg.slice(at + 2) ? [arg.slice(at + 2)] : []); break }
+            if (!options.plain.has(`-${letter}`)) { known = false; break }
+            words.push(`-${letter}`)
+        }
+        split.push(...known ? words : [arg])
+    }
+    return split
 }
 
 // The options each Git verb that writes the work tree, the index or a checkout takes, and those that take a
@@ -581,9 +608,15 @@ export interface GitTreeTarget {
     readonly paths?: readonly string[]
     /**
      * What a revision that names no commit stands for: `index`, which makes it and `paths` pathspecs
-     * written from the index, as checkout reads them; or `head`, as `worktree add` starts a branch there.
+     * written from the index, as checkout reads them; `remote`, the one remote branch of that name, as
+     * switch reads it; or `head`, as `worktree add` starts a branch there.
      */
-    readonly fallback?: 'index' | 'head'
+    readonly fallback?: 'index' | 'remote' | 'head'
+    /**
+     * Whether a missing branch is first looked for as the one remote branch of its name: always (`true`),
+     * as checkout does before reading a name no file holds as a path, or when `worktree.guessRemote` is set.
+     */
+    readonly remote?: true | 'config'
     /** A revision that may not exist and then writes nothing, as a stash without untracked files has none. */
     readonly optional?: true
 }
@@ -641,7 +674,10 @@ export function gitTreeTargets(git: GitInvocation): GitContentWrite | undefined 
         if (git.verb === 'checkout' && operands.length > 1) return index({ revision: operands[0]!, ...named(operands.slice(1)), fallback: 'index' })
         if (operands.length > 1) return unmodelled('names more than one revision')
         if (operands[0] === undefined) return forced ? onDisk('HEAD') : undefined
-        return onDisk(previous(operands[0]), git.verb === 'checkout' ? { fallback: 'index' } : {})
+        // A name that is no branch is the one remote branch of that name, which Git creates a branch from; checkout
+        // first reads it as a path. `--no-guess` turns the remote off.
+        const guess = git.args.includes('--no-guess') ? {} : git.verb === 'checkout' ? { remote: true as const } : { fallback: 'remote' as const }
+        return onDisk(previous(operands[0]), git.verb === 'checkout' ? { fallback: 'index', ...guess } : guess)
     }
     if (git.verb === 'restore') {
         const staged = git.args.some(arg => arg === '--staged' || /^-[a-zA-Z]*S/.test(arg) && !arg.startsWith('--'))
@@ -660,7 +696,10 @@ export function gitTreeTargets(git: GitInvocation): GitContentWrite | undefined 
         const [path, revision] = gitOperands(rest, ['-b', '-B', '--reason'])
         if (path === undefined) return undefined
         if (revision !== undefined) return onDisk(revision)
-        return rest.some(arg => ['-b', '-B', '-d', '--detach'].includes(arg)) ? onDisk('HEAD') : onDisk(posix.basename(path), { fallback: 'head' })
+        if (rest.some(arg => ['-b', '-B', '-d', '--detach'].includes(arg))) return onDisk('HEAD')
+        // Only a local branch of that name, never a tag or a hash; else, guessing, the one remote branch of it.
+        const guess = rest.includes('--guess-remote') ? { remote: true as const } : rest.includes('--no-guess-remote') ? {} : { remote: 'config' as const }
+        return onDisk(`refs/heads/${posix.basename(path)}`, { fallback: 'head', ...guess })
     }
     if (git.verb === 'reset' && git.args.some(arg => /^--(?:hard|merge|keep)$/.test(arg))) {
         const end = git.args.indexOf('--')

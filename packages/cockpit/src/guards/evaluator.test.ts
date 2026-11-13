@@ -428,10 +428,14 @@ describe('resolved guard evaluation', () => {
         const allowing = { ...policy(), defaultDecision: 'allow' as const }
         const decide = (command: string, facts?: Parameters<typeof answering>[0]) => evaluateGuard(parseGuardInput(shellPayload(command)), allowing, answering(facts)).decision
         const targets = (command: string) => { asked.length = 0; decide(command); return [...asked] }
-        for (const command of ['git checkout -b feat evil', 'git checkout -B feat evil', 'git switch -c feat evil', 'git switch --create feat evil', 'git checkout --orphan feat evil']) {
+        for (const command of ['git checkout -b feat evil', 'git checkout -B feat evil', 'git switch -c feat evil', 'git switch --create feat evil', 'git checkout --orphan feat evil',
+            // Short options combine, and the one that takes a value may carry it attached.
+            'git checkout -qb feat evil', 'git checkout -fb feat evil', 'git checkout -tB feat evil', 'git switch -qc feat evil', 'git checkout -bfeat evil']) {
             expect(targets(command), command).toEqual([{ revision: 'evil', from: 'worktree' }])
             expect(decide(command, { changed: ['.cockpit/guards/bash-guard.sh'] }), command).toBe('deny')
         }
+        // A combined option that force-creates a protected branch moves it.
+        expect(decide('git checkout -qB main evil')).toBe('deny')
         // `checkout <rev> --` names no path: it switches branches. A stash is named by its number too.
         expect(targets('git checkout evil --')).toEqual([{ revision: 'evil', from: 'worktree' }])
         expect(targets('git stash apply 1')).toEqual([{ revision: 'stash@{1}', from: 'stash@{1}^1' }, { revision: 'stash@{1}^3', from: ':empty', optional: true }])
@@ -489,7 +493,7 @@ describe('resolved guard evaluation', () => {
         const asked: object[] = []
         const answering = (changed: readonly string[], instructions?: readonly string[]) => (request: Parameters<PathInspection>[0]) => {
             if (request.operation !== 'tree') return withGit(request)
-            asked.push({ revision: request.revision, from: request.from, paths: request.paths, fallback: request.fallback })
+            asked.push({ revision: request.revision, from: request.from, paths: request.paths, fallback: request.fallback, ...request.remote === undefined ? {} : { remote: request.remote } })
             return { status: 'resolved', path: posix.resolve(request.cwd, request.path), revision: request.revision, ...request.from === undefined ? {} : { from: request.from },
                 guarded: false, changed: changed.map(path => `${root}/${path}`), ...instructions ? { instructions: instructions.map(path => `${root}/${path}`) } : {} }
         }
@@ -498,7 +502,7 @@ describe('resolved guard evaluation', () => {
             ['git checkout -- deep', { revision: ':index', from: 'worktree', paths: ['deep'] }],
             ['git checkout planted -- deep', { revision: 'planted', from: 'worktree', paths: ['deep'] }],
             // Without `--`, checkout reads a first word that names no commit as a path written from the index.
-            ['git checkout deep', { revision: 'deep', from: 'worktree', fallback: 'index' }],
+            ['git checkout deep', { revision: 'deep', from: 'worktree', fallback: 'index', remote: true }],
             ['git checkout planted deep', { revision: 'planted', from: 'worktree', paths: ['deep'], fallback: 'index' }],
             ['git restore deep', { revision: ':index', from: 'worktree', paths: ['deep'] }],
             ['git restore --source planted deep', { revision: 'planted', from: 'worktree', paths: ['deep'] }],
@@ -1366,7 +1370,7 @@ describe('allow by default', () => {
         const answering = (facts: { changed?: readonly string[]; unsettled?: readonly string[] } = {}) => (request: Parameters<PathInspection>[0]) => {
             if (request.operation !== 'tree') return withGit(request)
             asked.push({ revision: request.revision, ...request.from === undefined ? {} : { from: request.from }, ...request.fallback === undefined ? {} : { fallback: request.fallback },
-                ...request.optional === undefined ? {} : { optional: request.optional } })
+                ...request.remote === undefined ? {} : { remote: request.remote }, ...request.optional === undefined ? {} : { optional: request.optional } })
             return { status: 'resolved', path: posix.resolve(request.cwd, request.path), revision: request.revision, ...request.from === undefined ? {} : { from: request.from },
                 guarded: true, changed: (facts.changed ?? []).map(changed => `${root}/${changed}`), ...facts.unsettled ? { unsettled: facts.unsettled.map(path => `${root}/${path}`) } : {} }
         }
@@ -1376,12 +1380,16 @@ describe('allow by default', () => {
         const disk = { from: 'worktree' }
         for (const [command, expected] of [
             ['git checkout -f', [{ revision: 'HEAD', ...disk }]], ['git checkout --force', [{ revision: 'HEAD', ...disk }]],
-            ['git checkout -f HEAD', [{ revision: 'HEAD', ...disk, fallback: 'index' }]], ['git switch -f main', [{ revision: 'main', ...disk }]],
-            ['git switch --discard-changes topic', [{ revision: 'topic', ...disk }]], ['git checkout -b feat evil', [{ revision: 'evil', ...disk }]],
+            ['git checkout -f HEAD', [{ revision: 'HEAD', ...disk, fallback: 'index', remote: true }]], ['git switch -f main', [{ revision: 'main', ...disk, fallback: 'remote' }]],
+            ['git switch --discard-changes topic', [{ revision: 'topic', ...disk, fallback: 'remote' }]], ['git checkout -b feat evil', [{ revision: 'evil', ...disk }]],
+            // A name only a remote holds is the branch Git creates from it, unless guessing is off.
+            ['git checkout -f --no-guess feat', [{ revision: 'feat', ...disk, fallback: 'index' }]], ['git switch -f --no-guess feat', [{ revision: 'feat', ...disk }]],
             ['git merge --abort', [{ revision: 'HEAD', ...disk }]],
             ['git stash apply', [{ revision: 'stash@{0}', from: 'stash@{0}^1' }, { revision: 'stash@{0}^3', from: ':empty', optional: true }]],
             ['git worktree add -b x pkg/wt', [{ revision: 'HEAD', ...disk }]], ['git worktree add -d pkg/wt', [{ revision: 'HEAD', ...disk }]],
-            ['git worktree add pkg/wt', [{ revision: 'wt', ...disk, fallback: 'head' }]], ['git worktree add pkg/old HEAD~1', [{ revision: 'HEAD~1', ...disk }]],
+            ['git worktree add pkg/wt', [{ revision: 'refs/heads/wt', ...disk, fallback: 'head', remote: 'config' }]], ['git worktree add pkg/old HEAD~1', [{ revision: 'HEAD~1', ...disk }]],
+            ['git worktree add --guess-remote pkg/wt', [{ revision: 'refs/heads/wt', ...disk, fallback: 'head', remote: true }]],
+            ['git worktree add --no-guess-remote pkg/wt', [{ revision: 'refs/heads/wt', ...disk, fallback: 'head' }]],
             ['git merge --quit', []], ['git rebase --quit', []],
         ] as const) expect(targets(command), command).toEqual(expected)
         expect(run('git checkout -f', { changed: ['.claude/settings.local.json'] }).decision).toBe('deny')

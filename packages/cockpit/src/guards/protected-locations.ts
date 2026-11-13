@@ -504,12 +504,35 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
     if (to === null) return null
     if (to === undefined) {
         if (target.optional) return { guarded, changed: [] }
-        if (target.fallback === 'head') to = await commit('HEAD')
-        else if (target.fallback === 'index') {
+        // The one remote branch of the name, as Git creates a branch from it; none or several is unresolved.
+        const name = revision.replace(/^refs\/heads\//, '')
+        const remoteBranch = async () => {
+            const remotes = await run(['remote'])
+            if (remotes === null) return null
+            const found: string[] = []
+            for (const remote of remotes.join('').split('\n').filter(Boolean)) {
+                const tip = await commit(`refs/remotes/${remote}/${name}`)
+                if (tip === null) return null
+                if (tip) found.push(tip)
+            }
+            return found.length === 1 ? found[0] : undefined
+        }
+        const guessing = target.remote === true
+            || target.remote === 'config' && (await run(['config', '--type=bool', 'worktree.guessRemote']))?.join('').trim() === 'true'
+        // Checkout reads the name as a path when a file or index entry holds it.
+        const isPath = async () => {
+            try { lstatSync(resolve(cwd, revision)); return true } catch (error) { if (!missing(error)) throw error }
+            const listed = await run(['ls-files', '-z', '--', `:(literal)${relative(top, resolve(cwd, revision))}`])
+            return listed === null ? null : listed.length > 0
+        }
+        const asPath = target.fallback === 'index' && guessing ? await isPath() : true
+        if (asPath === null) return null
+        if (target.fallback === 'index' && asPath) {
             paths = [revision, ...paths ?? []]
             to = ':index'
             from = 'worktree'
-        }
+        } else if (target.fallback === 'head' && !guessing) to = await commit('HEAD')
+        else if (target.fallback) to = await remoteBranch()
         if (!to) return null
     }
     const pathspecs = ['--', ...inside.map(path => `:(literal)${path}`), ...AGENT_CONTROL_PATHSPECS]
