@@ -154,9 +154,11 @@ interface PathInspectionRequest {
      * commit reachable from a ref or the reflog holds, or null alike. A `branch` is the repository's current branch and push
      * settings; a `remote` says whether a remote URL Git prints for the repository carries a credential;
      * a `patch` is a patch file, and its evidence carries `targets`, every path its headers name. A
-     * `tree` asks the repository at `cwd` which protected paths its work tree holds would differ between
-     * `from` (HEAD when absent, or the work tree itself) and `revision`; its evidence carries `guarded`,
-     * whether the work tree holds any protected path, and `changed`, the protected paths that differ. A
+     * `tree` asks the repository at `cwd` which paths below `paths` would differ between `from` (HEAD
+     * when absent, or the work tree itself) and `revision`, as a GitTreeTarget describes them; its
+     * evidence carries `guarded`, whether the work tree holds any protected path, `changed`, the
+     * protected paths and agent controls that differ at any depth, and `instructions`, when any, the
+     * agent instruction files that differ. A
      * `manifest` is the nearest package.json at or above the path: its `name` and its `scripts` names.
      * An `external-write` is a path outside the roots a write may land on; its evidence carries
      * `landsAt`, the path with every existing link on the way resolved.
@@ -165,6 +167,8 @@ interface PathInspectionRequest {
     readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'list' | 'remove' | 'search' | 'unignored-search' | 'repository' | 'branch' | 'remote' | 'patch' | 'tree' | 'manifest' | 'external-write'
     readonly revision?: string
     readonly from?: string
+    readonly paths?: readonly string[]
+    readonly fallback?: 'index'
     /** For a `manifest`, also the scripts any package of the enclosing workspace declares, as `workspace`. */
     readonly workspace?: true
     /** For a `search`, the reading tool follows links, so a link below the path leaves its `sensitive` unknown (null). */
@@ -507,7 +511,15 @@ export function gitInvocation(invocation: ParsedInvocation): GitInvocation | und
  * `worktree` for a verb that overwrites local changes; or another revision for a verb that applies the
  * difference between two, where a `from` that names no commit means every file `revision` holds.
  */
-export interface GitTreeTarget { readonly revision: string; readonly from?: string }
+export interface GitTreeTarget {
+    /** A revision, or `:index` for the index. */
+    readonly revision: string
+    readonly from?: string
+    /** The pathspecs a verb names, as spelled; absent for the whole tree. */
+    readonly paths?: readonly string[]
+    /** `index` when a revision that names no commit makes it, and `paths`, pathspecs written from the index, as checkout reads them. */
+    readonly fallback?: 'index'
+}
 /**
  * What a Git verb writes into the working tree from revisions: `targets` to compare, and `unnamed` when
  * the content arrives only as the command runs (a pull that fetches), so no comparison made first can
@@ -522,13 +534,39 @@ export function gitTreeTargets(git: GitInvocation): Readonly<{ targets: readonly
         const revisions = gitOperands(git.args, ['-m', '-F', '-s', '-X', '--strategy', '--strategy-option', '--file', '--message', '--into-name'])
         return head(revisions.length ? revisions.map(previous) : ['@{upstream}'])
     }
+    // Paths read from a file are not named, so the whole tree is judged.
+    const named = (paths: readonly string[]) => git.args.some(arg => arg.startsWith('--pathspec-from-file')) ? {} : { paths }
+    const index = (target: GitTreeTarget) => ({ targets: [{ from: 'worktree', ...target }], unnamed: false })
+    if (git.verb === 'checkout' && git.args.includes('--')) {
+        const end = git.args.indexOf('--')
+        const [revision = ':index'] = gitOperands(git.args.slice(0, end), ['--conflict', '--pathspec-from-file'])
+        return index({ revision, ...named(git.args.slice(end + 1)) })
+    }
     if (git.verb === 'checkout' || git.verb === 'switch') {
-        if (git.args.includes('--')) return undefined
         const created = git.args.some(arg => ['-b', '-B', '-c', '-C', '--create', '--force-create', '--orphan'].includes(arg))
-        const operands = gitOperands(git.args, ['-b', '-B', '-c', '-C', '--create', '--force-create', '--orphan', '--conflict'])
+        const operands = gitOperands(git.args, ['-b', '-B', '-c', '-C', '--create', '--force-create', '--orphan', '--conflict', '--pathspec-from-file'])
         // A new branch starts at its start point, or HEAD when none is named.
-        const revision = created ? operands[1] : operands.length === 1 ? operands[0] : undefined
-        return revision === undefined ? undefined : head([previous(revision)])
+        if (created) return operands[1] === undefined ? undefined : head([previous(operands[1])])
+        if (git.verb === 'checkout' && operands.length > 1) return index({ revision: operands[0]!, ...named(operands.slice(1)), fallback: 'index' })
+        if (operands.length !== 1) return undefined
+        return { targets: [{ revision: previous(operands[0]!), ...git.verb === 'checkout' ? { fallback: 'index' as const } : {} }], unnamed: false }
+    }
+    if (git.verb === 'restore') {
+        const staged = git.args.some(arg => arg === '--staged' || /^-[a-zA-Z]*S/.test(arg) && !arg.startsWith('--'))
+        const worktree = git.args.some(arg => arg === '--worktree' || /^-[a-zA-Z]*W/.test(arg) && !arg.startsWith('--'))
+        if (staged && !worktree) return undefined
+        const at = git.args.findIndex(arg => arg === '-s' || arg === '--source')
+        const source = at >= 0 ? git.args[at + 1] : git.args.find(arg => arg.startsWith('--source='))?.slice('--source='.length)
+        return index({ revision: source ?? (staged ? 'HEAD' : ':index'), ...named(gitOperands(git.args, ['-s', '--source', '--conflict', '--pathspec-from-file'])) })
+    }
+    if (git.verb === 'checkout-index') return index({ revision: ':index', ...git.args.includes('--stdin') ? {} : named(gitOperands(git.args, ['--stage', '--prefix'])) })
+    if (git.verb === 'worktree' && gitOperands(git.args, [])[0] === 'add') {
+        const rest = git.args.slice(git.args.indexOf('add') + 1)
+        if (rest.some(arg => ['--no-checkout', '--orphan'].includes(arg))) return undefined
+        // Without a revision, a new worktree checks out the branch named like its directory, or starts one at HEAD.
+        const [path, revision] = gitOperands(rest, ['-b', '-B', '--reason'])
+        const branch = revision ?? (path === undefined || rest.some(arg => ['-b', '-B', '-d', '--detach'].includes(arg)) ? undefined : posix.basename(path))
+        return branch === undefined ? undefined : head([branch])
     }
     if (git.verb === 'reset' && git.args.some(arg => /^--(?:hard|merge|keep)$/.test(arg))) {
         const end = git.args.indexOf('--')
@@ -1251,6 +1289,28 @@ export function nestedAgentConfiguration(folded: string, covering: boolean): boo
     if (parts.some((part, at) => part === '.claude' && parts[at + 1] === 'hooks' || part === '.opencode' && /^plugins?$/.test(parts[at + 1] ?? ''))) return true
     // A writer that may place a whole directory, such as a move, carries those files with it.
     return covering && ['.claude', '.codex', '.opencode'].includes(name)
+}
+
+// Sync writes a guard script at `.cockpit/guards`, and a Codex session runs the one it finds above it,
+// so no agent writes such a path, nor a directory named `.cockpit` that one could be moved into, anywhere.
+export function guardScriptLocation(folded: string): boolean {
+    const parts = folded.split('/')
+    return parts.at(-1) === '.cockpit' || parts.some((part, at) => part === '.cockpit' && parts[at + 1] === 'guards')
+}
+
+// What no agent places anywhere: agent tool settings, hooks and guard scripts, and a `.git` entry, which
+// stops the hook walk and starts a repository the guard is not registered in. Folded spellings.
+export function plantedAgentControl(folded: string): boolean {
+    return nestedAgentConfiguration(folded, false) || guardScriptLocation(folded) || folded.split('/').includes('.git')
+}
+
+// Instructions whose frontmatter can register hooks or MCP servers that run outside the guard: skills
+// and commands ran their frontmatter hooks on Claude Code 2.1.323 (measured 2026-11-13); agents are
+// documented to, though the probe saw neither their hooks nor their MCP servers start. Folded spellings.
+export function agentInstructionFile(folded: string): boolean {
+    const parts = folded.split('/')
+    return parts.at(-1) === 'skill.md'
+        || parts.at(-1)!.endsWith('.md') && parts.some((part, at) => part === '.claude' && ['agents', 'commands'].includes(parts[at + 1] ?? '') && at + 2 < parts.length)
 }
 
 /**
@@ -2032,12 +2092,6 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     let settingExecutable = false
     // A write into an entry of the tool's home that the table does not classify: a person decides it.
     let unclassifiedAsk: GuardDecision | undefined
-    // Sync writes a guard script at `.cockpit/guards`, and a Codex session runs the one it finds above it,
-    // so no agent writes such a path, nor a directory named `.cockpit` that one could be moved into, anywhere.
-    const guardScriptLocation = (folded: string) => {
-        const parts = folded.split('/')
-        return parts.at(-1) === '.cockpit' || parts.some((part, at) => part === '.cockpit' && parts[at + 1] === 'guards')
-    }
     const nestedConfigurationDenial = deny('Refusing to write an agent tool\'s settings, hooks or MCP configuration (.claude/settings*.json, .claude/hooks, .mcp.json, .codex/config.toml or hooks.json, opencode.json, .opencode/plugins) at any depth: a session started in that directory loads it, and it can switch the guard off or start code there. A person makes this change.')
     const guardScriptDenial = deny('Refusing to write a path below .cockpit/guards, or a directory named .cockpit: cockpit sync writes the guard script there, and a Codex session runs the one it finds above it. Agents never write one.')
     // A file with another hard link is the same file under a name the guard may not protect: writing it
@@ -2128,13 +2182,14 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 pushRefspecs: evidence.pushRefspecs, pullRebase: evidence.pullRebase } : undefined
     }
     // Which protected paths a Git verb's revision would change in the working tree at `cwd`, and whether it holds any.
-    const treeFacts = (cwd: string, target: GitTreeTarget): { readonly guarded: boolean; readonly changed: readonly string[] } | undefined => {
+    const treeFacts = (cwd: string, target: GitTreeTarget): { readonly guarded: boolean; readonly changed: readonly string[]; readonly instructions: readonly string[] } | undefined => {
         let evidence: JsonSnapshot | undefined
-        try { evidence = snapshotJson(inspect({ path: '.', cwd, operation: 'tree', revision: target.revision, ...target.from === undefined ? {} : { from: target.from } })) }
+        try { evidence = snapshotJson(inspect({ path: '.', cwd, operation: 'tree', ...target })) }
         catch { return undefined } // no answer leaves the content unknown, which only ever asks
+        const paths = (value: JsonSnapshot | undefined): value is readonly string[] => Array.isArray(value) && value.length <= GUARD_LOCATION_LIMITS.sensitivePaths && value.every(canonical)
         return record(evidence) && evidence.status === 'resolved' && evidence.path === cwd && evidence.revision === target.revision && evidence.from === target.from
-            && typeof evidence.guarded === 'boolean' && Array.isArray(evidence.changed) && evidence.changed.length <= GUARD_LOCATION_LIMITS.sensitivePaths
-            && evidence.changed.every(canonical) ? { guarded: evidence.guarded, changed: evidence.changed as readonly string[] } : undefined
+            && typeof evidence.guarded === 'boolean' && paths(evidence.changed) && (evidence.instructions === undefined || paths(evidence.instructions))
+            ? { guarded: evidence.guarded, changed: evidence.changed, instructions: evidence.instructions ?? [] } : undefined
     }
     // The nearest package.json at or above a path: its name and its script names.
     // The nearest package.json at or above a path: its name and its script names, and with `workspace` the
@@ -3172,20 +3227,30 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (tree) {
             const answers = tree.targets.map(target => treeFacts(git.cwd, target))
             const changed = answers.flatMap(answer => answer?.changed ?? [])
+            const instructions = answers.flatMap(answer => answer?.instructions ?? [])
             const guarded = answers.some(answer => answer?.guarded)
-            if (changed.length) hold(deny(`Refusing ${named(invocation)}: it would write ${shownGuardWord(posix.relative(git.cwd, changed[0]!) || changed[0]!)} into the working tree from another revision, and that path is a guard control, a secrets directory or a declared instance. A person runs it.`))
+            if (changed.length) hold(deny(`Refusing ${named(invocation)}: it would write ${shownGuardWord(posix.relative(git.cwd, changed[0]!) || changed[0]!)} into the working tree from the index or another revision, and that path is a guard control, an agent tool's settings, hooks or guard script at any depth, a secrets directory or a declared instance. A person runs it.`))
+            else if (instructions.length) holdBoundary(invocation, ask(`${named(invocation)} writes ${shownGuardWord(posix.relative(git.cwd, instructions[0]!) || instructions[0]!)} from the index or another revision: a skill, command or agent file whose frontmatter can register hooks or MCP servers that run outside the guard. A person runs it.`))
             else if (answers.some(answer => answer === undefined)) holdBoundary(invocation, ask(`${named(invocation)} writes another revision's files into the working tree, and the guard could not tell whether they include a guard control: the revision does not resolve, or Git did not answer. A person runs it.`))
             else if (guarded && tree.unnamed) holdBoundary(invocation, ask(`${named(invocation)} brings content into a working tree that holds guard controls, which the guard cannot inspect before it is fetched. Fetch first, then \`git merge --ff-only <remote>/<branch>\`; or a person runs it.`))
             else if (guarded && headMayMove) holdBoundary(invocation, ask(`${named(invocation)} writes another revision's files into a working tree that holds guard controls, and an earlier command in this call can change that revision first. Run it on its own.`))
         }
         // A glob or magic pathspec matches guard controls its spelling does not name, and `--cacheinfo`
         // stages a path inside one word; both are judged against every control.
-        const pathspecs = [...git.args.filter(arg => !arg.startsWith('-') && (/[*?[]/.test(arg) || arg.startsWith(':'))),
-            ...git.args.flatMap((arg, at) => arg === '--cacheinfo' ? [git.args[at + 1]?.split(',')[2] ?? ''] : arg.startsWith('--cacheinfo=') ? [arg.split(',')[2] ?? ''] : [])]
+        // `--cacheinfo` takes `<mode>,<object>,<path>` or three words.
+        const cached = git.args.flatMap((arg, at) => arg === '--cacheinfo' ? [git.args[at + 1]?.includes(',') ? git.args[at + 1]!.split(',')[2] ?? '' : git.args[at + 3] ?? '']
+            : arg.startsWith('--cacheinfo=') ? [arg.split(',')[2] ?? ''] : [])
+        const pathspecs = [...git.args.filter(arg => !arg.startsWith('-') && (/[*?[]/.test(arg) || arg.startsWith(':'))), ...cached]
         for (const spec of pathspecs) if (controlPathspec(spec, git.cwd)) hold(controlDenial)
+        // An index entry is checked out by a later command that names only its directory, or none.
+        for (const path of cached) if (plantedAgentControl(fold(posix.resolve(git.cwd, path)))) hold(guardScriptLocation(fold(posix.resolve(git.cwd, path))) ? guardScriptDenial : nestedConfigurationDenial)
         if (git.verb === 'checkout-index' && git.args.some(arg => arg === '-a' || arg === '--all' || /^-[a-zA-Z]*a/.test(arg))
-            || git.verb === 'read-tree' && git.args.some(arg => arg === '-u' || /^-[a-zA-Z]*u/.test(arg))) {
+            || git.verb === 'read-tree' && git.args.some(arg => arg === '-u' || /^-[a-zA-Z]*u/.test(arg))
+            || git.verb === 'sparse-checkout' && !['list', 'check-rules'].includes(gitOperands(git.args, [])[0] ?? 'list')) {
             holdBoundary(invocation, ask(`${named(invocation)} writes every indexed file into the working tree, guard controls included. Check out the files by name.`))
+        }
+        if (git.verb === 'checkout-index' && git.args.some(arg => arg.startsWith('--prefix'))) {
+            holdBoundary(invocation, ask(`${named(invocation)} writes indexed files below a prefix, where no path the guard reads names them. Check out the files in place.`))
         }
         if (git.verb === 'config' && !gitConfigReads(git.args) && !(open && gitConfigPlainWrite(git.args))) hold(gitMetadataDenial)
         else if (git.verb === 'config' && gitConfigReads(git.args) && !access) holdAsk(invocation, ask(`${named(invocation)} prints configuration the guard cannot bound: a listing, a pattern, another file or a key outside a few sections can print a remote URL, an http header or a credential helper that holds a credential. Read one key with \`git config --get <key>\` from a section such as user, core or init, or a person runs it.`))

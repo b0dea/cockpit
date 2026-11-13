@@ -36,6 +36,7 @@ import {
     type GuardProtectedIdentity,
     type GuardInvocationProfile,
     type GuardProjectCommand,
+    type GitTreeTarget,
 } from '../../guards/evaluator.js'
 import { commandSpelling, ordinarySessionCommand, resolveOrdinaryInvocation, type OrdinaryGrant } from '../../command-table.js'
 import { effectivePolicy, trustInForce } from '../../autonomy.js'
@@ -531,11 +532,11 @@ export async function runGuardEvaluationApplication(
         // guard control: Git compares the revisions before the command runs.
         const protectedPaths = [...GUARD_ROOT_PROTECTIONS.map(item => join(policy.canonicalRoot, item.path)), ...watchedPaths]
         const trees = new Map<string, Awaited<ReturnType<typeof guardWorktreeChanges>>>()
-        const treeKey = (cwd: string, revision: string, from: string | undefined) => `${cwd}\0${revision}\0${from ?? ''}`
+        const treeKey = (cwd: string, target: GitTreeTarget) => `${cwd}\0${JSON.stringify([target.revision, target.from ?? null, target.paths ?? null, target.fallback ?? null])}`
         for (const invocation of parsed.invocations) {
             const command = gitInvocation(invocation)
             for (const target of command && !command.uncertain && allowed(command.cwd) ? gitTreeTargets(command)?.targets ?? [] : []) {
-                const key = treeKey(command!.cwd, target.revision, target.from)
+                const key = treeKey(command!.cwd, target)
                 if (trees.has(key)) continue
                 trees.set(key, null)
                 queries.push(async () => { trees.set(key, await guardWorktreeChanges(command!.cwd, target, protectedPaths, git.value, adapters.execute ?? executeProbe, gitEnvironment)) })
@@ -630,7 +631,7 @@ export async function runGuardEvaluationApplication(
                 return targets ? { status: 'resolved', path, targets } : { status: 'unavailable', path, symlink: false }
             }
             if (request.operation === 'tree') {
-                const facts = request.revision === undefined ? null : trees.get(treeKey(path, request.revision, request.from))
+                const facts = request.revision === undefined ? null : trees.get(treeKey(path, { ...request, revision: request.revision }))
                 return facts ? { status: 'resolved', path, revision: request.revision, ...request.from === undefined ? {} : { from: request.from }, ...facts }
                     : { status: 'unavailable', path, symlink: false }
             }

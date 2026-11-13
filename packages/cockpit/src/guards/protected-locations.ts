@@ -7,12 +7,12 @@
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { readBoundedFile } from '../bounded-read.js'
 import { parse as parseYaml } from 'yaml'
-import { basename, dirname, join, posix, relative } from 'node:path'
+import { basename, dirname, join, posix, relative, resolve } from 'node:path'
 
 import { ENVIRONMENT_CODES, snapshotExecutionStep, type ExecutionStep, RefusalError } from '../environment/contract.js'
 import { GIT_CHILD_CONFIG, type ResolvedExecutable } from '../environment/executable.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import { foldGuardSpelling, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity, isSensitiveGuardName, type GitTreeTarget } from './evaluator.js'
+import { agentInstructionFile, foldGuardSpelling, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity, isSensitiveGuardName, plantedAgentControl, type GitTreeTarget } from './evaluator.js'
 
 function missing(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
 
@@ -441,37 +441,66 @@ export async function guardRemoteCredentials(repository: string, git: ResolvedEx
         || /^remote\./.test(name) && credentialUrl(value))
 }
 
+// Where agent tool settings, hooks, guard scripts and instruction files live at any depth, for Git to
+// list; which of them matter is decided by plantedAgentControl and agentInstructionFile.
+const AGENT_CONTROL_PATHSPECS = ['**/.claude/**', '**/.codex/**', '**/.opencode/**', '**/.cockpit/**', '**/.cockpit', '**/.mcp.json', '**/opencode.json', '**/opencode.jsonc', '**/SKILL.md']
+    .map(pattern => `:(glob,icase)${pattern}`)
+
 /**
- * Which of `protectedPaths` the work tree holding `cwd` contains (`guarded`), and which of them differ
- * between the target's `from` and `revision` (`changed`), or null when Git could not answer. A revision
- * that names no commit writes nothing, since Git refuses it or reads the word as a pathspec, and a
- * `from` that names none compares with nothing, listing every protected path the revision holds.
+ * Which of `protectedPaths` the work tree holding `cwd` contains (`guarded`); which of them, or of the
+ * agent controls at any depth, differ between the target's `from` and `revision` below its `paths`
+ * (`changed`); and which agent instruction files do (`instructions`, when any). Null when Git could not
+ * answer. A revision that names no commit writes nothing, since Git refuses it, unless the target falls
+ * back to the index as checkout does; a `from` that names none compares with nothing, listing every
+ * such path the revision holds.
  */
 export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, protectedPaths: readonly string[], git: ResolvedExecutable, execute: GuardExecute,
-    env: GuardGitEnvironment = {}): Promise<{ readonly guarded: boolean; readonly changed: readonly string[] } | null> {
+    env: GuardGitEnvironment = {}): Promise<{ readonly guarded: boolean; readonly changed: readonly string[]; readonly instructions?: readonly string[] } | null> {
     const top = repositoryAbove(cwd)
     if (top === undefined) return null
     const inside = protectedPaths.filter(path => path === top || path.startsWith(`${top}/`)).map(path => relative(top, path)).filter(Boolean)
-    if (!inside.length) return { guarded: false, changed: [] }
+    const guarded = inside.length > 0
     // A diff against the work tree may refresh the index; this query takes no lock.
     const run = (args: readonly string[]) => gitPaths(git, top, ['--no-optional-locks', ...args], execute, env)
     const commit = async (revision: string) => {
         const lines = await run(['rev-parse', '--verify', '--quiet', '--end-of-options', `${revision}^{commit}`])
         return lines === null ? null : lines.join('').trim() || undefined
     }
-    const to = await commit(target.revision)
+    const { revision } = target
+    let { from, paths } = target
+    let to = revision === ':index' ? revision : await commit(revision)
     if (to === null) return null
-    if (to === undefined) return { guarded: true, changed: [] }
-    const pathspecs = inside.map(path => `:(literal)${path}`)
+    if (to === undefined) {
+        if (target.fallback !== 'index') return { guarded, changed: [] }
+        paths = [revision, ...paths ?? []]
+        to = ':index'
+        from = 'worktree'
+    }
+    const pathspecs = ['--', ...inside.map(path => `:(literal)${path}`), ...AGENT_CONTROL_PATHSPECS]
     const diff = ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z']
     let names: readonly string[] | null
-    if (target.from === 'worktree') names = await run([...diff, to, '--', ...pathspecs])
+    if (to === ':index') names = await run([...diff, ...pathspecs])
+    else if (from === 'worktree') names = await run([...diff, to, ...pathspecs])
     else {
-        const from = await commit(target.from ?? 'HEAD')
-        if (from === null) return null
-        names = await run(from === undefined ? ['ls-tree', '-r', '--name-only', '-z', to, '--', ...inside] : [...diff, from, to, '--', ...pathspecs])
+        const base = await commit(from ?? 'HEAD')
+        if (base === null) return null
+        const empty = base ?? (await run(['hash-object', '-t', 'tree', '/dev/null']))?.join('').trim()
+        names = empty ? await run([...diff, empty, to, ...pathspecs]) : null
     }
-    return names && names.length <= GUARD_LOCATION_LIMITS.sensitivePaths ? { guarded: true, changed: names.map(name => join(top, name)).sort() } : null
+    if (names === null) return null
+    // Paths spelled as globs or magic, or reaching past the repository, leave the whole tree in scope.
+    const scope = paths?.every(path => !/^:|[*?[\\]/.test(path)) ? paths.map(path => foldGuardSpelling(relative(top, resolve(cwd, path)))) : undefined
+    const inScope = (name: string) => scope === undefined || scope.some(path => path === '' || path === '..' || path.startsWith('../') || name === path || name.startsWith(`${path}/`))
+    const changed: string[] = []
+    const instructions: string[] = []
+    for (const name of names) {
+        const folded = foldGuardSpelling(name)
+        if (!inScope(folded)) continue
+        if (inside.some(path => name === path || name.startsWith(`${path}/`)) || plantedAgentControl(folded)) changed.push(join(top, name))
+        else if (agentInstructionFile(folded)) instructions.push(join(top, name))
+    }
+    if (changed.length + instructions.length > GUARD_LOCATION_LIMITS.sensitivePaths) return null
+    return { guarded, changed: changed.sort(), ...instructions.length ? { instructions: instructions.sort() } : {} }
 }
 
 // A package manifest is a few kilobytes; a larger one is not read.

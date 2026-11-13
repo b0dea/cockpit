@@ -153,6 +153,12 @@ describe('public surface publication transaction', () => {
             expect(call({ file_path: join(root, '.cockpit/guards/bash-guard.sh'), content: 'exit 0' })).toBe('deny')
             expect(call({ command: 'git push --force origin main' }, 'Bash')).toBe('deny')
             expect(call({ file_path: join(subdirectory, 'notes.md'), content: 'synthetic' })).toBe('allow')
+            // A hook registration placed through the object store and the index is refused where it enters
+            // the index and where a checkout of its directory would write it.
+            const blob = spawnSync('git', ['hash-object', '-w', '--stdin'], { cwd: root, encoding: 'utf8', input: '{}' }).stdout.trim()
+            expect(call({ command: `git update-index --add --cacheinfo 100644,${blob},planted/.claude/settings.json` }, 'Bash')).toBe('deny')
+            expect(spawnSync('git', ['update-index', '--add', '--cacheinfo', `100644,${blob},docs/deep/planted/.claude/settings.json`], { cwd: root }).status).toBe(0)
+            for (const command of ['git checkout -- planted', 'git restore planted', 'git checkout planted']) expect(call({ command }, 'Bash'), command).toBe('deny')
         })
 
         it('guards a session in a linked worktree kept below the checkout, and one below a cockpit nested in its repository', async () => {

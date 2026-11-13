@@ -242,6 +242,40 @@ describe('guard protected locations', () => {
         expect(await guardWorktreeChanges(sibling, { revision: 'HEAD' }, [guard], git, executeProbe)).toEqual({ guarded: false, changed: [] })
     })
 
+    it('names every agent tool setting, guard script and skill a Git verb would write anywhere in the tree', async () => {
+        const resolution = await resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+        if (resolution.state !== 'available') throw new Error(resolution.reason)
+        const git = resolution.value
+        const root = scratch()
+        const run = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args], { encoding: 'utf8' })
+        writeFileSync(join(root, 'notes.md'), 'notes\n')
+        run('init', '-q', '-b', 'work')
+        run('add', '.')
+        run('commit', '-qm', 'base')
+        // A revision carrying a nested hook registration, a planted guard script and a skill with frontmatter.
+        run('switch', '-qc', 'planted')
+        for (const path of ['deep/.claude/settings.json', 'deep/sub/.codex/hooks.json', 'pkg/.cockpit/guards/bash-guard.sh', 'pkg/.opencode/plugins/a.js', 'tools/skills/probe/SKILL.md']) {
+            mkdirSync(join(root, path, '..'), { recursive: true })
+            writeFileSync(join(root, path), '{}\n')
+        }
+        run('add', '.')
+        run('commit', '-qm', 'planted')
+        run('switch', '-q', 'work')
+        const planted = [join(root, 'deep/.claude/settings.json'), join(root, 'deep/sub/.codex/hooks.json'), join(root, 'pkg/.cockpit/guards/bash-guard.sh'), join(root, 'pkg/.opencode/plugins/a.js')]
+        const skill = [join(root, 'tools/skills/probe/SKILL.md')]
+        const changes = (target: Parameters<typeof guardWorktreeChanges>[1]) => guardWorktreeChanges(root, target, [], git, executeProbe)
+        // A checkout or merge of the revision, a restore of a directory from it, and a worktree of it.
+        expect(await changes({ revision: 'planted' })).toEqual({ guarded: false, changed: planted, instructions: skill })
+        expect(await changes({ revision: 'planted', from: 'worktree', paths: ['deep'] })).toEqual({ guarded: false, changed: [planted[0], planted[1]] })
+        expect(await changes({ revision: 'planted', from: ':empty' })).toEqual({ guarded: false, changed: planted, instructions: skill })
+        // The index, as `git update-index --cacheinfo` leaves it, then checked out by path or by a word that names no commit.
+        run('read-tree', 'planted')
+        expect(await changes({ revision: ':index', from: 'worktree', paths: ['deep'] })).toEqual({ guarded: false, changed: [planted[0], planted[1]] })
+        expect(await changes({ revision: 'deep', fallback: 'index' })).toEqual({ guarded: false, changed: [planted[0], planted[1]] })
+        run('read-tree', 'work')
+        expect(await changes({ revision: 'work', from: 'worktree', paths: ['notes.md'] })).toEqual({ guarded: false, changed: [] })
+    })
+
     it('reads the nearest package manifest inside the roots, and none past them or from an unreadable one', () => {
         const root = scratch()
         writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'synthetic-app', scripts: { build: 'tsc', test: 'vitest' } }))

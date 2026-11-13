@@ -398,6 +398,54 @@ describe('resolved guard evaluation', () => {
         expect(evaluateGuard(parseGuardInput(shellPayload('git worktree add pkg/wt')), policy(), withGit).reason).not.toContain('creates a Git repository inside the cockpit')
     })
 
+    it('judges what each spelling of a Git content writer checks out, refusing a planted control at any depth and asking for an agent instruction file', () => {
+        // Agent tool settings, hooks and guard scripts reached the working tree through the object store and the
+        // index, which no write names: `hash-object -w`, `update-index --cacheinfo`, then `checkout -- <dir>`.
+        const asked: object[] = []
+        const answering = (changed: readonly string[], instructions?: readonly string[]) => (request: Parameters<PathInspection>[0]) => {
+            if (request.operation !== 'tree') return withGit(request)
+            asked.push({ revision: request.revision, from: request.from, paths: request.paths, fallback: request.fallback })
+            return { status: 'resolved', path: posix.resolve(request.cwd, request.path), revision: request.revision, ...request.from === undefined ? {} : { from: request.from },
+                guarded: false, changed: changed.map(path => `${root}/${path}`), ...instructions ? { instructions: instructions.map(path => `${root}/${path}`) } : {} }
+        }
+        const decide = (command: string, changed: readonly string[], instructions?: readonly string[]) => evaluateGuard(parseGuardInput(shellPayload(command)), { ...policy(), defaultDecision: 'allow' as const }, answering(changed, instructions)).decision
+        for (const [command, target] of [
+            ['git checkout -- deep', { revision: ':index', from: 'worktree', paths: ['deep'] }],
+            ['git checkout planted -- deep', { revision: 'planted', from: 'worktree', paths: ['deep'] }],
+            // Without `--`, checkout reads a first word that names no commit as a path written from the index.
+            ['git checkout deep', { revision: 'deep', fallback: 'index' }],
+            ['git checkout planted deep', { revision: 'planted', from: 'worktree', paths: ['deep'], fallback: 'index' }],
+            ['git restore deep', { revision: ':index', from: 'worktree', paths: ['deep'] }],
+            ['git restore --source planted deep', { revision: 'planted', from: 'worktree', paths: ['deep'] }],
+            ['git restore -s planted -W -S deep', { revision: 'planted', from: 'worktree', paths: ['deep'] }],
+            ['git checkout-index -f -- deep/x', { revision: ':index', from: 'worktree', paths: ['deep/x'] }],
+            // A new worktree holds what the revision adds to the current one's HEAD; without one, the branch named like its directory.
+            ['git worktree add pkg/old HEAD~1', { revision: 'HEAD~1' }],
+            ['git worktree add pkg/old', { revision: 'old' }],
+            ['git merge planted', { revision: 'planted' }],
+        ] as const) {
+            asked.length = 0
+            expect(decide(command, ['deep/.claude/settings.json']), command).toBe('deny')
+            expect(asked, command).toEqual([{ from: undefined, paths: undefined, fallback: undefined, ...target }])
+            expect(decide(command, [], ['tools/skills/probe/SKILL.md']), command).toBe('ask')
+            expect(decide(command, []), command).toBe('allow')
+        }
+        // Staging writes only the index, and a worktree on a new branch at HEAD holds what this one does.
+        for (const command of ['git restore --staged deep', 'git worktree add worktrees/topic -b topic', 'git worktree add --detach pkg/wt']) {
+            asked.length = 0
+            expect(decide(command, ['deep/.claude/settings.json']), command).toBe('allow')
+            expect(asked, command).toEqual([])
+        }
+        // The index entry itself is refused, since nothing names the path again until it is checked out.
+        for (const command of ['git update-index --add --cacheinfo 100644,abc1234,deep/.claude/settings.json', 'git update-index --add --cacheinfo 100644 abc1234 sub/.cockpit/guards/bash-guard.sh',
+            'git update-index --add --cacheinfo=100644,abc1234,sub/.codex/hooks.json', 'git update-index --add --cacheinfo 100644,abc1234,sub/.opencode/plugins/a.js']) {
+            expect(decide(command, []), command).toBe('deny')
+        }
+        expect(decide('git update-index --add --cacheinfo 100644,abc1234,src/a.ts', [])).toBe('allow')
+        // A prefix lands the index somewhere no path names, and a sparse checkout writes skipped entries.
+        for (const command of ['git checkout-index --prefix=sub/ -- src/a.ts', 'git sparse-checkout disable']) expect(decide(command, []), command).toBe('ask')
+    })
+
     it('refuses an agent tool\'s hook or settings file at any depth, where a session started there loads it', () => {
         // Claude Code reads .claude/settings.json and settings.local.json from the directory a session starts
         // in, Codex every .codex/config.toml from the project root down to it, and OpenCode opencode.json and
