@@ -483,15 +483,20 @@ describe('restriction expansion', () => {
                 [2, 2, 'refused\n'], [0, 0, '']] as const) {
                 await writeFile(join(directory, result.sharedGuard.path), exit === 2 ? "printf 'refused\\n' >&2; exit 2\n" : `exit ${exit}\n`)
                 recordTestGuard(directory)
-                const run = spawnSync('/bin/sh', ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: directory } })
-                expect({ status: run.status, stderr: run.stderr }, `${name} exit ${exit}`).toEqual({ status, stderr })
+                // Linux runs hooks with dash as /bin/sh, which reads the command more strictly than bash.
+                for (const shell of ['/bin/sh', '/bin/dash']) {
+                    const run = spawnSync(shell, ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: directory } })
+                    expect({ status: run.status, stderr: run.stderr }, `${name} exit ${exit} under ${shell}`).toEqual({ status, stderr })
+                }
             }
             // A missing guard blocks, naming the script and the fix.
             await rm(join(directory, result.sharedGuard.path))
-            const missing = spawnSync('/bin/sh', ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: directory } })
-            expect(missing.status).toBe(2)
-            // Neither finds a cockpit above the session once the script is gone, so each names the absolute path that exists nowhere.
-            expect(missing.stderr).toContain('cockpit guard failed (127): /no-cockpit-root/.cockpit/guards/bash-guard.sh; sync the cockpit')
+            for (const shell of ['/bin/sh', '/bin/dash']) {
+                const missing = spawnSync(shell, ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: directory } })
+                expect(missing.status, shell).toBe(2)
+                // Neither finds a cockpit above the session once the script is gone, so each names the absolute path that exists nowhere.
+                expect(missing.stderr, shell).toContain('cockpit guard failed (127): /no-cockpit-root/.cockpit/guards/bash-guard.sh; sync the cockpit')
+            }
         }
         expect(result.sharedGuard.bytes).toContain(`so ${GUARD_HELD_CALLS} are refused.`)
     })

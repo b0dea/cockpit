@@ -30,10 +30,13 @@ async function fixture() {
     const run = (harness: 'claudecode' | 'codexcli', command = 'git restore -- .cockpit/guards/bash-guard.sh', event: 'PreToolUse' | 'SessionStart' = 'PreToolUse') => {
         const registration = rendered.targets.find(target => target.target === harness)!.files[0]!
         const hook = (JSON.parse(registration.bytes) as { hooks: Record<typeof event, Array<{ hooks: Array<{ command: string }> }>> }).hooks[event][0]!.hooks[0]!.command
-        return spawnSync('/bin/sh', ['-c', hook], { cwd: root, encoding: 'utf8',
+        // Linux runs hooks with dash as /bin/sh, which reads the command more strictly than bash: both answer alike.
+        const [sh, dash] = ['/bin/sh', '/bin/dash'].map(shell => spawnSync(shell, ['-c', hook], { cwd: root, encoding: 'utf8',
             env: { ...process.env, CLAUDE_PROJECT_DIR: root },
             input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: root, tool_input: { command } }),
-        })
+        }))
+        expect({ status: dash!.status, stdout: dash!.stdout, stderr: dash!.stderr }).toEqual({ status: sh!.status, stdout: sh!.stdout, stderr: sh!.stderr })
+        return sh!
     }
     const launcher = join(root, 'node_modules/@b00dea/cockpit/bin/cockpit.mjs')
     const handler = join(root, 'node_modules/@b00dea/cockpit/dist/cli.js')

@@ -399,7 +399,8 @@ const walk = (start: string, from: string) => `d=${start} || d=; r=${MISSING_ROO
 // The hook runs the guard script through the check sync wrote below ~/.cockpit/guards, where no agent
 // writes: it compares the script and the identity file that names the handler with the digests sync
 // recorded for the canonical root, then runs the script with that root (guards/guard-record.ts). With no
-// script the hook names it, as it always did.
+// script the hook names it, as it always did: bash exits 127 for a missing file where dash, Linux's
+// /bin/sh, exits 2, which the hook would pass on as a refusal with dash's own message.
 const CHECKED = (root: string, script: string) => `L="$HOME/${GUARD_CHECK_PATH}"; [ -f "${script}" ] || L=${script}; `
 const HOOK_ROOT = Object.freeze({
     claudecode: { expression: '${CLAUDE_PROJECT_DIR:-}', prelude: walk('${CLAUDE_PROJECT_DIR:-$(pwd -P)}', 'the session directory'), guard: '$r' },
@@ -415,7 +416,7 @@ function hooksBytes(target: keyof typeof HOOK_ROOT, matcher: string, guardPath: 
     // process, a missing shell or guard script) would let the tool call run, so it is folded into a
     // blocking exit. Claude Code prints the whole hook command beside every refusal it reports, so the
     // command stays one short line and the recovery text lives in the guard script it runs.
-    const guard = `${root.prelude}H="${root.guard}/${guardPath}"; ${CHECKED(root.guard, '"$H"')}${askIsDeny ? 'COCKPIT_ASK_IS_DENY=1 ' : ''}/bin/sh "$L" "${root.guard}" --harness ${target}; s=$?; case $s in 0|2) exit $s;; esac; echo "cockpit guard failed ($s): $H; sync the cockpit" >&2; exit 2`
+    const guard = `${root.prelude}H="${root.guard}/${guardPath}"; ${CHECKED(root.guard, '$H')}${askIsDeny ? 'COCKPIT_ASK_IS_DENY=1 ' : ''}/bin/bash "$L" "${root.guard}" --harness ${target}; s=$?; case $s in 0|2) exit $s;; esac; echo "cockpit guard failed ($s): $H; sync the cockpit" >&2; exit 2`
     // Claude Code 2.1.317 and Codex 0.166.0 (a trusted hook) each ran a SessionStart command and put its
     // stdout in the agent's context, measured 2026-11-03 beside a misspelled event that never ran. A
     // drift report there tells the agent what to re-sync before it works; the hook never blocks.

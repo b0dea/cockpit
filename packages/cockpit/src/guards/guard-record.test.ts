@@ -22,7 +22,12 @@ describe('guard record', () => {
         }
         write(root, 'printf "ran %s %s" "$COCKPIT_GUARD_CHECKED_ROOT" "$*"\n', 'identity\n')
         expect(await writeGuardRecord(root, home)).toEqual({ kind: 'complete' })
-        const check = (from = root) => spawnSync('/bin/sh', [join(home, GUARD_CHECK_PATH), from, '--harness', 'codexcli'], { encoding: 'utf8', env: { HOME: home, PATH: '/usr/bin:/bin' } })
+        // The OpenCode plugin runs the check with /bin/sh, which is dash on Linux: both answer alike.
+        const check = (from = root) => {
+            const [sh, dash] = ['/bin/sh', '/bin/dash'].map(shell => spawnSync(shell, [join(home, GUARD_CHECK_PATH), from, '--harness', 'codexcli'], { encoding: 'utf8', env: { HOME: home, PATH: '/usr/bin:/bin' } }))
+            expect({ status: dash!.status, stdout: dash!.stdout, stderr: dash!.stderr }).toEqual({ status: sh!.status, stdout: sh!.stdout, stderr: sh!.stderr })
+            return sh!
+        }
         expect(check()).toMatchObject({ status: 0, stdout: `ran ${root} --harness codexcli` })
         // Bytes moved from one file to the other leave their concatenation as it was, and are still a change.
         write(root, 'printf "ran %s %s" "$COCKPIT_GUARD_CHECKED_ROOT" "$*"\nid', 'entity\n')
