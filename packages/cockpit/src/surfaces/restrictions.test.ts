@@ -342,6 +342,15 @@ describe('restriction expansion', () => {
             expect(run.stderr).toContain('more than one .cockpit/guards/bash-guard.sh')
             expect(run.stderr).not.toContain('planted')
         }
+        // A linked worktree kept inside the checkout, as agent tools keep theirs, holds its own committed guard: the walk
+        // stops at the nearest Git entry, so the worktree's guard runs and the checkout's above it is no ambiguity.
+        const worktree = join(directory, 'worktrees/wt')
+        await mkdir(join(worktree, '.cockpit/guards'), { recursive: true })
+        await writeFile(join(worktree, '.git'), 'gitdir: /workspace/elsewhere/.git/worktrees/wt\n')
+        await writeFile(join(worktree, '.cockpit/guards/bash-guard.sh'), 'printf worktree-guard >&2; exit 0\n')
+        for (const [name, env] of [['claudecode', { ...ambient, CLAUDE_PROJECT_DIR: worktree }], ['codexcli', ambient]] as const) {
+            expect(runs(name, worktree, env, 'env/service.env'), name).toMatchObject({ status: 0, stderr: 'worktree-guard' })
+        }
         // Outside every cockpit the registration finds no guard and blocks.
         expect(runs('claudecode', tmpdir(), ambient, 'env/service.env.example')).toMatchObject({
             status: 2, stdout: '', stderr: expect.stringContaining('cockpit guard failed (127): /no-cockpit-root/.cockpit/guards/bash-guard.sh; sync the cockpit'),

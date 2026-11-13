@@ -154,6 +154,54 @@ describe('public surface publication transaction', () => {
             expect(call({ file_path: join(subdirectory, 'notes.md'), content: 'synthetic' })).toBe('allow')
         })
 
+        it('guards a session in a linked worktree kept below the checkout, and one below a cockpit nested in its repository', async () => {
+            const git = (cwd: string, ...args: string[]) => expect(spawnSync('git', ['-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args],
+                { cwd, encoding: 'utf8' }).status).toBe(0)
+            const hookOf = async (settings: string) => (JSON.parse(await readFile(settings, 'utf8')) as {
+                hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> } }).hooks.PreToolUse.at(-1)!.hooks[0]!.command
+            const run = (command: string, cwd: string, harness: 'claudecode' | 'codexcli', tool_input: object, tool_name = 'Write') => spawnSync('/bin/sh', ['-c', command], {
+                cwd, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: process.env.HOME, ...harness === 'claudecode' ? { CLAUDE_PROJECT_DIR: cwd } : {} },
+                input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name, cwd, tool_input }) })
+            const decision = (result: ReturnType<typeof run>) => {
+                expect(result.status, result.stderr).toBe(0)
+                return result.stdout ? JSON.parse(result.stdout).hookSpecificOutput.permissionDecision : 'allow'
+            }
+            // A worktree of a synced cockpit, synced itself, kept inside the main checkout as agent tools keep theirs.
+            const fixture = await surfaceConsumer('worktree-session')
+            await writeFile(join(fixture.siblingDirectory, 'package-lock.json'), '{}')
+            git(fixture.root, 'init', '--quiet')
+            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+            git(fixture.root, 'add', '-A')
+            git(fixture.root, 'commit', '--quiet', '-m', 'Synthetic cockpit')
+            const worktree = join(await realpath(fixture.root), 'worktrees/wt')
+            git(fixture.root, 'worktree', 'add', '--quiet', worktree)
+            expect(await syncGeneratedEnvironment({ configPath: join(worktree, 'cockpit.toml') })).toMatchObject({ kind: 'complete' })
+            for (const [harness, settings] of [['claudecode', '.claude/settings.json'], ['codexcli', '.codex/hooks.json']] as const) {
+                const command = await hookOf(join(worktree, settings))
+                expect(decision(run(command, worktree, harness, { file_path: join(worktree, '.cockpit/guards/bash-guard.sh'), content: 'exit 0' })), harness).toBe('deny')
+                expect(decision(run(command, worktree, harness, { file_path: join(worktree, 'notes.md'), content: 'synthetic' })), harness).toBe('allow')
+            }
+            // A cockpit in a directory below its repository's top: Claude Code reads local settings there only from
+            // the top, so sync writes the registration there too, gated to sessions inside the cockpit.
+            const repository = await realpath(await mkdtemp(join(tmpdir(), 'nested-cockpit-')))
+            roots.push(repository)
+            git(repository, 'init', '--quiet')
+            const nested = await surfaceConsumer('nested-session', { parentDirectory: repository })
+            await writeFile(join(nested.siblingDirectory, 'package-lock.json'), '{}')
+            expect(await syncGeneratedEnvironment({ configPath: nested.configPath })).toMatchObject({ kind: 'complete' })
+            const gated = await hookOf(join(repository, '.claude/settings.local.json'))
+            const inside = join(nested.root, 'docs')
+            const elsewhere = join(repository, 'other')
+            await mkdir(inside, { recursive: true })
+            await mkdir(elsewhere, { recursive: true })
+            expect(decision(run(gated, inside, 'claudecode', { command: 'git push --force origin main' }, 'Bash'))).toBe('deny')
+            expect(decision(run(gated, inside, 'claudecode', { file_path: join(inside, 'notes.md'), content: 'synthetic' }))).toBe('allow')
+            // Elsewhere in the repository, and at the cockpit root, whose own settings register the guard, it does nothing.
+            for (const cwd of [elsewhere, repository, nested.root]) {
+                expect(run(gated, cwd, 'claudecode', { command: 'git push --force origin main' }, 'Bash'), cwd).toMatchObject({ status: 0, stdout: '' })
+            }
+        })
+
         it('applies a tool restriction under stale_delete = person, removing only the unchanged MCP file of a tool still listed', async () => {
             const fixture = await surfaceConsumer('stale-mcp', { mcp: { command: '/usr/bin/true' } })
             expect(spawnSync('git', ['init', '--quiet', fixture.root]).status).toBe(0)

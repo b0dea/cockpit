@@ -18,8 +18,8 @@
  * Cursor and Grok Build were not installed, so nothing is written for them.
  */
 import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
-import { readdirSync } from 'node:fs'
-import { basename, join, sep } from 'node:path'
+import { lstatSync, readdirSync, realpathSync } from 'node:fs'
+import { basename, dirname, join, sep } from 'node:path'
 import { readBoundedFile } from '../bounded-read.js'
 import { GUARD_LOCAL_PATHS, writeCockpitLocalFiles } from '../guards/local-identity.js'
 import { foldGuardSpelling, nestedAgentConfiguration } from '../guards/evaluator.js'
@@ -251,47 +251,83 @@ export function mergeClaudeLocalGuard(current: unknown, wanted: readonly HookEnt
     return { bytes: Object.keys(next).length ? `${JSON.stringify(next, null, 2)}\n` : null }
 }
 
+/**
+ * The top of the repository holding the cockpit, when it is a directory above the cockpit root: Claude
+ * Code reads local settings only from a session's own directory and that top, so a cockpit nested below
+ * it registers the guard there too. Found as Git marks it, by the nearest `.git` entry at or above the root.
+ */
+function repositoryTopAbove(root: string): string | undefined {
+    for (let directory = root; ; directory = dirname(directory)) {
+        try { lstatSync(join(directory, '.git')); return directory === root ? undefined : realpathSync(directory) }
+        catch (error) { if (!isMissing(error)) throw error }
+        if (dirname(directory) === directory) return undefined
+    }
+}
+
+/**
+ * The guard entries for the repository top's local settings: each runs the guard only for a session that
+ * started inside the cockpit below its root, and does nothing elsewhere in the repository, or at the
+ * root, whose own settings register the guard.
+ */
+function gatedEntries(root: string, wanted: readonly HookEntry[]): readonly HookEntry[] {
+    const gate = `C='${root.replaceAll("'", "'\\''")}'; case "\${CLAUDE_PROJECT_DIR:-$(pwd -P)}" in "$C"/*) ;; *) exit 0;; esac; `
+    return wanted.map(entry => ({ ...entry, hooks: entry.hooks.map(hook => guardCommand(hook) ? { ...hook, command: gate + (hook as { command: string }).command } : hook) }))
+}
+
 /** The committed guard entries, and the local settings as read; a reason when either cannot be read. */
-function claudeGuardFiles(root: string): Readonly<{ wanted: readonly HookEntry[]; local: Readonly<{ value: unknown; bytes: string }> | undefined } | { reason: string }> {
+function claudeGuardFiles(root: string, settingsRoot = root): Readonly<{ wanted: readonly HookEntry[]; local: Readonly<{ value: unknown; bytes: string }> | undefined } | { reason: string }> {
     // A file that does not parse is no absent one: rewriting it would drop what a person keeps there.
     const committed = readLocalJson(join(root, CLAUDE_SETTINGS))
     if (committed && 'reason' in committed) return { reason: `${CLAUDE_SETTINGS} ${committed.reason}` }
     if (committed && committed.value === undefined) return { reason: `${CLAUDE_SETTINGS} is not valid JSON` }
-    const local = readLocalJson(join(root, CLAUDE_LOCAL_SETTINGS))
-    if (local && 'reason' in local) return { reason: `${CLAUDE_LOCAL_SETTINGS} ${local.reason}` }
-    if (local && local.value === undefined) return { reason: `${CLAUDE_LOCAL_SETTINGS} is not valid JSON` }
-    return { wanted: guardEntries(committed?.value), local }
+    const localPath = join(settingsRoot, CLAUDE_LOCAL_SETTINGS)
+    const local = readLocalJson(localPath)
+    if (local && 'reason' in local) return { reason: `${localPath} ${local.reason}` }
+    if (local && local.value === undefined) return { reason: `${localPath} is not valid JSON` }
+    const wanted = guardEntries(committed?.value)
+    return { wanted: settingsRoot === root ? wanted : gatedEntries(root, wanted), local }
 }
 
-/** Repeats the committed guard registration in Claude Code's local settings, or takes cockpit's entry back when none is committed. */
+/**
+ * Repeats the committed guard registration in Claude Code's local settings at the cockpit root, and at
+ * the repository's top when the cockpit lies below it, or takes cockpit's entry back when none is committed.
+ */
 export async function writeClaudeLocalGuard(root: string): Promise<Readonly<{ kind: 'complete' } | { kind: 'refusal'; message: string }>> {
-    const files = claudeGuardFiles(root)
-    if ('reason' in files) return { kind: 'refusal', message: files.reason }
-    if (files.local === undefined && files.wanted.length === 0) return { kind: 'complete' }
-    const merged = mergeClaudeLocalGuard(files.local?.value, files.wanted)
-    if (merged === undefined) return { kind: 'complete' }
-    if ('reason' in merged) return { kind: 'refusal', message: `${CLAUDE_LOCAL_SETTINGS} could not take the guard registration: ${merged.reason}` }
-    try {
-        await writeClaudeLocalSettings(root, merged.bytes)
-        return { kind: 'complete' }
-    } catch (error) {
-        return { kind: 'refusal', message: `${join(root, CLAUDE_LOCAL_SETTINGS)} could not be written: ${errorCause(error)}` }
+    let top: string | undefined
+    try { top = repositoryTopAbove(root) } catch (error) { return { kind: 'refusal', message: `the repository above ${root} could not be found: ${errorCause(error)}` } }
+    for (const settingsRoot of top === undefined ? [root] : [root, top]) {
+        const files = claudeGuardFiles(root, settingsRoot)
+        if ('reason' in files) return { kind: 'refusal', message: files.reason }
+        if (files.local === undefined && files.wanted.length === 0) continue
+        const merged = mergeClaudeLocalGuard(files.local?.value, files.wanted)
+        if (merged === undefined) continue
+        if ('reason' in merged) return { kind: 'refusal', message: `${join(settingsRoot, CLAUDE_LOCAL_SETTINGS)} could not take the guard registration: ${merged.reason}` }
+        try { await writeClaudeLocalSettings(settingsRoot, merged.bytes) }
+        catch (error) { return { kind: 'refusal', message: `${join(settingsRoot, CLAUDE_LOCAL_SETTINGS)} could not be written: ${errorCause(error)}` } }
     }
+    return { kind: 'complete' }
 }
 
 /** Doctor's finding when Claude Code sessions started below the cockpit root would run without the guard. */
 export function inspectClaudeLocalGuard(root: string): readonly EnvironmentDiagnostic[] {
-    const files = claudeGuardFiles(root)
+    let top: string | undefined
+    try { top = repositoryTopAbove(root) } catch { top = undefined } // an unreadable parent leaves the root's own file to check
+    return [root, ...top === undefined ? [] : [top]].flatMap(settingsRoot => inspectLocalGuardAt(root, settingsRoot))
+}
+
+function inspectLocalGuardAt(root: string, settingsRoot: string): readonly EnvironmentDiagnostic[] {
+    const files = claudeGuardFiles(root, settingsRoot)
     const missing = (why: string): EnvironmentDiagnostic => ({ severity: 'warning',
         code: 'CLAUDE_LOCAL_HOOK_MISSING' satisfies typeof ENVIRONMENT_CODES.CLAUDE_LOCAL_HOOK_MISSING,
         message: `${why}; Claude Code reads ${CLAUDE_SETTINGS} only from the directory a session starts in, so a session started below the cockpit root runs without the guard`,
         // Code and fix are literals, so the diagnostic inventory captures the fix beside the code.
-        target: CLAUDE_LOCAL_SETTINGS, fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal; if sync cannot read .claude/settings.local.json, make it a JSON object or remove it first' })
-    if ('reason' in files) return [missing(`cockpit could not check the guard registration in ${CLAUDE_LOCAL_SETTINGS}: ${files.reason}`)]
+        target: join(settingsRoot, CLAUDE_LOCAL_SETTINGS), fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal; if sync cannot read .claude/settings.local.json, make it a JSON object or remove it first' })
+    const local = join(settingsRoot, CLAUDE_LOCAL_SETTINGS)
+    if ('reason' in files) return [missing(`cockpit could not check the guard registration in ${local}: ${files.reason}`)]
     if (files.wanted.length === 0) return []
-    if (plainObject(files.local?.value) && files.local.value.disableAllHooks === true) return [missing(`${CLAUDE_LOCAL_SETTINGS} sets disableAllHooks`)]
+    if (plainObject(files.local?.value) && files.local.value.disableAllHooks === true) return [missing(`${local} sets disableAllHooks`)]
     const present = mergeClaudeLocalGuard(files.local?.value, files.wanted) === undefined
-    return present ? [] : [missing(`${CLAUDE_LOCAL_SETTINGS} does not register the guard ${CLAUDE_SETTINGS} registers`)]
+    return present ? [] : [missing(`${local} does not register the guard ${CLAUDE_SETTINGS} registers`)]
 }
 
 // Directories a session does not start in, and a bound on the walk: doctor reports, it does not prove.

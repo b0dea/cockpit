@@ -386,16 +386,18 @@ function shellLiteral(value: string): string {
 // have written, so each hook takes the outermost directory at or above the session's that holds the guard
 // script: the directories above the cockpit lie outside every root, which agents do not write. Claude
 // Code 2.1.323 sets CLAUDE_PROJECT_DIR to the directory a session started in, a subdirectory included
-// (measured 2026-11-13). A second guard script on the way is ambiguous, whoever wrote it, so the call
-// blocks; with none the guard path is an absolute one that exists nowhere, which no agent can create, and
+// (measured 2026-11-13). The walk stops at the nearest directory holding a `.git` entry, the top of the
+// checkout the session is in: a linked worktree that Claude Code keeps below the main checkout holds its
+// own committed guard, and the one above it belongs to another checkout. A second guard script within
+// that bound is ambiguous, whoever wrote it, so the call blocks; with none the guard path is an absolute one that exists nowhere, which no agent can create, and
 // the call blocks too. The walk is plain shell, since a program the hook found on the session's search
 // path could be one an agent planted.
 const MISSING_ROOT = '/no-cockpit-root'
-const walk = (start: string, from: string) => `d=${start} || d=; r=${MISSING_ROOT}; n=0; while [ -n "$d" ]; do [ -f "$d/.cockpit/guards/bash-guard.sh" ] && { r=$d; n=$((n+1)); }; d=\${d%/*}; done; `
+const walk = (start: string, from: string) => `d=${start} || d=; r=${MISSING_ROOT}; n=0; while [ -n "$d" ]; do [ -f "$d/.cockpit/guards/bash-guard.sh" ] && { r=$d; n=$((n+1)); }; [ -e "$d/.git" ] && break; d=\${d%/*}; done; `
     + `[ $n -gt 1 ] && { echo "cockpit guard: more than one .cockpit/guards/bash-guard.sh at or above ${from}, so the guard to run is ambiguous; a person removes the one that is not the cockpit's" >&2; exit 2; }; `
 const HOOK_ROOT = Object.freeze({
     claudecode: { expression: '${CLAUDE_PROJECT_DIR:-}', prelude: walk('${CLAUDE_PROJECT_DIR:-$(pwd -P)}', 'the session directory'), guard: '$r' },
-    // Codex trusts a hook by its exact command, so this spelling stays as people trusted it.
+    // Codex trusts a hook by its exact command, so a person trusts it again after this spelling changes.
     codexcli: { expression: '$(pwd -P 2>/dev/null)', prelude: walk('$(pwd -P)', '$(pwd -P)'), guard: '$r' },
 } as const)
 

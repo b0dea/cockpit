@@ -112,10 +112,12 @@ Limits, stated plainly:
   and `.claude/settings.local.json` also from the repository's top. So `sync` repeats the guard
   registration in the cockpit root's `.claude/settings.local.json`, which Git ignores, beside
   whatever a person keeps there, and `doctor` warns (`CLAUDE_LOCAL_HOOK_MISSING`) when it is
-  missing. A session started in a subdirectory then runs the guard too. This holds when the cockpit
-  root is the top of its repository: a local file in a directory between the top and the session's is
-  not read, so a session started below a cockpit nested in a larger repository runs without the
-  guard. Measured on 2026-11-13 with Claude Code 2.1.323 and its default setting sources, in a
+  missing. A session started in a subdirectory then runs the guard too. A local file in a directory
+  between the repository's top and the session's is not read, so for a cockpit below its repository's
+  top `sync` also writes the registration into the top's `.claude/settings.local.json`, where it runs
+  the guard only for a session started inside the cockpit and does nothing elsewhere in the
+  repository; that file lies outside the cockpit's own ignore rules, so keep it ignored there.
+  `doctor` checks both files. Measured on 2026-11-13 with Claude Code 2.1.323 and its default setting sources, in a
   throwaway repository:
   - started one or two directories below the root, no root `.claude/settings.json` hook ran while
     the shell command ran, and a malformed twin of that file, named as invalid from the root, went
@@ -1207,8 +1209,10 @@ Unavailable or malformed decisions exit 2 on every target, so adapter exit 0 alo
 permission was granted. Claude Code prints the hook command beside every refusal it reports, so the
 generated Claude Code and Codex commands are one line that runs the committed guard script, which
 holds the recovery text. Each takes the outermost directory at or above the session's that holds the
-guard script, starting for Claude Code from `CLAUDE_PROJECT_DIR`, else the working directory, and blocks
-the call when more than one directory on the way holds one, since it cannot tell which is the cockpit's; a script that is missing or exits with any status but 0 or 2 blocks
+guard script, starting for Claude Code from `CLAUDE_PROJECT_DIR`, else the working directory, and
+stopping at the nearest directory with a `.git` entry, so a linked worktree kept below its main checkout
+runs its own guard; it blocks the call when more than one directory within that bound holds one, since
+it cannot tell which is the cockpit's; a script that is missing or exits with any status but 0 or 2 blocks
 the call with `cockpit guard failed (<status>): <script>; sync the cockpit`. The generated Claude Code and Codex registrations give the guard hook a
 `timeout` of 30 seconds; a guard call spawns several Node and Git processes and was seen to exceed
 Codex's 5-second default on a loaded machine. What either harness does with the call when that
