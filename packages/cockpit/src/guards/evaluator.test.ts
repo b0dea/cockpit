@@ -1357,7 +1357,7 @@ describe('allow by default', () => {
                 { tool: 'opencode-config', path: `${home}/.config/opencode` }],
             agentMemoryKeys: ['-workspace-project', '-Workspace-Sibling'], agentType: 'reviewer',
             agentWorkspaces: [{ kind: 'scratchpad', path: scratch }, { kind: 'temp', path: '/workspace/tmp' }, { kind: 'temp', path: '/workspace/user-tmp' }],
-            agentReadAreas: [session] }
+            agentReadAreas: [`${claude}/projects/-workspace-project--claude-worktrees-wt`, session] }
         // `/tmp` leads to the temp directory, and one file there has a second name.
         const lands: PathInspection = request => {
             const path = posix.resolve(request.cwd, request.path)
@@ -1427,12 +1427,19 @@ describe('allow by default', () => {
         })
 
         it('reads back the agent\'s own data, controls and session files, never a credential', () => {
-            for (const command of [`cat ${claude}/projects/-workspace-elsewhere/session/tool-results/out.txt`, `rg needle ${session}/tasks/b1.output`,
-                `jq . ${claude}/projects/-workspace-project/session.jsonl`, `cat ${claude}/settings.json`, `cat ${codex}/memories/MEMORY.md`, 'cat /workspace/tmp/notes.txt',
-                `cat ${scratch}/notes.md`, `ls ${claude}/plans`]) {
+            for (const command of [`cat ${claude}/projects/-workspace-project/session/tool-results/out.txt`, `rg needle ${session}/tasks/b1.output`,
+                `jq . ${claude}/projects/-workspace-project/session.jsonl`, `cat ${claude}/projects/-workspace-project--claude-worktrees-wt/session.jsonl`,
+                `cat ${claude}/CLAUDE.md`, `cat ${codex}/memories/MEMORY.md`, `cat ${codex}/AGENTS.md`, 'cat /workspace/tmp/notes.txt',
+                `cat ${scratch}/notes.md`, `ls ${claude}/plans`, `ls ${claude}/projects`]) {
                 expect(shell(command), command).toMatchObject({ decision: 'allow' })
             }
-            for (const command of [`cat ${claude}/.credentials.json`, `cat ${codex}/auth.json`, `cat ${opencode}/auth.json`, `cat ${claude}/ide/1.lock`]) {
+            // What can hold a token, and another project's transcripts and data, ask before reaching the transcript.
+            for (const command of [`cat ${claude}/settings.json`, `cat ${claude}/settings.local.json`, `cat ${claude}/history.jsonl`, `cat ${claude}/paste-cache/a.txt`,
+                `cat ${claude}/projects/-workspace-elsewhere/session.jsonl`, `cat ${claude}/projects/-workspace-elsewhere/memory/MEMORY.md`,
+                `cat ${codex}/config.toml`, `cat ${codex}/history.jsonl`, `cat ${home}/.config/opencode/opencode.json`]) {
+                expect(shell(command), command).toMatchObject({ decision: 'ask' })
+            }
+            for (const command of [`cat ${claude}/.credentials.json`, `cat ${home}/.claude.json`, `cat ${codex}/auth.json`, `cat ${opencode}/auth.json`, `cat ${claude}/ide/1.lock`]) {
                 expect(shell(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('credential') })
             }
             // An unclassified entry, another session's temp tree and another tool's home are not the agent's own.

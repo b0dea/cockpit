@@ -7,7 +7,7 @@ import { renderGuardProjectCommand } from '../environment/install-policy.js'
 import { GUARD_LOCAL_PATHS } from './local-identity.js'
 import { classifyReadOnlyInvocation, cockpitLauncherPrefix, ghWords, gitContentOperands, type ReadOnlyAccess } from './read-only.js'
 import { SURFACE_EXECUTION_CONTROL_PATHS } from '../surfaces/harness-registry.js'
-import { AGENT_HOME_TOOLS, classifyAgentHomeEntry, type AgentHomeTool } from './agent-homes.js'
+import { AGENT_HOME_TOOLS, agentHomeReadAsks, classifyAgentHomeEntry, type AgentHomeTool } from './agent-homes.js'
 
 /**
  * The cockpit commands that run the words after their `--` as a command of their own, and where it
@@ -1996,14 +1996,19 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const agentHomeOf = (path: string) => agentHomes.find(home => within(path, home.path))
     const agentWorkspaceOf = (path: string) => agentWorkspaces.find(area => within(path, area.path)
         && !(area.kind === 'temp' && TEMP_RESERVED.test(fold(posix.relative(area.path, path)))))
-    // An agent reads its tool's data and controls, its workspaces and its session's temp tree; never a credential, and
-    // an entry the table does not classify asks.
+    // An agent reads its session's own areas, its workspaces, and its tool's data and controls for this cockpit's
+    // projects; never a credential. Another project's files, an entry that can hold a token and an entry the table
+    // does not classify ask.
     const agentReadable = (lexical: string) => {
+        if (agentReadAreas.some(area => within(lexical, area))) return true
         const home = agentHomeOf(lexical)
-        if (!home) return agentWorkspaceOf(lexical) !== undefined || agentReadAreas.some(area => within(lexical, area))
+        if (!home) return agentWorkspaceOf(lexical) !== undefined
         const relative = fold(posix.relative(home.path, lexical))
-        const entry = relative ? classifyAgentHomeEntry(home.tool, relative) : undefined
-        return relative === '' || entry !== undefined && entry.kind !== 'credential'
+        if (relative === '') return true
+        const entry = classifyAgentHomeEntry(home.tool, relative)
+        if (entry === undefined || entry.kind === 'credential' || agentHomeReadAsks(home.tool, relative)) return false
+        const project = home.tool === 'claude' ? /^projects\/([^/]+)/.exec(relative)?.[1] : undefined
+        return project === undefined || memoryKeys.has(project)
     }
     // Set while the invocation being judged makes or moves a link, moves a file or directory, or leaves a file it names executable.
     let linking = false

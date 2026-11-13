@@ -74,6 +74,21 @@ const AGENT_HOME_RULES: Readonly<Record<AgentHomeTool, readonly Rule[]>> = Objec
     'opencode-config': rules([['^', 'control', 'OpenCode loads its configuration, instructions and plugins from there']]),
 })
 
+// Entries an agent may read that can hold a token: settings carry `env` values and MCP headers, and
+// prompt history and pasted text hold whatever a person typed or pasted. A read of one asks, so a
+// credential reaches the transcript only once a person agrees.
+const READS_ASK: Readonly<Record<AgentHomeTool, RegExp>> = Object.freeze({
+    claude: new RegExp(`${below('(?:remote-|managed-)?settings[^/]*')}|${below('(?:history\\.jsonl|paste-cache)')}`),
+    codex: new RegExp(`${below('(?:[^/]*\\.)?config\\.toml[^/]*')}|${below('history\\.jsonl?')}`),
+    'opencode-data': /$^/,
+    'opencode-config': /^/,
+})
+
+/** Whether reading a path below a tool home asks, by its folded relative spelling, because it can hold a token. */
+export function agentHomeReadAsks(tool: AgentHomeTool, relative: string): boolean {
+    return READS_ASK[tool].test(relative)
+}
+
 /** The class of a path below a tool home, by its folded relative spelling; undefined is an entry cockpit does not know. */
 export function classifyAgentHomeEntry(tool: AgentHomeTool, relative: string): Readonly<{ kind: AgentHomeClass; why: string }> | undefined {
     const rule = AGENT_HOME_RULES[tool].find(([pattern]) => pattern.test(relative))
