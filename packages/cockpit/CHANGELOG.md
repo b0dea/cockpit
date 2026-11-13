@@ -13,6 +13,54 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.15
+
+### Patch Changes
+
+- d9b1270: An order's grade no longer judges another open order's work. A long-lived order's grade diffed the whole tree, so it failed with `WORK_TEST_WEAKENED` for test files a later order deleted. A changed path outside an order's `scope` and inside another open order's accepted `scope` is now that order's: the grade, `work acknowledge` and `test-run` leave it out of the change, `outOfScope` and test protection, and list it under `otherOrders`. A path in the order's own scope, or one that differs between the two orders' bases, stays its own. `cockpit grade` with a `scope` does the same. An order whose grade left changes to an order that then closed partial or abandoned must be graded again before it closes as done, and once it has closed done, the order holding those changes closes partial or abandoned only through a person or CI.
+- 065ec50: The guard reads more of the shell agents write, so fewer safe commands stop an autonomous session, and it refuses one more thing that is actually dangerous.
+  
+  - A live payment secret or restricted key (`sk` or `rk`, then `_live_` and the key) written into a command's arguments or assignments is refused, since a command line lands in shell history and transcripts. A test key of the same shape still runs.
+  - `mv` or `cp` onto an existing file inside the cockpit no longer fails with "Guard path inspection failed (ENOTDIR)". Writes to a guard control or outside the roots are still refused.
+  - Loops followed by a redirect or pipe, `while` and `until` loops, subshells `( … )`, brace groups that feed a pipeline, process substitution `<(…)` and `"${PIPESTATUS[0]}"` are judged by the commands inside them. `xargs` runs its command with the words from standard input as an argument the guard cannot see, so a command that would read or write what they name asks instead of failing to parse. A shell or interpreter given a word naming `<(…)`, `/dev/stdin` or another descriptor, as its script or an option's value, and `make -f` or `awk -f` reading one, asks, as inline code does.
+  - A function a command defines is judged as the commands in its body, whether or not it is called, because zsh runs `TRAPEXIT`, `zshexit` and similar functions unasked. A body that reads a secret or names a declared host is now refused.
+  - `cmp` and `diff` are read-only commands, so comparing a guard control with its adopted copy runs. Writing a control is still refused.
+  - `git remote get-url`, `git remote -v` and `git ls-remote --get-url` run while no configured remote URL or http header carries a credential, and are refused with that reason when one does.
+  - `gh` reads (`pr view|list|checks`, `run view|list|watch`, `issue view|list`, `repo view`, `auth status`) run in the strict mode too. `gh run rerun`, `gh workflow run`, `gh release create|delete`, `gh secret set` and other commands that publish, delete or spend now ask, and a `gh --jq` filter that reads the environment is refused.
+  - A working directory reached through a link is refused with a reason naming the link and the way forward (name the path through the link from the checkout), instead of "Guard path inspection failed".
+  - The refusal for a call whose working directory differs from the guard's names both directories.
+- 99782e6: New `[guards]` keys let an agent work with less waiting while dangerous actions stay refused:
+  
+  - `secret_paths` declares files and directories, in the cockpit or a sibling, that agents never read, write, search or stage, in every guarded tool. Claude Code's own Read and Edit tools are denied them too.
+  - `related_checkouts` lets agents read, search and run read-only Git in another checkout, such as the upstream of a tool you install. Writes and other Git commands there stay refused.
+  - `unresolved = "deny"` refuses instead of asking, keeping the reason and the route, so an autonomous session continues another way.
+  - `write_paths` lists locations outside the cockpit, such as `~/Downloads`, where agents may write, following the rules of `read_paths`. Agent and shell configuration, credentials, secret names, guards, Git hooks and scheduled jobs stay refused there.
+  
+  Adding a secret path or refusing unresolved commands narrows and needs no person. The other keys widen and wait for a person's `sync --interactive`.
+  
+  An ask that a `[[guards.allow]]` entry would admit now names that exact entry. While `cockpit.toml` does not load, an agent may correct it, without touching `[work]`, `[autonomy]` or MCP restrictions, and run `check` or `sync --dry-run`; everything else stays held. A version mismatch between the installed cockpit and the generated guards now says whether to reinstall dependencies or sync. An edit refused because the tool decoded a TOML `\u` escape now says so and how to spell it. The generated Claude Code and Codex hook command is one short line, so refusals no longer print a long shell program. Setup now warns when test output lands in a secret path.
+  
+  A call that makes or moves a symbolic link now runs nothing else: a link moved within one call could reach the guard script or a secret that the call's other commands were judged without. A path spelled through `/System/Volumes/Data` or `/Volumes` that reaches the cockpit or a granted location is refused. Hard links, clones and archive downloads count as links for that rule, and writing a file that has another hard link is refused. No agent writes a `.cockpit/guards` path or a `.cockpit` directory anywhere. The destination of `rsync`, `scp`, `ditto` and similar writers inside the cockpit is judged as a write, so none can replace the installed cockpit or the guard. The Codex hook finds the cockpit above a session started in a subdirectory, and blocks when more than one guard script is on the way.
+- 36165b2: The guard now holds secrets that only Git history, a pull request diff or a followed link would print:
+  
+  - A Git command that prints committed content (`diff`, `show`, `log -p`, `grep`, `blame`, `cat-file`, `archive`, `format-patch`, `whatchanged`) is refused when a pathspec or `rev:path` names an environment file, a secrets directory, a declared instance or a `[guards] secret_paths` entry, in both modes and whether or not the index holds it now.
+  - A command that can print a commit, such as `git log -p`, `git show <rev>` or `git grep <pattern> <rev>`, now asks while any commit reachable from a ref, a reflog or a revision it names holds such a file, not only the index. Limit it with `-- <path>`. In a very large history the check can take seconds, and past its time limit the command asks. `git cat-file -p` of an object other than a `rev:path` or `HEAD` asks, and the plumbing diffs (`diff-tree`, `diff-index`, `diff-files`, `merge-tree`) are no longer allowed unread. An option's value, such as `git log --grep .env`, no longer counts as a path.
+  - `gh pr diff` is judged as `git diff <rev>` is: it runs from the repository's top while neither the index nor history holds a secret, and asks otherwise. With `--repo`, a URL, or from a subdirectory it asks. Under the allow default `gh search code` and `gh api` reads of files or patches ask too. `gh pr diff --name-only` runs.
+  - `zip` (without `-y`), `scp` and `rsync -L`, `-k` or `--copy-unsafe-links` follow links below the trees they read, so a tree holding a link now asks, as `diff -r` already did.
+  - Claude Code's `Read` deny rules for a declared instance or secret path with a non-ASCII name are written in both Unicode normal forms, since Claude Code compares them literally while macOS resolves either spelling to the file.
+- edec0d3: Every command now says when it took over a state lock left by a killed command. Only `up`, `sleep`, `session`, `down` and `reset` reported `STATE_LOCK_RECLAIMED` before; `init`, `stacks prune`, the claims and ports commands, `test-run`, and the work and browser commands took the lock over silently. They now name the old holder's process and command and point to `doctor`, as the lifecycle commands do.
+- 5de5625: A runtime command killed while it held cockpit's state lock no longer blocks every later `session`, `up` and `test-run`: the next command takes the lock over once the holder's process is gone from this host, and reports `STATE_LOCK_RECLAIMED`. A lock written on another host, from inside a container or sandbox, or by an earlier release is still refused.
+  
+  A command that finds the state lock busy now waits a few seconds instead of failing at once, and `STATE_LOCKED` names the holder's process and command.
+  
+  `cockpit session` tells you to run `sleep` after a failed run only when an earlier `up` from your own checkout still holds the stack, not when another checkout holds it.
+  
+  `preflight` and `doctor` warn (`GIT_WORKING_TREE_DIRTY`) about uncommitted changes in the cockpit instead of failing; a repository with no commits still fails.
+  
+  When a failed service's logs cannot be collected, the error names the `cockpit logs --service <name>` command that shows them.
+  
+  `cockpit env keys` marks the names a schema writes no value for, and the missing-variable error points at `env keys` to find them.
+
 ## 0.1.14
 
 ### Patch Changes
