@@ -40,7 +40,7 @@ const captures: Record<typeof rows[number]['name'], CapturePair> = {
     'separate push': { candidate: [git('push', 'origin', 'feature'), git('push', 'origin', 'main')], control: [git('push', 'origin', 'feature'), printf('main')] },
     'timeout values': { candidate: [expected('git', ['reset', '--hard'], wrapper('-s', 'TERM', '-k', '5', '60'), true)], control: [printf('timeout -s TERM -k 5 60 git reset --hard')] },
     'nice adjustment': { candidate: [expected('git', ['clean', '-fd'], wrapper('-n', '10'), true)], control: [printf('nice -n 10 git clean -fd')] },
-    'session detacher': { candidate: [expected('git', ['push', 'origin', 'main'], wrapper('--wait'), true)], control: [printf('setsid --wait nohup git push origin main')], background: true },
+    'session detacher': { candidate: [{ ...expected('git', ['push', 'origin', 'main'], wrapper('--wait'), true), background: true }], control: [printf('setsid --wait nohup git push origin main')], background: true },
     'environment cwd': { candidate: [{ ...expected('git', ['push', 'origin', 'main'], wrapper('-C', 'config'), true), cwd: '/workspace/project/config' }], control: [printf('env -C config git push origin main')] },
     'refspec destination': { candidate: [git('push', 'origin', '+feature:refs/heads/main')], control: [git('push', 'origin', 'main:refs/heads/feature')] },
     'redirect data': { candidate: [redirect('curl', ['https://db.example.test'], 'output.txt')], control: [redirect('printf', ['ok'], 'db.example.test')] },

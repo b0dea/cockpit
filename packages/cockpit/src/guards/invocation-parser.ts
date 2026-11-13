@@ -39,6 +39,8 @@ export interface ParsedInvocation {
     readonly expandsStatus?: true
     /** A word of this invocation is dynamic; only `dynamicWords: 'mark'` emits one. */
     readonly dynamic?: true
+    /** It runs as a background job, which outlives the call: its list ends in `&`, or `nohup` or `setsid` detaches it. */
+    readonly background?: true
 }
 /** The new text a file tool call carries, as the payload spells it, kept so the policy pin can apply it. */
 export type GuardFileContent =
@@ -674,13 +676,14 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
     }
     assignments()
     let wrapped = false
+    let detached = false
     while (cursor < args.length && wrappers.has(posix.basename(args[cursor].value)) && !args[cursor].dynamic) {
         // `command -v NAME` and `command -V NAME` only print where a command is.
         if (posix.basename(args[cursor].value) === 'command' && /^-[vV]$/.test(args[cursor + 1]?.value ?? '')
             && args.length > cursor + 2 && args.slice(cursor + 2).every((token) => !token.value.startsWith('-'))) break
         const wrapper = posix.basename(args[cursor++].value)
         wrapped = true
-        if (wrapper === 'nohup' || wrapper === 'setsid') context.seen.background = true
+        if (wrapper === 'nohup' || wrapper === 'setsid') { context.seen.background = true; detached = true }
         const take = () => {
             const token = args[cursor++]
             if (!token) refuse(`Missing ${wrapper} operand.`)
@@ -783,7 +786,8 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
     words.push(...operands.map((token) => word('argument', token)))
     return [{ executable, argv: operands.map(({ value }) => value), cwd, wrapped, words, redirects: redirectPaths,
         ...args.some((token) => token.status) ? { expandsStatus: true as const } : {},
-        ...words.some((item) => item.dynamic) ? { dynamic: true as const } : {} }, ...nested]
+        ...words.some((item) => item.dynamic) ? { dynamic: true as const } : {}, ...detached ? { background: true as const } : {} },
+    ...detached ? nested.map((item) => ({ ...item, background: true as const })) : nested]
 }
 
 /**
@@ -939,6 +943,8 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
     let ran: readonly string[] = [cwd]
     // A list ending in `&` runs in a background subshell, so its cd moves nothing after it.
     let list = states
+    // Where the current and-or list starts in `result`: a list ending in `&` runs all of it in the background.
+    let listStart = 0
     // An earlier stage of the current pipeline downloads.
     let fetched = false
     const append = (item: ParsedInvocation) => {
@@ -1001,11 +1007,16 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
         current = []
         compound = undefined
         closed = undefined
-        if (separator === '&') { states = list; context.seen.background = true }
+        if (separator === '&') {
+            states = list
+            context.seen.background = true
+            for (let at = listStart; at < result.length; at++) result[at] = { ...result[at]!, background: true }
+        }
         if (separator === '&&' || separator === '||' || separator === '|') gate = separator
         else {
             gate = undefined
             list = states
+            listStart = result.length
         }
     }
     for (let i = 0; i < tokens.length; i++) {
@@ -1231,6 +1242,8 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
                 content = { kind: 'replace', path: paths[0]!, old: fields.old_string, new: fields.new_string, all: fields.replace_all === true }
             }
         } else if (!mcpTool(tool)) refuse('Unsupported guard tool.')
+        // The Bash tool's `run_in_background` and the Monitor tool run the whole command as a background job.
+        if (tool === 'Monitor' || tool === 'Bash' && fields.run_in_background === true) invocations = invocations.map((item) => ({ ...item, background: true as const }))
         if (paths.length + invocations.reduce((sum, item) => sum + item.redirects.length, 0) > GUARD_INPUT_LIMITS.paths) refuse('Guard path limit exceeded.')
         for (const item of invocations) {
             Object.freeze(item.argv)

@@ -1413,7 +1413,9 @@ describe('allow by default', () => {
     it('asks before a background job that loops, writes files or runs a Git write, which can change what the guard judged before it runs', () => {
         // A background loop swapping an archive, or `git reset --soft` moving HEAD, while a later call was judged.
         const judge = (tool_name: string, tool_input: object) => evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input }), open(), onBranch('refs/heads/topic'))
-        for (const command of ['git reset --soft HEAD~1 &', 'nohup cp src/a.ts src/b.ts', 'setsid -f mv src/a.ts src/b.ts', 'cp src/a.ts src/b.ts & npm test', 'printf x > src/a.ts &']) {
+        for (const command of ['git reset --soft HEAD~1 &', 'nohup cp src/a.ts src/b.ts', 'setsid -f mv src/a.ts src/b.ts', 'cp src/a.ts src/b.ts & npm test',
+            // Two background commands writing files race each other as surely as a loop does.
+            'printf x > build/a.txt & printf y > build/b.txt &']) {
             expect(judge('Bash', { command }).decision, command).toBe('ask')
         }
         // A loop sent to the background is not parsed at all, and one run by a background tool loops while later calls are judged.
@@ -1422,7 +1424,11 @@ describe('allow by default', () => {
         expect(judge('Bash', { command: 'git checkout main', run_in_background: true }).decision).toBe('ask')
         expect(judge('Monitor', { command: 'while true; do cp build/a.tar build/b.tar; done', description: 'swap', timeout_ms: 1000 }).decision).toBe('ask')
         // One long-running command in the background, a server or a watcher, runs as it would in the foreground.
-        for (const command of ['npm run dev &', 'npm test &', 'sleep 5 &']) expect(judge('Bash', { command }).decision, command).toBe('allow')
+        for (const command of ['npm run dev &', 'npm test &', 'sleep 5 &', 'npm run dev > dev.log 2>&1 &', 'mkdir -p logs && npm run dev > logs/dev.log 2>&1 &',
+            // Commands in the foreground are judged as they always are.
+            'cp src/a.ts src/b.ts; npm run dev &', 'printf x > build/a.txt; npm run dev > dev.log 2>&1 &']) {
+            expect(judge('Bash', { command }).decision, command).toBe('allow')
+        }
         expect(judge('Bash', { command: 'npm run dev', run_in_background: true }).decision).toBe('allow')
         expect(judge('Monitor', { command: 'tail -f src/a.ts', description: 'watch', timeout_ms: 1000 }).decision).toBe('allow')
     })
