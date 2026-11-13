@@ -1363,19 +1363,22 @@ describe('allow by default', () => {
     })
 
     describe('agent workspaces', () => {
-        // What the application derives per call: each tool home, this cockpit's Claude memory name, the
-        // session's scratchpad, the private temp directories and the session's own temp tree.
+        // What the application derives per call: each tool home, this cockpit's Claude memory names, the
+        // session's scratchpad, the private temp directories and the session's own areas.
         const claude = `${home}/.claude`
         const codex = `${home}/.codex`
         const opencode = `${home}/.local/share/opencode`
         const session = '/workspace/tmp/claude-1000/-workspace-project/session-one'
         const scratch = `${session}/scratchpad`
-        const agent = { ...open(), externalSearchDirectories: ['/workspace/tmp/bin'],
+        // What `mktemp` and `mktemp -d` name below each temp directory.
+        const made = '/workspace/tmp/tmp.AbCdEf1234'
+        const userMade = '/workspace/user-tmp/tmp.Zz9Yy8Xx7W'
+        const agent = { ...open(), externalSearchDirectories: [`${userMade}/bin`],
             agentHomes: [{ tool: 'claude', path: claude }, { tool: 'codex', path: codex }, { tool: 'opencode-data', path: opencode },
                 { tool: 'opencode-config', path: `${home}/.config/opencode` }],
             agentMemoryKeys: ['-workspace-project', '-Workspace-Sibling'], agentType: 'reviewer',
             agentWorkspaces: [{ kind: 'scratchpad', path: scratch }, { kind: 'temp', path: '/workspace/tmp' }, { kind: 'temp', path: '/workspace/user-tmp' }],
-            agentReadAreas: [`${claude}/projects/-workspace-project--claude-worktrees-wt`, session] }
+            agentReadAreas: [`${claude}/projects/-workspace-project-sub`, `${claude}/file-history/session-one`, session] }
         // `/tmp` leads to the temp directory, and one file there has a second name.
         const lands: PathInspection = request => {
             const path = posix.resolve(request.cwd, request.path)
@@ -1387,24 +1390,24 @@ describe('allow by default', () => {
         const shell = (command: string, configured: object = agent) => judge({ tool_name: 'Bash', tool_input: { command } }, configured)
         const write = (file_path: string, configured: object = agent) => judge({ tool_name: 'Write', tool_input: { file_path, content: 'x' } }, configured)
 
-        it('admits named writes to the agent tool\'s own data, its scratchpad and private temp', () => {
-            for (const path of [`${claude}/projects/-workspace-project/memory/MEMORY.md`, `${claude}/plans/bright-plan.md`, `${claude}/agent-memory/reviewer/MEMORY.md`,
-                `${claude}/projects/-WORKSPACE-project/session.jsonl`, `${claude}/projects/-Workspace-Sibling/memory/MEMORY.md`, `${codex}/memories/extensions/ad_hoc/notes/20261113T000000Z-tabs.md`,
-                `${opencode}/tool-output/out.txt`, `${scratch}/notes.md`, '/workspace/tmp/probe.txt', '/tmp/probe.txt', '/workspace/user-tmp/out.log']) {
+        it('admits named writes to the agent\'s own memory, plans and notes, its scratchpad and what mktemp made', () => {
+            for (const path of [`${claude}/projects/-workspace-project/memory/MEMORY.md`, `${claude}/projects/-Workspace-Sibling/memory/MEMORY.md`,
+                `${claude}/projects/-WORKSPACE-project/memory/topic.md`, `${claude}/plans/bright-plan.md`, `${codex}/memories/extensions/ad_hoc/notes/20261113T000000Z-tabs.md`,
+                `${scratch}/notes.md`, `${made}/probe.txt`, '/tmp/tmp.AbCdEf1234/probe.txt', `${userMade}/out.log`]) {
                 expect(write(path), path).toMatchObject({ decision: 'allow' })
             }
             expect(judge({ tool_name: 'Edit', tool_input: { file_path: `${claude}/projects/-workspace-project/memory/topic.md`, old_string: 'a', new_string: 'b' } }))
                 .toMatchObject({ decision: 'allow' })
             for (const command of [`mkdir -p ${codex}/memories/extensions/ad_hoc/notes && printf x > ${codex}/memories/extensions/ad_hoc/notes/a.md`,
-                `cat > ${claude}/plans/bright-plan.md <<'EOF'\nplan\nEOF`, `mkdir -p ${scratch}/sub`, 'cp build/out.log /tmp/out.log', 'rm /workspace/tmp/probe.txt',
-                'chmod 600 /workspace/tmp/probe.txt', `mv ${scratch}/a.md ${scratch}/b.md`]) {
+                `cat > ${claude}/plans/bright-plan.md <<'EOF'\nplan\nEOF`, `mkdir -p ${scratch}/sub`, `mkdir ${made}`, `cp build/out.log ${made}/out.log`, `rm ${made}/probe.txt`,
+                `chmod 600 ${made}/probe.txt`, `mv ${scratch}/a.md ${scratch}/b.md`, `rm -rf ${made}`]) {
                 expect(shell(command), command).toMatchObject({ decision: 'allow' })
             }
             // Without the derived areas the same writes stay refused.
-            for (const path of [`${claude}/projects/-workspace-project/memory/MEMORY.md`, '/workspace/tmp/probe.txt']) expect(write(path, open()).decision, path).not.toBe('allow')
+            for (const path of [`${claude}/projects/-workspace-project/memory/MEMORY.md`, `${made}/probe.txt`]) expect(write(path, open()).decision, path).not.toBe('allow')
         })
 
-        it('refuses controls, credentials, other projects\' memory and every write it cannot see into the agent\'s own areas', () => {
+        it('refuses controls, credentials, what the tool writes itself, other projects\' memory and every write it cannot see', () => {
             const refusals: Record<string, string> = {
                 [`echo x > ${claude}/settings.json`]: 'a control', [`echo x > ${claude}/settings.local.json`]: 'a control',
                 [`echo x > ${claude}/CLAUDE.md`]: 'a control', [`echo x > ${claude}/hooks/pre.sh`]: 'a control', [`echo x > ${claude}/skills/a/SKILL.md`]: 'a control',
@@ -1412,57 +1415,60 @@ describe('allow by default', () => {
                 [`echo x > ${codex}/config.toml`]: 'a control', [`echo x > ${codex}/AGENTS.md`]: 'a control', [`echo x > ${codex}/hooks.json`]: 'a control',
                 [`echo x > ${codex}/memories/skills/a/SKILL.md`]: 'a control', [`echo x > ${codex}/auth.json`]: 'a credential',
                 [`echo x > ${opencode}/auth.json`]: 'a credential', [`echo x > ${home}/.config/opencode/opencode.json`]: 'a control',
+                [`echo x > ${claude}/file-history/session/a`]: 'a control', [`echo x > ${codex}/memories/MEMORY.md`]: 'a control', [`echo x > ${opencode}/snapshot/project/config`]: 'a control',
+                // What the tool writes itself agents only read.
+                [`echo x > ${claude}/projects/-workspace-project/session.jsonl`]: 'writes itself', [`echo x > ${claude}/history.jsonl`]: 'writes itself',
+                [`echo x > ${claude}/tasks/list/1.json`]: 'writes itself', [`echo x > ${claude}/cache/changelog.md`]: 'writes itself',
+                [`echo x > ${codex}/sessions/2026/11/13/rollout.jsonl`]: 'writes itself', [`echo x > ${codex}/state_5.sqlite`]: 'writes itself',
+                [`echo x > ${codex}/version.json`]: 'writes itself', [`echo x > ${opencode}/tool-output/out.txt`]: 'writes itself', [`echo x > ${opencode}/storage/a.json`]: 'writes itself',
                 [`echo x > ${claude}/projects/-workspace-elsewhere/memory/MEMORY.md`]: 'another project',
                 [`echo x > ${claude}/PROJECTS/-workspace-elsewhere/MEMORY/MEMORY.md`]: 'another project',
-                [`echo x > ${claude}/projects/-workspace-elsewhere/session.jsonl`]: 'another project',
-                [`echo x > ${claude}/agent-memory/planner/MEMORY.md`]: 'subagent other', [`echo x > ${claude}/file-history/session/a`]: 'a control',
-                [`echo x > ${codex}/memories/MEMORY.md`]: 'a control', [`echo x > ${opencode}/snapshot/project/config`]: 'a control',
-                [`mv ${scratch}/skills ${codex}/memories_v2`]: 'moves', [`mv ${claude}/projects/-workspace-project/memory/a.md /workspace/tmp/a.md`]: 'moves',
-                ['echo x > /workspace/tmp/proj/.agents/skills/a/SKILL.md']: 'loads from',
-                [`ln -s ${root}/README.md ${scratch}/link.md`]: 'link', [`ln ${root}/README.md /workspace/tmp/hard.md`]: 'link',
-                [`chmod +x ${scratch}/run.sh`]: 'executable', ['chmod 755 /workspace/tmp/run.sh']: 'executable', ['install build/tool /workspace/tmp/tool']: 'executable',
-                ['tar -xf build/a.tar -C /workspace/tmp/out']: 'names it chooses', ['cp -R src /workspace/tmp/src']: 'names it chooses',
-                ['echo x > /workspace/tmp/.env.local']: 'environment file', ['echo x > /workspace/tmp/.secrets/a']: 'environment file',
-                ['echo x > /workspace/tmp/id_ed25519']: 'credential', ['echo x > /workspace/tmp/x/.cockpit/guards/bash-guard.sh']: '.cockpit',
-                ['echo x > /workspace/tmp/proj/.claude/settings.json']: 'loads from', ['echo x > /workspace/tmp/proj/CLAUDE.md']: 'loads from',
-                ['echo x > /workspace/tmp/proj/.git/hooks/pre-commit']: 'Git', ['echo x > /workspace/tmp/bin/git']: 'search path',
-                ['echo x > /workspace/tmp/linked.txt']: 'hard link', ['rm -rf /workspace/user-tmp']: 'not the files', [`rm -rf ${claude}/projects`]: 'not the files',
+                [`echo x > ${claude}/agent-memory/planner/MEMORY.md`]: 'subagent other',
+                [`mv ${scratch}/skills ${codex}/memories_v2`]: 'moves', [`mv ${claude}/projects/-workspace-project/memory/a.md ${made}/a.md`]: 'moves',
+                [`echo x > ${made}/proj/.agents/skills/a/SKILL.md`]: 'loads from',
+                [`ln -s ${root}/README.md ${scratch}/link.md`]: 'link', [`ln ${root}/README.md ${made}/hard.md`]: 'link',
+                [`chmod +x ${scratch}/run.sh`]: 'executable', [`chmod 755 ${made}/run.sh`]: 'executable', [`install build/tool ${made}/tool`]: 'executable',
+                [`tar -xf build/a.tar -C ${made}/out`]: 'names it chooses', [`cp -R src ${made}/src`]: 'names it chooses',
+                [`echo x > ${made}/.env.local`]: 'environment file', [`echo x > ${made}/.secrets/a`]: 'environment file',
+                [`echo x > ${made}/id_ed25519`]: 'credential', [`echo x > ${made}/x/.cockpit/guards/bash-guard.sh`]: '.cockpit',
+                [`echo x > ${made}/proj/.claude/settings.json`]: 'loads from', [`echo x > ${made}/proj/CLAUDE.md`]: 'loads from',
+                [`echo x > ${made}/proj/.git/hooks/pre-commit`]: 'Git', [`echo x > ${userMade}/bin/git`]: 'search path',
+                [`echo x > ${made}/linked.txt`]: 'hard link', [`rm -rf ${claude}/projects`]: 'not the files', [`rm -rf ${scratch}`]: 'not the files',
             }
             for (const [command, reason] of Object.entries(refusals)) expect(shell(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining(reason) })
-            // A subagent writes its own memory.
-            expect(write(`${claude}/agent-memory/reviewer/MEMORY.md`)).toMatchObject({ decision: 'allow' })
-            // Claude Code's trees for other sessions, cockpit's own staging and caches programs load are no temp workspace.
-            for (const path of ['/workspace/tmp/claude-1000/-workspace-other/session-two/scratchpad/a.md', `${session}/tasks/b1.output`, '/workspace/user-tmp/cockpit-execution-1/0000-x',
-                '/workspace/tmp/moved/claude-1000/-workspace-other/session-two/tasks/b1.output', '/workspace/user-tmp/xcrun_db', '/workspace/user-tmp/node-compile-cache/v8/x']) {
+            // Everything else in temp is other programs' state, such as cached packages they run later, and the temp directory itself.
+            for (const path of ['/workspace/tmp/probe.txt', '/workspace/user-tmp/cache/npm/_npx/abc/node_modules/tool/index.js', '/workspace/tmp/tsx-1000/a.js',
+                '/workspace/tmp/claude-1000/-workspace-other/session-two/scratchpad/a.md', `${session}/tasks/b1.output`, '/workspace/user-tmp/cockpit-execution-1/0000-x',
+                '/workspace/tmp/tmp.short/a', '/workspace/tmp/tmp.Ab-Cd_Ef/a']) {
                 expect(write(path).decision, path).not.toBe('allow')
             }
+            for (const command of ['rm /workspace/tmp/cc-socks', 'rm -rf /workspace/user-tmp']) expect(shell(command).decision, command).not.toBe('allow')
         })
 
-        it('asks before writing an entry of a tool home that it does not classify', () => {
-            for (const path of [`${claude}/daemon/state.json`, `${codex}/app-server-daemon/x`, `${opencode}/repos/a`]) {
-                expect(write(path), path).toMatchObject({ decision: 'ask', reason: expect.stringContaining('does not classify') })
+        it('asks before writing a subagent\'s user memory or an entry of a tool home it does not classify', () => {
+            for (const path of [`${claude}/agent-memory/reviewer/MEMORY.md`, `${claude}/daemon/state.json`, `${codex}/app-server-daemon/x`, `${opencode}/repos/a`]) {
+                expect(write(path), path).toMatchObject({ decision: 'ask' })
             }
         })
 
-        it('reads back the agent\'s own data, controls and session files, never a credential', () => {
-            for (const command of [`cat ${claude}/projects/-workspace-project/session/tool-results/out.txt`, `rg needle ${session}/tasks/b1.output`,
-                `jq . ${claude}/projects/-workspace-project/session.jsonl`, `cat ${claude}/projects/-workspace-project--claude-worktrees-wt/session.jsonl`,
-                `cat ${claude}/CLAUDE.md`, `cat ${codex}/memories/MEMORY.md`, `cat ${codex}/AGENTS.md`, 'cat /workspace/tmp/notes.txt',
-                `cat ${scratch}/notes.md`, `ls ${claude}/plans`, `ls ${claude}/projects`]) {
+        it('reads back the agent\'s own projects, session files and what it may write, and asks for the rest of a tool home', () => {
+            for (const command of [`cat ${claude}/projects/-workspace-project/session/tool-results/out.txt`, `jq . ${claude}/projects/-workspace-project/session.jsonl`,
+                `cat ${claude}/projects/-workspace-project-sub/session.jsonl`, `cat ${claude}/file-history/session-one/a@v1`, `rg needle ${session}/tasks/b1.output`,
+                `cat ${claude}/plans/bright-plan.md`, `cat ${claude}/agent-memory/reviewer/MEMORY.md`, `cat ${codex}/memories/extensions/ad_hoc/notes/a.md`,
+                `cat ${scratch}/notes.md`, `cat ${made}/notes.txt`, `ls ${claude}/plans`]) {
                 expect(shell(command), command).toMatchObject({ decision: 'allow' })
             }
-            // What can hold a token, and another project's transcripts and data, ask before reaching the transcript.
-            for (const command of [`cat ${claude}/settings.json`, `cat ${claude}/settings.local.json`, `cat ${claude}/history.jsonl`, `cat ${claude}/paste-cache/a.txt`,
+            for (const command of [`cat ${claude}/settings.json`, `cat ${claude}/CLAUDE.md`, `cat ${claude}/history.jsonl`, `cat ${claude}/paste-cache/a.txt`,
                 `cat ${claude}/projects/-workspace-elsewhere/session.jsonl`, `cat ${claude}/projects/-workspace-elsewhere/memory/MEMORY.md`,
-                `cat ${codex}/config.toml`, `cat ${codex}/history.jsonl`, `cat ${home}/.config/opencode/opencode.json`]) {
+                `cat ${claude}/file-history/session-two/a@v1`, `cat ${claude}/session-env/session-one/hook-1.sh`, `cat ${claude}/shell-snapshots/snapshot.sh`,
+                `cat ${claude}/debug/session-one.txt`, `cat ${codex}/sessions/2026/11/13/rollout.jsonl`, `cat ${codex}/archived_sessions/a.jsonl`, `cat ${codex}/log/codex.log`,
+                `cat ${codex}/state_5.sqlite`, `cat ${codex}/config.toml`, `cat ${codex}/memories/MEMORY.md`, `cat ${opencode}/storage/a.json`, `cat ${opencode}/opencode.db`,
+                `cat ${home}/.config/opencode/opencode.json`, 'cat /workspace/tmp/notes.txt', 'cat /workspace/tmp/claude-1000/-workspace-other/session-two/tasks/b1.output',
+                `cat ${claude}/daemon/state.json`]) {
                 expect(shell(command), command).toMatchObject({ decision: 'ask' })
             }
             for (const command of [`cat ${claude}/.credentials.json`, `cat ${home}/.claude.json`, `cat ${codex}/auth.json`, `cat ${opencode}/auth.json`, `cat ${claude}/ide/1.lock`]) {
                 expect(shell(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('credential') })
-            }
-            // An unclassified entry, another session's temp tree and another tool's home are not the agent's own.
-            for (const command of [`cat ${claude}/daemon/state.json`, 'cat /workspace/tmp/claude-1000/-workspace-other/session-two/tasks/b1.output']) {
-                expect(shell(command), command).toMatchObject({ decision: 'ask' })
             }
             expect(shell(`cat ${home}/.cursor/state.json`).decision).not.toBe('allow')
         })

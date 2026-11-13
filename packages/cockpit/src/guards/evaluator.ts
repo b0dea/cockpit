@@ -7,7 +7,7 @@ import { renderGuardProjectCommand } from '../environment/install-policy.js'
 import { GUARD_LOCAL_PATHS } from './local-identity.js'
 import { classifyReadOnlyInvocation, cockpitLauncherPrefix, ghWords, gitContentOperands, type ReadOnlyAccess } from './read-only.js'
 import { SURFACE_EXECUTION_CONTROL_PATHS } from '../surfaces/harness-registry.js'
-import { AGENT_HOME_TOOLS, agentHomeReadAsks, classifyAgentHomeEntry, type AgentHomeTool } from './agent-homes.js'
+import { AGENT_HOME_TOOLS, classifyAgentHomeEntry, type AgentHomeTool } from './agent-homes.js'
 
 /**
  * The cockpit commands that run the words after their `--` as a command of their own, and where it
@@ -1215,11 +1215,10 @@ const NAMED_RUN_CONFIGURATION = new Set(['.cockpit', '.claude', '.codex', '.open
 const NAMED_RUN_FILES = new Set(['opencode.json', 'opencode.jsonc', '.envrc', '.mcp.json'])
 // What an agent tool loads from the directory a session starts in, beyond its configuration directory.
 const NAMED_INSTRUCTION_FILES = new Set(['claude.md', 'claude.local.md', 'agents.md', 'agents.override.md'])
-// Below a temp directory: Claude Code's own trees for every session (`claude-<uid>`, wherever
-// CLAUDE_CODE_TMPDIR puts them), whose current session's scratchpad is admitted on its own; the
-// staging cockpit itself creates and then runs; and caches programs load as code or paths, such as
-// the developer-tools lookup the system Git consults and Node's compile cache.
-const TEMP_RESERVED = /(?:^|\/)claude-\d+(?:\/|$)|^(?:cockpit-[^/]*|xcrun_db[^/]*|node-compile-cache)(?:\/|$)/
+// Below a temp directory, only what `mktemp` and `mktemp -d` name by default (`tmp.` and random letters
+// and digits, BSD and GNU alike) is an agent's own: everything else there is other programs' state, such
+// as packages a launcher cached and runs later, sockets, or Claude Code's trees for other sessions.
+const MKTEMP_NAME = /^tmp\.[a-z0-9]{6,}$/
 
 function externalWriteHazard(spelled: string, home: string | undefined, searchDirectories: readonly string[]): string | undefined {
     const folded = unfirmlinked(spelled)
@@ -2013,20 +2012,19 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const memoryKeys = new Set((resolved.agentMemoryKeys ?? []).map(fold))
     const agentHomeOf = (path: string) => agentHomes.find(home => within(path, home.path))
     const agentWorkspaceOf = (path: string) => agentWorkspaces.find(area => within(path, area.path)
-        && !(area.kind === 'temp' && TEMP_RESERVED.test(fold(posix.relative(area.path, path)))))
-    // An agent reads its session's own areas, its workspaces, and its tool's data and controls for this cockpit's
-    // projects; never a credential. Another project's files, an entry that can hold a token and an entry the table
-    // does not classify ask.
+        && (area.kind !== 'temp' || MKTEMP_NAME.test(fold(posix.relative(area.path, path)).split('/')[0]!)))
+    // An agent reads its session's own areas, its workspaces, this cockpit's Claude Code projects, and what it may
+    // write in its tool's home; never a credential. Everything else there, other projects' files included, asks.
     const agentReadable = (lexical: string) => {
         if (agentReadAreas.some(area => within(lexical, area))) return true
         const home = agentHomeOf(lexical)
         if (!home) return agentWorkspaceOf(lexical) !== undefined
         const relative = fold(posix.relative(home.path, lexical))
         if (relative === '') return true
-        const entry = classifyAgentHomeEntry(home.tool, relative)
-        if (entry === undefined || entry.kind === 'credential' || agentHomeReadAsks(home.tool, relative)) return false
         const project = home.tool === 'claude' ? /^projects\/([^/]+)/.exec(relative)?.[1] : undefined
-        return project === undefined || memoryKeys.has(project)
+        if (project !== undefined) return memoryKeys.has(project)
+        const kind = classifyAgentHomeEntry(home.tool, relative)?.kind
+        return kind === 'writable' || kind === 'confirm'
     }
     // Set while the invocation being judged makes or moves a link, moves a file or directory, or leaves a file it names executable.
     let linking = false
@@ -2243,7 +2241,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const segments = relative ? relative.split('/') : []
         if (removing && segments.length <= (home ? 1 : 0)) return refuse(`it removes ${home ? 'a whole entry of ' : ''}${owner}, not the files in it`)
         const entry = home && segments.length ? classifyAgentHomeEntry(home.tool, relative) : undefined
-        if (entry && entry.kind !== 'data') return refuse(`it is ${entry.kind === 'credential' ? 'a credential' : 'a control'} in ${owner}: ${entry.why}`)
+        if (entry?.kind === 'control' || entry?.kind === 'credential') return refuse(`it is ${entry.kind === 'credential' ? 'a credential' : 'a control'} in ${owner}: ${entry.why}`)
+        if (entry?.kind === 'state') return refuse(`${entry.why}, in ${owner}`)
         if (segments.some(name => NAMED_RUN_CONFIGURATION.has(name)) || NAMED_RUN_FILES.has(segments.at(-1) ?? '')
             || !home && (NAMED_INSTRUCTION_FILES.has(segments.at(-1) ?? '') || segments.includes('.agents'))) {
             return refuse(`it is configuration, instructions or Git hooks that an agent tool, a shell or Git loads from ${owner}`)
@@ -2257,14 +2256,15 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             unclassifiedAsk ??= ask(`${shownGuardWord(request.path)} is in ${owner} under ${segments[0]}, which cockpit does not classify as the tool's data, a control or a credential, so a person decides whether an agent writes it.`)
             return true
         }
-        if (home.tool !== 'claude') return true
-        // Claude Code loads a project's MEMORY.md and resumes its transcripts in every session there, so another
-        // project's files steer sessions this cockpit never sees.
-        const project = /^projects\/([^/]+)/.exec(relative)?.[1]
-        if (project !== undefined && !memoryKeys.has(project)) return refuse('it is another project\'s Claude Code memory or transcripts, which load into that project\'s sessions; agents here write only this cockpit\'s own projects')
-        // A subagent's memory loads into that subagent in every project, so only the subagent the payload names writes its own.
-        const subagent = /^agent-memory\/([^/]+)/.exec(relative)?.[1]
-        if (subagent !== undefined && subagent !== fold(resolved.agentType ?? '')) return refuse('it is the memory of a subagent other than the one making this call, which loads into that subagent in every project')
+        if (home.tool === 'claude') {
+            // Claude Code loads a project's MEMORY.md into every session there, so another project's memory steers
+            // sessions this cockpit never sees.
+            const project = /^projects\/([^/]+)/.exec(relative)?.[1]
+            if (project !== undefined && !memoryKeys.has(project)) return refuse('it is another project\'s Claude Code memory, which loads into that project\'s sessions; agents here write only this cockpit\'s own projects')
+            const subagent = /^agent-memory\/([^/]+)/.exec(relative)?.[1]
+            if (subagent !== undefined && subagent !== fold(resolved.agentType ?? '')) return refuse('it is the memory of a subagent other than the one making this call, which loads into that subagent in every project')
+        }
+        if (entry.kind === 'confirm') unclassifiedAsk ??= ask(`${shownGuardWord(request.path)}: ${entry.why}, so a person approves an agent writing it.`)
         return true
     }
     const judgeExternalWrite = (request: PathInspectionRequest, lexical: string, removing = false) => {

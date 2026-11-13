@@ -124,6 +124,8 @@ export function guardAgentAreas(
         // The session's own project, which a worktree or subdirectory session names apart from the memory key.
         const claudeHome = homes.find(item => item.tool === 'claude')?.path
         if (claudeHome && project && /^[A-Za-z0-9-]{1,255}$/.test(project)) readAreas.push(join(claudeHome, 'projects', project))
+        // The session's own checkpoints, which hold what it edited.
+        if (claudeHome && /^[A-Za-z0-9-]{1,128}$/.test(session.sessionId ?? '')) readAreas.push(join(claudeHome, 'file-history', session.sessionId!))
         if (scratchpad) {
             workspaces.push({ kind: 'scratchpad', path: scratchpad })
             // The session's own temp tree: task output and images Claude Code writes beside the scratchpad.

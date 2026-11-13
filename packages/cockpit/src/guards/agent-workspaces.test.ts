@@ -38,7 +38,7 @@ describe('agent workspaces', () => {
             expect(claude.agentHomes).toEqual([{ tool: 'claude', path: join(home, '.claude') }])
             const scratchpad = join(realpathSync('/tmp'), `claude-${uid}`, '-synthetic-project', 'session-one', 'scratchpad')
             expect(claude.agentWorkspaces).toContainEqual({ kind: 'scratchpad', path: scratchpad })
-            expect(claude.agentReadAreas).toEqual([join(home, '.claude/projects/-synthetic-project'), join(scratchpad, '..')])
+            expect(claude.agentReadAreas).toEqual([join(home, '.claude/projects/-synthetic-project'), join(home, '.claude/file-history/session-one'), join(scratchpad, '..')])
             // A private TMPDIR is a workspace under both spellings, and /tmp is one too.
             expect(claude.agentWorkspaces).toContainEqual({ kind: 'temp', path: join(base, 'private-tmp') })
             expect(claude.agentWorkspaces).toContainEqual({ kind: 'temp', path: realpathSync('/tmp') })

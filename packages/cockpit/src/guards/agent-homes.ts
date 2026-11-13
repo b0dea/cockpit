@@ -1,6 +1,8 @@
-// What each agent tool keeps in its own directories, by entry: data the agent reads and writes while
-// it works, controls that change what the agent may do or which hooks run, and credentials. An entry
-// this table does not name asks, so a tool update that adds one opens nothing until a person admits it.
+// What each agent tool keeps in its own directories, by entry: what the agent itself writes (its memory,
+// plans and notes), a memory that loads into every project and so waits for a person, what the tool
+// writes itself and the agent only reads, controls that change what the agent may do or which hooks
+// run, and credentials. An entry this table does not name asks, so a tool update that adds one opens
+// nothing until a person admits it.
 //
 // Sources: the entries present on macOS on 2026-11-13 under Claude Code 2.1.323, Codex CLI 0.168.0 and
 // OpenCode 1.19.5, with what each holds taken from the tools' documentation
@@ -9,7 +11,12 @@
 // docs/safety-and-autonomy.md#agent-workspaces keeps the measured table.
 
 export type AgentHomeTool = 'claude' | 'codex' | 'opencode-data' | 'opencode-config'
-export type AgentHomeClass = 'data' | 'control' | 'credential'
+/**
+ * `writable` the agent writes and reads; `confirm` it reads, and writing waits for a person; `state` the
+ * tool writes itself, and reading it asks; `control` changes what the agent may do, reading it asks;
+ * `credential` is never read or written.
+ */
+export type AgentHomeClass = 'writable' | 'confirm' | 'state' | 'control' | 'credential'
 
 type Rule = readonly [RegExp, AgentHomeClass, string]
 // Each rule matches the folded path below the home; the first that matches decides. A trailing
@@ -22,6 +29,7 @@ const LOGIN = 'it holds the tool\'s login'
 const SETTINGS = 'it changes what the agent may do or which hooks run'
 const INSTRUCTIONS = 'the tool loads it as instructions, skills, agents or code'
 const SOURCED = 'the tool\'s shell sources it before every command it runs'
+const OWN = 'it is what the tool writes itself, which agents read but do not write'
 
 const AGENT_HOME_RULES: Readonly<Record<AgentHomeTool, readonly Rule[]>> = Object.freeze({
     // `CLAUDE_CONFIG_DIR`, else ~/.claude. `.claude.json` sits here only when that variable moves it.
@@ -42,8 +50,13 @@ const AGENT_HOME_RULES: Readonly<Record<AgentHomeTool, readonly Rule[]>> = Objec
         [below('(?:shell-snapshots|session-env)'), 'control', SOURCED],
         // Rewinding a checkpoint writes these snapshots back into the project's files.
         [below('file-history'), 'control', 'Claude Code writes these snapshots back into project files when a checkpoint is restored'],
-        [below('(?:projects|plans|tasks|todos|statsig|logs|agent-memory|debug|paste-cache|image-cache|uploads'
-            + '|feedback|feedback-bundles|usage-data|cache|sessions|history\\.jsonl|stats-cache\\.json)'), 'data', ''],
+        // Auto memory, which the evaluator admits only for this cockpit's own projects, and plan files.
+        [below('projects/[^/]+/memory'), 'writable', ''],
+        [below('plans'), 'writable', ''],
+        // A user-scope subagent memory loads into that subagent in every project.
+        [below('agent-memory'), 'confirm', 'a subagent\'s user memory loads into that subagent in every project'],
+        [below('(?:projects|tasks|todos|statsig|logs|debug|paste-cache|image-cache|uploads|feedback|feedback-bundles|usage-data|cache|sessions'
+            + '|history\\.jsonl|stats-cache\\.json)'), 'state', OWN],
     ]),
     // `CODEX_HOME`, else ~/.codex.
     codex: rules([
@@ -58,36 +71,21 @@ const AGENT_HOME_RULES: Readonly<Record<AgentHomeTool, readonly Rule[]>> = Objec
         [below('shell_snapshots'), 'control', SOURCED],
         // The agent writes memory as notes, as Codex's own prompt directs; the consolidated memories load
         // into every later session, so only Codex's own pipeline writes them.
-        [below('memories[^/]*/extensions/ad_hoc/notes'), 'data', ''],
+        [below('memories[^/]*/extensions/ad_hoc/notes'), 'writable', ''],
         [below('memories[^/]*'), 'control', 'Codex loads its consolidated memories into every later session'],
-        [below('(?:sessions|archived_sessions|log|history\\.jsonl|session_index\\.jsonl[^/]*|cache|tmp|\\.tmp|attachments'
-            + '|generated_images|thread-writer-locks|sqlite|[a-z_]+_\\d+\\.sqlite(?:-shm|-wal)?|version\\.json|update-check\\.json)'), 'data', ''],
+        [below('(?:sessions|archived_sessions|log|history\\.jsonl?|session_index\\.jsonl[^/]*|cache|tmp|\\.tmp|attachments'
+            + '|generated_images|thread-writer-locks|sqlite|[a-z_]+_\\d+\\.sqlite[^/]*|version\\.json|update-check\\.json)'), 'state', OWN],
     ]),
     // `$XDG_DATA_HOME/opencode`, else ~/.local/share/opencode.
     'opencode-data': rules([
         [below('(?:auth\\.json|mcp-auth\\.json)'), 'credential', LOGIN],
         // Each snapshot is a Git directory OpenCode runs Git against, whose configuration names programs.
         [below('snapshot'), 'control', 'OpenCode runs Git against it, and its configuration chooses programs Git runs'],
-        [below('(?:opencode\\.db[^/]*|log|tool-output|storage)'), 'data', ''],
+        [below('(?:opencode\\.db[^/]*|log|tool-output|storage)'), 'state', OWN],
     ]),
     // `$XDG_CONFIG_HOME/opencode`, else ~/.config/opencode: configuration, instructions and plugin code throughout.
     'opencode-config': rules([['^', 'control', 'OpenCode loads its configuration, instructions and plugins from there']]),
 })
-
-// Entries an agent may read that can hold a token: settings carry `env` values and MCP headers, and
-// prompt history and pasted text hold whatever a person typed or pasted. A read of one asks, so a
-// credential reaches the transcript only once a person agrees.
-const READS_ASK: Readonly<Record<AgentHomeTool, RegExp>> = Object.freeze({
-    claude: new RegExp(`${below('(?:remote-|managed-)?settings[^/]*')}|${below('(?:history\\.jsonl|paste-cache)')}`),
-    codex: new RegExp(`${below('(?:[^/]*\\.)?config\\.toml[^/]*')}|${below('history\\.jsonl?')}`),
-    'opencode-data': /$^/,
-    'opencode-config': /^/,
-})
-
-/** Whether reading a path below a tool home asks, by its folded relative spelling, because it can hold a token. */
-export function agentHomeReadAsks(tool: AgentHomeTool, relative: string): boolean {
-    return READS_ASK[tool].test(relative)
-}
 
 /** The class of a path below a tool home, by its folded relative spelling; undefined is an entry cockpit does not know. */
 export function classifyAgentHomeEntry(tool: AgentHomeTool, relative: string): Readonly<{ kind: AgentHomeClass; why: string }> | undefined {

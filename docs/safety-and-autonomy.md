@@ -744,18 +744,23 @@ a second spelling the guard's rules do not compare. Name it from `/`.
 
 ### Agent workspaces
 
-An agent tool keeps its own working files outside the cockpit: Claude Code's auto memory, plans,
-transcripts and spilled tool output, Codex's memory notes and sessions, OpenCode's tool output, and
-each tool's temp files. The guard admits them by default, in every mode and with no configuration,
-so an agent's memory, plans, scratch and temp files never wait for a person. Each location is
-derived on every call from what the harness reports, never from a guessed layout:
+An agent tool keeps its own working files outside the cockpit: Claude Code's auto memory and plans,
+Codex's memory notes, the session's scratchpad, and temp files. The guard admits writing them by
+default, in every mode and with no configuration, so an agent's memory, plans and scratch files never
+wait for a person; what the tool itself writes there, the agent reads but does not write. Each location
+is derived on every call from what the harness reports, never from a guessed layout:
 
 | Area | Where | Derived from |
 | --- | --- | --- |
 | The running tool's home | Claude Code: `CLAUDE_CONFIG_DIR`, else `~/.claude`. Codex: `CODEX_HOME`, else the directory above `sessions/` in the payload's `transcript_path`, else `~/.codex`. OpenCode: `opencode` below `XDG_DATA_HOME` (else `~/.local/share`) and below `XDG_CONFIG_HOME` (else `~/.config`). | The hook's environment and payload |
 | Claude Code's session scratchpad | The payload's `scratchpad_dir`; otherwise `claude-<uid>/<project>/<session_id>/scratchpad` below `CLAUDE_CODE_TMPDIR` or `/tmp`, where `<project>` names the transcript's directory | The payload's `transcript_path` and `session_id`, and the user id |
-| Claude Code's session temp tree, read only | The directory holding that scratchpad, where task output lands | As above |
-| Temp | `TMPDIR` when it is a directory the user owns that no one else may enter, and `/tmp`, each also under the spelling that leads there, such as `/tmp` for `/private/tmp` | The hook's environment and the directory's owner and mode |
+| The session's own files, read only | The directory holding that scratchpad, where task output lands; the transcript's project directory; and `file-history/<session_id>/`, the session's checkpoints | As above |
+| Temp, what `mktemp` made | Below `TMPDIR`, when it is a directory the user owns that no one else may enter, and below `/tmp`: only an entry named as `mktemp` and `mktemp -d` name one by default (`tmp.` and six or more letters and digits) and what lies below it | The hook's environment and the directory's owner and mode |
+
+Everything else in temp is other programs' state, such as packages a launcher cached and runs later,
+sockets, or Claude Code's trees for other sessions, and is judged as any location outside the cockpit.
+So an agent keeps temp files in the scratchpad, or in a directory from `mktemp -d`, or a file from
+`mktemp`.
 
 Only the running tool's own home counts: a Codex session does not write Claude Code's files. Below a
 home, each entry is classified by the table in
@@ -763,44 +768,40 @@ home, each entry is classified by the table in
 
 | Class | Read | Write | Claude Code | Codex | OpenCode |
 | --- | --- | --- | --- | --- | --- |
-| Data | allowed, except as below | allowed, file by file | `projects/` (transcripts, spilled tool output, auto memory), `plans/`, `tasks/`, `agent-memory/`, `debug/`, `paste-cache/`, `uploads/`, `feedback/`, `usage-data/`, `cache/`, `sessions/`, `history.jsonl`, `stats-cache.json` and the legacy `todos/`, `statsig/`, `logs/`, `image-cache/` | memory notes (`memories*/extensions/ad_hoc/notes/`), `sessions/`, `archived_sessions/`, `log/`, `history.jsonl`, `session_index.jsonl`, `cache/`, `tmp/`, `.tmp/`, `attachments/`, `generated_images/` and the state databases | data directory: `opencode.db*`, `log/`, `tool-output/`, `storage/` |
-| Control | allowed, except as below | refused | `settings*`, `CLAUDE.md`, `rules/`, `skills/`, `commands/`, `output-styles/`, `agents/`, `workflows/`, `hooks/`, `plugins/`, `dev-mods/`, `keybindings.json`, `themes/`, `statusline*`, remote and policy settings; `shell-snapshots/` and `session-env/`, which the shell sources before each command; `file-history/`, which a checkpoint restore writes back into project files | `config.toml` and its copies and profiles, `hooks.json`, `AGENTS.md`, `instructions.md`, `prompts/`, `rules/`, `skills/`, `plugins/`, `packages/`, `vendor_imports/`, `shell_snapshots/`, the global state file, plugins below `.tmp`, and the rest of `memories*`, whose consolidated memories load into every later session | the whole configuration directory, and the data directory's `snapshot/`, Git directories OpenCode runs Git against |
+| Writable | allowed | allowed, file by file | `projects/<project>/memory/` for this cockpit's projects, `plans/` | memory notes (`memories*/extensions/ad_hoc/notes/`) | nothing |
+| Confirmed | allowed | asks | `agent-memory/`, a subagent's user memory, which loads into that subagent in every project | none | none |
+| What the tool writes itself | asks, except the session's own files above and this cockpit's projects | refused | the rest of `projects/` (transcripts, spilled tool output), `tasks/`, `debug/`, `paste-cache/`, `uploads/`, `feedback/`, `usage-data/`, `cache/`, `sessions/`, `history.jsonl`, `stats-cache.json` and the legacy `todos/`, `statsig/`, `logs/`, `image-cache/` | `sessions/`, `archived_sessions/`, `log/`, `history.jsonl`, `session_index.jsonl`, `cache/`, `tmp/`, `.tmp/`, `attachments/`, `generated_images/`, the state databases and `version.json` | data directory: `opencode.db*`, `log/`, `tool-output/`, `storage/` |
+| Control | asks | refused | `settings*`, `CLAUDE.md`, `rules/`, `skills/`, `commands/`, `output-styles/`, `agents/`, `workflows/`, `hooks/`, `plugins/`, `dev-mods/`, `keybindings.json`, `themes/`, `statusline*`, remote and policy settings; `shell-snapshots/` and `session-env/`, which the shell sources before each command; `file-history/`, which a checkpoint restore writes back into project files | `config.toml` and its copies and profiles, `hooks.json`, `AGENTS.md`, `instructions.md`, `prompts/`, `rules/`, `skills/`, `plugins/`, `packages/`, `vendor_imports/`, `shell_snapshots/`, the global state file, plugins below `.tmp`, and the rest of `memories*`, whose consolidated memories load into every later session | the whole configuration directory, and the data directory's `snapshot/`, Git directories OpenCode runs Git against |
 | Credential | refused | refused | `.credentials.json`, `.claude.json` (and `~/.claude.json`), `backups/` (copies of it) and `ide/` (IDE connection tokens) | `auth.json`, `auth.lock`, `mcp-oauth-locks/`, `app-server-control/`, `ipc/` | `auth.json`, `mcp-auth.json` |
 | Unknown | asks | asks | any other entry | any other entry | any other entry in the data directory |
 
-An unknown entry, such as one a tool update adds, asks rather than opening or closing silently.
-A read that could pull a token into the transcript asks too: Claude Code's `settings*` files (their
-`env` and MCP headers), `history.jsonl` and `paste-cache/`, Codex's `config.toml` and `history.jsonl`,
-OpenCode's configuration directory, and another project's files below Claude Code's `projects/`.
-This cockpit's own projects and the session's own project, temp tree and scratchpad read freely,
-and `~/.claude.json` stays refused as the credential store it is.
+An unknown entry, such as one a tool update adds, asks rather than opening or closing silently. A
+read that asks is one that could pull a token into the transcript, or another session's or project's
+files, which a person approves.
 
-Writes below `projects/<project>/` are admitted only for this cockpit's own projects: the main
-checkout of the cockpit and of each sibling, named as Claude Code names it (each character other
-than a letter or digit becomes `-`; a name past 200 characters keeps 200, then `-` and a hash), and
-compared without regard to case. Claude Code loads a project's `MEMORY.md` and resumes its
-transcripts in every session there, so another project's files steer sessions this cockpit never
-sees. A session in a linked worktree writes its main checkout's memory. A subagent writes
-`agent-memory/<name>/` only for the `agent_type` its own calls carry, since that memory loads into
-the subagent in every project. A move into or out of a tool's home is refused: a moved directory
-carries files the guard does not see past the entry it classified.
+Writes below `projects/<project>/memory/`, and reads anywhere below `projects/<project>/`, are
+admitted only for this cockpit's own projects: the main checkout of the cockpit and of each sibling,
+named as Claude Code names it (each character other than a letter or digit becomes `-`; a name past
+200 characters keeps 200, then `-` and a hash), and compared without regard to case. Claude Code loads
+a project's `MEMORY.md` into every session there, so another project's memory steers sessions this
+cockpit never sees. A session in a linked worktree writes its main checkout's memory. A subagent's
+write to `agent-memory/<name>/` asks, and is refused for any `<name>` other than the `agent_type` its
+own calls carry; a project-scope subagent memory inside the cockpit is ordinary repository content.
+A move into or out of a tool's home is refused: a moved directory carries files the guard does not
+see past the entry it classified.
 
-In every area, and in the temp directories, writes name each file, and these stay refused: a link
-(symbolic or hard) or a moved link, a writer whose files the guard cannot see (an extraction, a
-recursive copy, a sync of a directory), a mode with an execute, set-id or sticky bit (`chmod +x`,
-`chmod 755`, `install` without a plain mode), `.env*` and `.secrets` names, key files, a `.cockpit/guards`
-path, a file with another hard link, a command search path directory, a `.git`, `.claude`, `.codex`
-or other tool directory below the area, removing a whole area or a whole entry of a home, and in
-temp and the scratchpad also a `CLAUDE.md`, `AGENTS.md` or `.agents/` a session started there would
-load and every location the [write path list](#writes-outside-the-roots) refuses. In the temp
-directories Claude Code's own trees for every session (`claude-<uid>`, at any depth), cockpit's own
-staging (`cockpit-*`) and caches programs load (`xcrun_db*`, which the system Git consults, and
-`node-compile-cache`) are not admitted; the current session's scratchpad is, on its own. Containment
-is judged on where a path lands once every existing link is followed, as for write paths, and a
-spelling that leaves a link through `..` is refused, since the system resolves it from where the
-link leads. A file
-copied in keeps its mode, so `cp` of an executable script still leaves an executable copy: the guard
-judges modes only where a command sets one.
+In every area writes name each file, and these stay refused: a link (symbolic or hard) or a moved
+link, a writer whose files the guard cannot see (an extraction, a recursive copy, a sync of a
+directory), a mode with an execute, set-id or sticky bit (`chmod +x`, `chmod 755`, `install` without
+a plain mode), `.env*` and `.secrets` names, key files, a `.cockpit/guards` path, a file with another
+hard link, a command search path directory, a `.git`, `.claude`, `.codex` or other tool directory
+below the area, removing a whole area or a whole entry of a home, and in temp and the scratchpad also
+a `CLAUDE.md`, `AGENTS.md` or `.agents/` a session started there would load and every location the
+[write path list](#writes-outside-the-roots) refuses. Containment is judged on where a path lands once
+every existing link is followed, as for write paths, and a spelling that leaves a link through `..`
+is refused, since the system resolves it from where the link leads. A file copied in keeps its mode,
+so `cp` of an executable script still leaves an executable copy: the guard judges modes only where a
+command sets one.
 
 The agent tool's own permissions still apply. Claude Code allowed auto memory writes without a
 prompt, and refused a headless write to `/tmp` itself; OpenCode asks before writing outside the

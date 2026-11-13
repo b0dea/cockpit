@@ -105,7 +105,8 @@ describe('public surface publication transaction', () => {
             // Without the session's facts its scratchpad is no workspace.
             expect(write(scratchpad, {}).permissionDecision).not.toBe('allow')
             // A spelling that leaves a link through `..` lands where the link leads, not in temp.
-            const shared = await realpath(await mkdtemp(join(await realpath('/tmp'), 'agent-escape-')))
+            // A directory named as mktemp names one, the only kind an agent writes in temp.
+            const shared = await realpath(await mkdtemp(join(await realpath('/tmp'), 'tmp.')))
             roots.push(shared)
             await mkdir(join(shared, 'd'))
             await symlink(home, join(shared, 'd', 'l'))
