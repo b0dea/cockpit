@@ -21,6 +21,11 @@ describe('instruction frontmatter', () => {
             // Frontmatter Claude Code may read differently from the guard is not proven safe.
             [write(skill, '---\nname: probe\nname: twice\n---\n'), 'ask'],
             [write(skill, 'No frontmatter.\nhooks: {}\n'), 'allow'],
+            // A body that runs a shell command as the skill loads, and a grant of the shell tool, ask too.
+            [write(skill, '---\nname: probe\n---\nThe date is !`date`.\n'), 'ask'],
+            [write(skill, '---\nname: probe\nallowed-tools: Read, Bash(git status:*)\n---\n'), 'ask'],
+            [write(skill, '---\nname: probe\nallowed-tools:\n  - Read\n  - bash\n---\n'), 'ask'],
+            [write(skill, '---\nname: probe\nallowed-tools: [Read, Grep]\n---\nRun `npm test`.\n'), 'allow'],
             // An edit is judged by the text it leaves.
             [edit(skill, 'name: probe\n', 'name: probe\nhooks: {}\n'), 'ask'],
             [edit(skill, 'Body.', 'Another body.'), 'allow'],

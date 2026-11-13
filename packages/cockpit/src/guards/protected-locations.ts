@@ -12,6 +12,7 @@ import { basename, dirname, join, posix, relative, resolve } from 'node:path'
 import { ENVIRONMENT_CODES, snapshotExecutionStep, type ExecutionStep, RefusalError } from '../environment/contract.js'
 import { GIT_CHILD_CONFIG, type ResolvedExecutable } from '../environment/executable.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import { instructionRisk } from './instruction-frontmatter.js'
 import { agentInstructionFile, foldGuardSpelling, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity, isSensitiveGuardName, plantedAgentControl, type GitTreeTarget } from './evaluator.js'
 
 function missing(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
@@ -480,7 +481,8 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
         from = 'worktree'
     }
     const pathspecs = ['--', ...inside.map(path => `:(literal)${path}`), ...AGENT_CONTROL_PATHSPECS]
-    const diff = ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z']
+    // Status and name pairs, so a file the verb removes is told from one it writes.
+    const diff = ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-status', '-z']
     let names: readonly string[] | null
     if (to === ':index') names = await run([...diff, ...pathspecs])
     else if (from === 'worktree') names = await run([...diff, to, ...pathspecs])
@@ -495,14 +497,21 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
     const scope = paths?.length && paths.every(path => !/^:|[*?[\\]/.test(path)) ? paths.map(path => foldGuardSpelling(relative(top, resolve(cwd, path)))) : undefined
     const inScope = (name: string) => scope === undefined || scope.some(path => path === '' || path === '..' || path.startsWith('../') || name === path || name.startsWith(`${path}/`))
     const changed: string[] = []
-    const instructions: string[] = []
-    for (const name of names) {
+    const written: string[] = []
+    for (let at = 0; at + 1 < names.length; at += 2) {
+        const [status, name] = [names[at]!, names[at + 1]!]
         const folded = foldGuardSpelling(name)
         if (!inScope(folded)) continue
         if (inside.some(path => name === path || name.startsWith(`${path}/`)) || plantedAgentControl(folded)) changed.push(join(top, name))
-        else if (agentInstructionFile(folded)) instructions.push(join(top, name))
+        else if (agentInstructionFile(folded) && status !== 'D') written.push(name)
     }
-    if (changed.length + instructions.length > GUARD_LOCATION_LIMITS.sensitivePaths) return null
+    if (changed.length + written.length > GUARD_LOCATION_LIMITS.sensitivePaths) return null
+    // Each instruction file is read as the verb would write it: one that runs or registers nothing passes.
+    const instructions: string[] = []
+    for (const name of written) {
+        const text = await run(['cat-file', '-p', to === ':index' ? `:${name}` : `${to}:${name}`])
+        if (text === null || instructionRisk(text.join('\0')) !== undefined) instructions.push(join(top, name))
+    }
     return { guarded, changed: changed.sort(), ...instructions.length ? { instructions: instructions.sort() } : {} }
 }
 

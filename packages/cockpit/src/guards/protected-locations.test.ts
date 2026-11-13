@@ -255,22 +255,28 @@ describe('guard protected locations', () => {
         run('init', '-q', '-b', 'work')
         run('add', '.')
         run('commit', '-qm', 'base')
-        // A revision carrying a nested hook registration, a planted guard script and a skill with frontmatter.
+        // A revision carrying a nested hook registration, a planted guard script, an OpenCode tool, a skill whose
+        // frontmatter registers a hook, a command whose body runs a shell, and a plain skill.
         run('switch', '-qc', 'planted')
-        for (const path of ['deep/.claude/settings.json', 'deep/sub/.codex/hooks.json', 'pkg/.cockpit/guards/bash-guard.sh', 'pkg/.opencode/plugins/a.js', 'tools/skills/probe/SKILL.md']) {
+        for (const [path, text] of Object.entries({ 'deep/.claude/settings.json': '{}', 'deep/sub/.codex/hooks.json': '{}', 'pkg/.cockpit/guards/bash-guard.sh': 'exit 0',
+            'pkg/.opencode/plugins/a.js': '', 'pkg/.opencode/tools/t.ts': '', 'tools/skills/probe/SKILL.md': '---\nname: probe\nhooks: {}\n---\n',
+            'tools/.claude/commands/run.md': 'Today is !`date`.', 'tools/skills/plain/SKILL.md': '---\nname: plain\n---\nBody.' })) {
             mkdirSync(join(root, path, '..'), { recursive: true })
-            writeFileSync(join(root, path), '{}\n')
+            writeFileSync(join(root, path), `${text}\n`)
         }
         run('add', '.')
         run('commit', '-qm', 'planted')
         run('switch', '-q', 'work')
-        const planted = [join(root, 'deep/.claude/settings.json'), join(root, 'deep/sub/.codex/hooks.json'), join(root, 'pkg/.cockpit/guards/bash-guard.sh'), join(root, 'pkg/.opencode/plugins/a.js')]
-        const skill = [join(root, 'tools/skills/probe/SKILL.md')]
+        const planted = [join(root, 'deep/.claude/settings.json'), join(root, 'deep/sub/.codex/hooks.json'), join(root, 'pkg/.cockpit/guards/bash-guard.sh'),
+            join(root, 'pkg/.opencode/plugins/a.js'), join(root, 'pkg/.opencode/tools/t.ts')]
+        // The plain skill is read and passes; one Git removes is not judged as an instruction.
+        const skill = [join(root, 'tools/.claude/commands/run.md'), join(root, 'tools/skills/probe/SKILL.md')]
         const changes = (target: Parameters<typeof guardWorktreeChanges>[1]) => guardWorktreeChanges(root, target, [], git, executeProbe)
         // A checkout or merge of the revision, a restore of a directory from it, and a worktree of it.
         expect(await changes({ revision: 'planted' })).toEqual({ guarded: false, changed: planted, instructions: skill })
         expect(await changes({ revision: 'planted', from: 'worktree', paths: ['deep'] })).toEqual({ guarded: false, changed: [planted[0], planted[1]] })
         expect(await changes({ revision: 'planted', from: ':empty' })).toEqual({ guarded: false, changed: planted, instructions: skill })
+        expect((await changes({ revision: 'work', from: 'planted' }))?.instructions).toBeUndefined()
         // The index, as `git update-index --cacheinfo` leaves it, then checked out by path or by a word that names no commit.
         run('read-tree', 'planted')
         expect(await changes({ revision: ':index', from: 'worktree', paths: ['deep'] })).toEqual({ guarded: false, changed: [planted[0], planted[1]] })

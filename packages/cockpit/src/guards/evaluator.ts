@@ -1366,7 +1366,8 @@ export function nestedAgentConfiguration(folded: string, covering: boolean): boo
     if (name === '.mcp.json' || name === 'opencode.json' || name === 'opencode.jsonc') return true
     if (parent === '.claude' && (name === 'settings.json' || name === 'settings.local.json')) return true
     if (parent === '.codex' && (name === 'config.toml' || name === 'hooks.json')) return true
-    if (parts.some((part, at) => part === '.claude' && parts[at + 1] === 'hooks' || part === '.opencode' && /^plugins?$/.test(parts[at + 1] ?? ''))) return true
+    // OpenCode imports `.opencode/tool(s)` at startup as it does its plugins (measured).
+    if (parts.some((part, at) => part === '.claude' && parts[at + 1] === 'hooks' || part === '.opencode' && /^(?:plugins?|tools?)$/.test(parts[at + 1] ?? ''))) return true
     // A writer that may place a whole directory, such as a move, carries those files with it.
     return covering && ['.claude', '.codex', '.opencode'].includes(name)
 }
