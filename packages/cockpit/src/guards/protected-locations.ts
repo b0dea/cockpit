@@ -515,9 +515,9 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
     }
     if (to === undefined) {
         if (target.optional) return { guarded, changed: [] }
-        // The one remote branch of the name, as Git creates a branch from it; none or several is unresolved.
+        // The remote branches of the name, one of which Git creates a branch from.
         const name = revision.replace(/^refs\/heads\//, '')
-        const remoteBranch = async () => {
+        const remoteBranches = async () => {
             const remotes = await run(['remote'])
             if (remotes === null) return null
             const found: string[] = []
@@ -526,21 +526,24 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
                 if (tip === null) return null
                 if (tip) found.push(tip)
             }
-            return found.length === 1 ? found[0] : undefined
+            return found
         }
-        const guessing = target.remote === true
+        const guessing = target.fallback === 'remote' || target.remote === true
             || target.remote === 'config' && (await run(['config', '--type=bool', 'worktree.guessRemote']))?.join('').trim() === 'true'
-        // Checkout reads the name as a path only when the disk holds it (Git's check_filename is an lstat), so a
-        // name only the index holds is still the remote branch.
-        const isPath = () => {
+        // Checkout reads the name as a path when the disk holds it (Git's check_filename is an lstat), else as the one
+        // remote branch of it; with none it is a path again, which the index may hold. Several is unresolved, since
+        // `checkout.defaultRemote` can pick one.
+        const onDiskPath = () => {
             try { lstatSync(resolve(cwd, revision)); return true } catch (error) { if (!missing(error)) throw error; return false }
         }
-        if (target.fallback === 'index' && (!guessing || isPath())) {
+        const branches = target.fallback && guessing && !(target.fallback === 'index' && onDiskPath()) ? await remoteBranches() : []
+        if (branches === null) return null
+        if (target.fallback === 'index' && !branches.length) {
             paths = [revision, ...paths ?? []]
             to = ':index'
             from = 'worktree'
-        } else if (target.fallback === 'head' && !guessing) to = await commit('HEAD')
-        else if (target.fallback) to = await remoteBranch()
+        } else if (target.fallback === 'head' && !branches.length) to = await commit('HEAD')
+        else if (target.fallback && branches.length === 1) to = branches[0]
         if (!to) return null
     }
     // A case-insensitive volume writes a protected path under any case, so Git matches it under any too.

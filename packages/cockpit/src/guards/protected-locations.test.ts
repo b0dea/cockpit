@@ -385,6 +385,8 @@ describe('guard protected locations', () => {
         run('add', 'feat')
         rmSync(join(root, 'feat'))
         expect(await changes({ revision: 'feat', from: 'worktree', fallback: 'index', remote: true })).toEqual(settings)
+        // A name no remote holds is a path again, as checkout reads one only the index holds.
+        expect(await changes({ revision: 'feat/.claude', from: 'worktree', fallback: 'index', remote: true })).toEqual({ guarded: false, changed: [] })
         // A file of that name is the path checkout writes instead; without the remote guess it is only that.
         writeFileSync(join(root, 'feat'), 'x\n')
         expect(await changes({ revision: 'feat', from: 'worktree', fallback: 'index', remote: true })).toEqual({ guarded: false, changed: [] })
