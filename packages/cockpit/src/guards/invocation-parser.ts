@@ -39,6 +39,8 @@ export interface ParsedInvocation {
     readonly expandsStatus?: true
     /** A word of this invocation is dynamic; only `dynamicWords: 'mark'` emits one. */
     readonly dynamic?: true
+    /** It runs as a background job, which outlives the call: its list ends in `&`, or `nohup` or `setsid` detaches it. */
+    readonly background?: true
 }
 /** The new text a file tool call carries, as the payload spells it, kept so the policy pin can apply it. */
 export type GuardFileContent =
@@ -47,13 +49,17 @@ export type GuardFileContent =
     | Readonly<{ kind: 'patch'; text: string }>
 export type GuardParseResult = {
     readonly status: 'parsed'
-    readonly tool: 'Bash' | 'Edit' | 'Write' | 'NotebookEdit' | 'apply_patch' | `mcp__${string}`
+    readonly tool: 'Bash' | 'Monitor' | 'Edit' | 'Write' | 'NotebookEdit' | 'apply_patch' | `mcp__${string}`
     readonly cwd: string
     readonly invocations: readonly ParsedInvocation[]
     readonly paths: readonly string[]
     /** Targets deleted, moved away from or emptied, as opposed to edited in place. */
     readonly removed: readonly string[]
     readonly content?: GuardFileContent
+    /** Part of the command runs as a background job (`&`, `nohup`, `setsid`, the Bash tool's `run_in_background` or the Monitor tool), which outlives the call the guard judged. */
+    readonly background?: true
+    /** The command runs a `for`, `while` or `until` loop. */
+    readonly loop?: true
 } | { readonly status: 'unavailable'; readonly reason: string }
 
 const parsedInputs = new WeakSet<object>()
@@ -608,7 +614,9 @@ function gitShellRefusal(argv: readonly string[]): string | undefined {
     return undefined
 }
 
-interface Context { readonly options: GuardParseOptions; readonly definitions: Set<string>; readonly depth: number }
+// What the whole command does beside its invocations: a job in the background, or a loop.
+interface Seen { background: boolean; loop: boolean }
+interface Context { readonly options: GuardParseOptions; readonly definitions: Set<string>; readonly depth: number; readonly seen: Seen }
 
 function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvocation[] {
     const { definitions, options } = context
@@ -668,12 +676,14 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
     }
     assignments()
     let wrapped = false
+    let detached = false
     while (cursor < args.length && wrappers.has(posix.basename(args[cursor].value)) && !args[cursor].dynamic) {
         // `command -v NAME` and `command -V NAME` only print where a command is.
         if (posix.basename(args[cursor].value) === 'command' && /^-[vV]$/.test(args[cursor + 1]?.value ?? '')
             && args.length > cursor + 2 && args.slice(cursor + 2).every((token) => !token.value.startsWith('-'))) break
         const wrapper = posix.basename(args[cursor++].value)
         wrapped = true
+        if (wrapper === 'nohup' || wrapper === 'setsid') { context.seen.background = true; detached = true }
         const take = () => {
             const token = args[cursor++]
             if (!token) refuse(`Missing ${wrapper} operand.`)
@@ -776,7 +786,8 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
     words.push(...operands.map((token) => word('argument', token)))
     return [{ executable, argv: operands.map(({ value }) => value), cwd, wrapped, words, redirects: redirectPaths,
         ...args.some((token) => token.status) ? { expandsStatus: true as const } : {},
-        ...words.some((item) => item.dynamic) ? { dynamic: true as const } : {} }, ...nested]
+        ...words.some((item) => item.dynamic) ? { dynamic: true as const } : {}, ...detached ? { background: true as const } : {} },
+    ...detached ? nested.map((item) => ({ ...item, background: true as const })) : nested]
 }
 
 /**
@@ -912,8 +923,9 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
     const result: ParsedInvocation[] = []
     let current: Token[] = []
     let compound: Compound | undefined
-    // Where each open brace group's commands start in `result`.
-    const groups: number[] = []
+    // Where each open brace group's commands start in `result`, and where the and-or list holding the group starts:
+    // the group's own separators end no list outside it.
+    const groups: Array<{ readonly start: number; readonly listStart: number }> = []
     // A group just closed, so a separator may follow it; `piped` holds its commands when it feeds a pipeline.
     let closed: { piped?: readonly ParsedInvocation[] } | undefined
     let needsCommand = false
@@ -932,6 +944,8 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
     let ran: readonly string[] = [cwd]
     // A list ending in `&` runs in a background subshell, so its cd moves nothing after it.
     let list = states
+    // Where the current and-or list starts in `result`: a list ending in `&` runs all of it in the background.
+    let listStart = 0
     // An earlier stage of the current pipeline downloads.
     let fetched = false
     const append = (item: ParsedInvocation) => {
@@ -994,11 +1008,16 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
         current = []
         compound = undefined
         closed = undefined
-        if (separator === '&') states = list
+        if (separator === '&') {
+            states = list
+            context.seen.background = true
+            for (let at = listStart; at < result.length; at++) result[at] = { ...result[at]!, background: true }
+        }
         if (separator === '&&' || separator === '||' || separator === '|') gate = separator
         else {
             gate = undefined
             list = states
+            listStart = result.length
         }
     }
     for (let i = 0; i < tokens.length; i++) {
@@ -1016,6 +1035,7 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
         }
         if (!current.length && !compound && token.kind === 'word' && !token.quoted && (token.value === 'for' && options.dynamicWords === 'mark' || token.value === 'while' || token.value === 'until')) {
             ({ compound, end: i } = token.value === 'for' ? readLoop(tokens, i) : readWhile(tokens, i))
+            context.seen.loop = true
             needsCommand = false
             closed = undefined
             continue
@@ -1066,11 +1086,13 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
             if (current.length) refuse('A standalone { is parsed only where it opens a command group, `{ command; }`. Quote a literal brace.')
             // Every command in the group reads the download, past the separators that end a pipeline stage.
             if (gate === '|' && fetched) refuse(FETCHED_CODE)
-            groups.push(result.length)
+            groups.push({ start: result.length, listStart })
             closed = undefined
         } else if (token.kind === 'op' && token.value === '}') {
             if (!groups.length || current.length || needsCommand) refuse('Malformed brace group.')
-            const start = groups.pop()!
+            const group = groups.pop()!
+            const start = group.start
+            listStart = group.listStart
             // The separator after the group and any redirects on it.
             let next = i + 1
             for (let item = tokens[next]; item; item = tokens[next]) {
@@ -1180,7 +1202,15 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
         let removed: string[] = []
         let invocations: ParsedInvocation[] = []
         let content: GuardFileContent | undefined
-        if (tool === 'Bash' || tool === 'apply_patch') {
+        const seen: Seen = { background: false, loop: false }
+        if (tool === 'Monitor') {
+            // Claude Code's Monitor tool runs its command in the background, or watches a WebSocket and runs nothing.
+            if (!exactKeys(fields, ['description'], ['command', 'timeout_ms', 'ws', 'persistent']) || !text(fields.description)
+                || fields.command !== undefined && (!text(fields.command) || !fields.command) || fields.timeout_ms !== undefined && typeof fields.timeout_ms !== 'number'
+                || fields.command === undefined && fields.ws === undefined) refuse('Malformed monitor payload.')
+            seen.background = true
+            if (typeof fields.command === 'string') invocations = parseShell(fields.command, cwd, { options, definitions: new Set(), depth: 0, seen })
+        } else if (tool === 'Bash' || tool === 'apply_patch') {
             // Native Bash calls carry execution options beside the command; they are type-checked
             // and otherwise ignored, because the command text alone decides what runs.
             const fieldChecks: Record<string, (value: JsonSnapshot | undefined) => boolean> = tool === 'Bash' ? {
@@ -1189,7 +1219,8 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
             } : {}
             if (!exactKeys(fields, ['command'], Object.keys(fieldChecks)) || !text(fields.command) || !fields.command
                 || Object.entries(fieldChecks).some(([key, valid]) => Object.hasOwn(fields, key) && !valid(fields[key]))) refuse('Malformed command payload.')
-            if (tool === 'Bash') invocations = parseShell(fields.command, cwd, { options, definitions: new Set(), depth: 0 })
+            if (fields.run_in_background === true) seen.background = true
+            if (tool === 'Bash') invocations = parseShell(fields.command, cwd, { options, definitions: new Set(), depth: 0, seen })
             else {
                 ({ paths, removed } = patchPaths(fields.command))
                 content = { kind: 'patch', text: fields.command }
@@ -1214,6 +1245,8 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
                 content = { kind: 'replace', path: paths[0]!, old: fields.old_string, new: fields.new_string, all: fields.replace_all === true }
             }
         } else if (!mcpTool(tool)) refuse('Unsupported guard tool.')
+        // The Bash tool's `run_in_background` and the Monitor tool run the whole command as a background job.
+        if (tool === 'Monitor' || tool === 'Bash' && fields.run_in_background === true) invocations = invocations.map((item) => ({ ...item, background: true as const }))
         if (paths.length + invocations.reduce((sum, item) => sum + item.redirects.length, 0) > GUARD_INPUT_LIMITS.paths) refuse('Guard path limit exceeded.')
         for (const item of invocations) {
             Object.freeze(item.argv)
@@ -1224,7 +1257,7 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
             Object.freeze(item)
         }
         const result: GuardParseResult = { status: 'parsed', tool, cwd, paths, removed, invocations,
-            ...content ? { content } : {} }
+            ...content ? { content } : {}, ...seen.background ? { background: true as const } : {}, ...seen.loop ? { loop: true as const } : {} }
         parsedInputs.add(result)
         return result
     } catch (error) {

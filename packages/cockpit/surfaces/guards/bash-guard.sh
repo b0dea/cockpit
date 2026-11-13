@@ -10,14 +10,22 @@ case "$source_path" in
     */*) guards="${source_path%/*}" ;;
     *) guards=. ;;
 esac
-if ! root=$(cd -P -- "$guards/../.." && pwd -P); then
+# The hook's check passes the root it verified, which a linked directory cannot move.
+if [ -n "${COCKPIT_GUARD_CHECKED_ROOT:-}" ]; then
+    root=$COCKPIT_GUARD_CHECKED_ROOT
+elif ! root=$(cd -P -- "$guards/../.." && pwd -P); then
     printf 'cockpit guard: cannot resolve the cockpit checkout above %s, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are refused. ' "$guards" >&2
     cockpit_guard_recovery '' "$config"
     exit 2
 fi
 local_file="$root/.cockpit/local/guard-identity"
+# A checked run is handed the identity text the hook's check hashed, and never reads the file again: one
+# created after the check would be unchecked.
+if [ -n "${COCKPIT_GUARD_CHECKED_ROOT:-}" ]; then identity_text=${COCKPIT_GUARD_CHECKED_IDENTITY-}
+else { identity_text=$(< "$local_file"); } 2>/dev/null || identity_text=''
+fi
 format='' node='' handler='' identity=''
-if ! { IFS= read -r format && IFS= read -r node && IFS= read -r handler && IFS= read -r identity; } 2>/dev/null < "$local_file" \
+if ! { IFS= read -r format && IFS= read -r node && IFS= read -r handler && IFS= read -r identity; } <<< "$identity_text" \
     || [ "$format" != 'cockpit-guard-local/v1' ] || [ -z "$node" ] || [ -z "$handler" ] || [ -z "$identity" ]; then
     printf 'cockpit guard: %s is missing, unreadable or from another cockpit version. It records the Node executable and cockpit handler on this machine, which committed files cannot carry, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are refused until it exists. ' "$local_file" >&2
     cockpit_guard_recovery "$root" "$config"

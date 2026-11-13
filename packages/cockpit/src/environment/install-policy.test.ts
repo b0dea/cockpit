@@ -16,6 +16,7 @@ import {
 import { resolveInstallPolicies, renderGuardProjectCommand, GUARD_PROJECT_COMMAND_RENDERED_BYTES } from './install-policy.js'
 import { GUARD_INPUT_LIMITS, parseGuardInput } from '../guards/invocation-parser.js'
 import { expandRestrictions } from '../surfaces/restrictions.js'
+import { recordTestGuard } from '../test-support/guard-record.js'
 
 const scratch: string[] = []
 const source = { path: '/synthetic/cockpit.toml', byteLength: 17, sha256: 'b'.repeat(64) }
@@ -91,6 +92,8 @@ describe('install policy resolution', () => {
         await mkdir(join(directory, '.cockpit/guards'), { recursive: true })
         // The subprocess boundary captures the actual registration's stdin, without executing the candidate command.
         await writeFile(join(directory, guardPath), 'cat > "$COCKPIT_TEST_CAPTURE"\nprintf \'{}\'\n', { mode: 0o600 })
+        // Recorded as sync records it, so the hook runs this stand-in guard.
+        recordTestGuard(directory)
         const framedBytes: Record<string, number> = {}
         for (const [name, word] of [['astral', '😀'.repeat(128)], ['escaping', "'".repeat(128)]] as const) {
             const argv = Array(32).fill(word)

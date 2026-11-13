@@ -37,7 +37,8 @@ function applyPatchSection(text: string, lines: readonly string[]): string | und
     return result
 }
 
-function proposedText(content: GuardFileContent, isConfig: (path: string) => boolean, current: string): string | undefined | 'untouched' {
+/** The text `content` leaves in the file `isConfig` names: undefined when it does not apply exactly once, 'untouched' when it names no such file. */
+export function proposedText(content: GuardFileContent, isConfig: (path: string) => boolean, current: string): string | undefined | 'untouched' {
     if (content.kind === 'write') return isConfig(content.path) ? content.content : 'untouched'
     if (content.kind === 'replace') {
         if (!isConfig(content.path)) return 'untouched'

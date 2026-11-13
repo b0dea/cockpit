@@ -15,7 +15,7 @@ describe('guard invocation capture', () => {
     it.each(invocationCorpus)('captures or explicitly refuses $name', (row) => {
         expect(parseGuardInput(shellPayload(row.candidate))).toEqual(typeof row.capture.candidate === 'string'
             ? { status: 'unavailable', reason: row.capture.candidate }
-            : { status: 'parsed', tool: 'Bash', cwd: '/workspace/project', invocations: row.capture.candidate, paths: [], removed: [] })
+            : { status: 'parsed', tool: 'Bash', cwd: '/workspace/project', invocations: row.capture.candidate, paths: [], removed: [], ...'background' in row.capture && row.capture.background ? { background: true } : {} })
         expect(parseGuardInput(shellPayload(row.control))).toEqual({ status: 'parsed', tool: 'Bash', cwd: '/workspace/project', invocations: row.capture.control, paths: [], removed: [] })
     })
 

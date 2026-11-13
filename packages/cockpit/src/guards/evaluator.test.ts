@@ -16,9 +16,10 @@ const instance = `${root}/config/active.instance`
 // A search's evidence also lists the `.env*` and `.secrets` names below it, and a repository's the
 // ones its index holds and, when asked, the ones its history ever held; synthetic trees and repositories hold none.
 const searches = (operation?: string) => operation === 'search' || operation === 'unignored-search'
-// A synthetic repository's work tree holds no guard control, so no revision changes one.
+// A synthetic repository's work tree holds no guard control, so no revision changes one, and a synthetic archive holds no member.
 const inspect = ({ path, cwd, operation, revision, from, history }: { path: string; cwd: string; operation?: string; revision?: string; from?: string; history?: true }) => operation === 'tree'
     ? { status: 'resolved', path: posix.resolve(cwd, path), revision, ...from === undefined ? {} : { from }, guarded: false, changed: [] as string[] }
+    : operation === 'archive' ? { status: 'resolved', path: posix.resolve(cwd, path), entries: [] as string[], links: false }
     : { status: 'resolved', path: posix.resolve(cwd, path), symlink: false, identity: null, ancestors: [],
         ...(searches(operation) ? { sensitive: [] as string[] | null } : {}), ...(operation === 'repository' ? { tracked: [] as string[] | null, ...history ? { committed: [] as string[] | null } : {} } : {}) }
 // Identity facts for every protected path; synthetic tests name only the ones they exercise.
@@ -145,7 +146,7 @@ describe('resolved guard evaluation', () => {
         expect(parsed).toEqual({ status: 'parsed', tool: 'Bash', cwd: root, invocations: row.capture.control, paths: [], removed: [] })
         const refused = parseGuardInput(shellPayload(row.candidate))
         expect(refused).toEqual(typeof row.capture.candidate === 'string' ? { status: 'unavailable', reason: row.capture.candidate }
-            : { status: 'parsed', tool: 'Bash', cwd: root, invocations: row.capture.candidate, paths: [], removed: [] })
+            : { status: 'parsed', tool: 'Bash', cwd: root, invocations: row.capture.candidate, paths: [], removed: [], ...'background' in row.capture && row.capture.background ? { background: true } : {} })
         for (const item of row.capture.control) {
             if (item.executable) configured.projectCommands.push({ checkoutRoot: root, kind: 'test', executable: item.executable, argv: [...item.argv] })
         }
@@ -381,10 +382,179 @@ describe('resolved guard evaluation', () => {
                 shellPayload(`printf ok > ${path}`),
             ]) expect(evaluateGuard(parseGuardInput(input), policy(), inspect), `${input.tool_name} ${path}`).toEqual(refusal)
         }
-        for (const path of [`${other}/.claude/settings.json`, `${root}/.claude/agents/evaluator.md`, `${root}/.opencode/agents/reviewer.md`,
-            `${root}/workorders/WO-001.md`]) {
+        for (const path of [`${root}/.claude/agents/evaluator.md`, `${root}/.opencode/agents/reviewer.md`, `${other}/.claude/agents/reviewer.md`,
+            `${root}/workorders/WO-001.md`, `${root}/docs/settings.json`, `${root}/docs/hooks/readme.md`]) {
             expect(evaluateGuard(parseGuardInput(payload('Write', { file_path: path, content: '{}' })), policy(), inspect).decision, path).toBe('allow')
         }
+    })
+
+    it('asks before creating a Git repository inside the roots, where a session would load no guard', () => {
+        // Claude Code reads the cockpit's local settings only up to the nearest .git entry, so a session started
+        // in a new repository below the root runs without the guard. A worktree carries its own committed guard.
+        for (const command of ['git init pkg', 'git -C app init', 'git init', 'git init -b main pkg', 'git init worktrees/scratch',
+            'git clone https://example.test/r.git app/c', 'git clone ../upstream', 'git submodule add ./app pkg/sm', 'git -C app submodule add https://example.test/r.git']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), policy(), withGit), command)
+                .toMatchObject({ decision: 'ask', reason: expect.stringContaining('creates a Git repository inside the cockpit') })
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('git worktree add pkg/wt')), policy(), withGit).reason).not.toContain('creates a Git repository inside the cockpit')
+    })
+
+    it('asks before a shell or patch writes a skill, command or agent file, whose frontmatter it cannot read', () => {
+        // Write and Edit carry the text they leave, which the guard application judges.
+        const allowing = { ...policy(), defaultDecision: 'allow' as const }
+        const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
+        for (const command of [`printf x > ${other}/tools/skills/probe/SKILL.md`, "sed -i '' 's/a/b/' .claude/commands/run.md", 'cp build/a.md pkg/.claude/agents/reviewer.md',
+            'rsync -a build/skills/ pkg/.claude/skills/', 'mv build/probe .agents/skills/probe']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), allowing, withGit), command).toMatchObject({ decision: 'ask', reason: expect.stringContaining('frontmatter') })
+        }
+        expect(evaluateGuard(parseGuardInput(payload('apply_patch', { command: '*** Begin Patch\n*** Add File: tools/skills/probe/SKILL.md\n+x\n*** End Patch' })), allowing, withGit).decision).toBe('ask')
+        for (const input of [payload('Write', { file_path: `${root}/tools/skills/probe/SKILL.md`, content: 'x' }), shellPayload('printf x > docs/skill.txt'), shellPayload('rsync -a build/out/ pkg/dist/')]) {
+            expect(evaluateGuard(parseGuardInput(input), allowing, withGit).decision, JSON.stringify(input)).toBe('allow')
+        }
+    })
+
+    it('asks for a Git write it cannot resolve, and judges a new branch by its start point', () => {
+        // A write judged as writing nothing when its target was missing let `git checkout -b <new> <rev>` and
+        // `git pull --ff-only` replace the guard.
+        const asked: object[] = []
+        const answering = (facts: { changed?: readonly string[]; guarded?: boolean; unresolved?: boolean } = {}) => (request: Parameters<PathInspection>[0]) => {
+            if (request.operation !== 'tree') return withGit(request)
+            asked.push({ revision: request.revision, ...request.from === undefined ? {} : { from: request.from }, ...request.paths === undefined ? {} : { paths: request.paths },
+                ...request.optional === undefined ? {} : { optional: request.optional } })
+            const path = posix.resolve(request.cwd, request.path)
+            return facts.unresolved ? { status: 'unavailable', path, symlink: false } : { status: 'resolved', path, revision: request.revision,
+                ...request.from === undefined ? {} : { from: request.from }, guarded: facts.guarded ?? false, changed: (facts.changed ?? []).map(changed => `${root}/${changed}`) }
+        }
+        const allowing = { ...policy(), defaultDecision: 'allow' as const }
+        const decide = (command: string, facts?: Parameters<typeof answering>[0]) => evaluateGuard(parseGuardInput(shellPayload(command)), allowing, answering(facts)).decision
+        const targets = (command: string) => { asked.length = 0; decide(command); return [...asked] }
+        for (const command of ['git checkout -b feat evil', 'git checkout -B feat evil', 'git switch -c feat evil', 'git switch --create feat evil', 'git checkout --orphan feat evil',
+            // Short options combine, and the one that takes a value may carry it attached.
+            'git checkout -qb feat evil', 'git checkout -fb feat evil', 'git checkout -tB feat evil', 'git switch -qc feat evil', 'git checkout -bfeat evil']) {
+            expect(targets(command), command).toEqual([{ revision: 'evil', from: 'worktree' }])
+            expect(decide(command, { changed: ['.cockpit/guards/bash-guard.sh'] }), command).toBe('deny')
+        }
+        // A combined option that force-creates a protected branch moves it.
+        expect(decide('git checkout -qB main evil')).toBe('deny')
+        // `checkout <rev> --` names no path: it switches branches. A stash is named by its number too.
+        expect(targets('git checkout evil --')).toEqual([{ revision: 'evil', from: 'worktree' }])
+        expect(targets('git stash apply 1')).toEqual([{ revision: 'stash@{1}', from: 'stash@{1}^1' }, { revision: 'stash@{1}^3', from: ':empty', optional: true }])
+        // A revision Git does not resolve asks, whatever the verb.
+        for (const command of ['git checkout -b feat nowhere', 'git merge nowhere', 'git switch nowhere', 'git worktree add pkg/wt nowhere']) {
+            expect(decide(command, { unresolved: true }), command).toBe('ask')
+        }
+        // A pull fetches what it merges: in a tree holding guard controls it asks, elsewhere it is judged as the ref last fetched.
+        for (const command of ['git pull --ff-only origin evil', 'git pull --ff-only', 'git pull']) expect(decide(command, { guarded: true }), command).toBe('ask')
+        expect(decide('git pull --ff-only origin topic')).toBe('allow')
+        expect(decide('git pull --ff-only origin topic', { unresolved: true })).toBe('ask')
+        // Forms the guard does not model ask: standard input, revision walks, unknown options and subcommands.
+        for (const command of ['git bisect start', 'git bisect good HEAD~3', 'git bisect reset main', 'git cherry-pick --stdin', 'git revert --stdin', 'git cherry-pick --all',
+            'git cherry-pick --branches=evil', 'git cherry-pick ^main evil', 'git stash branch b', 'git merge --frobnicate topic', 'git checkout --recurse-submodules main', 'git checkout -b',
+            'git worktree add --no-checkout pkg/wt', 'git worktree add --orphan x pkg/wt', 'git submodule update --init', 'git submodule init', 'git submodule absorbgitdirs',
+            'git update-index --index-info', 'git update-index --stdin', 'git update-index --frobnicate src/a.ts', 'git read-tree evil',
+            // An option's separate value that starts with `-` is that value, not options: Git reads pathspecs from the file `-qb`.
+            'git checkout --pathspec-from-file -qb evil', 'git merge -m -qm evil', 'git restore -s evil --pathspec-from-file -S',
+            // A worktree directory named `@{-1}` checks out the branch before this one.
+            "git worktree add 'pkg/@{-1}'"]) {
+            expect(decide(command), command).toBe('ask')
+        }
+        // `-S` signs with a key only when one is attached, so the word after it is the revision.
+        expect(targets('git merge -S evil')).toEqual([{ revision: 'evil' }])
+        expect(targets('git rebase -S evil')).toContainEqual(expect.objectContaining({ revision: 'evil' }))
+        // What does not touch the work tree stays allowed; what later brings it there is judged.
+        for (const command of ['git fetch origin', 'git write-tree', 'git hash-object -w src/a.ts',
+            'git bisect log', 'git submodule status', 'git stash list', 'git stash drop']) {
+            expect(decide(command), command).toBe('allow')
+        }
+    })
+
+    it('judges each member an extraction writes into the roots from the archive\'s listing, and asks when it cannot list one', () => {
+        const allowing = { ...policy(), defaultDecision: 'allow' as const }
+        const listing = (entries: readonly string[] | null) => (request: Parameters<PathInspection>[0]) => request.operation !== 'archive' ? withGit(request)
+            : entries === null ? { status: 'unavailable', path: posix.resolve(request.cwd, request.path), symlink: false }
+                : { status: 'resolved', path: posix.resolve(request.cwd, request.path), entries, links }
+        let links = false
+        const decide = (command: string, entries: readonly string[] | null) => evaluateGuard(parseGuardInput(shellPayload(command)), allowing, listing(entries)).decision
+        for (const command of ['tar -xf build/a.tar -C build/x', 'tar xzf build/a.tgz -C build/y', 'unzip -o build/a.zip -d build/x']) {
+            expect(decide(command, ['src/a.ts', 'docs/']), command).toBe('allow')
+            for (const planted of ['pkg/.claude/settings.json', 'sub/.cockpit/guards/bash-guard.sh', 'a/.opencode/tools/t.ts']) expect(decide(command, [planted]), `${command} ${planted}`).toBe('deny')
+            for (const entry of ['tools/skills/p/SKILL.md', '../escape.txt', '/etc/x']) expect(decide(command, [entry]), `${command} ${entry}`).toBe('ask')
+            expect(decide(command, null), command).toBe('ask')
+        }
+        // An archive from standard input, and extractors the guard does not list, ask; so does a clone into the roots.
+        for (const command of ['tar -xf - -C build/x', 'ditto -x -k build/a.zip build/x', '7z x build/a.7z', 'cpio -i < build/a.cpio', 'pax -r -f build/a.pax',
+            'gh repo clone o/r build/r', 'gh gist clone 1 build/g', 'gh repo fork o/r --clone']) {
+            expect(decide(command, []), command).not.toBe('allow')
+        }
+        expect(decide('ditto -x -k build/a.zip build/x', [])).toBe('ask')
+        expect(decide('gh repo clone o/r build/r', [])).toBe('ask')
+        expect(decide('tar -tf build/a.tar', null)).toBe('allow')
+        // An archive holding a link member asks, whatever its names.
+        links = true
+        expect(decide('tar -xf build/a.tar -C build/x', ['src/a.ts'])).toBe('ask')
+    })
+
+    it('judges what each spelling of a Git content writer checks out, refusing a planted control at any depth and asking for an agent instruction file', () => {
+        // Agent tool settings, hooks and guard scripts reached the working tree through the object store and the
+        // index, which no write names: `hash-object -w`, `update-index --cacheinfo`, then `checkout -- <dir>`.
+        const asked: object[] = []
+        const answering = (changed: readonly string[], instructions?: readonly string[]) => (request: Parameters<PathInspection>[0]) => {
+            if (request.operation !== 'tree') return withGit(request)
+            asked.push({ revision: request.revision, from: request.from, paths: request.paths, fallback: request.fallback, ...request.remote === undefined ? {} : { remote: request.remote } })
+            return { status: 'resolved', path: posix.resolve(request.cwd, request.path), revision: request.revision, ...request.from === undefined ? {} : { from: request.from },
+                guarded: false, changed: changed.map(path => `${root}/${path}`), ...instructions ? { instructions: instructions.map(path => `${root}/${path}`) } : {} }
+        }
+        const decide = (command: string, changed: readonly string[], instructions?: readonly string[]) => evaluateGuard(parseGuardInput(shellPayload(command)), { ...policy(), defaultDecision: 'allow' as const }, answering(changed, instructions)).decision
+        for (const [command, target] of [
+            ['git checkout -- deep', { revision: ':index', from: 'worktree', paths: ['deep'] }],
+            ['git checkout planted -- deep', { revision: 'planted', from: 'worktree', paths: ['deep'] }],
+            // Without `--`, checkout reads a first word that names no commit as a path written from the index.
+            ['git checkout deep', { revision: 'deep', from: 'worktree', fallback: 'index', remote: true }],
+            ['git checkout planted deep', { revision: 'planted', from: 'worktree', paths: ['deep'], fallback: 'index' }],
+            ['git restore deep', { revision: ':index', from: 'worktree', paths: ['deep'] }],
+            ['git restore --source planted deep', { revision: 'planted', from: 'worktree', paths: ['deep'] }],
+            ['git restore -s planted -W -S deep', { revision: 'planted', from: 'worktree', paths: ['deep'] }],
+            ['git checkout-index -f -- deep/x', { revision: ':index', from: 'worktree', paths: ['deep/x'] }],
+            ['git merge planted', { revision: 'planted' }],
+        ] as const) {
+            asked.length = 0
+            expect(decide(command, ['deep/.claude/settings.json']), command).toBe('deny')
+            expect(asked, command).toEqual([{ from: undefined, paths: undefined, fallback: undefined, ...target }])
+            expect(decide(command, [], ['tools/skills/probe/SKILL.md']), command).toBe('ask')
+            expect(decide(command, []), command).toBe('allow')
+        }
+        // Staging writes only the index.
+        for (const command of ['git restore --staged deep']) {
+            asked.length = 0
+            expect(decide(command, ['deep/.claude/settings.json']), command).toBe('allow')
+            expect(asked, command).toEqual([])
+        }
+        // The index entry itself is refused, since nothing names the path again until it is checked out.
+        for (const command of ['git update-index --add --cacheinfo 100644,abc1234,deep/.claude/settings.json', 'git update-index --add --cacheinfo 100644 abc1234 sub/.cockpit/guards/bash-guard.sh',
+            'git update-index --add --cacheinfo=100644,abc1234,sub/.codex/hooks.json', 'git update-index --add --cacheinfo 100644,abc1234,sub/.opencode/plugins/a.js']) {
+            expect(decide(command, []), command).toBe('deny')
+        }
+        expect(decide('git update-index --add --cacheinfo 100644,abc1234,src/a.ts', [])).toBe('allow')
+        // A prefix lands the index somewhere no path names, and a sparse checkout writes skipped entries.
+        for (const command of ['git checkout-index --prefix=sub/ -- src/a.ts', 'git sparse-checkout disable']) expect(decide(command, []), command).toBe('ask')
+    })
+
+    it('refuses an agent tool\'s hook or settings file at any depth, where a session started there loads it', () => {
+        // Claude Code reads .claude/settings.json and settings.local.json from the directory a session starts
+        // in, Codex every .codex/config.toml from the project root down to it, and OpenCode opencode.json and
+        // .opencode from it upwards: one written in a subdirectory could switch the guard off there.
+        const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
+        for (const path of [`${other}/.claude/settings.json`, `${root}/app/.claude/settings.json`, `${root}/app/web/.claude/settings.local.json`,
+            `${root}/app/.claude/hooks/pre.sh`, `${root}/app/.mcp.json`, `${root}/app/.codex/config.toml`, `${root}/app/.codex/hooks.json`,
+            `${root}/app/opencode.json`, `${root}/app/opencode.jsonc`, `${root}/app/.opencode/opencode.json`, `${root}/app/.opencode/plugin/a.js`,
+            `${root}/app/.opencode/plugins/a.js`, `${root}/app/.CLAUDE/Settings.json`]) {
+            for (const input of [payload('Write', { file_path: path, content: '{}' }), shellPayload(`printf ok > ${path}`)]) {
+                expect(evaluateGuard(parseGuardInput(input), policy(), inspect), `${input.tool_name} ${path}`)
+                    .toMatchObject({ decision: 'deny', reason: expect.stringContaining('loads') })
+            }
+        }
+        // Moving a whole tool directory into place carries the same files.
+        expect(evaluateGuard(parseGuardInput(shellPayload('mv staged/claude app/.claude')), policy(), inspect)).toMatchObject({ decision: 'deny' })
     })
 
     describe('protected identity', () => {
@@ -1200,6 +1370,106 @@ describe('allow by default', () => {
         }
     })
 
+    it('judges forced checkouts, aborts and new worktrees against the files on disk, and asks for plumbing that moves HEAD under them', () => {
+        // HEAD moved onto a crafted commit (`reset --soft`), then a forced checkout, wrote agent settings over the
+        // ones on disk while every comparison with HEAD found nothing.
+        const asked: object[] = []
+        const answering = (facts: { changed?: readonly string[]; unsettled?: readonly string[] } = {}) => (request: Parameters<PathInspection>[0]) => {
+            if (request.operation !== 'tree') return withGit(request)
+            asked.push({ revision: request.revision, ...request.from === undefined ? {} : { from: request.from }, ...request.fallback === undefined ? {} : { fallback: request.fallback },
+                ...request.remote === undefined ? {} : { remote: request.remote }, ...request.optional === undefined ? {} : { optional: request.optional } })
+            return { status: 'resolved', path: posix.resolve(request.cwd, request.path), revision: request.revision, ...request.from === undefined ? {} : { from: request.from },
+                guarded: true, changed: (facts.changed ?? []).map(changed => `${root}/${changed}`), ...facts.unsettled ? { unsettled: facts.unsettled.map(path => `${root}/${path}`) } : {} }
+        }
+        const run = (command: string, facts?: Parameters<typeof answering>[0]) => evaluateGuard(parseGuardInput(shellPayload(command)), open(), (request) =>
+            request.operation === 'branch' ? onBranch('refs/heads/topic')(request) : answering(facts)(request))
+        const targets = (command: string) => { asked.length = 0; run(command); return [...asked] }
+        const disk = { from: 'worktree' }
+        for (const [command, expected] of [
+            ['git checkout -f', [{ revision: 'HEAD', ...disk }]], ['git checkout --force', [{ revision: 'HEAD', ...disk }]],
+            ['git checkout -f HEAD', [{ revision: 'HEAD', ...disk, fallback: 'index', remote: true }]], ['git switch -f main', [{ revision: 'main', ...disk, fallback: 'remote' }]],
+            ['git switch --discard-changes topic', [{ revision: 'topic', ...disk, fallback: 'remote' }]], ['git checkout -b feat evil', [{ revision: 'evil', ...disk }]],
+            // A name only a remote holds is the branch Git creates from it, unless guessing is off.
+            ['git checkout -f --no-guess feat', [{ revision: 'feat', ...disk, fallback: 'index' }]], ['git switch -f --no-guess feat', [{ revision: 'feat', ...disk }]],
+            ['git merge --abort', [{ revision: 'HEAD', ...disk }]],
+            ['git stash apply', [{ revision: 'stash@{0}', from: 'stash@{0}^1' }, { revision: 'stash@{0}^3', from: ':empty', optional: true }]],
+            ['git worktree add -b x pkg/wt', [{ revision: 'HEAD', ...disk }]], ['git worktree add -d pkg/wt', [{ revision: 'HEAD', ...disk }]],
+            ['git worktree add pkg/wt', [{ revision: 'refs/heads/wt', ...disk, fallback: 'head', remote: 'config' }]], ['git worktree add pkg/old HEAD~1', [{ revision: 'HEAD~1', ...disk }]],
+            ['git worktree add --guess-remote pkg/wt', [{ revision: 'refs/heads/wt', ...disk, fallback: 'head', remote: true }]],
+            ['git worktree add --no-guess-remote pkg/wt', [{ revision: 'refs/heads/wt', ...disk, fallback: 'head' }]],
+            ['git merge --quit', []], ['git rebase --quit', []],
+        ] as const) expect(targets(command), command).toEqual(expected)
+        expect(run('git checkout -f', { changed: ['.claude/settings.local.json'] }).decision).toBe('deny')
+        // A new worktree holding a control that differs from this checkout's asks; HEAD moved off the files on disk asks.
+        expect(run('git worktree add -b x pkg/wt', { changed: ['api/.claude/settings.json'] }).decision).toBe('ask')
+        expect(run('git merge main', { unsettled: ['.claude/settings.json'] }).decision).toBe('ask')
+        // A sequence's own state records what it continues, skips or aborts to, which the guard does not read.
+        for (const command of ['git rebase --continue', 'git rebase --abort', 'git rebase --skip', 'git cherry-pick --abort', 'git cherry-pick --continue', 'git revert --skip']) {
+            expect(run(command).decision, command).toBe('ask')
+        }
+        // Plumbing that crafts objects or moves refs is what moved HEAD under the checkout, so in the cockpit it asks.
+        for (const command of ['git commit-tree HEAD^{tree} -m x', 'git mktree', 'git update-ref refs/heads/x HEAD', 'git symbolic-ref HEAD refs/heads/x', 'git stash store abc1234',
+            'git replace abc1234 def5678', 'git branch -f x HEAD~1', 'git branch -M x', 'git branch -C a b', 'git notes add -m x', 'git filter-branch', 'git filter-repo', 'git fast-import']) {
+            expect(run(command).decision, command).toBe('ask')
+        }
+        for (const command of ['git symbolic-ref HEAD', 'git notes list', 'git replace -l', 'git branch -m renamed', 'git reset --soft HEAD~1', 'git reset HEAD~1', 'git write-tree']) {
+            expect(run(command).decision, command).toBe('allow')
+        }
+    })
+
+    it('asks before a background job that loops, writes files or runs a Git write, which can change what the guard judged before it runs', () => {
+        // A background loop swapping an archive, or `git reset --soft` moving HEAD, while a later call was judged.
+        const judge = (tool_name: string, tool_input: object) => evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input }), open(), onBranch('refs/heads/topic'))
+        for (const command of ['git reset --soft HEAD~1 &', 'nohup cp src/a.ts src/b.ts', 'setsid -f mv src/a.ts src/b.ts', 'cp src/a.ts src/b.ts & npm test',
+            // Two background commands writing files race each other as surely as a loop does.
+            'printf x > build/a.txt & printf y > build/b.txt &',
+            // A brace group's own separators do not end the list the `&` after it sends to the background.
+            '{ mv src/a.ts src/b.ts; } &', 'npm test && { npm run lint; cp src/a.ts src/b.ts; } &']) {
+            expect(judge('Bash', { command }).decision, command).toBe('ask')
+        }
+        // A loop sent to the background is not parsed at all, and one run by a background tool loops while later calls are judged.
+        expect(judge('Bash', { command: 'while true; do cp build/a.tar build/b.tar; done &' }).decision).not.toBe('allow')
+        expect(judge('Bash', { command: 'while true; do sleep 1; done', run_in_background: true }).decision).toBe('ask')
+        expect(judge('Bash', { command: 'git checkout main', run_in_background: true }).decision).toBe('ask')
+        expect(judge('Monitor', { command: 'while true; do cp build/a.tar build/b.tar; done', description: 'swap', timeout_ms: 1000 }).decision).toBe('ask')
+        // One long-running command in the background, a server or a watcher, runs as it would in the foreground.
+        for (const command of ['npm run dev &', 'npm test &', 'sleep 5 &', 'npm run dev > dev.log 2>&1 &', 'mkdir -p logs && npm run dev > logs/dev.log 2>&1 &',
+            // Commands in the foreground are judged as they always are.
+            'cp src/a.ts src/b.ts; npm run dev &', 'printf x > build/a.txt; npm run dev > dev.log 2>&1 &']) {
+            expect(judge('Bash', { command }).decision, command).toBe('allow')
+        }
+        expect(judge('Bash', { command: 'npm run dev', run_in_background: true }).decision).toBe('allow')
+        expect(judge('Monitor', { command: 'tail -f src/a.ts', description: 'watch', timeout_ms: 1000 }).decision).toBe('allow')
+    })
+
+    it('lets a plain switch keep a person\'s local edits, as Git does, and judges a forced or merging one against the files on disk', () => {
+        const keeps = (command: string) => {
+            const asked: Array<boolean | undefined> = []
+            evaluateGuard(parseGuardInput(shellPayload(command)), open(), request => {
+                if (request.operation === 'tree') asked.push(request.keepsLocal)
+                return onBranch('refs/heads/topic')(request)
+            })
+            return asked
+        }
+        for (const command of ['git switch main', 'git checkout main', 'git checkout -b x evil', 'git switch -c x evil', 'git checkout evil --']) expect(keeps(command), command).toEqual([true])
+        for (const command of ['git switch -f main', 'git checkout -m main', 'git switch --merge main', 'git switch --discard-changes main', 'git checkout -fb x evil', 'git reset --hard main',
+            // `--conflict` merges as `--merge` does.
+            'git checkout --conflict=merge main', 'git switch --conflict diff3 main']) {
+            expect(keeps(command), command).toEqual([undefined])
+        }
+    })
+
+    it('keeps everyday Git work and plain skill edits allowed', () => {
+        const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
+        for (const input of [...['git checkout -b feat', 'git switch main', 'git stash', 'git stash pop', 'git restore src/a.ts', 'git rebase main', 'git merge topic',
+            'git worktree add .claude/checkouts/x', 'git worktree add -b x .claude/checkouts/x', 'git worktree add .claude/checkouts/x -b x', 'git worktree add --detach .claude/checkouts/x HEAD']
+            .map(command => shellPayload(command)),
+        payload('Write', { file_path: `${root}/.claude/skills/probe/SKILL.md`, content: '---\nname: probe\n---\nBody.\n' }),
+        payload('Edit', { file_path: `${root}/tools/skills/probe/SKILL.md`, old_string: 'Body.', new_string: 'Another body.' })]) {
+            expect(evaluateGuard(parseGuardInput(input), open(), onBranch('refs/heads/topic')), JSON.stringify(input.tool_input)).toMatchObject({ decision: 'allow' })
+        }
+    })
+
     it('judges words it cannot expand only where they decide what is read, written or pushed', () => {
         const marked = (command: string, evidence: PathInspection = onBranch('refs/heads/topic')) =>
             evaluateGuard(parseGuardInput(shellPayload(command), { dynamicWords: 'mark', home }), open(), evidence)
@@ -1342,6 +1612,120 @@ describe('allow by default', () => {
         }
         // One holding the home directory is no policy.
         expect(run('pwd', { ...native, writePaths: ['/workspace'] }).decision).toBe('unavailable')
+    })
+
+    describe('agent workspaces', () => {
+        // What the application derives per call: each tool home, this cockpit's Claude memory names, the
+        // session's scratchpad, the private temp directories and the session's own areas.
+        const claude = `${home}/.claude`
+        const codex = `${home}/.codex`
+        const opencode = `${home}/.local/share/opencode`
+        const session = '/workspace/tmp/claude-1000/-workspace-project/session-one'
+        const scratch = `${session}/scratchpad`
+        // Directories the agent made in its scratchpad.
+        const made = `${scratch}/work`
+        const userMade = `${scratch}/user`
+        const agent = { ...open(), externalSearchDirectories: [`${claude}/plans/bin`],
+            agentHomes: [{ tool: 'claude', path: claude }, { tool: 'codex', path: codex }, { tool: 'opencode-data', path: opencode },
+                { tool: 'opencode-config', path: `${home}/.config/opencode` }],
+            agentMemoryKeys: ['-workspace-project', '-Workspace-Sibling'], agentType: 'reviewer',
+            agentWorkspaces: [{ kind: 'scratchpad', path: scratch }],
+            agentReadAreas: [`${claude}/projects/-workspace-project-sub`, `${claude}/file-history/session-one`, session] }
+        // `/tmp` leads to the temp directory, and one file there has a second name.
+        const lands: PathInspection = request => {
+            const path = posix.resolve(request.cwd, request.path)
+            if (request.operation === 'external-write') return { status: 'resolved', path, landsAt: path.replace(/^\/tmp(?=\/)/, '/workspace/tmp'),
+                ...path.endsWith('/linked.txt') ? { links: 2 } : {} }
+            return { ...withGit(request), identity: path.startsWith(root) ? null : '8:2' }
+        }
+        const judge = (call: object, configured: object = agent) => evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', cwd: root, ...call }), configured, lands)
+        const shell = (command: string, configured: object = agent) => judge({ tool_name: 'Bash', tool_input: { command } }, configured)
+        const write = (file_path: string, configured: object = agent) => judge({ tool_name: 'Write', tool_input: { file_path, content: 'x' } }, configured)
+
+        it('admits named writes to the agent\'s own memory, plans and notes, and its scratchpad, never temp', () => {
+            for (const path of [`${claude}/projects/-workspace-project/memory/MEMORY.md`, `${claude}/projects/-Workspace-Sibling/memory/MEMORY.md`,
+                `${claude}/projects/-WORKSPACE-project/memory/topic.md`, `${claude}/plans/bright-plan.md`, `${codex}/memories/extensions/ad_hoc/notes/20261113T000000Z-tabs.md`,
+                `${scratch}/notes.md`, `${made}/probe.txt`, `${userMade}/out.log`]) {
+                expect(write(path), path).toMatchObject({ decision: 'allow' })
+            }
+            expect(judge({ tool_name: 'Edit', tool_input: { file_path: `${claude}/projects/-workspace-project/memory/topic.md`, old_string: 'a', new_string: 'b' } }))
+                .toMatchObject({ decision: 'allow' })
+            for (const command of [`mkdir -p ${codex}/memories/extensions/ad_hoc/notes && printf x > ${codex}/memories/extensions/ad_hoc/notes/a.md`,
+                `cat > ${claude}/plans/bright-plan.md <<'EOF'\nplan\nEOF`, `mkdir -p ${scratch}/sub`, `mkdir ${made}`, `cp build/out.log ${made}/out.log`, `rm ${made}/probe.txt`,
+                `chmod 600 ${made}/probe.txt`, `mv ${scratch}/a.md ${scratch}/b.md`, `rm -rf ${made}`]) {
+                expect(shell(command), command).toMatchObject({ decision: 'allow' })
+            }
+            // Without the derived areas the same writes stay refused.
+            for (const path of [`${claude}/projects/-workspace-project/memory/MEMORY.md`, `${made}/probe.txt`]) expect(write(path, open()).decision, path).not.toBe('allow')
+            // Temp holds other programs' state, what mktemp names included.
+            expect(write('/tmp/tmp.AbCdEf1234/probe.txt').decision).not.toBe('allow')
+        })
+
+        it('refuses controls, credentials, what the tool writes itself, other projects\' memory and every write it cannot see', () => {
+            const refusals: Record<string, string> = {
+                [`echo x > ${claude}/settings.json`]: 'a control', [`echo x > ${claude}/settings.local.json`]: 'a control',
+                [`echo x > ${claude}/CLAUDE.md`]: 'a control', [`echo x > ${claude}/hooks/pre.sh`]: 'a control', [`echo x > ${claude}/skills/a/SKILL.md`]: 'a control',
+                [`echo x > ${claude}/shell-snapshots/snapshot.sh`]: 'sources it', [`echo x > ${claude}/.credentials.json`]: 'a credential',
+                [`echo x > ${codex}/config.toml`]: 'a control', [`echo x > ${codex}/AGENTS.md`]: 'a control', [`echo x > ${codex}/hooks.json`]: 'a control',
+                [`echo x > ${codex}/memories/skills/a/SKILL.md`]: 'a control', [`echo x > ${codex}/auth.json`]: 'a credential',
+                [`echo x > ${opencode}/auth.json`]: 'a credential', [`echo x > ${home}/.config/opencode/opencode.json`]: 'a control',
+                [`echo x > ${claude}/file-history/session/a`]: 'a control', [`echo x > ${codex}/memories/MEMORY.md`]: 'a control', [`echo x > ${opencode}/snapshot/project/config`]: 'a control',
+                // What the tool writes itself agents only read.
+                [`echo x > ${claude}/projects/-workspace-project/session.jsonl`]: 'writes itself', [`echo x > ${claude}/history.jsonl`]: 'writes itself',
+                [`echo x > ${claude}/tasks/list/1.json`]: 'writes itself', [`echo x > ${claude}/cache/changelog.md`]: 'writes itself',
+                [`echo x > ${codex}/sessions/2026/11/13/rollout.jsonl`]: 'writes itself', [`echo x > ${codex}/state_5.sqlite`]: 'writes itself',
+                [`echo x > ${codex}/version.json`]: 'writes itself', [`echo x > ${opencode}/tool-output/out.txt`]: 'writes itself', [`echo x > ${opencode}/storage/a.json`]: 'writes itself',
+                [`echo x > ${claude}/projects/-workspace-elsewhere/memory/MEMORY.md`]: 'another project',
+                [`echo x > ${claude}/PROJECTS/-workspace-elsewhere/MEMORY/MEMORY.md`]: 'another project',
+                [`echo x > ${claude}/agent-memory/planner/MEMORY.md`]: 'subagent other',
+                [`mv ${scratch}/skills ${codex}/memories_v2`]: 'moves', [`mv ${claude}/projects/-workspace-project/memory/a.md ${made}/a.md`]: 'moves',
+                [`echo x > ${made}/proj/.agents/skills/a/SKILL.md`]: 'loads from',
+                [`ln -s ${root}/README.md ${scratch}/link.md`]: 'link', [`ln ${root}/README.md ${made}/hard.md`]: 'link',
+                [`chmod +x ${scratch}/run.sh`]: 'executable', [`chmod 755 ${made}/run.sh`]: 'executable', [`install build/tool ${made}/tool`]: 'executable',
+                [`tar -xf build/a.tar -C ${made}/out`]: 'names it chooses', [`cp -R src ${made}/src`]: 'names it chooses',
+                [`echo x > ${made}/.env.local`]: 'environment file', [`echo x > ${made}/.secrets/a`]: 'environment file',
+                [`echo x > ${made}/id_ed25519`]: 'credential', [`echo x > ${made}/x/.cockpit/guards/bash-guard.sh`]: '.cockpit',
+                [`echo x > ${made}/proj/.claude/settings.json`]: 'loads from', [`echo x > ${made}/proj/CLAUDE.md`]: 'loads from',
+                [`echo x > ${made}/proj/.git/hooks/pre-commit`]: 'Git', [`echo x > ${claude}/plans/bin/git`]: 'search path',
+                [`echo x > ${made}/linked.txt`]: 'hard link', [`rm -rf ${claude}/projects`]: 'not the files', [`rm -rf ${scratch}`]: 'not the files',
+            }
+            for (const [command, reason] of Object.entries(refusals)) expect(shell(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining(reason) })
+            // Everything else in temp is other programs' state, such as cached packages they run later, and the temp directory itself.
+            for (const path of ['/workspace/tmp/probe.txt', '/workspace/user-tmp/cache/npm/_npx/abc/node_modules/tool/index.js', '/workspace/tmp/tsx-1000/a.js',
+                '/workspace/tmp/claude-1000/-workspace-other/session-two/scratchpad/a.md', `${session}/tasks/b1.output`, '/workspace/user-tmp/cockpit-execution-1/0000-x',
+                '/workspace/tmp/tmp.short/a', '/workspace/tmp/tmp.Ab-Cd_Ef/a']) {
+                expect(write(path).decision, path).not.toBe('allow')
+            }
+            for (const command of ['rm /workspace/tmp/cc-socks', 'rm -rf /workspace/user-tmp']) expect(shell(command).decision, command).not.toBe('allow')
+        })
+
+        it('asks before writing a subagent\'s user memory or an entry of a tool home it does not classify', () => {
+            for (const path of [`${claude}/agent-memory/reviewer/MEMORY.md`, `${claude}/daemon/state.json`, `${codex}/app-server-daemon/x`, `${opencode}/repos/a`]) {
+                expect(write(path), path).toMatchObject({ decision: 'ask' })
+            }
+        })
+
+        it('reads back the agent\'s own projects, session files and what it may write, and asks for the rest of a tool home', () => {
+            for (const command of [`cat ${claude}/projects/-workspace-project/session/tool-results/out.txt`, `jq . ${claude}/projects/-workspace-project/session.jsonl`,
+                `cat ${claude}/projects/-workspace-project-sub/session.jsonl`, `cat ${claude}/file-history/session-one/a@v1`, `rg needle ${session}/tasks/b1.output`,
+                `cat ${claude}/plans/bright-plan.md`, `cat ${claude}/agent-memory/reviewer/MEMORY.md`, `cat ${codex}/memories/extensions/ad_hoc/notes/a.md`,
+                `cat ${scratch}/notes.md`, `cat ${made}/notes.txt`, `ls ${claude}/plans`]) {
+                expect(shell(command), command).toMatchObject({ decision: 'allow' })
+            }
+            for (const command of [`cat ${claude}/settings.json`, `cat ${claude}/CLAUDE.md`, `cat ${claude}/history.jsonl`, `cat ${claude}/paste-cache/a.txt`,
+                `cat ${claude}/projects/-workspace-elsewhere/session.jsonl`, `cat ${claude}/projects/-workspace-elsewhere/memory/MEMORY.md`,
+                `cat ${claude}/file-history/session-two/a@v1`, `cat ${claude}/session-env/session-one/hook-1.sh`, `cat ${claude}/shell-snapshots/snapshot.sh`,
+                `cat ${claude}/debug/session-one.txt`, `cat ${codex}/sessions/2026/11/13/rollout.jsonl`, `cat ${codex}/archived_sessions/a.jsonl`, `cat ${codex}/log/codex.log`,
+                `cat ${codex}/state_5.sqlite`, `cat ${codex}/config.toml`, `cat ${codex}/memories/MEMORY.md`, `cat ${opencode}/storage/a.json`, `cat ${opencode}/opencode.db`,
+                `cat ${home}/.config/opencode/opencode.json`, 'cat /workspace/tmp/notes.txt', 'cat /workspace/tmp/claude-1000/-workspace-other/session-two/tasks/b1.output',
+                `cat ${claude}/daemon/state.json`]) {
+                expect(shell(command), command).toMatchObject({ decision: 'ask' })
+            }
+            for (const command of [`cat ${claude}/.credentials.json`, `cat ${home}/.claude.json`, `cat ${codex}/auth.json`, `cat ${opencode}/auth.json`, `cat ${claude}/ide/1.lock`]) {
+                expect(shell(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('credential') })
+            }
+            expect(shell(`cat ${home}/.cursor/state.json`).decision).not.toBe('allow')
+        })
     })
 
     it('refuses the Data volume spelling of the cockpit, a related checkout or a write path, never judging it as outside', () => {
@@ -1794,7 +2178,7 @@ describe('allow by default', () => {
     it('still allows the development those refusals sit beside', () => {
         const refused: string[] = []
         for (const command of ['sort < src/a.ts', 'git commit -F notes.md', 'git push origin topic', 'git switch -c topic && git commit -m done', 'rsync -a src/ build/',
-            'git worktree add worktrees/topic -b topic', 'git init worktrees/scratch', 'export NODE_ENV=test && npm test', 'git -c core.quotepath=false status',
+            'git worktree add worktrees/topic -b topic', 'export NODE_ENV=test && npm test', 'git -c core.quotepath=false status',
             `cat ${home}/.ssh/id_ed25519.pub`, 'zip -qr build/src.zip src', 'git restore --source=HEAD~1 -- src/a.ts', 'echo "$PATH"', 'npm run build',
             'gh pr create --title Fix --body Done', 'gh pr edit 12 --title Fix', 'gh pr checks 12', 'gh run list', 'gh run view 1', 'pnpm build', 'pnpm test',
             'pnpm lint', 'pnpm typecheck', 'make -C local doctor', 'jq .result.summary .cockpit/local/probes/report.json', 'ps -o pid,user,command',
@@ -1817,7 +2201,7 @@ describe('allow by default', () => {
             'docker images -q', 'docker ps -a --filter status=running', "docker ps --format '{{.Names}}'", 'docker container ls', 'docker version --format {{.Server.Version}}',
             "jq --arg v 1 '.a' package.json", "jq --argjson n 1 --indent 4 '.a' package.json", "jq --rawfile t notes.md '.a' package.json", 'tail -f src/a.ts', 'tail -F -n 20 src/a.ts',
             'wc -l src/*.ts', "find src -name '*.ts' -print -quit", 'base64 -d build/a.b64 > build/a.bin', 'base64 -d -i build/a.b64 -o build/a.bin',
-            "gh release download v1 -p '*.tgz' -D build/x", "gh release download v1 -p '*.tgz'", 'gh run download 1 -D build/art', 'gh repo clone o/r build/r']) {
+            "gh release download v1 -p '*.tgz' -D build/x", "gh release download v1 -p '*.tgz'", 'gh run download 1 -D build/art']) {
             const allowsInline = { ...open(), externalReads: 'native' as const, declaredAllows: [{ argv: ['python3', '-c'], cwd: root, reason: 'Run inline Python.' }] }
             const marked = evaluateGuard(parseGuardInput(shellPayload(command), { dynamicWords: 'mark', home }), allowsInline,
                 (request) => ({ ...onBranch('refs/heads/topic')(request), identity: '8:2' }))
@@ -1830,8 +2214,9 @@ describe('allow by default', () => {
         // With -r or --filter, a script any workspace package declares is a script.
         expect(evaluateGuard(parseGuardInput(shellPayload('pnpm -r build'), { dynamicWords: 'mark', home }), open(),
             onBranch('refs/heads/topic', undefined, { scripts: [], workspaceScripts: ['build'] })).decision).toBe('allow')
+        // A pull there asks, since what it merges arrives with its fetch.
         expect(['git merge topic', 'git pull --ff-only', 'git stash pop', 'git checkout -b next'].map(command => `${command}: ${guarded(command, [])}`))
-            .toEqual(['git merge topic: allow', 'git pull --ff-only: allow', 'git stash pop: allow', 'git checkout -b next: allow'])
+            .toEqual(['git merge topic: allow', 'git pull --ff-only: ask', 'git stash pop: allow', 'git checkout -b next: allow'])
         // In the strict mode a declared command spelled with a launcher still admits the program it runs.
         const strict = { ...open(), defaultDecision: 'ask' as const, projectCommands: [{ checkoutRoot: root, kind: 'test', executable: 'pnpm', argv: ['exec', 'vitest', 'run'] }] }
         expect(evaluateGuard(parseGuardInput(shellPayload('pnpm exec vitest run')), strict, onBranch('refs/heads/topic'))).toMatchObject({ decision: 'allow' })

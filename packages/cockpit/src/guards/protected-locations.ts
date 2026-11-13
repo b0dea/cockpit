@@ -7,12 +7,13 @@
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { readBoundedFile } from '../bounded-read.js'
 import { parse as parseYaml } from 'yaml'
-import { basename, dirname, join, posix, relative } from 'node:path'
+import { basename, dirname, join, posix, relative, resolve } from 'node:path'
 
 import { ENVIRONMENT_CODES, snapshotExecutionStep, type ExecutionStep, RefusalError } from '../environment/contract.js'
 import { GIT_CHILD_CONFIG, type ResolvedExecutable } from '../environment/executable.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import { foldGuardSpelling, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity, isSensitiveGuardName, type GitTreeTarget } from './evaluator.js'
+import { instructionRisk } from './instruction-frontmatter.js'
+import { agentInstructionFile, foldGuardSpelling, GUARD_ARCHIVE_ENTRIES, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity, isSensitiveGuardName, plantedAgentControl, type GitTreeTarget } from './evaluator.js'
 
 function missing(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
 
@@ -186,7 +187,9 @@ const GUARD_IGNORED_ENTRY_LIMIT = GUARD_SEARCH_ENTRY_LIMIT
  */
 export type GuardGitEnvironment = Readonly<{ HOME?: string; XDG_CONFIG_HOME?: string }>
 
-async function gitPaths(git: ResolvedExecutable, repository: string, args: readonly string[], execute: GuardExecute, env: GuardGitEnvironment = {}): Promise<readonly string[] | null> {
+/** Git's NUL-separated output, without empty fields, or with them (`keepEmpty`) where an empty field is a value, as an attribute's is. */
+async function gitPaths(git: ResolvedExecutable, repository: string, args: readonly string[], execute: GuardExecute, env: GuardGitEnvironment = {},
+    keepEmpty = false): Promise<readonly string[] | null> {
     const step = snapshotExecutionStep({
         id: 'guard-git-paths',
         argv: [git.canonicalPath, '-C', repository, `--work-tree=${repository}`, ...GIT_CHILD_CONFIG, '-c', 'core.untrackedCache=false', '-c', 'core.ignoreCase=false', ...args],
@@ -198,9 +201,39 @@ async function gitPaths(git: ResolvedExecutable, repository: string, args: reado
     })
     if (!step) throw new RefusalError(`guard Git query could not be planned in ${repository}`)
     const outcome = authenticatedExecutionOutcome(await execute(step), step)
-    if (outcome?.kind === 'complete') return outcome.stdout.toString('utf8').split('\0').filter(Boolean)
+    if (outcome?.kind === 'complete') {
+        const fields = outcome.stdout.toString('utf8').split('\0')
+        return keepEmpty ? fields.slice(0, fields.at(-1) === '' ? -1 : undefined) : fields.filter(Boolean)
+    }
     return outcome?.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED
         && outcome.execution.exitCode === 1 && outcome.execution.signal === null ? [] : null
+}
+
+/**
+ * Every member name an archive lists, as `tar -tf` or `unzip -Z1` prints one per line, and whether any
+ * member is a link, symbolic or hard, as the long listing marks one (`l` or `h`, or bsdtar's ` link to `);
+ * null when the tool cannot read it or it lists more than GUARD_ARCHIVE_ENTRIES. tar detects compression itself.
+ */
+export async function guardArchiveEntries(archive: string, format: 'tar' | 'zip', tool: ResolvedExecutable, execute: GuardExecute): Promise<Readonly<{ entries: readonly string[]; links: boolean }> | null> {
+    const names = await archiveListing(archive, tool, execute, format === 'tar' ? ['-tf', archive] : ['-Z1', archive])
+    const long = await archiveListing(archive, tool, execute, format === 'tar' ? ['-tvf', archive] : ['-Z', archive])
+    if (names === null || long === null) return null
+    const entries = names.split('\n').filter(Boolean)
+    return entries.length <= GUARD_ARCHIVE_ENTRIES ? { entries, links: long.split('\n').some(line => /^[lh]/.test(line) || line.includes(' link to ')) } : null
+}
+
+async function archiveListing(archive: string, tool: ResolvedExecutable, execute: GuardExecute, args: readonly string[]): Promise<string | null> {
+    const step = snapshotExecutionStep({
+        id: 'guard-archive-entries',
+        argv: [tool.canonicalPath, ...args],
+        argv0: tool.invocationPath, cwd: dirname(archive), env: { LC_ALL: 'C' }, timeoutMs: 10_000,
+        stdoutLimitBytes: GIT_LIST_BYTES, stderrLimitBytes: 65_536, paths: [], ports: [], labels: { action: 'guard-archive-entries' }, expected: [],
+        consumedFiles: [{ path: tool.canonicalPath, sha256: tool.sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: tool.executionMode }],
+        filesystemChecks: [], compensation: [],
+    })
+    if (!step) throw new RefusalError(`the listing of ${archive} could not be planned`)
+    const outcome = authenticatedExecutionOutcome(await execute(step), step)
+    return outcome?.kind === 'complete' ? outcome.stdout.toString('utf8') : null
 }
 
 // A `.gitignore` is a short list of patterns; one past this is not read.
@@ -441,37 +474,145 @@ export async function guardRemoteCredentials(repository: string, git: ResolvedEx
         || /^remote\./.test(name) && credentialUrl(value))
 }
 
+// Where agent tool settings, hooks, guard scripts and instruction files live at any depth, for Git to
+// list; which of them matter is decided by plantedAgentControl and agentInstructionFile.
+const AGENT_CONTROL_PATHSPECS = ['**/.claude/**', '**/.codex/**', '**/.opencode/**', '**/.cockpit/**', '**/.cockpit', '**/.mcp.json', '**/opencode.json', '**/opencode.jsonc', '**/SKILL.md']
+    .map(pattern => `:(glob,icase)${pattern}`)
+
 /**
- * Which of `protectedPaths` the work tree holding `cwd` contains (`guarded`), and which of them differ
- * between the target's `from` and `revision` (`changed`), or null when Git could not answer. A revision
- * that names no commit writes nothing, since Git refuses it or reads the word as a pathspec, and a
- * `from` that names none compares with nothing, listing every protected path the revision holds.
+ * Which of `protectedPaths` the work tree holding `cwd` contains (`guarded`); which of them, or of the
+ * agent controls at any depth, a Git verb would write or remove (`changed`); which agent instruction
+ * files it would write that run, register or grant something, or that a Git filter would rewrite on
+ * checkout (`instructions`); and, for a verb that applies another revision's changes to HEAD, which of
+ * those paths differ between HEAD and the files on disk (`unsettled`), since its changes are then not
+ * judged against what it writes over. A target whose `from` is `worktree` is compared with the files on
+ * disk, which is what the verb overwrites: HEAD can be moved without touching them. Null when Git could
+ * not answer. A revision that names no commit is unresolved, unless the target falls back to the index
+ * or to HEAD as checkout and `worktree add` do, or is optional; a `from` that names none compares with
+ * nothing, listing every such path the revision holds.
  */
 export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, protectedPaths: readonly string[], git: ResolvedExecutable, execute: GuardExecute,
-    env: GuardGitEnvironment = {}): Promise<{ readonly guarded: boolean; readonly changed: readonly string[] } | null> {
+    env: GuardGitEnvironment = {}): Promise<Readonly<{ guarded: boolean; changed: readonly string[]; instructions?: readonly string[]; unsettled?: readonly string[] }> | null> {
     const top = repositoryAbove(cwd)
     if (top === undefined) return null
     const inside = protectedPaths.filter(path => path === top || path.startsWith(`${top}/`)).map(path => relative(top, path)).filter(Boolean)
-    if (!inside.length) return { guarded: false, changed: [] }
+    const guarded = inside.length > 0
     // A diff against the work tree may refresh the index; this query takes no lock.
     const run = (args: readonly string[]) => gitPaths(git, top, ['--no-optional-locks', ...args], execute, env)
     const commit = async (revision: string) => {
         const lines = await run(['rev-parse', '--verify', '--quiet', '--end-of-options', `${revision}^{commit}`])
         return lines === null ? null : lines.join('').trim() || undefined
     }
-    const to = await commit(target.revision)
+    const { revision } = target
+    let { from, paths } = target
+    let to = revision === ':index' ? revision : await commit(revision)
     if (to === null) return null
-    if (to === undefined) return { guarded: true, changed: [] }
-    const pathspecs = inside.map(path => `:(literal)${path}`)
-    const diff = ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z']
-    let names: readonly string[] | null
-    if (target.from === 'worktree') names = await run([...diff, to, '--', ...pathspecs])
-    else {
-        const from = await commit(target.from ?? 'HEAD')
-        if (from === null) return null
-        names = await run(from === undefined ? ['ls-tree', '-r', '--name-only', '-z', to, '--', ...inside] : [...diff, from, to, '--', ...pathspecs])
+    // Checkout, switch and `worktree add` take the local branch of a name, where rev-parse takes a tag of it first;
+    // a name a branch and another ref hold at different commits is unresolved.
+    if (to && /^[^-@~^:{}\s][^~^:{}\s]*$/.test(revision) && !revision.startsWith('refs/')) {
+        const branch = await commit(`refs/heads/${revision}`)
+        if (branch === null || branch && branch !== to) return null
     }
-    return names && names.length <= GUARD_LOCATION_LIMITS.sensitivePaths ? { guarded: true, changed: names.map(name => join(top, name)).sort() } : null
+    if (to === undefined) {
+        if (target.optional) return { guarded, changed: [] }
+        // The remote branches of the name, one of which Git creates a branch from.
+        const name = revision.replace(/^refs\/heads\//, '')
+        const remoteBranches = async () => {
+            const remotes = await run(['remote'])
+            if (remotes === null) return null
+            const found: string[] = []
+            for (const remote of remotes.join('').split('\n').filter(Boolean)) {
+                const tip = await commit(`refs/remotes/${remote}/${name}`)
+                if (tip === null) return null
+                if (tip) found.push(tip)
+            }
+            return found
+        }
+        const guessing = target.fallback === 'remote' || target.remote === true
+            || target.remote === 'config' && (await run(['config', '--type=bool', 'worktree.guessRemote']))?.join('').trim() === 'true'
+        // Checkout reads the name as a path when the disk holds it (Git's check_filename is an lstat), else as the one
+        // remote branch of it; with none it is a path again, which the index may hold. Several is unresolved, since
+        // `checkout.defaultRemote` can pick one.
+        const onDiskPath = () => {
+            try { lstatSync(resolve(cwd, revision)); return true } catch (error) { if (!missing(error)) throw error; return false }
+        }
+        const branches = target.fallback && guessing && !(target.fallback === 'index' && onDiskPath()) ? await remoteBranches() : []
+        if (branches === null) return null
+        if (target.fallback === 'index' && !branches.length) {
+            paths = [revision, ...paths ?? []]
+            to = ':index'
+            from = 'worktree'
+        } else if (target.fallback === 'head' && !branches.length) to = await commit('HEAD')
+        else if (target.fallback && branches.length === 1) to = branches[0]
+        if (!to) return null
+    }
+    // A case-insensitive volume writes a protected path under any case, so Git matches it under any too.
+    const pathspecs = ['--', ...inside.map(path => `:(literal,icase)${path}`), ...AGENT_CONTROL_PATHSPECS]
+    // Status and name pairs, so a file the verb removes is told from one it writes.
+    const diff = ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-status', '-z']
+    const pairs = (listed: readonly string[]) => Array.from({ length: Math.floor(listed.length / 2) }, (_, at) => [listed[at * 2]!, listed[at * 2 + 1]!] as const)
+    let names: readonly string[] | null
+    // Against the files on disk a path only they hold is one the verb removes; between revisions, one only the first holds.
+    let removed: string
+    if (to === ':index') { names = await run([...diff, ...pathspecs]); removed = '' }
+    else if (from === 'worktree') {
+        names = await run([...diff, to, ...pathspecs])
+        removed = 'A'
+        // A plain switch keeps a local edit where the target matches the index, so only a path the target holds
+        // differently from both the index and the files on disk is written.
+        if (names && target.keepsLocal) {
+            const indexed = await run([...diff, '--cached', to, ...pathspecs])
+            if (indexed === null) return null
+            const differs = new Set(pairs(indexed).map(([, name]) => name))
+            names = pairs(names).filter(([, name]) => differs.has(name)).flat()
+        }
+    }
+    else {
+        const base = await commit(from ?? 'HEAD')
+        if (base === null) return null
+        const empty = base ?? (await run(['hash-object', '-t', 'tree', '/dev/null']))?.join('').trim()
+        names = empty ? await run([...diff, empty, to, ...pathspecs]) : null
+        removed = 'D'
+    }
+    if (names === null) return null
+    // Paths spelled as globs or magic, or reaching past the repository, leave the whole tree in scope.
+    const scope = paths?.length && paths.every(path => !/^:|[*?[\\]/.test(path)) ? paths.map(path => foldGuardSpelling(relative(top, resolve(cwd, path)))) : undefined
+    const inScope = (name: string) => scope === undefined || scope.some(path => path === '' || path === '..' || path.startsWith('../') || name === path || name.startsWith(`${path}/`))
+    const protectedName = (name: string) => { const folded = foldGuardSpelling(name); return inside.map(foldGuardSpelling).some(path => folded === path || folded.startsWith(`${path}/`)) }
+    const changed: string[] = []
+    const written: string[] = []
+    for (const [status, name] of pairs(names)) {
+        const folded = foldGuardSpelling(name)
+        if (!inScope(folded)) continue
+        // Removing a nested agent setting or an instruction file takes nothing from the guard; removing a protected path does.
+        if (protectedName(name) || plantedAgentControl(folded) && status !== removed) changed.push(join(top, name))
+        else if (agentInstructionFile(folded) && status !== removed) written.push(name)
+    }
+    if (changed.length + written.length > GUARD_LOCATION_LIMITS.sensitivePaths) return null
+    const unsettled: string[] = []
+    if (from !== 'worktree' && to !== ':index') {
+        const moved = await run([...diff, 'HEAD', ...pathspecs])
+        if (moved === null) return null
+        // Only a path the revision itself changes is one the verb writes over what differs from HEAD.
+        const touched = new Set(pairs(names).map(([, name]) => name))
+        for (const [, name] of pairs(moved)) {
+            const folded = foldGuardSpelling(name)
+            if (touched.has(name) && inScope(folded) && (protectedName(name) || plantedAgentControl(folded) || agentInstructionFile(folded))) unsettled.push(join(top, name))
+        }
+    }
+    // Each instruction file is read as the verb would write it, and passes when it runs, registers and grants
+    // nothing. A Git filter rewrites a file on checkout from the blob read here, so a filtered one is not read.
+    const instructions: string[] = []
+    // Git before 2.40 has no `check-attr --source`; there the query fails, which asks.
+    const filters = written.length ? await gitPaths(git, top, ['--no-optional-locks', 'check-attr', '-z', ...to === ':index' ? ['--cached'] : ['--source', to], 'filter', '--', ...written], execute, env, true) : []
+    if (filters === null || filters.length % 3) return null
+    const filtered = new Set(Array.from({ length: Math.floor(filters.length / 3) }, (_, at) => filters.slice(at * 3, at * 3 + 3))
+        .filter(([, , value]) => value !== 'unspecified' && value !== 'unset').map(([name]) => name))
+    for (const name of written) {
+        const text = filtered.has(name) ? null : await run(['cat-file', '-p', to === ':index' ? `:${name}` : `${to}:${name}`])
+        if (text === null || instructionRisk(text.join('\0')) !== undefined) instructions.push(join(top, name))
+    }
+    return { guarded, changed: changed.sort(), ...instructions.length ? { instructions: instructions.sort() } : {}, ...unsettled.length ? { unsettled: unsettled.sort() } : {} }
 }
 
 // A package manifest is a few kilobytes; a larger one is not read.

@@ -7,6 +7,7 @@ import { GUARD_HANDLER_ARGV } from '../guards/harness-adapter.js'
 import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from '../guards/host.js'
 import { exactKeys } from '../exact-keys.js'
 import { GUARD_RECOVERY_SHELL } from './guard-recovery.js'
+import { GUARD_CHECK_PATH } from '../guards/guard-record.js'
 
 export const RESTRICTION_OUTPUT_LIMITS = Object.freeze({
     scalarBytes: 65_536,
@@ -276,7 +277,7 @@ function unavailableAdapter(value: JsonSnapshotObject): UnavailableRestrictionAd
 function nativeShapeMatches(adapter: NativeRestrictionAdapter): boolean {
     if (adapter.target === 'claudecode') return adapter.promptTier
         && adapter.registration.kind === 'hooks-json' && adapter.registration.path === '.claude/settings.json'
-        && adapter.registration.event === 'PreToolUse' && adapter.registration.matcher === 'Bash|Edit|Write|NotebookEdit'
+        && adapter.registration.event === 'PreToolUse' && adapter.registration.matcher === 'Bash|Edit|Write|NotebookEdit|Monitor'
         && adapter.payload.kind === 'pre-tool-use' && adapter.payload.bashTool === 'Bash'
         && JSON.stringify(adapter.payload.editTools) === JSON.stringify(['Edit', 'Write', 'NotebookEdit'])
         && adapter.readonly.kind === 'agent-frontmatter' && adapter.readonly.pathPattern === '.claude/agents/{agent}.md'
@@ -382,19 +383,29 @@ function shellLiteral(value: string): string {
 // Registrations are committed, so each finds the cockpit checkout at run time through the
 // mechanism its harness documents: Claude Code exports the project directory to hooks, and Codex runs
 // hooks in the session working directory. The Git root can be above a cockpit rooted in a subdirectory.
-// An unset project directory names no checkout, so the guard path it spells is an absolute one that exists
-// nowhere, which no agent can create, and the call blocks. A Codex session can start in a subdirectory of
-// the cockpit, where the guard script would be one an agent may have written, so the hook takes the
-// outermost directory at or above the session's that holds the guard script: the directories above the
-// cockpit lie outside every root, which agents do not write. A second guard script on the way is ambiguous,
-// whoever wrote it, so the call blocks. The walk is plain shell, since a program the hook found on the
-// session's search path could be one an agent planted.
+// A session can start in a subdirectory of the cockpit, where the guard script would be one an agent may
+// have written, so each hook takes the outermost directory at or above the session's that holds the guard
+// script: the directories above the cockpit lie outside every root, which agents do not write. Claude
+// Code 2.1.323 sets CLAUDE_PROJECT_DIR to the directory a session started in, a subdirectory included
+// (measured 2026-11-13). The walk stops at the nearest directory holding a `.git` entry, the top of the
+// checkout the session is in: a linked worktree that Claude Code keeps below the main checkout holds its
+// own committed guard, and the one above it belongs to another checkout. A second guard script within
+// that bound is ambiguous, whoever wrote it, so the call blocks; with none the guard path is an absolute one that exists nowhere, which no agent can create, and
+// the call blocks too. The walk is plain shell, since a program the hook found on the session's search
+// path could be one an agent planted.
 const MISSING_ROOT = '/no-cockpit-root'
+const walk = (start: string, from: string) => `d=${start} || d=; r=${MISSING_ROOT}; n=0; while [ -n "$d" ]; do [ -f "$d/.cockpit/guards/bash-guard.sh" ] && { r=$d; n=$((n+1)); }; [ -e "$d/.git" ] && break; d=\${d%/*}; done; `
+    + `[ $n -gt 1 ] && { echo "cockpit guard: more than one .cockpit/guards/bash-guard.sh at or above ${from}, so the guard to run is ambiguous; a person removes the one that is not the cockpit's" >&2; exit 2; }; `
+// The hook runs the guard script through the check sync wrote below ~/.cockpit/guards, where no agent
+// writes: it compares the script and the identity file that names the handler with the digests sync
+// recorded for the canonical root, then runs the script with that root (guards/guard-record.ts). With no
+// script the hook names it, as it always did: bash exits 127 for a missing file where dash, Linux's
+// /bin/sh, exits 2, which the hook would pass on as a refusal with dash's own message.
+const CHECKED = (root: string, script: string) => `L="$HOME/${GUARD_CHECK_PATH}"; [ -f "${script}" ] || L=${script}; `
 const HOOK_ROOT = Object.freeze({
-    claudecode: { expression: '${CLAUDE_PROJECT_DIR:-}', prelude: '', guard: `\${CLAUDE_PROJECT_DIR:-${MISSING_ROOT}}` },
-    codexcli: { expression: '$(pwd -P 2>/dev/null)',
-        prelude: `d=$(pwd -P) || d=; r=${MISSING_ROOT}; n=0; while [ -n "$d" ]; do [ -f "$d/.cockpit/guards/bash-guard.sh" ] && { r=$d; n=$((n+1)); }; d=\${d%/*}; done; `
-            + `[ $n -gt 1 ] && { echo "cockpit guard: more than one .cockpit/guards/bash-guard.sh at or above $(pwd -P), so the guard to run is ambiguous; a person removes the one that is not the cockpit's" >&2; exit 2; }; `, guard: '$r' },
+    claudecode: { expression: '${CLAUDE_PROJECT_DIR:-}', prelude: walk('${CLAUDE_PROJECT_DIR:-$(pwd -P)}', 'the session directory'), guard: '$r' },
+    // Codex trusts a hook by its exact command, so a person trusts it again after this spelling changes.
+    codexcli: { expression: '$(pwd -P 2>/dev/null)', prelude: walk('$(pwd -P)', '$(pwd -P)'), guard: '$r' },
 } as const)
 
 const GUARD_HOOK_TIMEOUT_SECONDS = 30
@@ -405,7 +416,7 @@ function hooksBytes(target: keyof typeof HOOK_ROOT, matcher: string, guardPath: 
     // process, a missing shell or guard script) would let the tool call run, so it is folded into a
     // blocking exit. Claude Code prints the whole hook command beside every refusal it reports, so the
     // command stays one short line and the recovery text lives in the guard script it runs.
-    const guard = `${root.prelude}H="${root.guard}/${guardPath}"; ${askIsDeny ? 'COCKPIT_ASK_IS_DENY=1 ' : ''}/bin/bash "$H" --harness ${target}; s=$?; case $s in 0|2) exit $s;; esac; echo "cockpit guard failed ($s): $H; sync the cockpit" >&2; exit 2`
+    const guard = `${root.prelude}H="${root.guard}/${guardPath}"; ${CHECKED(root.guard, '$H')}${askIsDeny ? 'COCKPIT_ASK_IS_DENY=1 ' : ''}/bin/bash "$L" "${root.guard}" --harness ${target}; s=$?; case $s in 0|2) exit $s;; esac; echo "cockpit guard failed ($s): $H; sync the cockpit" >&2; exit 2`
     // Claude Code 2.1.317 and Codex 0.166.0 (a trusted hook) each ran a SessionStart command and put its
     // stdout in the agent's context, measured 2026-11-03 beside a misspelled event that never ran. A
     // drift report there tells the agent what to re-sync before it works; the hook never blocks.
@@ -422,7 +433,7 @@ function hooksBytes(target: keyof typeof HOOK_ROOT, matcher: string, guardPath: 
 function opencodeBytes(guardPath: string, configFile: string): string {
     // The plugin is committed, so it locates the guard from its own published location.
     const guard = `fileURLToPath(new URL(${JSON.stringify(`../../${guardPath}`)}, import.meta.url))`
-    const launch = `${GUARD_RECOVERY_SHELL}\nH=$1; R=$2; C=$3; if ! test -f "$H" || ! test -r "$H"; then printf 'cockpit restriction guard missing: %s; OpenCode shell, edit, patch, read, grep and glob calls are held. ' "$H" >&2; cockpit_guard_recovery "$R" "$C"; exit 2; fi; exec /bin/bash "$H" --harness opencode`
+    const launch = `${GUARD_RECOVERY_SHELL}\nH=$1; R=$2; C=$3; if ! test -f "$H" || ! test -r "$H"; then printf 'cockpit restriction guard missing: %s; OpenCode shell, edit, patch, read, grep and glob calls are held. ' "$H" >&2; cockpit_guard_recovery "$R" "$C"; exit 2; fi; exec /bin/sh "$HOME/${GUARD_CHECK_PATH}" "$R" --harness opencode`
     // OpenCode's native read, grep and glob tools never reach a shell, and OpenCode 1.19.4 returned a
     // secrets file through read while the plugin mapped only shell, edit and patch tools (2026-11-01).
     // The guard parses shell, edit and patch payloads only, so each native read is restated as the

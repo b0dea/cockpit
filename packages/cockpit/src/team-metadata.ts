@@ -310,7 +310,7 @@ function pnpmImporterResolves(lock: unknown, spec: string): boolean {
 async function ignoreBlock(root: string, config: Pick<CockpitConfig, 'cockpit' | 'sibling' | 'environment'>): Promise<string | undefined> {
     const siblingsRoot = config.cockpit.siblings_root
     if (/[\0\r\n]/.test(siblingsRoot)) return undefined
-    // Claude Code's machine-local settings, where `cockpit use` grants a served checkout.
+    // Claude Code's machine-local settings, where `cockpit use` grants a served checkout and sync repeats the guard registration.
     const patterns = ['/node_modules/', '/.cockpit/local/', '/.claude/settings.local.json', '**/.secrets/*', '!/env/.secrets/.gitignore']
     const inside = (path: string, kind: 'directory' | 'any' = 'directory'): string | undefined => {
         const local = relative(root, path)

@@ -324,6 +324,19 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         expect(claudeOnly.diagnostics.map(({ code }) => code)).not.toContain('CODEX_HOOK_UNTRUSTED')
     })
 
+    it('warns from doctor when Claude Code\'s local settings do not repeat the guard registration', async () => {
+        const candidate = await fixture({ configuredRuntime: true, unseeded: true })
+        const settings = join(candidate.checkout, '.claude')
+        await mkdir(settings)
+        const registration = { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'H="$r/.cockpit/guards/bash-guard.sh"; /bin/bash "$H" --harness claudecode' }] }] } }
+        await writeFile(join(settings, 'settings.json'), JSON.stringify(registration))
+        const adapters = createHealthCommandAdapters({ configPath: candidate.configPath, env: { PATH: `${candidate.root}:${process.env.PATH}`, HOME: candidate.home }, timeoutMs: 5_000 }, executeProbe)
+        const codes = async () => (await runDoctor({ configPath: candidate.configPath }, adapters)).diagnostics.map(({ code }) => code)
+        expect(await codes()).toContain('CLAUDE_LOCAL_HOOK_MISSING')
+        await writeFile(join(settings, 'settings.local.json'), JSON.stringify(registration))
+        expect(await codes()).not.toContain('CLAUDE_LOCAL_HOOK_MISSING')
+    })
+
     it('reports the root-checkout discovery mismatch from both doctor readiness and check', async () => {
         const candidate = await fixture({ unseeded: true })
         const linked = join(candidate.root, 'linked')

@@ -126,6 +126,31 @@ cannot fix it. `CODEX_HOOK_UNTRUSTED` names the hook source whose trust is missi
 outdated, or the Git or file-access failure that kept discovery from being verified, which comes
 first. [Trust the Codex hook](harness-surfaces.md#trust-the-codex-hook) covers both.
 
+`CLAUDE_LOCAL_HOOK_MISSING` means the cockpit root's `.claude/settings.local.json` does not repeat the
+guard registration `.claude/settings.json` holds. Claude Code reads the committed file only from the
+directory a session starts in, so a session started below the root would run without the guard. Sync
+writes the registration there beside a person's own settings; it refuses a file that is not JSON
+rather than overwrite it. The local file setting `disableAllHooks` reports it too, since that key stops
+every hook.
+
+`AGENT_NESTED_REPOSITORY` names a Git repository below the cockpit root that is neither a declared
+sibling nor a worktree of the checkout. Claude Code loads no hook from the cockpit's local settings for
+a session started in it, so the guard does not run there.
+
+`GUARD_RECORD_MISMATCH` means `.cockpit/guards/bash-guard.sh` or `.cockpit/local/guard-identity` no
+longer matches the digest sync recorded for it below `~/.cockpit/guards/roots/`. Every hook checks
+both before it runs the guard, and holds every call with "guard script changed or unrecorded" until a
+person reviews what changed the script and runs sync; a linked `.cockpit`, `.cockpit/guards` or
+`.cockpit/local` holds it too, naming the link. `GUARD_WORKTREE_UNGUARDED`
+names a worktree kept below the root that holds no guard script, or one sync did not record there.
+
+`AGENT_SETTINGS_NESTED` names agent tool settings below the cockpit root, which a session started in
+that directory loads in place of the cockpit's: Claude Code reads `.claude/settings.json` from where
+a session starts, Codex every `.codex/config.toml` from the project root down, and OpenCode
+`opencode.json` and `.opencode` upward. `AGENT_HOOKS_DISABLED` names a Claude Code settings file
+setting `disableAllHooks`, which stops the guard with every other hook. Agents cannot write either; a
+person reviews and removes them.
+
 ### Merge, ownership, and generation
 
 `SURFACE_INPUT_INVALID`, `SURFACE_BOUNDS`, `SURFACE_NAME_DUPLICATE`,
@@ -343,10 +368,14 @@ Every diagnostic message names what failed and how to fix it. These codes always
 
 | Diagnostic | What to do |
 | --- | --- |
+| `AGENT_HOOKS_DISABLED` | remove disableAllHooks from the named Claude Code settings file; a person makes this change; [see above](#codex-hooks-in-linked-worktrees) |
+| `AGENT_NESTED_REPOSITORY` | declare the repository as a [[sibling]], move it outside the cockpit root, or remove its .git entry; a person makes this change; [see above](#codex-hooks-in-linked-worktrees) |
+| `AGENT_SETTINGS_NESTED` | review each file a person did not intend, and remove it, or move what it holds into the cockpit root's settings and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; [see above](#codex-hooks-in-linked-worktrees) |
 | `AUTONOMY_CI_ONLY` | push the change and let the CI job run the command, or have a person change the field in cockpit.toml and accept the change at sync |
 | `AUTONOMY_PERSON_REQUIRED` | a person runs the same command with --interactive in a terminal outside CI, or a person changes the field in cockpit.toml and accepts the change at sync |
 | `BROWSER_ROUTE_FINDINGS` | this run asked for a clean route (--fail-on-findings). Read result.receipt.surfaces[].diagnostics, including excerpt.messages where present: fix the product for each console error, uncaught page error and failed request that matters, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs browser drive --config <your cockpit.toml> --route <name> --fail-on-findings; third-party traffic never counts |
 | `CLAIM_CO_TENANT` | [see above](#common-refusal-guidance) |
+| `CLAUDE_LOCAL_HOOK_MISSING` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal; if sync cannot read .claude/settings.local.json, make it a JSON object or remove it first; [see above](#codex-hooks-in-linked-worktrees) |
 | `COCKPIT_REVISION_UNSTAMPED` | install a released @b00dea/cockpit when the resolved data must name the exact cockpit source commit |
 | `CODEX_HOOK_SOURCE_MISMATCH` | have a person review and roll out the matching generated hooks in the original checkout through its normal change process; cockpit does not copy hooks or change that checkout; rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config <your cockpit.toml>, then review and trust the reported source in interactive Codex; [see above](#codex-hooks-in-linked-worktrees) |
 | `CODEX_HOOK_UNTRUSTED` | if the hook source could not be verified, resolve the reported discovery failure first; otherwise a person runs codex -C <hook source directory> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config <your cockpit.toml>; [see above](#codex-hooks-in-linked-worktrees) |
@@ -385,8 +414,10 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `GUARD_CONFIG_WIDENED` | [see above](#guard-refusals) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_NODE_DIFFERS` | [see above](#selftest-and-override-inspection) |
+| `GUARD_RECORD_MISMATCH` | review what changed the guard script, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal; [see above](#codex-hooks-in-linked-worktrees) |
 | `GUARD_REFUSED` | [see above](#common-refusal-guidance) |
 | `GUARD_SEARCH_PATH_RELATIVE` | check PATH in the shell or launcher that starts the agent harness; if it contains relative or empty entries, remove them there and restart the harness |
+| `GUARD_WORKTREE_UNGUARDED` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml in each worktree, or remove the worktree; [see above](#codex-hooks-in-linked-worktrees) |
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | [see above](#common-refusal-guidance) |
 | `INIT_SCAFFOLD_COMPOSE_EXISTS` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs init <cockpit root> --target <tool>, which proposes the existing Compose file for environment.compose_files |
 | `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |

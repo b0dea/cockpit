@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterAll, expect, it } from 'vitest'
 import { expandRestrictions } from './restrictions.js'
+import { recordTestGuard } from '../test-support/guard-record.js'
 
 const scratch: string[] = []
 afterAll(async () => { await Promise.all(scratch.map(path => rm(path, { recursive: true, force: true }))) })
@@ -29,10 +30,13 @@ async function fixture() {
     const run = (harness: 'claudecode' | 'codexcli', command = 'git restore -- .cockpit/guards/bash-guard.sh', event: 'PreToolUse' | 'SessionStart' = 'PreToolUse') => {
         const registration = rendered.targets.find(target => target.target === harness)!.files[0]!
         const hook = (JSON.parse(registration.bytes) as { hooks: Record<typeof event, Array<{ hooks: Array<{ command: string }> }>> }).hooks[event][0]!.hooks[0]!.command
-        return spawnSync('/bin/sh', ['-c', hook], { cwd: root, encoding: 'utf8',
+        // Linux runs hooks with dash as /bin/sh, which reads the command more strictly than bash: both answer alike.
+        const [sh, dash] = ['/bin/sh', '/bin/dash'].map(shell => spawnSync(shell, ['-c', hook], { cwd: root, encoding: 'utf8',
             env: { ...process.env, CLAUDE_PROJECT_DIR: root },
             input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: root, tool_input: { command } }),
-        })
+        }))
+        expect({ status: dash!.status, stdout: dash!.stdout, stderr: dash!.stderr }).toEqual({ status: sh!.status, stdout: sh!.stdout, stderr: sh!.stderr })
+        return sh!
     }
     const launcher = join(root, 'node_modules/@b00dea/cockpit/bin/cockpit.mjs')
     const handler = join(root, 'node_modules/@b00dea/cockpit/dist/cli.js')
@@ -40,6 +44,7 @@ async function fixture() {
     const guard = join(root, rendered.sharedGuard.path)
     await mkdir(dirname(guard), { recursive: true })
     await writeFile(guard, rendered.sharedGuard.bytes)
+    recordTestGuard(root)
     return { root, configPath, rendered, run, launcher, handler, guard }
 }
 
@@ -80,6 +85,8 @@ it('diagnoses a missing OpenCode guard through the emitted plugin without admitt
     const guard = join(root, '.cockpit/guards/bash-guard.sh')
     await mkdir(dirname(guard), { recursive: true })
     await writeFile(guard, 'exit 0\n')
+    // Recorded, so the hook reaches the script: the record check alone would refuse it first.
+    recordTestGuard(root)
     expect(run(1024 * 1024)).toMatchObject({ status: 1, stdout: '', stderr: expect.stringContaining('cockpit restriction guard failed: spawnSync /bin/bash EPIPE') })
 })
 
@@ -182,7 +189,10 @@ it('names no invented path and asks for the cockpit root when the hook finds no 
     const { root, rendered } = await fixture()
     const configFile = "-cock'pit$(printf injected); config.toml"
     const hook = (JSON.parse(rendered.targets.find(target => target.target === 'claudecode')!.files[0]!.bytes) as { hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> } }).hooks.PreToolUse[0]!.hooks[0]!.command
-    const refused = spawnSync('/bin/sh', ['-c', hook], { cwd: root, encoding: 'utf8', input: '{}', env: { ...process.env, CLAUDE_PROJECT_DIR: '' } })
+    // A session outside every cockpit, with no project directory set, finds no guard at or above it.
+    const outside = await mkdtemp(join(tmpdir(), 'no-cockpit-'))
+    scratch.push(outside)
+    const refused = spawnSync('/bin/sh', ['-c', hook], { cwd: outside, encoding: 'utf8', input: '{}', env: { ...process.env, CLAUDE_PROJECT_DIR: '' } })
     expect(refused).toMatchObject({ status: 2, stdout: '' })
     expect(refused.stderr).toContain('cockpit guard failed (127): /no-cockpit-root/.cockpit/guards/bash-guard.sh; sync the cockpit')
     expect(refused.stderr).not.toContain(' /.cockpit/')

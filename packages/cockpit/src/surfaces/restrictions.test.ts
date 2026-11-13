@@ -12,6 +12,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { encodeGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
 import { fileFingerprint } from '../environment-exec/verified-digest.js'
 import { GUARD_RECOVERY_SHELL } from './guard-recovery.js'
+import { recordTestGuard } from '../test-support/guard-record.js'
 
 import { afterAll, describe, expect, it } from 'vitest'
 
@@ -149,6 +150,7 @@ function complete(value: ReturnType<typeof expandRestrictions>): RestrictionExpa
         writeFileSync(join(context.root, '.cockpit/generated-environment-ownership.json'), manifest.bytes)
         mkdirSync(join(context.root, '.cockpit/local'), { recursive: true })
         writeFileSync(join(context.root, '.cockpit/local/guard-identity'), encodeGuardLocalIdentity(context.handler), { mode: 0o600 })
+        recordTestGuard(context.root)
         renderedContexts.set(value, context)
     }
     return value
@@ -315,6 +317,10 @@ describe('restriction expansion', () => {
         const { CLAUDE_PROJECT_DIR: _unset, ...ambient } = process.env
         for (const [name, cwd, env] of [
             ['claudecode', join(directory, 'nested'), { ...ambient, CLAUDE_PROJECT_DIR: directory }],
+            // A Claude Code session started in a subdirectory names it as its project directory, and one with
+            // none set is found from where it runs; either finds the cockpit's own guard above it.
+            ['claudecode', join(directory, 'nested'), { ...ambient, CLAUDE_PROJECT_DIR: join(directory, 'nested') }],
+            ['claudecode', join(directory, 'nested'), ambient],
             ['codexcli', directory, ambient],
             // A Codex session started in a subdirectory finds the cockpit's own guard above it.
             ['codexcli', join(directory, 'nested'), ambient],
@@ -330,15 +336,28 @@ describe('restriction expansion', () => {
         // never the one the hook runs: the call blocks, naming the ambiguity.
         await mkdir(join(directory, 'nested/.cockpit/guards'), { recursive: true })
         await writeFile(join(directory, 'nested/.cockpit/guards/bash-guard.sh'), 'printf planted >&2; exit 0\n')
-        for (const cwd of [join(directory, 'nested'), directory]) {
-            const run = runs('codexcli', cwd, ambient, 'env/service.env')
+        for (const [name, cwd, env] of [['codexcli', join(directory, 'nested'), ambient], ['codexcli', directory, ambient],
+            ['claudecode', join(directory, 'nested'), { ...ambient, CLAUDE_PROJECT_DIR: join(directory, 'nested') }], ['claudecode', directory, { ...ambient, CLAUDE_PROJECT_DIR: directory }]] as const) {
+            const run = runs(name, cwd, env, 'env/service.env')
             if (cwd === directory) { expect(run.stdout, run.stderr).toContain('permissionDecision":"deny'); continue }
-            expect(run).toMatchObject({ status: 2, stdout: '' })
+            expect(run, name).toMatchObject({ status: 2, stdout: '' })
             expect(run.stderr).toContain('more than one .cockpit/guards/bash-guard.sh')
             expect(run.stderr).not.toContain('planted')
         }
-        // Without the harness's project root the registration cannot find the guard and blocks.
-        expect(runs('claudecode', directory, ambient, 'env/service.env.example')).toMatchObject({
+        // A linked worktree kept inside the checkout, as agent tools keep theirs, holds its own committed guard: the walk
+        // stops at the nearest Git entry, so the worktree's guard runs and the checkout's above it is no ambiguity.
+        const worktree = join(directory, 'worktrees/wt')
+        await mkdir(join(worktree, '.cockpit/guards'), { recursive: true })
+        await writeFile(join(worktree, '.git'), 'gitdir: /workspace/elsewhere/.git/worktrees/wt\n')
+        await writeFile(join(worktree, '.cockpit/guards/bash-guard.sh'), 'printf worktree-guard >&2; exit 0\n')
+        // Until sync runs in the worktree, its guard is unrecorded and holds the call; then it runs.
+        expect(runs('codexcli', worktree, ambient, 'env/service.env')).toMatchObject({ status: 2, stderr: expect.stringContaining('unrecorded') })
+        recordTestGuard(worktree)
+        for (const [name, env] of [['claudecode', { ...ambient, CLAUDE_PROJECT_DIR: worktree }], ['codexcli', ambient]] as const) {
+            expect(runs(name, worktree, env, 'env/service.env'), name).toMatchObject({ status: 0, stderr: 'worktree-guard' })
+        }
+        // Outside every cockpit the registration finds no guard and blocks.
+        expect(runs('claudecode', tmpdir(), ambient, 'env/service.env.example')).toMatchObject({
             status: 2, stdout: '', stderr: expect.stringContaining('cockpit guard failed (127): /no-cockpit-root/.cockpit/guards/bash-guard.sh; sync the cockpit'),
         })
         expect(runs('codexcli', tmpdir(), ambient, 'env/service.env.example')).toMatchObject({
@@ -452,10 +471,10 @@ describe('restriction expansion', () => {
                 hooks: { PreToolUse: Array<{ hooks: Array<{ command: string; timeout?: unknown }> }> }
             }).hooks.PreToolUse[0]!.hooks[0]!
             const command = hook.command
-            // Claude Code prints the whole hook command beside each refusal it reports, so it stays one short line;
-            // Codex's also walks up to the cockpit, so it is one line but longer.
+            // Claude Code prints the whole hook command beside each refusal it reports, so it stays one line; each
+            // walks up to the cockpit, which makes it longer than a fixed path would be.
             expect(command, name).not.toContain('\n')
-            expect(command.length, name).toBeLessThanOrEqual(name === 'claudecode' ? 220 : 700)
+            expect(command.length, name).toBeLessThanOrEqual(700)
             // Both harnesses read the hook's timeout in seconds; cockpit states it rather than inheriting each default.
             expect(hook.timeout, name).toBe(30)
             // A guard that cannot load its handler exits 1; a killed one 137. Exit 2 keeps its own reason.
@@ -463,15 +482,21 @@ describe('restriction expansion', () => {
             for (const [exit, status, stderr] of [[1, 2, `cockpit guard failed (1): ${guard}; sync the cockpit\n`], [137, 2, `cockpit guard failed (137): ${guard}; sync the cockpit\n`],
                 [2, 2, 'refused\n'], [0, 0, '']] as const) {
                 await writeFile(join(directory, result.sharedGuard.path), exit === 2 ? "printf 'refused\\n' >&2; exit 2\n" : `exit ${exit}\n`)
-                const run = spawnSync('/bin/sh', ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: directory } })
-                expect({ status: run.status, stderr: run.stderr }, `${name} exit ${exit}`).toEqual({ status, stderr })
+                recordTestGuard(directory)
+                // Linux runs hooks with dash as /bin/sh, which reads the command more strictly than bash.
+                for (const shell of ['/bin/sh', '/bin/dash']) {
+                    const run = spawnSync(shell, ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: directory } })
+                    expect({ status: run.status, stderr: run.stderr }, `${name} exit ${exit} under ${shell}`).toEqual({ status, stderr })
+                }
             }
             // A missing guard blocks, naming the script and the fix.
             await rm(join(directory, result.sharedGuard.path))
-            const missing = spawnSync('/bin/sh', ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: directory } })
-            expect(missing.status).toBe(2)
-            // Codex finds no cockpit above the session once the script is gone, so it names the absolute path that exists nowhere.
-            expect(missing.stderr).toContain(`cockpit guard failed (127): ${name === 'claudecode' ? guard : '/no-cockpit-root/.cockpit/guards/bash-guard.sh'}; sync the cockpit`)
+            for (const shell of ['/bin/sh', '/bin/dash']) {
+                const missing = spawnSync(shell, ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: directory } })
+                expect(missing.status, shell).toBe(2)
+                // Neither finds a cockpit above the session once the script is gone, so each names the absolute path that exists nowhere.
+                expect(missing.stderr, shell).toContain('cockpit guard failed (127): /no-cockpit-root/.cockpit/guards/bash-guard.sh; sync the cockpit')
+            }
         }
         expect(result.sharedGuard.bytes).toContain(`so ${GUARD_HELD_CALLS} are refused.`)
     })
@@ -495,7 +520,8 @@ describe('restriction expansion', () => {
             path: '.opencode/agents/evaluator.md', bytes: 'permission:\n  edit: deny\n',
         })
         expect(target(result, 'claudecode').files[0]).toMatchObject({ path: '.claude/settings.json' })
-        expect(target(result, 'claudecode').files[0]!.bytes).toContain('Bash|Edit|Write|NotebookEdit')
+        // Claude Code's Monitor tool runs a command in the background, so it reaches the guard too.
+        expect(target(result, 'claudecode').files[0]!.bytes).toContain('Bash|Edit|Write|NotebookEdit|Monitor')
         expect(target(result, 'codexcli').files[0]).toMatchObject({ path: '.codex/hooks.json' })
         expect(target(result, 'codexcli').files[0]!.bytes).toContain('Bash|Edit|Write|apply_patch')
         expect(target(result, 'opencode').files[0]).toMatchObject({ path: '.opencode/plugin/cockpit-guards.js' })

@@ -7,6 +7,7 @@ import { renderGuardProjectCommand } from '../environment/install-policy.js'
 import { GUARD_LOCAL_PATHS } from './local-identity.js'
 import { classifyReadOnlyInvocation, cockpitLauncherPrefix, ghWords, gitContentOperands, type ReadOnlyAccess } from './read-only.js'
 import { SURFACE_EXECUTION_CONTROL_PATHS } from '../surfaces/harness-registry.js'
+import { AGENT_HOME_TOOLS, classifyAgentHomeEntry, type AgentHomeTool } from './agent-homes.js'
 
 /**
  * The cockpit commands that run the words after their `--` as a command of their own, and where it
@@ -127,7 +128,19 @@ export interface GuardEvaluationPolicy {
     readonly externalSearchDirectories?: readonly string[]
     /** The Node executable and install prefix the guard runs with, wherever they are. */
     readonly guardRuntime?: readonly string[]
+    /** The running agent tool's own directories, canonical, each classified by the table for its tool. */
+    readonly agentHomes?: readonly GuardAgentHome[]
+    /** Claude Code project names whose auto memory this cockpit's agents write: the main checkout of each root. */
+    readonly agentMemoryKeys?: readonly string[]
+    /** The subagent the payload names, whose own memory it writes. */
+    readonly agentType?: string
+    /** The session's scratchpad. */
+    readonly agentWorkspaces?: readonly GuardAgentWorkspace[]
+    /** Directories the agent reads but does not write: its session's own temp tree. */
+    readonly agentReadAreas?: readonly string[]
 }
+export interface GuardAgentHome { readonly tool: AgentHomeTool; readonly path: string }
+export interface GuardAgentWorkspace { readonly kind: 'scratchpad'; readonly path: string }
 interface PathInspectionRequest {
     readonly path: string
     readonly cwd: string
@@ -141,17 +154,26 @@ interface PathInspectionRequest {
      * commit reachable from a ref or the reflog holds, or null alike. A `branch` is the repository's current branch and push
      * settings; a `remote` says whether a remote URL Git prints for the repository carries a credential;
      * a `patch` is a patch file, and its evidence carries `targets`, every path its headers name. A
-     * `tree` asks the repository at `cwd` which protected paths its work tree holds would differ between
-     * `from` (HEAD when absent, or the work tree itself) and `revision`; its evidence carries `guarded`,
-     * whether the work tree holds any protected path, and `changed`, the protected paths that differ. A
+     * `tree` asks the repository at `cwd` which paths below `paths` would differ between `from` (HEAD
+     * when absent, or the work tree itself) and `revision`, as a GitTreeTarget describes them; its
+     * evidence carries `guarded`, whether the work tree holds any protected path, `changed`, the
+     * protected paths and agent controls that differ at any depth, and `instructions`, when any, the
+     * agent instruction files that differ. A
      * `manifest` is the nearest package.json at or above the path: its `name` and its `scripts` names.
      * An `external-write` is a path outside the roots a write may land on; its evidence carries
-     * `landsAt`, the path with every existing link on the way resolved.
+     * `landsAt`, the path with every existing link on the way resolved. An `archive` is an archive of
+     * `format` an extraction reads; its evidence carries `entries`, every member name it lists.
      */
     /** `list` reads names only; it is asked for a listing outside the roots, where a directory may be listed but not read. */
-    readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'list' | 'remove' | 'search' | 'unignored-search' | 'repository' | 'branch' | 'remote' | 'patch' | 'tree' | 'manifest' | 'external-write'
+    readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'list' | 'remove' | 'search' | 'unignored-search' | 'repository' | 'branch' | 'remote' | 'patch' | 'tree' | 'manifest' | 'external-write' | 'archive'
+    readonly format?: 'tar' | 'zip'
     readonly revision?: string
     readonly from?: string
+    readonly paths?: readonly string[]
+    readonly fallback?: 'index' | 'remote' | 'head'
+    readonly remote?: true | 'config'
+    readonly optional?: true
+    readonly keepsLocal?: true
     /** For a `manifest`, also the scripts any package of the enclosing workspace declares, as `workspace`. */
     readonly workspace?: true
     /** For a `search`, the reading tool follows links, so a link below the path leaves its `sensitive` unknown (null). */
@@ -286,16 +308,32 @@ function projectTuple(value: JsonSnapshotObject): boolean {
     const tuple = GuardCommandArgv.safeParse([value.executable, ...value.argv])
     return tuple.success && renderGuardProjectCommand(tuple.data).kind === 'complete'
 }
+// The agent's own areas are derived per call from what the harness reports; none is the home directory
+// or above it, which would admit every shell startup file below.
+/** A subagent name as Claude Code reports it in `agent_type` and names its memory directory. */
+export const AGENT_TYPE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/
+function agentAreas(p: JsonSnapshotObject): boolean {
+    const outsideHome = (path: string) => typeof p.homeDirectory !== 'string' || !within(p.homeDirectory, path)
+    const located = (value: JsonSnapshot | undefined, kinds: readonly string[], kind: 'tool' | 'kind') => record(value) && keys(value, [kind, 'path'])
+        && kinds.includes(String(value[kind])) && canonical(value.path) && outsideHome(value.path)
+    return (p.agentHomes === undefined || Array.isArray(p.agentHomes) && p.agentHomes.length <= 8 && p.agentHomes.every(item => located(item, AGENT_HOME_TOOLS, 'tool')))
+        && (p.agentWorkspaces === undefined || Array.isArray(p.agentWorkspaces) && p.agentWorkspaces.length <= 16 && p.agentWorkspaces.every(item => located(item, ['scratchpad'], 'kind')))
+        && (p.agentReadAreas === undefined || strings(p.agentReadAreas) && p.agentReadAreas.length <= 16 && p.agentReadAreas.every(path => canonical(path) && outsideHome(path)))
+        && (p.agentMemoryKeys === undefined || strings(p.agentMemoryKeys) && p.agentMemoryKeys.length <= 512 && p.agentMemoryKeys.every(key => /^[A-Za-z0-9-]{1,255}$/.test(key)))
+        && (p.agentType === undefined || typeof p.agentType === 'string' && AGENT_TYPE.test(p.agentType))
+}
 function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     const p = snapshotJson(value)
     if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'searchPathRelativeEntry', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands', ...p.mcpAllowedTools === undefined ? [] : ['mcpAllowedTools'], ...p.externalReads === undefined ? [] : ['externalReads'], ...p.readPaths === undefined ? [] : ['readPaths'], ...p.defaultDecision === undefined ? [] : ['defaultDecision'], ...p.homeDirectory === undefined ? [] : ['homeDirectory'], ...p.cockpitPackageDirectories === undefined ? [] : ['cockpitPackageDirectories'],
-        ...['secretPaths', 'relatedCheckouts', 'unresolved', 'writePaths', 'relatedReserved', 'externalSearchDirectories', 'guardRuntime'].filter(key => p[key] !== undefined)])
+        ...['secretPaths', 'relatedCheckouts', 'unresolved', 'writePaths', 'relatedReserved', 'externalSearchDirectories', 'guardRuntime',
+            'agentHomes', 'agentMemoryKeys', 'agentType', 'agentWorkspaces', 'agentReadAreas'].filter(key => p[key] !== undefined)])
         || p.readPaths !== undefined && (!strings(p.readPaths) || p.readPaths.length > 64 || !p.readPaths.every(canonical))
         || p.externalReads !== undefined && p.externalReads !== 'grant' && p.externalReads !== 'native'
         || p.unresolved !== undefined && p.unresolved !== 'ask' && p.unresolved !== 'deny'
         || [p.writePaths, p.relatedReserved, p.guardRuntime].some(list => list !== undefined && (!strings(list) || list.length > 64 * 16 || !list.every(canonical)))
         // A write path that is the home directory or above it would admit every shell startup file below.
         || Array.isArray(p.writePaths) && typeof p.homeDirectory === 'string' && (p.writePaths as string[]).some(path => within(p.homeDirectory as string, path))
+        || !agentAreas(p)
         || p.secretPaths !== undefined && (!strings(p.secretPaths) || p.secretPaths.length > GUARD_LOCATION_LIMITS.secretPaths || !p.secretPaths.every(canonical))
         || p.relatedCheckouts !== undefined && (!strings(p.relatedCheckouts) || p.relatedCheckouts.length > 16 || !p.relatedCheckouts.every(canonical))
         || p.externalSearchDirectories !== undefined && (!strings(p.externalSearchDirectories) || p.externalSearchDirectories.length > GUARD_LOCATION_LIMITS.searchPathDirectories
@@ -469,7 +507,100 @@ export function gitInvocation(invocation: ParsedInvocation): GitInvocation | und
             uncertain = true
         } else return { verb: '', args: [], cwd, directories, uncertain: true }
     }
-    return { verb: args[cursor++] ?? '', args: args.slice(cursor), cwd, directories, uncertain }
+    const verb = args[cursor++] ?? ''
+    return { verb, args: splitGitShortOptions(verb, args.slice(cursor)), cwd, directories, uncertain }
+}
+
+/**
+ * Short options split one per word, as Git reads them: `-qb x` is `-q -b x` and `-bx` is `-b x`, for a verb
+ * whose options the guard lists, so every later check sees each option. A bundle holding a letter the
+ * verb does not take is left whole, which that verb's option check refuses. The word after an option
+ * that takes a separate value is that value, kept whole: Git reads `-m -qb` as the message `-qb`.
+ */
+function splitGitShortOptions(verb: string, args: readonly string[]): readonly string[] {
+    const options = GIT_WRITE_OPTIONS[verb === 'worktree' ? 'worktree add' : verb]
+    if (!options) return args
+    const split: string[] = []
+    for (let index = 0; index < args.length; index++) {
+        const arg = args[index]!
+        if (arg === '--') { split.push(...args.slice(index)); break }
+        let words = [arg]
+        if (/^-[A-Za-z]{2,}/.test(arg)) {
+            const letters: string[] = []
+            for (const [at, letter] of [...arg.slice(1)].entries()) {
+                if (options.valued.has(`-${letter}`)) { letters.push(`-${letter}`, ...arg.slice(at + 2) ? [arg.slice(at + 2)] : []); break }
+                if (!options.plain.has(`-${letter}`)) { letters.length = 0; break }
+                letters.push(`-${letter}`)
+            }
+            if (letters.length) words = letters
+        }
+        split.push(...words)
+        if (options.valued.has(words.at(-1)!) && index + 1 < args.length) split.push(args[++index]!)
+    }
+    return split
+}
+
+// The options each Git verb that writes the work tree, the index or a checkout takes, and those that take a
+// value. Any other option, such as `--stdin`, a revision walk (`--all`, `--branches`, `--glob`) or
+// `--recurse-submodules`, writes what the guard cannot name before it runs, so it asks.
+const gitOptions = (plain: string, valued: string) => ({ plain: new Set(plain.split(' ')), valued: new Set(valued.split(' ')) })
+const GIT_WRITE_OPTIONS: Readonly<Record<string, ReturnType<typeof gitOptions>>> = {
+    merge: gitOptions('--abort --continue --quit -e --edit --no-edit --ff --no-ff --ff-only --squash --no-squash --commit --no-commit --stat --no-stat -n --log --no-log '
+        + '--signoff --no-signoff --allow-unrelated-histories --autostash --no-autostash --rerere-autoupdate --no-rerere-autoupdate --progress --no-progress -q --quiet -v '
+        + '--verbose --verify-signatures --no-verify-signatures --overwrite-ignore --no-overwrite-ignore --summary --no-summary --no-verify -S --gpg-sign', '-m -F -s -X --strategy '
+        + '--strategy-option --file --message --into-name --cleanup'),
+    checkout: gitOptions('-q --quiet -f --force -m --merge --detach -t --track --no-track --guess --no-guess --ignore-other-worktrees --overwrite-ignore --no-overwrite-ignore '
+        + '--progress --no-progress -p --patch --ours --theirs --overlay --no-overlay --ignore-skip-worktree-bits -l --pathspec-file-nul', '-b -B --orphan --conflict --pathspec-from-file'),
+    switch: gitOptions('-q --quiet -f --force --discard-changes -m --merge -d --detach -t --track --no-track --guess --no-guess --ignore-other-worktrees --progress --no-progress',
+        '-c -C --create --force-create --orphan --conflict'),
+    restore: gitOptions('-W --worktree -S --staged -q --quiet -p --patch --ours --theirs -m --merge --overlay --no-overlay --ignore-unmerged --ignore-skip-worktree-bits '
+        + '--progress --no-progress --pathspec-file-nul', '-s --source --conflict --pathspec-from-file'),
+    'checkout-index': gitOptions('-u --index -q --quiet -f --force -a --all -n --no-create --temp -z --ignore-skip-worktree-bits', '--stage --prefix'),
+    reset: gitOptions('--soft --mixed --hard --merge --keep -q --quiet -p --patch -N --intent-to-add --no-refresh --refresh --pathspec-file-nul', '--pathspec-from-file'),
+    'cherry-pick': gitOptions('--continue --skip --quit --abort -e --edit --no-edit -n --no-commit -s --signoff -x -r --ff --allow-empty --allow-empty-message '
+        + '--keep-redundant-commits --rerere-autoupdate --no-rerere-autoupdate -S --gpg-sign', '-m --mainline -X --strategy --strategy-option --cleanup --empty'),
+    revert: gitOptions('--continue --skip --quit --abort -e --edit --no-edit -n --no-commit -s --signoff --reference --rerere-autoupdate --no-rerere-autoupdate -S --gpg-sign',
+        '-m --mainline -X --strategy --strategy-option --cleanup'),
+    rebase: gitOptions('--continue --skip --abort --quit --edit-todo --show-current-patch -i --interactive -q --quiet -v --verbose --stat -n --no-stat --autosquash '
+        + '--no-autosquash --autostash --no-autostash --keep-empty --no-keep-empty --root --fork-point --no-fork-point --keep-base --signoff --committer-date-is-author-date '
+        + '--ignore-date --reset-author-date --ignore-whitespace --no-verify --verify --rerere-autoupdate --no-rerere-autoupdate --update-refs --no-update-refs '
+        + '--reapply-cherry-picks --no-reapply-cherry-picks -f --force-rebase --no-ff --apply -m --merge -r --rebase-merges --no-rebase-merges -S --gpg-sign', '--onto -s --strategy -X '
+        + '--strategy-option -C --whitespace --empty'),
+    stash: gitOptions('-p --patch -k --keep-index --no-keep-index -u --include-untracked -a --all -q --quiet -S --staged --pathspec-file-nul --index',
+        '-m --message --pathspec-from-file'),
+    pull: gitOptions('--ff --no-ff --ff-only -r --rebase --no-rebase --squash --no-squash --commit --no-commit -e --edit --no-edit --stat --no-stat -n --log --no-log '
+        + '--autostash --no-autostash --signoff --no-signoff -q --quiet -v --verbose --progress --no-progress --prune --no-tags --tags --no-verify', '-s --strategy -X '
+        + '--strategy-option --depth -j --jobs -o --server-option --cleanup'),
+    'worktree add': gitOptions('-f --force -d --detach --checkout --lock --track --no-track --guess-remote --no-guess-remote -q --quiet --relative-paths --no-relative-paths',
+        '-b -B --reason'),
+    'update-index': gitOptions('--add --remove --refresh --really-refresh -q --ignore-submodules --unmerged --ignore-missing --assume-unchanged --no-assume-unchanged '
+        + '--skip-worktree --no-skip-worktree --fsmonitor-valid --no-fsmonitor-valid --force-remove --replace --info-only --verbose --chmod --untracked-cache '
+        + '--no-untracked-cache -z --again -g', '--cacheinfo'),
+}
+
+/**
+ * The first option in `args` a verb does not take, alone or bundled, before `--`; or an option given a
+ * separate value that starts with `-`, which the checks reading options by their spelling would take for one.
+ */
+function unknownGitOption(args: readonly string[], known: ReturnType<typeof gitOptions>): string | undefined {
+    const value = (index: number) => args[index]?.startsWith('-') ? `${args[index - 1]} ${args[index]}` : undefined
+    for (let index = 0; index < args.length; index++) {
+        const arg = args[index]!
+        if (arg === '--') return undefined
+        if (!arg.startsWith('-') || arg === '-') continue
+        if (arg.startsWith('--')) {
+            const name = arg.split('=')[0]!
+            if (known.valued.has(name) && !arg.includes('=')) { if (value(++index)) return value(index) }
+            else if (!known.plain.has(name) && !known.valued.has(name)) return arg
+            continue
+        }
+        // A short option bundle: each letter takes no value, until one that takes the rest or the next word.
+        for (const [at, letter] of [...arg.slice(1)].entries()) {
+            if (known.valued.has(`-${letter}`)) { if (at === arg.length - 2 && value(++index)) return value(index); break }
+            if (!known.plain.has(`-${letter}`)) return arg
+        }
+    }
+    return undefined
 }
 
 /**
@@ -478,28 +609,112 @@ export function gitInvocation(invocation: ParsedInvocation): GitInvocation | und
  * `worktree` for a verb that overwrites local changes; or another revision for a verb that applies the
  * difference between two, where a `from` that names no commit means every file `revision` holds.
  */
-export interface GitTreeTarget { readonly revision: string; readonly from?: string }
+export interface GitTreeTarget {
+    /** A revision, or `:index` for the index. */
+    readonly revision: string
+    readonly from?: string
+    /** The pathspecs a verb names, as spelled; absent for the whole tree. */
+    readonly paths?: readonly string[]
+    /**
+     * What a revision that names no commit stands for: `index`, which makes it and `paths` pathspecs
+     * written from the index, as checkout reads them; `remote`, the one remote branch of that name, as
+     * switch reads it; or `head`, as `worktree add` starts a branch there.
+     */
+    readonly fallback?: 'index' | 'remote' | 'head'
+    /**
+     * Whether a missing branch is first looked for as the one remote branch of its name: always (`true`),
+     * as checkout does before reading a name no file holds as a path, or when `worktree.guessRemote` is set.
+     */
+    readonly remote?: true | 'config'
+    /** A revision that may not exist and then writes nothing, as a stash without untracked files has none. */
+    readonly optional?: true
+    /** A plain switch, which keeps a local edit where the target matches the index. */
+    readonly keepsLocal?: true
+}
 /**
  * What a Git verb writes into the working tree from revisions: `targets` to compare, and `unnamed` when
  * the content arrives only as the command runs (a pull that fetches), so no comparison made first can
- * name it. Undefined for a verb that writes nothing from a revision; a pathspec form is judged by its
- * operands instead.
+ * name it; or `unmodelled`, why the guard cannot name what a form writes. Undefined for a verb that
+ * writes no checkout content: a read, or a write of refs, objects or the index from the work tree.
  */
-export function gitTreeTargets(git: GitInvocation): Readonly<{ targets: readonly GitTreeTarget[]; unnamed: boolean }> | undefined {
+export type GitContentWrite = Readonly<{ targets: readonly GitTreeTarget[]; unnamed: boolean }> | Readonly<{ unmodelled: string }>
+export function gitTreeTargets(git: GitInvocation): GitContentWrite | undefined {
     const control = git.args.some(arg => /^--(?:abort|continue|skip|quit|edit-todo|show-current-patch)$/.test(arg))
     const head = (revisions: readonly string[]) => ({ targets: revisions.map(revision => ({ revision })), unnamed: false })
+    // A checkout writes the revision's files over what is on disk, which is what it is compared with: HEAD can
+    // be moved under them without touching them.
+    const onDisk = (revision: string, extra: Partial<GitTreeTarget> = {}) => ({ targets: [{ revision, from: 'worktree', ...extra }], unnamed: false })
     const previous = (revision: string) => revision === '-' ? '@{-1}' : revision
+    const unmodelled = (why: string) => ({ unmodelled: why })
+    const subcommand = gitOperands(git.args, [])[0]
+    const options = GIT_WRITE_OPTIONS[git.verb === 'worktree' && subcommand === 'add' ? 'worktree add' : git.verb]
+    const unknown = options && unknownGitOption(git.verb === 'worktree' ? git.args.slice(git.args.indexOf('add') + 1) : git.args, options)
+    if (unknown !== undefined) return unmodelled(`takes ${shownGuardWord(unknown)}, an option that can write what the guard cannot name before it runs`)
+    // A revision walk or a symmetric range names commits the guard does not list.
+    const walked = (operands: readonly string[]) => operands.some(operand => operand.startsWith('^') || operand.includes('...'))
+    // Paths read from a file are not named, so the whole tree is judged.
+    const named = (paths: readonly string[]) => git.args.some(arg => arg.startsWith('--pathspec-from-file')) ? {} : { paths }
+    const index = (target: GitTreeTarget) => ({ targets: [{ from: 'worktree', ...target }], unnamed: false })
+    // Aborting a merge resets to HEAD. A sequence continues, skips or aborts to what its own state records,
+    // which the guard does not read; quitting forgets it and writes nothing.
+    if (git.verb === 'merge' && git.args.includes('--abort')) return onDisk('HEAD')
+    if (['rebase', 'cherry-pick', 'revert', 'am'].includes(git.verb) && git.args.some(arg => /^--(?:abort|continue|skip)$/.test(arg))) {
+        return unmodelled('continues, skips or aborts a sequence to what its own state records, which the guard does not read')
+    }
     if (git.verb === 'merge' && !control) {
-        const revisions = gitOperands(git.args, ['-m', '-F', '-s', '-X', '--strategy', '--strategy-option', '--file', '--message', '--into-name'])
+        const revisions = gitOperands(git.args, ['-m', '-F', '-s', '-X', '--strategy', '--strategy-option', '--file', '--message', '--into-name', '--cleanup'])
+        if (walked(revisions)) return unmodelled('names commits by a range the guard does not list')
         return head(revisions.length ? revisions.map(previous) : ['@{upstream}'])
     }
     if (git.verb === 'checkout' || git.verb === 'switch') {
-        if (git.args.includes('--')) return undefined
-        const created = git.args.some(arg => ['-b', '-B', '-c', '-C', '--create', '--force-create', '--orphan'].includes(arg))
-        const operands = gitOperands(git.args, ['-b', '-B', '-c', '-C', '--create', '--force-create', '--orphan', '--conflict'])
-        // A new branch starts at its start point, or HEAD when none is named.
-        const revision = created ? operands[1] : operands.length === 1 ? operands[0] : undefined
-        return revision === undefined ? undefined : head([previous(revision)])
+        const end = git.verb === 'checkout' ? git.args.indexOf('--') : -1
+        const before = end < 0 ? git.args : git.args.slice(0, end)
+        const creating = ['-b', '-B', '-c', '-C', '--create', '--force-create', '--orphan']
+        const created = before.some(arg => creating.includes(arg))
+        if (before.some((arg, at) => creating.includes(arg) && (before[at + 1] === undefined || before[at + 1]!.startsWith('-')))) return unmodelled('names no branch to create')
+        const operands = gitOperands(before, [...creating, '--conflict', '--pathspec-from-file'])
+        const paths = end < 0 ? undefined : git.args.slice(end + 1)
+        const forced = before.some(arg => ['-f', '--force', '--discard-changes'].includes(arg) || /^-[a-zA-Z]*f/.test(arg) && !arg.startsWith('--'))
+        // Without force or a merge, Git keeps a local edit where the target matches the index. `--conflict` merges too.
+        const plain = forced || before.some(arg => arg === '-m' || arg === '--merge' || arg.startsWith('--conflict')) ? {} : { keepsLocal: true as const }
+        // A new branch starts at its start point, checked out; one at HEAD writes nothing.
+        if (created) return operands.length > 1 || paths?.length ? unmodelled('names paths beside a new branch') : operands[0] === undefined ? undefined : onDisk(previous(operands[0]), plain)
+        // `checkout <rev> --` names no path: it switches to the revision; a forced checkout with none rewrites HEAD's files.
+        if (paths !== undefined && !paths.length && !git.args.some(arg => arg.startsWith('--pathspec-from-file'))) {
+            return operands.length > 1 ? unmodelled('names more than one revision') : operands[0] === undefined ? (forced ? onDisk('HEAD') : undefined) : onDisk(previous(operands[0]), plain)
+        }
+        if (paths !== undefined) return operands.length > 1 ? unmodelled('names more than one revision') : index({ revision: operands[0] ?? ':index', ...named(paths) })
+        if (git.verb === 'checkout' && operands.length > 1) return index({ revision: operands[0]!, ...named(operands.slice(1)), fallback: 'index' })
+        if (operands.length > 1) return unmodelled('names more than one revision')
+        if (operands[0] === undefined) return forced ? onDisk('HEAD') : undefined
+        // A name that is no branch is the one remote branch of that name, which Git creates a branch from; checkout
+        // first reads it as a path. `--no-guess` turns the remote off.
+        const guess = git.args.includes('--no-guess') ? {} : git.verb === 'checkout' ? { remote: true as const } : { fallback: 'remote' as const }
+        return onDisk(previous(operands[0]), { ...git.verb === 'checkout' ? { fallback: 'index' as const, ...guess } : guess, ...plain })
+    }
+    if (git.verb === 'restore') {
+        const staged = git.args.some(arg => arg === '--staged' || /^-[a-zA-Z]*S/.test(arg) && !arg.startsWith('--'))
+        const worktree = git.args.some(arg => arg === '--worktree' || /^-[a-zA-Z]*W/.test(arg) && !arg.startsWith('--'))
+        if (staged && !worktree) return undefined
+        const at = git.args.findIndex(arg => arg === '-s' || arg === '--source')
+        const source = at >= 0 ? git.args[at + 1] : git.args.find(arg => arg.startsWith('--source='))?.slice('--source='.length)
+        return index({ revision: source ?? (staged ? 'HEAD' : ':index'), ...named(gitOperands(git.args, ['-s', '--source', '--conflict', '--pathspec-from-file'])) })
+    }
+    if (git.verb === 'checkout-index') return index({ revision: ':index', ...git.args.includes('--stdin') ? {} : named(gitOperands(git.args, ['--stage', '--prefix'])) })
+    if (git.verb === 'worktree' && subcommand === 'add') {
+        const rest = git.args.slice(git.args.indexOf('add') + 1)
+        if (rest.some(arg => ['--no-checkout', '--orphan'].includes(arg))) return unmodelled('makes a worktree without checking out a revision, which a later command fills unseen')
+        // A new worktree checks out its revision; without one, a new branch at HEAD or the branch named like its
+        // directory, else HEAD. It is compared with this checkout's files, since a session there loads it.
+        const [path, revision] = gitOperands(rest, ['-b', '-B', '--reason'])
+        if (path === undefined) return undefined
+        if (revision !== undefined) return onDisk(revision)
+        if (rest.some(arg => ['-b', '-B', '-d', '--detach'].includes(arg))) return onDisk('HEAD')
+        // Git expands `@{-1}` in the directory's name to the branch checked out before this one.
+        if (/@\{|^[-@]/.test(posix.basename(path))) return unmodelled('names its branch by a directory name Git reads as another branch')
+        // Only a local branch of that name, never a tag or a hash; else, guessing, the one remote branch of it.
+        const guess = rest.includes('--guess-remote') ? { remote: true as const } : rest.includes('--no-guess-remote') ? {} : { remote: 'config' as const }
+        return onDisk(`refs/heads/${posix.basename(path)}`, { fallback: 'head', ...guess })
     }
     if (git.verb === 'reset' && git.args.some(arg => /^--(?:hard|merge|keep)$/.test(arg))) {
         const end = git.args.indexOf('--')
@@ -507,7 +722,9 @@ export function gitTreeTargets(git: GitInvocation): Readonly<{ targets: readonly
         return { targets: [{ revision, from: 'worktree' }], unnamed: false }
     }
     if ((git.verb === 'cherry-pick' || git.verb === 'revert') && !control) {
-        const targets = gitOperands(git.args, ['-m', '--mainline', '-X', '--strategy', '--strategy-option']).map(operand => {
+        const operands = gitOperands(git.args, ['-m', '--mainline', '-X', '--strategy', '--strategy-option', '--cleanup', '--empty'])
+        if (!operands.length || walked(operands)) return unmodelled('names commits by a range the guard does not list')
+        const targets = operands.map(operand => {
             const range = /^(.+?)\.\.(.+)$/.exec(operand)
             const [from, to] = range ? [range[1]!, range[2]!] : [`${operand}^`, operand]
             return git.verb === 'revert' ? { revision: from, from: to } : { revision: to, from }
@@ -515,30 +732,52 @@ export function gitTreeTargets(git: GitInvocation): Readonly<{ targets: readonly
         return { targets, unnamed: false }
     }
     if (git.verb === 'rebase' && !control) {
-        const operands = gitOperands(git.args, ['--onto', '-s', '--strategy', '-X', '--strategy-option'])
+        const operands = gitOperands(git.args, ['--onto', '-s', '--strategy', '-X', '--strategy-option', '-C', '--whitespace', '--empty'])
+        if (walked(operands)) return unmodelled('names commits by a range the guard does not list')
         const onto = git.args[git.args.indexOf('--onto') + 1]
         const base = git.args.includes('--onto') ? onto : operands[0] ?? (git.args.includes('--root') ? undefined : '@{upstream}')
         return head([...base === undefined ? [] : [base], ...operands.slice(1, 2)])
     }
     if (git.verb === 'stash') {
-        const [verb, stash = 'stash@{0}'] = gitOperands(git.args, ['-m', '--message', '--pathspec-from-file'])
-        // Applying a stash applies what it changed against its base, and restores the untracked files it took.
-        if (['pop', 'apply'].includes(verb ?? '')) return { targets: [{ revision: stash, from: `${stash}^1` }, { revision: `${stash}^3`, from: `${stash}^3^` }], unnamed: false }
+        const [verb, named = '0'] = gitOperands(git.args, ['-m', '--message', '--pathspec-from-file'])
+        // Git reads a bare number as that stash entry.
+        const stash = /^\d+$/.test(named) ? `stash@{${named}}` : named
+        // Applying a stash applies what it changed against its base, and restores the untracked files it took, when it took any.
+        if (['pop', 'apply'].includes(verb ?? '')) return { targets: [{ revision: stash, from: `${stash}^1` }, { revision: `${stash}^3`, from: ':empty', optional: true }], unnamed: false }
         // Stashing returns the working tree to HEAD.
         if (verb === undefined || ['push', 'save'].includes(verb)) return { targets: [{ revision: 'HEAD', from: 'worktree' }], unnamed: false }
-        return undefined
+        if (['list', 'show', 'drop', 'clear', 'create', 'store'].includes(verb)) return undefined
+        return unmodelled(`runs \`stash ${shownGuardWord(verb).slice(1, -1)}\`, which checks out content the guard does not model`)
     }
     if (git.verb === 'pull') {
-        // Only a fast-forward to a configured remote's branch can be named before the fetch; its
-        // remote-tracking ref holds what was last fetched or pushed there.
-        const operands = gitOperands(git.args, ['-s', '--strategy', '-X', '--strategy-option', '--depth', '-j', '--jobs', '-o', '--server-option'])
-        const fastForward = git.args.includes('--ff-only') && !git.args.some(arg => /^--rebase(?:=(?!false$)|$)|^-r$/.test(arg))
-        if (fastForward && operands.length === 0) return head(['@{upstream}'])
-        if (fastForward && operands.length === 2 && /^[\w.-]+$/.test(operands[0]!) && operands[0] !== '.' && /^[\w./-]+$/.test(operands[1]!)) return head([`${operands[0]}/${operands[1]}`])
-        return { targets: [{ revision: 'HEAD' }], unnamed: true }
+        // What a pull merges arrives with its fetch; before it, a configured remote's branch is named by its
+        // remote-tracking ref as last fetched, which is judged in a tree that holds no guard control.
+        const operands = gitOperands(git.args, ['-s', '--strategy', '-X', '--strategy-option', '--depth', '-j', '--jobs', '-o', '--server-option', '--cleanup'])
+        if (operands.length === 0) return { targets: [{ revision: '@{upstream}' }], unnamed: true }
+        if (operands.length === 2 && /^[\w.-]+$/.test(operands[0]!) && operands[0] !== '.' && /^[\w./-]+$/.test(operands[1]!)) return { targets: [{ revision: `${operands[0]}/${operands[1]}` }], unnamed: true }
+        return unmodelled('names a repository or refspec the guard cannot resolve before the fetch')
     }
+    if (git.verb === 'bisect' && !['log', 'visualize', 'view', 'help', 'terms'].includes(subcommand ?? '')) return unmodelled('checks out commits the bisection chooses as it runs')
+    if (git.verb === 'submodule' && !['status', 'summary'].includes(subcommand ?? '')) return unmodelled('checks out or moves a nested repository, which a session there would load without the guard')
+    if (git.verb === 'read-tree') return unmodelled('replaces the index with a tree that a later checkout writes')
     return undefined
 }
+
+/** Plumbing that crafts objects or moves refs, beside what reads them. */
+function plumbingWrite(git: GitInvocation): boolean {
+    const operands = gitOperands(git.args, ['-m', '-F', '--message', '--file', '-C', '-c'])
+    if (['commit-tree', 'mktree', 'update-ref', 'fast-import', 'filter-branch', 'filter-repo'].includes(git.verb)) return true
+    if (git.verb === 'symbolic-ref') return operands.length > 1 || git.args.some(arg => arg === '-d' || arg === '--delete')
+    if (git.verb === 'stash') return operands[0] === 'store'
+    if (git.verb === 'replace') return !(git.args.length === 0 || git.args.some(arg => arg === '-l' || arg === '--list' || arg.startsWith('--format')))
+    if (git.verb === 'branch') return git.args.some(arg => arg === '--force' || /^-[a-zA-Z]*[fMC]/.test(arg) && !arg.startsWith('--'))
+    if (git.verb === 'notes') return !['list', 'show', undefined].includes(operands[0])
+    return false
+}
+
+// Writers a background job could race a judged call with.
+const BACKGROUND_WRITERS = new Set(['cp', 'mv', 'ln', 'link', 'tee', 'rsync', 'install', 'dd', 'touch', 'rm', 'rmdir', 'unlink', 'tar', 'gtar', 'bsdtar',
+    'unzip', 'ditto', 'cpio', 'pax', 'patch', 'sed', 'perl', 'truncate', 'curl', 'wget', 'chmod', 'mkfifo'])
 
 const REMOVERS = new Set(['rm', 'unlink', 'rmdir', 'shred', 'trash', 'rimraf', 'del-cli'])
 // Git's own commands an agent runs in development. Another verb is an alias, which can run a shell
@@ -803,6 +1042,33 @@ function tarWrites(args: readonly string[]): VisibleWrites & { readonly mode: st
         sources: writesArchive ? sources : [], uncertain: uncertain || mode === undefined || mode === 'x' && archive === undefined }
 }
 
+/**
+ * What an extraction writes, so its archive can be listed first: the archive, its format and the
+ * destination; or `unmodelled` for one whose members the guard cannot list (an archive on standard
+ * input, `ditto -x`, `7z`, `cpio -i`, `pax -r`). Undefined for anything that extracts nothing.
+ */
+export function guardExtraction(invocation: ParsedInvocation): Readonly<{ archive: string; format: 'tar' | 'zip'; destination: string }> | 'unmodelled' | undefined {
+    if (invocation.executable === null) return undefined
+    const name = posix.basename(invocation.executable)
+    const argv = invocation.argv
+    if (['tar', 'gtar', 'bsdtar'].includes(name)) {
+        const tar = tarWrites(argv)
+        if (tar.mode !== 'x') return undefined
+        const archive = tar.reads?.[0]
+        return archive === undefined ? 'unmodelled' : { archive, format: 'tar', destination: tar.paths[0] ?? '.' }
+    }
+    if (name === 'unzip') {
+        const zip = unzipWrites(argv)
+        const archive = zip?.reads?.[0]
+        return zip === undefined ? undefined : archive === undefined ? 'unmodelled' : { archive, format: 'zip', destination: zip.paths[0] ?? '.' }
+    }
+    if (name === 'ditto') return argv.some(arg => /^-[A-Za-z]*x/.test(arg) && !arg.startsWith('--')) ? 'unmodelled' : undefined
+    if (['7z', '7za', '7zz'].includes(name)) return ['x', 'e'].includes(argv.find(arg => !arg.startsWith('-')) ?? '') ? 'unmodelled' : undefined
+    if (name === 'cpio') return argv.some(arg => arg === '--extract' || /^-[A-Za-z]*i/.test(arg) && !arg.startsWith('--')) ? 'unmodelled' : undefined
+    if (name === 'pax') return argv.some(arg => /^-[A-Za-z]*r/.test(arg) && !arg.startsWith('--')) ? 'unmodelled' : undefined
+    return undefined
+}
+
 /** unzip writes every member below its destination, the working directory or `-d`; listing, testing and printing write nothing. */
 function unzipWrites(args: readonly string[]): VisibleWrites | undefined {
     let destination = '.'
@@ -826,6 +1092,11 @@ function unzipWrites(args: readonly string[]): VisibleWrites | undefined {
     return { paths: [destination], reads: archive === undefined ? [] : [archive], removes: false, uncertain: uncertain || archive === undefined }
 }
 
+const AGENT_HOME_NAMES: Readonly<Record<AgentHomeTool, string>> = Object.freeze({
+    claude: 'Claude Code\'s own directory', codex: 'Codex\'s own directory',
+    'opencode-data': 'OpenCode\'s data directory', 'opencode-config': 'OpenCode\'s configuration directory',
+})
+
 const CHMOD_CLAUSE = '[ugoa]*(?:[-+=][rwxXstugo]*)+'
 const CHMOD_MODE = new RegExp(`^(?:[0-7]{1,4}|${CHMOD_CLAUSE}(?:,${CHMOD_CLAUSE})*)$`)
 
@@ -838,6 +1109,28 @@ function keepsOwnerRead(mode: string): boolean {
         return [...match[2]!.matchAll(/([-+=])([rwxXst]*)/g)].every(([, operator, permissions]) =>
             operator === '+' || operator === '-' && !permissions!.includes('r') || operator === '=' && permissions!.includes('r'))
     })
+}
+
+// Whether a mode sets an execute, set-id or sticky bit, or copies one from another class; a mode the
+// guard cannot read counts as setting one.
+function executableMode(mode: string | undefined): boolean {
+    if (mode === undefined || !CHMOD_MODE.test(mode)) return true
+    if (/^[0-7]+$/.test(mode)) return (Number.parseInt(mode, 8) & 0o7111) !== 0
+    return mode.split(',').some(clause => /[+=][rwxXstugo]*[xXstugo]/.test(clause))
+}
+
+/** Whether a writer leaves a file it names executable: `chmod` with such a mode, or `install`, whose default mode is 0755. */
+function setsExecutableBit(invocation: ParsedInvocation): boolean {
+    const name = posix.basename(invocation.executable ?? '')
+    const args = invocation.argv
+    if (name === 'chmod') {
+        if (args.some(arg => arg.startsWith('--reference'))) return true
+        return executableMode(args.find(arg => !/^-[fhvRHLPECNiI]+$/.test(arg) && arg !== '--'))
+    }
+    if (name !== 'install' || args.some(arg => arg === '-d' || arg === '--directory' || /^-[A-Za-z]*d/.test(arg) && !arg.startsWith('--'))) return false
+    const at = args.findIndex(arg => arg === '-m' || arg === '--mode')
+    const attached = args.find(arg => /^-m./.test(arg) || arg.startsWith('--mode='))
+    return executableMode(at >= 0 ? args[at + 1] : attached?.replace(/^-m|^--mode=/, ''))
 }
 
 const GIT_CONFIG_READ_ACTIONS = new Set(['--get', '--get-all', '--get-regexp', '--get-urlmatch', '--get-color', '--get-colorbool', '--list', '-l'])
@@ -1120,6 +1413,14 @@ export function guardFirmlinkStripped(path: string): string {
     return stripped === path ? path : stripped || '/'
 }
 
+/** A credential by its own name: a key file anywhere, or a store below the home directory, not the directories holding them. */
+function credentialName(spelled: string, home: string | undefined): boolean {
+    const folded = unfirmlinked(spelled)
+    if (KEY_FILE.test(posix.basename(folded))) return true
+    if (home === undefined || !within(folded, fold(home)) || folded === fold(home)) return false
+    return HOME_CREDENTIALS.some(pattern => pattern.test(folded.slice(fold(home).length + 1)))
+}
+
 function credentialStore(spelled: string, home: string | undefined): boolean {
     const folded = unfirmlinked(spelled)
     if (KEY_FILE.test(posix.basename(folded))) return true
@@ -1149,7 +1450,8 @@ const SYSTEM_RUN_CONFIGURATION = ['/etc', '/private/etc', '/library', '/system',
 // them, and direnv's `.envrc`, which runs when a shell enters its directory.
 const NAMED_RUN_CONFIGURATION = new Set(['.cockpit', '.claude', '.codex', '.opencode', '.cursor', '.grok', '.gemini', '.git', '.husky', '.githooks'])
 const NAMED_RUN_FILES = new Set(['opencode.json', 'opencode.jsonc', '.envrc', '.mcp.json'])
-
+// What an agent tool loads from the directory a session starts in, beyond its configuration directory.
+const NAMED_INSTRUCTION_FILES = new Set(['claude.md', 'claude.local.md', 'agents.md', 'agents.override.md'])
 function externalWriteHazard(spelled: string, home: string | undefined, searchDirectories: readonly string[]): string | undefined {
     const folded = unfirmlinked(spelled)
     if (credentialStore(folded, home)) return 'a credential store'
@@ -1164,6 +1466,57 @@ function externalWriteHazard(spelled: string, home: string | undefined, searchDi
     return HOME_RUN_CONFIGURATION.find(item => within(below, item.path) || within(item.path, below))?.what
 }
 const dotenvName = (name: string) => name === '.env' || name.startsWith('.env.')
+
+// What an agent tool loads from the directory a session starts in, or one between it and the project
+// root, that can register hooks, switch them off or start MCP servers. Claude Code 2.1.323 ran the hook
+// in a subdirectory's .claude/settings.json and read its .claude/settings.local.json (measured
+// 2026-11-13); Codex loads every .codex/config.toml from the project root down to the working directory
+// and hooks beside it (learn.chatgpt.com/docs/config-file/config-advanced); OpenCode searches opencode.json
+// and .opencode from the working directory upward (opencode.ai/docs/config). Folded spellings.
+export function nestedAgentConfiguration(folded: string, covering: boolean): boolean {
+    const parts = folded.split('/')
+    const name = parts.at(-1) ?? ''
+    const parent = parts.at(-2)
+    if (name === '.mcp.json' || name === 'opencode.json' || name === 'opencode.jsonc') return true
+    if (parent === '.claude' && (name === 'settings.json' || name === 'settings.local.json')) return true
+    if (parent === '.codex' && (name === 'config.toml' || name === 'hooks.json')) return true
+    // OpenCode imports `.opencode/tool(s)` at startup as it does its plugins (measured).
+    if (parts.some((part, at) => part === '.claude' && parts[at + 1] === 'hooks' || part === '.opencode' && /^(?:plugins?|tools?)$/.test(parts[at + 1] ?? ''))) return true
+    // A writer that may place a whole directory, such as a move, carries those files with it.
+    return covering && ['.claude', '.codex', '.opencode'].includes(name)
+}
+
+// Sync writes a guard script at `.cockpit/guards`, and a Codex session runs the one it finds above it,
+// so no agent writes such a path, nor a directory named `.cockpit` that one could be moved into, anywhere.
+export function guardScriptLocation(folded: string): boolean {
+    const parts = folded.split('/')
+    return parts.at(-1) === '.cockpit' || parts.some((part, at) => part === '.cockpit' && parts[at + 1] === 'guards')
+}
+
+/** The most members an archive listing may name; a larger archive is not listed, which asks. */
+export const GUARD_ARCHIVE_ENTRIES = 100_000
+
+// What no agent places anywhere: agent tool settings, hooks and guard scripts, and a `.git` entry, which
+// stops the hook walk and starts a repository the guard is not registered in. Folded spellings.
+export function plantedAgentControl(folded: string): boolean {
+    return nestedAgentConfiguration(folded, false) || guardScriptLocation(folded) || folded.split('/').includes('.git')
+}
+
+// Where a writer that places a whole directory may put instruction files: below `.claude/skills`, `agents` or
+// `commands`, or `.agents`. Folded spellings.
+function instructionDirectory(folded: string): boolean {
+    const parts = folded.split('/')
+    return parts.some((part, at) => part === '.agents' || part === '.claude' && ['skills', 'agents', 'commands'].includes(parts[at + 1] ?? ''))
+}
+
+// Instructions whose frontmatter can register hooks or MCP servers that run outside the guard: skills
+// and commands ran their frontmatter hooks on Claude Code 2.1.323 (measured 2026-11-13); agents are
+// documented to, though the probe saw neither their hooks nor their MCP servers start. Folded spellings.
+export function agentInstructionFile(folded: string): boolean {
+    const parts = folded.split('/')
+    return parts.at(-1) === 'skill.md'
+        || parts.at(-1)!.endsWith('.md') && parts.some((part, at) => part === '.claude' && ['agents', 'commands'].includes(parts[at + 1] ?? '') && at + 2 < parts.length)
+}
 
 /**
  * Files a command writes through an option rather than an operand: Git's patch output, downloads,
@@ -1917,12 +2270,34 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const inRelatedCheckout = (lexical: string) => relatedCheckouts.some((path) => within(fold(lexical), path))
     const relatedDenial = deny(`Refusing to change a checkout [guards] related_checkouts names in ${posix.basename(resolved.configPath)}: agents read it and run read-only Git there, such as \`git -C <checkout> log\`, status, diff or show, but write, commit, push or run anything else there only from a session started in that checkout.`)
     const writePaths = resolved.writePaths ?? []
-    // Sync writes a guard script at `.cockpit/guards`, and a Codex session runs the one it finds above it,
-    // so no agent writes such a path, nor a directory named `.cockpit` that one could be moved into, anywhere.
-    const guardScriptLocation = (folded: string) => {
-        const parts = folded.split('/')
-        return parts.at(-1) === '.cockpit' || parts.some((part, at) => part === '.cockpit' && parts[at + 1] === 'guards')
+    // The running agent tool's own directories and workspaces, judged on where a path lands as write paths are.
+    const agentHomes = resolved.agentHomes ?? []
+    const agentWorkspaces = resolved.agentWorkspaces ?? []
+    const agentReadAreas = resolved.agentReadAreas ?? []
+    const memoryKeys = new Set((resolved.agentMemoryKeys ?? []).map(fold))
+    const agentHomeOf = (path: string) => agentHomes.find(home => within(path, home.path))
+    const agentWorkspaceOf = (path: string) => agentWorkspaces.find(area => within(path, area.path))
+    // An agent reads its session's own areas, its workspaces, this cockpit's Claude Code projects, and what it may
+    // write in its tool's home; never a credential. Everything else there, other projects' files included, asks.
+    const agentReadable = (lexical: string) => {
+        if (agentReadAreas.some(area => within(lexical, area))) return true
+        const home = agentHomeOf(lexical)
+        if (!home) return agentWorkspaceOf(lexical) !== undefined
+        const relative = fold(posix.relative(home.path, lexical))
+        if (relative === '') return true
+        const project = home.tool === 'claude' ? /^projects\/([^/]+)/.exec(relative)?.[1] : undefined
+        if (project !== undefined) return memoryKeys.has(project)
+        const kind = classifyAgentHomeEntry(home.tool, relative)?.kind
+        return kind === 'writable' || kind === 'confirm'
     }
+    // Set while the invocation being judged makes or moves a link, moves a file or directory, or leaves a file it names executable.
+    let linking = false
+    let moving = false
+    let settingExecutable = false
+    // A write a person decides, which no grant admits: an entry of the tool's home that the table does not
+    // classify, or an agent instruction file whose text the guard cannot read.
+    let unclassifiedAsk: GuardDecision | undefined
+    const nestedConfigurationDenial = deny('Refusing to write an agent tool\'s settings, hooks or MCP configuration (.claude/settings*.json, .claude/hooks, .mcp.json, .codex/config.toml or hooks.json, opencode.json, .opencode/plugins) at any depth: a session started in that directory loads it, and it can switch the guard off or start code there. A person makes this change.')
     const guardScriptDenial = deny('Refusing to write a path below .cockpit/guards, or a directory named .cockpit: cockpit sync writes the guard script there, and a Codex session runs the one it finds above it. Agents never write one.')
     // A file with another hard link is the same file under a name the guard may not protect: writing it
     // writes that one too, the guard's own code or a control included, however each name is spelled.
@@ -1938,7 +2313,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const stripped = guardFirmlinkStripped(lexical)
         if (stripped === lexical) return false
         const folded = fold(stripped)
-        return [...resolved.allowedRoots, ...resolved.relatedCheckouts ?? [], ...relatedReserved, ...writePaths, ...resolved.secretPaths ?? []]
+        return [...resolved.allowedRoots, ...resolved.relatedCheckouts ?? [], ...relatedReserved, ...writePaths, ...resolved.secretPaths ?? [],
+            ...agentHomes.map(home => home.path), ...agentWorkspaces.map(area => area.path)]
             .some((path) => within(folded, fold(path)))
     }
     const aliasDenial = (path: string) => deny(`Refusing ${shownGuardWord(path)}: it names the cockpit, a related checkout or a write path through /System/Volumes/Data or /Volumes, a second spelling the guard does not judge. Name the path from /, as the cockpit does.`)
@@ -1987,7 +2363,17 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (!boundaryAsks.has(invocation)) boundaryAsks.set(invocation, decision)
     }
     const open = resolved.defaultDecision === 'allow'
-    const credential = (folded: string) => credentialStore(folded, resolved.homeDirectory)
+    // In the agent tool's own directories only the credential entries and key-file names are credentials; the
+    // directory as a whole is not, or the agent could not read back its own memory and tool output.
+    const credential = (folded: string) => {
+        const home = agentHomes.find(item => within(folded, fold(item.path)))
+        if (home) {
+            const relative = posix.relative(fold(home.path), folded)
+            return relative !== '' && classifyAgentHomeEntry(home.tool, relative)?.kind === 'credential' || credentialName(folded, resolved.homeDirectory)
+        }
+        if ([...agentWorkspaces.map(area => area.path), ...agentReadAreas].some(area => within(folded, fold(area)))) return credentialName(folded, resolved.homeDirectory)
+        return credentialStore(folded, resolved.homeDirectory)
+    }
     const credentialDenial = deny('Refusing to read, print or send a credential store: SSH and cloud keys, token files such as ~/.npmrc, ~/.netrc or ~/.codex/auth.json, agent tool and deployment CLI logins, shell histories, and .pem, .p12 or id_* key files hold credentials. A person handles them.')
     // The current branch and where a bare push goes, for the repository at `cwd`, as Git reports them.
     const branchFacts = (cwd: string): BranchFacts | undefined => {
@@ -2001,13 +2387,24 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 pushRefspecs: evidence.pushRefspecs, pullRebase: evidence.pullRebase } : undefined
     }
     // Which protected paths a Git verb's revision would change in the working tree at `cwd`, and whether it holds any.
-    const treeFacts = (cwd: string, target: GitTreeTarget): { readonly guarded: boolean; readonly changed: readonly string[] } | undefined => {
+    const treeFacts = (cwd: string, target: GitTreeTarget): { readonly guarded: boolean; readonly changed: readonly string[]; readonly instructions: readonly string[]; readonly unsettled: readonly string[] } | undefined => {
         let evidence: JsonSnapshot | undefined
-        try { evidence = snapshotJson(inspect({ path: '.', cwd, operation: 'tree', revision: target.revision, ...target.from === undefined ? {} : { from: target.from } })) }
+        try { evidence = snapshotJson(inspect({ path: '.', cwd, operation: 'tree', ...target })) }
         catch { return undefined } // no answer leaves the content unknown, which only ever asks
+        const paths = (value: JsonSnapshot | undefined): value is readonly string[] => Array.isArray(value) && value.length <= GUARD_LOCATION_LIMITS.sensitivePaths && value.every(canonical)
         return record(evidence) && evidence.status === 'resolved' && evidence.path === cwd && evidence.revision === target.revision && evidence.from === target.from
-            && typeof evidence.guarded === 'boolean' && Array.isArray(evidence.changed) && evidence.changed.length <= GUARD_LOCATION_LIMITS.sensitivePaths
-            && evidence.changed.every(canonical) ? { guarded: evidence.guarded, changed: evidence.changed as readonly string[] } : undefined
+            && typeof evidence.guarded === 'boolean' && paths(evidence.changed) && (evidence.instructions === undefined || paths(evidence.instructions))
+            && (evidence.unsettled === undefined || paths(evidence.unsettled))
+            ? { guarded: evidence.guarded, changed: evidence.changed, instructions: evidence.instructions ?? [], unsettled: evidence.unsettled ?? [] } : undefined
+    }
+    // Every member name the archive an extraction reads lists.
+    const archiveFacts = (archive: string, cwd: string, format: 'tar' | 'zip'): Readonly<{ entries: readonly string[]; links: boolean }> | undefined => {
+        let evidence: JsonSnapshot | undefined
+        try { evidence = snapshotJson(inspect({ path: archive, cwd, operation: 'archive', format })) }
+        catch { return undefined } // no listing leaves the members unknown, which only ever asks
+        return record(evidence) && evidence.status === 'resolved' && evidence.path === posix.resolve(cwd, archive) && Array.isArray(evidence.entries)
+            && evidence.entries.length <= GUARD_ARCHIVE_ENTRIES && evidence.entries.every(scalar) && typeof evidence.links === 'boolean'
+            ? { entries: evidence.entries as readonly string[], links: evidence.links } : undefined
     }
     // The nearest package.json at or above a path: its name and its script names.
     // The nearest package.json at or above a path: its name and its script names, and with `workspace` the
@@ -2080,20 +2477,77 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     // existing links lead (as the system resolves them, and from / for a Data volume spelling). One that
     // lands in the roots is judged there; in a related checkout, a secret path or the code the guard runs,
     // it is refused; below a write path the locations that change what runs later stay refused.
-    const judgeExternalWrite = (request: PathInspectionRequest, lexical: string) => {
-        if (!writePaths.length) {
-            hold(unavailable('Guard path escapes configured roots. This command writes outside every root this cockpit manages, and no [guards] allow rule grants a write there: write inside the cockpit, or a person runs the command.'))
-            return
-        }
+    const noWritePath = unavailable('Guard path escapes configured roots. This command writes outside every root this cockpit manages, and no [guards] allow rule grants a write there: write inside the cockpit, or a person runs the command.')
+    // Where a write outside the roots lands once existing links are followed, and how many names the file has.
+    const externalLanding = (request: PathInspectionRequest, lexical: string): { readonly landsAt: string; readonly links?: number } | undefined => {
         let evidence: JsonSnapshot | undefined
         try { evidence = snapshotJson(inspect({ path: request.path, cwd: request.cwd, operation: 'external-write' })) } catch (error) { inspectionFailure = errorCause(error) }
-        const reported = record(evidence) && evidence.status === 'resolved' && evidence.path === lexical && canonical(evidence.landsAt)
-            && (evidence.links === undefined || typeof evidence.links === 'number' && Number.isSafeInteger(evidence.links) && evidence.links >= 1) ? evidence.landsAt : undefined
-        if (reported === undefined) {
+        return record(evidence) && evidence.status === 'resolved' && evidence.path === lexical && canonical(evidence.landsAt)
+            && (evidence.links === undefined || typeof evidence.links === 'number' && Number.isSafeInteger(evidence.links) && evidence.links >= 1)
+            ? { landsAt: guardFirmlinkStripped(evidence.landsAt), ...typeof evidence.links === 'number' ? { links: evidence.links } : {} } : undefined
+    }
+    // The agent tool's own data and workspaces take named files only: no link, no executable, nothing a tool,
+    // a shell or Git loads as configuration, and in the tool's home only the entries its table names as data.
+    // Returns whether the write lands in one of them, so no other rule judges it.
+    const judgeAgentWrite = (request: PathInspectionRequest, lexical: string, landsAt: string, removing: boolean): boolean => {
+        const home = agentHomeOf(landsAt)
+        const workspace = home ? undefined : agentWorkspaceOf(landsAt)
+        if (!home && !workspace) return false
+        const owner = home ? AGENT_HOME_NAMES[home.tool] : 'the session scratchpad'
+        const refuse = (why: string) => { hold(deny(`Refusing to write ${shownGuardWord(request.path)}: ${why}. A person makes this change.`)); return true }
+        if (linking) return refuse(`the command makes or moves a link in ${owner}, which a later write could follow anywhere`)
+        if (settingExecutable) return refuse(`the command leaves a file in ${owner} executable, which a later command could run in place of a program the guard judges`)
+        // A move carries a whole directory, whose files the guard does not see, into or out of an entry it classified by name.
+        if (home && moving) return refuse(`the command moves files into or out of ${owner}, and a moved directory carries files the guard does not see`)
+        const folded = fold(landsAt)
+        for (const spelled of [fold(lexical), folded]) {
+            if (credentialName(spelled, resolved.homeDirectory)) return refuse('it names a credential store or key file')
+            if (dotenvName(posix.basename(spelled)) || spelled.split('/').includes('.secrets')) return refuse('it names an environment file or secrets directory')
+        }
+        if ((resolved.externalSearchDirectories ?? []).some(directory => posix.dirname(folded) === fold(directory) || within(fold(directory), folded))) {
+            return refuse('it lands in a command search path directory, where a file runs in place of a command')
+        }
+        const relative = fold(posix.relative(home?.path ?? workspace!.path, landsAt))
+        const segments = relative ? relative.split('/') : []
+        if (removing && segments.length <= (home ? 1 : 0)) return refuse(`it removes ${home ? 'a whole entry of ' : ''}${owner}, not the files in it`)
+        const entry = home && segments.length ? classifyAgentHomeEntry(home.tool, relative) : undefined
+        if (entry?.kind === 'control' || entry?.kind === 'credential') return refuse(`it is ${entry.kind === 'credential' ? 'a credential' : 'a control'} in ${owner}: ${entry.why}`)
+        if (entry?.kind === 'state') return refuse(`${entry.why}, in ${owner}`)
+        if (segments.some(name => NAMED_RUN_CONFIGURATION.has(name)) || NAMED_RUN_FILES.has(segments.at(-1) ?? '')
+            || !home && (NAMED_INSTRUCTION_FILES.has(segments.at(-1) ?? '') || segments.includes('.agents'))) {
+            return refuse(`it is configuration, instructions or Git hooks that an agent tool, a shell or Git loads from ${owner}`)
+        }
+        // The scratchpad is judged as any location outside the roots: what a shell, Git or the system runs later stays refused.
+        const hazard = home ? undefined : externalWriteHazard(folded, resolved.homeDirectory, [])
+        if (hazard) return refuse(`it is ${hazard}`)
+        // The home directory itself, as `mkdir -p` names it on the way to an entry.
+        if (!home || !segments.length) return true
+        if (!entry) {
+            unclassifiedAsk ??= ask(`${shownGuardWord(request.path)} is in ${owner} under ${segments[0]}, which cockpit does not classify as the tool's data, a control or a credential, so a person decides whether an agent writes it.`)
+            return true
+        }
+        if (home.tool === 'claude') {
+            // Claude Code loads a project's MEMORY.md into every session there, so another project's memory steers
+            // sessions this cockpit never sees.
+            const project = /^projects\/([^/]+)/.exec(relative)?.[1]
+            if (project !== undefined && !memoryKeys.has(project)) return refuse('it is another project\'s Claude Code memory, which loads into that project\'s sessions; agents here write only this cockpit\'s own projects')
+            const subagent = /^agent-memory\/([^/]+)/.exec(relative)?.[1]
+            if (subagent !== undefined && subagent !== fold(resolved.agentType ?? '')) return refuse('it is the memory of a subagent other than the one making this call, which loads into that subagent in every project')
+        }
+        if (entry.kind === 'confirm') unclassifiedAsk ??= ask(`${shownGuardWord(request.path)}: ${entry.why}, so a person approves an agent writing it.`)
+        return true
+    }
+    const judgeExternalWrite = (request: PathInspectionRequest, lexical: string, removing = false) => {
+        if (!writePaths.length && !agentHomes.length && !agentWorkspaces.length) {
+            hold(noWritePath)
+            return
+        }
+        const landing = externalLanding(request, lexical)
+        if (landing === undefined) {
             hold(unavailable(`Guard could not tell where a write outside the configured roots lands, so it cannot rule out a link into a location it protects: ${shownGuardWord(request.path)}. Write to a path that exists up to its parent directory, or a person runs it.`))
             return
         }
-        const landsAt = guardFirmlinkStripped(reported)
+        const { landsAt } = landing
         const folded = fold(landsAt)
         if (inRelatedCheckout(landsAt) || reservedForRelated(landsAt)) { hold(relatedDenial); return }
         if (resolved.allowedRoots.some((root) => within(folded, fold(root)))) {
@@ -2105,14 +2559,16 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         }
         if (guardScriptLocation(folded)) { hold(guardScriptDenial); return }
         if (unseenMembers) {
-            hold(deny(`Refusing ${shownGuardWord(request.path)}: the command writes files whose names it chooses itself, as an extraction, a sync of a directory, a recursive copy, a clone or a download of an archive does, and outside the roots a write path admits only writes that name each file. Write it inside the cockpit and copy the files you need by name.`))
+            hold(deny(`Refusing ${shownGuardWord(request.path)}: the command writes files whose names it chooses itself, as an extraction, a sync of a directory, a recursive copy, a clone or a download of an archive does, and outside the roots a write path or agent workspace admits only writes that name each file. Write it inside the cockpit and copy the files you need by name.`))
             return
         }
-        if (evidence !== undefined && record(evidence) && typeof evidence.links === 'number' && evidence.links > 1) { hold(hardLinkDenial); return }
+        if (landing.links !== undefined && landing.links > 1) { hold(hardLinkDenial); return }
         if ([...resolved.guardRuntime ?? [], ...resolved.cockpitPackageDirectories ?? [], ...resolved.executionDirectories].some((path) => within(folded, fold(path)))) {
             hold(executionDenial)
             return
         }
+        if (judgeAgentWrite(request, lexical, landsAt, removing)) return
+        if (!writePaths.length) { hold(noWritePath); return }
         const area = writePaths.find((path) => within(landsAt, path))
         if (area === undefined) { hold(outsideWriteRefusal); return }
         const hazard = externalWriteHazard(fold(lexical), resolved.homeDirectory, resolved.externalSearchDirectories ?? [])
@@ -2138,6 +2594,14 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // Held first, so a declared instance's own denial, held after it, is the one reported.
         // Held before the control denials, so a control's own denial is the one reported.
         if ((request.operation === 'write' || staging) && guardScriptLocation(folded)) hold(guardScriptDenial)
+        // A guard control's own denial, held before or below, names the stronger boundary.
+        if (request.operation === 'write' && nestedAgentConfiguration(folded, controlCoverage) && !controlFiles.some(path => folded === fold(path)) && hardDeny === undefined) hold(nestedConfigurationDenial)
+        // Write and Edit carry the text they leave, which the guard application judges; any other writer,
+        // or one that may place a whole directory where agent tools keep instructions, carries none to read.
+        if (request.operation === 'write' && input.tool !== 'Write' && input.tool !== 'Edit'
+            && (agentInstructionFile(folded) || controlCoverage && instructionDirectory(folded))) {
+            unclassifiedAsk ??= ask(`${shownGuardWord(request.path)} is or may hold a skill, command or agent file, whose frontmatter can register hooks or MCP servers that Claude Code runs outside the guard, and this writer carries no text the guard can read. Use the Write or Edit tool, or a person approves it.`)
+        }
         if (mutating && dotenvSecret(folded)) hold(dotenvDenial)
         if (mutating && (inSecretPath(folded) || (staging || removing) && coversSecretPath(folded))) hold(staging && !inSecretPath(folded) ? coveringStageDenial : secretPathDenial)
         if (mutating && resolved.instances.some((item) => folded === fold(item.path) || (staging || removing) && within(fold(item.path), folded))) hold(staging && !resolved.instances.some((item) => folded === fold(item.path)) ? coveringStageDenial : instanceDenial)
@@ -2208,9 +2672,12 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (aliasedLocation(lexical)) { hold(aliasDenial(path)); return false }
         if (inRelatedCheckout(lexical) || reservedForRelated(lexical)) { hold(relatedDenial); return false }
         if (!resolved.allowedRoots.some((root) => within(lexical, root))) {
-            // Removing below a write path, as `mv` does to its source, is a write there; anywhere else outside it asks, as before.
-            if (!writePaths.length || !writePaths.some((area) => within(lexical, area))) return true
-            judgeExternalWrite({ path, cwd, operation: 'write' }, lexical)
+            // Removing in the agent's own data or workspaces, or below a write path, as `mv` does to its source, is a
+            // write there; anywhere else outside it asks, as before.
+            const landing = agentHomes.length || agentWorkspaces.length ? externalLanding({ path, cwd, operation: 'write' }, lexical) : undefined
+            const agentOwn = landing !== undefined && (agentHomeOf(landing.landsAt) !== undefined || agentWorkspaceOf(landing.landsAt) !== undefined)
+            if (!agentOwn && (!writePaths.length || !writePaths.some((area) => within(lexical, area)))) return true
+            judgeExternalWrite({ path, cwd, operation: 'write' }, lexical, true)
             return false
         }
         const evidence = inspectPath({ path, cwd, operation: 'remove' })
@@ -2286,6 +2753,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     // A person's read paths, or native external reads, admit named reads outside the roots; the
     // application then admits only an existing regular file, or a directory to list.
     const readableOutside = (lexical: string) => resolved.externalReads === 'native' || (resolved.readPaths ?? []).some(path => within(lexical, path)) || inRelatedCheckout(lexical)
+        || agentReadable(lexical)
     const inspectReadOnly = (access: ReadOnlyAccess, chainReadOnly = false, approvedExternalRead = false): boolean => {
         let safe = true
         searchBlocker = undefined
@@ -2514,6 +2982,10 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (resolved.vendorHosts.some((host) => hostUsed(word.value, host))) hold(deny('Refusing executable use of a declared vendor host.'))
         }
         inspectPath({ path: invocation.cwd, cwd: invocation.cwd, operation: 'cwd' })
+        // A redirect writes the file it names, whatever the command does to its operands.
+        linking = false
+        moving = false
+        settingExecutable = false
         for (const redirect of invocation.redirects) {
             // A control file's own denial names the stronger boundary, so it is held last.
             if (redirect.truncate) inspectRemoval(redirect.target, invocation.cwd)
@@ -2526,6 +2998,45 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         }
         const git = gitInvocation(invocation)
         unseenMembers = writesUnseenMembers(invocation, git)
+        linking = linkMakers.includes(invocation)
+        moving = git?.verb === 'mv' || posix.basename(invocation.executable ?? '') === 'mv'
+        // Claude Code 2.1.323 loaded no hook from the cockpit's local settings for a session started at or below
+        // a `.git` entry under the root (measured 2026-11-13, reproduced with an empty .git directory, a gitdir
+        // file pointing nowhere and `git init`), so a new repository inside the roots is a place the guard does
+        // not reach. A worktree carries its own committed guard, so `git worktree add` is not one.
+        if (git && (['init', 'clone'].includes(git.verb) || git.verb === 'submodule' && git.args.find(arg => !arg.startsWith('-')) === 'add')) {
+            const targets = ['.', ...git.args.filter(arg => !arg.startsWith('-') && arg !== 'add' && !/^[a-z][a-z0-9+.-]*:\/\//i.test(arg) && !/^[^/]*:/.test(arg))]
+            if (targets.some(target => inRoots(posix.resolve(git.cwd, target)))) holdBoundary(invocation, ask(`${named(invocation)} creates a Git repository inside the cockpit, and Claude Code loads no hook from the cockpit's settings for a session started in it, so the guard would not run there. `
+                + 'Use `git worktree add`, whose checkout carries the guard, or create the repository outside the cockpit; otherwise a person runs it.'))
+        }
+        // An extraction writes members whose names only its archive holds, so the archive is listed first and
+        // each member judged where it lands, at any depth.
+        const extracted = guardExtraction(invocation)
+        if (extracted === 'unmodelled') {
+            holdBoundary(invocation, ask(`${named(invocation)} extracts members the guard cannot list before they land. Extract with \`tar -xf <archive>\` or \`unzip <archive>\`, which it lists, or a person runs it.`))
+        } else if (extracted && inRoots(posix.resolve(invocation.cwd, extracted.destination))) {
+            const destination = posix.resolve(invocation.cwd, extracted.destination)
+            const listed = archiveFacts(extracted.archive, invocation.cwd, extracted.format)
+            if (listed === undefined) holdBoundary(invocation, ask(`${named(invocation)} extracts an archive the guard could not list, so it cannot tell whether a member is an agent tool's settings, hooks or skill. A person runs it.`))
+            // A link member lets a later member, or a later command, write through it where its name does not say.
+            else if (listed.links) holdBoundary(invocation, ask(`${named(invocation)} extracts an archive holding a link, symbolic or hard, which a later member or command can write through. A person runs it.`))
+            for (const entry of listed?.entries ?? []) {
+                if (entry.startsWith('/') || entry.split('/').includes('..')) {
+                    holdBoundary(invocation, ask(`${named(invocation)} extracts ${shownGuardWord(entry)}, which names a place outside its destination. A person runs it.`))
+                    continue
+                }
+                const folded = fold(posix.join(destination, entry))
+                if (plantedAgentControl(folded)) hold(guardScriptLocation(folded) ? guardScriptDenial : nestedConfigurationDenial)
+                else if (agentInstructionFile(folded)) holdBoundary(invocation, ask(`${named(invocation)} extracts ${shownGuardWord(entry)}, a skill, command or agent file whose text the guard cannot read before it lands. A person runs it.`))
+            }
+        }
+        // A clone into the roots is a repository a session started in it loads without the guard.
+        const ghWords = invocation.argv.filter(arg => !arg.startsWith('-'))
+        if (posix.basename(invocation.executable ?? '') === 'gh' && materialisesRepository(invocation) && !['release', 'run'].includes(ghWords[0] ?? '')
+            && inRoots(posix.resolve(invocation.cwd, ghWords[1] === 'clone' && ghWords[3] !== undefined ? ghWords[3] : '.'))) {
+            holdBoundary(invocation, ask(`${named(invocation)} clones a repository inside the cockpit, where a session started in it loads no cockpit hook. Clone it outside the cockpit, or a person runs it.`))
+        }
+        settingExecutable = setsExecutableBit(invocation)
         const executableName = posix.basename(invocation.executable ?? '')
         const removed = removedOperands(invocation, git)
         for (const path of removed?.paths ?? []) {
@@ -2941,6 +3452,11 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const configuredRebase = git.verb === 'pull' && !rewritesHead && !git.args.some(arg => /^--(?:no-rebase|ff-only|rebase=false)$/.test(arg))
         if ((rewritesHead || configuredRebase) && headMayMove) holdBoundary(invocation, headMoved)
         if (git.verb === 'update-ref' && git.args.includes('--stdin')) holdBoundary(invocation, ask('`git update-ref --stdin` moves refs the guard cannot see. Name the ref on the command line.'))
+        // Crafting objects and moving refs is how HEAD was moved under a checkout that then wrote a crafted tree
+        // over the guard; in the cockpit's own repository a person runs such plumbing.
+        if (within(fold(git.cwd), fold(resolved.canonicalRoot)) && plumbingWrite(git)) {
+            holdBoundary(invocation, ask(`${named(invocation)} crafts Git objects or moves a ref in the cockpit's repository, which can put content under a later checkout the guard did not judge. A person runs it.`))
+        }
         // `git rebase <upstream> <branch>` rewrites that branch.
         if (git.verb === 'rebase' && protectedName(gitOperands(git.args, ['--onto', '-s', '--strategy', '-X', '--strategy-option'])[1])) hold(deny('Refusing to rewrite history on a declared protected branch. Switch to a work branch first.'))
         // A fetch refspec's destination is a local ref: `git fetch . +topic:main` moves or rewrites main.
@@ -2961,23 +3477,38 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // working tree, where they overwrite a guard control as surely as a write would: a commit made in a
         // second worktree and merged back replaced the guard with every step allowed.
         const tree = gitTreeTargets(git)
-        if (tree) {
+        if (tree && 'unmodelled' in tree) holdBoundary(invocation, ask(`${named(invocation)} ${tree.unmodelled}. A person runs it.`))
+        else if (tree) {
             const answers = tree.targets.map(target => treeFacts(git.cwd, target))
             const changed = answers.flatMap(answer => answer?.changed ?? [])
+            const instructions = answers.flatMap(answer => answer?.instructions ?? [])
+            const unsettled = answers.flatMap(answer => answer?.unsettled ?? [])
             const guarded = answers.some(answer => answer?.guarded)
-            if (changed.length) hold(deny(`Refusing ${named(invocation)}: it would write ${shownGuardWord(posix.relative(git.cwd, changed[0]!) || changed[0]!)} into the working tree from another revision, and that path is a guard control, a secrets directory or a declared instance. A person runs it.`))
+            // A new worktree is a checkout a session there loads, not this one's files: a control in it that differs asks.
+            if (unsettled.length) holdBoundary(invocation, ask(`${named(invocation)} applies another revision's changes to HEAD, and HEAD differs from the files on disk at ${shownGuardWord(posix.relative(git.cwd, unsettled[0]!) || unsettled[0]!)}, a guard control or agent setting, so what it writes there cannot be judged. Restore the checkout first, or a person runs it.`))
+            if (changed.length && git.verb === 'worktree') holdBoundary(invocation, ask(`${named(invocation)} checks out ${shownGuardWord(posix.relative(git.cwd, changed[0]!) || changed[0]!)} different from this checkout's copy, an agent tool's settings, hooks or guard script a session started in the new worktree would load. A person runs it.`))
+            else if (changed.length) hold(deny(`Refusing ${named(invocation)}: it would write ${shownGuardWord(posix.relative(git.cwd, changed[0]!) || changed[0]!)} into the working tree from the index or another revision, and that path is a guard control, an agent tool's settings, hooks or guard script at any depth, a secrets directory or a declared instance. A person runs it.`))
+            else if (instructions.length) holdBoundary(invocation, ask(`${named(invocation)} writes ${shownGuardWord(posix.relative(git.cwd, instructions[0]!) || instructions[0]!)} from the index or another revision: a skill, command or agent file whose frontmatter can register hooks or MCP servers that run outside the guard. A person runs it.`))
             else if (answers.some(answer => answer === undefined)) holdBoundary(invocation, ask(`${named(invocation)} writes another revision's files into the working tree, and the guard could not tell whether they include a guard control: the revision does not resolve, or Git did not answer. A person runs it.`))
             else if (guarded && tree.unnamed) holdBoundary(invocation, ask(`${named(invocation)} brings content into a working tree that holds guard controls, which the guard cannot inspect before it is fetched. Fetch first, then \`git merge --ff-only <remote>/<branch>\`; or a person runs it.`))
             else if (guarded && headMayMove) holdBoundary(invocation, ask(`${named(invocation)} writes another revision's files into a working tree that holds guard controls, and an earlier command in this call can change that revision first. Run it on its own.`))
         }
         // A glob or magic pathspec matches guard controls its spelling does not name, and `--cacheinfo`
         // stages a path inside one word; both are judged against every control.
-        const pathspecs = [...git.args.filter(arg => !arg.startsWith('-') && (/[*?[]/.test(arg) || arg.startsWith(':'))),
-            ...git.args.flatMap((arg, at) => arg === '--cacheinfo' ? [git.args[at + 1]?.split(',')[2] ?? ''] : arg.startsWith('--cacheinfo=') ? [arg.split(',')[2] ?? ''] : [])]
+        // `--cacheinfo` takes `<mode>,<object>,<path>` or three words.
+        const cached = git.args.flatMap((arg, at) => arg === '--cacheinfo' ? [git.args[at + 1]?.includes(',') ? git.args[at + 1]!.split(',')[2] ?? '' : git.args[at + 3] ?? '']
+            : arg.startsWith('--cacheinfo=') ? [arg.split(',')[2] ?? ''] : [])
+        const pathspecs = [...git.args.filter(arg => !arg.startsWith('-') && (/[*?[]/.test(arg) || arg.startsWith(':'))), ...cached]
         for (const spec of pathspecs) if (controlPathspec(spec, git.cwd)) hold(controlDenial)
+        // An index entry is checked out by a later command that names only its directory, or none.
+        for (const path of cached) if (plantedAgentControl(fold(posix.resolve(git.cwd, path)))) hold(guardScriptLocation(fold(posix.resolve(git.cwd, path))) ? guardScriptDenial : nestedConfigurationDenial)
         if (git.verb === 'checkout-index' && git.args.some(arg => arg === '-a' || arg === '--all' || /^-[a-zA-Z]*a/.test(arg))
-            || git.verb === 'read-tree' && git.args.some(arg => arg === '-u' || /^-[a-zA-Z]*u/.test(arg))) {
+            || git.verb === 'read-tree' && git.args.some(arg => arg === '-u' || /^-[a-zA-Z]*u/.test(arg))
+            || git.verb === 'sparse-checkout' && !['list', 'check-rules'].includes(gitOperands(git.args, [])[0] ?? 'list')) {
             holdBoundary(invocation, ask(`${named(invocation)} writes every indexed file into the working tree, guard controls included. Check out the files by name.`))
+        }
+        if (git.verb === 'checkout-index' && git.args.some(arg => arg.startsWith('--prefix'))) {
+            holdBoundary(invocation, ask(`${named(invocation)} writes indexed files below a prefix, where no path the guard reads names them. Check out the files in place.`))
         }
         if (git.verb === 'config' && !gitConfigReads(git.args) && !(open && gitConfigPlainWrite(git.args))) hold(gitMetadataDenial)
         else if (git.verb === 'config' && gitConfigReads(git.args) && !access) holdAsk(invocation, ask(`${named(invocation)} prints configuration the guard cannot bound: a listing, a pattern, another file or a key outside a few sections can print a remote URL, an http header or a credential helper that holds a credential. Read one key with \`git config --get <key>\` from a section such as user, core or init, or a person runs it.`))
@@ -3033,6 +3564,23 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (!operands) holdBoundary(invocation, ask('Staging without explicit paths requires human approval.'))
         }
     }
+    linking = false
+    moving = false
+    settingExecutable = false
+    // A background job runs on after the call is judged, so one that loops, writes files or runs a Git write can
+    // change what the guard judged for a later call before that call runs: an archive swapped under its listing,
+    // HEAD moved under a checkout. One long-running command, a server or a watcher, runs as in the foreground.
+    // Only what is sent to the background is judged so; a single command there may write its own redirect target.
+    const backgrounded = invocations.filter(invocation => invocation.background)
+    if (backgrounded.length) {
+        const redirecting = backgrounded.filter(invocation => invocation.redirects.some(redirect => redirect.write && !['/dev/null', '/dev/stdout', '/dev/stderr'].includes(redirect.target)))
+        const racing = input.loop || redirecting.length > 1 || backgrounded.some(invocation => {
+            if (invocation.executable === null) return false
+            if (gitInvocation(invocation)) return !accesses.get(invocation)
+            return BACKGROUND_WRITERS.has(posix.basename(invocation.executable))
+        })
+        if (racing) unclassifiedAsk ??= ask('This call runs a background job that loops, writes files or runs a Git write, which can change what the guard judged for a later call before it runs. Run it in the foreground, or a person approves it.')
+    }
     if (pathCount > GUARD_INPUT_LIMITS.paths) hold(unavailable('Guard path limit exceeded.'))
     if (hardDeny) return hardDeny
     for (const invocation of invocations) {
@@ -3040,6 +3588,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (declared) return deny(`${declared.reason}${declared.fix ? ` Fix: ${declared.fix}` : ''}`)
     }
     if (authorityUnavailable) return authorityUnavailable
+    if (unclassifiedAsk) return unclassifiedAsk
     const declaredReasons: string[] = []
     for (const invocation of invocations) {
         const barrier = approvalBarriers.get(invocation)

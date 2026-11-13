@@ -74,12 +74,12 @@ The blocked list below is refused in every mode, and no `[[guards.allow]]` rule 
 | Blocked | What the guard checks |
 | --- | --- |
 | Secrets | A command that names an `.env*` file (other than documentation names and declared templates), a `.secrets` directory, a declared instance, a [`[guards] secret_paths`](#instances-secrets-and-hosted-endpoints) entry or a credential store: in its arguments (including `--body-file`, `-T` and `@file` values), an input or output redirect, a link source, an assignment value, a loop item, an unexpanded glob that can match one, or a file tool's path. Any known tool given such a name is refused, whether it reads, prints, copies or sends the file (`sort`, `xxd`, `awk`, `curl -T`, `gh gist create`); only a program the guard does not know, such as `docker compose --env-file .env up`, asks, because it may only pass the name on. Credential stores are the files and directories below the home directory that hold tokens and keys, such as `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh/hosts.yml`, `~/.netrc`, `~/.npmrc`, `~/.pgpass`, `~/.docker/config.json`, `~/.kube/config` and `~/.codex/auth.json`, the logins of other agent tools and deployment CLIs (opencode's `auth.json`, `~/.claude.json`, GitHub Copilot's `~/.config/github-copilot`, Vercel, including `~/.vercel`, Wrangler, Stripe, Supabase, Fly, Netlify, including `~/.netlify`, Firebase, Heroku's `~/.heroku`, `sentry-cli`, `hub` and `doctl`; older locations a tool may no longer write are listed too), shell histories (`~/.zsh_history`, `~/.bash_history`, fish's history), any directory above them, and `.pem`, `.p12`, `.pfx`, `.key` and `id_*` key files anywhere; the [evaluator](../packages/cockpit/src/guards/evaluator.ts) holds the full list. Also refused: a live payment secret or restricted key (`sk` or `rk`, then `_live_` and 24 or more letters and digits) written into a command's arguments or assignments, since a command line lands in shell history and transcripts, while a test key of the same shape runs; commands that print a credential without naming a file (`gh auth token`, `git credential`, `git remote -v`, `git remote get-url` and `git ls-remote --get-url` while a configured remote URL or http header carries a credential, `aws configure get` of a secret, `gcloud auth print-access-token`, `az account get-access-token`, `security find-generic-password -w`, `op read`, `git var -l`), environment dumps (`env`, `printenv`, `export -p`, `declare -x`, `set`, `ps e`, `npm run env` and its `yarn` and `pnpm` forms, `make -p`, an `awk` program that reads `ENVIRON`, a `gh` `--jq` filter that reads `env` or `$ENV`, and `declare -p` or `typeset -p` of a secret's name) and printing a variable whose name holds TOKEN, SECRET, KEY, PASS, PASSWORD, PAT or CREDENTIAL. |
-| Writes outside the cockpit | Redirects, writer destinations (`cp`, `mv`, `tee`, `touch`, `mkdir`, `ln`, `dd`, `tar -x`, removers), write options (`--output`, `curl -o`, `wget -O`, `sort -o`, `sed -i`, `perl -i`; for `curl` also `-w '%output{file}'`, a `#N` output template with a URL glob, `-O`, `-J`, `--etag-save`, `--hsts`, `--alt-svc` and `--libcurl`; for `wget` the names it writes into the working directory or its `-P` directory, and its recursive forms; for decompressors the operand's name without its suffix; for `gh release download` and `gh run download` the `-D` directory, refused when the `-p` patterns could match a guard file there and asked when the names are unknown; and the directory `gh repo clone` and `gh gist clone` create), any operand outside the cockpit of `rsync`, `ditto`, `scp`, `unzip`, `patch`, `uniq`, `split` and similar writers, the new repository, worktree or bundle of `git clone`, `init`, `worktree add` and `bundle create`, and a working directory outside the cockpit and its siblings. Writing to `/dev/null`, `/dev/stdout` or `/dev/stderr` is exempt. Under the allow default any command that names a path outside the cockpit follows `[guards] external_reads`. A [`[guards] write_paths`](#writes-outside-the-roots) entry admits the writes that land below it, except the locations that section lists. |
+| Writes outside the cockpit | Redirects, writer destinations (`cp`, `mv`, `tee`, `touch`, `mkdir`, `ln`, `dd`, `tar -x`, removers), write options (`--output`, `curl -o`, `wget -O`, `sort -o`, `sed -i`, `perl -i`; for `curl` also `-w '%output{file}'`, a `#N` output template with a URL glob, `-O`, `-J`, `--etag-save`, `--hsts`, `--alt-svc` and `--libcurl`; for `wget` the names it writes into the working directory or its `-P` directory, and its recursive forms; for decompressors the operand's name without its suffix; for `gh release download` and `gh run download` the `-D` directory, refused when the `-p` patterns could match a guard file there and asked when the names are unknown; and the directory `gh repo clone` and `gh gist clone` create), any operand outside the cockpit of `rsync`, `ditto`, `scp`, `unzip`, `patch`, `uniq`, `split` and similar writers, the new repository, worktree or bundle of `git clone`, `init`, `worktree add` and `bundle create`, and a working directory outside the cockpit and its siblings. Writing to `/dev/null`, `/dev/stdout` or `/dev/stderr` is exempt. Under the allow default any command that names a path outside the cockpit follows `[guards] external_reads`. A [`[guards] write_paths`](#writes-outside-the-roots) entry admits the writes that land below it, except the locations that section lists, and the running agent tool's own files are admitted without one, as [Agent workspaces](#agent-workspaces) describes. |
 | Branches and history | Force pushes of any branch (`--force`, `--force-with-lease`, a `+` refspec), pushes to a protected branch, remote branch deletion (`--delete`, `:branch`, `--prune`, `--mirror`), and rewriting a protected branch's history (`commit --amend`, `rebase`, `reset` to another commit, `update-ref HEAD`, `filter-branch`, `rebase <upstream> <protected>`, `rebase --onto <base> <upstream> <protected>`) or moving, resetting or deleting it, including `heads/<branch>` destinations, a fetch refspec into it (`git fetch . +topic:main`), `git send-pack` and GitHub API writes to a protected branch's ref. Force flags count when bundled or abbreviated (`-uf`, `--forc`). A push option the guard does not know asks. A push that names no destination is resolved from the repository's `@{push}`; one Git cannot resolve asks, and so does a push or rewrite that rests on the current branch after an earlier command in the same call that could move it. |
 | Declared hosts | Any spelled use of a `hosted_db_hosts` or `vendor_endpoint_hosts` name. The match is lexical: a CLI with a built-in endpoint, such as `gh`, reaches its host without naming it. |
-| The guard itself | Writes to hook registrations, `.cockpit/guards`, `.cockpit/local`, the installed cockpit, `node_modules/.bin` and `.npmrc`, including through glob or magic Git pathspecs and `--cacheinfo`; widening edits to `cockpit.toml`, which wait for a person's `sync`, and an agent's `sync` or `upgrade` while one waits; `node <copy>/dist/cli.js sync` or `upgrade` from a copy of cockpit inside the roots, which would make the guard run that copy; cockpit commands its own table does not admit (`sync --interactive`, `sync --adopt`, `sibling add` and the rest), however spelled (`npm run cockpit:sync`, `pnpm exec cockpit`, a path to `cockpit.mjs`), which ask and which no rule admits; direct `.git` writes; `git config` keys that choose a program (hooks, fsmonitor, pagers, editors, helpers, aliases, filters, drivers, includes, remotes, templates, submodules); `git -c` with such a key; `--no-verify` and its abbreviations; `pre-commit`, `husky` and `lefthook` `uninstall`; `git init` and `clone` with `--template`; transfer options that name a program (`--upload-pack`, `--receive-pack`, `--exec`); and assignments, prefixed or exported, that steer Git, its hooks or the command search path (`GIT_*`, `HOME`, `XDG_CONFIG_HOME`, `HUSKY`, `SKIP`, `LEFTHOOK`, a relative `PATH` entry, `set -a`). |
+| The guard itself | Writes to an agent tool's settings, hooks or MCP configuration at any depth, since a session started in that directory loads them (`.claude/settings.json`, `.claude/settings.local.json`, `.claude/hooks/`, `.mcp.json`, `.codex/config.toml`, `.codex/hooks.json`, `opencode.json(c)`, `.opencode/plugin(s)/`, `.opencode/tool(s)/`, which OpenCode imports at startup; `doctor` reports existing ones as `AGENT_SETTINGS_NESTED`, and `disableAllHooks` in a Claude Code settings file as `AGENT_HOOKS_DISABLED`); a skill (`SKILL.md` at any depth), a command (`.claude/commands/`) or an agent (`.claude/agents/`) written by `Write` or `Edit` so that its frontmatter sets `hooks` or `mcpServers`, grants the shell in `allowed-tools` or does not parse, or its text runs a shell command as it loads (`` !` ``, or a fence opened with `` ```! ``), which asks, as any other writer of one does, since Claude Code runs what that frontmatter registers outside the guard; a `tar -x` or `unzip` into the cockpit whose archive lists one of these at any depth, listed before it runs (a member that is a skill, command or agent file, a link, or lands outside its destination, an archive the guard cannot list, `ditto -x`, `7z`, `cpio -i`, `pax -r`, and a `gh repo clone` or `gh gist clone` into the cockpit ask); writes to hook registrations, `.cockpit/guards`, `.cockpit/local`, the installed cockpit, `node_modules/.bin` and `.npmrc`, including through glob or magic Git pathspecs and `--cacheinfo`; widening edits to `cockpit.toml`, which wait for a person's `sync`, and an agent's `sync` or `upgrade` while one waits; `node <copy>/dist/cli.js sync` or `upgrade` from a copy of cockpit inside the roots, which would make the guard run that copy; cockpit commands its own table does not admit (`sync --interactive`, `sync --adopt`, `sibling add` and the rest), however spelled (`npm run cockpit:sync`, `pnpm exec cockpit`, a path to `cockpit.mjs`), which ask and which no rule admits; direct `.git` writes; `git config` keys that choose a program (hooks, fsmonitor, pagers, editors, helpers, aliases, filters, drivers, includes, remotes, templates, submodules); `git -c` with such a key; `--no-verify` and its abbreviations; `pre-commit`, `husky` and `lefthook` `uninstall`; `git init` and `clone` with `--template`; transfer options that name a program (`--upload-pack`, `--receive-pack`, `--exec`); and assignments, prefixed or exported, that steer Git, its hooks or the command search path (`GIT_*`, `HOME`, `XDG_CONFIG_HOME`, `HUSKY`, `SKIP`, `LEFTHOOK`, a relative `PATH` entry, `set -a`). |
 | Privilege and fetched code | `sudo`, `doas`, `su` and `pkexec`; a download piped into a shell or interpreter, such as `curl … \| sh`, `curl … \| awk` or `bash <(curl …)`; and a package launcher or `deno` given a URL or Git source. A program a launcher runs (`npx`, `pnpm exec`, `bun run`, `uvx`, `bundle exec`) is judged as if it ran on its own, and so is a `pnpm <word>` or `bun run <word>` that the nearest `package.json` does not declare as a script. Programs that run a command the guard cannot see (`script`, `flock`, `parallel`, `entr`, `eval`, `source`, `git rebase -x`, `git submodule foreach`, `git bisect run`) are refused. `xargs` is judged as the command it runs with the words it reads from standard input appended, which the guard cannot see, so only `echo` and `printf` run under it without a prompt; `xargs -I`, `-J` and `-a` are refused. |
-| Git updates to guard files | In a repository whose work tree holds guard controls, the secrets root or a declared instance, a Git verb that would write one of them from another revision: `merge`, `checkout` or `switch` to a revision, `reset --hard`, `--merge` or `--keep`, `cherry-pick`, `revert`, `rebase`, and `stash pop`, `apply` or `push`. Git compares the revisions before the command runs, and a verb that would change such a path is refused. A revision that does not resolve, or a Git that does not answer, asks. A plain `git pull` there asks, since what it brings arrives only as it runs: fetch first, then `git merge --ff-only <remote>/<branch>`. `git am` of a mail with an encoded body, or of a patch whose targets the guard cannot read, asks; a patch that names a guard control is refused. See [Git updates to guard files](#git-updates-to-guard-files). |
+| Git updates to guard files | In a repository whose work tree holds guard controls, the secrets root or a declared instance, a Git verb that would write one of them from another revision: `merge`, `checkout` or `switch` to a revision, `reset --hard`, `--merge` or `--keep`, `cherry-pick`, `revert`, `rebase`, and `stash pop`, `apply` or `push`. In any repository inside the roots, the same verbs, a `checkout`, `restore` or `checkout-index` of paths from the index or a revision, and a `worktree add` of a revision other than HEAD are refused when they would write an agent tool's settings, hooks or MCP configuration, or a `.cockpit/guards` path, at any depth, and ask when they would write a skill, command or agent file; so is an index entry for such a setting or guard path (`update-index --cacheinfo`), which a later checkout of its directory would write. A skill, command or agent file is read as the verb would write it, and passes when it runs, registers and grants nothing. A `checkout-index --prefix` and a `sparse-checkout` that writes files ask. Every Git write is judged only once the guard resolves each revision and path it writes: a new branch is judged by its start point, `checkout <rev> --` as a switch to it, and a bare stash number as that entry; an unresolved revision, `--stdin`, a revision walk such as `--all` or `--branches`, an option the guard does not list for that verb, `bisect`, `stash branch`, `read-tree`, `update-index --index-info`, a `submodule` subcommand other than `status` and `summary`, and `worktree add --no-checkout` or `--orphan` ask. A checkout, switch, reset, restore, stash, `merge --abort` or forced form (`checkout -f`, `switch --discard-changes`) is judged against the files on disk, which is what it overwrites, since HEAD can be moved without touching them, and a plain switch, which keeps a local edit where its target matches the index, only where the target differs from both; a name only a remote holds is the branch Git creates from it, and `worktree add` without a branch checks out the local branch named like its directory, never a tag; a name a branch and a tag hold at different commits, an option value that starts with `-`, and a worktree directory named like `@{-1}` ask; protected paths match in any case; a verb that applies another revision's changes to HEAD asks when HEAD differs from the files on disk at such a path, and a sequence's `--continue`, `--skip` or `--abort` asks. `worktree add`, in any form, asks when the new worktree holds such a path that differs from this checkout's copy. In the cockpit's own repository, plumbing that crafts objects or moves refs asks: `commit-tree`, `mktree`, `update-ref`, a writing `symbolic-ref`, `stash store`, `replace`, `branch -f`, `-M` or `-C`, `notes` and `filter-branch` or `filter-repo`. An instruction file a Git filter rewrites on checkout asks. Git compares the revisions before the command runs, and a verb that would change such a path is refused. A revision that does not resolve, or a Git that does not answer, asks. Any `git pull` there asks, a fast-forward too, since what it brings arrives only as it runs: fetch first, then `git merge --ff-only <remote>/<branch>`, which is judged against the fetched ref. `git am` of a mail with an encoded body, or of a patch whose targets the guard cannot read, asks; a patch that names a guard control is refused. See [Git updates to guard files](#git-updates-to-guard-files). |
 | Tool configuration | Writes to the person's own tool configuration and installs outside the cockpit: package-manager configuration writes (`npm`, `pnpm` and `yarn` `config set`, `delete` or `edit`), global installs, `npm link` and `yarn link`, `go install`, `go env -w`, `cargo install`, `uv tool install`, `pip install --user`, `pipx install`, `gh config set`, `gh alias set` and `gh extension install`. `npm config set --location=project` asks, because it writes the project's `.npmrc`. An install from a URL or a Git source asks, as `npx` does. |
 | `gh` changes | Refused: `gh pr merge --admin`, `gh repo sync --force`, `gh repo delete`, and `gh repo edit` of the default branch, visibility or merge settings. Ask: any other `gh pr merge`, any other `gh repo edit`, `gh repo rename`, `archive` and `unarchive`, `gh api` writes, and what publishes, deletes or spends: `gh run rerun` and `delete`, `gh workflow run`, `enable` and `disable`, `gh release create`, `upload`, `edit`, `delete` and `delete-asset`, `gh issue delete` and `transfer`, `gh cache delete`, `gh secret` and `gh variable` `set` and `delete`, `gh gist delete` and `gh label delete`. Merging is a person's or CI's decision, and no `[work.gates]` entry covers it. |
 
@@ -97,8 +97,30 @@ Limits, stated plainly:
   and server-side branch protection, such as a GitHub ruleset on the default branch. The guard is not
   a sandbox. `gh pr merge` asks because merging is a person's or CI's decision; the ruleset is what
   enforces it.
-- `git pull --ff-only` is judged against the remote-tracking ref as last fetched. The pull fetches
-  first, so what it merges can be newer than what the guard checked.
+- Telling whether a Git filter rewrites a skill on checkout needs `git check-attr --source`, which
+  Git 2.40 added; with an older Git a checkout that writes a skill, command or agent file asks.
+- A pull fetches before it merges, so what it brings can be newer than anything the guard can
+  inspect first. In a repository holding a guard control every pull asks; elsewhere a pull is judged
+  against the remote-tracking ref as last fetched, so in a sibling it can still bring in a nested
+  agent setting or skill the guard never saw.
+- The hook runs the guard script through a check sync writes below `~/.cockpit/guards/`, which the
+  guard refuses to every agent write. The check reads the script and the machine-local identity that
+  names the handler once each, compares those bytes with the digests sync recorded for the canonical
+  root, refuses a linked `.cockpit`, guard or local directory and anything that is not a regular file,
+  and runs the text it compared with the root and identity it checked. A change to
+  either file by any writer holds every call until a person runs sync (`GUARD_RECORD_MISMATCH`). The installed cockpit modules the handler loads are not hashed:
+  they are many files, past what one hash per call can cover, so they rest on the guard refusing
+  writes to the installed package.
+- A background job that loops, copies, moves or links files, runs a Git write, or has more than one
+  command writing a redirect asks, whether sent there with `&`, `nohup`, `setsid`, the Bash tool's
+  `run_in_background` or Claude Code's Monitor tool, since it can change what the guard judged for a
+  later call before that call runs. Only the commands sent to the background are judged so: one
+  long-running command, such as a dev server writing its own log or a test watcher, runs there as in
+  the foreground. Any allowed program
+  can still race the guard from inside its own code, as the first limit above says. That the Monitor
+  tool reaches the hook through the generated matcher is not yet measured.
+- In an [agent workspace](#agent-workspaces) a file copied in keeps its mode, so `cp` of an
+  executable script leaves an executable copy: the guard judges modes only where a command sets one.
 - A Git command that needs repository facts, such as a push or a merge, asks when it runs after
   `session --` or `exec --`, because the guard gathers those facts only for the outer command.
 - Sync binds the guard to the cockpit that runs it, which is why it refuses to run from a copy
@@ -108,6 +130,34 @@ Limits, stated plainly:
   `workspace-write` sandbox, which cockpit selects once a sibling is granted to Codex, keeps `.codex`
   read-only to a Codex agent; an agent in another tool can still rewrite it where that tool's
   protection does not cover the shell.
+- Claude Code reads a project's `.claude/settings.json` only from the directory a session starts in,
+  and `.claude/settings.local.json` also from the repository's top. So `sync` repeats the guard
+  registration in the cockpit root's `.claude/settings.local.json`, which Git ignores, beside
+  whatever a person keeps there, and `doctor` warns (`CLAUDE_LOCAL_HOOK_MISSING`) when it is
+  missing. A session started in a subdirectory then runs the guard too. A local file in a directory
+  between the repository's top and the session's is not read, so for a cockpit below its repository's
+  top `sync` also writes the registration into the top's `.claude/settings.local.json`, where it runs
+  the guard only for a session started inside the cockpit and does nothing elsewhere in the
+  repository; that file lies outside the cockpit's own ignore rules, so keep it ignored there.
+  `doctor` checks both files. Measured on 2026-11-13 with Claude Code 2.1.323 and its default setting sources, in a
+  throwaway repository:
+  - started one or two directories below the root, no root `.claude/settings.json` hook ran while
+    the shell command ran, and a malformed twin of that file, named as invalid from the root, went
+    unnamed from there;
+  - a hook in the root's `.claude/settings.local.json` ran from both subdirectories, and its
+    malformed twin was named from there;
+  - `CLAUDE_PROJECT_DIR` and the payload's `cwd` were the subdirectory;
+  - registered identically in both root files, the command ran once from the root, while two
+    different commands both ran;
+  - a session started at or below any `.git` entry under the root, an empty directory, a `gitdir`
+    file pointing nowhere or a `git init`, ran no hook from the cockpit's local settings.
+
+  So `git init`, `git clone` and `git submodule add` ask when the new repository would land inside the
+  roots, and `doctor` reports a `.git` entry below the root that is neither a declared sibling nor a
+  worktree of the checkout (`AGENT_NESTED_REPOSITORY`). `git worktree add` stays allowed, since a
+  worktree carries its own committed guard, but a session started in a subdirectory of a worktree kept
+  below the root is guarded only once `sync` has run in that worktree; `doctor` there reports
+  `CLAUDE_LOCAL_HOOK_MISSING` until it has.
 - What a harness does when its hook timeout fires is not measured. The guard keeps its own 25-second
   deadline and refuses at it ([Native adapter behavior](#native-adapter-behavior)).
 
@@ -714,13 +764,101 @@ anywhere; any cockpit's guard controls and generated hooks, as a `.cockpit`, `.c
 command search path directories; launch agents and daemons, cron and the system's own directories
 (`/etc`, `/Library`, `/System`, `/usr`). The list is the `externalWriteHazard` rule in the
 [evaluator](../packages/cockpit/src/guards/evaluator.ts). Naming a path outside the roots still
-follows `external_reads`, since any command may read what it names. Adding a write path widens what
+follows `external_reads`, since any command may read what it names. The running agent tool's own
+files are admitted apart from write paths, as [Agent workspaces](#agent-workspaces) describes. Adding a write path widens what
 agents may do and waits for a person's sync; removing one narrows.
 
 A path spelled through `/System/Volumes/Data` or `/Volumes` that reaches the cockpit, a sibling, a
 related checkout, a secret path or a write path is refused wherever a call names it, as a word, an
 option value, a redirect, a file tool's target or a working directory: it is the same location under
 a second spelling the guard's rules do not compare. Name it from `/`.
+
+### Agent workspaces
+
+An agent tool keeps its own working files outside the cockpit: Claude Code's auto memory and plans,
+Codex's memory notes, and Claude Code's session scratchpad. The guard admits writing them by
+default, in every mode and with no configuration, so an agent's memory, plans and scratch files never
+wait for a person; what the tool itself writes there, the agent reads but does not write. Each location
+is derived on every call from what the harness reports, never from a guessed layout:
+
+| Area | Where | Derived from |
+| --- | --- | --- |
+| The running tool's home | Claude Code: `CLAUDE_CONFIG_DIR`, else `~/.claude`. Codex: `CODEX_HOME`, else the directory above `sessions/` in the payload's `transcript_path`, else `~/.codex`. OpenCode: `opencode` below `XDG_DATA_HOME` (else `~/.local/share`) and below `XDG_CONFIG_HOME` (else `~/.config`). | The hook's environment and payload |
+| Claude Code's session scratchpad | The payload's `scratchpad_dir`; otherwise `claude-<uid>/<project>/<session_id>/scratchpad` below `CLAUDE_CODE_TMPDIR` or `/tmp`, where `<project>` names the transcript's directory | The payload's `transcript_path` and `session_id`, and the user id |
+| The session's own files, read only | The directory holding that scratchpad, where task output lands; the transcript's project directory; and `file-history/<session_id>/`, the session's checkpoints | As above |
+
+Temp directories are other programs' state, such as packages a launcher cached and runs later,
+sockets, or Claude Code's trees for other sessions, and are judged as any location outside the
+cockpit; `mktemp` itself is a program the guard does not know, and its `$(mktemp)` output is a word it
+cannot expand. So an agent in Claude Code keeps scratch files in its scratchpad, and one in another tool
+keeps them inside the checkout (in an ignored directory) or under a
+[write path](#writes-outside-the-roots) a person adds.
+
+Only the running tool's own home counts: a Codex session does not write Claude Code's files. Below a
+home, each entry is classified by the table in
+[`agent-homes.ts`](../packages/cockpit/src/guards/agent-homes.ts):
+
+| Class | Read | Write | Claude Code | Codex | OpenCode |
+| --- | --- | --- | --- | --- | --- |
+| Writable | allowed | allowed, file by file | `projects/<project>/memory/` for this cockpit's projects, `plans/` | memory notes (`memories*/extensions/ad_hoc/notes/`) | nothing |
+| Confirmed | allowed | asks | `agent-memory/`, a subagent's user memory, which loads into that subagent in every project | none | none |
+| What the tool writes itself | asks, except the session's own files above and this cockpit's projects | refused | the rest of `projects/` (transcripts, spilled tool output), `tasks/`, `debug/`, `paste-cache/`, `uploads/`, `feedback/`, `usage-data/`, `cache/`, `sessions/`, `history.jsonl`, `stats-cache.json` and the legacy `todos/`, `statsig/`, `logs/`, `image-cache/` | `sessions/`, `archived_sessions/`, `log/`, `history.jsonl`, `session_index.jsonl`, `cache/`, `tmp/`, `.tmp/`, `attachments/`, `generated_images/`, the state databases and `version.json` | data directory: `opencode.db*`, `log/`, `tool-output/`, `storage/` |
+| Control | asks | refused | `settings*`, `CLAUDE.md`, `rules/`, `skills/`, `commands/`, `output-styles/`, `agents/`, `workflows/`, `hooks/`, `plugins/`, `dev-mods/`, `keybindings.json`, `themes/`, `statusline*`, remote and policy settings; `shell-snapshots/` and `session-env/`, which the shell sources before each command; `file-history/`, which a checkpoint restore writes back into project files | `config.toml` and its copies and profiles, `hooks.json`, `AGENTS.md`, `instructions.md`, `prompts/`, `rules/`, `skills/`, `plugins/`, `packages/`, `vendor_imports/`, `shell_snapshots/`, the global state file, plugins below `.tmp`, and the rest of `memories*`, whose consolidated memories load into every later session | the whole configuration directory, and the data directory's `snapshot/`, Git directories OpenCode runs Git against |
+| Credential | refused | refused | `.credentials.json`, `.claude.json` (and `~/.claude.json`), `backups/` (copies of it) and `ide/` (IDE connection tokens) | `auth.json`, `auth.lock`, `mcp-oauth-locks/`, `app-server-control/`, `ipc/` | `auth.json`, `mcp-auth.json` |
+| Unknown | asks | asks | any other entry | any other entry | any other entry in the data directory |
+
+An unknown entry, such as one a tool update adds, asks rather than opening or closing silently. A
+read that asks is one that could pull a token into the transcript, or another session's or project's
+files, which a person approves.
+
+Writes below `projects/<project>/memory/`, and reads anywhere below `projects/<project>/`, are
+admitted only for this cockpit's own projects: the main checkout of the cockpit and of each sibling,
+named as Claude Code names it (each character other than a letter or digit becomes `-`; a name past
+200 characters keeps 200, then `-` and a hash), and compared without regard to case. Claude Code loads
+a project's `MEMORY.md` into every session there, so another project's memory steers sessions this
+cockpit never sees. A session in a linked worktree writes its main checkout's memory. A subagent's
+write to `agent-memory/<name>/` asks, and is refused for any `<name>` other than the `agent_type` its
+own calls carry; a project-scope subagent memory inside the cockpit is ordinary repository content.
+Codex's memory notes stay writable without an ask, though they too reach later sessions: Codex turns
+an ask into a denial, which would stop the memory its own prompt requires, and a note persists
+instructions only, never a permission grant or a hook.
+A move into or out of a tool's home is refused: a moved directory carries files the guard does not
+see past the entry it classified.
+
+In every area writes name each file, and these stay refused: a link (symbolic or hard) or a moved
+link, a writer whose files the guard cannot see (an extraction, a recursive copy, a sync of a
+directory), a mode with an execute, set-id or sticky bit (`chmod +x`, `chmod 755`, `install` without
+a plain mode), `.env*` and `.secrets` names, key files, a `.cockpit/guards` path, a file with another
+hard link, a command search path directory, a `.git`, `.claude`, `.codex` or other tool directory
+below the area, removing a whole area or a whole entry of a home, and in the scratchpad also
+a `CLAUDE.md`, `AGENTS.md` or `.agents/` a session started there would load and every location the
+[write path list](#writes-outside-the-roots) refuses. Containment is judged on where a path lands once
+every existing link is followed, as for write paths, and a spelling that leaves a link through `..`
+is refused, since the system resolves it from where the link leads. A file copied in keeps its mode,
+so `cp` of an executable script still leaves an executable copy: the guard judges modes only where a
+command sets one.
+
+The agent tool's own permissions still apply. Claude Code allowed auto memory writes without a
+prompt, and refused a headless write to `/tmp` itself; OpenCode asks before writing outside the
+project (`external_directory`). Cockpit writes no native permission for these areas, since none was
+needed for the guard to stop blocking them.
+
+Measured on 2026-11-13 on macOS with Claude Code 2.1.323, Codex CLI 0.168.0 and OpenCode 1.19.5. A
+throwaway repository's logging hook (a plugin for OpenCode) recorded every payload and environment
+while each tool was asked to use the feature for real:
+
+- Claude Code wrote auto memory with `Write` and `Edit` under the main repository's project name,
+  from a linked worktree and from a subdirectory too, a subagent's memory under `agent-memory/<agent>/`
+  (with `agent_type` in the payload) and a plan under `plans/`; a background command's output landed
+  in the session temp tree. A session started in a 264-character directory was named by the hashed
+  rule above. Headless sessions had no scratchpad; this session's interactive one matched the
+  derivation from its transcript, but `scratchpad_dir` in an interactive payload is documented, not
+  measured.
+- Codex wrote a memory note with its shell under `memories/extensions/ad_hoc/notes/`, as its own
+  prompt directs; its payload's `transcript_path` sits below `CODEX_HOME`.
+- OpenCode wrote nothing of its own through the hook but todos, which it stores in its database.
+- The home entries were classified from each tool's documentation and the entries present on the
+  machine, read by name only. Linux was not measured.
 
 ### Cockpit commands an agent can run
 
@@ -1106,9 +1244,11 @@ decision without adding grants or weakening hard boundaries:
 Unavailable or malformed decisions exit 2 on every target, so adapter exit 0 alone does not mean
 permission was granted. Claude Code prints the hook command beside every refusal it reports, so the
 generated Claude Code and Codex commands are one line that runs the committed guard script, which
-holds the recovery text. Claude Code's finds it through `CLAUDE_PROJECT_DIR`; Codex's takes the
-outermost directory at or above the session's that holds the guard script, and blocks the call when
-more than one directory on the way holds one, since it cannot tell which is the cockpit's; a script that is missing or exits with any status but 0 or 2 blocks
+holds the recovery text. Each takes the outermost directory at or above the session's that holds the
+guard script, starting for Claude Code from `CLAUDE_PROJECT_DIR`, else the working directory, and
+stopping at the nearest directory with a `.git` entry, so a linked worktree kept below its main checkout
+runs its own guard; it blocks the call when more than one directory within that bound holds one, since
+it cannot tell which is the cockpit's; a script that is missing or exits with any status but 0 or 2 blocks
 the call with `cockpit guard failed (<status>): <script>; sync the cockpit`. The generated Claude Code and Codex registrations give the guard hook a
 `timeout` of 30 seconds; a guard call spawns several Node and Git processes and was seen to exceed
 Codex's 5-second default on a loaded machine. What either harness does with the call when that

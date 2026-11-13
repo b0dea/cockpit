@@ -4,10 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { GUARD_EXECUTABLE_SEARCH_PATH, resolveGitExecutable } from '../environment/executable.js'
+import { GUARD_EXECUTABLE_SEARCH_PATH, resolveExecutable, resolveGitExecutable } from '../environment/executable.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { GUARD_SECRET_FILE_LIMIT } from './evaluator.js'
-import { guardBranchFacts, guardInstalledDirectories, guardPackageManifest, guardPatchTargets, guardRemoteCredentials, guardSearchDirectories, guardSearchPathRelativeEntry,
+import { guardArchiveEntries, guardBranchFacts, guardInstalledDirectories, guardPackageManifest, guardPatchTargets, guardRemoteCredentials, guardSearchDirectories, guardSearchPathRelativeEntry,
     guardCommittedSensitivePaths, guardSecretFiles, guardSensitivePathsBelow, guardTrackedSensitivePaths, guardUnignoredSensitivePaths, guardWorktreeChanges } from './protected-locations.js'
 
 const roots: string[] = []
@@ -227,19 +227,209 @@ describe('guard protected locations', () => {
         const changes = (revision: string, from?: string) => guardWorktreeChanges(root, { revision, ...from === undefined ? {} : { from } }, [guard, join(root, '.cockpit/mcp')], git, executeProbe)
         expect(await changes('evil')).toEqual({ guarded: true, changed: [guard] })
         expect(await changes('work~1')).toEqual({ guarded: true, changed: [] })
-        // A pick applies only what the commit changed, and a word that names no commit writes nothing.
+        // A pick applies only what the commit changed, and a word that names no commit is unresolved, which asks.
         expect(await changes('evil', 'evil^')).toEqual({ guarded: true, changed: [guard] })
         expect(await changes('work', 'work^')).toEqual({ guarded: true, changed: [] })
-        expect(await changes('notes.md')).toEqual({ guarded: true, changed: [] })
+        expect(await changes('notes.md')).toBeNull()
+        expect(await guardWorktreeChanges(root, { revision: 'missing^3', from: 'missing^3^', optional: true }, [guard], git, executeProbe)).toEqual({ guarded: true, changed: [] })
         // A reset overwrites the work tree itself, local edits included.
         writeFileSync(guard, 'edited\n')
         expect(await changes('HEAD', 'worktree')).toEqual({ guarded: true, changed: [guard] })
         // A from that names no commit lists what the revision holds, as a stash's untracked files are restored.
-        expect(await changes('evil', 'evil~5')).toEqual({ guarded: true, changed: [guard] })
-        // A repository whose work tree holds no protected path is not asked.
+        expect(await changes('evil', 'evil~5')).toEqual({ guarded: true, changed: [guard], unsettled: [guard] })
+        // A repository whose work tree holds no protected path is not guarded; one with no commit names no HEAD.
         const sibling = scratch()
         execFileSync('git', ['init', '-q', sibling])
+        expect(await guardWorktreeChanges(sibling, { revision: 'HEAD' }, [guard], git, executeProbe)).toBeNull()
+        execFileSync('git', ['-C', sibling, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', 'commit', '-q', '--allow-empty', '-m', 'base'])
         expect(await guardWorktreeChanges(sibling, { revision: 'HEAD' }, [guard], git, executeProbe)).toEqual({ guarded: false, changed: [] })
+    })
+
+    it('names every agent tool setting, guard script and skill a Git verb would write anywhere in the tree', async () => {
+        const resolution = await resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+        if (resolution.state !== 'available') throw new Error(resolution.reason)
+        const git = resolution.value
+        const root = scratch()
+        const run = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args], { encoding: 'utf8' })
+        writeFileSync(join(root, 'notes.md'), 'notes\n')
+        run('init', '-q', '-b', 'work')
+        run('add', '.')
+        run('commit', '-qm', 'base')
+        // A revision carrying a nested hook registration, a planted guard script, an OpenCode tool, a skill whose
+        // frontmatter registers a hook, a command whose body runs a shell, and a plain skill.
+        run('switch', '-qc', 'planted')
+        for (const [path, text] of Object.entries({ 'deep/.claude/settings.json': '{}', 'deep/sub/.codex/hooks.json': '{}', 'pkg/.cockpit/guards/bash-guard.sh': 'exit 0',
+            'pkg/.opencode/plugins/a.js': '', 'pkg/.opencode/tools/t.ts': '', 'tools/skills/probe/SKILL.md': '---\nname: probe\nhooks: {}\n---\n',
+            'tools/.claude/commands/run.md': 'Today is !`date`.', 'tools/skills/plain/SKILL.md': '---\nname: plain\n---\nBody.',
+            // A Git filter rewrites a file on checkout from the blob the guard would read.
+            'tools/skills/filtered/SKILL.md': '---\nname: filtered\n---\nBody.', 'tools/skills/zempty/SKILL.md': '---\nname: zempty\n---\nBody.',
+            // An empty attribute value is a field of its own in Git's listing, which must not shift the ones after it.
+            '.gitattributes': 'tools/skills/filtered/SKILL.md filter=synthetic\ntools/skills/zempty/SKILL.md filter=' })) {
+            mkdirSync(join(root, path, '..'), { recursive: true })
+            writeFileSync(join(root, path), `${text}\n`)
+        }
+        run('add', '.')
+        run('commit', '-qm', 'planted')
+        run('switch', '-q', 'work')
+        const planted = [join(root, 'deep/.claude/settings.json'), join(root, 'deep/sub/.codex/hooks.json'), join(root, 'pkg/.cockpit/guards/bash-guard.sh'),
+            join(root, 'pkg/.opencode/plugins/a.js'), join(root, 'pkg/.opencode/tools/t.ts')]
+        // The plain skill is read and passes; one Git removes is not judged as an instruction.
+        const skill = [join(root, 'tools/.claude/commands/run.md'), join(root, 'tools/skills/filtered/SKILL.md'), join(root, 'tools/skills/probe/SKILL.md'),
+            join(root, 'tools/skills/zempty/SKILL.md')]
+        const changes = (target: Parameters<typeof guardWorktreeChanges>[1]) => guardWorktreeChanges(root, target, [], git, executeProbe)
+        // A checkout or merge of the revision, a restore of a directory from it, and a worktree of it.
+        expect(await changes({ revision: 'planted' })).toEqual({ guarded: false, changed: planted, instructions: skill })
+        expect(await changes({ revision: 'planted', from: 'worktree', paths: ['deep'] })).toEqual({ guarded: false, changed: [planted[0], planted[1]] })
+        expect(await changes({ revision: 'planted', from: ':empty' })).toEqual({ guarded: false, changed: planted, instructions: skill })
+        expect((await changes({ revision: 'work', from: 'planted' }))?.instructions).toBeUndefined()
+        // The index, as `git update-index --cacheinfo` leaves it, then checked out by path or by a word that names no commit.
+        run('read-tree', 'planted')
+        expect(await changes({ revision: ':index', from: 'worktree', paths: ['deep'] })).toEqual({ guarded: false, changed: [planted[0], planted[1]] })
+        expect(await changes({ revision: 'deep', fallback: 'index' })).toEqual({ guarded: false, changed: [planted[0], planted[1]] })
+        run('read-tree', 'work')
+        expect(await changes({ revision: 'work', from: 'worktree', paths: ['notes.md'] })).toEqual({ guarded: false, changed: [] })
+    })
+
+    it('judges what a verb writes against the working tree, so a HEAD moved under it hides nothing', async () => {
+        const resolution = await resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+        if (resolution.state !== 'available') throw new Error(resolution.reason)
+        const git = resolution.value
+        const root = scratch()
+        const run = (args: string[], input?: string) => execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args],
+            { encoding: 'utf8', ...input === undefined ? {} : { input } }).trim()
+        mkdirSync(join(root, '.claude'), { recursive: true })
+        writeFileSync(join(root, '.claude/settings.json'), '{"hooks":{}}\n')
+        writeFileSync(join(root, '.gitignore'), '.claude/settings.local.json\n')
+        run(['init', '-q', '-b', 'work'])
+        run(['add', '.'])
+        run(['commit', '-qm', 'base'])
+        run(['branch', 'topic'])
+        writeFileSync(join(root, '.claude/settings.local.json'), '{}\n')
+        // A commit crafted from objects alone, with HEAD moved onto it: the index and the files on disk still hold the guard.
+        const blob = (text: string) => run(['hash-object', '-w', '--stdin'], text)
+        const tree = (entries: string) => run(['mktree'], entries)
+        const claude = tree(`100644 blob ${blob('{}\n')}\tsettings.json\n100644 blob ${blob('{"disableAllHooks":true}\n')}\tsettings.local.json\n`)
+        const api = tree(`040000 tree ${tree(`100644 blob ${blob('{}\n')}\tsettings.json\n`)}\t.claude\n`)
+        const crafted = run(['commit-tree', tree(`040000 tree ${claude}\t.claude\n040000 tree ${api}\tapi\n100644 blob ${blob('.claude/settings.local.json\n')}\t.gitignore\n`), '-p', 'HEAD', '-m', 'crafted'])
+        run(['reset', '--soft', crafted])
+        const changes = (target: Parameters<typeof guardWorktreeChanges>[1]) => guardWorktreeChanges(root, target, [], git, executeProbe)
+        const planted = [join(root, '.claude/settings.json'), join(root, '.claude/settings.local.json'), join(root, 'api/.claude/settings.json')]
+        // A forced checkout of HEAD, and a new worktree of it, write the crafted files over the ones on disk.
+        expect(await changes({ revision: 'HEAD', from: 'worktree' })).toEqual({ guarded: false, changed: planted })
+        // A merge applies another revision's changes to HEAD: with HEAD moved off what is on disk, a control it
+        // changes is not judged by them, so it is named; one it leaves alone is not.
+        expect(await changes({ revision: 'HEAD' })).toEqual({ guarded: false, changed: [] })
+        expect(await changes({ revision: 'topic' })).toEqual({ guarded: false, changed: [join(root, '.claude/settings.json')], unsettled: planted })
+        // A new worktree named for a branch that does not exist starts at HEAD.
+        expect(await changes({ revision: 'nowhere', from: 'worktree', fallback: 'head' })).toEqual({ guarded: false, changed: planted })
+    })
+
+    it('matches protected paths in any case, and keeps a local edit a plain switch leaves alone', async () => {
+        const resolution = await resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+        if (resolution.state !== 'available') throw new Error(resolution.reason)
+        const git = resolution.value
+        const root = scratch()
+        const run = (args: string[], input?: string) => execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args],
+            { encoding: 'utf8', ...input === undefined ? {} : { input } }).trim()
+        mkdirSync(join(root, '.claude'), { recursive: true })
+        writeFileSync(join(root, '.claude/settings.json'), '{"hooks":{}}\n')
+        run(['init', '-q', '-b', 'work'])
+        run(['add', '.'])
+        run(['commit', '-qm', 'base'])
+        run(['branch', 'topic'])
+        // A commit writing a declared secrets path under another case, which a case-insensitive volume resolves to it.
+        const blob = run(['hash-object', '-w', '--stdin'], 'SYNTHETIC=1\n')
+        const secrets = run(['mktree'], `040000 tree ${run(['mktree'], `100644 blob ${blob}\tkey\n`)}\t.SECRETS\n`)
+        const tree = run(['mktree'], `${run(['ls-tree', 'HEAD']).split('\n').join('\n')}\n040000 tree ${secrets}\tENV\n`)
+        run(['branch', 'cased', run(['commit-tree', tree, '-p', 'HEAD', '-m', 'cased'])])
+        const changes = (target: Parameters<typeof guardWorktreeChanges>[1]) => guardWorktreeChanges(root, target, [join(root, 'env/.secrets')], git, executeProbe)
+        expect(await changes({ revision: 'cased' })).toEqual({ guarded: true, changed: [join(root, 'ENV/.SECRETS/key')] })
+        // A person's uncommitted edit to a control: a plain switch to a branch whose copy matches the index keeps it.
+        writeFileSync(join(root, '.claude/settings.json'), '{"hooks":{},"edited":true}\n')
+        const settings = (await changes({ revision: 'topic', from: 'worktree' }))?.changed.filter(path => path.endsWith('settings.json'))
+        expect(settings).toEqual([join(root, '.claude/settings.json')])
+        expect((await changes({ revision: 'topic', from: 'worktree', keepsLocal: true }))?.changed).toEqual([])
+    })
+
+    it('resolves a name Git reads as a remote branch, and a new worktree\'s branch, as Git does', async () => {
+        const resolution = await resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+        if (resolution.state !== 'available') throw new Error(resolution.reason)
+        const git = resolution.value
+        const root = scratch()
+        const run = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args], { encoding: 'utf8' }).trim()
+        writeFileSync(join(root, 'notes.md'), 'notes\n')
+        run('init', '-q', '-b', 'work')
+        run('add', '.')
+        run('commit', '-qm', 'base')
+        mkdirSync(join(root, 'api/.claude'), { recursive: true })
+        writeFileSync(join(root, 'api/.claude/settings.json'), '{}\n')
+        run('add', '.')
+        run('commit', '-qm', 'planted')
+        const planted = run('rev-parse', 'HEAD')
+        run('reset', '-q', '--hard', 'HEAD~1')
+        // The planted commit exists only as a remote branch, and as a tag and short hash a worktree's basename could name.
+        run('remote', 'add', 'origin', 'https://example.test/r.git')
+        run('update-ref', 'refs/remotes/origin/feat', planted)
+        run('tag', 'wt', planted)
+        // Checkout takes the branch of a name where rev-parse takes the tag: a name both hold at different commits is unresolved.
+        run('branch', 'both', planted)
+        run('tag', 'both', 'HEAD')
+        const changes = (target: Parameters<typeof guardWorktreeChanges>[1]) => guardWorktreeChanges(root, target, [], git, executeProbe)
+        const settings = { guarded: false, changed: [join(root, 'api/.claude/settings.json')] }
+        expect(await changes({ revision: 'both', from: 'worktree' })).toBeNull()
+        // `git checkout feat` and `git switch feat` create feat from the one remote branch of that name.
+        expect(await changes({ revision: 'feat', from: 'worktree', fallback: 'index', remote: true })).toEqual(settings)
+        expect(await changes({ revision: 'feat', from: 'worktree', fallback: 'remote' })).toEqual(settings)
+        // Git looks for the path on disk only: a name the index holds but the disk does not is still the remote branch.
+        writeFileSync(join(root, 'feat'), 'x\n')
+        run('add', 'feat')
+        rmSync(join(root, 'feat'))
+        expect(await changes({ revision: 'feat', from: 'worktree', fallback: 'index', remote: true })).toEqual(settings)
+        // A name no remote holds is a path again, as checkout reads one only the index holds.
+        expect(await changes({ revision: 'feat/.claude', from: 'worktree', fallback: 'index', remote: true })).toEqual({ guarded: false, changed: [] })
+        // A file of that name is the path checkout writes instead; without the remote guess it is only that.
+        writeFileSync(join(root, 'feat'), 'x\n')
+        expect(await changes({ revision: 'feat', from: 'worktree', fallback: 'index', remote: true })).toEqual({ guarded: false, changed: [] })
+        // A name two remotes hold is ambiguous, and Git refuses it.
+        run('remote', 'add', 'mirror', 'https://example.test/m.git')
+        run('update-ref', 'refs/remotes/mirror/feat', planted)
+        expect(await changes({ revision: 'feat', from: 'worktree', fallback: 'remote' })).toBeNull()
+        // A new worktree checks out the branch named like its directory, never a tag; else HEAD, or with the remote guess the one remote branch.
+        expect(await changes({ revision: 'refs/heads/wt', from: 'worktree', fallback: 'head' })).toEqual({ guarded: false, changed: [] })
+        run('config', 'worktree.guessRemote', 'true')
+        expect(await changes({ revision: 'refs/heads/feat', from: 'worktree', fallback: 'head', remote: 'config' })).toBeNull()
+        run('update-ref', '-d', 'refs/remotes/mirror/feat')
+        expect(await changes({ revision: 'refs/heads/feat', from: 'worktree', fallback: 'head', remote: 'config' })).toEqual(settings)
+        run('config', 'worktree.guessRemote', 'false')
+        expect(await changes({ revision: 'refs/heads/feat', from: 'worktree', fallback: 'head', remote: 'config' })).toEqual({ guarded: false, changed: [] })
+    })
+
+    it('lists the members a tar or zip archive would extract, and none from one it cannot read', async () => {
+        const root = scratch()
+        for (const path of ['src/a.ts', 'pkg/.claude/settings.json']) {
+            mkdirSync(join(root, 'content', path, '..'), { recursive: true })
+            writeFileSync(join(root, 'content', path), 'synthetic\n')
+        }
+        execFileSync('tar', ['-czf', join(root, 'a.tgz'), '-C', join(root, 'content'), 'src', 'pkg'])
+        execFileSync('zip', ['-qr', join(root, 'a.zip'), 'src', 'pkg'], { cwd: join(root, 'content') })
+        writeFileSync(join(root, 'broken.tgz'), 'not an archive')
+        const list = async (archive: string, format: 'tar' | 'zip') => {
+            const tool = await resolveExecutable(format === 'tar' ? 'tar' : 'unzip', { PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+            if (tool.state !== 'available') throw new Error(tool.reason)
+            return guardArchiveEntries(join(root, archive), format, tool.value, executeProbe)
+        }
+        const members = ['pkg/', 'pkg/.claude/', 'pkg/.claude/settings.json', 'src/', 'src/a.ts']
+        expect(await list('a.tgz', 'tar').then(found => found && { ...found, entries: [...found.entries].sort() })).toEqual({ entries: members, links: false })
+        expect(await list('a.zip', 'zip').then(found => found && { ...found, entries: [...found.entries].sort() })).toEqual({ entries: members, links: false })
+        // A member that is a link, symbolic or hard, lets a later member or command write through it.
+        symlinkSync('src/a.ts', join(root, 'content', 'link'))
+        linkSync(join(root, 'content/src/a.ts'), join(root, 'content', 'hard'))
+        execFileSync('tar', ['-czf', join(root, 'links.tgz'), '-C', join(root, 'content'), 'src', 'link'])
+        execFileSync('tar', ['-czf', join(root, 'hard.tgz'), '-C', join(root, 'content'), 'src', 'hard'])
+        execFileSync('zip', ['-qry', join(root, 'links.zip'), 'src', 'link'], { cwd: join(root, 'content') })
+        for (const [archive, format] of [['links.tgz', 'tar'], ['hard.tgz', 'tar'], ['links.zip', 'zip']] as const) expect((await list(archive, format))?.links, archive).toBe(true)
+        expect(await list('broken.tgz', 'tar')).toBeNull()
+        expect(await list('missing.zip', 'zip')).toBeNull()
     })
 
     it('reads the nearest package manifest inside the roots, and none past them or from an unreadable one', () => {
