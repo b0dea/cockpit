@@ -1443,32 +1443,30 @@ describe('allow by default', () => {
         const opencode = `${home}/.local/share/opencode`
         const session = '/workspace/tmp/claude-1000/-workspace-project/session-one'
         const scratch = `${session}/scratchpad`
-        // What `mktemp` and `mktemp -d` name below each temp directory.
-        const made = '/workspace/tmp/tmp.AbCdEf1234'
-        const userMade = '/workspace/user-tmp/tmp.Zz9Yy8Xx7W'
-        const agent = { ...open(), externalSearchDirectories: [`${userMade}/bin`],
+        // Directories the agent made in its scratchpad.
+        const made = `${scratch}/work`
+        const userMade = `${scratch}/user`
+        const agent = { ...open(), externalSearchDirectories: [`${claude}/plans/bin`],
             agentHomes: [{ tool: 'claude', path: claude }, { tool: 'codex', path: codex }, { tool: 'opencode-data', path: opencode },
                 { tool: 'opencode-config', path: `${home}/.config/opencode` }],
             agentMemoryKeys: ['-workspace-project', '-Workspace-Sibling'], agentType: 'reviewer',
-            agentWorkspaces: [{ kind: 'scratchpad', path: scratch }, { kind: 'temp', path: '/workspace/tmp' }, { kind: 'temp', path: '/workspace/user-tmp' }],
+            agentWorkspaces: [{ kind: 'scratchpad', path: scratch }],
             agentReadAreas: [`${claude}/projects/-workspace-project-sub`, `${claude}/file-history/session-one`, session] }
         // `/tmp` leads to the temp directory, and one file there has a second name.
         const lands: PathInspection = request => {
             const path = posix.resolve(request.cwd, request.path)
             if (request.operation === 'external-write') return { status: 'resolved', path, landsAt: path.replace(/^\/tmp(?=\/)/, '/workspace/tmp'),
                 ...path.endsWith('/linked.txt') ? { links: 2 } : {} }
-            // Each temp entry is one this call makes.
-            if (request.operation === 'entry') return { status: 'resolved', path, exists: false }
             return { ...withGit(request), identity: path.startsWith(root) ? null : '8:2' }
         }
         const judge = (call: object, configured: object = agent) => evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', cwd: root, ...call }), configured, lands)
         const shell = (command: string, configured: object = agent) => judge({ tool_name: 'Bash', tool_input: { command } }, configured)
         const write = (file_path: string, configured: object = agent) => judge({ tool_name: 'Write', tool_input: { file_path, content: 'x' } }, configured)
 
-        it('admits named writes to the agent\'s own memory, plans and notes, its scratchpad and what mktemp made', () => {
+        it('admits named writes to the agent\'s own memory, plans and notes, and its scratchpad, never temp', () => {
             for (const path of [`${claude}/projects/-workspace-project/memory/MEMORY.md`, `${claude}/projects/-Workspace-Sibling/memory/MEMORY.md`,
                 `${claude}/projects/-WORKSPACE-project/memory/topic.md`, `${claude}/plans/bright-plan.md`, `${codex}/memories/extensions/ad_hoc/notes/20261113T000000Z-tabs.md`,
-                `${scratch}/notes.md`, `${made}/probe.txt`, '/tmp/tmp.AbCdEf1234/probe.txt', `${userMade}/out.log`]) {
+                `${scratch}/notes.md`, `${made}/probe.txt`, `${userMade}/out.log`]) {
                 expect(write(path), path).toMatchObject({ decision: 'allow' })
             }
             expect(judge({ tool_name: 'Edit', tool_input: { file_path: `${claude}/projects/-workspace-project/memory/topic.md`, old_string: 'a', new_string: 'b' } }))
@@ -1480,24 +1478,8 @@ describe('allow by default', () => {
             }
             // Without the derived areas the same writes stay refused.
             for (const path of [`${claude}/projects/-workspace-project/memory/MEMORY.md`, `${made}/probe.txt`]) expect(write(path, open()).decision, path).not.toBe('allow')
-        })
-
-        it('admits an existing temp entry only when this user made it after the agent tool started, and asks when either time is unknown', () => {
-            // Another session's or user's `mktemp` entry was made before this tool started, or by someone else.
-            const started = Date.UTC(2026, 10, 13, 12)
-            const entry = (facts: object): PathInspection => request => request.operation === 'entry'
-                ? { status: 'resolved', path: posix.resolve(request.cwd, request.path), exists: true, ...facts } : lands(request)
-            const decide = (facts: object, configured: object = { ...agent, agentStartedAt: started }) =>
-                evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', cwd: root, tool_name: 'Write', tool_input: { file_path: `${made}/probe.txt`, content: 'x' } }), configured, entry(facts)).decision
-            expect(decide({ owned: true, bornMs: started + 1000 })).toBe('allow')
-            expect(decide({ owned: true, bornMs: started - 1000 })).not.toMatch(/^(?:allow|ask)$/)
-            expect(decide({ owned: false, bornMs: started + 1000 })).not.toMatch(/^(?:allow|ask)$/)
-            expect(decide({ owned: true, bornMs: null })).toBe('ask')
-            expect(decide({ owned: true, bornMs: started + 1000 }, agent)).toBe('ask')
-            // A name the call makes now is the agent's, as is its scratchpad, whatever its age.
-            expect(write(`${made}/probe.txt`, { ...agent, agentStartedAt: started })).toMatchObject({ decision: 'allow' })
-            expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', cwd: root, tool_name: 'Write', tool_input: { file_path: `${scratch}/a.md`, content: 'x' } }),
-                agent, entry({ owned: true, bornMs: null })).decision).toBe('allow')
+            // Temp holds other programs' state, what mktemp names included.
+            expect(write('/tmp/tmp.AbCdEf1234/probe.txt').decision).not.toBe('allow')
         })
 
         it('refuses controls, credentials, what the tool writes itself, other projects\' memory and every write it cannot see', () => {
@@ -1525,7 +1507,7 @@ describe('allow by default', () => {
                 [`echo x > ${made}/.env.local`]: 'environment file', [`echo x > ${made}/.secrets/a`]: 'environment file',
                 [`echo x > ${made}/id_ed25519`]: 'credential', [`echo x > ${made}/x/.cockpit/guards/bash-guard.sh`]: '.cockpit',
                 [`echo x > ${made}/proj/.claude/settings.json`]: 'loads from', [`echo x > ${made}/proj/CLAUDE.md`]: 'loads from',
-                [`echo x > ${made}/proj/.git/hooks/pre-commit`]: 'Git', [`echo x > ${userMade}/bin/git`]: 'search path',
+                [`echo x > ${made}/proj/.git/hooks/pre-commit`]: 'Git', [`echo x > ${claude}/plans/bin/git`]: 'search path',
                 [`echo x > ${made}/linked.txt`]: 'hard link', [`rm -rf ${claude}/projects`]: 'not the files', [`rm -rf ${scratch}`]: 'not the files',
             }
             for (const [command, reason] of Object.entries(refusals)) expect(shell(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining(reason) })

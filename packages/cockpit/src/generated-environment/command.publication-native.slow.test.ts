@@ -166,29 +166,6 @@ describe('public surface publication transaction', () => {
             expect(call({ file_path: skill, content: '---\nname: probe\nhooks: {}\n---\n' })).toBe('ask')
             expect(call({ file_path: skill, old_string: 'name: probe\n', new_string: 'name: probe\nmcpServers: {}\n' }, 'Edit')).toBe('ask')
             expect(call({ file_path: skill, old_string: 'Body.', new_string: 'Another body.' }, 'Edit')).toBe('allow')
-            // A temp entry is the agent's when it is made after the agent tool started: a node process stands in for
-            // the tool, making the entry first or finding one made before it started.
-            const viaAgent = (makes: boolean, file: string) => {
-                const script = `const { spawnSync } = require('node:child_process'); const { mkdtempSync } = require('node:fs');
-                    const [command, cwd, payload, makes] = JSON.parse(process.argv[1]);
-                    const entry = makes ? mkdtempSync('/tmp/tmp.') : '';
-                    const run = spawnSync('/bin/sh', ['-c', command], { cwd, encoding: 'utf8', input: payload.replaceAll('@ENTRY@', entry) });
-                    process.stdout.write(JSON.stringify({ ...run, entry }));`
-                const payload = JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: subdirectory, tool_input: { file_path: file, content: 'synthetic' } })
-                const run = spawnSync(process.execPath, ['-e', script, JSON.stringify([command, subdirectory, payload, makes])], { encoding: 'utf8',
-                    env: { PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_PROJECT_DIR: subdirectory } })
-                const hook = JSON.parse(run.stdout) as { status: number; stdout: string; stderr: string; entry: string }
-                if (hook.entry) roots.push(hook.entry)
-                // A write outside every root is held with the hook's blocking exit.
-                if (hook.status === 2) return 'held'
-                expect(hook.status, hook.stderr).toBe(0)
-                return hook.stdout ? JSON.parse(hook.stdout).hookSpecificOutput.permissionDecision : 'allow'
-            }
-            const older = await mkdtemp('/tmp/tmp.')
-            roots.push(older)
-            await new Promise(settle => setTimeout(settle, 1100))
-            expect(viaAgent(false, join(older, 'out.txt'))).toBe('held')
-            expect(viaAgent(true, '@ENTRY@/out.txt')).toBe('allow')
         })
 
         it('guards a session in a linked worktree kept below the checkout, and one below a cockpit nested in its repository', async () => {

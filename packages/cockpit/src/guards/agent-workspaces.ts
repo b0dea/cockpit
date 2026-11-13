@@ -1,6 +1,6 @@
 // Derives, for one guard call, where the running agent tool keeps its own files: its home
 // directories, the Claude Code project names whose auto memory belongs to this cockpit, the
-// session's scratchpad and the private temp directories. Each comes from what the harness reported
+// session's scratchpad. Each comes from what the harness reported
 // in the hook payload, the variables it runs with and the machine, never from a guessed layout; the
 // evaluator classifies and judges every path below them.
 //
@@ -9,12 +9,8 @@
 import { lstatSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, normalize, resolve } from 'node:path'
 import { readBoundedFile } from '../bounded-read.js'
-import { snapshotExecutionStep, RefusalError } from '../environment/contract.js'
-import type { ResolvedExecutable } from '../environment/executable.js'
-import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { claudeProjectKey } from './agent-homes.js'
 import { AGENT_TYPE, type GuardAgentHome, type GuardAgentWorkspace } from './evaluator.js'
-import type { GuardExecute } from './protected-locations.js'
 
 /** What the hook payload says about the session, as the harness sent it. */
 export interface GuardAgentSession {
@@ -25,7 +21,7 @@ export interface GuardAgentSession {
     readonly agentType?: string
 }
 /** The variables that move each tool's files, as the harness's environment holds them. */
-export const GUARD_AGENT_VARIABLES = Object.freeze(['CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_TMPDIR', 'CODEX_HOME', 'TMPDIR', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME'] as const)
+export const GUARD_AGENT_VARIABLES = Object.freeze(['CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_TMPDIR', 'CODEX_HOME', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME'] as const)
 export type GuardAgentEnvironment = Readonly<Partial<Record<(typeof GUARD_AGENT_VARIABLES)[number], string>>>
 
 export interface GuardAgentAreas {
@@ -37,7 +33,7 @@ export interface GuardAgentAreas {
 }
 
 const absolute = (value: string | undefined): value is string => typeof value === 'string' && isAbsolute(value) && !/[\x00-\x1f\x7f]/.test(value)
-// An area the guard cannot locate, such as a stale worktree's main checkout or a TMPDIR it may not read,
+// An area the guard cannot locate, such as a stale worktree's main checkout or a scratchpad it may not read,
 // is left out: that admits nothing there, while a thrown error would refuse every guarded call.
 function located<T>(derive: () => T): T | undefined {
     try { return derive() } catch { return undefined }
@@ -86,12 +82,6 @@ export function mainCheckout(root: string): string | undefined {
     }
 }
 
-/** A private temp directory: a directory the current user owns that no one else may enter. */
-function privateDirectory(path: string, uid: number): boolean {
-    const status = lstatSync(path)
-    return status.isDirectory() && status.uid === uid && (status.mode & 0o077) === 0
-}
-
 export function guardAgentAreas(
     harness: 'claudecode' | 'codexcli' | 'opencode',
     session: GuardAgentSession,
@@ -104,12 +94,6 @@ export function guardAgentAreas(
     const workspaces: GuardAgentWorkspace[] = []
     const readAreas: string[] = []
     const memoryKeys = new Set<string>()
-    // A temp directory and the spellings that lead to it, such as `/tmp` for `/private/tmp`.
-    const temp = (spelled: string, real: string) => {
-        for (const path of new Set([real, normalize(spelled).replace(/(.)\/+$/, '$1')])) {
-            if (!workspaces.some(area => area.kind === 'temp' && area.path === path)) workspaces.push({ kind: 'temp', path })
-        }
-    }
     if (harness === 'claudecode') {
         // CLAUDE_CONFIG_DIR moves every ~/.claude path, `.claude.json` included.
         home('claude', absolute(env.CLAUDE_CONFIG_DIR) ? env.CLAUDE_CONFIG_DIR : join(personal, '.claude'))
@@ -145,11 +129,6 @@ export function guardAgentAreas(
         home('opencode-data', join(absolute(env.XDG_DATA_HOME) ? env.XDG_DATA_HOME : join(personal, '.local/share'), 'opencode'))
         home('opencode-config', join(absolute(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : join(personal, '.config'), 'opencode'))
     }
-    // Each tool inherits the person's TMPDIR, which is per user and private on macOS; one that is not stays shut.
-    const tmpdir = absolute(env.TMPDIR) ? located(() => realpathSync(env.TMPDIR!)) : undefined
-    if (tmpdir && located(() => privateDirectory(tmpdir, uid))) temp(env.TMPDIR!, tmpdir)
-    const shared = located(() => realpathSync('/tmp'))
-    if (shared) temp('/tmp', shared)
     // The home directory or a directory above it is never an area: it would admit every shell startup file.
     const outsideHome = (path: string) => !within(personal, path)
     return {
@@ -161,42 +140,3 @@ export function guardAgentAreas(
     }
 }
 
-// The shells a tool runs a hook through, which a hook command may start again; the first other ancestor is the tool.
-const HOOK_SHELLS = new Set(['sh', 'bash', 'zsh', 'dash'])
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-
-/**
- * When the agent tool that started process `pid` began, from `ps -A -o pid=,ppid=,lstart=,comm=` run
- * with LC_ALL=C and TZ=UTC0: the start of the first process at or above `pid` that is not a shell, or
- * undefined when the chain leaves the listing or a start does not parse.
- */
-export function agentToolStart(listing: string, pid: number): number | undefined {
-    const processes = new Map<number, { ppid: number; started: number; name: string }>()
-    for (const line of listing.split('\n')) {
-        // procps separates the command by one space, macOS by several.
-        const row = /^\s*(\d+)\s+(\d+)\s+[A-Z][a-z]{2} ([A-Z][a-z]{2})\s+(\d{1,2}) (\d\d):(\d\d):(\d\d) (\d{4})\s+(\S.*)$/.exec(line)
-        const month = row ? MONTHS.indexOf(row[3]!) : -1
-        if (!row || month < 0) continue
-        processes.set(Number(row[1]), { ppid: Number(row[2]), name: basename(row[9]!.trim()).replace(/^-/, ''),
-            started: Date.UTC(Number(row[8]), month, Number(row[4]), Number(row[5]), Number(row[6]), Number(row[7])) })
-    }
-    for (let current = processes.get(pid), hops = 0; current && hops < 32; current = processes.get(current.ppid), hops++) {
-        if (!HOOK_SHELLS.has(current.name)) return current.started
-    }
-    return undefined
-}
-
-/** The start of the agent tool above process `pid`, as `ps` reports it, or undefined when it cannot be read. */
-export async function guardAgentStart(ps: ResolvedExecutable, execute: GuardExecute, pid: number): Promise<number | undefined> {
-    const step = snapshotExecutionStep({
-        id: 'guard-agent-start',
-        argv: [ps.canonicalPath, '-A', '-o', 'pid=,ppid=,lstart=,comm='],
-        argv0: ps.invocationPath, cwd: '/', env: { LC_ALL: 'C', TZ: 'UTC0' }, timeoutMs: 10_000,
-        stdoutLimitBytes: 4_194_304, stderrLimitBytes: 65_536, paths: [], ports: [], labels: { action: 'guard-agent-start' }, expected: [],
-        consumedFiles: [{ path: ps.canonicalPath, sha256: ps.sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: ps.executionMode }],
-        filesystemChecks: [], compensation: [],
-    })
-    if (!step) throw new RefusalError('the process listing that dates the agent tool could not be planned')
-    const outcome = authenticatedExecutionOutcome(await execute(step), step)
-    return outcome?.kind === 'complete' ? agentToolStart(outcome.stdout.toString('utf8'), pid) : undefined
-}

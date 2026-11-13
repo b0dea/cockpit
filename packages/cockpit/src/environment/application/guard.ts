@@ -16,7 +16,7 @@ import {
     snapshotJson,
     tryParseJson,
 } from '../contract.js'
-import { GUARD_EXECUTABLE_SEARCH_PATH, resolveExecutable, type ExecutableResolution, type ResolvedExecutable } from '../executable.js'
+import { GUARD_EXECUTABLE_SEARCH_PATH, type ExecutableResolution, type ResolvedExecutable } from '../executable.js'
 import { CockpitConfig } from '../../schema.js'
 import { correctsHeldConfiguration, pinnedPolicyDenial, restoresRecordedConfiguration } from '../../guards/policy-pin.js'
 import { instructionFrontmatterAsk } from '../../guards/instruction-frontmatter.js'
@@ -85,7 +85,7 @@ import { browserPreapprovalRequested, loadCockpitConfig, consumeLoadedConfigProj
 import { deriveRegistry } from '../../registry-derivation.js'
 import { confinedPath, lifecycleRefusal, ownDataValues, sameSource } from './shared.js'
 import { splitRepositoryPath } from '../../repository-path.js'
-import { GUARD_AGENT_VARIABLES, guardAgentAreas, guardAgentStart, type GuardAgentEnvironment, type GuardAgentSession } from '../../guards/agent-workspaces.js'
+import { GUARD_AGENT_VARIABLES, guardAgentAreas, type GuardAgentEnvironment, type GuardAgentSession } from '../../guards/agent-workspaces.js'
 import { readSiblingCheckouts, servedSiblings, type ServedSibling, type SiblingCheckoutRecordRead } from '../sibling-checkouts.js'
 
 export interface GuardEvaluationApplicationInput {
@@ -544,15 +544,6 @@ export async function runGuardEvaluationApplication(
                 queries.push(async () => { trees.set(key, await guardWorktreeChanges(command!.cwd, target, protectedPaths, git.value, adapters.execute ?? executeProbe, gitEnvironment)) })
             }
         }
-        // When the agent tool started, which dates an existing mktemp entry, asked only of a call that names one.
-        const temps = agentAreas?.agentWorkspaces.filter(area => area.kind === 'temp').map(area => area.path) ?? []
-        let agentStartedAt: number | undefined
-        if (temps.length && /tmp\./i.test(JSON.stringify(data.payload))) {
-            queries.push(async () => {
-                const ps = await resolveExecutable('ps', { PATH: GUARD_EXECUTABLE_SEARCH_PATH })
-                if (ps.state === 'available') agentStartedAt = await guardAgentStart(ps.value, adapters.execute ?? executeProbe, process.ppid)
-            })
-        }
         for (const invocation of parsed.invocations) {
             const command = gitInvocation(invocation)
             if ((command?.verb === 'remote' || command?.verb === 'ls-remote') && !command.uncertain) askRemotes(command.cwd)
@@ -645,14 +636,6 @@ export async function runGuardEvaluationApplication(
                 const facts = request.revision === undefined ? null : trees.get(treeKey(path, { ...request, revision: request.revision }))
                 return facts ? { status: 'resolved', path, revision: request.revision, ...request.from === undefined ? {} : { from: request.from }, ...facts }
                     : { status: 'unavailable', path, symlink: false }
-            }
-            if (request.operation === 'entry') {
-                if (!temps.includes(dirname(path))) return { status: 'unavailable', path, symlink: false }
-                let status: Stats | undefined
-                try { status = lstatIfPresentSync(path) } catch (error) { throw new CallPathUnreadable(path, error) }
-                // A system that keeps no birth time reports zero.
-                return status ? { status: 'resolved', path, exists: true, owned: status.uid === process.getuid?.(), bornMs: status.birthtimeMs > 0 ? Math.floor(status.birthtimeMs) : null }
-                    : { status: 'resolved', path, exists: false }
             }
             if (request.operation === 'external-write') {
                 // The system resolves `link/..` from where the link leads, so such a spelling lands somewhere its
@@ -817,7 +800,7 @@ export async function runGuardEvaluationApplication(
             cockpitLaunchers: launched.map(({ executable, cwd, argv, prefix }) => ({ executable, cwd, argv: argv.slice(0, prefix) })),
             searchDirectories: guardSearchDirectories(searchPath, prepared.result.policy.allowedRoots),
             // A write path still never takes a program planted in a search path directory, nor the Node the guard runs.
-            ...agentAreas, ...agentStartedAt === undefined ? {} : { agentStartedAt },
+            ...agentAreas,
             ...policy.writePaths?.length || agentRoots.length ? { externalSearchDirectories: externalSearchDirectories(searchPath, policy.allowedRoots),
                 guardRuntime: [...new Set([identity.node, dirname(dirname(identity.node)), process.execPath])].filter(path => path !== '/') } : {},
             searchPathRelativeEntry: guardSearchPathRelativeEntry(searchPath),

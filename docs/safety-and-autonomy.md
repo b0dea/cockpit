@@ -103,8 +103,6 @@ Limits, stated plainly:
   a nested agent setting the guard never saw.
 - In an [agent workspace](#agent-workspaces) a file copied in keeps its mode, so `cp` of an
   executable script leaves an executable copy: the guard judges modes only where a command sets one.
-  Where the system reports a changed time in place of a birth time, a temp entry changed since the
-  agent tool started passes as one it made.
 - A Git command that needs repository facts, such as a push or a merge, asks when it runs after
   `session --` or `exec --`, because the guard gathers those facts only for the outer command.
 - Sync binds the guard to the cockpit that runs it, which is why it refuses to run from a copy
@@ -760,7 +758,7 @@ a second spelling the guard's rules do not compare. Name it from `/`.
 ### Agent workspaces
 
 An agent tool keeps its own working files outside the cockpit: Claude Code's auto memory and plans,
-Codex's memory notes, the session's scratchpad, and temp files. The guard admits writing them by
+Codex's memory notes, and Claude Code's session scratchpad. The guard admits writing them by
 default, in every mode and with no configuration, so an agent's memory, plans and scratch files never
 wait for a person; what the tool itself writes there, the agent reads but does not write. Each location
 is derived on every call from what the harness reports, never from a guessed layout:
@@ -770,16 +768,13 @@ is derived on every call from what the harness reports, never from a guessed lay
 | The running tool's home | Claude Code: `CLAUDE_CONFIG_DIR`, else `~/.claude`. Codex: `CODEX_HOME`, else the directory above `sessions/` in the payload's `transcript_path`, else `~/.codex`. OpenCode: `opencode` below `XDG_DATA_HOME` (else `~/.local/share`) and below `XDG_CONFIG_HOME` (else `~/.config`). | The hook's environment and payload |
 | Claude Code's session scratchpad | The payload's `scratchpad_dir`; otherwise `claude-<uid>/<project>/<session_id>/scratchpad` below `CLAUDE_CODE_TMPDIR` or `/tmp`, where `<project>` names the transcript's directory | The payload's `transcript_path` and `session_id`, and the user id |
 | The session's own files, read only | The directory holding that scratchpad, where task output lands; the transcript's project directory; and `file-history/<session_id>/`, the session's checkpoints | As above |
-| Temp, what `mktemp` made | Below `TMPDIR`, when it is a directory the user owns that no one else may enter, and below `/tmp`: only an entry named as `mktemp` and `mktemp -d` name one by default (`tmp.` and six or more letters and digits) and what lies below it | The hook's environment and the directory's owner and mode |
 
-Everything else in temp is other programs' state, such as packages a launcher cached and runs later,
-sockets, or Claude Code's trees for other sessions, and is judged as any location outside the cockpit.
-So an agent keeps temp files in the scratchpad, or in a directory from `mktemp -d`, or a file from
-`mktemp`. An entry the call makes is the agent's. One that already exists is the agent's only when the
-user owns it and its birth time is no earlier than the start of the agent tool's process, the first
-process above the guard that is not a shell, as `ps` reports it to the second. An older entry, or
-another user's, may be another session's and is judged as any location outside the cockpit. When
-the system keeps no birth time, or the start cannot be read, a person decides.
+Temp directories are other programs' state, such as packages a launcher cached and runs later,
+sockets, or Claude Code's trees for other sessions, and are judged as any location outside the
+cockpit; `mktemp` itself is a program the guard does not know, and its `$(mktemp)` output is a word it
+cannot expand. So an agent in Claude Code keeps scratch files in its scratchpad, and one in another tool
+keeps them inside the checkout (in an ignored directory) or under a
+[write path](#writes-outside-the-roots) a person adds.
 
 Only the running tool's own home counts: a Codex session does not write Claude Code's files. Below a
 home, each entry is classified by the table in
@@ -817,7 +812,7 @@ link, a writer whose files the guard cannot see (an extraction, a recursive copy
 directory), a mode with an execute, set-id or sticky bit (`chmod +x`, `chmod 755`, `install` without
 a plain mode), `.env*` and `.secrets` names, key files, a `.cockpit/guards` path, a file with another
 hard link, a command search path directory, a `.git`, `.claude`, `.codex` or other tool directory
-below the area, removing a whole area or a whole entry of a home, and in temp and the scratchpad also
+below the area, removing a whole area or a whole entry of a home, and in the scratchpad also
 a `CLAUDE.md`, `AGENTS.md` or `.agents/` a session started there would load and every location the
 [write path list](#writes-outside-the-roots) refuses. Containment is judged on where a path lands once
 every existing link is followed, as for write paths, and a spelling that leaves a link through `..`

@@ -134,15 +134,13 @@ export interface GuardEvaluationPolicy {
     readonly agentMemoryKeys?: readonly string[]
     /** The subagent the payload names, whose own memory it writes. */
     readonly agentType?: string
-    /** The session's scratchpad and the private temp directories, and the spellings that lead to them. */
+    /** The session's scratchpad. */
     readonly agentWorkspaces?: readonly GuardAgentWorkspace[]
     /** Directories the agent reads but does not write: its session's own temp tree. */
     readonly agentReadAreas?: readonly string[]
-    /** When the running agent tool's process started, in milliseconds since the epoch, to the second. */
-    readonly agentStartedAt?: number
 }
 export interface GuardAgentHome { readonly tool: AgentHomeTool; readonly path: string }
-export interface GuardAgentWorkspace { readonly kind: 'scratchpad' | 'temp'; readonly path: string }
+export interface GuardAgentWorkspace { readonly kind: 'scratchpad'; readonly path: string }
 interface PathInspectionRequest {
     readonly path: string
     readonly cwd: string
@@ -163,12 +161,10 @@ interface PathInspectionRequest {
      * agent instruction files that differ. A
      * `manifest` is the nearest package.json at or above the path: its `name` and its `scripts` names.
      * An `external-write` is a path outside the roots a write may land on; its evidence carries
-     * `landsAt`, the path with every existing link on the way resolved. An `entry` is a temp directory
-     * entry; its evidence carries `exists`, and for one that does, `owned`, whether the user running the
-     * guard owns it, and `bornMs`, its birth time, or null when the system does not keep one.
+     * `landsAt`, the path with every existing link on the way resolved.
      */
     /** `list` reads names only; it is asked for a listing outside the roots, where a directory may be listed but not read. */
-    readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'list' | 'remove' | 'search' | 'unignored-search' | 'repository' | 'branch' | 'remote' | 'patch' | 'tree' | 'manifest' | 'external-write' | 'entry'
+    readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'list' | 'remove' | 'search' | 'unignored-search' | 'repository' | 'branch' | 'remote' | 'patch' | 'tree' | 'manifest' | 'external-write'
     readonly revision?: string
     readonly from?: string
     readonly paths?: readonly string[]
@@ -316,17 +312,16 @@ function agentAreas(p: JsonSnapshotObject): boolean {
     const located = (value: JsonSnapshot | undefined, kinds: readonly string[], kind: 'tool' | 'kind') => record(value) && keys(value, [kind, 'path'])
         && kinds.includes(String(value[kind])) && canonical(value.path) && outsideHome(value.path)
     return (p.agentHomes === undefined || Array.isArray(p.agentHomes) && p.agentHomes.length <= 8 && p.agentHomes.every(item => located(item, AGENT_HOME_TOOLS, 'tool')))
-        && (p.agentWorkspaces === undefined || Array.isArray(p.agentWorkspaces) && p.agentWorkspaces.length <= 16 && p.agentWorkspaces.every(item => located(item, ['scratchpad', 'temp'], 'kind')))
+        && (p.agentWorkspaces === undefined || Array.isArray(p.agentWorkspaces) && p.agentWorkspaces.length <= 16 && p.agentWorkspaces.every(item => located(item, ['scratchpad'], 'kind')))
         && (p.agentReadAreas === undefined || strings(p.agentReadAreas) && p.agentReadAreas.length <= 16 && p.agentReadAreas.every(path => canonical(path) && outsideHome(path)))
         && (p.agentMemoryKeys === undefined || strings(p.agentMemoryKeys) && p.agentMemoryKeys.length <= 512 && p.agentMemoryKeys.every(key => /^[A-Za-z0-9-]{1,255}$/.test(key)))
         && (p.agentType === undefined || typeof p.agentType === 'string' && AGENT_TYPE.test(p.agentType))
-        && (p.agentStartedAt === undefined || typeof p.agentStartedAt === 'number' && Number.isSafeInteger(p.agentStartedAt) && p.agentStartedAt >= 0)
 }
 function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     const p = snapshotJson(value)
     if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'searchPathRelativeEntry', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands', ...p.mcpAllowedTools === undefined ? [] : ['mcpAllowedTools'], ...p.externalReads === undefined ? [] : ['externalReads'], ...p.readPaths === undefined ? [] : ['readPaths'], ...p.defaultDecision === undefined ? [] : ['defaultDecision'], ...p.homeDirectory === undefined ? [] : ['homeDirectory'], ...p.cockpitPackageDirectories === undefined ? [] : ['cockpitPackageDirectories'],
         ...['secretPaths', 'relatedCheckouts', 'unresolved', 'writePaths', 'relatedReserved', 'externalSearchDirectories', 'guardRuntime',
-            'agentHomes', 'agentMemoryKeys', 'agentType', 'agentWorkspaces', 'agentReadAreas', 'agentStartedAt'].filter(key => p[key] !== undefined)])
+            'agentHomes', 'agentMemoryKeys', 'agentType', 'agentWorkspaces', 'agentReadAreas'].filter(key => p[key] !== undefined)])
         || p.readPaths !== undefined && (!strings(p.readPaths) || p.readPaths.length > 64 || !p.readPaths.every(canonical))
         || p.externalReads !== undefined && p.externalReads !== 'grant' && p.externalReads !== 'native'
         || p.unresolved !== undefined && p.unresolved !== 'ask' && p.unresolved !== 'deny'
@@ -1258,11 +1253,6 @@ const NAMED_RUN_CONFIGURATION = new Set(['.cockpit', '.claude', '.codex', '.open
 const NAMED_RUN_FILES = new Set(['opencode.json', 'opencode.jsonc', '.envrc', '.mcp.json'])
 // What an agent tool loads from the directory a session starts in, beyond its configuration directory.
 const NAMED_INSTRUCTION_FILES = new Set(['claude.md', 'claude.local.md', 'agents.md', 'agents.override.md'])
-// Below a temp directory, only what `mktemp` and `mktemp -d` name by default (`tmp.` and random letters
-// and digits, BSD and GNU alike) is an agent's own: everything else there is other programs' state, such
-// as packages a launcher cached and runs later, sockets, or Claude Code's trees for other sessions.
-const MKTEMP_NAME = /^tmp\.[a-z0-9]{6,}$/
-
 function externalWriteHazard(spelled: string, home: string | undefined, searchDirectories: readonly string[]): string | undefined {
     const folded = unfirmlinked(spelled)
     if (credentialStore(folded, home)) return 'a credential store'
@@ -2076,31 +2066,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const agentReadAreas = resolved.agentReadAreas ?? []
     const memoryKeys = new Set((resolved.agentMemoryKeys ?? []).map(fold))
     const agentHomeOf = (path: string) => agentHomes.find(home => within(path, home.path))
-    // A temp entry is the agent's when this call makes it, or the user made it after the agent tool started:
-    // an older one may be another session's or user's. Either time unknown, a person decides.
-    const entries = new Map<string, boolean>()
-    const madeByAgent = (entry: string) => {
-        let made = entries.get(entry)
-        if (made !== undefined) return made
-        let evidence: JsonSnapshot | undefined
-        try { evidence = snapshotJson(inspect({ path: entry, cwd: '/', operation: 'entry' })) } catch { evidence = undefined } // no answer is an unknown time, which asks
-        const fact = record(evidence) && evidence.status === 'resolved' && evidence.path === entry ? evidence : undefined
-        if (fact?.exists === false) made = true
-        else if (fact?.exists === true && fact.owned !== true) made = false
-        else if (fact?.exists === true && typeof fact.bornMs === 'number' && resolved.agentStartedAt !== undefined) made = fact.bornMs >= resolved.agentStartedAt
-        else {
-            unclassifiedAsk ??= ask(`${shownGuardWord(entry)} may already exist, and the guard could not tell whether this user made it after this agent tool started, so it may be another session's. A person decides, or the agent makes a new one with mktemp.`)
-            made = true
-        }
-        entries.set(entry, made)
-        return made
-    }
-    const agentWorkspaceOf = (path: string) => agentWorkspaces.find(area => {
-        if (!within(path, area.path)) return false
-        if (area.kind !== 'temp') return true
-        const name = posix.relative(area.path, path).split('/')[0]!
-        return MKTEMP_NAME.test(fold(name)) && madeByAgent(posix.join(area.path, name))
-    })
+    const agentWorkspaceOf = (path: string) => agentWorkspaces.find(area => within(path, area.path))
     // An agent reads its session's own areas, its workspaces, this cockpit's Claude Code projects, and what it may
     // write in its tool's home; never a credential. Everything else there, other projects' files included, asks.
     const agentReadable = (lexical: string) => {
@@ -2307,7 +2273,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const home = agentHomeOf(landsAt)
         const workspace = home ? undefined : agentWorkspaceOf(landsAt)
         if (!home && !workspace) return false
-        const owner = home ? AGENT_HOME_NAMES[home.tool] : workspace!.kind === 'scratchpad' ? 'the session scratchpad' : 'a temp directory'
+        const owner = home ? AGENT_HOME_NAMES[home.tool] : 'the session scratchpad'
         const refuse = (why: string) => { hold(deny(`Refusing to write ${shownGuardWord(request.path)}: ${why}. A person makes this change.`)); return true }
         if (linking) return refuse(`the command makes or moves a link in ${owner}, which a later write could follow anywhere`)
         if (settingExecutable) return refuse(`the command leaves a file in ${owner} executable, which a later command could run in place of a program the guard judges`)
@@ -2331,7 +2297,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             || !home && (NAMED_INSTRUCTION_FILES.has(segments.at(-1) ?? '') || segments.includes('.agents'))) {
             return refuse(`it is configuration, instructions or Git hooks that an agent tool, a shell or Git loads from ${owner}`)
         }
-        // A temp directory is judged as any location outside the roots: what a shell, Git or the system runs later stays refused.
+        // The scratchpad is judged as any location outside the roots: what a shell, Git or the system runs later stays refused.
         const hazard = home ? undefined : externalWriteHazard(folded, resolved.homeDirectory, [])
         if (hazard) return refuse(`it is ${hazard}`)
         // The home directory itself, as `mkdir -p` names it on the way to an entry.
