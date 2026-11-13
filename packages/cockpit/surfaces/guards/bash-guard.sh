@@ -10,7 +10,10 @@ case "$source_path" in
     */*) guards="${source_path%/*}" ;;
     *) guards=. ;;
 esac
-if ! root=$(cd -P -- "$guards/../.." && pwd -P); then
+# The hook's check passes the root it verified, which a linked directory cannot move.
+if [ -n "${COCKPIT_GUARD_CHECKED_ROOT:-}" ]; then
+    root=$COCKPIT_GUARD_CHECKED_ROOT
+elif ! root=$(cd -P -- "$guards/../.." && pwd -P); then
     printf 'cockpit guard: cannot resolve the cockpit checkout above %s, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are refused. ' "$guards" >&2
     cockpit_guard_recovery '' "$config"
     exit 2

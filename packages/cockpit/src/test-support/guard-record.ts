@@ -7,18 +7,16 @@ import { GUARD_LOCAL_PATHS } from '../guards/local-identity.js'
 
 /**
  * Records a synthetic cockpit's guard as sync would, for a test that runs a generated hook against
- * files it wrote itself, in the test's own home. The digest covers the files
- * present, as the hook's `cat` does, so a fixture without an identity file still reaches the guard
- * script's own diagnosis of it.
+ * files it wrote itself, in the test's own home. A fixture without an identity file records none, and
+ * the check leaves its absence to the guard script's own diagnosis.
  */
 export function recordTestGuard(root: string, home = homedir()): void {
     const canonical = realpathSync(root)
-    const hash = createHash('sha256')
-    for (const path of [GUARD_SCRIPT_PATH, GUARD_LOCAL_PATHS.identity]) {
-        try { hash.update(readFileSync(join(canonical, path))) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
-    }
+    const digests = [GUARD_SCRIPT_PATH, GUARD_LOCAL_PATHS.identity].map(path => {
+        try { return createHash('sha256').update(readFileSync(join(canonical, path))).digest('hex') } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; return '' }
+    })
     const record = guardRecordPath(canonical, home)
     mkdirSync(dirname(record), { recursive: true })
-    writeFileSync(record, `${hash.digest('hex')}\n`)
+    writeFileSync(record, `${digests.join('\n')}\n`)
     writeFileSync(join(home, GUARD_CHECK_PATH), GUARD_CHECK_SCRIPT)
 }
