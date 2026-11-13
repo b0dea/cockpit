@@ -166,6 +166,14 @@ describe('public surface publication transaction', () => {
             expect(call({ file_path: skill, content: '---\nname: probe\nhooks: {}\n---\n' })).toBe('ask')
             expect(call({ file_path: skill, old_string: 'name: probe\n', new_string: 'name: probe\nmcpServers: {}\n' }, 'Edit')).toBe('ask')
             expect(call({ file_path: skill, old_string: 'Body.', new_string: 'Another body.' }, 'Edit')).toBe('allow')
+            // An extraction is judged by the members its archive lists.
+            for (const [name, member] of [['clean', 'notes.md'], ['planted', '.claude/settings.json']]) {
+                await mkdir(join(subdirectory, 'content', name, dirname(member)), { recursive: true })
+                await writeFile(join(subdirectory, 'content', name, member), '{}')
+                expect(spawnSync('tar', ['-cf', join(subdirectory, `${name}.tar`), '-C', join(subdirectory, 'content', name), member]).status).toBe(0)
+            }
+            expect(call({ command: 'tar -xf clean.tar -C out' }, 'Bash')).toBe('allow')
+            expect(call({ command: 'tar -xf planted.tar -C out' }, 'Bash')).toBe('deny')
         })
 
         it('guards a session in a linked worktree kept below the checkout, and one below a cockpit nested in its repository', async () => {

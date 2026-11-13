@@ -13,7 +13,7 @@ import { ENVIRONMENT_CODES, snapshotExecutionStep, type ExecutionStep, RefusalEr
 import { GIT_CHILD_CONFIG, type ResolvedExecutable } from '../environment/executable.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { instructionRisk } from './instruction-frontmatter.js'
-import { agentInstructionFile, foldGuardSpelling, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity, isSensitiveGuardName, plantedAgentControl, type GitTreeTarget } from './evaluator.js'
+import { agentInstructionFile, foldGuardSpelling, GUARD_ARCHIVE_ENTRIES, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity, isSensitiveGuardName, plantedAgentControl, type GitTreeTarget } from './evaluator.js'
 
 function missing(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
 
@@ -202,6 +202,26 @@ async function gitPaths(git: ResolvedExecutable, repository: string, args: reado
     if (outcome?.kind === 'complete') return outcome.stdout.toString('utf8').split('\0').filter(Boolean)
     return outcome?.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED
         && outcome.execution.exitCode === 1 && outcome.execution.signal === null ? [] : null
+}
+
+/**
+ * Every member name an archive lists, as `tar -tf` or `unzip -Z1` prints one per line, or null when the
+ * tool cannot read it or it lists more than GUARD_ARCHIVE_ENTRIES. tar detects compression itself.
+ */
+export async function guardArchiveEntries(archive: string, format: 'tar' | 'zip', tool: ResolvedExecutable, execute: GuardExecute): Promise<readonly string[] | null> {
+    const step = snapshotExecutionStep({
+        id: 'guard-archive-entries',
+        argv: [tool.canonicalPath, ...format === 'tar' ? ['-tf', archive] : ['-Z1', archive]],
+        argv0: tool.invocationPath, cwd: dirname(archive), env: { LC_ALL: 'C' }, timeoutMs: 10_000,
+        stdoutLimitBytes: GIT_LIST_BYTES, stderrLimitBytes: 65_536, paths: [], ports: [], labels: { action: 'guard-archive-entries' }, expected: [],
+        consumedFiles: [{ path: tool.canonicalPath, sha256: tool.sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: tool.executionMode }],
+        filesystemChecks: [], compensation: [],
+    })
+    if (!step) throw new RefusalError(`the listing of ${archive} could not be planned`)
+    const outcome = authenticatedExecutionOutcome(await execute(step), step)
+    if (outcome?.kind !== 'complete') return null
+    const entries = outcome.stdout.toString('utf8').split('\n').filter(Boolean)
+    return entries.length <= GUARD_ARCHIVE_ENTRIES ? entries : null
 }
 
 // A `.gitignore` is a short list of patterns; one past this is not read.

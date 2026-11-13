@@ -16,9 +16,10 @@ const instance = `${root}/config/active.instance`
 // A search's evidence also lists the `.env*` and `.secrets` names below it, and a repository's the
 // ones its index holds and, when asked, the ones its history ever held; synthetic trees and repositories hold none.
 const searches = (operation?: string) => operation === 'search' || operation === 'unignored-search'
-// A synthetic repository's work tree holds no guard control, so no revision changes one.
+// A synthetic repository's work tree holds no guard control, so no revision changes one, and a synthetic archive holds no member.
 const inspect = ({ path, cwd, operation, revision, from, history }: { path: string; cwd: string; operation?: string; revision?: string; from?: string; history?: true }) => operation === 'tree'
     ? { status: 'resolved', path: posix.resolve(cwd, path), revision, ...from === undefined ? {} : { from }, guarded: false, changed: [] as string[] }
+    : operation === 'archive' ? { status: 'resolved', path: posix.resolve(cwd, path), entries: [] as string[] }
     : { status: 'resolved', path: posix.resolve(cwd, path), symlink: false, identity: null, ancestors: [],
         ...(searches(operation) ? { sensitive: [] as string[] | null } : {}), ...(operation === 'repository' ? { tracked: [] as string[] | null, ...history ? { committed: [] as string[] | null } : {} } : {}) }
 // Identity facts for every protected path; synthetic tests name only the ones they exercise.
@@ -454,6 +455,28 @@ describe('resolved guard evaluation', () => {
             'git bisect log', 'git submodule status', 'git stash list', 'git stash drop']) {
             expect(decide(command), command).toBe('allow')
         }
+    })
+
+    it('judges each member an extraction writes into the roots from the archive\'s listing, and asks when it cannot list one', () => {
+        const allowing = { ...policy(), defaultDecision: 'allow' as const }
+        const listing = (entries: readonly string[] | null) => (request: Parameters<PathInspection>[0]) => request.operation !== 'archive' ? withGit(request)
+            : entries === null ? { status: 'unavailable', path: posix.resolve(request.cwd, request.path), symlink: false }
+                : { status: 'resolved', path: posix.resolve(request.cwd, request.path), entries }
+        const decide = (command: string, entries: readonly string[] | null) => evaluateGuard(parseGuardInput(shellPayload(command)), allowing, listing(entries)).decision
+        for (const command of ['tar -xf build/a.tar -C build/x', 'tar xzf build/a.tgz -C build/y', 'unzip -o build/a.zip -d build/x']) {
+            expect(decide(command, ['src/a.ts', 'docs/']), command).toBe('allow')
+            for (const planted of ['pkg/.claude/settings.json', 'sub/.cockpit/guards/bash-guard.sh', 'a/.opencode/tools/t.ts']) expect(decide(command, [planted]), `${command} ${planted}`).toBe('deny')
+            for (const entry of ['tools/skills/p/SKILL.md', '../escape.txt', '/etc/x']) expect(decide(command, [entry]), `${command} ${entry}`).toBe('ask')
+            expect(decide(command, null), command).toBe('ask')
+        }
+        // An archive from standard input, and extractors the guard does not list, ask; so does a clone into the roots.
+        for (const command of ['tar -xf - -C build/x', 'ditto -x -k build/a.zip build/x', '7z x build/a.7z', 'cpio -i < build/a.cpio', 'pax -r -f build/a.pax',
+            'gh repo clone o/r build/r', 'gh gist clone 1 build/g', 'gh repo fork o/r --clone']) {
+            expect(decide(command, []), command).not.toBe('allow')
+        }
+        expect(decide('ditto -x -k build/a.zip build/x', [])).toBe('ask')
+        expect(decide('gh repo clone o/r build/r', [])).toBe('ask')
+        expect(decide('tar -tf build/a.tar', null)).toBe('allow')
     })
 
     it('judges what each spelling of a Git content writer checks out, refusing a planted control at any depth and asking for an agent instruction file', () => {
@@ -2077,7 +2100,7 @@ describe('allow by default', () => {
             'docker images -q', 'docker ps -a --filter status=running', "docker ps --format '{{.Names}}'", 'docker container ls', 'docker version --format {{.Server.Version}}',
             "jq --arg v 1 '.a' package.json", "jq --argjson n 1 --indent 4 '.a' package.json", "jq --rawfile t notes.md '.a' package.json", 'tail -f src/a.ts', 'tail -F -n 20 src/a.ts',
             'wc -l src/*.ts', "find src -name '*.ts' -print -quit", 'base64 -d build/a.b64 > build/a.bin', 'base64 -d -i build/a.b64 -o build/a.bin',
-            "gh release download v1 -p '*.tgz' -D build/x", "gh release download v1 -p '*.tgz'", 'gh run download 1 -D build/art', 'gh repo clone o/r build/r']) {
+            "gh release download v1 -p '*.tgz' -D build/x", "gh release download v1 -p '*.tgz'", 'gh run download 1 -D build/art']) {
             const allowsInline = { ...open(), externalReads: 'native' as const, declaredAllows: [{ argv: ['python3', '-c'], cwd: root, reason: 'Run inline Python.' }] }
             const marked = evaluateGuard(parseGuardInput(shellPayload(command), { dynamicWords: 'mark', home }), allowsInline,
                 (request) => ({ ...onBranch('refs/heads/topic')(request), identity: '8:2' }))

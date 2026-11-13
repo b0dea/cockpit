@@ -161,10 +161,12 @@ interface PathInspectionRequest {
      * agent instruction files that differ. A
      * `manifest` is the nearest package.json at or above the path: its `name` and its `scripts` names.
      * An `external-write` is a path outside the roots a write may land on; its evidence carries
-     * `landsAt`, the path with every existing link on the way resolved.
+     * `landsAt`, the path with every existing link on the way resolved. An `archive` is an archive of
+     * `format` an extraction reads; its evidence carries `entries`, every member name it lists.
      */
     /** `list` reads names only; it is asked for a listing outside the roots, where a directory may be listed but not read. */
-    readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'list' | 'remove' | 'search' | 'unignored-search' | 'repository' | 'branch' | 'remote' | 'patch' | 'tree' | 'manifest' | 'external-write'
+    readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'list' | 'remove' | 'search' | 'unignored-search' | 'repository' | 'branch' | 'remote' | 'patch' | 'tree' | 'manifest' | 'external-write' | 'archive'
+    readonly format?: 'tar' | 'zip'
     readonly revision?: string
     readonly from?: string
     readonly paths?: readonly string[]
@@ -955,6 +957,33 @@ function tarWrites(args: readonly string[]): VisibleWrites & { readonly mode: st
         sources: writesArchive ? sources : [], uncertain: uncertain || mode === undefined || mode === 'x' && archive === undefined }
 }
 
+/**
+ * What an extraction writes, so its archive can be listed first: the archive, its format and the
+ * destination; or `unmodelled` for one whose members the guard cannot list (an archive on standard
+ * input, `ditto -x`, `7z`, `cpio -i`, `pax -r`). Undefined for anything that extracts nothing.
+ */
+export function guardExtraction(invocation: ParsedInvocation): Readonly<{ archive: string; format: 'tar' | 'zip'; destination: string }> | 'unmodelled' | undefined {
+    if (invocation.executable === null) return undefined
+    const name = posix.basename(invocation.executable)
+    const argv = invocation.argv
+    if (['tar', 'gtar', 'bsdtar'].includes(name)) {
+        const tar = tarWrites(argv)
+        if (tar.mode !== 'x') return undefined
+        const archive = tar.reads?.[0]
+        return archive === undefined ? 'unmodelled' : { archive, format: 'tar', destination: tar.paths[0] ?? '.' }
+    }
+    if (name === 'unzip') {
+        const zip = unzipWrites(argv)
+        const archive = zip?.reads?.[0]
+        return zip === undefined ? undefined : archive === undefined ? 'unmodelled' : { archive, format: 'zip', destination: zip.paths[0] ?? '.' }
+    }
+    if (name === 'ditto') return argv.some(arg => /^-[A-Za-z]*x/.test(arg) && !arg.startsWith('--')) ? 'unmodelled' : undefined
+    if (['7z', '7za', '7zz'].includes(name)) return ['x', 'e'].includes(argv.find(arg => !arg.startsWith('-')) ?? '') ? 'unmodelled' : undefined
+    if (name === 'cpio') return argv.some(arg => arg === '--extract' || /^-[A-Za-z]*i/.test(arg) && !arg.startsWith('--')) ? 'unmodelled' : undefined
+    if (name === 'pax') return argv.some(arg => /^-[A-Za-z]*r/.test(arg) && !arg.startsWith('--')) ? 'unmodelled' : undefined
+    return undefined
+}
+
 /** unzip writes every member below its destination, the working directory or `-d`; listing, testing and printing write nothing. */
 function unzipWrites(args: readonly string[]): VisibleWrites | undefined {
     let destination = '.'
@@ -1378,6 +1407,9 @@ export function guardScriptLocation(folded: string): boolean {
     const parts = folded.split('/')
     return parts.at(-1) === '.cockpit' || parts.some((part, at) => part === '.cockpit' && parts[at + 1] === 'guards')
 }
+
+/** The most members an archive listing may name; a larger archive is not listed, which asks. */
+export const GUARD_ARCHIVE_ENTRIES = 100_000
 
 // What no agent places anywhere: agent tool settings, hooks and guard scripts, and a `.git` entry, which
 // stops the hook walk and starts a repository the guard is not registered in. Folded spellings.
@@ -2279,6 +2311,14 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             && typeof evidence.guarded === 'boolean' && paths(evidence.changed) && (evidence.instructions === undefined || paths(evidence.instructions))
             ? { guarded: evidence.guarded, changed: evidence.changed, instructions: evidence.instructions ?? [] } : undefined
     }
+    // Every member name the archive an extraction reads lists.
+    const archiveFacts = (archive: string, cwd: string, format: 'tar' | 'zip'): readonly string[] | undefined => {
+        let evidence: JsonSnapshot | undefined
+        try { evidence = snapshotJson(inspect({ path: archive, cwd, operation: 'archive', format })) }
+        catch { return undefined } // no listing leaves the members unknown, which only ever asks
+        return record(evidence) && evidence.status === 'resolved' && evidence.path === posix.resolve(cwd, archive) && Array.isArray(evidence.entries)
+            && evidence.entries.length <= GUARD_ARCHIVE_ENTRIES && evidence.entries.every(scalar) ? evidence.entries as readonly string[] : undefined
+    }
     // The nearest package.json at or above a path: its name and its script names.
     // The nearest package.json at or above a path: its name and its script names, and with `workspace` the
     // scripts any package of the enclosing workspace declares, or null when they could not all be read.
@@ -2881,6 +2921,31 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const targets = ['.', ...git.args.filter(arg => !arg.startsWith('-') && arg !== 'add' && !/^[a-z][a-z0-9+.-]*:\/\//i.test(arg) && !/^[^/]*:/.test(arg))]
             if (targets.some(target => inRoots(posix.resolve(git.cwd, target)))) holdBoundary(invocation, ask(`${named(invocation)} creates a Git repository inside the cockpit, and Claude Code loads no hook from the cockpit's settings for a session started in it, so the guard would not run there. `
                 + 'Use `git worktree add`, whose checkout carries the guard, or create the repository outside the cockpit; otherwise a person runs it.'))
+        }
+        // An extraction writes members whose names only its archive holds, so the archive is listed first and
+        // each member judged where it lands, at any depth.
+        const extracted = guardExtraction(invocation)
+        if (extracted === 'unmodelled') {
+            holdBoundary(invocation, ask(`${named(invocation)} extracts members the guard cannot list before they land. Extract with \`tar -xf <archive>\` or \`unzip <archive>\`, which it lists, or a person runs it.`))
+        } else if (extracted && inRoots(posix.resolve(invocation.cwd, extracted.destination))) {
+            const destination = posix.resolve(invocation.cwd, extracted.destination)
+            const entries = archiveFacts(extracted.archive, invocation.cwd, extracted.format)
+            if (entries === undefined) holdBoundary(invocation, ask(`${named(invocation)} extracts an archive the guard could not list, so it cannot tell whether a member is an agent tool's settings, hooks or skill. A person runs it.`))
+            for (const entry of entries ?? []) {
+                if (entry.startsWith('/') || entry.split('/').includes('..')) {
+                    holdBoundary(invocation, ask(`${named(invocation)} extracts ${shownGuardWord(entry)}, which names a place outside its destination. A person runs it.`))
+                    continue
+                }
+                const folded = fold(posix.join(destination, entry))
+                if (plantedAgentControl(folded)) hold(guardScriptLocation(folded) ? guardScriptDenial : nestedConfigurationDenial)
+                else if (agentInstructionFile(folded)) holdBoundary(invocation, ask(`${named(invocation)} extracts ${shownGuardWord(entry)}, a skill, command or agent file whose text the guard cannot read before it lands. A person runs it.`))
+            }
+        }
+        // A clone into the roots is a repository a session started in it loads without the guard.
+        const ghWords = invocation.argv.filter(arg => !arg.startsWith('-'))
+        if (posix.basename(invocation.executable ?? '') === 'gh' && materialisesRepository(invocation) && !['release', 'run'].includes(ghWords[0] ?? '')
+            && inRoots(posix.resolve(invocation.cwd, ghWords[1] === 'clone' && ghWords[3] !== undefined ? ghWords[3] : '.'))) {
+            holdBoundary(invocation, ask(`${named(invocation)} clones a repository inside the cockpit, where a session started in it loads no cockpit hook. Clone it outside the cockpit, or a person runs it.`))
         }
         settingExecutable = setsExecutableBit(invocation)
         const executableName = posix.basename(invocation.executable ?? '')

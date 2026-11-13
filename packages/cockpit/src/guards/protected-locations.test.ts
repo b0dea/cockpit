@@ -4,10 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { GUARD_EXECUTABLE_SEARCH_PATH, resolveGitExecutable } from '../environment/executable.js'
+import { GUARD_EXECUTABLE_SEARCH_PATH, resolveExecutable, resolveGitExecutable } from '../environment/executable.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { GUARD_SECRET_FILE_LIMIT } from './evaluator.js'
-import { guardBranchFacts, guardInstalledDirectories, guardPackageManifest, guardPatchTargets, guardRemoteCredentials, guardSearchDirectories, guardSearchPathRelativeEntry,
+import { guardArchiveEntries, guardBranchFacts, guardInstalledDirectories, guardPackageManifest, guardPatchTargets, guardRemoteCredentials, guardSearchDirectories, guardSearchPathRelativeEntry,
     guardCommittedSensitivePaths, guardSecretFiles, guardSensitivePathsBelow, guardTrackedSensitivePaths, guardUnignoredSensitivePaths, guardWorktreeChanges } from './protected-locations.js'
 
 const roots: string[] = []
@@ -283,6 +283,27 @@ describe('guard protected locations', () => {
         expect(await changes({ revision: 'deep', fallback: 'index' })).toEqual({ guarded: false, changed: [planted[0], planted[1]] })
         run('read-tree', 'work')
         expect(await changes({ revision: 'work', from: 'worktree', paths: ['notes.md'] })).toEqual({ guarded: false, changed: [] })
+    })
+
+    it('lists the members a tar or zip archive would extract, and none from one it cannot read', async () => {
+        const root = scratch()
+        for (const path of ['src/a.ts', 'pkg/.claude/settings.json']) {
+            mkdirSync(join(root, 'content', path, '..'), { recursive: true })
+            writeFileSync(join(root, 'content', path), 'synthetic\n')
+        }
+        execFileSync('tar', ['-czf', join(root, 'a.tgz'), '-C', join(root, 'content'), 'src', 'pkg'])
+        execFileSync('zip', ['-qr', join(root, 'a.zip'), 'src', 'pkg'], { cwd: join(root, 'content') })
+        writeFileSync(join(root, 'broken.tgz'), 'not an archive')
+        const list = async (archive: string, format: 'tar' | 'zip') => {
+            const tool = await resolveExecutable(format === 'tar' ? 'tar' : 'unzip', { PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+            if (tool.state !== 'available') throw new Error(tool.reason)
+            return guardArchiveEntries(join(root, archive), format, tool.value, executeProbe)
+        }
+        const members = ['pkg/', 'pkg/.claude/', 'pkg/.claude/settings.json', 'src/', 'src/a.ts']
+        expect([...await list('a.tgz', 'tar') ?? []].sort()).toEqual(members)
+        expect([...await list('a.zip', 'zip') ?? []].sort()).toEqual(members)
+        expect(await list('broken.tgz', 'tar')).toBeNull()
+        expect(await list('missing.zip', 'zip')).toBeNull()
     })
 
     it('reads the nearest package manifest inside the roots, and none past them or from an unreadable one', () => {

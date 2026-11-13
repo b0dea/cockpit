@@ -16,7 +16,7 @@ import {
     snapshotJson,
     tryParseJson,
 } from '../contract.js'
-import { GUARD_EXECUTABLE_SEARCH_PATH, type ExecutableResolution, type ResolvedExecutable } from '../executable.js'
+import { GUARD_EXECUTABLE_SEARCH_PATH, resolveExecutable, type ExecutableResolution, type ResolvedExecutable } from '../executable.js'
 import { CockpitConfig } from '../../schema.js'
 import { correctsHeldConfiguration, pinnedPolicyDenial, restoresRecordedConfiguration } from '../../guards/policy-pin.js'
 import { instructionFrontmatterAsk } from '../../guards/instruction-frontmatter.js'
@@ -39,6 +39,7 @@ import {
     type GuardInvocationProfile,
     type GuardProjectCommand,
     type GitTreeTarget,
+    guardExtraction,
 } from '../../guards/evaluator.js'
 import { commandSpelling, ordinarySessionCommand, resolveOrdinaryInvocation, type OrdinaryGrant } from '../../command-table.js'
 import { effectivePolicy, trustInForce } from '../../autonomy.js'
@@ -60,6 +61,7 @@ import {
     guardPatchTargets,
     guardRemoteCredentials,
     guardWorktreeChanges,
+    guardArchiveEntries,
     guardCommittedSensitivePaths,
     guardTrackedSensitivePaths,
     guardUnignoredSensitivePaths,
@@ -545,6 +547,21 @@ export async function runGuardEvaluationApplication(
                 queries.push(async () => { trees.set(key, await guardWorktreeChanges(command!.cwd, target, protectedPaths, git.value, adapters.execute ?? executeProbe, gitEnvironment)) })
             }
         }
+        // What an extraction into the roots writes: its archive, inside the roots, is listed before the call is judged.
+        const archives = new Map<string, readonly string[] | null>()
+        const archiveKey = (path: string, format: string) => `${path}\0${format}`
+        for (const invocation of parsed.invocations) {
+            const extracted = guardExtraction(invocation)
+            if (!extracted || extracted === 'unmodelled') continue
+            const path = resolve(invocation.cwd, extracted.archive)
+            const key = archiveKey(path, extracted.format)
+            if (!allowed(path) || archives.has(key)) continue
+            archives.set(key, null)
+            queries.push(async () => {
+                const tool = await resolveExecutable(extracted.format === 'tar' ? 'tar' : 'unzip', { PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+                if (tool.state === 'available') archives.set(key, await guardArchiveEntries(path, extracted.format, tool.value, adapters.execute ?? executeProbe))
+            })
+        }
         for (const invocation of parsed.invocations) {
             const command = gitInvocation(invocation)
             if ((command?.verb === 'remote' || command?.verb === 'ls-remote') && !command.uncertain) askRemotes(command.cwd)
@@ -637,6 +654,10 @@ export async function runGuardEvaluationApplication(
                 const facts = request.revision === undefined ? null : trees.get(treeKey(path, { ...request, revision: request.revision }))
                 return facts ? { status: 'resolved', path, revision: request.revision, ...request.from === undefined ? {} : { from: request.from }, ...facts }
                     : { status: 'unavailable', path, symlink: false }
+            }
+            if (request.operation === 'archive') {
+                const entries = request.format === undefined ? undefined : archives.get(archiveKey(path, request.format))
+                return entries ? { status: 'resolved', path, entries } : { status: 'unavailable', path, symlink: false }
             }
             if (request.operation === 'external-write') {
                 // The system resolves `link/..` from where the link leads, so such a spelling lands somewhere its
