@@ -205,13 +205,22 @@ async function gitPaths(git: ResolvedExecutable, repository: string, args: reado
 }
 
 /**
- * Every member name an archive lists, as `tar -tf` or `unzip -Z1` prints one per line, or null when the
- * tool cannot read it or it lists more than GUARD_ARCHIVE_ENTRIES. tar detects compression itself.
+ * Every member name an archive lists, as `tar -tf` or `unzip -Z1` prints one per line, and whether any
+ * member is a link, symbolic or hard, as the long listing marks one (`l` or `h`, or bsdtar's ` link to `);
+ * null when the tool cannot read it or it lists more than GUARD_ARCHIVE_ENTRIES. tar detects compression itself.
  */
-export async function guardArchiveEntries(archive: string, format: 'tar' | 'zip', tool: ResolvedExecutable, execute: GuardExecute): Promise<readonly string[] | null> {
+export async function guardArchiveEntries(archive: string, format: 'tar' | 'zip', tool: ResolvedExecutable, execute: GuardExecute): Promise<Readonly<{ entries: readonly string[]; links: boolean }> | null> {
+    const names = await archiveListing(archive, tool, execute, format === 'tar' ? ['-tf', archive] : ['-Z1', archive])
+    const long = await archiveListing(archive, tool, execute, format === 'tar' ? ['-tvf', archive] : ['-Z', archive])
+    if (names === null || long === null) return null
+    const entries = names.split('\n').filter(Boolean)
+    return entries.length <= GUARD_ARCHIVE_ENTRIES ? { entries, links: long.split('\n').some(line => /^[lh]/.test(line) || line.includes(' link to ')) } : null
+}
+
+async function archiveListing(archive: string, tool: ResolvedExecutable, execute: GuardExecute, args: readonly string[]): Promise<string | null> {
     const step = snapshotExecutionStep({
         id: 'guard-archive-entries',
-        argv: [tool.canonicalPath, ...format === 'tar' ? ['-tf', archive] : ['-Z1', archive]],
+        argv: [tool.canonicalPath, ...args],
         argv0: tool.invocationPath, cwd: dirname(archive), env: { LC_ALL: 'C' }, timeoutMs: 10_000,
         stdoutLimitBytes: GIT_LIST_BYTES, stderrLimitBytes: 65_536, paths: [], ports: [], labels: { action: 'guard-archive-entries' }, expected: [],
         consumedFiles: [{ path: tool.canonicalPath, sha256: tool.sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: tool.executionMode }],
@@ -219,9 +228,7 @@ export async function guardArchiveEntries(archive: string, format: 'tar' | 'zip'
     })
     if (!step) throw new RefusalError(`the listing of ${archive} could not be planned`)
     const outcome = authenticatedExecutionOutcome(await execute(step), step)
-    if (outcome?.kind !== 'complete') return null
-    const entries = outcome.stdout.toString('utf8').split('\n').filter(Boolean)
-    return entries.length <= GUARD_ARCHIVE_ENTRIES ? entries : null
+    return outcome?.kind === 'complete' ? outcome.stdout.toString('utf8') : null
 }
 
 // A `.gitignore` is a short list of patterns; one past this is not read.

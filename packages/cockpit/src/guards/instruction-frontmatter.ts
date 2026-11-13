@@ -19,7 +19,8 @@ import { proposedText } from './policy-pin.js'
  * YAML, with merge keys and unique keys, is not proven to do none of these.
  */
 export function instructionRisk(text: string): string | undefined {
-    if (text.includes('!`')) return 'it runs a shell command as it loads (`!` before a backtick span)'
+    // Claude Code 2.1.323 runs both `!` before a backtick span and a fence opened with `!`.
+    if (text.includes('!`') || /`{3,}!/.test(text)) return 'it runs a shell command as it loads (`!` before a backtick span, or a fence opened with `!`)'
     const lines = text.replace(/^﻿/, '').split(/\r?\n/)
     const start = lines.findIndex(line => line.trim() !== '')
     if (start < 0 || lines[start]!.trim() !== '---') return undefined

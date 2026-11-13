@@ -335,8 +335,15 @@ describe('guard protected locations', () => {
             return guardArchiveEntries(join(root, archive), format, tool.value, executeProbe)
         }
         const members = ['pkg/', 'pkg/.claude/', 'pkg/.claude/settings.json', 'src/', 'src/a.ts']
-        expect([...await list('a.tgz', 'tar') ?? []].sort()).toEqual(members)
-        expect([...await list('a.zip', 'zip') ?? []].sort()).toEqual(members)
+        expect(await list('a.tgz', 'tar').then(found => found && { ...found, entries: [...found.entries].sort() })).toEqual({ entries: members, links: false })
+        expect(await list('a.zip', 'zip').then(found => found && { ...found, entries: [...found.entries].sort() })).toEqual({ entries: members, links: false })
+        // A member that is a link, symbolic or hard, lets a later member or command write through it.
+        symlinkSync('src/a.ts', join(root, 'content', 'link'))
+        linkSync(join(root, 'content/src/a.ts'), join(root, 'content', 'hard'))
+        execFileSync('tar', ['-czf', join(root, 'links.tgz'), '-C', join(root, 'content'), 'src', 'link'])
+        execFileSync('tar', ['-czf', join(root, 'hard.tgz'), '-C', join(root, 'content'), 'src', 'hard'])
+        execFileSync('zip', ['-qry', join(root, 'links.zip'), 'src', 'link'], { cwd: join(root, 'content') })
+        for (const [archive, format] of [['links.tgz', 'tar'], ['hard.tgz', 'tar'], ['links.zip', 'zip']] as const) expect((await list(archive, format))?.links, archive).toBe(true)
         expect(await list('broken.tgz', 'tar')).toBeNull()
         expect(await list('missing.zip', 'zip')).toBeNull()
     })

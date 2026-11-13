@@ -2340,12 +2340,13 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             ? { guarded: evidence.guarded, changed: evidence.changed, instructions: evidence.instructions ?? [], unsettled: evidence.unsettled ?? [] } : undefined
     }
     // Every member name the archive an extraction reads lists.
-    const archiveFacts = (archive: string, cwd: string, format: 'tar' | 'zip'): readonly string[] | undefined => {
+    const archiveFacts = (archive: string, cwd: string, format: 'tar' | 'zip'): Readonly<{ entries: readonly string[]; links: boolean }> | undefined => {
         let evidence: JsonSnapshot | undefined
         try { evidence = snapshotJson(inspect({ path: archive, cwd, operation: 'archive', format })) }
         catch { return undefined } // no listing leaves the members unknown, which only ever asks
         return record(evidence) && evidence.status === 'resolved' && evidence.path === posix.resolve(cwd, archive) && Array.isArray(evidence.entries)
-            && evidence.entries.length <= GUARD_ARCHIVE_ENTRIES && evidence.entries.every(scalar) ? evidence.entries as readonly string[] : undefined
+            && evidence.entries.length <= GUARD_ARCHIVE_ENTRIES && evidence.entries.every(scalar) && typeof evidence.links === 'boolean'
+            ? { entries: evidence.entries as readonly string[], links: evidence.links } : undefined
     }
     // The nearest package.json at or above a path: its name and its script names.
     // The nearest package.json at or above a path: its name and its script names, and with `workspace` the
@@ -2957,9 +2958,11 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             holdBoundary(invocation, ask(`${named(invocation)} extracts members the guard cannot list before they land. Extract with \`tar -xf <archive>\` or \`unzip <archive>\`, which it lists, or a person runs it.`))
         } else if (extracted && inRoots(posix.resolve(invocation.cwd, extracted.destination))) {
             const destination = posix.resolve(invocation.cwd, extracted.destination)
-            const entries = archiveFacts(extracted.archive, invocation.cwd, extracted.format)
-            if (entries === undefined) holdBoundary(invocation, ask(`${named(invocation)} extracts an archive the guard could not list, so it cannot tell whether a member is an agent tool's settings, hooks or skill. A person runs it.`))
-            for (const entry of entries ?? []) {
+            const listed = archiveFacts(extracted.archive, invocation.cwd, extracted.format)
+            if (listed === undefined) holdBoundary(invocation, ask(`${named(invocation)} extracts an archive the guard could not list, so it cannot tell whether a member is an agent tool's settings, hooks or skill. A person runs it.`))
+            // A link member lets a later member, or a later command, write through it where its name does not say.
+            else if (listed.links) holdBoundary(invocation, ask(`${named(invocation)} extracts an archive holding a link, symbolic or hard, which a later member or command can write through. A person runs it.`))
+            for (const entry of listed?.entries ?? []) {
                 if (entry.startsWith('/') || entry.split('/').includes('..')) {
                     holdBoundary(invocation, ask(`${named(invocation)} extracts ${shownGuardWord(entry)}, which names a place outside its destination. A person runs it.`))
                     continue

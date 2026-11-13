@@ -19,7 +19,7 @@ const searches = (operation?: string) => operation === 'search' || operation ===
 // A synthetic repository's work tree holds no guard control, so no revision changes one, and a synthetic archive holds no member.
 const inspect = ({ path, cwd, operation, revision, from, history }: { path: string; cwd: string; operation?: string; revision?: string; from?: string; history?: true }) => operation === 'tree'
     ? { status: 'resolved', path: posix.resolve(cwd, path), revision, ...from === undefined ? {} : { from }, guarded: false, changed: [] as string[] }
-    : operation === 'archive' ? { status: 'resolved', path: posix.resolve(cwd, path), entries: [] as string[] }
+    : operation === 'archive' ? { status: 'resolved', path: posix.resolve(cwd, path), entries: [] as string[], links: false }
     : { status: 'resolved', path: posix.resolve(cwd, path), symlink: false, identity: null, ancestors: [],
         ...(searches(operation) ? { sensitive: [] as string[] | null } : {}), ...(operation === 'repository' ? { tracked: [] as string[] | null, ...history ? { committed: [] as string[] | null } : {} } : {}) }
 // Identity facts for every protected path; synthetic tests name only the ones they exercise.
@@ -461,7 +461,8 @@ describe('resolved guard evaluation', () => {
         const allowing = { ...policy(), defaultDecision: 'allow' as const }
         const listing = (entries: readonly string[] | null) => (request: Parameters<PathInspection>[0]) => request.operation !== 'archive' ? withGit(request)
             : entries === null ? { status: 'unavailable', path: posix.resolve(request.cwd, request.path), symlink: false }
-                : { status: 'resolved', path: posix.resolve(request.cwd, request.path), entries }
+                : { status: 'resolved', path: posix.resolve(request.cwd, request.path), entries, links }
+        let links = false
         const decide = (command: string, entries: readonly string[] | null) => evaluateGuard(parseGuardInput(shellPayload(command)), allowing, listing(entries)).decision
         for (const command of ['tar -xf build/a.tar -C build/x', 'tar xzf build/a.tgz -C build/y', 'unzip -o build/a.zip -d build/x']) {
             expect(decide(command, ['src/a.ts', 'docs/']), command).toBe('allow')
@@ -477,6 +478,9 @@ describe('resolved guard evaluation', () => {
         expect(decide('ditto -x -k build/a.zip build/x', [])).toBe('ask')
         expect(decide('gh repo clone o/r build/r', [])).toBe('ask')
         expect(decide('tar -tf build/a.tar', null)).toBe('allow')
+        // An archive holding a link member asks, whatever its names.
+        links = true
+        expect(decide('tar -xf build/a.tar -C build/x', ['src/a.ts'])).toBe('ask')
     })
 
     it('judges what each spelling of a Git content writer checks out, refusing a planted control at any depth and asking for an agent instruction file', () => {

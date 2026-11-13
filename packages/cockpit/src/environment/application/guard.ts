@@ -548,7 +548,7 @@ export async function runGuardEvaluationApplication(
             }
         }
         // What an extraction into the roots writes: its archive, inside the roots, is listed before the call is judged.
-        const archives = new Map<string, readonly string[] | null>()
+        const archives = new Map<string, Awaited<ReturnType<typeof guardArchiveEntries>>>()
         const archiveKey = (path: string, format: string) => `${path}\0${format}`
         for (const invocation of parsed.invocations) {
             const extracted = guardExtraction(invocation)
@@ -656,8 +656,8 @@ export async function runGuardEvaluationApplication(
                     : { status: 'unavailable', path, symlink: false }
             }
             if (request.operation === 'archive') {
-                const entries = request.format === undefined ? undefined : archives.get(archiveKey(path, request.format))
-                return entries ? { status: 'resolved', path, entries } : { status: 'unavailable', path, symlink: false }
+                const listed = request.format === undefined ? undefined : archives.get(archiveKey(path, request.format))
+                return listed ? { status: 'resolved', path, ...listed } : { status: 'unavailable', path, symlink: false }
             }
             if (request.operation === 'external-write') {
                 // The system resolves `link/..` from where the link leads, so such a spelling lands somewhere its
