@@ -17,35 +17,49 @@ const GUARD_RECORD_INPUT_BYTES = 1_048_576
 
 // The check every hook runs in place of the guard script, kept beside the records so it is as unwritable
 // to agents as they are, and so the hook command, which Claude Code prints beside every refusal, stays
-// short. It refuses a linked `.cockpit`, guard directory, local directory, script or identity, which could
-// lead the script to other files than the ones checked; compares each file with its own recorded digest,
-// so bytes moved from one to the other are a change; and then runs the script with the root it checked. A
-// missing identity is left to the recorded script, which refuses without it and names the fix.
-// It is plain shell naming every program by absolute path, since one found on the session's search path
-// could be one an agent planted. The version in its name changes when what it checks does.
-export const GUARD_CHECK_PATH = '.cockpit/guards/check-v2.sh'
+// short. It refuses a linked `.cockpit`, guard directory, local directory, script or identity, and either
+// file when it is not a regular one (a FIFO identity would hold the read until the hook times out). It
+// reads each file once, compares those bytes with the file's own recorded digest, so bytes moved from one
+// to the other are a change, then runs the script text it hashed with the root it checked and the
+// identity text it hashed: nothing is read again after the comparison. A missing identity is left to the
+// recorded script, which refuses without it and names the fix. It is POSIX shell, run by dash on Linux,
+// naming every program by absolute path, since one found on the session's search path could be one an
+// agent planted. The version in its name changes when what it checks does.
+export const GUARD_CHECK_PATH = '.cockpit/guards/check-v3.sh'
 export const GUARD_CHECK_SCRIPT = `# Written by cockpit sync: runs a cockpit's guard script once it and the identity match the digests sync recorded.
+refuse() {
+    echo "cockpit guard: $1; a person reviews what changed it and runs cockpit sync in a terminal" >&2
+    exit 2
+}
 r=$1
 shift
 c=$(cd "$r" 2>/dev/null && pwd -P) || c=$r
 s="$c/${GUARD_SCRIPT_PATH}"
 i="$c/${GUARD_LOCAL_PATHS.identity}"
 for p in "$c/.cockpit" "$c/.cockpit/guards" "$c/.cockpit/local" "$s" "$i"; do
-    [ -L "$p" ] && { echo "cockpit guard: $p is a link, so the guard it leads to is not the one sync recorded; a person removes the link and runs cockpit sync in a terminal" >&2; exit 2; }
+    [ -L "$p" ] && refuse "$p is a link, so the guard it leads to is not the one sync recorded"
 done
+[ -f "$s" ] || refuse "$s is not a regular file"
+if [ -e "$i" ] && [ ! -f "$i" ]; then refuse "$i is not a regular file"; fi
 k1=
 k2=
 { read -r k1; read -r k2; } 2>/dev/null < "$HOME/.cockpit/guards/roots$c/bash-guard.sha256"
 t=
 for candidate in /usr/bin/sha256sum /sbin/sha256sum /bin/sha256sum; do [ -x "$candidate" ] && { t=$candidate; break; }; done
-digest() { if [ -n "$t" ]; then "$t" < "$1"; else /usr/bin/shasum -a 256 < "$1"; fi; }
-h1=$(digest "$s" 2>/dev/null)
-h2=$(digest "$i" 2>/dev/null)
-if [ -z "$k1" ] || [ "\${h1%% *}" != "$k1" ] || { [ -e "$i" ] && [ "\${h2%% *}" != "$k2" ]; }; then
-    echo "cockpit guard: guard script changed or unrecorded in $c; a person reviews what changed it and runs cockpit sync in a terminal" >&2
-    exit 2
+digest() { if [ -n "$t" ]; then printf '%s' "$1" | "$t"; else printf '%s' "$1" | /usr/bin/shasum -a 256; fi; }
+# Command substitution drops trailing newlines, so each read ends with a marker that is then removed.
+script=$(/bin/cat "$s" && printf x) || refuse "$s could not be read"
+script=\${script%x}
+identity=
+if [ -f "$i" ]; then
+    identity=$(/bin/cat "$i" && printf x) || refuse "$i could not be read"
+    identity=\${identity%x}
+    h2=$(digest "$identity")
+    [ "\${h2%% *}" = "$k2" ] || refuse "guard script changed or unrecorded in $c"
 fi
-COCKPIT_GUARD_CHECKED_ROOT=$c exec /bin/bash "$s" "$@"
+h1=$(digest "$script")
+{ [ -n "$k1" ] && [ "\${h1%% *}" = "$k1" ]; } || refuse "guard script changed or unrecorded in $c"
+COCKPIT_GUARD_CHECKED_ROOT=$c COCKPIT_GUARD_CHECKED_IDENTITY=$identity exec /bin/bash -c "$script" "$s" "$@"
 `
 
 /** Where sync records the digest for the cockpit at canonical `root`: the root's own path below the record directory. */
