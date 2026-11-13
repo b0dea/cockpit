@@ -18,9 +18,11 @@
  * Cursor and Grok Build were not installed, so nothing is written for them.
  */
 import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { readdirSync } from 'node:fs'
 import { basename, join, sep } from 'node:path'
 import { readBoundedFile } from '../bounded-read.js'
 import { GUARD_LOCAL_PATHS, writeCockpitLocalFiles } from '../guards/local-identity.js'
+import { foldGuardSpelling, nestedAgentConfiguration } from '../guards/evaluator.js'
 import type { SurfaceTarget } from '../surfaces/contract.js'
 import { ENVIRONMENT_CODES, errorCause, isMissing, tryParseJson, type EnvironmentDiagnostic } from './contract.js'
 import { openCodeGrantFile } from './generated-application/surface-outputs.js'
@@ -287,6 +289,54 @@ export function inspectClaudeLocalGuard(root: string): readonly EnvironmentDiagn
         target: CLAUDE_LOCAL_SETTINGS, fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal; if sync cannot read .claude/settings.local.json, make it a JSON object or remove it first' })
     if ('reason' in files) return [missing(`cockpit could not check the guard registration in ${CLAUDE_LOCAL_SETTINGS}: ${files.reason}`)]
     if (files.wanted.length === 0) return []
+    if (plainObject(files.local?.value) && files.local.value.disableAllHooks === true) return [missing(`${CLAUDE_LOCAL_SETTINGS} sets disableAllHooks`)]
     const present = mergeClaudeLocalGuard(files.local?.value, files.wanted) === undefined
     return present ? [] : [missing(`${CLAUDE_LOCAL_SETTINGS} does not register the guard ${CLAUDE_SETTINGS} registers`)]
+}
+
+// Directories a session does not start in, and a bound on the walk: doctor reports, it does not prove.
+const SETTINGS_WALK_SKIPPED = new Set(['node_modules', '.git'])
+const SETTINGS_WALK_LIMIT = 20_000
+const ROOT_AGENT_SETTINGS = /^(?:\.claude\/settings(?:\.local)?\.json|\.claude\/hooks\/.+|\.codex\/(?:config\.toml|hooks\.json)|\.mcp\.json|opencode\.jsonc?|\.opencode\/opencode\.jsonc?|\.opencode\/plugins?\/.+)$/
+
+/**
+ * Doctor's findings about agent tool settings that would switch the guard off: one below the cockpit
+ * root, which a session started in that directory loads instead of the cockpit's, and `disableAllHooks`
+ * in any Claude Code settings file found, which stops every hook, the guard's included.
+ */
+export function inspectAgentSettingsHazards(root: string): readonly EnvironmentDiagnostic[] {
+    const nested: string[] = []
+    const claudeSettings = [CLAUDE_SETTINGS, CLAUDE_LOCAL_SETTINGS]
+    let seen = 0
+    const walk = (relative: string) => {
+        let entries
+        try { entries = readdirSync(join(root, relative), { withFileTypes: true }) } catch { return } // an unreadable directory holds nothing doctor can report
+        for (const entry of entries) {
+            if (++seen > SETTINGS_WALK_LIMIT) return
+            const path = relative ? `${relative}/${entry.name}` : entry.name
+            if (entry.isDirectory() && !entry.isSymbolicLink()) {
+                if (!SETTINGS_WALK_SKIPPED.has(entry.name) && !(relative === '' && entry.name === '.cockpit')) walk(path)
+                continue
+            }
+            if (!nestedAgentConfiguration(foldGuardSpelling(`/${path}`), false)) continue
+            // The cockpit root's own files are the generated ones, and its Claude settings are read below anyway.
+            if (ROOT_AGENT_SETTINGS.test(path)) continue
+            nested.push(path)
+            if (/(?:^|\/)\.claude\/settings(?:\.local)?\.json$/.test(path)) claudeSettings.push(path)
+        }
+    }
+    walk('')
+    const findings: EnvironmentDiagnostic[] = []
+    if (nested.length) findings.push({ severity: 'warning',
+        code: 'AGENT_SETTINGS_NESTED' satisfies typeof ENVIRONMENT_CODES.AGENT_SETTINGS_NESTED,
+        message: `agent tool settings below the cockpit root (${nested.slice(0, 10).join(', ')}${nested.length > 10 ? ', …' : ''}) load for a session started in that directory and can switch the guard off or start code there`,
+        target: nested[0]!,
+        fix: 'review each file a person did not intend, and remove it, or move what it holds into the cockpit root\'s settings and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>' })
+    const disabled = claudeSettings.filter(path => { const read = readLocalJson(join(root, path)); return read !== undefined && !('reason' in read) && plainObject(read.value) && read.value.disableAllHooks === true })
+    if (disabled.length) findings.push({ severity: 'warning',
+        code: 'AGENT_HOOKS_DISABLED' satisfies typeof ENVIRONMENT_CODES.AGENT_HOOKS_DISABLED,
+        message: `${disabled.join(', ')} set disableAllHooks, so Claude Code runs no hook, the cockpit guard included, for sessions that read ${disabled.length > 1 ? 'them' : 'it'}`,
+        target: disabled[0]!,
+        fix: 'remove disableAllHooks from the named Claude Code settings file; a person makes this change' })
+    return findings
 }

@@ -381,10 +381,28 @@ describe('resolved guard evaluation', () => {
                 shellPayload(`printf ok > ${path}`),
             ]) expect(evaluateGuard(parseGuardInput(input), policy(), inspect), `${input.tool_name} ${path}`).toEqual(refusal)
         }
-        for (const path of [`${other}/.claude/settings.json`, `${root}/.claude/agents/evaluator.md`, `${root}/.opencode/agents/reviewer.md`,
-            `${root}/workorders/WO-001.md`]) {
+        for (const path of [`${root}/.claude/agents/evaluator.md`, `${root}/.opencode/agents/reviewer.md`, `${other}/.claude/agents/reviewer.md`,
+            `${root}/workorders/WO-001.md`, `${root}/docs/settings.json`, `${root}/docs/hooks/readme.md`]) {
             expect(evaluateGuard(parseGuardInput(payload('Write', { file_path: path, content: '{}' })), policy(), inspect).decision, path).toBe('allow')
         }
+    })
+
+    it('refuses an agent tool\'s hook or settings file at any depth, where a session started there loads it', () => {
+        // Claude Code reads .claude/settings.json and settings.local.json from the directory a session starts
+        // in, Codex every .codex/config.toml from the project root down to it, and OpenCode opencode.json and
+        // .opencode from it upwards: one written in a subdirectory could switch the guard off there.
+        const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
+        for (const path of [`${other}/.claude/settings.json`, `${root}/app/.claude/settings.json`, `${root}/app/web/.claude/settings.local.json`,
+            `${root}/app/.claude/hooks/pre.sh`, `${root}/app/.mcp.json`, `${root}/app/.codex/config.toml`, `${root}/app/.codex/hooks.json`,
+            `${root}/app/opencode.json`, `${root}/app/opencode.jsonc`, `${root}/app/.opencode/opencode.json`, `${root}/app/.opencode/plugin/a.js`,
+            `${root}/app/.opencode/plugins/a.js`, `${root}/app/.CLAUDE/Settings.json`]) {
+            for (const input of [payload('Write', { file_path: path, content: '{}' }), shellPayload(`printf ok > ${path}`)]) {
+                expect(evaluateGuard(parseGuardInput(input), policy(), inspect), `${input.tool_name} ${path}`)
+                    .toMatchObject({ decision: 'deny', reason: expect.stringContaining('loads') })
+            }
+        }
+        // Moving a whole tool directory into place carries the same files.
+        expect(evaluateGuard(parseGuardInput(shellPayload('mv staged/claude app/.claude')), policy(), inspect)).toMatchObject({ decision: 'deny' })
     })
 
     describe('protected identity', () => {

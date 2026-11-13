@@ -130,7 +130,15 @@ first. [Trust the Codex hook](harness-surfaces.md#trust-the-codex-hook) covers b
 guard registration `.claude/settings.json` holds. Claude Code reads the committed file only from the
 directory a session starts in, so a session started below the root would run without the guard. Sync
 writes the registration there beside a person's own settings; it refuses a file that is not JSON
-rather than overwrite it.
+rather than overwrite it. The local file setting `disableAllHooks` reports it too, since that key stops
+every hook.
+
+`AGENT_SETTINGS_NESTED` names agent tool settings below the cockpit root, which a session started in
+that directory loads in place of the cockpit's: Claude Code reads `.claude/settings.json` from where
+a session starts, Codex every `.codex/config.toml` from the project root down, and OpenCode
+`opencode.json` and `.opencode` upward. `AGENT_HOOKS_DISABLED` names a Claude Code settings file
+setting `disableAllHooks`, which stops the guard with every other hook. Agents cannot write either; a
+person reviews and removes them.
 
 ### Merge, ownership, and generation
 
@@ -349,6 +357,8 @@ Every diagnostic message names what failed and how to fix it. These codes always
 
 | Diagnostic | What to do |
 | --- | --- |
+| `AGENT_HOOKS_DISABLED` | remove disableAllHooks from the named Claude Code settings file; a person makes this change; [see above](#codex-hooks-in-linked-worktrees) |
+| `AGENT_SETTINGS_NESTED` | review each file a person did not intend, and remove it, or move what it holds into the cockpit root's settings and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; [see above](#codex-hooks-in-linked-worktrees) |
 | `AUTONOMY_CI_ONLY` | push the change and let the CI job run the command, or have a person change the field in cockpit.toml and accept the change at sync |
 | `AUTONOMY_PERSON_REQUIRED` | a person runs the same command with --interactive in a terminal outside CI, or a person changes the field in cockpit.toml and accepts the change at sync |
 | `BROWSER_ROUTE_FINDINGS` | this run asked for a clean route (--fail-on-findings). Read result.receipt.surfaces[].diagnostics, including excerpt.messages where present: fix the product for each console error, uncaught page error and failed request that matters, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs browser drive --config <your cockpit.toml> --route <name> --fail-on-findings; third-party traffic never counts |

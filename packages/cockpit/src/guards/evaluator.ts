@@ -1236,6 +1236,24 @@ function externalWriteHazard(spelled: string, home: string | undefined, searchDi
 }
 const dotenvName = (name: string) => name === '.env' || name.startsWith('.env.')
 
+// What an agent tool loads from the directory a session starts in, or one between it and the project
+// root, that can register hooks, switch them off or start MCP servers. Claude Code 2.1.323 ran the hook
+// in a subdirectory's .claude/settings.json and read its .claude/settings.local.json (measured
+// 2026-11-13); Codex loads every .codex/config.toml from the project root down to the working directory
+// and hooks beside it (learn.chatgpt.com/docs/config-file/config-advanced); OpenCode searches opencode.json
+// and .opencode from the working directory upward (opencode.ai/docs/config). Folded spellings.
+export function nestedAgentConfiguration(folded: string, covering: boolean): boolean {
+    const parts = folded.split('/')
+    const name = parts.at(-1) ?? ''
+    const parent = parts.at(-2)
+    if (name === '.mcp.json' || name === 'opencode.json' || name === 'opencode.jsonc') return true
+    if (parent === '.claude' && (name === 'settings.json' || name === 'settings.local.json')) return true
+    if (parent === '.codex' && (name === 'config.toml' || name === 'hooks.json')) return true
+    if (parts.some((part, at) => part === '.claude' && parts[at + 1] === 'hooks' || part === '.opencode' && /^plugins?$/.test(parts[at + 1] ?? ''))) return true
+    // A writer that may place a whole directory, such as a move, carries those files with it.
+    return covering && ['.claude', '.codex', '.opencode'].includes(name)
+}
+
 /**
  * Files a command writes through an option rather than an operand: Git's patch output, downloads,
  * sorted output and in-place edits. Each is judged as a write, whatever grant admits the command.
@@ -2022,6 +2040,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const parts = folded.split('/')
         return parts.at(-1) === '.cockpit' || parts.some((part, at) => part === '.cockpit' && parts[at + 1] === 'guards')
     }
+    const nestedConfigurationDenial = deny('Refusing to write an agent tool\'s settings, hooks or MCP configuration (.claude/settings*.json, .claude/hooks, .mcp.json, .codex/config.toml or hooks.json, opencode.json, .opencode/plugins) at any depth: a session started in that directory loads it, and it can switch the guard off or start code there. A person makes this change.')
     const guardScriptDenial = deny('Refusing to write a path below .cockpit/guards, or a directory named .cockpit: cockpit sync writes the guard script there, and a Codex session runs the one it finds above it. Agents never write one.')
     // A file with another hard link is the same file under a name the guard may not protect: writing it
     // writes that one too, the guard's own code or a control included, however each name is spelled.
@@ -2305,6 +2324,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // Held first, so a declared instance's own denial, held after it, is the one reported.
         // Held before the control denials, so a control's own denial is the one reported.
         if ((request.operation === 'write' || staging) && guardScriptLocation(folded)) hold(guardScriptDenial)
+        // A guard control's own denial, held before or below, names the stronger boundary.
+        if (request.operation === 'write' && nestedAgentConfiguration(folded, controlCoverage) && !controlFiles.some(path => folded === fold(path)) && hardDeny === undefined) hold(nestedConfigurationDenial)
         if (mutating && dotenvSecret(folded)) hold(dotenvDenial)
         if (mutating && (inSecretPath(folded) || (staging || removing) && coversSecretPath(folded))) hold(staging && !inSecretPath(folded) ? coveringStageDenial : secretPathDenial)
         if (mutating && resolved.instances.some((item) => folded === fold(item.path) || (staging || removing) && within(fold(item.path), folded))) hold(staging && !resolved.instances.some((item) => folded === fold(item.path)) ? coveringStageDenial : instanceDenial)

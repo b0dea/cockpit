@@ -1,5 +1,5 @@
 import { dirname, join, resolve } from 'node:path'
-import { inspectClaudeLocalGuard } from '../served-checkout-grants.js'
+import { inspectAgentSettingsHazards, inspectClaudeLocalGuard } from '../served-checkout-grants.js'
 import { ENVIRONMENT_CODES, errorCause, type EnvironmentDiagnostic, snapshotJson } from '../contract.js'
 import type { CockpitConfig, EvaluatorTool } from '../../schema.js'
 import { effectivePolicy, policyWeakening, policyWeakeningDiagnostic, readRecordedPolicy, trustInForce } from '../../autonomy.js'
@@ -306,8 +306,9 @@ export async function runDoctor(
         const loaded = await config
         if (loaded.kind !== 'complete') return []
         const tools = loaded.result.config.surfaces.tools
+        const root = dirname(loaded.result.source.path)
         return [...tools.includes('codexcli') ? await adapters.inspectHookTrust?.() ?? [] : [],
-            ...tools.includes('claudecode') ? inspectClaudeLocalGuard(dirname(loaded.result.source.path)) : []]
+            ...tools.includes('claudecode') ? inspectClaudeLocalGuard(root) : [], ...inspectAgentSettingsHazards(root)]
     }
     const currentness = adapters.inspectGeneratedCurrentness?.() ?? prepareGeneratedEnvironmentCurrentness(input)
     const mcpStartup = async (): Promise<readonly EnvironmentDiagnostic[]> => adapters.inspectMcpStartup?.((await currentness).mcpServers) ?? []
