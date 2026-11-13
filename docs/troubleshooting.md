@@ -137,6 +137,12 @@ every hook.
 sibling nor a worktree of the checkout. Claude Code loads no hook from the cockpit's local settings for
 a session started in it, so the guard does not run there.
 
+`GUARD_RECORD_MISMATCH` means `.cockpit/guards/bash-guard.sh` or `.cockpit/local/guard-identity` no
+longer matches the digest sync recorded for this cockpit below `~/.cockpit/guards/roots/`. Every hook
+checks that digest before it runs the guard, and holds every call with "guard script changed or
+unrecorded" until a person reviews what changed the script and runs sync. `GUARD_WORKTREE_UNGUARDED`
+names a worktree kept below the root that holds no guard script, or one sync did not record there.
+
 `AGENT_SETTINGS_NESTED` names agent tool settings below the cockpit root, which a session started in
 that directory loads in place of the cockpit's: Claude Code reads `.claude/settings.json` from where
 a session starts, Codex every `.codex/config.toml` from the project root down, and OpenCode
@@ -407,8 +413,10 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `GUARD_CONFIG_WIDENED` | [see above](#guard-refusals) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_NODE_DIFFERS` | [see above](#selftest-and-override-inspection) |
+| `GUARD_RECORD_MISMATCH` | review what changed the guard script, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal; [see above](#codex-hooks-in-linked-worktrees) |
 | `GUARD_REFUSED` | [see above](#common-refusal-guidance) |
 | `GUARD_SEARCH_PATH_RELATIVE` | check PATH in the shell or launcher that starts the agent harness; if it contains relative or empty entries, remove them there and restart the harness |
+| `GUARD_WORKTREE_UNGUARDED` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml in each worktree, or remove the worktree; [see above](#codex-hooks-in-linked-worktrees) |
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | [see above](#common-refusal-guidance) |
 | `INIT_SCAFFOLD_COMPOSE_EXISTS` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs init <cockpit root> --target <tool>, which proposes the existing Compose file for environment.compose_files |
 | `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |

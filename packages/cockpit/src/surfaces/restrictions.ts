@@ -7,6 +7,7 @@ import { GUARD_HANDLER_ARGV } from '../guards/harness-adapter.js'
 import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from '../guards/host.js'
 import { exactKeys } from '../exact-keys.js'
 import { GUARD_RECOVERY_SHELL } from './guard-recovery.js'
+import { GUARD_CHECK_PATH } from '../guards/guard-record.js'
 
 export const RESTRICTION_OUTPUT_LIMITS = Object.freeze({
     scalarBytes: 65_536,
@@ -395,6 +396,10 @@ function shellLiteral(value: string): string {
 const MISSING_ROOT = '/no-cockpit-root'
 const walk = (start: string, from: string) => `d=${start} || d=; r=${MISSING_ROOT}; n=0; while [ -n "$d" ]; do [ -f "$d/.cockpit/guards/bash-guard.sh" ] && { r=$d; n=$((n+1)); }; [ -e "$d/.git" ] && break; d=\${d%/*}; done; `
     + `[ $n -gt 1 ] && { echo "cockpit guard: more than one .cockpit/guards/bash-guard.sh at or above ${from}, so the guard to run is ambiguous; a person removes the one that is not the cockpit's" >&2; exit 2; }; `
+// Before running the guard script the hook has the check sync wrote below ~/.cockpit/guards, where no
+// agent writes, compare it and the identity file that names the handler with the digest sync recorded
+// for the canonical root (guards/guard-record.ts).
+const RECORD_CHECK = (root: string) => `/bin/sh "$HOME/${GUARD_CHECK_PATH}" "${root}" || exit 2; `
 const HOOK_ROOT = Object.freeze({
     claudecode: { expression: '${CLAUDE_PROJECT_DIR:-}', prelude: walk('${CLAUDE_PROJECT_DIR:-$(pwd -P)}', 'the session directory'), guard: '$r' },
     // Codex trusts a hook by its exact command, so a person trusts it again after this spelling changes.
@@ -409,7 +414,7 @@ function hooksBytes(target: keyof typeof HOOK_ROOT, matcher: string, guardPath: 
     // process, a missing shell or guard script) would let the tool call run, so it is folded into a
     // blocking exit. Claude Code prints the whole hook command beside every refusal it reports, so the
     // command stays one short line and the recovery text lives in the guard script it runs.
-    const guard = `${root.prelude}H="${root.guard}/${guardPath}"; ${askIsDeny ? 'COCKPIT_ASK_IS_DENY=1 ' : ''}/bin/bash "$H" --harness ${target}; s=$?; case $s in 0|2) exit $s;; esac; echo "cockpit guard failed ($s): $H; sync the cockpit" >&2; exit 2`
+    const guard = `${root.prelude}H="${root.guard}/${guardPath}"; [ -f "$H" ] && { ${RECORD_CHECK(root.guard)}}; ${askIsDeny ? 'COCKPIT_ASK_IS_DENY=1 ' : ''}/bin/bash "$H" --harness ${target}; s=$?; case $s in 0|2) exit $s;; esac; echo "cockpit guard failed ($s): $H; sync the cockpit" >&2; exit 2`
     // Claude Code 2.1.317 and Codex 0.166.0 (a trusted hook) each ran a SessionStart command and put its
     // stdout in the agent's context, measured 2026-11-03 beside a misspelled event that never ran. A
     // drift report there tells the agent what to re-sync before it works; the hook never blocks.
@@ -426,7 +431,7 @@ function hooksBytes(target: keyof typeof HOOK_ROOT, matcher: string, guardPath: 
 function opencodeBytes(guardPath: string, configFile: string): string {
     // The plugin is committed, so it locates the guard from its own published location.
     const guard = `fileURLToPath(new URL(${JSON.stringify(`../../${guardPath}`)}, import.meta.url))`
-    const launch = `${GUARD_RECOVERY_SHELL}\nH=$1; R=$2; C=$3; if ! test -f "$H" || ! test -r "$H"; then printf 'cockpit restriction guard missing: %s; OpenCode shell, edit, patch, read, grep and glob calls are held. ' "$H" >&2; cockpit_guard_recovery "$R" "$C"; exit 2; fi; exec /bin/bash "$H" --harness opencode`
+    const launch = `${GUARD_RECOVERY_SHELL}\nH=$1; R=$2; C=$3; if ! test -f "$H" || ! test -r "$H"; then printf 'cockpit restriction guard missing: %s; OpenCode shell, edit, patch, read, grep and glob calls are held. ' "$H" >&2; cockpit_guard_recovery "$R" "$C"; exit 2; fi; ${RECORD_CHECK('$R')}exec /bin/bash "$H" --harness opencode`
     // OpenCode's native read, grep and glob tools never reach a shell, and OpenCode 1.19.4 returned a
     // secrets file through read while the plugin mapped only shell, edit and patch tools (2026-11-01).
     // The guard parses shell, edit and patch payloads only, so each native read is restated as the

@@ -104,15 +104,18 @@ describe('public surface publication transaction', () => {
                 permissionDecisionReason: expect.stringContaining('another project') })
             // Without the session's facts its scratchpad is no workspace.
             expect(write(scratchpad, {}).permissionDecision).not.toBe('allow')
-            // A spelling that leaves a link through `..` lands where the link leads, not in temp.
-            // A directory named as mktemp names one, the only kind an agent writes in temp.
-            const shared = await realpath(await mkdtemp(join(await realpath('/tmp'), 'tmp.')))
-            roots.push(shared)
-            await mkdir(join(shared, 'd'))
+            // A spelling that leaves a link through `..` lands where the link leads, not in the scratchpad.
+            const shared = dirname(scratchpad)
+            roots.push(dirname(dirname(shared)))
+            await mkdir(join(shared, 'd'), { recursive: true })
             await symlink(home, join(shared, 'd', 'l'))
             const shell = (command: string) => guard('claudecode', { ...session, tool_name: 'Bash', tool_input: { command } })
             expect(shell(`echo x > ${shared}/d/kept.txt`)).toMatchObject({ permissionDecision: 'allow' })
             expect(shell(`echo x > ${shared}/d/l/../escape.txt`).permissionDecision).not.toBe('allow')
+            // Temp holds other programs' state, what mktemp names included.
+            const made = await realpath(await mkdtemp(join(await realpath('/tmp'), 'tmp.')))
+            roots.push(made)
+            expect(shell(`echo x > ${made}/kept.txt`).permissionDecision).not.toBe('allow')
             // The agent reads back a spilled tool output, never the login beside it.
             const spilled = join(claudeHome, 'projects', project, 'session-one', 'tool-results', 'out.txt')
             await mkdir(dirname(spilled), { recursive: true })
@@ -203,6 +206,18 @@ describe('public surface publication transaction', () => {
                 expect(decision(run(command, worktree, harness, { file_path: join(worktree, '.cockpit/guards/bash-guard.sh'), content: 'exit 0' })), harness).toBe('deny')
                 expect(decision(run(command, worktree, harness, { file_path: join(worktree, 'notes.md'), content: 'synthetic' })), harness).toBe('allow')
             }
+            // A guard script changed after sync, by any writer, holds every call: the hook checks it against the
+            // digest sync recorded where no agent writes.
+            const script = join(worktree, '.cockpit/guards/bash-guard.sh')
+            const original = await readFile(script, 'utf8')
+            await writeFile(script, `${original}\n# changed\n`)
+            for (const [harness, settings] of [['claudecode', '.claude/settings.json'], ['codexcli', '.codex/hooks.json']] as const) {
+                const changed = run(await hookOf(join(worktree, settings)), worktree, harness, { file_path: join(worktree, 'notes.md'), content: 'synthetic' })
+                expect(changed.status, harness).toBe(2)
+                expect(changed.stderr, harness).toContain('guard script changed')
+            }
+            await writeFile(script, original)
+            expect(decision(run(await hookOf(join(worktree, '.claude/settings.json')), worktree, 'claudecode', { file_path: join(worktree, 'notes.md'), content: 'synthetic' }))).toBe('allow')
             // A cockpit in a directory below its repository's top: Claude Code reads local settings there only from
             // the top, so sync writes the registration there too, gated to sessions inside the cockpit.
             const repository = await realpath(await mkdtemp(join(tmpdir(), 'nested-cockpit-')))

@@ -22,6 +22,7 @@ import { lstatSync, readdirSync, realpathSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { readBoundedFile } from '../bounded-read.js'
 import { GUARD_LOCAL_PATHS, writeCockpitLocalFiles } from '../guards/local-identity.js'
+import { GUARD_SCRIPT_PATH, inspectGuardRecord } from '../guards/guard-record.js'
 import { foldGuardSpelling, nestedAgentConfiguration } from '../guards/evaluator.js'
 import type { SurfaceTarget } from '../surfaces/contract.js'
 import { ENVIRONMENT_CODES, errorCause, isMissing, tryParseJson, type EnvironmentDiagnostic } from './contract.js'
@@ -337,12 +338,15 @@ const ROOT_AGENT_SETTINGS = /^(?:\.claude\/settings(?:\.local)?\.json|\.claude\/
 
 /**
  * Doctor's findings about agent tool settings that would switch the guard off: one below the cockpit
- * root, which a session started in that directory loads instead of the cockpit's, and `disableAllHooks`
- * in any Claude Code settings file found, which stops every hook, the guard's included.
+ * root, which a session started in that directory loads instead of the cockpit's, `disableAllHooks`
+ * in any Claude Code settings file found, which stops every hook, the guard's included, and a guard
+ * script, at the root or in a worktree kept below it, that does not match the digest sync recorded in
+ * `home`, which the hook refuses to run.
  */
-export function inspectAgentSettingsHazards(root: string, siblings: readonly string[] = []): readonly EnvironmentDiagnostic[] {
+export function inspectAgentSettingsHazards(root: string, siblings: readonly string[] = [], home?: string): readonly EnvironmentDiagnostic[] {
     const nested: string[] = []
     const repositories: string[] = []
+    const worktrees: string[] = []
     // Claude Code loads no hook from the cockpit's local settings for a session started at or below a `.git`
     // entry under the root, so each such entry other than a declared sibling or a worktree of this checkout,
     // which carries its own guard, is a place the guard does not reach.
@@ -360,8 +364,9 @@ export function inspectAgentSettingsHazards(root: string, siblings: readonly str
         for (const entry of entries) {
             if (++seen > SETTINGS_WALK_LIMIT) return
             const path = relative ? `${relative}/${entry.name}` : entry.name
-            if (entry.name === '.git' && relative !== '' && !siblings.includes(join(root, relative)) && !(entry.isFile() && ownWorktree(path))) {
-                repositories.push(path)
+            if (entry.name === '.git' && relative !== '' && !siblings.includes(join(root, relative))) {
+                if (entry.isFile() && ownWorktree(path)) worktrees.push(relative)
+                else repositories.push(path)
                 continue
             }
             if (entry.isDirectory() && !entry.isSymbolicLink()) {
@@ -393,6 +398,19 @@ export function inspectAgentSettingsHazards(root: string, siblings: readonly str
         message: `${disabled.join(', ')} set disableAllHooks, so Claude Code runs no hook, the cockpit guard included, for sessions that read ${disabled.length > 1 ? 'them' : 'it'}`,
         target: disabled[0]!,
         fix: 'remove disableAllHooks from the named Claude Code settings file; a person makes this change' })
+    const guarded = (checkout: string) => { try { return lstatSync(join(checkout, GUARD_SCRIPT_PATH)).isFile() } catch { return false } } // an unreadable script is none
+    if (!guarded(root)) return findings
+    if (inspectGuardRecord(root, home) !== 'match') findings.push({ severity: 'error',
+        code: 'GUARD_RECORD_MISMATCH' satisfies typeof ENVIRONMENT_CODES.GUARD_RECORD_MISMATCH,
+        message: `${GUARD_SCRIPT_PATH} or ${GUARD_LOCAL_PATHS.identity} does not match the digest cockpit sync recorded for this cockpit, so every guarded call is held until a person runs sync`,
+        target: GUARD_SCRIPT_PATH,
+        fix: 'review what changed the guard script, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal' })
+    const unguarded = worktrees.filter(worktree => !guarded(join(root, worktree)) || inspectGuardRecord(realpathSync(join(root, worktree)), home) !== 'match')
+    if (unguarded.length) findings.push({ severity: 'warning',
+        code: 'GUARD_WORKTREE_UNGUARDED' satisfies typeof ENVIRONMENT_CODES.GUARD_WORKTREE_UNGUARDED,
+        message: `worktrees below the cockpit root (${unguarded.slice(0, 10).join(', ')}${unguarded.length > 10 ? ', …' : ''}) hold no guard script, or one sync did not record, so a session started in one is held or unguarded`,
+        target: unguarded[0]!,
+        fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml in each worktree, or remove the worktree' })
     return findings
 }
 

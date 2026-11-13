@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { inspectAgentSettingsHazards, inspectClaudeLocalGuard, writeClaudeLocalGuard } from './served-checkout-grants.js'
+import { writeGuardRecord } from '../guards/guard-record.js'
 
 describe('Claude Code local guard registration', () => {
     it('repeats the committed guard hook in the local settings beside a person\'s own, and doctor flags it missing', async () => {
@@ -83,5 +84,35 @@ describe('Claude Code local guard registration', () => {
             expect(found[0]!.message).toContain('docs/.git')
             expect(found[0]!.message).not.toContain('worktrees/wt')
         } finally { rmSync(root, { recursive: true, force: true }) }
+    })
+
+    it('flags a guard script that no longer matches the digest sync recorded, at the root and in a worktree kept below it', async () => {
+        const root = realpathSync(mkdtempSync(join(tmpdir(), 'guard-records-')))
+        const home = realpathSync(mkdtempSync(join(tmpdir(), 'guard-records-home-')))
+        try {
+            const git = (...args: string[]) => expect(spawnSync('git', ['-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args], { cwd: root }).status).toBe(0)
+            const guard = (checkout: string) => {
+                mkdirSync(join(checkout, '.cockpit/guards'), { recursive: true })
+                mkdirSync(join(checkout, '.cockpit/local'), { recursive: true })
+                writeFileSync(join(checkout, '.cockpit/guards/bash-guard.sh'), 'guard\n')
+                writeFileSync(join(checkout, '.cockpit/local/guard-identity'), 'identity\n')
+            }
+            git('init', '--quiet')
+            git('commit', '--quiet', '--allow-empty', '-m', 'init')
+            git('worktree', 'add', '--quiet', 'worktrees/wt')
+            guard(root)
+            const codes = () => inspectAgentSettingsHazards(root, [], home).map(finding => `${finding.code} ${finding.target}`)
+            expect(codes()).toEqual(['GUARD_RECORD_MISMATCH .cockpit/guards/bash-guard.sh', 'GUARD_WORKTREE_UNGUARDED worktrees/wt'])
+            await writeGuardRecord(root, home)
+            guard(join(root, 'worktrees/wt'))
+            expect(codes()).toEqual(['GUARD_WORKTREE_UNGUARDED worktrees/wt'])
+            await writeGuardRecord(join(root, 'worktrees/wt'), home)
+            expect(codes()).toEqual([])
+            writeFileSync(join(root, '.cockpit/guards/bash-guard.sh'), 'exit 0\n')
+            expect(codes()).toEqual(['GUARD_RECORD_MISMATCH .cockpit/guards/bash-guard.sh'])
+        } finally {
+            rmSync(root, { recursive: true, force: true })
+            rmSync(home, { recursive: true, force: true })
+        }
     })
 })

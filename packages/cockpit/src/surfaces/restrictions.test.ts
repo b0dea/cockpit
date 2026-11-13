@@ -12,6 +12,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { encodeGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
 import { fileFingerprint } from '../environment-exec/verified-digest.js'
 import { GUARD_RECOVERY_SHELL } from './guard-recovery.js'
+import { recordTestGuard } from '../test-support/guard-record.js'
 
 import { afterAll, describe, expect, it } from 'vitest'
 
@@ -149,6 +150,7 @@ function complete(value: ReturnType<typeof expandRestrictions>): RestrictionExpa
         writeFileSync(join(context.root, '.cockpit/generated-environment-ownership.json'), manifest.bytes)
         mkdirSync(join(context.root, '.cockpit/local'), { recursive: true })
         writeFileSync(join(context.root, '.cockpit/local/guard-identity'), encodeGuardLocalIdentity(context.handler), { mode: 0o600 })
+        recordTestGuard(context.root)
         renderedContexts.set(value, context)
     }
     return value
@@ -348,6 +350,9 @@ describe('restriction expansion', () => {
         await mkdir(join(worktree, '.cockpit/guards'), { recursive: true })
         await writeFile(join(worktree, '.git'), 'gitdir: /workspace/elsewhere/.git/worktrees/wt\n')
         await writeFile(join(worktree, '.cockpit/guards/bash-guard.sh'), 'printf worktree-guard >&2; exit 0\n')
+        // Until sync runs in the worktree, its guard is unrecorded and holds the call; then it runs.
+        expect(runs('codexcli', worktree, ambient, 'env/service.env')).toMatchObject({ status: 2, stderr: expect.stringContaining('unrecorded') })
+        recordTestGuard(worktree)
         for (const [name, env] of [['claudecode', { ...ambient, CLAUDE_PROJECT_DIR: worktree }], ['codexcli', ambient]] as const) {
             expect(runs(name, worktree, env, 'env/service.env'), name).toMatchObject({ status: 0, stderr: 'worktree-guard' })
         }
@@ -477,6 +482,7 @@ describe('restriction expansion', () => {
             for (const [exit, status, stderr] of [[1, 2, `cockpit guard failed (1): ${guard}; sync the cockpit\n`], [137, 2, `cockpit guard failed (137): ${guard}; sync the cockpit\n`],
                 [2, 2, 'refused\n'], [0, 0, '']] as const) {
                 await writeFile(join(directory, result.sharedGuard.path), exit === 2 ? "printf 'refused\\n' >&2; exit 2\n" : `exit ${exit}\n`)
+                recordTestGuard(directory)
                 const run = spawnSync('/bin/sh', ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: directory } })
                 expect({ status: run.status, stderr: run.stderr }, `${name} exit ${exit}`).toEqual({ status, stderr })
             }

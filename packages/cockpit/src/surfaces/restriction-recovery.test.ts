@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterAll, expect, it } from 'vitest'
 import { expandRestrictions } from './restrictions.js'
+import { recordTestGuard } from '../test-support/guard-record.js'
 
 const scratch: string[] = []
 afterAll(async () => { await Promise.all(scratch.map(path => rm(path, { recursive: true, force: true }))) })
@@ -40,6 +41,7 @@ async function fixture() {
     const guard = join(root, rendered.sharedGuard.path)
     await mkdir(dirname(guard), { recursive: true })
     await writeFile(guard, rendered.sharedGuard.bytes)
+    recordTestGuard(root)
     return { root, configPath, rendered, run, launcher, handler, guard }
 }
 
@@ -80,6 +82,8 @@ it('diagnoses a missing OpenCode guard through the emitted plugin without admitt
     const guard = join(root, '.cockpit/guards/bash-guard.sh')
     await mkdir(dirname(guard), { recursive: true })
     await writeFile(guard, 'exit 0\n')
+    // Recorded, so the hook reaches the script: the record check alone would refuse it first.
+    recordTestGuard(root)
     expect(run(1024 * 1024)).toMatchObject({ status: 1, stdout: '', stderr: expect.stringContaining('cockpit restriction guard failed: spawnSync /bin/bash EPIPE') })
 })
 

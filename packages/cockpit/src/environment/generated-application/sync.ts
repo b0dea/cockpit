@@ -26,6 +26,7 @@ import { checkCanonicalGeneratedEnvironment, issueRepairAuthority, issuedRepairs
 import { openCodeGrantFile, staleMcpOutputsOnly } from './surface-outputs.js'
 import { readSiblingCheckouts } from '../sibling-checkouts.js'
 import { openCodeGrantDirectory, openCodePatternUnsafe, writeClaudeLocalGuard } from '../served-checkout-grants.js'
+import { writeGuardRecord } from '../../guards/guard-record.js'
 
 async function prepareGeneratedEnvironmentSync(
     input: GeneratedEnvironmentSyncInput,
@@ -152,6 +153,11 @@ export async function applyGeneratedEnvironmentRepair(
         if (local.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
             `the committed guard files were published, but ${local.message}; the guard refuses ${GUARD_HELD_CALLS} until it exists`,
             GUARD_LOCAL_PATHS.identity, 'fix the path, then run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` again in a terminal')
+        // The hook runs the guard script only when it matches the digest recorded here.
+        const record = await writeGuardRecord(prepared.root)
+        if (record.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
+            `the committed guard files were published, but ${record.message}; the guard refuses ${GUARD_HELD_CALLS} until it is recorded`,
+            GUARD_LOCAL_PATHS.identity, 'run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` again in a terminal')
         // A Claude Code session started below the cockpit root reads only the local settings at the root.
         const claude = await writeClaudeLocalGuard(prepared.root)
         if (claude.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
