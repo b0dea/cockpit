@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -59,6 +60,28 @@ describe('Claude Code local guard registration', () => {
             write('.claude/settings.json', { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'H="$r/.cockpit/guards/bash-guard.sh"; /bin/bash "$H" --harness claudecode' }] }] } })
             write('.claude/settings.local.json', { disableAllHooks: true, hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'H="$r/.cockpit/guards/bash-guard.sh"; /bin/bash "$H" --harness claudecode' }] }] } })
             expect(inspectClaudeLocalGuard(root)).toEqual([expect.objectContaining({ code: 'CLAUDE_LOCAL_HOOK_MISSING', message: expect.stringContaining('disableAllHooks') })])
+        } finally { rmSync(root, { recursive: true, force: true }) }
+    })
+
+    it('flags a Git repository below the cockpit root that is neither its worktree nor a declared sibling', async () => {
+        const root = realpathSync(mkdtempSync(join(tmpdir(), 'nested-repositories-')))
+        try {
+            const git = (...args: string[]) => expect(spawnSync('git', ['-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args], { cwd: root }).status).toBe(0)
+            git('init', '--quiet')
+            git('commit', '--quiet', '--allow-empty', '-m', 'init')
+            git('worktree', 'add', '--quiet', 'worktrees/wt')
+            mkdirSync(join(root, 'app'))
+            git('init', '--quiet', 'app')
+            expect(inspectAgentSettingsHazards(root, [join(root, 'app')])).toEqual([])
+            mkdirSync(join(root, 'pkg/.git'), { recursive: true })
+            writeFileSync(join(root, 'stray'), '')
+            mkdirSync(join(root, 'docs'))
+            writeFileSync(join(root, 'docs/.git'), 'gitdir: /workspace/nowhere\n')
+            const found = inspectAgentSettingsHazards(root, [join(root, 'app')])
+            expect(found).toEqual([expect.objectContaining({ severity: 'warning', code: 'AGENT_NESTED_REPOSITORY' })])
+            expect(found[0]!.message).toContain('pkg/.git')
+            expect(found[0]!.message).toContain('docs/.git')
+            expect(found[0]!.message).not.toContain('worktrees/wt')
         } finally { rmSync(root, { recursive: true, force: true }) }
     })
 })

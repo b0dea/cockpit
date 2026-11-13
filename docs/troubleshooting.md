@@ -133,6 +133,10 @@ writes the registration there beside a person's own settings; it refuses a file 
 rather than overwrite it. The local file setting `disableAllHooks` reports it too, since that key stops
 every hook.
 
+`AGENT_NESTED_REPOSITORY` names a Git repository below the cockpit root that is neither a declared
+sibling nor a worktree of the checkout. Claude Code loads no hook from the cockpit's local settings for
+a session started in it, so the guard does not run there.
+
 `AGENT_SETTINGS_NESTED` names agent tool settings below the cockpit root, which a session started in
 that directory loads in place of the cockpit's: Claude Code reads `.claude/settings.json` from where
 a session starts, Codex every `.codex/config.toml` from the project root down, and OpenCode
@@ -358,6 +362,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | Diagnostic | What to do |
 | --- | --- |
 | `AGENT_HOOKS_DISABLED` | remove disableAllHooks from the named Claude Code settings file; a person makes this change; [see above](#codex-hooks-in-linked-worktrees) |
+| `AGENT_NESTED_REPOSITORY` | declare the repository as a [[sibling]], move it outside the cockpit root, or remove its .git entry; a person makes this change; [see above](#codex-hooks-in-linked-worktrees) |
 | `AGENT_SETTINGS_NESTED` | review each file a person did not intend, and remove it, or move what it holds into the cockpit root's settings and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; [see above](#codex-hooks-in-linked-worktrees) |
 | `AUTONOMY_CI_ONLY` | push the change and let the CI job run the command, or have a person change the field in cockpit.toml and accept the change at sync |
 | `AUTONOMY_PERSON_REQUIRED` | a person runs the same command with --interactive in a terminal outside CI, or a person changes the field in cockpit.toml and accepts the change at sync |

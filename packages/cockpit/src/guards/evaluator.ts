@@ -2724,6 +2724,15 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         unseenMembers = writesUnseenMembers(invocation, git)
         linking = linkMakers.includes(invocation)
         moving = git?.verb === 'mv' || posix.basename(invocation.executable ?? '') === 'mv'
+        // Claude Code 2.1.323 loaded no hook from the cockpit's local settings for a session started at or below
+        // a `.git` entry under the root (measured 2026-11-13, reproduced with an empty .git directory, a gitdir
+        // file pointing nowhere and `git init`), so a new repository inside the roots is a place the guard does
+        // not reach. A worktree carries its own committed guard, so `git worktree add` is not one.
+        if (git && (['init', 'clone'].includes(git.verb) || git.verb === 'submodule' && git.args.find(arg => !arg.startsWith('-')) === 'add')) {
+            const targets = ['.', ...git.args.filter(arg => !arg.startsWith('-') && arg !== 'add' && !/^[a-z][a-z0-9+.-]*:\/\//i.test(arg) && !/^[^/]*:/.test(arg))]
+            if (targets.some(target => inRoots(posix.resolve(git.cwd, target)))) holdBoundary(invocation, ask(`${named(invocation)} creates a Git repository inside the cockpit, and Claude Code loads no hook from the cockpit's settings for a session started in it, so the guard would not run there. `
+                + 'Use `git worktree add`, whose checkout carries the guard, or create the repository outside the cockpit; otherwise a person runs it.'))
+        }
         settingExecutable = setsExecutableBit(invocation)
         const executableName = posix.basename(invocation.executable ?? '')
         const removed = removedOperands(invocation, git)

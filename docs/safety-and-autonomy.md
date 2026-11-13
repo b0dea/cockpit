@@ -126,7 +126,16 @@ Limits, stated plainly:
     malformed twin was named from there;
   - `CLAUDE_PROJECT_DIR` and the payload's `cwd` were the subdirectory;
   - registered identically in both root files, the command ran once from the root, while two
-    different commands both ran.
+    different commands both ran;
+  - a session started at or below any `.git` entry under the root, an empty directory, a `gitdir`
+    file pointing nowhere or a `git init`, ran no hook from the cockpit's local settings.
+
+  So `git init`, `git clone` and `git submodule add` ask when the new repository would land inside the
+  roots, and `doctor` reports a `.git` entry below the root that is neither a declared sibling nor a
+  worktree of the checkout (`AGENT_NESTED_REPOSITORY`). `git worktree add` stays allowed, since a
+  worktree carries its own committed guard, but a session started in a subdirectory of a worktree kept
+  below the root is guarded only once `sync` has run in that worktree; `doctor` there reports
+  `CLAUDE_LOCAL_HOOK_MISSING` until it has.
 - What a harness does when its hook timeout fires is not measured. The guard keeps its own 25-second
   deadline and refuses at it ([Native adapter behavior](#native-adapter-behavior)).
 

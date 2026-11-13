@@ -387,6 +387,17 @@ describe('resolved guard evaluation', () => {
         }
     })
 
+    it('asks before creating a Git repository inside the roots, where a session would load no guard', () => {
+        // Claude Code reads the cockpit's local settings only up to the nearest .git entry, so a session started
+        // in a new repository below the root runs without the guard. A worktree carries its own committed guard.
+        for (const command of ['git init pkg', 'git -C app init', 'git init', 'git init -b main pkg', 'git init worktrees/scratch',
+            'git clone https://example.test/r.git app/c', 'git clone ../upstream', 'git submodule add ./app pkg/sm', 'git -C app submodule add https://example.test/r.git']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), policy(), withGit), command)
+                .toMatchObject({ decision: 'ask', reason: expect.stringContaining('creates a Git repository inside the cockpit') })
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('git worktree add pkg/wt')), policy(), withGit).reason).not.toContain('creates a Git repository inside the cockpit')
+    })
+
     it('refuses an agent tool\'s hook or settings file at any depth, where a session started there loads it', () => {
         // Claude Code reads .claude/settings.json and settings.local.json from the directory a session starts
         // in, Codex every .codex/config.toml from the project root down to it, and OpenCode opencode.json and
@@ -1924,7 +1935,7 @@ describe('allow by default', () => {
     it('still allows the development those refusals sit beside', () => {
         const refused: string[] = []
         for (const command of ['sort < src/a.ts', 'git commit -F notes.md', 'git push origin topic', 'git switch -c topic && git commit -m done', 'rsync -a src/ build/',
-            'git worktree add worktrees/topic -b topic', 'git init worktrees/scratch', 'export NODE_ENV=test && npm test', 'git -c core.quotepath=false status',
+            'git worktree add worktrees/topic -b topic', 'export NODE_ENV=test && npm test', 'git -c core.quotepath=false status',
             `cat ${home}/.ssh/id_ed25519.pub`, 'zip -qr build/src.zip src', 'git restore --source=HEAD~1 -- src/a.ts', 'echo "$PATH"', 'npm run build',
             'gh pr create --title Fix --body Done', 'gh pr edit 12 --title Fix', 'gh pr checks 12', 'gh run list', 'gh run view 1', 'pnpm build', 'pnpm test',
             'pnpm lint', 'pnpm typecheck', 'make -C local doctor', 'jq .result.summary .cockpit/local/probes/report.json', 'ps -o pid,user,command',

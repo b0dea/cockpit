@@ -19,7 +19,7 @@
  */
 import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { lstatSync, readdirSync, realpathSync } from 'node:fs'
-import { basename, dirname, join, sep } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { readBoundedFile } from '../bounded-read.js'
 import { GUARD_LOCAL_PATHS, writeCockpitLocalFiles } from '../guards/local-identity.js'
 import { foldGuardSpelling, nestedAgentConfiguration } from '../guards/evaluator.js'
@@ -340,8 +340,18 @@ const ROOT_AGENT_SETTINGS = /^(?:\.claude\/settings(?:\.local)?\.json|\.claude\/
  * root, which a session started in that directory loads instead of the cockpit's, and `disableAllHooks`
  * in any Claude Code settings file found, which stops every hook, the guard's included.
  */
-export function inspectAgentSettingsHazards(root: string): readonly EnvironmentDiagnostic[] {
+export function inspectAgentSettingsHazards(root: string, siblings: readonly string[] = []): readonly EnvironmentDiagnostic[] {
     const nested: string[] = []
+    const repositories: string[] = []
+    // Claude Code loads no hook from the cockpit's local settings for a session started at or below a `.git`
+    // entry under the root, so each such entry other than a declared sibling or a worktree of this checkout,
+    // which carries its own guard, is a place the guard does not reach.
+    const common = gitCommonDirectory(root)
+    const ownWorktree = (path: string) => {
+        if (common === undefined) return false
+        const named = /^gitdir: (.+)$/.exec(readSmallText(join(root, path)) ?? '')?.[1]
+        return named !== undefined && resolve(dirname(join(root, path)), named).startsWith(`${common}/worktrees/`)
+    }
     const claudeSettings = [CLAUDE_SETTINGS, CLAUDE_LOCAL_SETTINGS]
     let seen = 0
     const walk = (relative: string) => {
@@ -350,6 +360,10 @@ export function inspectAgentSettingsHazards(root: string): readonly EnvironmentD
         for (const entry of entries) {
             if (++seen > SETTINGS_WALK_LIMIT) return
             const path = relative ? `${relative}/${entry.name}` : entry.name
+            if (entry.name === '.git' && relative !== '' && !siblings.includes(join(root, relative)) && !(entry.isFile() && ownWorktree(path))) {
+                repositories.push(path)
+                continue
+            }
             if (entry.isDirectory() && !entry.isSymbolicLink()) {
                 if (!SETTINGS_WALK_SKIPPED.has(entry.name) && !(relative === '' && entry.name === '.cockpit')) walk(path)
                 continue
@@ -368,6 +382,11 @@ export function inspectAgentSettingsHazards(root: string): readonly EnvironmentD
         message: `agent tool settings below the cockpit root (${nested.slice(0, 10).join(', ')}${nested.length > 10 ? ', …' : ''}) load for a session started in that directory and can switch the guard off or start code there`,
         target: nested[0]!,
         fix: 'review each file a person did not intend, and remove it, or move what it holds into the cockpit root\'s settings and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>' })
+    if (repositories.length) findings.push({ severity: 'warning',
+        code: 'AGENT_NESTED_REPOSITORY' satisfies typeof ENVIRONMENT_CODES.AGENT_NESTED_REPOSITORY,
+        message: `Git repositories below the cockpit root (${repositories.slice(0, 10).join(', ')}${repositories.length > 10 ? ', …' : ''}) are neither declared siblings nor worktrees of this checkout; Claude Code loads no cockpit hook for a session started in one, so the guard does not run there`,
+        target: repositories[0]!,
+        fix: 'declare the repository as a [[sibling]], move it outside the cockpit root, or remove its .git entry; a person makes this change' })
     const disabled = claudeSettings.filter(path => { const read = readLocalJson(join(root, path)); return read !== undefined && !('reason' in read) && plainObject(read.value) && read.value.disableAllHooks === true })
     if (disabled.length) findings.push({ severity: 'warning',
         code: 'AGENT_HOOKS_DISABLED' satisfies typeof ENVIRONMENT_CODES.AGENT_HOOKS_DISABLED,
@@ -375,4 +394,20 @@ export function inspectAgentSettingsHazards(root: string): readonly EnvironmentD
         target: disabled[0]!,
         fix: 'remove disableAllHooks from the named Claude Code settings file; a person makes this change' })
     return findings
+}
+
+function readSmallText(path: string): string | undefined {
+    try { const read = readBoundedFile(path, 4096); return read.kind === 'complete' ? read.bytes.toString('utf8').trim() : undefined }
+    catch { return undefined } // an unreadable entry names no worktree, so it is reported
+}
+
+/** The Git directory that holds this checkout's worktrees: its own `.git` directory, or the one a linked worktree's `commondir` names. */
+function gitCommonDirectory(root: string): string | undefined {
+    const entry = join(root, '.git')
+    try { if (lstatSync(entry).isDirectory()) return realpathSync(entry) } catch { return undefined } // no repository holds no worktrees
+    const administrative = /^gitdir: (.+)$/.exec(readSmallText(entry) ?? '')?.[1]
+    if (!administrative) return undefined
+    const directory = resolve(root, administrative)
+    const common = readSmallText(join(directory, 'commondir'))
+    try { return realpathSync(common ? resolve(directory, common) : directory) } catch { return undefined } // a pruned worktree has none
 }

@@ -308,7 +308,8 @@ export async function runDoctor(
         const tools = loaded.result.config.surfaces.tools
         const root = dirname(loaded.result.source.path)
         return [...tools.includes('codexcli') ? await adapters.inspectHookTrust?.() ?? [] : [],
-            ...tools.includes('claudecode') ? inspectClaudeLocalGuard(root) : [], ...inspectAgentSettingsHazards(root)]
+            ...tools.includes('claudecode') ? inspectClaudeLocalGuard(root) : [],
+            ...inspectAgentSettingsHazards(root, loaded.result.config.sibling.map(sibling => resolve(root, loaded.result.config.cockpit.siblings_root, sibling.dir)))]
     }
     const currentness = adapters.inspectGeneratedCurrentness?.() ?? prepareGeneratedEnvironmentCurrentness(input)
     const mcpStartup = async (): Promise<readonly EnvironmentDiagnostic[]> => adapters.inspectMcpStartup?.((await currentness).mcpServers) ?? []
