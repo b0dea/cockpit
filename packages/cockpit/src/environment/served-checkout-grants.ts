@@ -165,6 +165,25 @@ export async function planAgentGrants(input: Readonly<{
     return { kind: 'complete', plan: { settings, local, lines, report: { granted, ungranted } } }
 }
 
+/** Replaces Claude Code's local settings in one rename, or removes them when nothing is left; null bytes removes. */
+async function writeClaudeLocalSettings(root: string, bytes: string | null): Promise<void> {
+    const path = join(root, CLAUDE_LOCAL_SETTINGS)
+    if (bytes === null) {
+        await rm(path)
+        return
+    }
+    const directory = join(root, '.claude')
+    await mkdir(directory, { recursive: true })
+    if ((await lstat(directory)).isSymbolicLink()) throw new Error(`${directory} is a symbolic link`)
+    const temporary = join(directory, `.settings.local.json.${process.pid}.tmp`)
+    try {
+        await writeFile(temporary, bytes, { flag: 'wx' })
+        await rename(temporary, path)
+    } finally {
+        await rm(temporary, { force: true })
+    }
+}
+
 /** Writes a plan: cockpit's own record first, so a grant it added is never one it forgets. */
 export async function applyAgentGrants(root: string, plan: AgentGrantPlan): Promise<Readonly<{ kind: 'complete' } | { kind: 'refusal'; diagnostic: EnvironmentDiagnostic }>> {
     if (plan.local.length > 0) {
@@ -173,25 +192,101 @@ export async function applyAgentGrants(root: string, plan: AgentGrantPlan): Prom
             'make .cockpit/local a plain directory you can write, then run this command again')
     }
     if (plan.settings === undefined) return { kind: 'complete' }
-    const path = join(root, CLAUDE_LOCAL_SETTINGS)
     try {
-        if (plan.settings.bytes === null) {
-            await rm(path)
-            return { kind: 'complete' }
-        }
-        const directory = join(root, '.claude')
-        await mkdir(directory, { recursive: true })
-        if ((await lstat(directory)).isSymbolicLink()) throw new Error(`${directory} is a symbolic link`)
-        const temporary = join(directory, `.settings.local.json.${process.pid}.tmp`)
-        try {
-            await writeFile(temporary, plan.settings.bytes, { flag: 'wx' })
-            await rename(temporary, path)
-        } finally {
-            await rm(temporary, { force: true })
-        }
+        await writeClaudeLocalSettings(root, plan.settings.bytes)
         return { kind: 'complete' }
     } catch (error) {
-        return grantRefusal(`${path} could not be written: ${errorCause(error)}`, CLAUDE_LOCAL_SETTINGS,
+        return grantRefusal(`${join(root, CLAUDE_LOCAL_SETTINGS)} could not be written: ${errorCause(error)}`, CLAUDE_LOCAL_SETTINGS,
             'make .claude a plain directory you can write, then run this command again')
     }
+}
+
+// Claude Code reads a project's `.claude/settings.json` only from the directory a session starts in, and
+// `.claude/settings.local.json` also from the repository's top, so the guard registration is repeated
+// there to bind a session started in a subdirectory. Measured 2026-11-13 with Claude Code 2.1.323 and the
+// default setting sources: started one or two directories below the root, only the local file's hook ran,
+// and a malformed twin of it was named from there; started at the root, a command registered identically
+// in both files ran once, while two different commands both ran. A local file in a directory between the
+// root and the session's was not read.
+const CLAUDE_SETTINGS = '.claude/settings.json'
+
+type HookEntry = Readonly<{ hooks: readonly Readonly<{ command?: unknown }>[] }> & Readonly<Record<string, unknown>>
+const guardCommand = (hook: unknown) => plainObject(hook) && typeof hook.command === 'string'
+    && hook.command.includes('/.cockpit/guards/bash-guard.sh') && hook.command.includes('--harness claudecode')
+const hookEntries = (settings: unknown): readonly unknown[] | undefined => {
+    if (!plainObject(settings)) return undefined
+    const hooks = settings.hooks ?? {}
+    if (!plainObject(hooks)) return undefined
+    const entries = hooks.PreToolUse ?? []
+    return Array.isArray(entries) ? entries : undefined
+}
+/** The guard's PreToolUse entries in Claude Code settings: each entry with a hook that runs the cockpit guard. */
+function guardEntries(settings: unknown): readonly HookEntry[] {
+    return (hookEntries(settings) ?? []).filter((entry): entry is HookEntry => plainObject(entry) && Array.isArray(entry.hooks) && entry.hooks.some(guardCommand))
+}
+
+/**
+ * Local settings carrying exactly the guard entries the committed settings register, beside everything
+ * else a person keeps there; undefined when they already do, or a reason when the file is not settings
+ * cockpit can add a hook to. An entry cockpit wrote before is replaced, never duplicated.
+ */
+export function mergeClaudeLocalGuard(current: unknown, wanted: readonly HookEntry[]): Readonly<{ bytes: string | null } | { reason: string }> | undefined {
+    const object = current ?? {}
+    const entries = hookEntries(object)
+    // Claude Code drops a whole settings file it cannot load, so cockpit never rewrites one it cannot read either.
+    if (!plainObject(object) || entries === undefined) return { reason: 'it is not a Claude Code settings object whose hooks.PreToolUse is a list' }
+    const kept = entries.flatMap(entry => {
+        if (!plainObject(entry) || !Array.isArray(entry.hooks)) return [entry]
+        const hooks = entry.hooks.filter(hook => !guardCommand(hook))
+        return hooks.length === entry.hooks.length ? [entry] : hooks.length ? [{ ...entry, hooks }] : []
+    })
+    const PreToolUse = [...kept, ...wanted]
+    const { hooks: _hooks, ...others } = object
+    const otherHooks = plainObject(object.hooks) ? Object.fromEntries(Object.entries(object.hooks).filter(([event]) => event !== 'PreToolUse')) : {}
+    const nextHooks = PreToolUse.length ? { ...otherHooks, PreToolUse } : otherHooks
+    const next = Object.keys(nextHooks).length ? { ...others, hooks: nextHooks } : others
+    if (JSON.stringify(next) === JSON.stringify(object)) return undefined
+    return { bytes: Object.keys(next).length ? `${JSON.stringify(next, null, 2)}\n` : null }
+}
+
+/** The committed guard entries, and the local settings as read; a reason when either cannot be read. */
+function claudeGuardFiles(root: string): Readonly<{ wanted: readonly HookEntry[]; local: Readonly<{ value: unknown; bytes: string }> | undefined } | { reason: string }> {
+    // A file that does not parse is no absent one: rewriting it would drop what a person keeps there.
+    const committed = readLocalJson(join(root, CLAUDE_SETTINGS))
+    if (committed && 'reason' in committed) return { reason: `${CLAUDE_SETTINGS} ${committed.reason}` }
+    if (committed && committed.value === undefined) return { reason: `${CLAUDE_SETTINGS} is not valid JSON` }
+    const local = readLocalJson(join(root, CLAUDE_LOCAL_SETTINGS))
+    if (local && 'reason' in local) return { reason: `${CLAUDE_LOCAL_SETTINGS} ${local.reason}` }
+    if (local && local.value === undefined) return { reason: `${CLAUDE_LOCAL_SETTINGS} is not valid JSON` }
+    return { wanted: guardEntries(committed?.value), local }
+}
+
+/** Repeats the committed guard registration in Claude Code's local settings, or takes cockpit's entry back when none is committed. */
+export async function writeClaudeLocalGuard(root: string): Promise<Readonly<{ kind: 'complete' } | { kind: 'refusal'; message: string }>> {
+    const files = claudeGuardFiles(root)
+    if ('reason' in files) return { kind: 'refusal', message: files.reason }
+    if (files.local === undefined && files.wanted.length === 0) return { kind: 'complete' }
+    const merged = mergeClaudeLocalGuard(files.local?.value, files.wanted)
+    if (merged === undefined) return { kind: 'complete' }
+    if ('reason' in merged) return { kind: 'refusal', message: `${CLAUDE_LOCAL_SETTINGS} could not take the guard registration: ${merged.reason}` }
+    try {
+        await writeClaudeLocalSettings(root, merged.bytes)
+        return { kind: 'complete' }
+    } catch (error) {
+        return { kind: 'refusal', message: `${join(root, CLAUDE_LOCAL_SETTINGS)} could not be written: ${errorCause(error)}` }
+    }
+}
+
+/** Doctor's finding when Claude Code sessions started below the cockpit root would run without the guard. */
+export function inspectClaudeLocalGuard(root: string): readonly EnvironmentDiagnostic[] {
+    const files = claudeGuardFiles(root)
+    const missing = (why: string): EnvironmentDiagnostic => ({ severity: 'warning',
+        code: 'CLAUDE_LOCAL_HOOK_MISSING' satisfies typeof ENVIRONMENT_CODES.CLAUDE_LOCAL_HOOK_MISSING,
+        message: `${why}; Claude Code reads ${CLAUDE_SETTINGS} only from the directory a session starts in, so a session started below the cockpit root runs without the guard`,
+        // Code and fix are literals, so the diagnostic inventory captures the fix beside the code.
+        target: CLAUDE_LOCAL_SETTINGS, fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal; if sync cannot read .claude/settings.local.json, make it a JSON object or remove it first' })
+    if ('reason' in files) return [missing(`cockpit could not check the guard registration in ${CLAUDE_LOCAL_SETTINGS}: ${files.reason}`)]
+    if (files.wanted.length === 0) return []
+    const present = mergeClaudeLocalGuard(files.local?.value, files.wanted) === undefined
+    return present ? [] : [missing(`${CLAUDE_LOCAL_SETTINGS} does not register the guard ${CLAUDE_SETTINGS} registers`)]
 }

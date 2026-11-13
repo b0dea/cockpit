@@ -108,16 +108,23 @@ Limits, stated plainly:
   `workspace-write` sandbox, which cockpit selects once a sibling is granted to Codex, keeps `.codex`
   read-only to a Codex agent; an agent in another tool can still rewrite it where that tool's
   protection does not cover the shell.
-- Claude Code reads a project's `.claude/settings.json` only from the directory a session starts in.
-  Started in a subdirectory of the cockpit, it does not load the cockpit's hook registration, so the
-  guard does not run for that session: start Claude Code at the cockpit root. Measured on 2026-11-13
-  with Claude Code 2.1.323: `claude -p --setting-sources project` started in the root of a throwaway
-  repository ran the root's logging hook, and started one or two directories below it ran none,
-  while the shell command still ran. With the root file replaced by malformed JSON, the debug log
-  named it as invalid from the root and never named it from the subdirectory. A
-  `.claude/settings.json` in the subdirectory ran there, and so did a hook in the root's
-  `.claude/settings.local.json` with `--setting-sources project,local`, whose malformed twin was
-  named from the subdirectory too.
+- Claude Code reads a project's `.claude/settings.json` only from the directory a session starts in,
+  and `.claude/settings.local.json` also from the repository's top. So `sync` repeats the guard
+  registration in the cockpit root's `.claude/settings.local.json`, which Git ignores, beside
+  whatever a person keeps there, and `doctor` warns (`CLAUDE_LOCAL_HOOK_MISSING`) when it is
+  missing. A session started in a subdirectory then runs the guard too. This holds when the cockpit
+  root is the top of its repository: a local file in a directory between the top and the session's is
+  not read, so a session started below a cockpit nested in a larger repository runs without the
+  guard. Measured on 2026-11-13 with Claude Code 2.1.323 and its default setting sources, in a
+  throwaway repository:
+  - started one or two directories below the root, no root `.claude/settings.json` hook ran while
+    the shell command ran, and a malformed twin of that file, named as invalid from the root, went
+    unnamed from there;
+  - a hook in the root's `.claude/settings.local.json` ran from both subdirectories, and its
+    malformed twin was named from there;
+  - `CLAUDE_PROJECT_DIR` and the payload's `cwd` were the subdirectory;
+  - registered identically in both root files, the command ran once from the root, while two
+    different commands both ran.
 - What a harness does when its hook timeout fires is not measured. The guard keeps its own 25-second
   deadline and refuses at it ([Native adapter behavior](#native-adapter-behavior)).
 
@@ -1199,9 +1206,9 @@ decision without adding grants or weakening hard boundaries:
 Unavailable or malformed decisions exit 2 on every target, so adapter exit 0 alone does not mean
 permission was granted. Claude Code prints the hook command beside every refusal it reports, so the
 generated Claude Code and Codex commands are one line that runs the committed guard script, which
-holds the recovery text. Claude Code's finds it through `CLAUDE_PROJECT_DIR`; Codex's takes the
-outermost directory at or above the session's that holds the guard script, and blocks the call when
-more than one directory on the way holds one, since it cannot tell which is the cockpit's; a script that is missing or exits with any status but 0 or 2 blocks
+holds the recovery text. Each takes the outermost directory at or above the session's that holds the
+guard script, starting for Claude Code from `CLAUDE_PROJECT_DIR`, else the working directory, and blocks
+the call when more than one directory on the way holds one, since it cannot tell which is the cockpit's; a script that is missing or exits with any status but 0 or 2 blocks
 the call with `cockpit guard failed (<status>): <script>; sync the cockpit`. The generated Claude Code and Codex registrations give the guard hook a
 `timeout` of 30 seconds; a guard call spawns several Node and Git processes and was seen to exceed
 Codex's 5-second default on a loaded machine. What either harness does with the call when that

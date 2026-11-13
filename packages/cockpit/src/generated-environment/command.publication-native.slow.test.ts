@@ -127,6 +127,33 @@ describe('public surface publication transaction', () => {
             expect(codex(`printf x > ${join(codexHome, 'config.toml')}`)).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: expect.stringContaining('a control') })
         })
 
+        it('guards a Claude Code session started below the cockpit root through the local registration sync writes', async () => {
+            const fixture = await surfaceConsumer('subdirectory-session')
+            expect(spawnSync('git', ['init', '--quiet', fixture.root]).status).toBe(0)
+            await writeFile(join(fixture.siblingDirectory, 'package-lock.json'), '{}')
+            const synced = await syncGeneratedEnvironment({ configPath: fixture.configPath })
+            expect(synced, JSON.stringify(synced.diagnostics)).toMatchObject({ kind: 'complete' })
+            const root = await realpath(fixture.root)
+            const settingsDirectory = join(root, '.claude')
+            const guardHook = async (file: string) => (JSON.parse(await readFile(join(settingsDirectory, file), 'utf8')) as {
+                hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> } }).hooks.PreToolUse.at(-1)!.hooks[0]!.command
+            // The local registration is the committed one, so Claude Code runs it once from the root.
+            const command = await guardHook('settings.local.json')
+            expect(command).toBe(await guardHook('settings.json'))
+            const subdirectory = join(root, 'docs', 'deep')
+            await mkdir(subdirectory, { recursive: true })
+            const call = (tool_input: object, tool_name = 'Write') => {
+                const run = spawnSync('/bin/sh', ['-c', command], { cwd: subdirectory, encoding: 'utf8',
+                    env: { PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_PROJECT_DIR: subdirectory },
+                    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name, cwd: subdirectory, tool_input }) })
+                expect(run.status, run.stderr).toBe(0)
+                return run.stdout ? JSON.parse(run.stdout).hookSpecificOutput.permissionDecision : 'allow'
+            }
+            expect(call({ file_path: join(root, '.cockpit/guards/bash-guard.sh'), content: 'exit 0' })).toBe('deny')
+            expect(call({ command: 'git push --force origin main' }, 'Bash')).toBe('deny')
+            expect(call({ file_path: join(subdirectory, 'notes.md'), content: 'synthetic' })).toBe('allow')
+        })
+
         it('applies a tool restriction under stale_delete = person, removing only the unchanged MCP file of a tool still listed', async () => {
             const fixture = await surfaceConsumer('stale-mcp', { mcp: { command: '/usr/bin/true' } })
             expect(spawnSync('git', ['init', '--quiet', fixture.root]).status).toBe(0)

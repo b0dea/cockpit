@@ -126,6 +126,12 @@ cannot fix it. `CODEX_HOOK_UNTRUSTED` names the hook source whose trust is missi
 outdated, or the Git or file-access failure that kept discovery from being verified, which comes
 first. [Trust the Codex hook](harness-surfaces.md#trust-the-codex-hook) covers both.
 
+`CLAUDE_LOCAL_HOOK_MISSING` means the cockpit root's `.claude/settings.local.json` does not repeat the
+guard registration `.claude/settings.json` holds. Claude Code reads the committed file only from the
+directory a session starts in, so a session started below the root would run without the guard. Sync
+writes the registration there beside a person's own settings; it refuses a file that is not JSON
+rather than overwrite it.
+
 ### Merge, ownership, and generation
 
 `SURFACE_INPUT_INVALID`, `SURFACE_BOUNDS`, `SURFACE_NAME_DUPLICATE`,
@@ -347,6 +353,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `AUTONOMY_PERSON_REQUIRED` | a person runs the same command with --interactive in a terminal outside CI, or a person changes the field in cockpit.toml and accepts the change at sync |
 | `BROWSER_ROUTE_FINDINGS` | this run asked for a clean route (--fail-on-findings). Read result.receipt.surfaces[].diagnostics, including excerpt.messages where present: fix the product for each console error, uncaught page error and failed request that matters, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs browser drive --config <your cockpit.toml> --route <name> --fail-on-findings; third-party traffic never counts |
 | `CLAIM_CO_TENANT` | [see above](#common-refusal-guidance) |
+| `CLAUDE_LOCAL_HOOK_MISSING` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal; if sync cannot read .claude/settings.local.json, make it a JSON object or remove it first; [see above](#codex-hooks-in-linked-worktrees) |
 | `COCKPIT_REVISION_UNSTAMPED` | install a released @b00dea/cockpit when the resolved data must name the exact cockpit source commit |
 | `CODEX_HOOK_SOURCE_MISMATCH` | have a person review and roll out the matching generated hooks in the original checkout through its normal change process; cockpit does not copy hooks or change that checkout; rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config <your cockpit.toml>, then review and trust the reported source in interactive Codex; [see above](#codex-hooks-in-linked-worktrees) |
 | `CODEX_HOOK_UNTRUSTED` | if the hook source could not be verified, resolve the reported discovery failure first; otherwise a person runs codex -C <hook source directory> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config <your cockpit.toml>; [see above](#codex-hooks-in-linked-worktrees) |

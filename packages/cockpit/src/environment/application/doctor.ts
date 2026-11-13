@@ -1,4 +1,5 @@
 import { dirname, join, resolve } from 'node:path'
+import { inspectClaudeLocalGuard } from '../served-checkout-grants.js'
 import { ENVIRONMENT_CODES, errorCause, type EnvironmentDiagnostic, snapshotJson } from '../contract.js'
 import type { CockpitConfig, EvaluatorTool } from '../../schema.js'
 import { effectivePolicy, policyWeakening, policyWeakeningDiagnostic, readRecordedPolicy, trustInForce } from '../../autonomy.js'
@@ -299,11 +300,14 @@ export async function runDoctor(
     adapters: DoctorCommandAdapters,
 ): Promise<DoctorCommandResult> {
     const config = loadCockpitConfig(input.configPath)
-    // Codex hook trust is advice for a Codex user; a cockpit that does not list Codex gets none.
+    // Codex hook trust is advice for a Codex user; a cockpit that does not list Codex gets none. A Claude Code
+    // session started below the cockpit root runs the guard only through the local settings sync writes.
     const hookTrustFindings = async (): Promise<readonly EnvironmentDiagnostic[]> => {
         const loaded = await config
-        return loaded.kind === 'complete' && loaded.result.config.surfaces.tools.includes('codexcli')
-            ? adapters.inspectHookTrust?.() ?? [] : []
+        if (loaded.kind !== 'complete') return []
+        const tools = loaded.result.config.surfaces.tools
+        return [...tools.includes('codexcli') ? await adapters.inspectHookTrust?.() ?? [] : [],
+            ...tools.includes('claudecode') ? inspectClaudeLocalGuard(dirname(loaded.result.source.path)) : []]
     }
     const currentness = adapters.inspectGeneratedCurrentness?.() ?? prepareGeneratedEnvironmentCurrentness(input)
     const mcpStartup = async (): Promise<readonly EnvironmentDiagnostic[]> => adapters.inspectMcpStartup?.((await currentness).mcpServers) ?? []

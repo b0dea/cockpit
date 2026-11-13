@@ -25,7 +25,7 @@ import { inputSourcesCurrent, ownedInputOverlap, preparePublication } from './pu
 import { checkCanonicalGeneratedEnvironment, issueRepairAuthority, issuedRepairs } from './check.js'
 import { openCodeGrantFile, staleMcpOutputsOnly } from './surface-outputs.js'
 import { readSiblingCheckouts } from '../sibling-checkouts.js'
-import { openCodeGrantDirectory, openCodePatternUnsafe } from '../served-checkout-grants.js'
+import { openCodeGrantDirectory, openCodePatternUnsafe, writeClaudeLocalGuard } from '../served-checkout-grants.js'
 
 async function prepareGeneratedEnvironmentSync(
     input: GeneratedEnvironmentSyncInput,
@@ -152,6 +152,11 @@ export async function applyGeneratedEnvironmentRepair(
         if (local.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
             `the committed guard files were published, but ${local.message}; the guard refuses ${GUARD_HELD_CALLS} until it exists`,
             GUARD_LOCAL_PATHS.identity, 'fix the path, then run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` again in a terminal')
+        // A Claude Code session started below the cockpit root reads only the local settings at the root.
+        const claude = await writeClaudeLocalGuard(prepared.root)
+        if (claude.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
+            `the committed guard files were published, but ${claude.message}; a Claude Code session started below the cockpit root runs without the guard until it is written`,
+            '.claude/settings.local.json', 'make .claude/settings.local.json a JSON object or remove it, then run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` again in a terminal')
     }
     if (prepared.openCodeGrantRoots.length > 0 && settings.dryRun !== true) {
         // A checkout `use` serves from outside the declared one is what OpenCode is granted, as `use` wrote it.

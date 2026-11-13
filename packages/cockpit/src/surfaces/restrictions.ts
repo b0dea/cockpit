@@ -382,19 +382,21 @@ function shellLiteral(value: string): string {
 // Registrations are committed, so each finds the cockpit checkout at run time through the
 // mechanism its harness documents: Claude Code exports the project directory to hooks, and Codex runs
 // hooks in the session working directory. The Git root can be above a cockpit rooted in a subdirectory.
-// An unset project directory names no checkout, so the guard path it spells is an absolute one that exists
-// nowhere, which no agent can create, and the call blocks. A Codex session can start in a subdirectory of
-// the cockpit, where the guard script would be one an agent may have written, so the hook takes the
-// outermost directory at or above the session's that holds the guard script: the directories above the
-// cockpit lie outside every root, which agents do not write. A second guard script on the way is ambiguous,
-// whoever wrote it, so the call blocks. The walk is plain shell, since a program the hook found on the
-// session's search path could be one an agent planted.
+// A session can start in a subdirectory of the cockpit, where the guard script would be one an agent may
+// have written, so each hook takes the outermost directory at or above the session's that holds the guard
+// script: the directories above the cockpit lie outside every root, which agents do not write. Claude
+// Code 2.1.323 sets CLAUDE_PROJECT_DIR to the directory a session started in, a subdirectory included
+// (measured 2026-11-13). A second guard script on the way is ambiguous, whoever wrote it, so the call
+// blocks; with none the guard path is an absolute one that exists nowhere, which no agent can create, and
+// the call blocks too. The walk is plain shell, since a program the hook found on the session's search
+// path could be one an agent planted.
 const MISSING_ROOT = '/no-cockpit-root'
+const walk = (start: string, from: string) => `d=${start} || d=; r=${MISSING_ROOT}; n=0; while [ -n "$d" ]; do [ -f "$d/.cockpit/guards/bash-guard.sh" ] && { r=$d; n=$((n+1)); }; d=\${d%/*}; done; `
+    + `[ $n -gt 1 ] && { echo "cockpit guard: more than one .cockpit/guards/bash-guard.sh at or above ${from}, so the guard to run is ambiguous; a person removes the one that is not the cockpit's" >&2; exit 2; }; `
 const HOOK_ROOT = Object.freeze({
-    claudecode: { expression: '${CLAUDE_PROJECT_DIR:-}', prelude: '', guard: `\${CLAUDE_PROJECT_DIR:-${MISSING_ROOT}}` },
-    codexcli: { expression: '$(pwd -P 2>/dev/null)',
-        prelude: `d=$(pwd -P) || d=; r=${MISSING_ROOT}; n=0; while [ -n "$d" ]; do [ -f "$d/.cockpit/guards/bash-guard.sh" ] && { r=$d; n=$((n+1)); }; d=\${d%/*}; done; `
-            + `[ $n -gt 1 ] && { echo "cockpit guard: more than one .cockpit/guards/bash-guard.sh at or above $(pwd -P), so the guard to run is ambiguous; a person removes the one that is not the cockpit's" >&2; exit 2; }; `, guard: '$r' },
+    claudecode: { expression: '${CLAUDE_PROJECT_DIR:-}', prelude: walk('${CLAUDE_PROJECT_DIR:-$(pwd -P)}', 'the session directory'), guard: '$r' },
+    // Codex trusts a hook by its exact command, so this spelling stays as people trusted it.
+    codexcli: { expression: '$(pwd -P 2>/dev/null)', prelude: walk('$(pwd -P)', '$(pwd -P)'), guard: '$r' },
 } as const)
 
 const GUARD_HOOK_TIMEOUT_SECONDS = 30
