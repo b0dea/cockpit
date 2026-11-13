@@ -514,7 +514,8 @@ export function gitInvocation(invocation: ParsedInvocation): GitInvocation | und
 /**
  * Short options split one per word, as Git reads them: `-qb x` is `-q -b x` and `-bx` is `-b x`, for a verb
  * whose options the guard lists, so every later check sees each option. A bundle holding a letter the
- * verb does not take is left whole, which that verb's option check refuses.
+ * verb does not take is left whole, which that verb's option check refuses. The word after an option
+ * that takes a separate value is that value, kept whole: Git reads `-m -qb` as the message `-qb`.
  */
 function splitGitShortOptions(verb: string, args: readonly string[]): readonly string[] {
     const options = GIT_WRITE_OPTIONS[verb === 'worktree' ? 'worktree add' : verb]
@@ -523,15 +524,18 @@ function splitGitShortOptions(verb: string, args: readonly string[]): readonly s
     for (let index = 0; index < args.length; index++) {
         const arg = args[index]!
         if (arg === '--') { split.push(...args.slice(index)); break }
-        if (!/^-[A-Za-z]{2,}/.test(arg)) { split.push(arg); continue }
-        const words: string[] = []
-        let known = true
-        for (const [at, letter] of [...arg.slice(1)].entries()) {
-            if (options.valued.has(`-${letter}`)) { words.push(`-${letter}`, ...arg.slice(at + 2) ? [arg.slice(at + 2)] : []); break }
-            if (!options.plain.has(`-${letter}`)) { known = false; break }
-            words.push(`-${letter}`)
+        let words = [arg]
+        if (/^-[A-Za-z]{2,}/.test(arg)) {
+            const letters: string[] = []
+            for (const [at, letter] of [...arg.slice(1)].entries()) {
+                if (options.valued.has(`-${letter}`)) { letters.push(`-${letter}`, ...arg.slice(at + 2) ? [arg.slice(at + 2)] : []); break }
+                if (!options.plain.has(`-${letter}`)) { letters.length = 0; break }
+                letters.push(`-${letter}`)
+            }
+            if (letters.length) words = letters
         }
-        split.push(...known ? words : [arg])
+        split.push(...words)
+        if (options.valued.has(words.at(-1)!) && index + 1 < args.length) split.push(args[++index]!)
     }
     return split
 }
@@ -543,8 +547,8 @@ const gitOptions = (plain: string, valued: string) => ({ plain: new Set(plain.sp
 const GIT_WRITE_OPTIONS: Readonly<Record<string, ReturnType<typeof gitOptions>>> = {
     merge: gitOptions('--abort --continue --quit -e --edit --no-edit --ff --no-ff --ff-only --squash --no-squash --commit --no-commit --stat --no-stat -n --log --no-log '
         + '--signoff --no-signoff --allow-unrelated-histories --autostash --no-autostash --rerere-autoupdate --no-rerere-autoupdate --progress --no-progress -q --quiet -v '
-        + '--verbose --verify-signatures --no-verify-signatures --overwrite-ignore --no-overwrite-ignore --summary --no-summary --no-verify', '-m -F -s -X --strategy '
-        + '--strategy-option --file --message --into-name --cleanup -S --gpg-sign'),
+        + '--verbose --verify-signatures --no-verify-signatures --overwrite-ignore --no-overwrite-ignore --summary --no-summary --no-verify -S --gpg-sign', '-m -F -s -X --strategy '
+        + '--strategy-option --file --message --into-name --cleanup'),
     checkout: gitOptions('-q --quiet -f --force -m --merge --detach -t --track --no-track --guess --no-guess --ignore-other-worktrees --overwrite-ignore --no-overwrite-ignore '
         + '--progress --no-progress -p --patch --ours --theirs --overlay --no-overlay --ignore-skip-worktree-bits -l --pathspec-file-nul', '-b -B --orphan --conflict --pathspec-from-file'),
     switch: gitOptions('-q --quiet -f --force --discard-changes -m --merge -d --detach -t --track --no-track --guess --no-guess --ignore-other-worktrees --progress --no-progress',
@@ -554,14 +558,14 @@ const GIT_WRITE_OPTIONS: Readonly<Record<string, ReturnType<typeof gitOptions>>>
     'checkout-index': gitOptions('-u --index -q --quiet -f --force -a --all -n --no-create --temp -z --ignore-skip-worktree-bits', '--stage --prefix'),
     reset: gitOptions('--soft --mixed --hard --merge --keep -q --quiet -p --patch -N --intent-to-add --no-refresh --refresh --pathspec-file-nul', '--pathspec-from-file'),
     'cherry-pick': gitOptions('--continue --skip --quit --abort -e --edit --no-edit -n --no-commit -s --signoff -x -r --ff --allow-empty --allow-empty-message '
-        + '--keep-redundant-commits --rerere-autoupdate --no-rerere-autoupdate', '-m --mainline -X --strategy --strategy-option --cleanup -S --gpg-sign --empty'),
-    revert: gitOptions('--continue --skip --quit --abort -e --edit --no-edit -n --no-commit -s --signoff --reference --rerere-autoupdate --no-rerere-autoupdate',
-        '-m --mainline -X --strategy --strategy-option --cleanup -S --gpg-sign'),
+        + '--keep-redundant-commits --rerere-autoupdate --no-rerere-autoupdate -S --gpg-sign', '-m --mainline -X --strategy --strategy-option --cleanup --empty'),
+    revert: gitOptions('--continue --skip --quit --abort -e --edit --no-edit -n --no-commit -s --signoff --reference --rerere-autoupdate --no-rerere-autoupdate -S --gpg-sign',
+        '-m --mainline -X --strategy --strategy-option --cleanup'),
     rebase: gitOptions('--continue --skip --abort --quit --edit-todo --show-current-patch -i --interactive -q --quiet -v --verbose --stat -n --no-stat --autosquash '
         + '--no-autosquash --autostash --no-autostash --keep-empty --no-keep-empty --root --fork-point --no-fork-point --keep-base --signoff --committer-date-is-author-date '
         + '--ignore-date --reset-author-date --ignore-whitespace --no-verify --verify --rerere-autoupdate --no-rerere-autoupdate --update-refs --no-update-refs '
-        + '--reapply-cherry-picks --no-reapply-cherry-picks -f --force-rebase --no-ff --apply -m --merge -r --rebase-merges --no-rebase-merges', '--onto -s --strategy -X '
-        + '--strategy-option -C --whitespace --empty -S --gpg-sign'),
+        + '--reapply-cherry-picks --no-reapply-cherry-picks -f --force-rebase --no-ff --apply -m --merge -r --rebase-merges --no-rebase-merges -S --gpg-sign', '--onto -s --strategy -X '
+        + '--strategy-option -C --whitespace --empty'),
     stash: gitOptions('-p --patch -k --keep-index --no-keep-index -u --include-untracked -a --all -q --quiet -S --staged --pathspec-file-nul --index',
         '-m --message --pathspec-from-file'),
     pull: gitOptions('--ff --no-ff --ff-only -r --rebase --no-rebase --squash --no-squash --commit --no-commit -e --edit --no-edit --stat --no-stat -n --log --no-log '
@@ -574,21 +578,25 @@ const GIT_WRITE_OPTIONS: Readonly<Record<string, ReturnType<typeof gitOptions>>>
         + '--no-untracked-cache -z --again -g', '--cacheinfo'),
 }
 
-/** The first option in `args` a verb does not take, alone or bundled, before `--`. */
+/**
+ * The first option in `args` a verb does not take, alone or bundled, before `--`; or an option given a
+ * separate value that starts with `-`, which the checks reading options by their spelling would take for one.
+ */
 function unknownGitOption(args: readonly string[], known: ReturnType<typeof gitOptions>): string | undefined {
+    const value = (index: number) => args[index]?.startsWith('-') ? `${args[index - 1]} ${args[index]}` : undefined
     for (let index = 0; index < args.length; index++) {
         const arg = args[index]!
         if (arg === '--') return undefined
         if (!arg.startsWith('-') || arg === '-') continue
         if (arg.startsWith('--')) {
             const name = arg.split('=')[0]!
-            if (known.valued.has(name) && !arg.includes('=')) index++
+            if (known.valued.has(name) && !arg.includes('=')) { if (value(++index)) return value(index) }
             else if (!known.plain.has(name) && !known.valued.has(name)) return arg
             continue
         }
         // A short option bundle: each letter takes no value, until one that takes the rest or the next word.
         for (const [at, letter] of [...arg.slice(1)].entries()) {
-            if (known.valued.has(`-${letter}`)) { if (at === arg.length - 2) index++; break }
+            if (known.valued.has(`-${letter}`)) { if (at === arg.length - 2 && value(++index)) return value(index); break }
             if (!known.plain.has(`-${letter}`)) return arg
         }
     }
@@ -654,7 +662,7 @@ export function gitTreeTargets(git: GitInvocation): GitContentWrite | undefined 
         return unmodelled('continues, skips or aborts a sequence to what its own state records, which the guard does not read')
     }
     if (git.verb === 'merge' && !control) {
-        const revisions = gitOperands(git.args, ['-m', '-F', '-s', '-X', '--strategy', '--strategy-option', '--file', '--message', '--into-name', '--cleanup', '-S', '--gpg-sign'])
+        const revisions = gitOperands(git.args, ['-m', '-F', '-s', '-X', '--strategy', '--strategy-option', '--file', '--message', '--into-name', '--cleanup'])
         if (walked(revisions)) return unmodelled('names commits by a range the guard does not list')
         return head(revisions.length ? revisions.map(previous) : ['@{upstream}'])
     }
@@ -667,8 +675,8 @@ export function gitTreeTargets(git: GitInvocation): GitContentWrite | undefined 
         const operands = gitOperands(before, [...creating, '--conflict', '--pathspec-from-file'])
         const paths = end < 0 ? undefined : git.args.slice(end + 1)
         const forced = before.some(arg => ['-f', '--force', '--discard-changes'].includes(arg) || /^-[a-zA-Z]*f/.test(arg) && !arg.startsWith('--'))
-        // Without force or a merge, Git keeps a local edit where the target matches the index.
-        const plain = forced || before.some(arg => arg === '-m' || arg === '--merge') ? {} : { keepsLocal: true as const }
+        // Without force or a merge, Git keeps a local edit where the target matches the index. `--conflict` merges too.
+        const plain = forced || before.some(arg => arg === '-m' || arg === '--merge' || arg.startsWith('--conflict')) ? {} : { keepsLocal: true as const }
         // A new branch starts at its start point, checked out; one at HEAD writes nothing.
         if (created) return operands.length > 1 || paths?.length ? unmodelled('names paths beside a new branch') : operands[0] === undefined ? undefined : onDisk(previous(operands[0]), plain)
         // `checkout <rev> --` names no path: it switches to the revision; a forced checkout with none rewrites HEAD's files.
@@ -702,6 +710,8 @@ export function gitTreeTargets(git: GitInvocation): GitContentWrite | undefined 
         if (path === undefined) return undefined
         if (revision !== undefined) return onDisk(revision)
         if (rest.some(arg => ['-b', '-B', '-d', '--detach'].includes(arg))) return onDisk('HEAD')
+        // Git expands `@{-1}` in the directory's name to the branch checked out before this one.
+        if (/@\{|^[-@]/.test(posix.basename(path))) return unmodelled('names its branch by a directory name Git reads as another branch')
         // Only a local branch of that name, never a tag or a hash; else, guessing, the one remote branch of it.
         const guess = rest.includes('--guess-remote') ? { remote: true as const } : rest.includes('--no-guess-remote') ? {} : { remote: 'config' as const }
         return onDisk(`refs/heads/${posix.basename(path)}`, { fallback: 'head', ...guess })
@@ -712,7 +722,7 @@ export function gitTreeTargets(git: GitInvocation): GitContentWrite | undefined 
         return { targets: [{ revision, from: 'worktree' }], unnamed: false }
     }
     if ((git.verb === 'cherry-pick' || git.verb === 'revert') && !control) {
-        const operands = gitOperands(git.args, ['-m', '--mainline', '-X', '--strategy', '--strategy-option', '--cleanup', '-S', '--gpg-sign', '--empty'])
+        const operands = gitOperands(git.args, ['-m', '--mainline', '-X', '--strategy', '--strategy-option', '--cleanup', '--empty'])
         if (!operands.length || walked(operands)) return unmodelled('names commits by a range the guard does not list')
         const targets = operands.map(operand => {
             const range = /^(.+?)\.\.(.+)$/.exec(operand)
@@ -722,7 +732,7 @@ export function gitTreeTargets(git: GitInvocation): GitContentWrite | undefined 
         return { targets, unnamed: false }
     }
     if (git.verb === 'rebase' && !control) {
-        const operands = gitOperands(git.args, ['--onto', '-s', '--strategy', '-X', '--strategy-option', '-C', '--whitespace', '--empty', '-S', '--gpg-sign'])
+        const operands = gitOperands(git.args, ['--onto', '-s', '--strategy', '-X', '--strategy-option', '-C', '--whitespace', '--empty'])
         if (walked(operands)) return unmodelled('names commits by a range the guard does not list')
         const onto = git.args[git.args.indexOf('--onto') + 1]
         const base = git.args.includes('--onto') ? onto : operands[0] ?? (git.args.includes('--root') ? undefined : '@{upstream}')

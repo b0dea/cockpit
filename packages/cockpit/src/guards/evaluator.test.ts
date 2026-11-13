@@ -451,9 +451,16 @@ describe('resolved guard evaluation', () => {
         for (const command of ['git bisect start', 'git bisect good HEAD~3', 'git bisect reset main', 'git cherry-pick --stdin', 'git revert --stdin', 'git cherry-pick --all',
             'git cherry-pick --branches=evil', 'git cherry-pick ^main evil', 'git stash branch b', 'git merge --frobnicate topic', 'git checkout --recurse-submodules main', 'git checkout -b',
             'git worktree add --no-checkout pkg/wt', 'git worktree add --orphan x pkg/wt', 'git submodule update --init', 'git submodule init', 'git submodule absorbgitdirs',
-            'git update-index --index-info', 'git update-index --stdin', 'git update-index --frobnicate src/a.ts', 'git read-tree evil']) {
+            'git update-index --index-info', 'git update-index --stdin', 'git update-index --frobnicate src/a.ts', 'git read-tree evil',
+            // An option's separate value that starts with `-` is that value, not options: Git reads pathspecs from the file `-qb`.
+            'git checkout --pathspec-from-file -qb evil', 'git merge -m -qm evil', 'git restore -s evil --pathspec-from-file -S',
+            // A worktree directory named `@{-1}` checks out the branch before this one.
+            "git worktree add 'pkg/@{-1}'"]) {
             expect(decide(command), command).toBe('ask')
         }
+        // `-S` signs with a key only when one is attached, so the word after it is the revision.
+        expect(targets('git merge -S evil')).toEqual([{ revision: 'evil' }])
+        expect(targets('git rebase -S evil')).toContainEqual(expect.objectContaining({ revision: 'evil' }))
         // What does not touch the work tree stays allowed; what later brings it there is judged.
         for (const command of ['git fetch origin', 'git write-tree', 'git hash-object -w src/a.ts',
             'git bisect log', 'git submodule status', 'git stash list', 'git stash drop']) {
@@ -1415,7 +1422,9 @@ describe('allow by default', () => {
         const judge = (tool_name: string, tool_input: object) => evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input }), open(), onBranch('refs/heads/topic'))
         for (const command of ['git reset --soft HEAD~1 &', 'nohup cp src/a.ts src/b.ts', 'setsid -f mv src/a.ts src/b.ts', 'cp src/a.ts src/b.ts & npm test',
             // Two background commands writing files race each other as surely as a loop does.
-            'printf x > build/a.txt & printf y > build/b.txt &']) {
+            'printf x > build/a.txt & printf y > build/b.txt &',
+            // A brace group's own separators do not end the list the `&` after it sends to the background.
+            '{ mv src/a.ts src/b.ts; } &', 'npm test && { npm run lint; cp src/a.ts src/b.ts; } &']) {
             expect(judge('Bash', { command }).decision, command).toBe('ask')
         }
         // A loop sent to the background is not parsed at all, and one run by a background tool loops while later calls are judged.
@@ -1443,7 +1452,9 @@ describe('allow by default', () => {
             return asked
         }
         for (const command of ['git switch main', 'git checkout main', 'git checkout -b x evil', 'git switch -c x evil', 'git checkout evil --']) expect(keeps(command), command).toEqual([true])
-        for (const command of ['git switch -f main', 'git checkout -m main', 'git switch --merge main', 'git switch --discard-changes main', 'git checkout -fb x evil', 'git reset --hard main']) {
+        for (const command of ['git switch -f main', 'git checkout -m main', 'git switch --merge main', 'git switch --discard-changes main', 'git checkout -fb x evil', 'git reset --hard main',
+            // `--conflict` merges as `--merge` does.
+            'git checkout --conflict=merge main', 'git switch --conflict diff3 main']) {
             expect(keeps(command), command).toEqual([undefined])
         }
     })

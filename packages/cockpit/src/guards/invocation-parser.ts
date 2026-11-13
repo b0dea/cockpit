@@ -923,8 +923,9 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
     const result: ParsedInvocation[] = []
     let current: Token[] = []
     let compound: Compound | undefined
-    // Where each open brace group's commands start in `result`.
-    const groups: number[] = []
+    // Where each open brace group's commands start in `result`, and where the and-or list holding the group starts:
+    // the group's own separators end no list outside it.
+    const groups: Array<{ readonly start: number; readonly listStart: number }> = []
     // A group just closed, so a separator may follow it; `piped` holds its commands when it feeds a pipeline.
     let closed: { piped?: readonly ParsedInvocation[] } | undefined
     let needsCommand = false
@@ -1085,11 +1086,13 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
             if (current.length) refuse('A standalone { is parsed only where it opens a command group, `{ command; }`. Quote a literal brace.')
             // Every command in the group reads the download, past the separators that end a pipeline stage.
             if (gate === '|' && fetched) refuse(FETCHED_CODE)
-            groups.push(result.length)
+            groups.push({ start: result.length, listStart })
             closed = undefined
         } else if (token.kind === 'op' && token.value === '}') {
             if (!groups.length || current.length || needsCommand) refuse('Malformed brace group.')
-            const start = groups.pop()!
+            const group = groups.pop()!
+            const start = group.start
+            listStart = group.listStart
             // The separator after the group and any redirects on it.
             let next = i + 1
             for (let item = tokens[next]; item; item = tokens[next]) {

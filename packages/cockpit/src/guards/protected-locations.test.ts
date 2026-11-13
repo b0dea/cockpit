@@ -371,11 +371,20 @@ describe('guard protected locations', () => {
         run('remote', 'add', 'origin', 'https://example.test/r.git')
         run('update-ref', 'refs/remotes/origin/feat', planted)
         run('tag', 'wt', planted)
+        // Checkout takes the branch of a name where rev-parse takes the tag: a name both hold at different commits is unresolved.
+        run('branch', 'both', planted)
+        run('tag', 'both', 'HEAD')
         const changes = (target: Parameters<typeof guardWorktreeChanges>[1]) => guardWorktreeChanges(root, target, [], git, executeProbe)
         const settings = { guarded: false, changed: [join(root, 'api/.claude/settings.json')] }
+        expect(await changes({ revision: 'both', from: 'worktree' })).toBeNull()
         // `git checkout feat` and `git switch feat` create feat from the one remote branch of that name.
         expect(await changes({ revision: 'feat', from: 'worktree', fallback: 'index', remote: true })).toEqual(settings)
         expect(await changes({ revision: 'feat', from: 'worktree', fallback: 'remote' })).toEqual(settings)
+        // Git looks for the path on disk only: a name the index holds but the disk does not is still the remote branch.
+        writeFileSync(join(root, 'feat'), 'x\n')
+        run('add', 'feat')
+        rmSync(join(root, 'feat'))
+        expect(await changes({ revision: 'feat', from: 'worktree', fallback: 'index', remote: true })).toEqual(settings)
         // A file of that name is the path checkout writes instead; without the remote guess it is only that.
         writeFileSync(join(root, 'feat'), 'x\n')
         expect(await changes({ revision: 'feat', from: 'worktree', fallback: 'index', remote: true })).toEqual({ guarded: false, changed: [] })

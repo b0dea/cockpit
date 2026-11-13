@@ -22,8 +22,8 @@ const GUARD_RECORD_INPUT_BYTES = 1_048_576
 // reads each file once, compares those bytes with the file's own recorded digest, so bytes moved from one
 // to the other are a change, then runs the script text it hashed with the root it checked and the
 // identity text it hashed: nothing is read again after the comparison. A missing identity is left to the
-// recorded script, which refuses without it and names the fix. It is POSIX shell, run by dash on Linux,
-// naming every program by absolute path, since one found on the session's search path could be one an
+// recorded script, which refuses without it and names the fix. It is POSIX shell, which the hook runs with
+// /bin/bash, naming every program by absolute path, since one found on the session's search path could be one an
 // agent planted. The version in its name changes when what it checks does.
 export const GUARD_CHECK_PATH = '.cockpit/guards/check-v3.sh'
 export const GUARD_CHECK_SCRIPT = `# Written by cockpit sync: runs a cockpit's guard script once it and the identity match the digests sync recorded.

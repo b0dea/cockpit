@@ -507,6 +507,12 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
     let { from, paths } = target
     let to = revision === ':index' ? revision : await commit(revision)
     if (to === null) return null
+    // Checkout, switch and `worktree add` take the local branch of a name, where rev-parse takes a tag of it first;
+    // a name a branch and another ref hold at different commits is unresolved.
+    if (to && /^[^-@~^:{}\s][^~^:{}\s]*$/.test(revision) && !revision.startsWith('refs/')) {
+        const branch = await commit(`refs/heads/${revision}`)
+        if (branch === null || branch && branch !== to) return null
+    }
     if (to === undefined) {
         if (target.optional) return { guarded, changed: [] }
         // The one remote branch of the name, as Git creates a branch from it; none or several is unresolved.
@@ -524,15 +530,12 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
         }
         const guessing = target.remote === true
             || target.remote === 'config' && (await run(['config', '--type=bool', 'worktree.guessRemote']))?.join('').trim() === 'true'
-        // Checkout reads the name as a path when a file or index entry holds it.
-        const isPath = async () => {
-            try { lstatSync(resolve(cwd, revision)); return true } catch (error) { if (!missing(error)) throw error }
-            const listed = await run(['ls-files', '-z', '--', `:(literal)${relative(top, resolve(cwd, revision))}`])
-            return listed === null ? null : listed.length > 0
+        // Checkout reads the name as a path only when the disk holds it (Git's check_filename is an lstat), so a
+        // name only the index holds is still the remote branch.
+        const isPath = () => {
+            try { lstatSync(resolve(cwd, revision)); return true } catch (error) { if (!missing(error)) throw error; return false }
         }
-        const asPath = target.fallback === 'index' && guessing ? await isPath() : true
-        if (asPath === null) return null
-        if (target.fallback === 'index' && asPath) {
+        if (target.fallback === 'index' && (!guessing || isPath())) {
             paths = [revision, ...paths ?? []]
             to = ':index'
             from = 'worktree'
