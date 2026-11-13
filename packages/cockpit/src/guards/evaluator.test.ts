@@ -1427,6 +1427,21 @@ describe('allow by default', () => {
         expect(judge('Monitor', { command: 'tail -f src/a.ts', description: 'watch', timeout_ms: 1000 }).decision).toBe('allow')
     })
 
+    it('lets a plain switch keep a person\'s local edits, as Git does, and judges a forced or merging one against the files on disk', () => {
+        const keeps = (command: string) => {
+            const asked: Array<boolean | undefined> = []
+            evaluateGuard(parseGuardInput(shellPayload(command)), open(), request => {
+                if (request.operation === 'tree') asked.push(request.keepsLocal)
+                return onBranch('refs/heads/topic')(request)
+            })
+            return asked
+        }
+        for (const command of ['git switch main', 'git checkout main', 'git checkout -b x evil', 'git switch -c x evil', 'git checkout evil --']) expect(keeps(command), command).toEqual([true])
+        for (const command of ['git switch -f main', 'git checkout -m main', 'git switch --merge main', 'git switch --discard-changes main', 'git checkout -fb x evil', 'git reset --hard main']) {
+            expect(keeps(command), command).toEqual([undefined])
+        }
+    })
+
     it('keeps everyday Git work and plain skill edits allowed', () => {
         const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
         for (const input of [...['git checkout -b feat', 'git switch main', 'git stash', 'git stash pop', 'git restore src/a.ts', 'git rebase main', 'git merge topic',

@@ -173,6 +173,7 @@ interface PathInspectionRequest {
     readonly fallback?: 'index' | 'remote' | 'head'
     readonly remote?: true | 'config'
     readonly optional?: true
+    readonly keepsLocal?: true
     /** For a `manifest`, also the scripts any package of the enclosing workspace declares, as `workspace`. */
     readonly workspace?: true
     /** For a `search`, the reading tool follows links, so a link below the path leaves its `sensitive` unknown (null). */
@@ -619,6 +620,8 @@ export interface GitTreeTarget {
     readonly remote?: true | 'config'
     /** A revision that may not exist and then writes nothing, as a stash without untracked files has none. */
     readonly optional?: true
+    /** A plain switch, which keeps a local edit where the target matches the index. */
+    readonly keepsLocal?: true
 }
 /**
  * What a Git verb writes into the working tree from revisions: `targets` to compare, and `unnamed` when
@@ -664,11 +667,13 @@ export function gitTreeTargets(git: GitInvocation): GitContentWrite | undefined 
         const operands = gitOperands(before, [...creating, '--conflict', '--pathspec-from-file'])
         const paths = end < 0 ? undefined : git.args.slice(end + 1)
         const forced = before.some(arg => ['-f', '--force', '--discard-changes'].includes(arg) || /^-[a-zA-Z]*f/.test(arg) && !arg.startsWith('--'))
+        // Without force or a merge, Git keeps a local edit where the target matches the index.
+        const plain = forced || before.some(arg => arg === '-m' || arg === '--merge') ? {} : { keepsLocal: true as const }
         // A new branch starts at its start point, checked out; one at HEAD writes nothing.
-        if (created) return operands.length > 1 || paths?.length ? unmodelled('names paths beside a new branch') : operands[0] === undefined ? undefined : onDisk(previous(operands[0]))
+        if (created) return operands.length > 1 || paths?.length ? unmodelled('names paths beside a new branch') : operands[0] === undefined ? undefined : onDisk(previous(operands[0]), plain)
         // `checkout <rev> --` names no path: it switches to the revision; a forced checkout with none rewrites HEAD's files.
         if (paths !== undefined && !paths.length && !git.args.some(arg => arg.startsWith('--pathspec-from-file'))) {
-            return operands.length > 1 ? unmodelled('names more than one revision') : operands[0] === undefined ? (forced ? onDisk('HEAD') : undefined) : onDisk(previous(operands[0]))
+            return operands.length > 1 ? unmodelled('names more than one revision') : operands[0] === undefined ? (forced ? onDisk('HEAD') : undefined) : onDisk(previous(operands[0]), plain)
         }
         if (paths !== undefined) return operands.length > 1 ? unmodelled('names more than one revision') : index({ revision: operands[0] ?? ':index', ...named(paths) })
         if (git.verb === 'checkout' && operands.length > 1) return index({ revision: operands[0]!, ...named(operands.slice(1)), fallback: 'index' })
@@ -677,7 +682,7 @@ export function gitTreeTargets(git: GitInvocation): GitContentWrite | undefined 
         // A name that is no branch is the one remote branch of that name, which Git creates a branch from; checkout
         // first reads it as a path. `--no-guess` turns the remote off.
         const guess = git.args.includes('--no-guess') ? {} : git.verb === 'checkout' ? { remote: true as const } : { fallback: 'remote' as const }
-        return onDisk(previous(operands[0]), git.verb === 'checkout' ? { fallback: 'index', ...guess } : guess)
+        return onDisk(previous(operands[0]), { ...git.verb === 'checkout' ? { fallback: 'index' as const, ...guess } : guess, ...plain })
     }
     if (git.verb === 'restore') {
         const staged = git.args.some(arg => arg === '--staged' || /^-[a-zA-Z]*S/.test(arg) && !arg.startsWith('--'))

@@ -536,7 +536,7 @@ export async function runGuardEvaluationApplication(
         // guard control: Git compares the revisions before the command runs.
         const protectedPaths = [...GUARD_ROOT_PROTECTIONS.map(item => join(policy.canonicalRoot, item.path)), ...watchedPaths]
         const trees = new Map<string, Awaited<ReturnType<typeof guardWorktreeChanges>>>()
-        const treeKey = (cwd: string, target: GitTreeTarget) => `${cwd}\0${JSON.stringify([target.revision, target.from ?? null, target.paths ?? null, target.fallback ?? null, target.remote ?? null, target.optional ?? null])}`
+        const treeKey = (cwd: string, target: GitTreeTarget) => `${cwd}\0${JSON.stringify([target.revision, target.from ?? null, target.paths ?? null, target.fallback ?? null, target.remote ?? null, target.optional ?? null, target.keepsLocal ?? null])}`
         for (const invocation of parsed.invocations) {
             const command = gitInvocation(invocation)
             const written = command && !command.uncertain && allowed(command.cwd) ? gitTreeTargets(command) : undefined

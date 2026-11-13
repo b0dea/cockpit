@@ -262,7 +262,9 @@ describe('guard protected locations', () => {
             'pkg/.opencode/plugins/a.js': '', 'pkg/.opencode/tools/t.ts': '', 'tools/skills/probe/SKILL.md': '---\nname: probe\nhooks: {}\n---\n',
             'tools/.claude/commands/run.md': 'Today is !`date`.', 'tools/skills/plain/SKILL.md': '---\nname: plain\n---\nBody.',
             // A Git filter rewrites a file on checkout from the blob the guard would read.
-            'tools/skills/filtered/SKILL.md': '---\nname: filtered\n---\nBody.', '.gitattributes': 'tools/skills/filtered/SKILL.md filter=synthetic' })) {
+            'tools/skills/filtered/SKILL.md': '---\nname: filtered\n---\nBody.', 'tools/skills/zempty/SKILL.md': '---\nname: zempty\n---\nBody.',
+            // An empty attribute value is a field of its own in Git's listing, which must not shift the ones after it.
+            '.gitattributes': 'tools/skills/filtered/SKILL.md filter=synthetic\ntools/skills/zempty/SKILL.md filter=' })) {
             mkdirSync(join(root, path, '..'), { recursive: true })
             writeFileSync(join(root, path), `${text}\n`)
         }
@@ -272,7 +274,8 @@ describe('guard protected locations', () => {
         const planted = [join(root, 'deep/.claude/settings.json'), join(root, 'deep/sub/.codex/hooks.json'), join(root, 'pkg/.cockpit/guards/bash-guard.sh'),
             join(root, 'pkg/.opencode/plugins/a.js'), join(root, 'pkg/.opencode/tools/t.ts')]
         // The plain skill is read and passes; one Git removes is not judged as an instruction.
-        const skill = [join(root, 'tools/.claude/commands/run.md'), join(root, 'tools/skills/filtered/SKILL.md'), join(root, 'tools/skills/probe/SKILL.md')]
+        const skill = [join(root, 'tools/.claude/commands/run.md'), join(root, 'tools/skills/filtered/SKILL.md'), join(root, 'tools/skills/probe/SKILL.md'),
+            join(root, 'tools/skills/zempty/SKILL.md')]
         const changes = (target: Parameters<typeof guardWorktreeChanges>[1]) => guardWorktreeChanges(root, target, [], git, executeProbe)
         // A checkout or merge of the revision, a restore of a directory from it, and a worktree of it.
         expect(await changes({ revision: 'planted' })).toEqual({ guarded: false, changed: planted, instructions: skill })
@@ -313,11 +316,39 @@ describe('guard protected locations', () => {
         const planted = [join(root, '.claude/settings.json'), join(root, '.claude/settings.local.json'), join(root, 'api/.claude/settings.json')]
         // A forced checkout of HEAD, and a new worktree of it, write the crafted files over the ones on disk.
         expect(await changes({ revision: 'HEAD', from: 'worktree' })).toEqual({ guarded: false, changed: planted })
-        // A merge applies another revision's changes to HEAD: with HEAD moved off what is on disk, what it writes is not
-        // judged by them, so every control that differs is named.
-        expect(await changes({ revision: 'HEAD' })).toEqual({ guarded: false, changed: [], unsettled: planted })
+        // A merge applies another revision's changes to HEAD: with HEAD moved off what is on disk, a control it
+        // changes is not judged by them, so it is named; one it leaves alone is not.
+        expect(await changes({ revision: 'HEAD' })).toEqual({ guarded: false, changed: [] })
+        expect(await changes({ revision: 'topic' })).toEqual({ guarded: false, changed: [join(root, '.claude/settings.json')], unsettled: planted })
         // A new worktree named for a branch that does not exist starts at HEAD.
         expect(await changes({ revision: 'nowhere', from: 'worktree', fallback: 'head' })).toEqual({ guarded: false, changed: planted })
+    })
+
+    it('matches protected paths in any case, and keeps a local edit a plain switch leaves alone', async () => {
+        const resolution = await resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+        if (resolution.state !== 'available') throw new Error(resolution.reason)
+        const git = resolution.value
+        const root = scratch()
+        const run = (args: string[], input?: string) => execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args],
+            { encoding: 'utf8', ...input === undefined ? {} : { input } }).trim()
+        mkdirSync(join(root, '.claude'), { recursive: true })
+        writeFileSync(join(root, '.claude/settings.json'), '{"hooks":{}}\n')
+        run(['init', '-q', '-b', 'work'])
+        run(['add', '.'])
+        run(['commit', '-qm', 'base'])
+        run(['branch', 'topic'])
+        // A commit writing a declared secrets path under another case, which a case-insensitive volume resolves to it.
+        const blob = run(['hash-object', '-w', '--stdin'], 'SYNTHETIC=1\n')
+        const secrets = run(['mktree'], `040000 tree ${run(['mktree'], `100644 blob ${blob}\tkey\n`)}\t.SECRETS\n`)
+        const tree = run(['mktree'], `${run(['ls-tree', 'HEAD']).split('\n').join('\n')}\n040000 tree ${secrets}\tENV\n`)
+        run(['branch', 'cased', run(['commit-tree', tree, '-p', 'HEAD', '-m', 'cased'])])
+        const changes = (target: Parameters<typeof guardWorktreeChanges>[1]) => guardWorktreeChanges(root, target, [join(root, 'env/.secrets')], git, executeProbe)
+        expect(await changes({ revision: 'cased' })).toEqual({ guarded: true, changed: [join(root, 'ENV/.SECRETS/key')] })
+        // A person's uncommitted edit to a control: a plain switch to a branch whose copy matches the index keeps it.
+        writeFileSync(join(root, '.claude/settings.json'), '{"hooks":{},"edited":true}\n')
+        const settings = (await changes({ revision: 'topic', from: 'worktree' }))?.changed.filter(path => path.endsWith('settings.json'))
+        expect(settings).toEqual([join(root, '.claude/settings.json')])
+        expect((await changes({ revision: 'topic', from: 'worktree', keepsLocal: true }))?.changed).toEqual([])
     })
 
     it('resolves a name Git reads as a remote branch, and a new worktree\'s branch, as Git does', async () => {

@@ -187,7 +187,9 @@ const GUARD_IGNORED_ENTRY_LIMIT = GUARD_SEARCH_ENTRY_LIMIT
  */
 export type GuardGitEnvironment = Readonly<{ HOME?: string; XDG_CONFIG_HOME?: string }>
 
-async function gitPaths(git: ResolvedExecutable, repository: string, args: readonly string[], execute: GuardExecute, env: GuardGitEnvironment = {}): Promise<readonly string[] | null> {
+/** Git's NUL-separated output, without empty fields, or with them (`keepEmpty`) where an empty field is a value, as an attribute's is. */
+async function gitPaths(git: ResolvedExecutable, repository: string, args: readonly string[], execute: GuardExecute, env: GuardGitEnvironment = {},
+    keepEmpty = false): Promise<readonly string[] | null> {
     const step = snapshotExecutionStep({
         id: 'guard-git-paths',
         argv: [git.canonicalPath, '-C', repository, `--work-tree=${repository}`, ...GIT_CHILD_CONFIG, '-c', 'core.untrackedCache=false', '-c', 'core.ignoreCase=false', ...args],
@@ -199,7 +201,10 @@ async function gitPaths(git: ResolvedExecutable, repository: string, args: reado
     })
     if (!step) throw new RefusalError(`guard Git query could not be planned in ${repository}`)
     const outcome = authenticatedExecutionOutcome(await execute(step), step)
-    if (outcome?.kind === 'complete') return outcome.stdout.toString('utf8').split('\0').filter(Boolean)
+    if (outcome?.kind === 'complete') {
+        const fields = outcome.stdout.toString('utf8').split('\0')
+        return keepEmpty ? fields.slice(0, fields.at(-1) === '' ? -1 : undefined) : fields.filter(Boolean)
+    }
     return outcome?.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED
         && outcome.execution.exitCode === 1 && outcome.execution.signal === null ? [] : null
 }
@@ -535,14 +540,27 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
         else if (target.fallback) to = await remoteBranch()
         if (!to) return null
     }
-    const pathspecs = ['--', ...inside.map(path => `:(literal)${path}`), ...AGENT_CONTROL_PATHSPECS]
+    // A case-insensitive volume writes a protected path under any case, so Git matches it under any too.
+    const pathspecs = ['--', ...inside.map(path => `:(literal,icase)${path}`), ...AGENT_CONTROL_PATHSPECS]
     // Status and name pairs, so a file the verb removes is told from one it writes.
     const diff = ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-status', '-z']
+    const pairs = (listed: readonly string[]) => Array.from({ length: Math.floor(listed.length / 2) }, (_, at) => [listed[at * 2]!, listed[at * 2 + 1]!] as const)
     let names: readonly string[] | null
     // Against the files on disk a path only they hold is one the verb removes; between revisions, one only the first holds.
     let removed: string
     if (to === ':index') { names = await run([...diff, ...pathspecs]); removed = '' }
-    else if (from === 'worktree') { names = await run([...diff, to, ...pathspecs]); removed = 'A' }
+    else if (from === 'worktree') {
+        names = await run([...diff, to, ...pathspecs])
+        removed = 'A'
+        // A plain switch keeps a local edit where the target matches the index, so only a path the target holds
+        // differently from both the index and the files on disk is written.
+        if (names && target.keepsLocal) {
+            const indexed = await run([...diff, '--cached', to, ...pathspecs])
+            if (indexed === null) return null
+            const differs = new Set(pairs(indexed).map(([, name]) => name))
+            names = pairs(names).filter(([, name]) => differs.has(name)).flat()
+        }
+    }
     else {
         const base = await commit(from ?? 'HEAD')
         if (base === null) return null
@@ -554,8 +572,7 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
     // Paths spelled as globs or magic, or reaching past the repository, leave the whole tree in scope.
     const scope = paths?.length && paths.every(path => !/^:|[*?[\\]/.test(path)) ? paths.map(path => foldGuardSpelling(relative(top, resolve(cwd, path)))) : undefined
     const inScope = (name: string) => scope === undefined || scope.some(path => path === '' || path === '..' || path.startsWith('../') || name === path || name.startsWith(`${path}/`))
-    const protectedName = (name: string) => inside.some(path => name === path || name.startsWith(`${path}/`))
-    const pairs = (listed: readonly string[]) => Array.from({ length: Math.floor(listed.length / 2) }, (_, at) => [listed[at * 2]!, listed[at * 2 + 1]!] as const)
+    const protectedName = (name: string) => { const folded = foldGuardSpelling(name); return inside.map(foldGuardSpelling).some(path => folded === path || folded.startsWith(`${path}/`)) }
     const changed: string[] = []
     const written: string[] = []
     for (const [status, name] of pairs(names)) {
@@ -570,16 +587,19 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
     if (from !== 'worktree' && to !== ':index') {
         const moved = await run([...diff, 'HEAD', ...pathspecs])
         if (moved === null) return null
+        // Only a path the revision itself changes is one the verb writes over what differs from HEAD.
+        const touched = new Set(pairs(names).map(([, name]) => name))
         for (const [, name] of pairs(moved)) {
             const folded = foldGuardSpelling(name)
-            if (inScope(folded) && (protectedName(name) || plantedAgentControl(folded) || agentInstructionFile(folded))) unsettled.push(join(top, name))
+            if (touched.has(name) && inScope(folded) && (protectedName(name) || plantedAgentControl(folded) || agentInstructionFile(folded))) unsettled.push(join(top, name))
         }
     }
     // Each instruction file is read as the verb would write it, and passes when it runs, registers and grants
     // nothing. A Git filter rewrites a file on checkout from the blob read here, so a filtered one is not read.
     const instructions: string[] = []
-    const filters = written.length ? await run(['check-attr', '-z', ...to === ':index' ? ['--cached'] : ['--source', to], 'filter', '--', ...written]) : []
-    if (filters === null) return null
+    // Git before 2.40 has no `check-attr --source`; there the query fails, which asks.
+    const filters = written.length ? await gitPaths(git, top, ['--no-optional-locks', 'check-attr', '-z', ...to === ':index' ? ['--cached'] : ['--source', to], 'filter', '--', ...written], execute, env, true) : []
+    if (filters === null || filters.length % 3) return null
     const filtered = new Set(Array.from({ length: Math.floor(filters.length / 3) }, (_, at) => filters.slice(at * 3, at * 3 + 3))
         .filter(([, , value]) => value !== 'unspecified' && value !== 'unset').map(([name]) => name))
     for (const name of written) {
