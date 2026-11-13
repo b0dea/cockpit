@@ -470,8 +470,11 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
     let { from, paths } = target
     let to = revision === ':index' ? revision : await commit(revision)
     if (to === null) return null
+    // A revision that names no commit is refused by Git or read as a path; only a stash's optional part writes
+    // nothing then. Any other is unresolved, which asks.
     if (to === undefined) {
-        if (target.fallback !== 'index') return { guarded, changed: [] }
+        if (target.optional) return { guarded, changed: [] }
+        if (target.fallback !== 'index') return null
         paths = [revision, ...paths ?? []]
         to = ':index'
         from = 'worktree'
@@ -489,7 +492,7 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
     }
     if (names === null) return null
     // Paths spelled as globs or magic, or reaching past the repository, leave the whole tree in scope.
-    const scope = paths?.every(path => !/^:|[*?[\\]/.test(path)) ? paths.map(path => foldGuardSpelling(relative(top, resolve(cwd, path)))) : undefined
+    const scope = paths?.length && paths.every(path => !/^:|[*?[\\]/.test(path)) ? paths.map(path => foldGuardSpelling(relative(top, resolve(cwd, path)))) : undefined
     const inScope = (name: string) => scope === undefined || scope.some(path => path === '' || path === '..' || path.startsWith('../') || name === path || name.startsWith(`${path}/`))
     const changed: string[] = []
     const instructions: string[] = []

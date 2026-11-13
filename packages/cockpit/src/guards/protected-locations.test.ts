@@ -227,18 +227,21 @@ describe('guard protected locations', () => {
         const changes = (revision: string, from?: string) => guardWorktreeChanges(root, { revision, ...from === undefined ? {} : { from } }, [guard, join(root, '.cockpit/mcp')], git, executeProbe)
         expect(await changes('evil')).toEqual({ guarded: true, changed: [guard] })
         expect(await changes('work~1')).toEqual({ guarded: true, changed: [] })
-        // A pick applies only what the commit changed, and a word that names no commit writes nothing.
+        // A pick applies only what the commit changed, and a word that names no commit is unresolved, which asks.
         expect(await changes('evil', 'evil^')).toEqual({ guarded: true, changed: [guard] })
         expect(await changes('work', 'work^')).toEqual({ guarded: true, changed: [] })
-        expect(await changes('notes.md')).toEqual({ guarded: true, changed: [] })
+        expect(await changes('notes.md')).toBeNull()
+        expect(await guardWorktreeChanges(root, { revision: 'missing^3', from: 'missing^3^', optional: true }, [guard], git, executeProbe)).toEqual({ guarded: true, changed: [] })
         // A reset overwrites the work tree itself, local edits included.
         writeFileSync(guard, 'edited\n')
         expect(await changes('HEAD', 'worktree')).toEqual({ guarded: true, changed: [guard] })
         // A from that names no commit lists what the revision holds, as a stash's untracked files are restored.
         expect(await changes('evil', 'evil~5')).toEqual({ guarded: true, changed: [guard] })
-        // A repository whose work tree holds no protected path is not asked.
+        // A repository whose work tree holds no protected path is not guarded; one with no commit names no HEAD.
         const sibling = scratch()
         execFileSync('git', ['init', '-q', sibling])
+        expect(await guardWorktreeChanges(sibling, { revision: 'HEAD' }, [guard], git, executeProbe)).toBeNull()
+        execFileSync('git', ['-C', sibling, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', 'commit', '-q', '--allow-empty', '-m', 'base'])
         expect(await guardWorktreeChanges(sibling, { revision: 'HEAD' }, [guard], git, executeProbe)).toEqual({ guarded: false, changed: [] })
     })
 

@@ -459,9 +459,10 @@ describe('guard policy construction', () => {
         expect(await decide('git push', { home })).toMatchObject({ decision: 'deny', reason: expect.stringContaining('push.default=matching') })
         git('switch', '-q', 'main')
         // ACK: the cockpit root's work tree holds the guard, and a pull brings content the guard cannot inspect
-        // before it is fetched, so a plain pull there asks; a fast-forward to what was last fetched is judged.
+        // before it is fetched, so any pull there asks, a fast-forward too: what it merges can be newer than
+        // the ref last fetched, which let a fast-forward replace the guard.
         expect(await decide('git pull')).toMatchObject({ decision: 'ask' })
-        expect(await decide('git pull --ff-only')).toMatchObject({ decision: 'allow' })
+        expect(await decide('git pull --ff-only')).toMatchObject({ decision: 'ask' })
         expect(await decide('git pull', { home, xdgConfigHome: join(home, 'xdg') })).toMatchObject({ decision: 'deny', reason: expect.stringContaining('protected branch') })
         git('switch', '-q', 'topic')
         // A commit that replaces the guard, made without touching this work tree, is refused when merged in.
@@ -472,7 +473,8 @@ describe('guard policy construction', () => {
         const blob = plumbing(['hash-object', '-w', '--stdin'], 'exit 0\n')
         plumbing(['update-index', '--add', '--cacheinfo', `100755,${blob},.cockpit/guards/bash-guard.sh`])
         git('branch', 'evil', plumbing(['commit-tree', plumbing(['write-tree']), '-p', 'HEAD', '-m', 'Replace the guard']))
-        for (const command of ['git merge evil', 'git checkout evil', 'git reset --hard evil', 'git cherry-pick evil']) {
+        // A new branch started at it checks it out as surely, however the branch is created.
+        for (const command of ['git merge evil', 'git checkout evil', 'git reset --hard evil', 'git cherry-pick evil', 'git checkout -b feat evil', 'git switch -c feat evil']) {
             expect(await decide(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('.cockpit/guards/bash-guard.sh') })
         }
         expect(await decide('git merge main')).toMatchObject({ decision: 'allow' })

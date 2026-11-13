@@ -412,6 +412,50 @@ describe('resolved guard evaluation', () => {
         }
     })
 
+    it('asks for a Git write it cannot resolve, and judges a new branch by its start point', () => {
+        // A write judged as writing nothing when its target was missing let `git checkout -b <new> <rev>` and
+        // `git pull --ff-only` replace the guard.
+        const asked: object[] = []
+        const answering = (facts: { changed?: readonly string[]; guarded?: boolean; unresolved?: boolean } = {}) => (request: Parameters<PathInspection>[0]) => {
+            if (request.operation !== 'tree') return withGit(request)
+            asked.push({ revision: request.revision, ...request.from === undefined ? {} : { from: request.from }, ...request.paths === undefined ? {} : { paths: request.paths },
+                ...request.optional === undefined ? {} : { optional: request.optional } })
+            const path = posix.resolve(request.cwd, request.path)
+            return facts.unresolved ? { status: 'unavailable', path, symlink: false } : { status: 'resolved', path, revision: request.revision,
+                ...request.from === undefined ? {} : { from: request.from }, guarded: facts.guarded ?? false, changed: (facts.changed ?? []).map(changed => `${root}/${changed}`) }
+        }
+        const allowing = { ...policy(), defaultDecision: 'allow' as const }
+        const decide = (command: string, facts?: Parameters<typeof answering>[0]) => evaluateGuard(parseGuardInput(shellPayload(command)), allowing, answering(facts)).decision
+        const targets = (command: string) => { asked.length = 0; decide(command); return [...asked] }
+        for (const command of ['git checkout -b feat evil', 'git checkout -B feat evil', 'git switch -c feat evil', 'git switch --create feat evil', 'git checkout --orphan feat evil']) {
+            expect(targets(command), command).toEqual([{ revision: 'evil' }])
+            expect(decide(command, { changed: ['.cockpit/guards/bash-guard.sh'] }), command).toBe('deny')
+        }
+        // `checkout <rev> --` names no path: it switches branches. A stash is named by its number too.
+        expect(targets('git checkout evil --')).toEqual([{ revision: 'evil' }])
+        expect(targets('git stash apply 1')).toEqual([{ revision: 'stash@{1}', from: 'stash@{1}^1' }, { revision: 'stash@{1}^3', from: 'stash@{1}^3^', optional: true }])
+        // A revision Git does not resolve asks, whatever the verb.
+        for (const command of ['git checkout -b feat nowhere', 'git merge nowhere', 'git switch nowhere', 'git worktree add pkg/wt nowhere']) {
+            expect(decide(command, { unresolved: true }), command).toBe('ask')
+        }
+        // A pull fetches what it merges: in a tree holding guard controls it asks, elsewhere it is judged as the ref last fetched.
+        for (const command of ['git pull --ff-only origin evil', 'git pull --ff-only', 'git pull']) expect(decide(command, { guarded: true }), command).toBe('ask')
+        expect(decide('git pull --ff-only origin topic')).toBe('allow')
+        expect(decide('git pull --ff-only origin topic', { unresolved: true })).toBe('ask')
+        // Forms the guard does not model ask: standard input, revision walks, unknown options and subcommands.
+        for (const command of ['git bisect start', 'git bisect good HEAD~3', 'git bisect reset main', 'git cherry-pick --stdin', 'git revert --stdin', 'git cherry-pick --all',
+            'git cherry-pick --branches=evil', 'git cherry-pick ^main evil', 'git stash branch b', 'git merge --frobnicate topic', 'git checkout --recurse-submodules main', 'git checkout -b',
+            'git worktree add --no-checkout pkg/wt', 'git worktree add --orphan x pkg/wt', 'git submodule update --init', 'git submodule init', 'git submodule absorbgitdirs',
+            'git update-index --index-info', 'git update-index --stdin', 'git update-index --frobnicate src/a.ts', 'git read-tree evil']) {
+            expect(decide(command), command).toBe('ask')
+        }
+        // What does not touch the work tree stays allowed; what later brings it there is judged.
+        for (const command of ['git fetch origin', 'git update-ref refs/heads/topic HEAD', 'git commit-tree HEAD^{tree} -m x', 'git write-tree', 'git hash-object -w src/a.ts',
+            'git bisect log', 'git submodule status', 'git stash list', 'git stash drop']) {
+            expect(decide(command), command).toBe('allow')
+        }
+    })
+
     it('judges what each spelling of a Git content writer checks out, refusing a planted control at any depth and asking for an agent instruction file', () => {
         // Agent tool settings, hooks and guard scripts reached the working tree through the object store and the
         // index, which no write names: `hash-object -w`, `update-index --cacheinfo`, then `checkout -- <dir>`.
@@ -1291,6 +1335,17 @@ describe('allow by default', () => {
         }
     })
 
+    it('keeps everyday Git work and plain skill edits allowed', () => {
+        const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
+        for (const input of [...['git checkout -b feat', 'git switch main', 'git stash', 'git stash pop', 'git restore src/a.ts', 'git rebase main', 'git merge topic',
+            'git worktree add .claude/checkouts/x', 'git worktree add -b x .claude/checkouts/x', 'git worktree add .claude/checkouts/x -b x', 'git worktree add --detach .claude/checkouts/x HEAD']
+            .map(command => shellPayload(command)),
+        payload('Write', { file_path: `${root}/.claude/skills/probe/SKILL.md`, content: '---\nname: probe\n---\nBody.\n' }),
+        payload('Edit', { file_path: `${root}/tools/skills/probe/SKILL.md`, old_string: 'Body.', new_string: 'Another body.' })]) {
+            expect(evaluateGuard(parseGuardInput(input), open(), onBranch('refs/heads/topic')), JSON.stringify(input.tool_input)).toMatchObject({ decision: 'allow' })
+        }
+    })
+
     it('judges words it cannot expand only where they decide what is read, written or pushed', () => {
         const marked = (command: string, evidence: PathInspection = onBranch('refs/heads/topic')) =>
             evaluateGuard(parseGuardInput(shellPayload(command), { dynamicWords: 'mark', home }), open(), evidence)
@@ -2035,8 +2090,9 @@ describe('allow by default', () => {
         // With -r or --filter, a script any workspace package declares is a script.
         expect(evaluateGuard(parseGuardInput(shellPayload('pnpm -r build'), { dynamicWords: 'mark', home }), open(),
             onBranch('refs/heads/topic', undefined, { scripts: [], workspaceScripts: ['build'] })).decision).toBe('allow')
+        // A pull there asks, since what it merges arrives with its fetch.
         expect(['git merge topic', 'git pull --ff-only', 'git stash pop', 'git checkout -b next'].map(command => `${command}: ${guarded(command, [])}`))
-            .toEqual(['git merge topic: allow', 'git pull --ff-only: allow', 'git stash pop: allow', 'git checkout -b next: allow'])
+            .toEqual(['git merge topic: allow', 'git pull --ff-only: ask', 'git stash pop: allow', 'git checkout -b next: allow'])
         // In the strict mode a declared command spelled with a launcher still admits the program it runs.
         const strict = { ...open(), defaultDecision: 'ask' as const, projectCommands: [{ checkoutRoot: root, kind: 'test', executable: 'pnpm', argv: ['exec', 'vitest', 'run'] }] }
         expect(evaluateGuard(parseGuardInput(shellPayload('pnpm exec vitest run')), strict, onBranch('refs/heads/topic'))).toMatchObject({ decision: 'allow' })

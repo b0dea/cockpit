@@ -169,6 +169,7 @@ interface PathInspectionRequest {
     readonly from?: string
     readonly paths?: readonly string[]
     readonly fallback?: 'index'
+    readonly optional?: true
     /** For a `manifest`, also the scripts any package of the enclosing workspace declares, as `workspace`. */
     readonly workspace?: true
     /** For a `search`, the reading tool follows links, so a link below the path leaves its `sensitive` unknown (null). */
@@ -505,6 +506,65 @@ export function gitInvocation(invocation: ParsedInvocation): GitInvocation | und
     return { verb: args[cursor++] ?? '', args: args.slice(cursor), cwd, directories, uncertain }
 }
 
+// The options each Git verb that writes the work tree, the index or a checkout takes, and those that take a
+// value. Any other option, such as `--stdin`, a revision walk (`--all`, `--branches`, `--glob`) or
+// `--recurse-submodules`, writes what the guard cannot name before it runs, so it asks.
+const gitOptions = (plain: string, valued: string) => ({ plain: new Set(plain.split(' ')), valued: new Set(valued.split(' ')) })
+const GIT_WRITE_OPTIONS: Readonly<Record<string, ReturnType<typeof gitOptions>>> = {
+    merge: gitOptions('--abort --continue --quit -e --edit --no-edit --ff --no-ff --ff-only --squash --no-squash --commit --no-commit --stat --no-stat -n --log --no-log '
+        + '--signoff --no-signoff --allow-unrelated-histories --autostash --no-autostash --rerere-autoupdate --no-rerere-autoupdate --progress --no-progress -q --quiet -v '
+        + '--verbose --verify-signatures --no-verify-signatures --overwrite-ignore --no-overwrite-ignore --summary --no-summary --no-verify', '-m -F -s -X --strategy '
+        + '--strategy-option --file --message --into-name --cleanup -S --gpg-sign'),
+    checkout: gitOptions('-q --quiet -f --force -m --merge --detach -t --track --no-track --guess --no-guess --ignore-other-worktrees --overwrite-ignore --no-overwrite-ignore '
+        + '--progress --no-progress -p --patch --ours --theirs --overlay --no-overlay --ignore-skip-worktree-bits -l --pathspec-file-nul', '-b -B --orphan --conflict --pathspec-from-file'),
+    switch: gitOptions('-q --quiet -f --force --discard-changes -m --merge -d --detach -t --track --no-track --guess --no-guess --ignore-other-worktrees --progress --no-progress',
+        '-c -C --create --force-create --orphan --conflict'),
+    restore: gitOptions('-W --worktree -S --staged -q --quiet -p --patch --ours --theirs -m --merge --overlay --no-overlay --ignore-unmerged --ignore-skip-worktree-bits '
+        + '--progress --no-progress --pathspec-file-nul', '-s --source --conflict --pathspec-from-file'),
+    'checkout-index': gitOptions('-u --index -q --quiet -f --force -a --all -n --no-create --temp -z --ignore-skip-worktree-bits', '--stage --prefix'),
+    reset: gitOptions('--soft --mixed --hard --merge --keep -q --quiet -p --patch -N --intent-to-add --no-refresh --refresh --pathspec-file-nul', '--pathspec-from-file'),
+    'cherry-pick': gitOptions('--continue --skip --quit --abort -e --edit --no-edit -n --no-commit -s --signoff -x -r --ff --allow-empty --allow-empty-message '
+        + '--keep-redundant-commits --rerere-autoupdate --no-rerere-autoupdate', '-m --mainline -X --strategy --strategy-option --cleanup -S --gpg-sign --empty'),
+    revert: gitOptions('--continue --skip --quit --abort -e --edit --no-edit -n --no-commit -s --signoff --reference --rerere-autoupdate --no-rerere-autoupdate',
+        '-m --mainline -X --strategy --strategy-option --cleanup -S --gpg-sign'),
+    rebase: gitOptions('--continue --skip --abort --quit --edit-todo --show-current-patch -i --interactive -q --quiet -v --verbose --stat -n --no-stat --autosquash '
+        + '--no-autosquash --autostash --no-autostash --keep-empty --no-keep-empty --root --fork-point --no-fork-point --keep-base --signoff --committer-date-is-author-date '
+        + '--ignore-date --reset-author-date --ignore-whitespace --no-verify --verify --rerere-autoupdate --no-rerere-autoupdate --update-refs --no-update-refs '
+        + '--reapply-cherry-picks --no-reapply-cherry-picks -f --force-rebase --no-ff --apply -m --merge -r --rebase-merges --no-rebase-merges', '--onto -s --strategy -X '
+        + '--strategy-option -C --whitespace --empty -S --gpg-sign'),
+    stash: gitOptions('-p --patch -k --keep-index --no-keep-index -u --include-untracked -a --all -q --quiet -S --staged --pathspec-file-nul --index',
+        '-m --message --pathspec-from-file'),
+    pull: gitOptions('--ff --no-ff --ff-only -r --rebase --no-rebase --squash --no-squash --commit --no-commit -e --edit --no-edit --stat --no-stat -n --log --no-log '
+        + '--autostash --no-autostash --signoff --no-signoff -q --quiet -v --verbose --progress --no-progress --prune --no-tags --tags --no-verify', '-s --strategy -X '
+        + '--strategy-option --depth -j --jobs -o --server-option --cleanup'),
+    'worktree add': gitOptions('-f --force -d --detach --checkout --lock --track --no-track --guess-remote --no-guess-remote -q --quiet --relative-paths --no-relative-paths',
+        '-b -B --reason'),
+    'update-index': gitOptions('--add --remove --refresh --really-refresh -q --ignore-submodules --unmerged --ignore-missing --assume-unchanged --no-assume-unchanged '
+        + '--skip-worktree --no-skip-worktree --fsmonitor-valid --no-fsmonitor-valid --force-remove --replace --info-only --verbose --chmod --untracked-cache '
+        + '--no-untracked-cache -z --again -g', '--cacheinfo'),
+}
+
+/** The first option in `args` a verb does not take, alone or bundled, before `--`. */
+function unknownGitOption(args: readonly string[], known: ReturnType<typeof gitOptions>): string | undefined {
+    for (let index = 0; index < args.length; index++) {
+        const arg = args[index]!
+        if (arg === '--') return undefined
+        if (!arg.startsWith('-') || arg === '-') continue
+        if (arg.startsWith('--')) {
+            const name = arg.split('=')[0]!
+            if (known.valued.has(name) && !arg.includes('=')) index++
+            else if (!known.plain.has(name) && !known.valued.has(name)) return arg
+            continue
+        }
+        // A short option bundle: each letter takes no value, until one that takes the rest or the next word.
+        for (const [at, letter] of [...arg.slice(1)].entries()) {
+            if (known.valued.has(`-${letter}`)) { if (at === arg.length - 2) index++; break }
+            if (!known.plain.has(`-${letter}`)) return arg
+        }
+    }
+    return undefined
+}
+
 /**
  * A revision whose content a Git verb writes into the working tree, and what it is compared with: HEAD
  * by default, since Git keeps or refuses a local change a merge or checkout would overwrite;
@@ -519,37 +579,54 @@ export interface GitTreeTarget {
     readonly paths?: readonly string[]
     /** `index` when a revision that names no commit makes it, and `paths`, pathspecs written from the index, as checkout reads them. */
     readonly fallback?: 'index'
+    /** A revision that may not exist and then writes nothing, as a stash without untracked files has none. */
+    readonly optional?: true
 }
 /**
  * What a Git verb writes into the working tree from revisions: `targets` to compare, and `unnamed` when
  * the content arrives only as the command runs (a pull that fetches), so no comparison made first can
- * name it. Undefined for a verb that writes nothing from a revision; a pathspec form is judged by its
- * operands instead.
+ * name it; or `unmodelled`, why the guard cannot name what a form writes. Undefined for a verb that
+ * writes no checkout content: a read, or a write of refs, objects or the index from the work tree.
  */
-export function gitTreeTargets(git: GitInvocation): Readonly<{ targets: readonly GitTreeTarget[]; unnamed: boolean }> | undefined {
+export type GitContentWrite = Readonly<{ targets: readonly GitTreeTarget[]; unnamed: boolean }> | Readonly<{ unmodelled: string }>
+export function gitTreeTargets(git: GitInvocation): GitContentWrite | undefined {
     const control = git.args.some(arg => /^--(?:abort|continue|skip|quit|edit-todo|show-current-patch)$/.test(arg))
     const head = (revisions: readonly string[]) => ({ targets: revisions.map(revision => ({ revision })), unnamed: false })
     const previous = (revision: string) => revision === '-' ? '@{-1}' : revision
-    if (git.verb === 'merge' && !control) {
-        const revisions = gitOperands(git.args, ['-m', '-F', '-s', '-X', '--strategy', '--strategy-option', '--file', '--message', '--into-name'])
-        return head(revisions.length ? revisions.map(previous) : ['@{upstream}'])
-    }
+    const unmodelled = (why: string) => ({ unmodelled: why })
+    const subcommand = gitOperands(git.args, [])[0]
+    const options = GIT_WRITE_OPTIONS[git.verb === 'worktree' && subcommand === 'add' ? 'worktree add' : git.verb]
+    const unknown = options && unknownGitOption(git.verb === 'worktree' ? git.args.slice(git.args.indexOf('add') + 1) : git.args, options)
+    if (unknown !== undefined) return unmodelled(`takes ${shownGuardWord(unknown)}, an option that can write what the guard cannot name before it runs`)
+    // A revision walk or a symmetric range names commits the guard does not list.
+    const walked = (operands: readonly string[]) => operands.some(operand => operand.startsWith('^') || operand.includes('...'))
     // Paths read from a file are not named, so the whole tree is judged.
     const named = (paths: readonly string[]) => git.args.some(arg => arg.startsWith('--pathspec-from-file')) ? {} : { paths }
     const index = (target: GitTreeTarget) => ({ targets: [{ from: 'worktree', ...target }], unnamed: false })
-    if (git.verb === 'checkout' && git.args.includes('--')) {
-        const end = git.args.indexOf('--')
-        const [revision = ':index'] = gitOperands(git.args.slice(0, end), ['--conflict', '--pathspec-from-file'])
-        return index({ revision, ...named(git.args.slice(end + 1)) })
+    if (git.verb === 'merge' && !control) {
+        const revisions = gitOperands(git.args, ['-m', '-F', '-s', '-X', '--strategy', '--strategy-option', '--file', '--message', '--into-name', '--cleanup', '-S', '--gpg-sign'])
+        if (walked(revisions)) return unmodelled('names commits by a range the guard does not list')
+        return head(revisions.length ? revisions.map(previous) : ['@{upstream}'])
     }
     if (git.verb === 'checkout' || git.verb === 'switch') {
-        const created = git.args.some(arg => ['-b', '-B', '-c', '-C', '--create', '--force-create', '--orphan'].includes(arg))
-        const operands = gitOperands(git.args, ['-b', '-B', '-c', '-C', '--create', '--force-create', '--orphan', '--conflict', '--pathspec-from-file'])
-        // A new branch starts at its start point, or HEAD when none is named.
-        if (created) return operands[1] === undefined ? undefined : head([previous(operands[1])])
+        const end = git.verb === 'checkout' ? git.args.indexOf('--') : -1
+        const before = end < 0 ? git.args : git.args.slice(0, end)
+        const creating = ['-b', '-B', '-c', '-C', '--create', '--force-create', '--orphan']
+        const created = before.some(arg => creating.includes(arg))
+        if (before.some((arg, at) => creating.includes(arg) && (before[at + 1] === undefined || before[at + 1]!.startsWith('-')))) return unmodelled('names no branch to create')
+        const operands = gitOperands(before, [...creating, '--conflict', '--pathspec-from-file'])
+        const paths = end < 0 ? undefined : git.args.slice(end + 1)
+        // A new branch starts at its start point, checked out; one at HEAD writes nothing.
+        if (created) return operands.length > 1 || paths?.length ? unmodelled('names paths beside a new branch') : operands[0] === undefined ? undefined : head([previous(operands[0])])
+        // `checkout <rev> --` names no path: it switches to the revision.
+        if (paths !== undefined && !paths.length && !git.args.some(arg => arg.startsWith('--pathspec-from-file'))) {
+            return operands.length > 1 ? unmodelled('names more than one revision') : operands[0] === undefined ? undefined : head([previous(operands[0])])
+        }
+        if (paths !== undefined) return operands.length > 1 ? unmodelled('names more than one revision') : index({ revision: operands[0] ?? ':index', ...named(paths) })
         if (git.verb === 'checkout' && operands.length > 1) return index({ revision: operands[0]!, ...named(operands.slice(1)), fallback: 'index' })
-        if (operands.length !== 1) return undefined
-        return { targets: [{ revision: previous(operands[0]!), ...git.verb === 'checkout' ? { fallback: 'index' as const } : {} }], unnamed: false }
+        if (operands.length > 1) return unmodelled('names more than one revision')
+        if (operands[0] === undefined) return undefined
+        return { targets: [{ revision: previous(operands[0]), ...git.verb === 'checkout' ? { fallback: 'index' as const } : {} }], unnamed: false }
     }
     if (git.verb === 'restore') {
         const staged = git.args.some(arg => arg === '--staged' || /^-[a-zA-Z]*S/.test(arg) && !arg.startsWith('--'))
@@ -560,9 +637,9 @@ export function gitTreeTargets(git: GitInvocation): Readonly<{ targets: readonly
         return index({ revision: source ?? (staged ? 'HEAD' : ':index'), ...named(gitOperands(git.args, ['-s', '--source', '--conflict', '--pathspec-from-file'])) })
     }
     if (git.verb === 'checkout-index') return index({ revision: ':index', ...git.args.includes('--stdin') ? {} : named(gitOperands(git.args, ['--stage', '--prefix'])) })
-    if (git.verb === 'worktree' && gitOperands(git.args, [])[0] === 'add') {
+    if (git.verb === 'worktree' && subcommand === 'add') {
         const rest = git.args.slice(git.args.indexOf('add') + 1)
-        if (rest.some(arg => ['--no-checkout', '--orphan'].includes(arg))) return undefined
+        if (rest.some(arg => ['--no-checkout', '--orphan'].includes(arg))) return unmodelled('makes a worktree without checking out a revision, which a later command fills unseen')
         // Without a revision, a new worktree checks out the branch named like its directory, or starts one at HEAD.
         const [path, revision] = gitOperands(rest, ['-b', '-B', '--reason'])
         const branch = revision ?? (path === undefined || rest.some(arg => ['-b', '-B', '-d', '--detach'].includes(arg)) ? undefined : posix.basename(path))
@@ -574,7 +651,9 @@ export function gitTreeTargets(git: GitInvocation): Readonly<{ targets: readonly
         return { targets: [{ revision, from: 'worktree' }], unnamed: false }
     }
     if ((git.verb === 'cherry-pick' || git.verb === 'revert') && !control) {
-        const targets = gitOperands(git.args, ['-m', '--mainline', '-X', '--strategy', '--strategy-option']).map(operand => {
+        const operands = gitOperands(git.args, ['-m', '--mainline', '-X', '--strategy', '--strategy-option', '--cleanup', '-S', '--gpg-sign', '--empty'])
+        if (!operands.length || walked(operands)) return unmodelled('names commits by a range the guard does not list')
+        const targets = operands.map(operand => {
             const range = /^(.+?)\.\.(.+)$/.exec(operand)
             const [from, to] = range ? [range[1]!, range[2]!] : [`${operand}^`, operand]
             return git.verb === 'revert' ? { revision: from, from: to } : { revision: to, from }
@@ -582,28 +661,34 @@ export function gitTreeTargets(git: GitInvocation): Readonly<{ targets: readonly
         return { targets, unnamed: false }
     }
     if (git.verb === 'rebase' && !control) {
-        const operands = gitOperands(git.args, ['--onto', '-s', '--strategy', '-X', '--strategy-option'])
+        const operands = gitOperands(git.args, ['--onto', '-s', '--strategy', '-X', '--strategy-option', '-C', '--whitespace', '--empty', '-S', '--gpg-sign'])
+        if (walked(operands)) return unmodelled('names commits by a range the guard does not list')
         const onto = git.args[git.args.indexOf('--onto') + 1]
         const base = git.args.includes('--onto') ? onto : operands[0] ?? (git.args.includes('--root') ? undefined : '@{upstream}')
         return head([...base === undefined ? [] : [base], ...operands.slice(1, 2)])
     }
     if (git.verb === 'stash') {
-        const [verb, stash = 'stash@{0}'] = gitOperands(git.args, ['-m', '--message', '--pathspec-from-file'])
-        // Applying a stash applies what it changed against its base, and restores the untracked files it took.
-        if (['pop', 'apply'].includes(verb ?? '')) return { targets: [{ revision: stash, from: `${stash}^1` }, { revision: `${stash}^3`, from: `${stash}^3^` }], unnamed: false }
+        const [verb, named = '0'] = gitOperands(git.args, ['-m', '--message', '--pathspec-from-file'])
+        // Git reads a bare number as that stash entry.
+        const stash = /^\d+$/.test(named) ? `stash@{${named}}` : named
+        // Applying a stash applies what it changed against its base, and restores the untracked files it took, when it took any.
+        if (['pop', 'apply'].includes(verb ?? '')) return { targets: [{ revision: stash, from: `${stash}^1` }, { revision: `${stash}^3`, from: `${stash}^3^`, optional: true }], unnamed: false }
         // Stashing returns the working tree to HEAD.
         if (verb === undefined || ['push', 'save'].includes(verb)) return { targets: [{ revision: 'HEAD', from: 'worktree' }], unnamed: false }
-        return undefined
+        if (['list', 'show', 'drop', 'clear', 'create', 'store'].includes(verb)) return undefined
+        return unmodelled(`runs \`stash ${shownGuardWord(verb).slice(1, -1)}\`, which checks out content the guard does not model`)
     }
     if (git.verb === 'pull') {
-        // Only a fast-forward to a configured remote's branch can be named before the fetch; its
-        // remote-tracking ref holds what was last fetched or pushed there.
-        const operands = gitOperands(git.args, ['-s', '--strategy', '-X', '--strategy-option', '--depth', '-j', '--jobs', '-o', '--server-option'])
-        const fastForward = git.args.includes('--ff-only') && !git.args.some(arg => /^--rebase(?:=(?!false$)|$)|^-r$/.test(arg))
-        if (fastForward && operands.length === 0) return head(['@{upstream}'])
-        if (fastForward && operands.length === 2 && /^[\w.-]+$/.test(operands[0]!) && operands[0] !== '.' && /^[\w./-]+$/.test(operands[1]!)) return head([`${operands[0]}/${operands[1]}`])
-        return { targets: [{ revision: 'HEAD' }], unnamed: true }
+        // What a pull merges arrives with its fetch; before it, a configured remote's branch is named by its
+        // remote-tracking ref as last fetched, which is judged in a tree that holds no guard control.
+        const operands = gitOperands(git.args, ['-s', '--strategy', '-X', '--strategy-option', '--depth', '-j', '--jobs', '-o', '--server-option', '--cleanup'])
+        if (operands.length === 0) return { targets: [{ revision: '@{upstream}' }], unnamed: true }
+        if (operands.length === 2 && /^[\w.-]+$/.test(operands[0]!) && operands[0] !== '.' && /^[\w./-]+$/.test(operands[1]!)) return { targets: [{ revision: `${operands[0]}/${operands[1]}` }], unnamed: true }
+        return unmodelled('names a repository or refspec the guard cannot resolve before the fetch')
     }
+    if (git.verb === 'bisect' && !['log', 'visualize', 'view', 'help', 'terms'].includes(subcommand ?? '')) return unmodelled('checks out commits the bisection chooses as it runs')
+    if (git.verb === 'submodule' && !['status', 'summary'].includes(subcommand ?? '')) return unmodelled('checks out or moves a nested repository, which a session there would load without the guard')
+    if (git.verb === 'read-tree') return unmodelled('replaces the index with a tree that a later checkout writes')
     return undefined
 }
 
@@ -1297,6 +1382,13 @@ export function guardScriptLocation(folded: string): boolean {
 // stops the hook walk and starts a repository the guard is not registered in. Folded spellings.
 export function plantedAgentControl(folded: string): boolean {
     return nestedAgentConfiguration(folded, false) || guardScriptLocation(folded) || folded.split('/').includes('.git')
+}
+
+// Where a writer that places a whole directory may put instruction files: below `.claude/skills`, `agents` or
+// `commands`, or `.agents`. Folded spellings.
+function instructionDirectory(folded: string): boolean {
+    const parts = folded.split('/')
+    return parts.some((part, at) => part === '.agents' || part === '.claude' && ['skills', 'agents', 'commands'].includes(parts[at + 1] ?? ''))
 }
 
 // Instructions whose frontmatter can register hooks or MCP servers that run outside the guard: skills
@@ -2379,7 +2471,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // Write and Edit carry the text they leave, which the guard application judges; any other writer,
         // or one that may place a whole directory where agent tools keep instructions, carries none to read.
         if (request.operation === 'write' && input.tool !== 'Write' && input.tool !== 'Edit'
-            && (agentInstructionFile(folded) || controlCoverage && folded.split('/').some(part => part === '.claude' || part === '.agents'))) {
+            && (agentInstructionFile(folded) || controlCoverage && instructionDirectory(folded))) {
             unclassifiedAsk ??= ask(`${shownGuardWord(request.path)} is or may hold a skill, command or agent file, whose frontmatter can register hooks or MCP servers that Claude Code runs outside the guard, and this writer carries no text the guard can read. Use the Write or Edit tool, or a person approves it.`)
         }
         if (mutating && dotenvSecret(folded)) hold(dotenvDenial)
@@ -3225,7 +3317,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // working tree, where they overwrite a guard control as surely as a write would: a commit made in a
         // second worktree and merged back replaced the guard with every step allowed.
         const tree = gitTreeTargets(git)
-        if (tree) {
+        if (tree && 'unmodelled' in tree) holdBoundary(invocation, ask(`${named(invocation)} ${tree.unmodelled}. A person runs it.`))
+        else if (tree) {
             const answers = tree.targets.map(target => treeFacts(git.cwd, target))
             const changed = answers.flatMap(answer => answer?.changed ?? [])
             const instructions = answers.flatMap(answer => answer?.instructions ?? [])
