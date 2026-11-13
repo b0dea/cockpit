@@ -515,7 +515,8 @@ describe('restriction expansion', () => {
             path: '.opencode/agents/evaluator.md', bytes: 'permission:\n  edit: deny\n',
         })
         expect(target(result, 'claudecode').files[0]).toMatchObject({ path: '.claude/settings.json' })
-        expect(target(result, 'claudecode').files[0]!.bytes).toContain('Bash|Edit|Write|NotebookEdit')
+        // Claude Code's Monitor tool runs a command in the background, so it reaches the guard too.
+        expect(target(result, 'claudecode').files[0]!.bytes).toContain('Bash|Edit|Write|NotebookEdit|Monitor')
         expect(target(result, 'codexcli').files[0]).toMatchObject({ path: '.codex/hooks.json' })
         expect(target(result, 'codexcli').files[0]!.bytes).toContain('Bash|Edit|Write|apply_patch')
         expect(target(result, 'opencode').files[0]).toMatchObject({ path: '.opencode/plugin/cockpit-guards.js' })

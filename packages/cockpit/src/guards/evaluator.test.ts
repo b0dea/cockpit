@@ -146,7 +146,7 @@ describe('resolved guard evaluation', () => {
         expect(parsed).toEqual({ status: 'parsed', tool: 'Bash', cwd: root, invocations: row.capture.control, paths: [], removed: [] })
         const refused = parseGuardInput(shellPayload(row.candidate))
         expect(refused).toEqual(typeof row.capture.candidate === 'string' ? { status: 'unavailable', reason: row.capture.candidate }
-            : { status: 'parsed', tool: 'Bash', cwd: root, invocations: row.capture.candidate, paths: [], removed: [] })
+            : { status: 'parsed', tool: 'Bash', cwd: root, invocations: row.capture.candidate, paths: [], removed: [], ...'background' in row.capture && row.capture.background ? { background: true } : {} })
         for (const item of row.capture.control) {
             if (item.executable) configured.projectCommands.push({ checkoutRoot: root, kind: 'test', executable: item.executable, argv: [...item.argv] })
         }
@@ -1400,6 +1400,23 @@ describe('allow by default', () => {
         for (const command of ['git symbolic-ref HEAD', 'git notes list', 'git replace -l', 'git branch -m renamed', 'git reset --soft HEAD~1', 'git reset HEAD~1', 'git write-tree']) {
             expect(run(command).decision, command).toBe('allow')
         }
+    })
+
+    it('asks before a background job that loops, writes files or runs a Git write, which can change what the guard judged before it runs', () => {
+        // A background loop swapping an archive, or `git reset --soft` moving HEAD, while a later call was judged.
+        const judge = (tool_name: string, tool_input: object) => evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input }), open(), onBranch('refs/heads/topic'))
+        for (const command of ['git reset --soft HEAD~1 &', 'nohup cp src/a.ts src/b.ts', 'setsid -f mv src/a.ts src/b.ts', 'cp src/a.ts src/b.ts & npm test', 'printf x > src/a.ts &']) {
+            expect(judge('Bash', { command }).decision, command).toBe('ask')
+        }
+        // A loop sent to the background is not parsed at all, and one run by a background tool loops while later calls are judged.
+        expect(judge('Bash', { command: 'while true; do cp build/a.tar build/b.tar; done &' }).decision).not.toBe('allow')
+        expect(judge('Bash', { command: 'while true; do sleep 1; done', run_in_background: true }).decision).toBe('ask')
+        expect(judge('Bash', { command: 'git checkout main', run_in_background: true }).decision).toBe('ask')
+        expect(judge('Monitor', { command: 'while true; do cp build/a.tar build/b.tar; done', description: 'swap', timeout_ms: 1000 }).decision).toBe('ask')
+        // One long-running command in the background, a server or a watcher, runs as it would in the foreground.
+        for (const command of ['npm run dev &', 'npm test &', 'sleep 5 &']) expect(judge('Bash', { command }).decision, command).toBe('allow')
+        expect(judge('Bash', { command: 'npm run dev', run_in_background: true }).decision).toBe('allow')
+        expect(judge('Monitor', { command: 'tail -f src/a.ts', description: 'watch', timeout_ms: 1000 }).decision).toBe('allow')
     })
 
     it('keeps everyday Git work and plain skill edits allowed', () => {

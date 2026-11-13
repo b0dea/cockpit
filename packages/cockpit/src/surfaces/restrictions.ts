@@ -277,7 +277,7 @@ function unavailableAdapter(value: JsonSnapshotObject): UnavailableRestrictionAd
 function nativeShapeMatches(adapter: NativeRestrictionAdapter): boolean {
     if (adapter.target === 'claudecode') return adapter.promptTier
         && adapter.registration.kind === 'hooks-json' && adapter.registration.path === '.claude/settings.json'
-        && adapter.registration.event === 'PreToolUse' && adapter.registration.matcher === 'Bash|Edit|Write|NotebookEdit'
+        && adapter.registration.event === 'PreToolUse' && adapter.registration.matcher === 'Bash|Edit|Write|NotebookEdit|Monitor'
         && adapter.payload.kind === 'pre-tool-use' && adapter.payload.bashTool === 'Bash'
         && JSON.stringify(adapter.payload.editTools) === JSON.stringify(['Edit', 'Write', 'NotebookEdit'])
         && adapter.readonly.kind === 'agent-frontmatter' && adapter.readonly.pathPattern === '.claude/agents/{agent}.md'

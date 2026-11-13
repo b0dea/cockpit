@@ -34,12 +34,13 @@ const here = (body: string) => expected('cat', [], [{ role: 'redirect-target', v
 const redirect = (executable: string, argv: string[], target: string) => ({ ...expected(executable, argv, [{ role: 'redirect-target', value: target }]), redirects: [{ target, write: true, truncate: true }] })
 const defined = 'Unsupported executable or defined command invocation.'
 const dynamic = (word: string) => `Dynamic command construction is unsupported: ${JSON.stringify(word)} holds a variable, command substitution, glob, home-directory tilde or zsh =command whose expansion the guard cannot see. Write the command and its paths out literally.`
-interface CapturePair { candidate: readonly ParsedInvocation[] | string; control: readonly ParsedInvocation[] }
+// `background` marks a candidate that sends a job to the background, as `setsid` and `nohup` do.
+interface CapturePair { candidate: readonly ParsedInvocation[] | string; control: readonly ParsedInvocation[]; background?: true }
 const captures: Record<typeof rows[number]['name'], CapturePair> = {
     'separate push': { candidate: [git('push', 'origin', 'feature'), git('push', 'origin', 'main')], control: [git('push', 'origin', 'feature'), printf('main')] },
     'timeout values': { candidate: [expected('git', ['reset', '--hard'], wrapper('-s', 'TERM', '-k', '5', '60'), true)], control: [printf('timeout -s TERM -k 5 60 git reset --hard')] },
     'nice adjustment': { candidate: [expected('git', ['clean', '-fd'], wrapper('-n', '10'), true)], control: [printf('nice -n 10 git clean -fd')] },
-    'session detacher': { candidate: [expected('git', ['push', 'origin', 'main'], wrapper('--wait'), true)], control: [printf('setsid --wait nohup git push origin main')] },
+    'session detacher': { candidate: [expected('git', ['push', 'origin', 'main'], wrapper('--wait'), true)], control: [printf('setsid --wait nohup git push origin main')], background: true },
     'environment cwd': { candidate: [{ ...expected('git', ['push', 'origin', 'main'], wrapper('-C', 'config'), true), cwd: '/workspace/project/config' }], control: [printf('env -C config git push origin main')] },
     'refspec destination': { candidate: [git('push', 'origin', '+feature:refs/heads/main')], control: [git('push', 'origin', 'main:refs/heads/feature')] },
     'redirect data': { candidate: [redirect('curl', ['https://db.example.test'], 'output.txt')], control: [redirect('printf', ['ok'], 'db.example.test')] },

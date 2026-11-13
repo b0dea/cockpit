@@ -47,13 +47,17 @@ export type GuardFileContent =
     | Readonly<{ kind: 'patch'; text: string }>
 export type GuardParseResult = {
     readonly status: 'parsed'
-    readonly tool: 'Bash' | 'Edit' | 'Write' | 'NotebookEdit' | 'apply_patch' | `mcp__${string}`
+    readonly tool: 'Bash' | 'Monitor' | 'Edit' | 'Write' | 'NotebookEdit' | 'apply_patch' | `mcp__${string}`
     readonly cwd: string
     readonly invocations: readonly ParsedInvocation[]
     readonly paths: readonly string[]
     /** Targets deleted, moved away from or emptied, as opposed to edited in place. */
     readonly removed: readonly string[]
     readonly content?: GuardFileContent
+    /** Part of the command runs as a background job (`&`, `nohup`, `setsid`, the Bash tool's `run_in_background` or the Monitor tool), which outlives the call the guard judged. */
+    readonly background?: true
+    /** The command runs a `for`, `while` or `until` loop. */
+    readonly loop?: true
 } | { readonly status: 'unavailable'; readonly reason: string }
 
 const parsedInputs = new WeakSet<object>()
@@ -608,7 +612,9 @@ function gitShellRefusal(argv: readonly string[]): string | undefined {
     return undefined
 }
 
-interface Context { readonly options: GuardParseOptions; readonly definitions: Set<string>; readonly depth: number }
+// What the whole command does beside its invocations: a job in the background, or a loop.
+interface Seen { background: boolean; loop: boolean }
+interface Context { readonly options: GuardParseOptions; readonly definitions: Set<string>; readonly depth: number; readonly seen: Seen }
 
 function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvocation[] {
     const { definitions, options } = context
@@ -674,6 +680,7 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
             && args.length > cursor + 2 && args.slice(cursor + 2).every((token) => !token.value.startsWith('-'))) break
         const wrapper = posix.basename(args[cursor++].value)
         wrapped = true
+        if (wrapper === 'nohup' || wrapper === 'setsid') context.seen.background = true
         const take = () => {
             const token = args[cursor++]
             if (!token) refuse(`Missing ${wrapper} operand.`)
@@ -994,7 +1001,7 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
         current = []
         compound = undefined
         closed = undefined
-        if (separator === '&') states = list
+        if (separator === '&') { states = list; context.seen.background = true }
         if (separator === '&&' || separator === '||' || separator === '|') gate = separator
         else {
             gate = undefined
@@ -1016,6 +1023,7 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
         }
         if (!current.length && !compound && token.kind === 'word' && !token.quoted && (token.value === 'for' && options.dynamicWords === 'mark' || token.value === 'while' || token.value === 'until')) {
             ({ compound, end: i } = token.value === 'for' ? readLoop(tokens, i) : readWhile(tokens, i))
+            context.seen.loop = true
             needsCommand = false
             closed = undefined
             continue
@@ -1180,7 +1188,15 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
         let removed: string[] = []
         let invocations: ParsedInvocation[] = []
         let content: GuardFileContent | undefined
-        if (tool === 'Bash' || tool === 'apply_patch') {
+        const seen: Seen = { background: false, loop: false }
+        if (tool === 'Monitor') {
+            // Claude Code's Monitor tool runs its command in the background, or watches a WebSocket and runs nothing.
+            if (!exactKeys(fields, ['description'], ['command', 'timeout_ms', 'ws', 'persistent']) || !text(fields.description)
+                || fields.command !== undefined && (!text(fields.command) || !fields.command) || fields.timeout_ms !== undefined && typeof fields.timeout_ms !== 'number'
+                || fields.command === undefined && fields.ws === undefined) refuse('Malformed monitor payload.')
+            seen.background = true
+            if (typeof fields.command === 'string') invocations = parseShell(fields.command, cwd, { options, definitions: new Set(), depth: 0, seen })
+        } else if (tool === 'Bash' || tool === 'apply_patch') {
             // Native Bash calls carry execution options beside the command; they are type-checked
             // and otherwise ignored, because the command text alone decides what runs.
             const fieldChecks: Record<string, (value: JsonSnapshot | undefined) => boolean> = tool === 'Bash' ? {
@@ -1189,7 +1205,8 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
             } : {}
             if (!exactKeys(fields, ['command'], Object.keys(fieldChecks)) || !text(fields.command) || !fields.command
                 || Object.entries(fieldChecks).some(([key, valid]) => Object.hasOwn(fields, key) && !valid(fields[key]))) refuse('Malformed command payload.')
-            if (tool === 'Bash') invocations = parseShell(fields.command, cwd, { options, definitions: new Set(), depth: 0 })
+            if (fields.run_in_background === true) seen.background = true
+            if (tool === 'Bash') invocations = parseShell(fields.command, cwd, { options, definitions: new Set(), depth: 0, seen })
             else {
                 ({ paths, removed } = patchPaths(fields.command))
                 content = { kind: 'patch', text: fields.command }
@@ -1224,7 +1241,7 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
             Object.freeze(item)
         }
         const result: GuardParseResult = { status: 'parsed', tool, cwd, paths, removed, invocations,
-            ...content ? { content } : {} }
+            ...content ? { content } : {}, ...seen.background ? { background: true as const } : {}, ...seen.loop ? { loop: true as const } : {} }
         parsedInputs.add(result)
         return result
     } catch (error) {

@@ -721,6 +721,10 @@ function plumbingWrite(git: GitInvocation): boolean {
     return false
 }
 
+// Writers a background job could race a judged call with.
+const BACKGROUND_WRITERS = new Set(['cp', 'mv', 'ln', 'link', 'tee', 'rsync', 'install', 'dd', 'touch', 'mkdir', 'rm', 'rmdir', 'unlink', 'tar', 'gtar', 'bsdtar',
+    'unzip', 'ditto', 'cpio', 'pax', 'patch', 'sed', 'perl', 'truncate', 'curl', 'wget', 'chmod', 'mkfifo'])
+
 const REMOVERS = new Set(['rm', 'unlink', 'rmdir', 'shred', 'trash', 'rimraf', 'del-cli'])
 // Git's own commands an agent runs in development. Another verb is an alias, which can run a shell
 // command, or a command that runs hooks, tools or servers of its own, and asks.
@@ -3509,6 +3513,18 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     linking = false
     moving = false
     settingExecutable = false
+    // A background job runs on after the call is judged, so one that loops, writes files or runs a Git write can
+    // change what the guard judged for a later call before that call runs: an archive swapped under its listing,
+    // HEAD moved under a checkout. One long-running command, a server or a watcher, runs as in the foreground.
+    if (input.background) {
+        const racing = input.loop || invocations.some(invocation => {
+            if (invocation.executable === null) return false
+            if (gitInvocation(invocation)) return !accesses.get(invocation)
+            return invocation.redirects.some(redirect => redirect.write && !['/dev/null', '/dev/stdout', '/dev/stderr'].includes(redirect.target))
+                || BACKGROUND_WRITERS.has(posix.basename(invocation.executable))
+        })
+        if (racing) unclassifiedAsk ??= ask('This call runs a background job that loops, writes files or runs a Git write, which can change what the guard judged for a later call before it runs. Run it in the foreground, or a person approves it.')
+    }
     if (pathCount > GUARD_INPUT_LIMITS.paths) hold(unavailable('Guard path limit exceeded.'))
     if (hardDeny) return hardDeny
     for (const invocation of invocations) {
