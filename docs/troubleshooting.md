@@ -138,9 +138,10 @@ sibling nor a worktree of the checkout. Claude Code loads no hook from the cockp
 a session started in it, so the guard does not run there.
 
 `GUARD_RECORD_MISMATCH` means `.cockpit/guards/bash-guard.sh` or `.cockpit/local/guard-identity` no
-longer matches the digest sync recorded for this cockpit below `~/.cockpit/guards/roots/`. Every hook
-checks that digest before it runs the guard, and holds every call with "guard script changed or
-unrecorded" until a person reviews what changed the script and runs sync. `GUARD_WORKTREE_UNGUARDED`
+longer matches the digest sync recorded for it below `~/.cockpit/guards/roots/`. Every hook checks
+both before it runs the guard, and holds every call with "guard script changed or unrecorded" until a
+person reviews what changed the script and runs sync; a linked `.cockpit`, `.cockpit/guards` or
+`.cockpit/local` holds it too, naming the link. `GUARD_WORKTREE_UNGUARDED`
 names a worktree kept below the root that holds no guard script, or one sync did not record there.
 
 `AGENT_SETTINGS_NESTED` names agent tool settings below the cockpit root, which a session started in

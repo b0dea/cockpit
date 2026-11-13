@@ -21,3 +21,6 @@ The guard no longer blocks an agent tool's own files, with no configuration:
 - `tar -x` and `unzip` into the cockpit list the archive first and judge each member; other extractors and a `gh repo clone` into the cockpit ask.
 - A skill, command or agent file whose body runs a shell command (`` !` ``) or whose `allowed-tools` grants the shell asks, and Git checkouts read those files instead of asking by name. OpenCode's `.opencode/tool(s)/` is refused at any depth.
 - Temp directories are no longer agent workspaces: Claude Code keeps scratch files in its scratchpad, and other tools inside the checkout or under a write path a person adds.
+- Git checkouts, resets, restores, stashes and new worktrees are judged against the files on disk, not HEAD, so a HEAD moved by plumbing hides nothing; plumbing that crafts objects or moves refs asks in the cockpit, and a merge or pick asks when HEAD differs from the files on disk at a guard path.
+- A background job that loops, writes files or runs a Git write asks, and Claude Code's Monitor tool now reaches the guard.
+- The guard check compares the script and identity separately, refuses linked guard directories and runs the script with the root it checked. Fenced `` ```! `` shell blocks in skills, links inside archives and instruction files under a Git filter ask.
