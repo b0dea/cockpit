@@ -124,7 +124,10 @@ Limits, stated plainly:
   and `.claude/settings.local.json` also from the repository's top. So `sync` repeats the guard
   registration in the cockpit root's `.claude/settings.local.json`, which Git ignores, beside
   whatever a person keeps there, and `doctor` warns (`CLAUDE_LOCAL_HOOK_MISSING`) when it is
-  missing. A session started in a subdirectory then runs the guard too. A local file in a directory
+  missing. A session started in a subdirectory then runs the guard too. The committed Read and Edit
+  deny rules go there too, spelled as absolute `//path` rules: measured on 2026-11-14 with Claude Code
+  2.1.325, a `/path` rule in a local file was read from the session's directory, so a session started
+  in a subdirectory was not denied the cockpit's files, while an absolute rule denied them. A local file in a directory
   between the repository's top and the session's is not read, so for a cockpit below its repository's
   top `sync` also writes the registration into the top's `.claude/settings.local.json`, where it runs
   the guard only for a session started inside the cockpit, by any spelling of its path, and does

@@ -19,7 +19,7 @@
  */
 import { appendFile, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { lstatSync, readdirSync, realpathSync } from 'node:fs'
-import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { readBoundedFile } from '../bounded-read.js'
 import { GUARD_LOCAL_PATHS, writeCockpitLocalFiles } from '../guards/local-identity.js'
 import { GUARD_SCRIPT_PATH, inspectGuardRecord } from '../guards/guard-record.js'
@@ -292,20 +292,19 @@ function gatedEntries(root: string, wanted: readonly HookEntry[]): readonly Hook
 }
 
 /**
- * The committed Read and Edit deny rules, spelled for local settings at `settingsRoot`. Claude Code reads a
- * `/path` rule from the directory holding the settings file, so the repository top's copy names the cockpit's
- * files through the cockpit's place below it, and an absolute `//**` pattern only below the cockpit: that file
- * binds every session in the repository, and outside the cockpit the person's own rules stand.
+ * The committed Read and Edit deny rules, spelled for local settings at `settingsRoot` as absolute `//path`
+ * rules. Claude Code 2.1.325 read a `/path` rule in a local file from the session's own directory, not the
+ * file's, so a session started in a subdirectory was not denied the cockpit's files (measured 2026-11-14);
+ * an absolute rule binds every session. The repository top's file binds every session in the repository, so
+ * an any-depth `//**` pattern there names only what lies below the cockpit: outside it the person's own rules stand.
  */
 function localDenyRules(root: string, settingsRoot: string, committed: unknown): readonly string[] {
-    const rules = (denyRules(committed) ?? []).filter((rule): rule is string => typeof rule === 'string' && /^(?:Read|Edit)\(.+\)$/s.test(rule))
-    if (settingsRoot === root) return rules
-    const below = relative(settingsRoot, root).split(sep).join('/')
-    return rules.flatMap(rule => {
+    const absolute = `/${realpathSync(root)}`
+    return (denyRules(committed) ?? []).filter((rule): rule is string => typeof rule === 'string' && /^(?:Read|Edit)\(.+\)$/s.test(rule)).flatMap(rule => {
         const [, tool, path] = /^(Read|Edit)\((.+)\)$/s.exec(rule)!
-        if (path!.startsWith('//**/')) return [`${tool}(/${below}/${path!.slice(2)})`]
-        if (path!.startsWith('//') || path!.startsWith('~')) return []
-        return path!.startsWith('/') ? [`${tool}(/${below}${path})`] : []
+        if (path!.startsWith('//**/')) return [settingsRoot === root ? rule : `${tool}(${absolute}/${path!.slice(2)})`]
+        if (path!.startsWith('//') || path!.startsWith('~')) return settingsRoot === root ? [rule] : []
+        return path!.startsWith('/') ? [`${tool}(${absolute}${path})`] : settingsRoot === root ? [rule] : []
     })
 }
 

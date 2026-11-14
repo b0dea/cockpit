@@ -54,12 +54,15 @@ describe('Claude Code local guard registration', () => {
             const local = (directory: string) => JSON.parse(readFileSync(join(directory, '.claude/settings.local.json'), 'utf8'))
             expect(inspectClaudeLocalGuard(root)).toEqual([expect.objectContaining({ code: 'CLAUDE_LOCAL_HOOK_MISSING' }), expect.objectContaining({ code: 'CLAUDE_LOCAL_HOOK_MISSING' })])
             expect(await writeClaudeLocalGuard(root)).toEqual({ kind: 'complete' })
-            expect(local(root).permissions.deny).toEqual(['Read(/notes/private.md)', 'Read(/var/secret)', 'Read(/var/secret/**)', 'Edit(/.cockpit/guards/bash-guard.sh)', 'Read(//**/.env)'])
-            // The repository top's file binds every session in the repository, so it names only the cockpit's files, through its place below the top.
-            expect(local(top).permissions.deny).toEqual(['Read(/ops/cockpit/var/secret)', 'Read(/ops/cockpit/var/secret/**)', 'Edit(/ops/cockpit/.cockpit/guards/bash-guard.sh)', 'Read(/ops/cockpit/**/.env)'])
+            // Claude Code 2.1.325 read a `/path` rule in a local file from the session's own directory, so a session started in a
+            // subdirectory was not denied the root's files (measured 2026-11-14); an absolute `//path` rule binds every session.
+            const absolute = `/${root}`
+            expect(local(root).permissions.deny).toEqual(['Read(/notes/private.md)', `Read(${absolute}/var/secret)`, `Read(${absolute}/var/secret/**)`, `Edit(${absolute}/.cockpit/guards/bash-guard.sh)`, 'Read(//**/.env)'])
+            // The repository top's file binds every session in the repository, so it names only the cockpit's files.
+            expect(local(top).permissions.deny).toEqual([`Read(${absolute}/var/secret)`, `Read(${absolute}/var/secret/**)`, `Edit(${absolute}/.cockpit/guards/bash-guard.sh)`, `Read(${absolute}/**/.env)`])
             expect(inspectClaudeLocalGuard(root)).toEqual([])
             // A rule taken out of the local file is missing again.
-            writeFileSync(join(root, '.claude/settings.local.json'), `${JSON.stringify({ ...local(root), permissions: { deny: ['Read(/var/secret)'] } })}\n`)
+            writeFileSync(join(root, '.claude/settings.local.json'), `${JSON.stringify({ ...local(root), permissions: { deny: [`Read(${absolute}/var/secret)`] } })}\n`)
             expect(inspectClaudeLocalGuard(root)).toEqual([expect.objectContaining({ code: 'CLAUDE_LOCAL_HOOK_MISSING', message: expect.stringContaining('deny rules') })])
         } finally { rmSync(top, { recursive: true, force: true }) }
     })
