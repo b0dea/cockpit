@@ -308,16 +308,18 @@ describe('public surface publication transaction', () => {
             const denied = invoke('mcp__approved-server__write_record', { text: 'x'.repeat(131_072) })
             expect(denied.status, denied.stderr).toBe(0)
             expect(JSON.parse(denied.stdout).hookSpecificOutput.permissionDecision).toBe('deny')
-            const oversized = invoke('mcp__approved-server__read_record', { text: 'x'.repeat(1_048_576) })
-            expect(oversized.status).toBe(2)
-            expect(oversized.stderr).toContain('byte bound')
+            const refused = (run: ReturnType<typeof invoke>) => {
+                expect(run.status, run.stderr).toBe(0)
+                const answer = JSON.parse(run.stdout).hookSpecificOutput
+                expect(answer.permissionDecision).toBe('deny')
+                return answer.permissionDecisionReason as string
+            }
+            expect(refused(invoke('mcp__approved-server__read_record', { text: 'x'.repeat(1_048_576) }))).toContain('byte bound')
             for (const run of [invoke('Bash', { command: 'printf x', description: 'x'.repeat(65_536) }),
                 invoke('Write', { file_path: join(fixture.root, 'notes.txt'), content: 'x'.repeat(65_536) })]) {
-                expect(run.status).toBe(2)
-                expect(run.stderr).toContain('byte bound')
+                expect(refused(run)).toContain('byte bound')
             }
-            const malformed = invoke('mcp__approved-server__read_record', [])
-            expect(malformed.status).toBe(2)
+            expect(refused(invoke('mcp__approved-server__read_record', []))).toContain('Malformed MCP tool input')
         })
 
         it('serializes one MCP collection exactly and guards a selected sibling root', async () => {
@@ -534,7 +536,7 @@ describe('public surface publication transaction', () => {
             expect(runGeneratedGuard(fixture.root, join(outside, '.env.example'))).toMatchObject({ status: 0, stdout: '' })
             // A documentation name, so the roots decide rather than the environment-file denial.
             expect(runGeneratedGuard(fixture.root, join(fixture.root, '..', 'unlisted', '.env.example'))).toMatchObject({
-                status: 2, stderr: expect.stringContaining('Guard path escapes configured roots.'),
+                status: 0, stderr: '', stdout: expect.stringMatching(/"permissionDecision":"deny".*Guard path escapes configured roots\./),
             })
         })
 

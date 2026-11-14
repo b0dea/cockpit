@@ -464,7 +464,7 @@ it('consumes vendor and exact build/test authority through installed hook regist
     expect(invoke('curl https://api.vendor.example.test/messages').stdout).toContain('permissionDecision":"ask')
     expect(invoke('curl https://replacement.vendor.example.test/messages').stdout).toContain('permissionDecision":"deny')
     await writeFile(join(root, '.claude/settings.json'), '{}\n')
-    expect(invoke('npm run build')).toMatchObject({ status: 2, stdout: '', stderr: expect.stringContaining('drifted') })
+    expect(invoke('npm run build')).toMatchObject({ status: 0, stderr: '', stdout: expect.stringMatching(/"permissionDecision":"deny".*drifted/) })
 }, 120_000)
 
 it('admits the npx and installed-path launcher spellings only while they run the installed cockpit', async () => {

@@ -38,12 +38,16 @@ export function adaptGuardDecision(harness: unknown, input: unknown): NativeGuar
     let stdout = ''
     let stderr = ''
     let exitCode: 0 | 2 = 0
-    if (verdict === 'unavailable' || native === 'opencode' && verdict !== 'allow') {
+    // Claude Code prints the whole hook command before the reason of a refusal that exits 2, so every
+    // refusal goes out as decision JSON where the harness reads it. OpenCode's plugin only throws on a
+    // nonzero status, and an unknown harness has no spelling to trust.
+    if (verdict === 'allow') { /* the agent tool's own permissions decide */ }
+    else if (native === null || native === 'opencode') {
         exitCode = 2
         stderr = `cockpit guard: ${selected.reason}\n`
-    } else if (verdict !== 'allow') {
+    } else {
         stdout = JSON.stringify({ hookSpecificOutput: {
-            hookEventName: 'PreToolUse', permissionDecision: verdict, permissionDecisionReason: selected.reason,
+            hookEventName: 'PreToolUse', permissionDecision: verdict === 'ask' ? 'ask' : 'deny', permissionDecisionReason: selected.reason,
         } }) + '\n'
     }
     return { target: native, capability: 'instructed', decision: verdict, exitCode, stdout, stderr }

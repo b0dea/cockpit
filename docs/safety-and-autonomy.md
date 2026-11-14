@@ -1212,12 +1212,15 @@ decision without adding grants or weakening hard boundaries:
 
 | Harness | Translation and adapter exit |
 | --- | --- |
-| Claude Code | Allow, ask, and deny exit 0; ask and deny are carried in native decision JSON. |
-| Codex CLI | Ask becomes deny, because Codex hooks have no prompt tier, and a decision a human cannot be shown must not let the call run. Allow and deny exit 0; deny is carried in native decision JSON. |
+| Claude Code | Every decision exits 0; ask and every refusal, unavailable included, are carried in native decision JSON. |
+| Codex CLI | Ask becomes deny, because Codex hooks have no prompt tier, and a decision a human cannot be shown must not let the call run. Every decision exits 0; every refusal, unavailable included, is carried in native decision JSON. |
 | OpenCode | Ask becomes deny, for the same reason: its plugin hook can only throw or continue. Allow exits 0; every non-allow decision exits 2. |
 
-Unavailable or malformed decisions exit 2 on every target, so adapter exit 0 alone does not mean
-permission was granted. Claude Code prints the hook command beside every refusal it reports, so the
+Unavailable or malformed decisions are refusals on every target, spelled as deny decision JSON for
+Claude Code and Codex and as exit 2 for OpenCode or a harness the adapter does not know, so adapter
+exit 0 alone does not mean permission was granted. Claude Code prints the whole hook command before
+the reason of a refusal that exits 2, which is why the adapter refuses through decision JSON there. Only
+the hook command itself still exits 2, when it cannot reach the adapter, so the
 generated Claude Code and Codex commands are one line that runs the committed guard script, which
 holds the recovery text. Each takes the outermost directory at or above the session's that holds the
 guard script, starting for Claude Code from `CLAUDE_PROJECT_DIR`, else the working directory, and
@@ -1228,11 +1231,11 @@ the call with `cockpit guard failed (<status>): <script>; sync the cockpit`. The
 `timeout` of 30 seconds; a guard call spawns several Node and Git processes and was seen to exceed
 Codex's 5-second default on a loaded machine. What either harness does with the call when that
 timeout fires, run it or refuse it, is not measured. So the guard keeps its own deadline of 25
-seconds: a call still undecided then is refused (`GUARD_TIMED_OUT`, exit 2), the guard stops every
+seconds: a call still undecided then is refused (`GUARD_TIMED_OUT`), the guard stops every
 process it started, and it starts nothing after. A synchronous stall inside the guard's own process
 can still reach the harness timeout, which may then fail open;
 copied plans, failed transport, signals, oversized output, nonzero handler status and invalid JSON
-become `unavailable` with exit 2. Lexical path normalization in this adapter does not itself verify
+become `unavailable`, refused as above. Lexical path normalization in this adapter does not itself verify
 filesystem identity.
 
 If an adapter is unavailable, no target-specific registration or read-only fragment is emitted; the

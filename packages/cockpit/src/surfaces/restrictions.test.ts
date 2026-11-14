@@ -180,6 +180,12 @@ function runGuard(published: RestrictionExpansionComplete, payload: unknown, env
     return result
 }
 
+/** A refusal as Claude Code reads it: decision JSON on a zero exit, so the hook command stays out of the reason. */
+function refusal(reason: string) {
+    const quoted = reason.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    return { status: 0, stderr: '', stdout: expect.stringMatching(new RegExp(`"permissionDecision":"deny","permissionDecisionReason":".*${quoted}`)) }
+}
+
 function bash(command: string) {
     return { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } }
 }
@@ -591,9 +597,7 @@ describe('restriction expansion', () => {
             })
         }
         for (const path of ['/workspace/product-other/env/service.env']) {
-            expect(runGuard(result, edit(path))).toMatchObject({
-                status: 2, stderr: expect.stringContaining('escapes configured roots'),
-            })
+            expect(runGuard(result, edit(path))).toMatchObject(refusal('escapes configured roots'))
         }
         expect(runGuard(result, edit('env/service.env.example'))).toMatchObject({ status: 0, stdout: '' })
 
@@ -667,9 +671,7 @@ while (Date.now() < end) {
         const result = complete(expandRestrictions(await input({ canonicalProjectRoot: directory })))
 
         for (const payload of [edit('alias-env/service.env'), bash('git add alias-env/service.env')]) {
-            expect(runGuard(result, payload)).toMatchObject({
-                status: 2, stderr: expect.stringContaining('symlinked'),
-            })
+            expect(runGuard(result, payload)).toMatchObject(refusal('symlinked'))
         }
         const protectedPath = runGuard(result, edit('env/service.env'))
         expect(protectedPath.stderr, JSON.stringify(protectedPath)).toBe('')
@@ -700,9 +702,7 @@ while (Date.now() < end) {
             expect(runGuard(result, edit(path))).toMatchObject({ status: 0, stdout: '' })
         }
         for (const path of ['/workspace/other/env/private.env', '../other/env/private.env']) {
-            expect(runGuard(result, edit(path))).toMatchObject({
-                status: 2, stderr: expect.stringContaining('escapes configured roots'),
-            })
+            expect(runGuard(result, edit(path))).toMatchObject(refusal('escapes configured roots'))
         }
 
         const patch = '*** Begin Patch\n*** Update File: env/service.env.example\n*** Move to: ../api/env/private.env\n@@\n-old\n+new\n*** End Patch'
@@ -750,7 +750,7 @@ while (Date.now() < end) {
     it('keeps destructive policy active when the instance set is empty and denies asks without a prompt tier', async () => {
         const result = complete(expandRestrictions(await input({ instances: [] })))
         expect(runGuard(result, bash('git reset --hard "$REVISION"')))
-            .toMatchObject({ status: 2, stderr: expect.stringContaining('Dynamic command construction is unsupported') })
+            .toMatchObject(refusal('Dynamic command construction is unsupported'))
         const command = bash('git reset --hard HEAD')
 
         expect(runGuard(result, command)).toMatchObject({ status: 0, stderr: '', stdout: expect.stringContaining('permissionDecision":"ask') })
@@ -843,10 +843,10 @@ while (Date.now() < end) {
 
         const result = complete(expandRestrictions(value))
         expect(runGuard(result, { hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: {} }))
-            .toMatchObject({ status: 2, stderr: expect.stringContaining('Malformed file payload') })
+            .toMatchObject(refusal('Malformed file payload'))
         expect(runGuard(result, {
             hook_event_name: 'tool.execute.before', input: { tool: 'bash' }, args: { command: 'git reset --hard' },
-        })).toMatchObject({ status: 2, stderr: expect.stringContaining('Guard request is malformed') })
+        })).toMatchObject(refusal('Guard request is malformed'))
     })
 
     it('emits no apparent control when a measured source supplies no mechanism version', async () => {
