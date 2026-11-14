@@ -260,7 +260,7 @@ describe('reference pages', () => {
             for (const flag of Object.keys(command.options)) expect(cli).toContain(`| \`--${flag}\` |`)
         }
         const section = (name: string, next: string) => cli.slice(cli.indexOf(`## cockpit ${name}\n`), cli.indexOf(`## cockpit ${next}\n`))
-        expect(section('sync', 'check')).toContain('| `--adopt` | string | unset |')
+        expect(section('sync', 'check')).toContain('| `--dry-run` | boolean | `false` |')
         expect(section('sync', 'check')).toContain('Reads `cockpit.toml` from `--config`.')
         expect(section('init', 'setup')).toContain('Does not read `cockpit.toml`.')
         expect(cli).toContain('| 0 | success |\n| 2 | failure |\n| 130 | cancelled |')

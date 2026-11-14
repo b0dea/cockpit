@@ -5,7 +5,7 @@
  *
  * It does not decide what the edit is: callers supply the text edit and the predicate that
  * recognises the intended change. It never spawns a process. Callers: `sibling add` /
- * `sibling remove` and `sync --adopt`.
+ * `sibling remove`.
  */
 import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'

@@ -2404,144 +2404,6 @@
               "claudecode-plugin"
             ]
           }
-        },
-        "adopted": {
-          "default": [],
-          "description": "Harness settings files cockpit merges with its own output.",
-          "maxItems": 3,
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "path": {
-                "type": "string",
-                "enum": [
-                  ".claude/settings.json",
-                  ".codex/config.toml",
-                  ".codex/hooks.json"
-                ],
-                "description": "Harness settings file that was adopted."
-              },
-              "source": {
-                "allOf": [
-                  {
-                    "type": "string",
-                    "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
-                  },
-                  {
-                    "type": "string",
-                    "maxLength": 4096,
-                    "pattern": "^(?!.*(?:^|\\/)(?:\\.git|internal|node_modules)(?:\\/|$)).+$"
-                  }
-                ],
-                "description": "Where the adopted copy now lives, under cockpit/adopted/."
-              },
-              "sha256": {
-                "type": "string",
-                "pattern": "^[a-f0-9]{64}$",
-                "description": "SHA-256 of the bytes that were moved, as a record for review."
-              },
-              "adopted_on": {
-                "type": "string",
-                "format": "date",
-                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
-                "description": "Date the file was adopted."
-              },
-              "provenance": {
-                "type": "object",
-                "properties": {
-                  "source": {
-                    "type": "string",
-                    "maxLength": 4096,
-                    "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$",
-                    "description": "File or place the value came from, relative to the repository."
-                  },
-                  "observed_on": {
-                    "description": "Date the source was looked at; required unless kind is declared.",
-                    "type": "string",
-                    "format": "date",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
-                  },
-                  "kind": {
-                    "type": "string",
-                    "enum": [
-                      "declared",
-                      "measured",
-                      "inferred"
-                    ],
-                    "description": "How the value was established: declared by this file, measured, or inferred."
-                  },
-                  "reason": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 4096,
-                    "pattern": "\\S",
-                    "description": "Why the value is what it is."
-                  },
-                  "confirmed": {
-                    "description": "Set to true once a person has confirmed an inferred value; inferred values require it.",
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "source",
-                  "kind",
-                  "reason"
-                ],
-                "additionalProperties": false,
-                "description": "Where the adoption came from; its kind must be declared.",
-                "anyOf": [
-                  {
-                    "properties": {
-                      "kind": {
-                        "enum": [
-                          "declared"
-                        ]
-                      }
-                    }
-                  },
-                  {
-                    "properties": {
-                      "kind": {
-                        "enum": [
-                          "measured"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "observed_on"
-                    ]
-                  },
-                  {
-                    "properties": {
-                      "kind": {
-                        "enum": [
-                          "inferred"
-                        ]
-                      },
-                      "confirmed": {
-                        "enum": [
-                          true
-                        ]
-                      }
-                    },
-                    "required": [
-                      "confirmed",
-                      "observed_on"
-                    ]
-                  }
-                ]
-              }
-            },
-            "required": [
-              "path",
-              "source",
-              "sha256",
-              "adopted_on",
-              "provenance"
-            ],
-            "additionalProperties": false
-          }
         }
       },
       "additionalProperties": false
@@ -2696,18 +2558,6 @@
     {
       "path": "surfaces.harnesses[].capabilities[].spelling",
       "rule": "unique_when_emitted"
-    },
-    {
-      "path": "surfaces.adopted[].path",
-      "rule": "unique"
-    },
-    {
-      "path": "surfaces.adopted[].source",
-      "rule": "equals_cockpit/adopted/<path>"
-    },
-    {
-      "path": "surfaces.adopted[].provenance.kind",
-      "rule": "declared"
     }
   ],
   "x-cockpit-editor-limitations": [
@@ -2790,18 +2640,6 @@
     {
       "path": "surfaces.harnesses[].capabilities[].spelling",
       "rule": "unique_when_emitted"
-    },
-    {
-      "path": "surfaces.adopted[].path",
-      "rule": "unique"
-    },
-    {
-      "path": "surfaces.adopted[].source",
-      "rule": "equals_cockpit/adopted/<path>"
-    },
-    {
-      "path": "surfaces.adopted[].provenance.kind",
-      "rule": "declared"
     }
   ]
 }

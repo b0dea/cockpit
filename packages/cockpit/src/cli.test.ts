@@ -260,7 +260,7 @@ describe('closed ordinary invocation metadata', () => {
     it('refuses all ambiguous, repeated, escaping, unavailable or differently spelled forms', () => {
         const cases = [
             ['registry-resolve', '--registry', 'registry.sh'], ['registry-resolve', '.', '--registry', 'registry.sh', '--siblings-root', '.', '--adoption', 'adoption'],
-            ['sync', '--interactive'], ['sync', '--interactive=false'], ['sync', '--adopt', '.claude/settings.json'], ['selftest'], ['selftest', '--probe-specifications', 'probe', '--interactive'],
+            ['sync', '--interactive'], ['sync', '--interactive=false'], ['selftest'], ['selftest', '--probe-specifications', 'probe', '--interactive'],
             ['selftest', '--probe-specifications', 'probe', '--write-probe-specifications', 'draft'],
             ['logs'], ['logs', '--service', 'other'], ['logs', '--service', 'app', '--tail', '0'], ['logs', '--service', 'app', '--tail', '10001'],
             ['logs', '--service', 'app', '--tail', '1.5'], ['logs', '--service', 'app', '--since', '1m;id'], ['logs', '--service', 'app', '--since', 'x'.repeat(65)],
@@ -272,7 +272,7 @@ describe('closed ordinary invocation metadata', () => {
             ['exec', '--service', 'app'], ['exec', '--service', 'app', '--config', authority.configPath, '--'],
             ['exec', '--service', 'app', '--config', authority.configPath, 'psql'], ['exec', '--service', 'other', '--config', authority.configPath, '--', 'psql'],
             ['exec', '--config', authority.configPath, '--', 'psql'],
-            ['sync', '--adopt', '.claude/settings.json'], ['upgrade', '^1.2.3'], ['upgrade', '1.2.3', '1.2.4'], ['upgrade', '--dry-run', '--dry-run'],
+            ['upgrade', '^1.2.3'], ['upgrade', '1.2.3', '1.2.4'], ['upgrade', '--dry-run', '--dry-run'],
             ['reset'], ['reset', '--interactive'], ['guard-evaluate', '--harness', 'claudecode'],
             ['runtime', '--image', 'node:22-alpine'], ['runtime', 'other', '--image', 'node:22-alpine'], ['runtime', 'measure'],
             ['runtime', 'measure', 'extra', '--image', 'node:22-alpine'], ['runtime', 'measure', '--image', 'node 22'],
@@ -683,10 +683,13 @@ describe('generated environment process contract', () => {
             if (reason !== 'adoption') {
                 mkdirSync(dirname(guard), { recursive: true })
                 writeFileSync(guard, '# operator change\n')
+            } else {
+                // A file under cockpit/adopted/ is merged on every sync; this one would switch the guard off.
+                mkdirSync(join(directory, 'cockpit/adopted/.claude'), { recursive: true })
+                writeFileSync(join(directory, 'cockpit/adopted/.claude/settings.json'), '{ "disableAllHooks": true }\n')
             }
             const capture = captureIo()
-            expect(await runCli(['sync', '--config', configPath, '--json',
-                ...(reason === 'adoption' ? ['--adopt', '.claude/settings.json'] : [])], capture.io)).toBe(2)
+            expect(await runCli(['sync', '--config', configPath, '--json'], capture.io)).toBe(2)
             expect(JSON.parse(capture.output().stdout).diagnostics).toEqual([
                 expect.objectContaining({ code: reason === 'adoption' ? 'SURFACE_ADOPTION_REFUSED' : 'SURFACE_STATE_CONFLICT' }),
             ])

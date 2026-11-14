@@ -74,8 +74,7 @@ The values cockpit uses for a key the configuration leaves out.
     ],
     "overlays": [],
     "harnesses": [],
-    "bundles": [],
-    "adopted": []
+    "bundles": []
   }
 }
 ```
@@ -153,7 +152,19 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
 | `path` | JSON file in the sibling with a top-level mcpServers object, as agent tools read from .mcp.json. | string |  | required; pattern [P1](#patterns); at most 4096 characters |
-| `provenance` | Where this MCP source declaration came from. | table: [`provenance` shape](#provenance-shape) |  | required |
+| `provenance` | Where this MCP source declaration came from. | table: [`[sibling.derives.mcp_sources.provenance]`](#siblingderivesmcp_sourcesprovenance) |  | required |
+
+### `[sibling.derives.mcp_sources.provenance]`
+
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `source` | File or place the value came from, relative to the repository. | string |  | required; pattern [P1](#patterns); at most 4096 characters |
+| `observed_on` | Date the source was looked at; required unless kind is declared. | string |  | format `date`; pattern [P2](#patterns) |
+| `kind` | How the value was established: declared by this file, measured, or inferred. | string |  | required; one of `"declared"`, `"measured"`, `"inferred"` |
+| `reason` | Why the value is what it is. | string |  | required; pattern `\S`; 1–4096 characters |
+| `confirmed` | Set to true once a person has confirmed an inferred value; inferred values require it. | boolean |  |  |
+
+- Must match at least one of `[{"properties":{"kind":{"enum":["declared"]}}},{"properties":{"kind":{"enum":["measured"]}},"required":["observed_on"]},{"properties":{"kind":{"enum":["inferred"]},"confirmed":{"enum":[true]}},"required":["confirmed","observed_on"]}]`.
 
 ### `[ports]`
 
@@ -479,7 +490,6 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `overlays` | Team-owned rules, subagents, skills and hooks added to the generated surfaces. | array of table: [`[[surfaces.overlays]]`](#surfacesoverlays) | `[]` | at most 256 items |
 | `harnesses` | Agent tools beyond the shipped ones, with measured capabilities. | array of table: [`[[surfaces.harnesses]]`](#surfacesharnesses) | `[]` | at most 64 items |
 | `bundles` | Bundle formats to publish, such as a Claude plugin bundle. | array of string | `[]` | at most 1 item; each item: exactly `"claudecode-plugin"` |
-| `adopted` | Harness settings files cockpit merges with its own output. | array of table: [`[[surfaces.adopted]]`](#surfacesadopted) | `[]` | at most 3 items |
 
 ### `[[surfaces.overlays]]`
 
@@ -551,16 +561,6 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `state` | Whether the harness enforces, only instructs, or lacks this capability. | string |  | required; exactly `"unavailable"` |
 | `reason` | Why the capability is unavailable. | string |  | required; pattern `\S`; 1–4096 characters |
 
-### `[[surfaces.adopted]]`
-
-| Key | Meaning | Type | Default | Constraints |
-| --- | --- | --- | --- | --- |
-| `path` | Harness settings file that was adopted. | string |  | required; one of `".claude/settings.json"`, `".codex/config.toml"`, `".codex/hooks.json"` |
-| `source` | Where the adopted copy now lives, under cockpit/adopted/. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
-| `sha256` | SHA-256 of the bytes that were moved, as a record for review. | string |  | required; pattern `^[a-f0-9]{64}$` |
-| `adopted_on` | Date the file was adopted. | string |  | required; format `date`; pattern [P2](#patterns) |
-| `provenance` | Where the adoption came from; its kind must be declared. | table: [`provenance` shape](#provenance-shape) |  | required |
-
 ### `[docs]`
 
 | Key | Meaning | Type | Default | Constraints |
@@ -579,18 +579,6 @@ These tables recur in several places; each place links here instead of repeating
 | --- | --- | --- | --- | --- |
 | `module` | Module that implements the capability. | string |  | required; pattern [P1](#patterns); pattern [P7](#patterns); at most 4096 characters |
 | `export` | Export of the module that implements the capability. | string |  | required; pattern `^[A-Za-z_$][A-Za-z0-9_$]*$`; at most 128 characters |
-
-### `provenance` shape
-
-| Key | Meaning | Type | Default | Constraints |
-| --- | --- | --- | --- | --- |
-| `source` | File or place the value came from, relative to the repository. | string |  | required; pattern [P1](#patterns); at most 4096 characters |
-| `observed_on` | Date the source was looked at; required unless kind is declared. | string |  | format `date`; pattern [P2](#patterns) |
-| `kind` | How the value was established: declared by this file, measured, or inferred. | string |  | required; one of `"declared"`, `"measured"`, `"inferred"` |
-| `reason` | Why the value is what it is. | string |  | required; pattern `\S`; 1–4096 characters |
-| `confirmed` | Set to true once a person has confirmed an inferred value; inferred values require it. | boolean |  |  |
-
-- Must match at least one of `[{"properties":{"kind":{"enum":["declared"]}}},{"properties":{"kind":{"enum":["measured"]}},"required":["observed_on"]},{"properties":{"kind":{"enum":["inferred"]},"confirmed":{"enum":[true]}},"required":["confirmed","observed_on"]}]`.
 
 ## Patterns
 
@@ -640,9 +628,6 @@ cockpit checks these rules when it loads the configuration (`x-cockpit-runtime-c
 | `surfaces.harnesses[].name` | `unique` | yes |
 | `surfaces.harnesses[].capabilities` | `one_row_per_surface_feature` | yes |
 | `surfaces.harnesses[].capabilities[].spelling` | `unique_when_emitted` | yes |
-| `surfaces.adopted[].path` | `unique` | yes |
-| `surfaces.adopted[].source` | `equals_cockpit/adopted/<path>` | yes |
-| `surfaces.adopted[].provenance.kind` | `declared` | yes |
 
 ## Skill size limits
 

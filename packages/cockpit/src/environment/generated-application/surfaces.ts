@@ -6,10 +6,10 @@ import { fileURLToPath } from 'node:url'
 import { renderBrowserSurfaces } from '../../browser/surfaces.js'
 import { resolveBrowserRuntime } from '../../browser/runtime.js'
 import { resolveObservationPostures } from '../posture-observation.js'
-import { SURFACE_FEATURES, SURFACE_TARGETS, type RenderedSurfaceFile, type SurfaceSourceFile, type SurfaceTarget } from '../../surfaces/contract.js'
+import { ADOPTABLE_SURFACE_PATHS, SURFACE_FEATURES, SURFACE_TARGETS, type RenderedSurfaceFile, type SurfaceSourceFile, type SurfaceTarget } from '../../surfaces/contract.js'
 import { subagentGradingProblem } from '../../grading/evaluate.js'
 import { GUARD_SURFACE_TARGETS, harnessFact, isGuardSurfaceTarget, listedSurfaceTargets } from '../../surfaces/harness-registry.js'
-import { mergeAdoptedSurface } from '../../surfaces/adoption.js'
+import { adoptedCopyPath, mergeAdoptedSurface } from '../../surfaces/adoption.js'
 import { generateSurfaceEstate } from '../../surfaces/generator-adapter.js'
 import { mergeSurfaceDeclarations } from '../../surfaces/merge.js'
 import {
@@ -761,9 +761,9 @@ export async function prepareSurfaces(
 const ADOPTED_HARNESS = Object.freeze({ '.claude/settings.json': 'claudecode', '.codex/config.toml': 'codexcli', '.codex/hooks.json': 'codexcli' } as const)
 
 /**
- * Replace each adopted harness settings file in the rendered set with the merge of the team's
- * adopted copy and cockpit's rendering. The copy is read through the same anchored reader as every
- * other input and recorded, so publication refuses if it changes before the write.
+ * Replace each harness settings file the team keeps under cockpit/adopted/ with the merge of that
+ * copy and cockpit's rendering. The copy is read through the same anchored reader as every other
+ * input and recorded, so publication refuses if it changes before the write.
  */
 async function mergeAdoptedSurfaces(
     prepared: PreparedEnvironment,
@@ -771,14 +771,19 @@ async function mergeAdoptedSurfaces(
     configuredHarnesses: readonly string[],
     adapters: GeneratedEnvironmentCommandAdapters,
 ): Promise<Readonly<{ entries: readonly SurfaceDesiredEntry[]; sources: readonly AdoptedSourceIdentity[] }> | RefusalOutcome> {
-    const rows = prepared.registry.config.surfaces.adopted
-    if (rows.length === 0) return { entries, sources: [] }
     const merged = [...entries]
     const sources: AdoptedSourceIdentity[] = []
-    for (const row of rows) {
+    for (const path of ADOPTABLE_SURFACE_PATHS) {
+        const row = { path, source: adoptedCopyPath(path) }
+        // Most cockpits adopt nothing; a plain lstat spares each absent copy an anchored helper read.
+        try { await lstat(join(prepared.root, row.source)) } catch (error) {
+            if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) continue
+            return refuse('SURFACE_ADOPTION_REFUSED', `the adopted copy ${row.source} could not be inspected: ${errorCause(error)}`, row.source)
+        }
         const read = await readAnchoredFile(prepared.root, row.source, MAX_SURFACE_FILE_BYTES, prepared.node, adapters)
+        if (read.kind === 'missing') continue
         if (read.kind !== 'complete') return refuse('SURFACE_ADOPTION_REFUSED',
-            `the adopted copy of ${row.path} is ${read.kind === 'missing' ? 'missing' : 'not a bounded regular file'}; restore ${row.source} or remove its [[surfaces.adopted]] row`, row.source)
+            `the adopted copy ${row.source} is not a bounded regular file; replace it with the plain settings file or remove it`, row.source)
         let bytes: string
         try { bytes = new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) } catch {
             // undecodable bytes are malformed input the caller refuses.
@@ -790,7 +795,7 @@ async function mergeAdoptedSurfaces(
         const result = mergeAdoptedSurface(row.path, bytes, current?.bytes)
         if (result.kind !== 'complete') return refuse(result.diagnostic.code, result.diagnostic.message, result.diagnostic.target)
         const harness = ADOPTED_HARNESS[row.path]
-        if (!configuredHarnesses.includes(harness)) return refuse('SURFACE_ADOPTION_REFUSED', `${row.path} belongs to ${harness}, which this cockpit does not configure`, row.path)
+        if (!configuredHarnesses.includes(harness)) return refuse('SURFACE_ADOPTION_REFUSED', `${row.source} belongs to ${harness}, which this cockpit does not configure; list ${harness} in [surfaces] tools or remove the file`, row.source)
         const entry: SurfaceDesiredEntry = current
             ? { ...current, bytes: result.bytes, sha256: sha256(result.bytes) }
             : { kind: 'file', path: row.path, harnesses: [harness] as [string], scope: 'always', capability: 'instructed', writer: 'cockpit',

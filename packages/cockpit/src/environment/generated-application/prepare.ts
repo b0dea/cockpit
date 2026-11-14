@@ -69,8 +69,7 @@ export function syncCommandInput(input: unknown): GeneratedEnvironmentSyncInput 
         const guardWidening = Object.hasOwn(descriptors, 'guardWidening') && 'value' in descriptors.guardWidening!
             ? ownRecord(descriptors.guardWidening.value) : undefined
         if (Object.hasOwn(descriptors, 'guardWidening') && !(guardWidening
-            && (exactKeys(guardWidening, ['configSha256']) && typeof guardWidening.configSha256 === 'string'
-                || exactKeys(guardWidening, ['fields']) && Array.isArray(guardWidening.fields) && guardWidening.fields.every(field => typeof field === 'string')))) return undefined
+            && exactKeys(guardWidening, ['configSha256']) && typeof guardWidening.configSha256 === 'string')) return undefined
         return { configPath, dryRun, ...(bootstrapState === undefined ? {} : { bootstrapState }),
             ...(guardWidening === undefined ? {} : { guardWidening: guardWidening as GuardWideningApproval }) }
     } catch {

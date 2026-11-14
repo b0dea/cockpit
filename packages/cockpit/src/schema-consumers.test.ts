@@ -23,12 +23,12 @@ const REASSEMBLY_MODULE = 'registry-derivation.ts'
 // Leaves no code reads, each a decision with its reason. A stale entry fails the test.
 const UNREAD_BY_DESIGN: Readonly<Record<string, string>> = {
     // A provenance tells the person reviewing cockpit.toml where a value came from. The schema is
-    // its check: it refuses an inferred provenance until a person sets confirmed = true, and an
-    // adopted file's provenance must be declared.
+    // its check: it refuses an inferred provenance until a person sets confirmed = true.
     'sibling.[].derives.mcp_sources.[].provenance.kind': 'where the declaration came from, for its reviewer; schema.ts refuses an unconfirmed inferred one',
     'sibling.[].derives.mcp_sources.[].provenance.confirmed': 'a person\'s confirmation of an inferred source; schema.ts refuses an inferred one without it',
-    'surfaces.adopted.[].provenance.kind': 'where the adopted file came from, for its reviewer; schema.ts accepts only declared',
-    'surfaces.adopted.[].provenance.confirmed': 'a person\'s confirmation of an inferred value; schema.ts refuses an inferred one without it',
+    'sibling.[].derives.mcp_sources.[].provenance.source': 'where the declaration came from, for its reviewer',
+    'sibling.[].derives.mcp_sources.[].provenance.reason': 'why the declaration is there, for its reviewer',
+    'sibling.[].derives.mcp_sources.[].provenance.observed_on': 'when the declaration was observed, for its reviewer',
     'surfaces.harnesses.[].capabilities.[].reason': 'why a capability is unavailable, recorded for the reader of the support matrix',
     'surfaces.harnesses.[].capabilities.[].control': 'the broken control the measurement ran beside, recorded as evidence',
     'guards.read_paths.[].reason': 'why a person lets agents read the location, recorded for the reviewer of cockpit.toml',

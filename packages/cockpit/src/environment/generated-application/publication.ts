@@ -3,6 +3,7 @@ import { constants } from 'node:fs'
 import { lstat, open } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { SURFACE_PUBLICATION_ANCHORS } from '../../surfaces/harness-registry.js'
+import { ADOPTED_SURFACE_ROOT } from '../../surfaces/contract.js'
 import {
     classifyGeneratedPaths,
     encodeOwnershipManifest,
@@ -392,7 +393,7 @@ export function planObservedSurfaces(
 /** A hand edit to a merged adopted file belongs in its adopted copy; say so where the conflict is reported. */
 export function surfacePlanRefusal(prepared: PreparedEnvironment, diagnostic: SurfaceDiagnostic, unfinishedInit?: UnfinishedInit): RefusalOutcome {
     const adopted = diagnostic.code === 'SURFACE_STATE_CONFLICT'
-        ? prepared.registry.config.surfaces.adopted.find(row => row.path === diagnostic.target) : undefined
+        ? prepared.adoptedSources.find(source => source.path === `${ADOPTED_SURFACE_ROOT}/${diagnostic.target}`) : undefined
     // Plain sync met a setup file an unfinished init published and can no longer vouch for; the
     // person needs to hear about that init, not only that the file is unrecorded.
     if (diagnostic.code === 'SURFACE_STATE_CONFLICT' && unfinishedInit && !unfinishedInit.surfaces
@@ -401,8 +402,8 @@ export function surfacePlanRefusal(prepared: PreparedEnvironment, diagnostic: Su
             diagnostic.target, `resume that init with ${initCommand({ root: unfinishedInit.root, target: unfinishedInit.target })} and the options you started it with, which shows its current preview; or ask the person who ran init before you remove cockpit.toml and the files it published so init starts again`)
     }
     return adopted
-        ? refuse(diagnostic.code, `${diagnostic.message}; ${adopted.path} is merged from ${adopted.source}`, diagnostic.target,
-            `make the change in ${adopted.source}, then ask the person who owns the cockpit before you delete ${adopted.path}, and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>`)
+        ? refuse(diagnostic.code, `${diagnostic.message}; ${diagnostic.target} is merged from ${adopted.path}`, diagnostic.target,
+            `make the change in ${adopted.path}, then ask the person who owns the cockpit before you delete ${adopted.path}, and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>`)
         : refuse(diagnostic.code, diagnostic.message, diagnostic.target, diagnostic.fix)
 }
 

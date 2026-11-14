@@ -12,7 +12,6 @@ import { renderHumanDiagnostics } from '../diagnostics.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { runConfiguredSurfaceSelftestOutcome, runSelftestOperatorCommand, runSurfaceSelftestApplication } from '../environment/selftest-application.js'
 import { syncGeneratedEnvironment } from '../generated-environment/command.js'
-import { sha256Hex } from '../sha256.js'
 import { draftSurfaceSelftestSpecifications, surfaceSelftestExpectation } from '../surfaces/selftest.js'
 import { validateSelftestEvidenceBundle } from '../../libexec/validate-harness-evidence.mjs'
 import { encodeGuardLocalIdentity, parseGuardLocalIdentity } from '../guards/local-identity.js'
@@ -202,14 +201,6 @@ describe('native model input selftest', () => {
         const { root, configPath } = await issuedApplication()
         await mkdir(join(root, 'cockpit/adopted/.claude'), { recursive: true })
         await writeFile(join(root, 'cockpit/adopted/.claude/settings.json'), TEAM_SETTINGS)
-        await writeFile(configPath, `${await readFile(configPath, 'utf8')}
-[[surfaces.adopted]]
-path = ".claude/settings.json"
-source = "cockpit/adopted/.claude/settings.json"
-sha256 = "${sha256Hex(TEAM_SETTINGS)}"
-adopted_on = "2026-01-01"
-provenance = { source = ".claude/settings.json", kind = "declared", reason = "Keep the team's own hooks", observed_on = "2026-01-01" }
-`)
         const synced = await syncGeneratedEnvironment({ configPath })
         if (synced.kind !== 'complete') throw new Error(JSON.stringify(synced.diagnostics))
         const application = synced.result.application

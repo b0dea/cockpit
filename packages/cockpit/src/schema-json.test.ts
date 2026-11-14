@@ -93,9 +93,6 @@ const surfaceRuntimeChecks = [
     { path: 'surfaces.harnesses[].name', rule: 'unique' },
     { path: 'surfaces.harnesses[].capabilities', rule: 'one_row_per_surface_feature' },
     { path: 'surfaces.harnesses[].capabilities[].spelling', rule: 'unique_when_emitted' },
-    { path: 'surfaces.adopted[].path', rule: 'unique' },
-    { path: 'surfaces.adopted[].source', rule: 'equals_cockpit/adopted/<path>' },
-    { path: 'surfaces.adopted[].provenance.kind', rule: 'declared' },
 ]
 
 // @ts-expect-error arbitrary strings are not valid sibling mount modes
@@ -900,7 +897,6 @@ describe('the published cockpit schema', () => {
         walk(JSON.parse(renderCockpitSchema()), '#')
 
         expect(seen.some((path) => path.includes('mcp_sources'))).toBe(true)
-        expect(seen.some((path) => path.includes('adopted'))).toBe(true)
         expect(withoutRule).toEqual([])
     })
 

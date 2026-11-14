@@ -5,7 +5,7 @@ import { parseDocument } from 'yaml'
 import { browserProxyAuthorityMatches } from './browser/proxy.js'
 import { ENTRYPOINT_KINDS } from './entrypoint-kinds.js'
 import { GUARD_HOST_LIMITS, GUARD_HOST_PATTERN, normalizeGuardHost } from './guards/host.js'
-import { ADOPTABLE_SURFACE_PATHS, ADOPTED_SURFACE_ROOT, SURFACE_BUNDLE_FORMATS, SURFACE_FEATURES, SURFACE_TARGETS, surfaceSourcesMatchFeature } from './surfaces/contract.js'
+import { SURFACE_BUNDLE_FORMATS, SURFACE_FEATURES, SURFACE_TARGETS, surfaceSourcesMatchFeature } from './surfaces/contract.js'
 import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS } from './surfaces/harness-registry.js'
 import { RefusalError, errorCause } from './environment/contract.js'
 import { REPOSITORY_FILE, REPOSITORY_PATH, splitRepositoryPath } from './repository-path.js'
@@ -824,24 +824,6 @@ export const SurfaceOverlay = SurfaceDeclaration.safeExtend({
     feature: z.enum(['rules', 'subagents', 'skills', 'hooks']).describe('Kind of surface the overlay provides.'),
 })
 
-// A team's own harness settings file that cockpit moved under cockpit/adopted/ and merges with its
-// rendering. `sha256` records the bytes that were moved; it is a record for review, not a lock:
-// the adopted copy is consumer-owned, and the next sync re-merges whatever it holds.
-export const SurfaceAdoption = z.object({
-    path: z.enum(ADOPTABLE_SURFACE_PATHS).describe('Harness settings file that was adopted.'),
-    source: SurfacePath.describe('Where the adopted copy now lives, under cockpit/adopted/.'),
-    sha256: SurfaceSha256.describe('SHA-256 of the bytes that were moved, as a record for review.'),
-    adopted_on: z.string().date().describe('Date the file was adopted.'),
-    provenance: Provenance.describe('Where the adoption came from; its kind must be declared.'),
-}).strict().superRefine((row, ctx) => {
-    if (row.source !== `${ADOPTED_SURFACE_ROOT}/${row.path}`) {
-        ctx.addIssue({ code: 'custom', path: ['source'], message: `an adopted surface is kept at ${ADOPTED_SURFACE_ROOT}/<path>` })
-    }
-    if (row.provenance.kind !== 'declared') {
-        ctx.addIssue({ code: 'custom', path: ['provenance', 'kind'], message: 'an adopted surface is declared by the team that owns it' })
-    }
-})
-
 const HarnessMechanism = z.object({
     module: SurfacePath.describe('Module that implements the capability.'),
     export: z.string().regex(/^[A-Za-z_$][A-Za-z0-9_$]*$/).max(128).describe('Export of the module that implements the capability.'),
@@ -901,11 +883,7 @@ const Surfaces = z.object({
     overlays: z.array(SurfaceOverlay).max(256).default([]).describe('Team-owned rules, subagents, skills and hooks added to the generated surfaces.'),
     harnesses: z.array(CustomHarness).max(64).default([]).describe('Agent tools beyond the shipped ones, with measured capabilities.'),
     bundles: z.array(z.enum(SURFACE_BUNDLE_FORMATS)).max(SURFACE_BUNDLE_FORMATS.length).default([]).describe('Bundle formats to publish, such as a Claude plugin bundle.'),
-    adopted: z.array(SurfaceAdoption).max(ADOPTABLE_SURFACE_PATHS.length).default([]).describe('Harness settings files cockpit merges with its own output.'),
 }).strict().superRefine((surfaces, ctx) => {
-    if (hasDuplicate(surfaces.adopted.map((row) => row.path))) {
-        ctx.addIssue({ code: 'custom', path: ['adopted'], message: 'each harness settings file is adopted at most once' })
-    }
     if (hasDuplicate(surfaces.overlays.map((overlay) => overlay.name))) {
         ctx.addIssue({ code: 'custom', path: ['overlays'], message: 'overlay names must be unique' })
     }
@@ -1113,7 +1091,6 @@ type SurfaceSource = z.infer<typeof SurfaceSource>
 type SurfaceOverrideReference = z.infer<typeof SurfaceOverrideReference>
 export type SurfaceDeclaration = z.infer<typeof SurfaceDeclaration>
 export type SurfaceOverlay = z.infer<typeof SurfaceOverlay>
-export type SurfaceAdoption = z.infer<typeof SurfaceAdoption>
 type CustomHarnessCapability = z.infer<typeof CustomHarnessCapability>
 export type CustomHarness = z.infer<typeof CustomHarness>
 export type Surfaces = z.infer<typeof Surfaces>

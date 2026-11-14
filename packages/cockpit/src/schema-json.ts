@@ -131,9 +131,6 @@ export function renderCockpitSchema(): string {
         { path: 'surfaces.harnesses[].name', rule: 'unique' },
         { path: 'surfaces.harnesses[].capabilities', rule: 'one_row_per_surface_feature' },
         { path: 'surfaces.harnesses[].capabilities[].spelling', rule: 'unique_when_emitted' },
-        { path: 'surfaces.adopted[].path', rule: 'unique' },
-        { path: 'surfaces.adopted[].source', rule: 'equals_cockpit/adopted/<path>' },
-        { path: 'surfaces.adopted[].provenance.kind', rule: 'declared' },
     ]
     schema['x-cockpit-editor-limitations'] = [
         { path: 'sibling[].environment_files[].instance', rule: 'unique' },
@@ -156,9 +153,6 @@ export function renderCockpitSchema(): string {
         { path: 'surfaces.harnesses[].name', rule: 'unique' },
         { path: 'surfaces.harnesses[].capabilities', rule: 'one_row_per_surface_feature' },
         { path: 'surfaces.harnesses[].capabilities[].spelling', rule: 'unique_when_emitted' },
-        { path: 'surfaces.adopted[].path', rule: 'unique' },
-        { path: 'surfaces.adopted[].source', rule: 'equals_cockpit/adopted/<path>' },
-        { path: 'surfaces.adopted[].provenance.kind', rule: 'declared' },
     ]
 
     // Found by shape, so every table that embeds a provenance carries the rule, wherever it sits.

@@ -2,7 +2,6 @@ import { agentSessionVariable, confirmDigest } from '../operator-confirmation.js
 import { renderHumanValue } from '../diagnostics.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { loadOperatorPolicy, runSyncOperatorApplication } from '../environment/operator-application.js'
-import { runSyncAdoption, type SyncAdoptionInput, type SyncAdoptionOutcome } from './adopt.js'
 import {
     applySelectedBootstrapSurface as applyBootstrap,
     prepareSelectedBootstrapSurface as prepareBootstrap,
@@ -95,12 +94,6 @@ export function syncTeamGeneratedEnvironment(
     adapters?: Partial<GeneratedEnvironmentCommandAdapters>,
 ): Promise<GeneratedEnvironmentCommandOutcome> {
     return synchronizeTeam(input, adapters)
-}
-
-/** `sync --adopt`: record the adoption, then run the ordinary sync that renders the merge. */
-export function adoptAndSyncGeneratedEnvironment(input: SyncAdoptionInput): Promise<SyncAdoptionOutcome> {
-    // The adoption writes its own rows; anything else that widens the guards waits for a person.
-    return runSyncAdoption(input, request => synchronizeTeam({ ...request, guardWidening: { fields: ['surfaces.adopted'] } }))
 }
 
 export function checkGeneratedEnvironment(

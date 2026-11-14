@@ -82,8 +82,7 @@ async function unapprovedGuardWidening(prepared: PreparedEnvironment, approval: 
     if (!config) return refuse('GENERATED_SOURCE_CHANGED', 'the configuration changed before generated files could be published', prepared.configSource.path)
     const change = await observeGuardConfigChange(prepared.root, { sha256: prepared.sourceSha256, config })
     if (change?.kind !== 'widening') return undefined
-    if (approval && ('configSha256' in approval ? approval.configSha256 === prepared.sourceSha256
-        : change.fields.every(field => approval.fields.includes(field)))) return undefined
+    if (approval?.configSha256 === prepared.sourceSha256) return undefined
     const refusal = guardWideningUnconfirmedDiagnostic(change.fields, prepared.configPath)
     return refuse(refusal.code, refusal.message, refusal.target, refusal.fix)
 }

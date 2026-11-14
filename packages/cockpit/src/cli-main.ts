@@ -106,7 +106,6 @@ import {
     prepareSelectedBootstrapSurface, resumeSelectedBootstrapSurface, applySelectedBootstrapSurface,
     checkGeneratedEnvironment,
     syncTeamGeneratedEnvironment,
-    adoptAndSyncGeneratedEnvironment,
     runSyncOperatorCommand,
     type GeneratedEnvironmentCommandInput,
     type GeneratedEnvironmentCommandOutcome,
@@ -200,7 +199,6 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
     stacks: Readonly<{ configPath: string; operation: 'list' | 'prune' }>
     sync: GeneratedEnvironmentCommandInput & Readonly<{
         dryRun?: boolean
-        adopt?: readonly string[]
         authorizeStaleRemoval?: (
             request: GeneratedStaleRemovalApprovalRequest,
         ) => Promise<GeneratedStaleRemovalApproval | undefined>
@@ -693,8 +691,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         }),
         'registry-resolve': registryResolveCommand,
         setup: (input) => setupCommand({ ...input, env }, defaultSetupAdapters),
-        sync: async ({ authorizeStaleRemoval, adopt, ...input }) => {
-            if (adopt) return adoptAndSyncGeneratedEnvironment({ configPath: input.configPath, adopt })
+        sync: async ({ authorizeStaleRemoval, ...input }) => {
             return syncTeamGeneratedEnvironment(input, authorizeStaleRemoval ? { authorizeStaleRemoval } : {})
         },
         check: async input => {
@@ -1181,17 +1178,13 @@ async function decodeRequest(
     }
 
     if (handler === 'sync') {
-        const values = parsed.values as { config?: string; 'dry-run'?: boolean; interactive?: boolean; adopt?: string[] }
+        const values = parsed.values as { config?: string; 'dry-run'?: boolean; interactive?: boolean }
         if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'sync accepts named inputs only')
         if (!values.config) return missingConfig()
         if (values['dry-run'] && values.interactive) {
             return usageOutcome('CLI_USAGE_INVALID', 'sync --dry-run and --interactive are mutually exclusive', '--interactive')
         }
-        if (values.adopt && (values['dry-run'] || values.interactive)) {
-            return usageOutcome('CLI_USAGE_INVALID', 'sync --adopt moves files and records them in cockpit.toml, so it cannot be a dry run or interactive; a refused adoption is rolled back', '--adopt')
-        }
-        return { handler, input: { configPath: values.config, ...(values['dry-run'] === true ? { dryRun: true } : {}),
-            ...(values.adopt ? { adopt: [...values.adopt] } : {}) } }
+        return { handler, input: { configPath: values.config, ...(values['dry-run'] === true ? { dryRun: true } : {}) } }
     }
 
     if (handler === 'upgrade') {

@@ -25,7 +25,7 @@ Follow these rules throughout. Reuse explicit authorization already given for th
 ask when scope is missing or an exact preview still needs acceptance:
 
 1. Ask the human before creating a Git remote or hosted repository, running a destructive command
-   (`reset`, approving removals), running `sync --adopt`, accepting an `init` digest, or adopting a
+   (`reset`, approving removals), moving a team's settings file under `cockpit/adopted/`, accepting an `init` digest, or adopting a
    test framework or dependency outside already authorized product-change scope. A Dockerfile, Compose file or `.env.schema`
    the product needs goes on a new branch in that sibling's checkout, started with no uncommitted
    changes; show its diff against the starting branch in your report. Nothing is pushed.
@@ -94,7 +94,7 @@ Look at the directory before asking. Several cases can apply; bootstrap first.
 | Repositories scattered across the disk | Moving them is the human's call. Otherwise declare each with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add <slug> --config cockpit.toml --from <path> --purpose "<purpose>" --json`, then run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config cockpit.toml --json`. | *Other situations* |
 | An existing Compose file | Answer `environment.compose_files = ["compose.yml"]`. For a Compose file inside a product repository, declare that repository as a sibling and point `compose_files` at the file in its checkout. Ask the human for the `environment.machine` floors and the `environment.posture` (how the product is reached and signed into) that `init` asks next. | *Chapter 2* |
 | A service with no local setup | Follow **Create a local setup** below. | *Other situations* |
-| Committed `.claude/settings.json`, `.codex/config.toml` or `.codex/hooks.json` | `sync` refuses with `SURFACE_STATE_CONFLICT`. With the human's yes, run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --adopt <path> --json`. | *Adopt existing agent settings* |
+| Committed `.claude/settings.json`, `.codex/config.toml` or `.codex/hooks.json` | `sync` refuses with `SURFACE_STATE_CONFLICT`. With the human's yes, they move it to `cockpit/adopted/<path>`, then run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --json`. | *Adopt existing agent settings* |
 | A repository joins or leaves an existing cockpit | Run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add <slug> --config cockpit.toml` or `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling remove <slug> --config cockpit.toml`, then `sync --dry-run`, `sync` and `check`. | *Add or remove a repository* |
 | A repository has dotenv files, environment templates or a `.env.schema` | Follow **Secret handling** below. | *Other situations* |
 
