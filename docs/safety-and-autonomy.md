@@ -19,6 +19,14 @@ are refused for their form. A program the guard does not know, a word it cannot 
 glob that cannot match a secret name, and a read whose form it cannot prove all run. It does not stop a program that finds a secret by itself, or a value it
 builds at run time.
 
+What the guard does not stop: a script it cannot read, run as any allowed program, can rewrite an agent
+tool's settings (`disableAllHooks`, an edited `.codex/hooks.json`, a removed OpenCode plugin) or the
+installed cockpit, which switches the hook off before the hook could notice. The guard refuses those
+writes only where the call's text spells them. `cockpit check` and `doctor` report a changed or missing
+guard file afterwards, and a CI job that runs the committed-file drift check catches one that is
+committed. A team that needs more anchors outside the checkout: the agent tool's managed settings,
+which a project file cannot override, to register the hook, and the agent tool's OS sandbox.
+
 A person is still asked only where their judgment is the point, or where the guard cannot tell whether
 a command crosses a blocked line:
 
