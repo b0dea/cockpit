@@ -523,8 +523,8 @@ with 2xx.
 - **Artifact roots.** The three `browser.artifacts` paths, listed as
   `environment.generated_host_paths`. The screenshot command creates the `cli` root when it is
   missing.
-- **A measured harness row.** The commands drive through a `browser.harnesses` row whose version
-  cockpit has measured; the rendered skill reports other versions as unavailable.
+- **A harness row.** The commands drive through a `browser.harnesses` row, at any version of that
+  agent tool.
 
 cockpit does not run a browser service or a browser debugger. To let an agent drive a browser
 through its own Playwright MCP tools, run a browser service in your own Compose file and name its

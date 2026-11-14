@@ -92,17 +92,13 @@ const issuedOperationAuthorizations = new WeakMap<object, {
 }>()
 
 const MEASURED_BROWSER_TOOL = 'browser_navigate'
-// Historical measurements seed spelling only; every current invocation still needs its paired control.
+// Tool spelling and CLI availability as measured; any harness version uses them, and every current
+// invocation still needs its paired control.
 const MEASURED = {
     claudecode: { version: '2.1.220', date: '2026-08-25', tool: 'mcp__playwright__browser_navigate', cli: true },
     codexcli: { version: '0.149.0', date: '2026-08-25', tool: 'mcp__playwright__browser_navigate', cli: false },
     opencode: { version: '1.18.15', date: '2026-08-25', tool: 'playwright_browser_navigate', cli: true },
 } as const
-
-/** The harness version each target's browser transport spelling was measured at, for diagnostics. */
-export function measuredBrowserHarnessVersions(): Readonly<Record<GuardSurfaceTarget, string>> {
-    return Object.fromEntries(Object.entries(MEASURED).map(([target, row]) => [target, row.version])) as Record<GuardSurfaceTarget, string>
-}
 
 const Sha256 = z.string().regex(/^[a-f0-9]{64}$/)
 const Version = z.string().regex(/^\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?$/).max(128)
@@ -540,9 +536,8 @@ export function renderBrowserSurfaces(input: BrowserSurfaceInput) {
         const measured = MEASURED[harness.target]
         for (const transport of ['mcp', 'cli'] as const) {
             let reason = 'Declaration only; current paired native invocation is required.'
-            let available = harness.version === measured.version
-            if (!available) reason = 'Harness version has no measured transport spelling.'
-            else if (runtime.connection.kind !== 'remote') { available = false; reason = 'Native transports require a declared remote browser endpoint; application commands use the local project client.' }
+            let available = true
+            if (runtime.connection.kind !== 'remote') { available = false; reason = 'Native transports require a declared remote browser endpoint; application commands use the local project client.' }
             else if (transport === 'cli' && !measured.cli) { available = false; reason = 'Browser CLI is unavailable under the measured workspace sandbox.' }
             else if (transport === 'cli' && cli === null) { available = false; reason = 'Pinned test package CLI identity is unavailable.' }
             else if (transport === 'mcp' && !server.enabled) { available = false; reason = 'Browser MCP server is absent from shared approval.' }
@@ -577,7 +572,6 @@ export function renderBrowserSurfaces(input: BrowserSurfaceInput) {
     const projectPackage = data.testPackage !== null && 'artifactRoot' in data.testPackage && 'module' in data.testPackage
         ? data.testPackage as z.infer<typeof ProjectPackage> : null
     const clients = projectPackage === null || cli === null ? [] : data.harnesses
-        .filter(harness => harness.version === MEASURED[harness.target].version)
         .map(harness => projectClient(projectPackage, harness, runtime, data.cockpitDirectory))
     return { rows, files, mcp,
         clients, graderBrowserAccess: 'retained' as const }

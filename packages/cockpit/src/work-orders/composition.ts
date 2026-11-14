@@ -17,7 +17,7 @@ import { ENVIRONMENT_CODES, errorCause, hasErrorCode, INHERITED_TOOL_ENVIRONMENT
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
 import { issueBrowserRoutePolicy, type BrowserCommandInput, type BrowserCommandKind, type BrowserRoutePolicy } from '../browser/commands.js'
 import { type BrowserRuntimeProjection } from '../browser/runtime.js'
-import { measuredBrowserHarnessVersions, observeBrowserProjectPackage, renderBrowserSurfaces, type BrowserProjectClient } from '../browser/surfaces.js'
+import { observeBrowserProjectPackage, renderBrowserSurfaces, type BrowserProjectClient } from '../browser/surfaces.js'
 import { isGuardSurfaceTarget } from '../surfaces/harness-registry.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import { stripDevelopmentMarkers } from '../surfaces/development-markers.js'
@@ -1158,11 +1158,8 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
                     artifactRoot: runtime.cliArtifactRoot }), skillTemplate: skillBytes })
             const client = [...rendered.clients].sort((left, right) => left.target.localeCompare(right.target))[0]
             if (!client) {
-                const measured = measuredBrowserHarnessVersions()
-                const declared = harnessRows.length ? harnessRows.map(row => `${row.target} ${row.version}`).join(', ') : 'no harness cockpit can drive'
-                throw new RefusalError(`authenticated browser project client is unavailable: no browser.harnesses row is at a measured version `
-                    + `(declared: ${declared}; measured: ${Object.entries(measured).map(([target, version]) => `${target} ${version}`).join(', ')}); `
-                    + `set a browser.harnesses row to a measured target and version in ${captured.configPath}, then run ${cockpitCommand('sync', { config: captured.configPath })}`)
+                throw new RefusalError(`authenticated browser project client is unavailable: no browser.harnesses row names a harness cockpit can drive; `
+                    + `add one in ${captured.configPath}, then run ${cockpitCommand('sync', { config: captured.configPath })}`)
             }
             return { runtime, client,
                 policy: issueBrowserRoutePolicy(runtime, { origin: originUrl.origin, routes }),
