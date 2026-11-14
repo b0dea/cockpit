@@ -31,6 +31,7 @@ export default defineConfig({
                 test: {
                     name: 'slow',
                     include: [`packages/*/${SLOW}`],
+                    globalSetup: [fileURLToPath(new URL('./scripts/require-fresh-dist.mjs', import.meta.url))],
                 },
             },
         ],
