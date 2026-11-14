@@ -1,88 +1,19 @@
-import { createHash } from 'node:crypto'
-import { spawnSync } from 'node:child_process'
 import { appendFile, readFile, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { loadCockpitConfig } from '../config/load.js'
 import { SURFACE_TARGETS } from '../surfaces/harness-registry.js'
 import { executeProbe } from '../environment-exec/execute.js'
-import { resolveGitExecutable } from './executable.js'
 import { syncGeneratedEnvironment } from '../generated-environment/command.js'
 import { nodeAuthority, readAnchoredBatches } from '../generated-environment/transaction.js'
-import { cockpitId, publicationCockpitId } from './identity.js'
-import { encodeOwnershipManifest } from '../surfaces/ownership.js'
 
 const roots: string[] = []
-const fixture = resolve('fixtures/registries/generated-environment.toml')
-
-async function explicitNativeHookFixture() {
-    const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-native-hook-outcome-')))
-    roots.push(root)
-    const configPath = join(root, 'cockpit.toml')
-    const policyPath = '.cockpit/guards/bash-guard.sh'
-    const policyBytes = 'native-hook-ms=1\n'
-    const policySha256 = createHash('sha256').update(policyBytes).digest('hex')
-    const source = `${(await readFile(fixture, 'utf8')).replace(
-        'name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."',
-    )}
-[testing]
-stages = [{ id = "unit", command = ["npm", "test"], requires_stack = false }]
-gates = [{ id = "focused", tier = "targeted", stages = ["unit"], changes = "Synthetic focused change" }]
-native_hooks = { install = "explicit-native" }
-native_hook_policy = { path = ${JSON.stringify(policyPath)}, sha256 = ${JSON.stringify(policySha256)} }
-`
-    await writeFile(configPath, source)
-    await mkdir(join(root, 'app'), { recursive: true })
-    await mkdir(join(root, 'fixtures'), { recursive: true })
-    const personaBytes = '[{"id":"first"}]\n'
-    await writeFile(join(root, 'fixtures/personas.json'), personaBytes)
-    await mkdir(join(root, '.cockpit/guards'), { recursive: true })
-    await writeFile(join(root, policyPath), policyBytes)
-    const loaded = await loadCockpitConfig(configPath)
-    if (loaded.kind !== 'complete') throw new Error('native hook fixture configuration unavailable')
-    const currentCockpit = publicationCockpitId({ name: loaded.result.config.cockpit.name })
-    const ownership = encodeOwnershipManifest({ root, cockpitId: currentCockpit, configPath,
-        generation: createHash('sha256').update('synthetic native hook generation').digest('hex'),
-        sourceSha256: createHash('sha256').update(source).digest('hex'),
-        owned: [{ path: policyPath, sha256: policySha256 }], surfaces: [] })
-    const ownershipPath = join(root, '.cockpit/generated-environment-ownership.json')
-    await writeFile(ownershipPath, ownership.bytes)
-    expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
-    expect(spawnSync('git', ['-C', root, 'config', 'user.name', 'Synthetic Fixture']).status).toBe(0)
-    expect(spawnSync('git', ['-C', root, 'config', 'user.email', 'fixture@example.invalid']).status).toBe(0)
-    expect(spawnSync('git', ['-C', root, 'add', 'cockpit.toml', 'fixtures/personas.json']).status).toBe(0)
-    expect(spawnSync('git', ['-C', root, 'commit', '--quiet', '-m', 'synthetic fixture']).status).toBe(0)
-    expect(spawnSync('git', ['-C', root, 'commit', '--quiet', '--allow-empty', '-m', 'synthetic parent']).status).toBe(0)
-    const revisions = spawnSync('git', ['-C', root, 'rev-list', '--max-count=2', 'HEAD'], { encoding: 'utf8' })
-    expect(revisions.status).toBe(0)
-    const [head, parent] = revisions.stdout.trim().split('\n')
-    const git = await resolveGitExecutable({ PATH: process.env.PATH ?? '' })
-    if (git.state !== 'available') throw new Error('native hook fixture Git authority unavailable')
-    const bin = join(root, 'bin')
-    const calls = join(root, 'git-calls')
-    await mkdir(bin)
-    await writeFile(join(bin, 'git'), `#!/bin/sh
-if [ "$PWD" != '${root.replaceAll("'", "'\\''")}' ]; then
-    printf 'unexpected synthetic git working directory\\n' >&2; exit 64
-fi
-if [ "$#" -eq 3 ] && [ "$1" = rev-list ] && [ "$2" = --max-count=2 ] && [ "$3" = HEAD ]; then
-    printf '%s\\n' "$*" >> '${calls.replaceAll("'", "'\\''")}'
-    printf '%s\\n' '${head}' '${parent}'
-elif [ "$#" -eq 4 ] && [ "$1" = merge-base ] && [ "$2" = --is-ancestor ] && [ "$3" = '${parent}' ] && [ "$4" = '${head}' ]; then
-    printf '%s\\n' "$*" >> '${calls.replaceAll("'", "'\\''")}'
-    exit 0
-else
-    exec '${git.value.canonicalPath.replaceAll("'", "'\\''")}' "$@"
-fi
-`, { mode: 0o700 })
-    return { root, configPath, policyPath, ownership, ownershipPath, bin, calls, head, parent }
-}
 
 afterEach(async () => {
     await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
+const fixture = resolve('fixtures/registries/generated-environment.toml')
 
 describe('generated application authenticated read batching', () => {
     async function deepSources() {
@@ -386,25 +317,4 @@ describe('generated application authenticated read batching', () => {
             code: 'SURFACE_STATE_CONFLICT', target: 'surfaces',
         })] })
     })
-
-    it('refuses an explicit native hook that must move to CI before publication', async () => {
-        const { root, configPath, ownership, ownershipPath, bin, calls, head, parent } = await explicitNativeHookFixture()
-        const priorPath = process.env.PATH
-        let result: Awaited<ReturnType<typeof syncGeneratedEnvironment>>
-        try {
-            process.env.PATH = `./node_modules/.bin${delimiter}${bin}` + (priorPath === undefined ? '' : delimiter + priorPath)
-            result = await syncGeneratedEnvironment({ configPath })
-        } finally {
-            if (priorPath === undefined) delete process.env.PATH
-            else process.env.PATH = priorPath
-        }
-        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
-            code: 'SURFACE_INPUT_INVALID', target: '.githooks/pre-push', message: expect.stringContaining('move this check to CI'),
-        })] })
-        expect((await readFile(calls, 'utf8')).trim().split('\n')).toEqual([
-            'rev-list --max-count=2 HEAD', ...Array(128).fill(`merge-base --is-ancestor ${parent} ${head}`),
-        ])
-        expect(await readFile(ownershipPath, 'utf8')).toBe(ownership.bytes)
-        await expect(readFile(join(root, 'compose.generated.yml'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
-    }, 120_000)
 })

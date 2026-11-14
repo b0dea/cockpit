@@ -606,9 +606,3 @@ selection to the product's own tool and never substitutes a made-up pass. Every 
 same result, with each stage's observation; any verdict but PASS also exits non-zero with
 `TEST_GATE_UNSATISFIED`.
 
-<!-- cockpit:ref schema=testing.native_hooks.install --> Native hooks are inspect-only by default.
-Writing native hook output needs a policy tied to cockpit's ownership record and a measurement of
-its cost. Rendering a hook and describing how to activate it does not switch on the Git hook path. A
-person must install it and check separately that it works. Leave `native_hooks` out to keep that
-default; declare `native_hooks = { install = "explicit-native" }` only together with
-`native_hook_policy`.

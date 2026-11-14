@@ -223,7 +223,7 @@ describe('observation application runners', () => {
                 message: 'cockpit.toml declares no [testing] gate, so test-run has nothing to run and no work in this product can be graded PASS',
                 fix: expect.stringContaining('./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>') }])
             expect(await doctorFor(`${compose}\n\n[testing]\nstages = [{ id = "unit", command = ["make", "test"], requires_stack = false }]\n`
-                + 'gates = [{ id = "all", tier = "full", stages = ["unit"], changes = "Any behavior" }]\nnative_hooks = { install = "inspect" }')).toEqual([])
+                + 'gates = [{ id = "all", tier = "full", stages = ["unit"], changes = "Any behavior" }]')).toEqual([])
             // A docs-only cockpit has no product to test.
             expect(await doctorFor('')).toEqual([])
         } finally { rmSync(directory, { recursive: true, force: true }) }

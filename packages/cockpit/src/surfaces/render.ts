@@ -305,15 +305,14 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         }
     }
     const testing = captured.testing === null ? null : object(captured.testing)
-        && exactKeys(captured.testing, ['tierGuide', 'nativeHooks']) && object(captured.testing.tierGuide)
+        && exactKeys(captured.testing, ['tierGuide']) && object(captured.testing.tierGuide)
         && exactKeys(captured.testing.tierGuide, ['kind', 'bytes', 'lines', 'costs'])
         && captured.testing.tierGuide.kind === 'complete' && typeof captured.testing.tierGuide.bytes === 'string'
-        && Buffer.byteLength(captured.testing.tierGuide.bytes) <= 65_536 && object(captured.testing.nativeHooks)
+        && Buffer.byteLength(captured.testing.tierGuide.bytes) <= 65_536
         ? captured.testing : undefined
     if (testing === undefined) return refuse('SURFACE_INPUT_INVALID', 'testing projection must be an exact bounded accepted leaf result')
     const tierGuide = testing && object(testing.tierGuide) ? testing.tierGuide : null
-    const nativeHooks = testing && object(testing.nativeHooks) ? testing.nativeHooks : null
-    if (testing && (!tierGuide || !nativeHooks)) return refuse('SURFACE_INPUT_INVALID', 'testing projection must retain its validated objects')
+    if (testing && !tierGuide) return refuse('SURFACE_INPUT_INVALID', 'testing projection must retain its validated objects')
     if (tierGuide && (typeof tierGuide.bytes !== 'string' || typeof tierGuide.lines !== 'number' || !Number.isSafeInteger(tierGuide.lines) || tierGuide.lines < 1
         || tierGuide.lines !== (tierGuide.bytes as string).trimEnd().split('\n').length
         || !Array.isArray(tierGuide.costs) || tierGuide.costs.length !== listedNative.size
@@ -422,34 +421,10 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     if (typeof captured.instructions === 'string') for (const [target, path] of instructionPaths) {
         add(markdown, path, { harnesses: [target], scope: 'always', capability: 'instructed', bytes: captured.instructions })
     }
-    if (testing && tierGuide && nativeHooks) {
+    if (testing && tierGuide) {
         for (const [target, path] of instructionPaths) {
             add(markdown, path, { harnesses: [target], scope: 'always', capability: 'instructed', bytes: stripDevelopmentMarkers(tierGuide.bytes as string) })
         }
-        const hooks = nativeHooks
-        if (hooks.kind === 'complete') {
-            if (!exactKeys(hooks, ['kind', 'entries', 'cost', 'activation']) || !Array.isArray(hooks.entries) || hooks.entries.length !== 1) {
-                return refuse('SURFACE_INPUT_INVALID', 'native hook projection is malformed')
-            }
-            if (!object(hooks.cost) || !exactKeys(hooks.cost, ['kind', 'scope', 'executionSha256', 'limitMs', 'measuredMs'])
-                || hooks.cost.kind !== 'within-budget' || hooks.cost.scope !== 'supplied-execution-environment'
-                || typeof hooks.cost.executionSha256 !== 'string' || !SHA256.test(hooks.cost.executionSha256)
-                || typeof hooks.cost.limitMs !== 'number' || !Number.isSafeInteger(hooks.cost.limitMs) || hooks.cost.limitMs < 1
-                || typeof hooks.cost.measuredMs !== 'number' || !Number.isSafeInteger(hooks.cost.measuredMs) || hooks.cost.measuredMs < 0 || hooks.cost.measuredMs > hooks.cost.limitMs
-                || !object(hooks.activation) || !exactKeys(hooks.activation, ['kind', 'hooksPath', 'mode'])
-                || hooks.activation.kind !== 'explicit-native-install' || hooks.activation.hooksPath !== '.githooks'
-                || hooks.activation.mode !== 493) return refuse('SURFACE_INPUT_INVALID', 'native hook projection is malformed')
-            const hook = hooks.entries[0]
-            if (!object(hook) || !exactKeys(hook, ['path', 'kind', 'ownership', 'harnesses', 'writer', 'schemaVersion', 'scope', 'capability', 'bytes', 'sha256'])
-                || hook.path !== '.githooks/pre-push' || hook.kind !== 'file' || hook.ownership !== 'whole-file'
-                || hook.writer !== 'cockpit' || hook.schemaVersion !== 1 || hook.scope !== 'scoped' || hook.capability !== 'instructed'
-                || !Array.isArray(hook.harnesses) || hook.harnesses.length === 0 || hook.harnesses.some(value => typeof value !== 'string' || !configuredSet.has(value))
-                || !validFileFields(hook)) return refuse('SURFACE_INPUT_INVALID', 'native hook projection is malformed')
-            add(whole, hook.path, { harnesses: hook.harnesses as string[], scope: 'scoped', capability: 'instructed', bytes: hook.bytes as string })
-        } else if ((hooks.kind !== 'not-installed' && hooks.kind !== 'ci-required' && hooks.kind !== 'refusal')
-            || !exactKeys(hooks, ['kind', 'reason']) || typeof hooks.reason !== 'string' || hooks.reason.length === 0
-            || Buffer.byteLength(hooks.reason) > 4_096) return refuse('SURFACE_INPUT_INVALID', 'native hook projection is malformed')
-        else if (hooks.kind !== 'not-installed') return refuse('SURFACE_INPUT_INVALID', hooks.reason, '.githooks/pre-push')
     }
     for (const fragment of [...mcpNative, ...grantNative]) native.set(fragment.path, [...native.get(fragment.path) ?? [], fragment])
     for (const wrapper of captured.mcp.result.wrappers) {

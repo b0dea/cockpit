@@ -760,7 +760,7 @@ describe('operator-confirmed document completion', () => {
         const testedDefaults = await draftFromRegistry({ ...input, configuration: { ...configuration, answers: throughTesting(declaredTesting) } })
         const tested = await draftFromRegistry({ ...input, configuration: { ...configuration,
             answers: [...throughTesting(declaredTesting), confirmDefaults(testedDefaults.question!)] } })
-        expect(parseToml(tested.artifact!)).toMatchObject({ testing: { ...declaredTesting, native_hooks: { install: 'inspect' } } })
+        expect(parseToml(tested.artifact!)).toMatchObject({ testing: declaredTesting })
 
         const invalid = await draftFromRegistry({ ...input, configuration: {
             ...configuration, answers: [nameAnswer, portAnswer, answer(generated.question!, 'compose.yml')] } })

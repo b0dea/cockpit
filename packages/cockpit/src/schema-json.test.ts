@@ -581,7 +581,7 @@ describe('the published cockpit schema', () => {
                 authentication: { policy: 'none', states: [] }, data: { mode: 'empty', isolated: true, reaches_production: false },
                 artifacts: { mcp: '.browser/mcp', cli: '.browser/cli', auth: '.browser/auth' },
             },
-            testing: { stages: [{ id: 'unit', command: ['npm', 'test'], requires_stack: false }], gates: [{ id: 'focused', tier: 'targeted', stages: ['unit'], changes: 'Isolated behavior' }], native_hooks: { install: 'inspect' } },
+            testing: { stages: [{ id: 'unit', command: ['npm', 'test'], requires_stack: false }], gates: [{ id: 'focused', tier: 'targeted', stages: ['unit'], changes: 'Isolated behavior' }] },
             environment: {},
         }) as JsonObject
         select(config).unexpected = true
@@ -637,40 +637,25 @@ describe('the published cockpit schema', () => {
         }
     })
 
-    it('publishes bounded work, browser, testing and hook contracts with runtime-only relations named', () => {
+    it('publishes bounded work, browser and testing contracts with runtime-only relations named', () => {
         const schema = object(JSON.parse(renderCockpitSchema()))
         const properties = object(schema.properties)
         const work = object(object(properties.work).properties)
         const browserProperties = object(object(properties.browser).properties)
-        const testingProperties = object(object(properties.testing).properties)
 
         expect(work.wip_cap).toMatchObject({ type: 'integer', minimum: 1, maximum: 3, default: 3 })
         expect(object(object(work.gates).properties).accept).toMatchObject({ enum: ['agent', 'person', 'ci'] })
         expect(object(browserProperties.artifacts).additionalProperties).toBe(false)
-        expect(object(testingProperties.native_hooks).additionalProperties).toBe(false)
         expect(schema['x-cockpit-runtime-checks']).toContainEqual({ path: 'browser.artifacts', rule: 'exact_environment.generated_host_paths_coverage' })
         expect(schema['x-cockpit-editor-limitations']).toContainEqual({ path: 'testing.gates[].stages[]', rule: 'references_declared_testing_stage' })
     })
 
-    it('rejects duplicate browser authorities and policy without an explicit native install discriminator', () => {
+    it('rejects duplicate browser authorities', () => {
         const schema = object(JSON.parse(renderCockpitSchema()))
         const properties = object(schema.properties)
         const browserProperties = object(object(properties.browser).properties)
         const proxyProperties = object(object(browserProperties.proxy).properties)
         expect(object(proxyProperties.allowed_hosts).uniqueItems).toBe(true)
-
-        const validate = compileDraft04Schema(object(properties.testing))
-        const testing = {
-            stages: [{ id: 'unit', command: ['npm', 'test'], requires_stack: false }],
-            gates: [{ id: 'focused', tier: 'targeted', stages: ['unit'], changes: 'Isolated behavior' }],
-            native_hooks: {},
-            native_hook_policy: { path: 'hook-policy.txt', sha256: 'a'.repeat(64) },
-        }
-        expect(validate(testing), JSON.stringify(validate.errors)).toBe(false)
-        const { native_hooks: _hooks, ...undeclared } = testing
-        expect(validate(undeclared), JSON.stringify(validate.errors)).toBe(false)
-        const { native_hook_policy: _policy, ...inspected } = undeclared
-        expect(validate(inspected), JSON.stringify(validate.errors)).toBe(true)
     })
 
     it.each([

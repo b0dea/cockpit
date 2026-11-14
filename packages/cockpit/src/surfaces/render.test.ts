@@ -274,7 +274,6 @@ describe('surface rendering', () => {
         const reference = '# Browser reference\n'
         const tierGuide = '# Testing tiers\n'
         const browserMcp = '{"mcpServers":{"playwright":{"command":"docker","args":["run"]}}}\n'
-        const hookBytes = '#!/bin/sh\nexit 0\n'
         const browser = {
             files: [file('claudecode', '.mcp.json', browserMcp), file('claudecode', '.claude/skills/cockpit-browser/SKILL.md', skill)],
             rows: [], clients: [], graderBrowserAccess: 'retained',
@@ -285,11 +284,6 @@ describe('surface rendering', () => {
             scopeSemantics: target === 'claudecode' ? 'conditional' : 'full' }))
         const testing = {
             tierGuide: { kind: 'complete', bytes: tierGuide, lines: 1, costs },
-            nativeHooks: { kind: 'complete', entries: [{ path: '.githooks/pre-push', kind: 'file', ownership: 'whole-file',
-                harnesses: ['claudecode'], writer: 'cockpit', schemaVersion: 1, scope: 'scoped', capability: 'instructed',
-                bytes: hookBytes, sha256: digest(hookBytes) }], cost: { kind: 'within-budget', scope: 'supplied-execution-environment',
-                executionSha256: 'a'.repeat(64), limitMs: 100, measuredMs: 1 },
-                activation: { kind: 'explicit-native-install', hooksPath: '.githooks', mode: 493 } },
         }
         const rendering = { ...value, browser, browserReference: reference, testing }
 
@@ -310,22 +304,6 @@ describe('surface rendering', () => {
         expect(result.entries.find(entry => entry.path === 'CLAUDE.md')).toMatchObject({
             kind: 'shared-region', region: { bytes: '@AGENTS.md\n' },
         })
-        expect(result.entries.find(entry => entry.path === '.githooks/pre-push')).toMatchObject({ bytes: hookBytes })
-
-        const inspectOnly = structuredClone(rendering)
-        inspectOnly.testing.nativeHooks = { kind: 'not-installed', reason: 'native hooks require explicit installation' } as never
-        const inspected = renderSurfaceSet(inspectOnly)
-        expect(inspected).toMatchObject({ kind: 'complete' })
-        if (inspected.kind !== 'complete') return
-        expect(inspected.entries.some(entry => entry.path === '.githooks/pre-push')).toBe(false)
-
-        const overBudget = structuredClone(rendering)
-        overBudget.testing.nativeHooks = { kind: 'ci-required', reason: 'native hook exceeds its measured budget; move this check to CI' } as never
-        expect(renderSurfaceSet(overBudget)).toMatchObject({ kind: 'refusal', diagnostic: {
-            code: 'SURFACE_INPUT_INVALID',
-            message: 'native hook exceeds its measured budget; move this check to CI',
-            target: '.githooks/pre-push',
-        } })
 
         const collision = structuredClone(rendering)
         collision.browser.files[0] = file('claudecode', '.mcp.json', '{"mcpServers":{"playwright":{"command":"docker","args":["run"]},"existing":{"command":"other","args":[]}}}\n')

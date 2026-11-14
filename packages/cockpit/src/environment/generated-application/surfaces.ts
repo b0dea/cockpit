@@ -22,7 +22,6 @@ import { collectMcpDeclarations, mcpApprovalDigest, parseMcpDeclarationFile } fr
 import {
     bindSurfaceOwnershipIdentity,
     renderSharedPostimage,
-    type OwnershipManifest,
     type SurfaceDesiredEntry,
     type SurfacePriorOwnedEntry,
 } from '../../surfaces/ownership.js'
@@ -47,7 +46,6 @@ import { checkoutId, cockpitId, stackId } from '../identity.js'
 import { resolveLifecycleStage } from '../lifecycle-stage.js'
 import { observeConfiguration, selectStateRoot } from '../state.js'
 import { TESTING_GUIDE_REGISTRY, createGateRegistry, renderTierGuide } from '../../testing/gates.js'
-import { projectNativeHooks } from '../../testing/hooks.js'
 import { refusalOutcome as refuse } from '../../refusal.js'
 import {
     type AdoptedSourceIdentity,
@@ -93,13 +91,11 @@ import {
     nativeSources,
     openCodeReadDenials,
 } from './surface-outputs.js'
-import { projectExplicitNativeHooks } from './custom-surface.js'
 
 export async function prepareSurfaces(
     prepared: PreparedEnvironment,
     priorOwned: readonly SurfacePriorOwnedEntry[],
     adapters: GeneratedEnvironmentCommandAdapters,
-    manifest?: OwnershipManifest,
 ): Promise<PreparedEnvironment | RefusalOutcome> {
     const config = prepared.registry.config
     // Only the listed tools are rendered and drift-checked; an unlisted tool's files become stale.
@@ -308,23 +304,6 @@ export async function prepareSurfaces(
         ? createGateRegistry(prepared.workEnvironment.testing.declarations)
         : TESTING_GUIDE_REGISTRY
     const configuredHarnesses = [...tools].sort()
-    const testingConfiguration = prepared.workEnvironment.testing
-    const explicitNativeHooks = testingConfiguration?.nativeHookInstall === 'explicit-native'
-        ? testingConfiguration.nativeHookPolicy
-            ? await projectExplicitNativeHooks(prepared, manifest, adapters, testingConfiguration.nativeHookPolicy, configuredHarnesses)
-            : undefined
-        : undefined
-    const nativeHooks = testingConfiguration?.nativeHookInstall === 'explicit-native'
-        ? explicitNativeHooks?.projection
-        : await projectNativeHooks({
-            cockpitId: prepared.cockpitId,
-            harnesses: configuredHarnesses,
-            install: 'inspect',
-        })
-    if (!nativeHooks) return refuse('SURFACE_INPUT_INVALID', 'explicit native hook policy or measurement is unavailable', '.githooks/pre-push')
-    if (testingConfiguration?.nativeHookInstall === 'explicit-native' && nativeHooks.kind !== 'complete') {
-        return refuse('SURFACE_INPUT_INVALID', nativeHooks.reason, '.githooks/pre-push')
-    }
     const coreAssets = new Map(assets.map(row => [row.path, row] as const))
     // The browser server as Claude Code gets it, so the evaluator's tool list admits exactly its tools.
     const claudeBrowser = browser ? mcp.result.harnesses.find(row => row.target === 'claudecode')?.servers.find(server => server.name === 'playwright') : undefined
@@ -487,7 +466,7 @@ export async function prepareSurfaces(
     const rendered = renderSurfaceSet({ configuredHarnesses, merge, generated, projection, mcp, restrictions: listedRestrictions, instructions,
         nativeMcp, nativeGrants, browser, browserReference: browser ? asset('references/browser.md').bytes : null,
         skillReferences: REFERENCE_ASSETS.map(path => ({ skill: SHIPPED_SETUP_SKILL, path, bytes: asset(path).bytes })),
-        testing: { tierGuide, nativeHooks }, sourceEvidence: evidence })
+        testing: { tierGuide }, sourceEvidence: evidence })
     if (rendered.kind !== 'complete') return refuse(rendered.diagnostic.code, rendered.diagnostic.message, rendered.diagnostic.target)
     const adopted = await mergeAdoptedSurfaces(prepared, rendered.entries, configuredHarnesses, adapters)
     if ('status' in adopted) return adopted
@@ -575,10 +554,6 @@ export async function prepareSurfaces(
     if (rootGuideBytes > CODEX_PROJECT_DOC_BYTES) return guideBytesExceeded(rootGuideBytes)
     const overCap = actualGuideCosts.filter(cost => cost.status === 'exceeded').sort((left, right) => right.value - left.value)[0]
     if (overCap) return guideCapExceeded(overCap)
-    if (explicitNativeHooks && !surfaceEntries.some(entry => entry.kind === 'file'
-        && entry.path === explicitNativeHooks.source.path && entry.sha256 === explicitNativeHooks.source.sha256)) {
-        return refuse('SURFACE_INPUT_INVALID', 'native hook policy must remain an exact desired owned surface', explicitNativeHooks.source.path)
-    }
     if (new Set(surfaceEntries.map(entry => entry.path)).size !== surfaceEntries.length) {
         return refuse('SURFACE_PATH_CONFLICT', 'generated surface paths collide', 'surfaces')
     }
@@ -679,7 +654,6 @@ export async function prepareSurfaces(
         },
         sourceEvidence: evidence, sourceRoots,
         adoptedSources: adopted.sources,
-        ...(explicitNativeHooks ? { nativeHookPolicySource: explicitNativeHooks.source } : {}),
         surfaceAssets: assets.map(({ path, sha256: digest, identity }) => ({ path, sha256: digest, identity })),
         workApplication,
         warnings: [...rendered.warnings] }

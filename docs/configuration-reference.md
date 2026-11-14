@@ -372,10 +372,6 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `test_files` | Paths and globs, relative to each checkout, that hold tests. Grading fails an order that deletes, skips or loosens what they match. Defaults to common layouts. | array of string |  | 1–64 items; each item: pattern `^(?!\/)(?!.*(?:^\|\/)\.\.(?:\/\|$))[A-Za-z0-9._@+\-/*?]+$`, 1–512 characters |
 | `stages` | Commands that make up the test gates. | array of table: [`[[testing.stages]]`](#testingstages) |  | required; 1–128 items |
 | `gates` | Named gates that run stages before handing back changes. | array of table: [`[[testing.gates]]`](#testinggates) |  | required; 1–128 items |
-| `native_hooks` | How the repository's own git hooks are handled. | table: [`[testing.native_hooks]`](#testingnative_hooks) | `{"install":"inspect"}` |  |
-| `native_hook_policy` | Policy file for installing the repository's hooks; required for explicit-native. | table: [`[testing.native_hook_policy]`](#testingnative_hook_policy) |  |  |
-
-- Must match exactly one of `[{"properties":{"native_hooks":{"properties":{"install":{"enum":["inspect"]}}}},"not":{"required":["native_hook_policy"]}},{"properties":{"native_hooks":{"properties":{"install":{"enum":["explicit-native"]}},"required":["install"]}},"required":["native_hooks","native_hook_policy"]}]`.
 
 ### `[[testing.stages]]`
 
@@ -404,19 +400,6 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `tier` | Whether the gate covers targeted changes or the full suite. | string |  | required; one of `"targeted"`, `"full"` |
 | `stages` | Stages the gate runs, by id. | array of string |  | required; 1–128 items; each item: pattern `^[a-z][a-z0-9-]{0,63}$` |
 | `changes` | Kind of change that calls for this gate. | string |  | required; 1–4096 characters |
-
-### `[testing.native_hooks]`
-
-| Key | Meaning | Type | Default | Constraints |
-| --- | --- | --- | --- | --- |
-| `install` | Inspect the repository's hooks, or install them as the policy file declares. | string | `"inspect"` | one of `"inspect"`, `"explicit-native"` |
-
-### `[testing.native_hook_policy]`
-
-| Key | Meaning | Type | Default | Constraints |
-| --- | --- | --- | --- | --- |
-| `path` | Policy file, relative to the cockpit. | string |  | required; pattern [P1](#patterns); at most 4096 characters |
-| `sha256` | SHA-256 of the policy file. | string |  | required; pattern `^[a-f0-9]{64}$` |
 
 ### `[environment]`
 

@@ -31,7 +31,6 @@ export function renderCockpitSchema(): string {
     const environmentProperties = environment.properties as Record<string, JsonSchema>
     const browser = properties.browser as JsonSchema
     const browserProperties = browser.properties as Record<string, JsonSchema>
-    const testing = properties.testing as JsonSchema
     const mcpProperties = properties.mcp.properties as Record<string, JsonSchema>
     const toolLists = mcpProperties.allowed_tools
     toolLists.maxProperties = 256
@@ -51,10 +50,6 @@ export function renderCockpitSchema(): string {
         { properties: { data: { required: ['mode', 'isolated', 'reaches_production'], properties: {
             mode: { enum: ['empty', 'seeded'] }, isolated: { enum: [true] }, reaches_production: { enum: [false] },
         } } } },
-    ]
-    testing.oneOf = [
-        { properties: { native_hooks: { properties: { install: { enum: ['inspect'] } } } }, not: { required: ['native_hook_policy'] } },
-        { properties: { native_hooks: { properties: { install: { enum: ['explicit-native'] } }, required: ['install'] } }, required: ['native_hooks', 'native_hook_policy'] },
     ]
 
     sibling.allOf = [

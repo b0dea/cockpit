@@ -484,7 +484,6 @@ sync = "person"
 [testing]
 stages = [{ id = "quick", command = ["sh", "-c", "echo ok"], requires_stack = false }]
 gates = [{ id = "quick", tier = "targeted", stages = ["quick"], changes = "Synthetic gate" }]
-native_hooks = { install = "inspect" }
 ` })
     expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
     await writeFile(join(root, 'app/package-lock.json'), '{}')

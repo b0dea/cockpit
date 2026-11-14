@@ -729,13 +729,6 @@ export const Testing = z.object({
         stages: z.array(TestingName).min(1).max(128).describe('Stages the gate runs, by id.'),
         changes: z.string().min(1).max(4096).refine((value) => !/[\x00-\x1f\x7f]/.test(value)).describe('Kind of change that calls for this gate.'),
     }).strict()).min(1).max(128).describe('Named gates that run stages before handing back changes.'),
-    native_hooks: z.object({
-        install: z.enum(['inspect', 'explicit-native']).default('inspect').describe('Inspect the repository\'s hooks, or install them as the policy file declares.'),
-    }).strict().default({ install: 'inspect' }).describe('How the repository\'s own git hooks are handled.'),
-    native_hook_policy: z.object({
-        path: SafeRelativePath.max(4096).describe('Policy file, relative to the cockpit.'),
-        sha256: z.string().regex(/^[a-f0-9]{64}$/).describe('SHA-256 of the policy file.'),
-    }).strict().optional().describe('Policy file for installing the repository\'s hooks; required for explicit-native.'),
 }).strict().superRefine((testing, ctx) => {
     const stageIds = testing.stages.map((stage) => stage.id)
     const gateIds = testing.gates.map((gate) => gate.id)
@@ -745,10 +738,6 @@ export const Testing = z.object({
         if (hasDuplicate(gate.stages) || gate.stages.some((stage) => !stageIds.includes(stage))) {
             ctx.addIssue({ code: 'custom', path: ['gates', index, 'stages'], message: 'testing gates require unique declared stages' })
         }
-    }
-    if (testing.native_hooks.install === 'explicit-native' && !testing.native_hook_policy
-        || testing.native_hooks.install === 'inspect' && testing.native_hook_policy) {
-        ctx.addIssue({ code: 'custom', path: ['native_hook_policy'], message: 'native hook policy is required only for explicit native installation' })
     }
 })
 

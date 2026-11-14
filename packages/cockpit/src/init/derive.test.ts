@@ -303,7 +303,7 @@ describe('inferred interview answers', () => {
         const root = estate({ '3d-viewer/Makefile': 'test:\n\ttrue\n', [`${long}/Makefile`]: 'test:\n\ttrue\n' })
         const { facts, skipped } = await deriveInferredFacts({ root, repositories: [{ slug: '3d-viewer', path: '3d-viewer' }, { slug: long, path: long }] })
         const proposed = byTarget(facts, '3d-viewer.testing')?.value as { stages: unknown[]; gates: unknown[] }
-        expect(Testing.safeParse({ ...proposed, native_hooks: {} }).success).toBe(true)
+        expect(Testing.safeParse(proposed).success).toBe(true)
         expect(proposed.gates).toMatchObject([{ id: 'targeted-3d-viewer', stages: ['test-3d-viewer'] }, { id: 'full-3d-viewer' }])
         expect(byTarget(facts, `${long}.testing`)).toBeUndefined()
         expect(skipped).toContainEqual({ source: `${long}/Makefile`, reason: expect.stringMatching(

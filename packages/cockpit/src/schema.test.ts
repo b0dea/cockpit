@@ -568,18 +568,12 @@ describe('work and browser declarations', () => {
         }
     })
 
-    it('accepts only closed product-owned gate and hook declarations', () => {
+    it('accepts only closed product-owned gate declarations', () => {
         const testing = { stages: [{ id: 'unit', command: ['npm', 'test'], requires_stack: false }],
-            gates: [{ id: 'focused', tier: 'targeted', stages: ['unit'], changes: 'Isolated behavior' }], native_hooks: { install: 'inspect' } }
+            gates: [{ id: 'focused', tier: 'targeted', stages: ['unit'], changes: 'Isolated behavior' }] }
         expect(Testing.safeParse(testing).success).toBe(true)
         expect(Testing.safeParse({ ...testing, gates: [{ ...testing.gates[0], stages: ['missing'] }] }).success).toBe(false)
-        expect(Testing.safeParse({ ...testing, native_hooks: { install: 'automatic' } }).success).toBe(false)
-        expect(Testing.safeParse({ ...testing, native_hooks: { install: 'explicit-native' } }).success).toBe(false)
-        expect(Testing.safeParse({ ...testing, native_hooks: { install: 'explicit-native' }, native_hook_policy: { path: 'hook-policy.txt', sha256: 'a'.repeat(64) } }).success).toBe(true)
-        // Hooks are inspect-only unless declared otherwise, so the table may be left out, but not under a policy.
-        const { native_hooks: _hooks, ...undeclared } = testing
-        expect(Testing.parse(undeclared).native_hooks).toEqual({ install: 'inspect' })
-        expect(Testing.safeParse({ ...undeclared, native_hook_policy: { path: 'hook-policy.txt', sha256: 'a'.repeat(64) } }).success).toBe(false)
+        expect(Testing.safeParse({ ...testing, native_hooks: { install: 'inspect' } }).success).toBe(false)
         expect(Testing.safeParse({ ...testing, extra: true }).success).toBe(false)
         const selecting = (select: unknown) => ({ ...testing, stages: [{ ...testing.stages[0], select }] })
         expect(Testing.safeParse(selecting({ file: ['{value}'], test: ['-t', '{value}'] })).success).toBe(true)

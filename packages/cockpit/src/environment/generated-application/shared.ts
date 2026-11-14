@@ -172,7 +172,6 @@ export interface PreparedEnvironment {
     readonly sourceRoots: readonly SourceRootIdentity[]
     // The team's adopted harness settings copies a merged surface was rendered from.
     readonly adoptedSources: readonly AdoptedSourceIdentity[]
-    readonly nativeHookPolicySource?: Readonly<{ path: string; sha256: string; identity: FileIdentity }>
     // The declared Compose files the ownership override was rendered from, re-read before publication.
     readonly composeSources: readonly Readonly<{ path: string; sha256: string; identity: FileIdentity }>[]
     readonly surfaceAssets: readonly SurfaceAssetIdentity[]
@@ -436,10 +435,6 @@ export const MAX_GENERATED_BYTES = 16_777_216
 export const MAX_SURFACE_FILE_BYTES = 65_536
 const MAX_SURFACE_BYTES = 4_194_304
 export const HELPER_TIMEOUT_MS = 10_000
-// The native hook cost workload spawns Git once per ref update, 128 times. On a loaded host that
-// takes seconds (7 s at a load average of 24), so under the helper bound an over-budget hook timed
-// out and was reported as a failed execution instead of being sent to CI.
-export const NATIVE_HOOK_COST_TIMEOUT_MS = 60_000
 export const SURFACE_ROOT = fileURLToPath(new URL('../../../surfaces', import.meta.url))
 export const RESTRICTION_ASSETS = Object.freeze([
     'guards/bash-guard.sh',
