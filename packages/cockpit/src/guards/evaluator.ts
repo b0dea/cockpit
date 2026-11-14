@@ -1734,11 +1734,21 @@ function printsCredential(invocation: ParsedInvocation, git: GitInvocation | und
 
 // A live payment secret or restricted key, as the payment processor issues it: a pasted one lands in shell
 // history and transcripts. Test keys of the same shape reach only test data.
+const liveKeyDenial: GuardDecision = Object.freeze({ decision: 'deny', reason: 'Refusing a live secret key written into the command: a command line lands in shell history and agent transcripts. Read the key from the environment the process runs with, for example through `varlock run -- <command>`, and never paste it.' })
 const LIVE_SECRET_KEY = /(?<![A-Za-z0-9])[sr]k_live_[A-Za-z0-9]{24,}/
 
 // Names a glob is tried against: a pattern that can match one of them may reach a secret.
 // Programs whose arguments or standard-input heredoc can be code.
 const INLINE_CODE = /^(?:python[\d.]*|node|nodejs|ruby|perl|php|deno|bun|tsx|osascript|[gmn]?awk|bash|sh|zsh)$/
+/** The code an interpreter runs from its own words: a `-c`, `-e`, `-p`, `-r` or `--eval` value, an awk program, or a heredoc. */
+function inlineCode(invocation: ParsedInvocation): readonly string[] {
+    const name = posix.basename(invocation.executable ?? '')
+    if (!INLINE_CODE.test(name)) return []
+    const argv = invocation.argv
+    const valued = argv.flatMap((arg, at) => /^(?:-[a-zA-Z]*[ceEpr]|--eval|--print|--command)$/.test(arg) && at + 1 < argv.length ? [argv[at + 1]!] : [])
+    const program = /awk$/.test(name) && !argv.some(arg => /^-[a-zA-Z]*f/.test(arg)) ? argv.filter(arg => !arg.startsWith('-')).slice(0, 1) : []
+    return [...valued, ...program, ...invocation.words.filter(word => word.role === 'heredoc-body').map(word => word.value)]
+}
 const SECRET_SAMPLES = ['.env', '.env.local', '.env.production', '.secrets', 'id_rsa', 'id_ed25519', 'credentials', 'server.pem', 'server.key', '.npmrc', '.netrc',
     '.pgpass', 'auth.json', 'hosts.yml', '.git-credentials', '.vault-token']
 
@@ -2108,6 +2118,42 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         return credentialStore(folded, resolved.homeDirectory)
     }
     const credentialDenial = deny('Refusing to read, print or send a credential store: SSH and cloud keys, token files such as ~/.npmrc, ~/.netrc or ~/.codex/auth.json, agent tool and deployment CLI logins, shell histories, and .pem, .p12 or id_* key files hold credentials. A person handles them.')
+    // A directory at or above the home directory, such as `/` in a regular expression or a URL path, names no store itself.
+    const home = resolved.homeDirectory === undefined ? undefined : fold(resolved.homeDirectory)
+    const namesCredential = (folded: string) => !(home !== undefined && within(home, folded)) && credential(folded)
+    // Text the guard does not read as commands, an unreadable shell form or inline interpreter code, is judged by the
+    // names it spells: a secret, a credential, a declared host, a guard control or agent setting, the installed cockpit,
+    // a forced or protected-branch push, skipped hooks, privilege, and downloaded code piped into an interpreter.
+    const textDenial = (text: string, cwd: string): GuardDecision | undefined => {
+        if (LIVE_SECRET_KEY.test(text)) return liveKeyDenial
+        if (resolved.hostedDatabaseHosts.some(host => hostUsed(text, host))) return deny('Refusing executable use of a declared hosted database host.')
+        if (resolved.vendorHosts.some(host => hostUsed(text, host))) return deny('Refusing executable use of a declared vendor host.')
+        const tokens = text.split(/[^\w./@~+-]+/).filter(Boolean)
+        for (const token of tokens) {
+            const folded = fold(posix.resolve(cwd, token.startsWith('~/') && home !== undefined ? home + token.slice(1) : token))
+            if (dotenvSecret(folded)) return dotenvDenial
+            if (folded.split('/').includes('.secrets') || resolved.instances.some(item => within(folded, fold(item.path)))) return readDenial
+            if (inSecretPath(folded)) return secretPathDenial
+            // A bare name may be reached from the home directory, as `cd .aws && cat credentials` reaches it through CDPATH.
+            if (namesCredential(folded) || home !== undefined && !/^[/~.]\./.test(token) && !token.startsWith('/') && namesCredential(fold(posix.join(home, token)))) return credentialDenial
+            if (controlFiles.some(path => folded === fold(path)) || controlDirectories.some(path => within(folded, fold(path))) || guardScriptLocation(folded)) return controlDenial
+            if (nestedAgentConfiguration(folded, false)) return nestedConfigurationDenial
+            if (installedCode(folded, false)) return executionDenial
+        }
+        if (tokens.some(token => /^(?:sudo|doas|pkexec)$/.test(token))) return deny('Refusing privilege escalation: it is a person\'s action. Ask them to run it in their own terminal.')
+        if (/\b(?:curl|wget)\b[^|;&]*\|\s*(?:\S*\/)?(?:sh|bash|zsh|dash|python[\d.]*|node|perl|ruby)\b/.test(text)) return deny('Refusing to run downloaded text as code. Download the file into the cockpit, read it, then run it by path.')
+        const git = tokens.indexOf('git')
+        const after = git < 0 ? [] : tokens.slice(git + 1)
+        if (after.includes('--no-verify')) return deny('Refusing --no-verify: it skips the hooks a commit or push runs.')
+        const push = after.indexOf('push')
+        if (push >= 0 && after.slice(push + 1).some(token => /^(?:-f|--force(?:-with-lease|-if-includes)?|-d|--delete|--mirror|--prune)$/.test(token) || token.startsWith('+')
+            || resolved.protectedBranches.some(branch => [branch, `heads/${branch}`, `refs/heads/${branch}`].includes(token)))) {
+            return deny('Refusing a forced push, a remote branch deletion or a push that names a protected branch.')
+        }
+        return undefined
+    }
+    if (input.unreadable) return textDenial(input.unreadable.text, input.cwd) ?? { decision: 'allow',
+        reason: `The guard does not read this shell form (${input.unreadable.reason}), and its text names nothing the guard refuses, so it runs.` }
     // The current branch and where a bare push goes, for the repository at `cwd`, as Git reports them.
     const branchFacts = (cwd: string): BranchFacts | undefined => {
         let evidence: JsonSnapshot | undefined
@@ -2704,9 +2750,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // A host passed to printf is still an argument and remains a hard denial.
         // `curl -K -` and `wget -i -` read their URLs from a heredoc.
         const fetcher = ['curl', 'wget'].includes(posix.basename(invocation.executable ?? ''))
-        if (invocation.words.some(word => ['executable', 'argument', 'environment-assignment-value', 'wrapper-option-value'].includes(word.role) && LIVE_SECRET_KEY.test(word.value))) {
-            hold(deny('Refusing a live secret key written into the command: a command line lands in shell history and agent transcripts. Read the key from the environment the process runs with, for example through `varlock run -- <command>`, and never paste it.'))
-        }
+        if (invocation.words.some(word => ['executable', 'argument', 'environment-assignment-value', 'wrapper-option-value'].includes(word.role) && LIVE_SECRET_KEY.test(word.value))) hold(liveKeyDenial)
+        // Inline interpreter code can do anything a command can, so its text meets the whole deny list.
+        for (const code of inlineCode(invocation)) { const refusal = textDenial(code, invocation.cwd); if (refusal) hold(refusal) }
         for (const word of invocation.words) {
             if (!['executable', 'argument', 'environment-assignment-value', ...fetcher ? ['heredoc-body'] : []].includes(word.role)) continue
             if (resolved.hostedDatabaseHosts.some((host) => hostUsed(word.value, host))) hold(deny('Refusing executable use of a declared hosted database host.'))
@@ -2975,7 +3021,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             // matches inside the roots is the project's, and a credential store is judged by its directory.
             const secret = glob ? posix.basename(folded).startsWith('.') && SECRET_SAMPLES.some((name) => name.startsWith('.') && glob.test(name)) || credential(posix.dirname(folded))
                 || plainGlob(word) && globReachesProtected(word.value, invocation.cwd) || globNamesProtected(word.value, invocation.cwd)
-                : dotenvSecret(folded) || folded.split('/').includes('.secrets') || resolved.instances.some((item) => within(folded, fold(item.path))) || inSecretPath(folded) || credential(folded)
+                : dotenvSecret(folded) || folded.split('/').includes('.secrets') || resolved.instances.some((item) => within(folded, fold(item.path))) || inSecretPath(folded) || namesCredential(folded)
             if (secret && !approvalBarriers.has(invocation)) approvalBarriers.set(invocation, ask(`${invocation.executable === null ? 'This command' : named(invocation)} holds ${shownGuardWord(word.value)}, which names or can match an environment file, secrets directory, declared instance or credential store. Name the files it needs.`))
         }
         // A declared rule admits a command the profile cannot classify, but never past the secret names
@@ -2995,21 +3041,17 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 ? invocation.argv.findIndex(arg => !arg.startsWith('-')) : -1
             const launcherPath = (lexical: string) => resolved.cockpitLaunchers.some((item) => [item.executable, ...item.argv]
                 .some((spelled) => spelled.includes('/') && posix.resolve(item.cwd, spelled) === lexical))
-            // Inline code runs as a project script does, so only the names its text spells are judged, as argv's are.
-            const code = INLINE_CODE.test(executableName)
-            const codeText = code ? invocation.words.filter(word => word.role === 'heredoc-body').map(word => word.value) : []
-            for (const [position, word] of [...invocation.argv, ...codeText].entries()) {
+            for (const [position, word] of invocation.argv.entries()) {
                 // An attached short option value, as in `sed -f.env`, is a candidate too.
                 const attached = /^-[^-]/.test(word) && word.length > 2 ? [word.slice(2)] : []
-                const tokens = code ? word.split(/[^\w./@~+-]+/) : []
                 // `@file` is how curl and gh name a file whose content they send.
-                for (const candidate of new Set([word, word.slice(word.indexOf('=') + 1), word.slice(word.lastIndexOf(':') + 1), word.slice(word.lastIndexOf('@') + 1), ...attached, ...tokens])) {
+                for (const candidate of new Set([word, word.slice(word.indexOf('=') + 1), word.slice(word.lastIndexOf(':') + 1), word.slice(word.lastIndexOf('@') + 1), ...attached])) {
                     if (!candidate || candidate.startsWith('-') || !scalar(candidate)) continue
                     // Git resolves its operands from the directory -C names.
                     const lexical = posix.resolve(git?.cwd ?? invocation.cwd, candidate)
                     const folded = fold(lexical)
                     if (dotenvSecret(folded)) secretName(dotenvDenial)
-                    if (credential(folded)) hold(credentialDenial)
+                    if (namesCredential(folded)) hold(credentialDenial)
                     holdGitConfigRead(lexical)
                     // In the allow default any command may read what it names, so a path outside the roots
                     // follows external_reads for every command, not only the reading ones.

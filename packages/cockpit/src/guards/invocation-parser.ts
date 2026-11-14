@@ -58,6 +58,11 @@ export type GuardParseResult = {
     readonly background?: true
     /** The command runs a `for`, `while` or `until` loop. */
     readonly loop?: true
+    /**
+     * The shell text holds a construct the parser does not read, such as `$((…))`, `if` or `eval`, so no invocation
+     * was captured from it: the evaluator judges the text by the names it spells.
+     */
+    readonly unreadable?: Readonly<{ text: string; reason: string }>
 } | { readonly status: 'unavailable'; readonly reason: string }
 
 const parsedInputs = new WeakSet<object>()
@@ -67,6 +72,10 @@ export function isParsedGuardInput(value: unknown): value is Extract<GuardParseR
 
 const shown = (word: string) => shownGuardWord(word)
 function refuse(reason: string): never { throw new RefusalError(reason) }
+// A construct that is itself the danger, not one the parser merely cannot read: privilege escalation, downloaded
+// code run as code, and a dump of the environment. It refuses the call even where unreadable text would run.
+class ForbiddenConstruct extends RefusalError {}
+function forbid(reason: string): never { throw new ForbiddenConstruct(reason) }
 /** A word as a refusal quotes it: JSON-escaped, with the controls a harness rejects in a reason escaped too, and bounded. */
 export function shownGuardWord(word: string): string {
     const characters = [...word]
@@ -116,7 +125,7 @@ const FETCHED_CODE = 'Refusing to run downloaded text as code: a download feeds 
     + 'Download the file into the cockpit, read it, then run it by path.'
 // A URL, or a package spelled as a Git source, runs code no registry name or path the guard can read stands for.
 const REMOTE_SOURCE = /:\/\/|^(?:git\+|github:|gitlab:|bitbucket:|gist:)/i
-const fetchedSource = (word: string): never => refuse(`${shown(word)} runs code fetched from a URL or a Git host, which the guard cannot read. Download it into the cockpit, read it, then run it by path.`)
+const fetchedSource = (word: string): never => forbid(`${shown(word)} runs code fetched from a URL or a Git host, which the guard cannot read. Download it into the cockpit, read it, then run it by path.`)
 
 /** Whether a command list starts a fetcher anywhere a command starts, judged from its words alone. */
 function startsFetcher(tokens: readonly Token[]): boolean {
@@ -236,7 +245,7 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
         }
         if (/^[<>]\(/.test(command.slice(index, index + 2))) {
             const inner = lex(command, options, index + 2, depth + 1)
-            if (startsFetcher(inner.tokens)) refuse(FETCHED_CODE)
+            if (startsFetcher(inner.tokens)) forbid(FETCHED_CODE)
             // `<(…)` is a word naming a pipe the command reads; its commands are judged where it runs. Joined to other text
             // it names a path the guard does not spell, and `>(…)` runs a command on what the program writes.
             if (command[index] === '>' || awaitingDocument !== undefined || index > start && !/[ \t\n;&|<>(]/.test(command[index - 1]!)
@@ -715,8 +724,8 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
         if (wrapper === 'timeout' && !/^\d+(?:\.\d+)?[smhd]?$/.test(take().value)) refuse('Invalid timeout duration.')
         if (wrapper === 'env') assignments()
         if (cursor >= args.length) {
-            refuse(wrapper === 'env' ? 'env without a command prints the whole environment, which can hold credentials. Print one named variable that holds no secret instead, such as printenv PATH.'
-                : `Missing ${wrapper} executable.`)
+            if (wrapper === 'env') forbid('env without a command prints the whole environment, which can hold credentials. Print one named variable that holds no secret instead, such as printenv PATH.')
+            refuse(`Missing ${wrapper} executable.`)
         }
         if (wrapper === 'xargs') {
             const input: Token = { kind: 'word', value: XARGS_INPUT, quoted: false, dynamic: true, status: false }
@@ -739,7 +748,7 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
         if (!executable || executableToken!.status || definitions.has(executable)) refuse('Unsupported executable or defined command invocation.')
         if (directoryChangers.has(executable)) refuse(CD_REFUSAL)
         const name = posix.basename(executable)
-        if (privileged.has(name) || name === 'osascript' && args.slice(cursor + 1).some((token) => /administrator\s+privileges/i.test(token.value))) refuse(`${shown(executable)} runs a command with another user's privileges. Privilege escalation is a person's action: ask them to run it in their own terminal.`)
+        if (privileged.has(name) || name === 'osascript' && args.slice(cursor + 1).some((token) => /administrator\s+privileges/i.test(token.value))) forbid(`${shown(executable)} runs a command with another user's privileges. Privilege escalation is a person's action: ask them to run it in their own terminal.`)
         if (scriptShells.has(name)) {
             const [first, script, ...rest] = args.slice(cursor + 1)
             if (first?.value === '-c') {
@@ -935,7 +944,7 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
     // A substitution runs before its command, in the same directory, and a fetched one is code from the network.
     const substituted = (items: readonly Token[], directory: string) => {
         const inner = items.flatMap((token) => token.substitutions ?? []).flatMap((text) => parseShell(text, directory, deeper))
-        if (inner.some(fetches)) refuse(FETCHED_CODE)
+        if (inner.some(fetches)) forbid(FETCHED_CODE)
         return inner
     }
     const stage = (directory: string): ParsedInvocation[] => {
@@ -957,7 +966,7 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
         // Any word naming an interpreter counts, so a program that runs the rest of its line cannot hide one, and it is
         // named before the stage is read, so a bare `| bash` is refused for what it runs.
         const words = compound ? compoundTokens(compound) : current
-        if (gate === '|' && fetched && words.some((token) => token.kind === 'word' && INTERPRETERS.test(posix.basename(token.value)))) refuse(FETCHED_CODE)
+        if (gate === '|' && fetched && words.some((token) => token.kind === 'word' && INTERPRETERS.test(posix.basename(token.value)))) forbid(FETCHED_CODE)
         const target = current.length ? changedDirectory(current, context) : undefined
         if (target !== undefined && !cdAllowed) refuse(`${CD_REFUSAL} A cd inside a loop is not.`)
         // A pipeline or background job runs `cd` in a subshell in bash, and the last stage of a pipeline in the current shell in zsh.
@@ -983,7 +992,7 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
         }
         // A group that feeds a pipeline is that pipeline's stage, with any redirect after it.
         const stageItems = [...closed?.piped ?? [], ...result.slice(first)]
-        if (gate === '|' && fetched && stageItems.some(interprets)) refuse(FETCHED_CODE)
+        if (gate === '|' && fetched && stageItems.some(interprets)) forbid(FETCHED_CODE)
         fetched = (gate === '|' && fetched) || stageItems.some(fetches)
         current = []
         compound = undefined
@@ -1065,7 +1074,7 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
         } else if (token.kind === 'op' && token.value === '{') {
             if (current.length) refuse('A standalone { is parsed only where it opens a command group, `{ command; }`. Quote a literal brace.')
             // Every command in the group reads the download, past the separators that end a pipeline stage.
-            if (gate === '|' && fetched) refuse(FETCHED_CODE)
+            if (gate === '|' && fetched) forbid(FETCHED_CODE)
             groups.push({ start: result.length, listStart })
             closed = undefined
         } else if (token.kind === 'op' && token.value === '}') {
@@ -1182,13 +1191,22 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
         let invocations: ParsedInvocation[] = []
         let content: GuardFileContent | undefined
         const seen: Seen = { background: false, loop: false }
+        let unreadable: { text: string; reason: string } | undefined
+        const shell = (command: string): ParsedInvocation[] => {
+            try { return parseShell(command, cwd, { options, definitions: new Set(), depth: 0, seen }) }
+            catch (error) {
+                if (!(error instanceof RefusalError) || error instanceof ForbiddenConstruct) throw error
+                unreadable = { text: command, reason: error.message }
+                return []
+            }
+        }
         if (tool === 'Monitor') {
             // Claude Code's Monitor tool runs its command in the background, or watches a WebSocket and runs nothing.
             if (!exactKeys(fields, ['description'], ['command', 'timeout_ms', 'ws', 'persistent']) || !text(fields.description)
                 || fields.command !== undefined && (!text(fields.command) || !fields.command) || fields.timeout_ms !== undefined && typeof fields.timeout_ms !== 'number'
                 || fields.command === undefined && fields.ws === undefined) refuse('Malformed monitor payload.')
             seen.background = true
-            if (typeof fields.command === 'string') invocations = parseShell(fields.command, cwd, { options, definitions: new Set(), depth: 0, seen })
+            if (typeof fields.command === 'string') invocations = shell(fields.command)
         } else if (tool === 'Bash' || tool === 'apply_patch') {
             // Native Bash calls carry execution options beside the command; they are type-checked
             // and otherwise ignored, because the command text alone decides what runs.
@@ -1199,7 +1217,7 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
             if (!exactKeys(fields, ['command'], Object.keys(fieldChecks)) || !text(fields.command) || !fields.command
                 || Object.entries(fieldChecks).some(([key, valid]) => Object.hasOwn(fields, key) && !valid(fields[key]))) refuse('Malformed command payload.')
             if (fields.run_in_background === true) seen.background = true
-            if (tool === 'Bash') invocations = parseShell(fields.command, cwd, { options, definitions: new Set(), depth: 0, seen })
+            if (tool === 'Bash') invocations = shell(fields.command)
             else {
                 ({ paths, removed } = patchPaths(fields.command))
                 content = { kind: 'patch', text: fields.command }
@@ -1236,7 +1254,7 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
             Object.freeze(item)
         }
         const result: GuardParseResult = { status: 'parsed', tool, cwd, paths, removed, invocations,
-            ...content ? { content } : {}, ...seen.background ? { background: true as const } : {}, ...seen.loop ? { loop: true as const } : {} }
+            ...content ? { content } : {}, ...seen.background ? { background: true as const } : {}, ...seen.loop ? { loop: true as const } : {}, ...unreadable ? { unreadable } : {} }
         parsedInputs.add(result)
         return result
     } catch (error) {

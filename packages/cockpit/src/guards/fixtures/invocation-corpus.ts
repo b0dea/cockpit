@@ -12,12 +12,12 @@ const rows = [
     { name: 'heredoc data', candidate: 'cat <<\'END\'\nsafe\nEND\ngit push origin main', control: 'cat <<\'END\'\ngit push origin main; db.example.test\nEND', decision: 'deny' },
     { name: 'brace boundaries', candidate: '{ git push origin feature; git push origin main; }', control: '{ git push origin feature; printf main; }', decision: 'deny' },
     { name: 'option decoy', candidate: 'git push --push-option=feature origin main', control: 'git push --push-option=main origin feature', decision: 'deny' },
-    { name: 'function definition', candidate: 'ship() { git push origin main; }; ship', control: "printf 'ship() { git push origin main; }'", decision: 'unavailable' },
-    { name: 'alias definition', candidate: 'alias ship="git push origin main"\nship', control: 'alias ship="git push origin main"; printf ok', decision: 'unavailable' },
+    { name: 'function definition', candidate: 'ship() { git push origin main; }; ship', control: "printf 'ship() { git push origin main; }'", decision: 'deny' },
+    { name: 'alias definition', candidate: 'alias ship="git push origin main"\nship', control: 'alias ship="git push origin main"; printf ok', decision: 'deny' },
     { name: 'assignment host', candidate: 'DB_URL=https://db.example.test printf ok', control: 'printf "NOTE=git push origin main"', decision: 'deny' },
-    { name: 'command variable', candidate: 'cmd=git; $cmd push origin main', control: "printf '$cmd push origin main'", decision: 'unavailable' },
-    { name: 'variable indirection', candidate: 'cmd=git; name=cmd; ${!name} push origin main', control: "printf '${!name} push origin main'", decision: 'unavailable' },
-    { name: 'command substitution', candidate: '$(printf git) push origin main', control: "printf '$(printf git) push origin main'", decision: 'unavailable' },
+    { name: 'command variable', candidate: 'cmd=git; $cmd push origin main', control: "printf '$cmd push origin main'", decision: 'deny' },
+    { name: 'variable indirection', candidate: 'cmd=git; name=cmd; ${!name} push origin main', control: "printf '${!name} push origin main'", decision: 'deny' },
+    { name: 'command substitution', candidate: '$(printf git) push origin main', control: "printf '$(printf git) push origin main'", decision: 'deny' },
 ] as const
 
 function expected(executable: string | null, argv: string[] = [], before: InvocationWord[] = [], wrapped = false): ParsedInvocation {
@@ -56,7 +56,8 @@ const captures: Record<typeof rows[number]['name'], CapturePair> = {
     'command substitution': { candidate: program('$(printf git)'), control: [printf('$(printf git) push origin main')] },
 }
 const protectedPush = 'Refusing push to a declared protected branch.'
-const uncaptured = 'Guard input is unavailable or was not captured by the invocation parser.'
+// Text the parser does not read is judged by what it spells, here a push naming the protected branch.
+const unreadPush = 'Refusing a forced push, a remote branch deletion or a push that names a protected branch.'
 const destructive = 'Destructive Git operation requires human approval.'
 const hosted = 'Refusing executable use of a declared hosted database host.'
 const pathspec = 'Unproven Git staging pathspec grammar.'
@@ -67,7 +68,7 @@ export const invocationCorpus = [
         const witness = typeof capture.candidate === 'string' ? git('push', 'origin', 'main') : capture.candidate.at(-1)
         if (!witness) throw new Error(`Missing executable corpus witness: ${row.name}`)
         return { ...row, capture, witness,
-            cause: row.decision === 'unavailable' ? uncaptured : row.decision === 'ask' ? destructive : ['redirect data', 'assignment host'].includes(row.name) ? hosted : protectedPush,
+            cause: typeof capture.candidate === 'string' ? unreadPush : row.decision === 'ask' ? destructive : ['redirect data', 'assignment host'].includes(row.name) ? hosted : protectedPush,
         }
     }),
     ...['config/*', 'config/active.*', 'config/active.?nstance', 'config/[a]ctive.instance', ':(glob)config/*'].map((path) => ({
