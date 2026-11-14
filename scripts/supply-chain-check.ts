@@ -59,7 +59,6 @@ const STATIC_PACKAGE_FILES = Object.freeze([
     'libexec/fenced-group-runner.cjs',
     'libexec/fenced-supervisor.cjs',
     'libexec/generated-filesystem.cjs',
-    'libexec/install-filesystem.cjs',
     'libexec/native-selftest-guard.d.mts',
     'libexec/native-selftest-guard.mjs',
     'libexec/native-selftest-input.d.mts',

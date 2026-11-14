@@ -293,8 +293,6 @@ const JUSTIFIED_EMPTY_CATCHES: readonly (readonly [site: string, why: string])[]
     ['packages/cockpit/libexec/fence-marker.cjs#replaceApprovedActiveMarker', CLEANUP_AFTER_REPORTED_FAILURE],
     ['packages/cockpit/libexec/fenced-supervisor.cjs#<module>', 'a marker that cannot be removed stays visible, and the state scan refuses it'],
     ['packages/cockpit/libexec/fenced-supervisor.cjs#removeSocket', 'an absent socket is the goal, and repair checks absence itself'],
-    ['packages/cockpit/libexec/install-filesystem.cjs#acquire', 'lock residue is left on purpose for explicit recovery, and the primary refusal is returned'],
-    ['packages/cockpit/libexec/install-filesystem.cjs#atomicFile', CLEANUP_AFTER_REPORTED_FAILURE],
     ['packages/cockpit/src/environment-exec/execute.ts#checkFilesystem', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/environment-exec/execute.ts#consumedFileMatches', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/environment-exec/execute.ts#publishFenceMarker', CLOSE_AFTER_DECISION],
