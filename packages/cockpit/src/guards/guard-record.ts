@@ -16,23 +16,54 @@ export const GUARD_SCRIPT_PATH = '.cockpit/guards/bash-guard.sh'
 const GUARD_RECORD_INPUT_BYTES = 1_048_576
 
 // The check every hook runs in place of the guard script, kept beside the records so it is as unwritable
-// to agents as they are, and so the hook command, which Claude Code prints beside every refusal, stays
-// short. It refuses a linked `.cockpit`, guard directory, local directory, script or identity, and either
-// file when it is not a regular one (a FIFO identity would hold the read until the hook times out). It
-// reads each file once, compares those bytes with the file's own recorded digest, so bytes moved from one
-// to the other are a change, then runs the script text it hashed with the root it checked and the
-// identity text it hashed: nothing is read again after the comparison. A missing identity is left to the
-// recorded script, which refuses without it and names the fix. It is POSIX shell, which the hook runs with
-// /bin/bash, naming every program by absolute path, since one found on the session's search path could be one an
-// agent planted. The version in its name changes when what it checks does.
-export const GUARD_CHECK_PATH = '.cockpit/guards/check-v3.sh'
-export const GUARD_CHECK_SCRIPT = `# Written by cockpit sync: runs a cockpit's guard script once it and the identity match the digests sync recorded.
+// to agents as they are. Its name and arguments (`<directory> --harness <target>`) never change: Codex
+// trusts a hook by its exact command and runs without it until a person trusts a changed one, so each
+// registered command is a fixed line that runs this script, and what changes between releases changes
+// here, where sync rewrites it. Every cockpit on the machine runs the copy the latest sync wrote.
+//
+// Registrations are committed, so the script finds the cockpit from the directory the hook passes, the
+// one the session started in. A session can start in a subdirectory of the cockpit, where the guard
+// script would be one an agent may have written, so it takes the outermost directory at or above that
+// one that holds the guard script: the directories above the cockpit lie outside every root, which
+// agents do not write. Claude Code 2.1.323 sets CLAUDE_PROJECT_DIR to the directory a session started
+// in, a subdirectory included (measured 2026-11-13). The walk stops at the nearest directory holding a
+// `.git` entry, the top of the checkout the session is in: a linked worktree that Claude Code keeps
+// below the main checkout holds its own committed guard, and the one above it belongs to another
+// checkout. A second guard script within that bound is ambiguous, whoever wrote it, and none means no
+// guard to run, so either blocks the call.
+//
+// It refuses a linked `.cockpit`, guard directory, local directory, script or identity, and either file
+// when it is not a regular one (a FIFO identity would hold the read until the hook times out). It reads
+// each file once, compares those bytes with the file's own recorded digest, so bytes moved from one to
+// the other are a change, then runs the script text it hashed with the root it checked and the identity
+// text it hashed: nothing is read again after the comparison. A missing identity is left to the recorded
+// script, which refuses without it and names the fix. It is POSIX shell, which the hook runs with
+// /bin/bash, naming every program by absolute path, since one found on the session's search path could
+// be one an agent planted.
+export const GUARD_CHECK_PATH = '.cockpit/guards/check.sh'
+export const GUARD_CHECK_SCRIPT = `# Written by cockpit sync: finds the cockpit at or above a session's directory and runs its guard script once it and the identity match the digests sync recorded.
 refuse() {
     echo "cockpit guard: $1; a person reviews what changed it and runs cockpit sync in a terminal" >&2
     exit 2
 }
-r=$1
+start=$1
 shift
+d=$start
+r=
+n=0
+while [ -n "$d" ]; do
+    [ -f "$d/${GUARD_SCRIPT_PATH}" ] && { r=$d; n=$((n+1)); }
+    [ -e "$d/.git" ] && break
+    d=\${d%/*}
+done
+if [ "$n" -gt 1 ]; then
+    echo "cockpit guard: more than one ${GUARD_SCRIPT_PATH} at or above $start, so the guard to run is ambiguous; a person removes the one that is not the cockpit's" >&2
+    exit 2
+fi
+if [ -z "$r" ]; then
+    echo "cockpit guard: no ${GUARD_SCRIPT_PATH} at or above $start; a person starts the agent in a cockpit, or runs cockpit sync there in a terminal" >&2
+    exit 2
+fi
 c=$(cd "$r" 2>/dev/null && pwd -P) || c=$r
 s="$c/${GUARD_SCRIPT_PATH}"
 i="$c/${GUARD_LOCAL_PATHS.identity}"

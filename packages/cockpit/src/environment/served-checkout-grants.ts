@@ -214,8 +214,9 @@ export async function applyAgentGrants(root: string, plan: AgentGrantPlan): Prom
 const CLAUDE_SETTINGS = '.claude/settings.json'
 
 type HookEntry = Readonly<{ hooks: readonly Readonly<{ command?: unknown }>[] }> & Readonly<Record<string, unknown>>
+// The guard's command runs a script below a `.cockpit/guards` directory; an older release's ran the cockpit's own.
 const guardCommand = (hook: unknown) => plainObject(hook) && typeof hook.command === 'string'
-    && hook.command.includes('/.cockpit/guards/bash-guard.sh') && hook.command.includes('--harness claudecode')
+    && hook.command.includes('/.cockpit/guards/') && hook.command.includes('--harness claudecode')
 const hookEntries = (settings: unknown): readonly unknown[] | undefined => {
     if (!plainObject(settings)) return undefined
     const hooks = settings.hooks ?? {}

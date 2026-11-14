@@ -13,14 +13,15 @@ describe('Claude Code local guard registration', () => {
             const settingsDirectory = join(root, '.claude')
             mkdirSync(settingsDirectory)
             const committed = (command: string) => ({ matcher: 'Bash|Edit|Write', hooks: [{ type: 'command', command, timeout: 30 }] })
-            const guard = 'd=x; H="$r/.cockpit/guards/bash-guard.sh"; /bin/bash "$H" --harness claudecode'
+            const guard = '/bin/bash "$HOME/.cockpit/guards/check.sh" "${CLAUDE_PROJECT_DIR:-$(pwd -P)}" --harness claudecode'
             const write = (file: string, value: unknown) => writeFileSync(join(settingsDirectory, file), typeof value === 'string' ? value : `${JSON.stringify(value)}\n`)
             const local = () => JSON.parse(readFileSync(join(settingsDirectory, 'settings.local.json'), 'utf8'))
             write('settings.json', { hooks: { PreToolUse: [committed(guard)], SessionStart: [{ hooks: [{ type: 'command', command: 'check' }] }] } })
-            // A person's own settings and hooks stay, and an earlier guard registration is replaced, not repeated.
+            // A person's own settings and hooks stay, and an earlier guard registration, in the shape an older release
+            // wrote, is replaced, not repeated.
             const own = { matcher: 'Bash', hooks: [{ type: 'command', command: 'person-hook.sh' }] }
             write('settings.local.json', { permissions: { additionalDirectories: ['/workspace/served'] },
-                hooks: { PreToolUse: [own, committed(`${guard} --old`)], PostToolUse: [own] } })
+                hooks: { PreToolUse: [own, committed('d=x; H="$r/.cockpit/guards/bash-guard.sh"; /bin/bash "$H" --harness claudecode')], PostToolUse: [own] } })
             expect(inspectClaudeLocalGuard(root)).toEqual([expect.objectContaining({ severity: 'warning', code: 'CLAUDE_LOCAL_HOOK_MISSING' })])
             expect(await writeClaudeLocalGuard(root)).toEqual({ kind: 'complete' })
             expect(local()).toEqual({ permissions: { additionalDirectories: ['/workspace/served'] },

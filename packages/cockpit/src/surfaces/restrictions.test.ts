@@ -27,6 +27,11 @@ import {
 } from './restrictions.js'
 
 const root = new URL('../../', import.meta.url)
+// The registered guard commands, byte for byte: changing one makes every Codex user trust the hook again.
+const STABLE_GUARD_COMMANDS = {
+    claudecode: '/bin/bash "$HOME/.cockpit/guards/check.sh" "${CLAUDE_PROJECT_DIR:-$(pwd -P)}" --harness claudecode; s=$?; case $s in 0|2) exit $s;; esac; echo "cockpit guard failed ($s); a person runs cockpit sync in a terminal" >&2; exit 2',
+    codexcli: 'COCKPIT_ASK_IS_DENY=1 /bin/bash "$HOME/.cockpit/guards/check.sh" "$(pwd -P)" --harness codexcli; s=$?; case $s in 0|2) exit $s;; esac; echo "cockpit guard failed ($s); a person runs cockpit sync in a terminal" >&2; exit 2',
+}
 interface GuardContext { root: string; alias: string; api: string; source: string; configPath: string; handler: GuardHandlerIdentity }
 // Rendered bytes no longer name their checkout, so the next completed expansion is bound to the
 // checkout the most recent fixture input prepared.
@@ -357,12 +362,11 @@ describe('restriction expansion', () => {
             expect(runs(name, worktree, env, 'env/service.env'), name).toMatchObject({ status: 0, stderr: 'worktree-guard' })
         }
         // Outside every cockpit the registration finds no guard and blocks.
-        expect(runs('claudecode', tmpdir(), ambient, 'env/service.env.example')).toMatchObject({
-            status: 2, stdout: '', stderr: expect.stringContaining('cockpit guard failed (127): /no-cockpit-root/.cockpit/guards/bash-guard.sh; sync the cockpit'),
-        })
-        expect(runs('codexcli', tmpdir(), ambient, 'env/service.env.example')).toMatchObject({
-            status: 2, stdout: '', stderr: expect.stringContaining('cockpit guard failed (127): /no-cockpit-root/.cockpit/guards/bash-guard.sh'),
-        })
+        for (const name of ['claudecode', 'codexcli'] as const) {
+            expect(runs(name, tmpdir(), ambient, 'env/service.env.example'), name).toMatchObject({
+                status: 2, stdout: '', stderr: expect.stringContaining(`cockpit guard: no .cockpit/guards/bash-guard.sh at or above ${realpathSync(tmpdir())}`),
+            })
+        }
 
         // At session start each registration runs the installed cockpit's check on the configuration
         // and shows its report; it never blocks the session, including when dependencies are absent.
@@ -471,15 +475,14 @@ describe('restriction expansion', () => {
                 hooks: { PreToolUse: Array<{ hooks: Array<{ command: string; timeout?: unknown }> }> }
             }).hooks.PreToolUse[0]!.hooks[0]!
             const command = hook.command
-            // Claude Code prints the whole hook command beside each refusal it reports, so it stays one line; each
-            // walks up to the cockpit, which makes it longer than a fixed path would be.
-            expect(command, name).not.toContain('\n')
-            expect(command.length, name).toBeLessThanOrEqual(700)
+            // Codex trusts a hook by its exact command and skips it, unguarded, until a person trusts a changed one, so the
+            // command is the same in every release: what changes lives in the check script sync writes. Claude Code prints
+            // the whole command beside each refusal it reports, so it stays one line.
+            expect(command, name).toBe(STABLE_GUARD_COMMANDS[name])
             // Both harnesses read the hook's timeout in seconds; cockpit states it rather than inheriting each default.
             expect(hook.timeout, name).toBe(30)
             // A guard that cannot load its handler exits 1; a killed one 137. Exit 2 keeps its own reason.
-            const guard = join(await realpath(directory), result.sharedGuard.path)
-            for (const [exit, status, stderr] of [[1, 2, `cockpit guard failed (1): ${guard}; sync the cockpit\n`], [137, 2, `cockpit guard failed (137): ${guard}; sync the cockpit\n`],
+            for (const [exit, status, stderr] of [[1, 2, 'cockpit guard failed (1); a person runs cockpit sync in a terminal\n'], [137, 2, 'cockpit guard failed (137); a person runs cockpit sync in a terminal\n'],
                 [2, 2, 'refused\n'], [0, 0, '']] as const) {
                 await writeFile(join(directory, result.sharedGuard.path), exit === 2 ? "printf 'refused\\n' >&2; exit 2\n" : `exit ${exit}\n`)
                 recordTestGuard(directory)
@@ -494,8 +497,18 @@ describe('restriction expansion', () => {
             for (const shell of ['/bin/sh', '/bin/dash']) {
                 const missing = spawnSync(shell, ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: directory } })
                 expect(missing.status, shell).toBe(2)
-                // Neither finds a cockpit above the session once the script is gone, so each names the absolute path that exists nowhere.
-                expect(missing.stderr, shell).toContain('cockpit guard failed (127): /no-cockpit-root/.cockpit/guards/bash-guard.sh; sync the cockpit')
+                // Neither finds a cockpit at or above the session once the script is gone, and each says so.
+                expect(missing.stderr, shell).toContain(`cockpit guard: no .cockpit/guards/bash-guard.sh at or above ${directory}`)
+            }
+            // So does a missing check script, which only sync writes: the hook names the fix rather than letting the call run.
+            await writeFile(join(directory, result.sharedGuard.path), 'exit 0\n')
+            recordTestGuard(directory)
+            const home = await isolatedProjectRoot('cockpit-hook-home-')
+            for (const shell of ['/bin/sh', '/bin/dash']) {
+                const unsynced = spawnSync(shell, ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, HOME: home, CLAUDE_PROJECT_DIR: directory } })
+                expect(unsynced.status, shell).toBe(2)
+                expect(unsynced.stderr, shell).toContain(`${home}/.cockpit/guards/check.sh`)
+                expect(unsynced.stderr, shell).toContain('a person runs cockpit sync in a terminal')
             }
         }
         expect(result.sharedGuard.bytes).toContain(`so ${GUARD_HELD_CALLS} are refused.`)

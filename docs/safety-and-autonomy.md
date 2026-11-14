@@ -90,7 +90,8 @@ Limits, stated plainly:
   against the remote-tracking ref as last fetched, so in a sibling it can still bring in a nested
   agent setting or skill the guard never saw.
 - The hook runs the guard script through a check sync writes below `~/.cockpit/guards/`, which the
-  guard refuses to every agent write. The check reads the script and the machine-local identity that
+  guard refuses to every agent write. The latest sync on a machine writes the one check every cockpit
+  there runs, and a hook that finds no check refuses the call and names sync as the fix. The check reads the script and the machine-local identity that
   names the handler once each, compares those bytes with the digests sync recorded for the canonical
   root, refuses a linked `.cockpit`, guard or local directory and anything that is not a regular file,
   and runs the text it compared with the root and identity it checked. A change to
@@ -112,7 +113,10 @@ Limits, stated plainly:
 - Sync binds the guard to the cockpit that runs it, which is why it refuses to run from a copy
   ([Cockpit commands an agent can run](#cockpit-commands-an-agent-can-run)).
 - Codex skips a `hooks.json` it no longer trusts. A script that rewrites `.codex/hooks.json` makes the
-  hook untrusted, and the guard stops running until a person trusts the hooks again. Codex's
+  hook untrusted, and the guard stops running until a person trusts the hooks again. The guard's
+  registered command is the same in every release, so upgrading cockpit does not change what a person
+  trusted there; the session-start command can still change, and Codex then asks a person to review
+  that hook. Codex's
   `workspace-write` sandbox, which cockpit selects once a sibling is granted to Codex, keeps `.codex`
   read-only to a Codex agent; an agent in another tool can still rewrite it where that tool's
   protection does not cover the shell.

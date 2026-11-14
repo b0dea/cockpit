@@ -409,7 +409,7 @@ it('consumes vendor and exact build/test authority through installed hook regist
     await writeFile(join(root, 'app/package-lock.json'), '{}')
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
     const registered = async (path: string) => JSON.parse(await readFile(join(root, path), 'utf8')).hooks.PreToolUse
-        .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('bash-guard.sh')).command as string
+        .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('/.cockpit/guards/check.sh')).command as string
     const hook = await registered('.claude/settings.json')
     const invoke = (command: string | { tool_name: string; tool_input: object }, cwd = join(root, 'app'), registration = hook) => {
         const result = spawnSync('/bin/sh', ['-c', registration], {
@@ -481,7 +481,7 @@ gates = [{ id = "quick", tier = "targeted", stages = ["quick"], changes = "Synth
     await writeFile(join(root, 'app/package-lock.json'), '{}')
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
     const hook = (JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8')).hooks.PreToolUse
-        .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('bash-guard.sh')).command) as string
+        .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('/.cockpit/guards/check.sh')).command) as string
     const bin = join(root, 'node_modules/.bin/cockpit')
     // npm run puts this repository's own node_modules/.bin, whose cockpit is the same launcher, on
     // PATH; the bare-name cases must see only the search path each one sets up.
@@ -569,7 +569,7 @@ it('emits path-proven launcher remedies for a pnpm-style install', async () => {
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
     const settings = JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8'))
     const hook = settings.hooks.PreToolUse.flatMap((row: { hooks: { command: string }[] }) => row.hooks)
-        .find((row: { command: string }) => row.command.includes('bash-guard.sh')).command as string
+        .find((row: { command: string }) => row.command.includes('/.cockpit/guards/check.sh')).command as string
     const invoke = (command: string) => {
         const result = spawnSync('/bin/sh', ['-c', hook], {
             cwd: root, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: root },
@@ -610,7 +610,7 @@ it('admits a writing sync, an applied reset and setup\'s sibling instruction wri
     await writeFile(join(root, 'app/package-lock.json'), '{}')
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
     const hook = (JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8')).hooks.PreToolUse
-        .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('bash-guard.sh')).command) as string
+        .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('/.cockpit/guards/check.sh')).command) as string
     await mkdir(join(root, 'node_modules/.bin'), { recursive: true })
     await symlink(fileURLToPath(new URL('../../bin/cockpit.mjs', import.meta.url)), join(root, 'node_modules/.bin/cockpit'))
     // Only the search path this cockpit's own install provides, as in the launcher spellings case.

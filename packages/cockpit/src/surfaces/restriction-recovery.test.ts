@@ -194,7 +194,7 @@ it('names no invented path and asks for the cockpit root when the hook finds no 
     scratch.push(outside)
     const refused = spawnSync('/bin/sh', ['-c', hook], { cwd: outside, encoding: 'utf8', input: '{}', env: { ...process.env, CLAUDE_PROJECT_DIR: '' } })
     expect(refused).toMatchObject({ status: 2, stdout: '' })
-    expect(refused.stderr).toContain('cockpit guard failed (127): /no-cockpit-root/.cockpit/guards/bash-guard.sh; sync the cockpit')
+    expect(refused.stderr).toContain(`cockpit guard: no .cockpit/guards/bash-guard.sh at or above ${await realpath(outside)}; a person starts the agent in a cockpit`)
     expect(refused.stderr).not.toContain(' /.cockpit/')
     expect(refused.stderr).not.toContain(` /${configFile}`)
     expect(existsSync(join(root, 'injected'))).toBe(false)
