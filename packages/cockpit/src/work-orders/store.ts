@@ -56,6 +56,7 @@ const Grade = z.object({
 export const WorkRecord = z.object({
     format: z.literal('cockpit-work-order/v1'),
     id: z.string().regex(WORK_ORDER_ID),
+    // Nothing writes `checked` any more; it stays so a record an earlier `work check` wrote still reads.
     state: z.enum(['accepted', 'checked', 'graded', 'done', 'partial', 'abandoned']),
     accepted: z.object({
         at, by, digest: z.string().length(64),

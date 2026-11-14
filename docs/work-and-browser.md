@@ -68,12 +68,13 @@ npx --no cockpit work signoff --config cockpit.toml --work-order WO-1
 npx --no cockpit work status --config cockpit.toml
 ```
 
-An order moves draft → accepted → checked → graded → done. `work status` also shows three states it
+An order moves draft → accepted → graded → done. `work status` also shows three states it
 derives: **stale** when the file or a source changed since acceptance, **blocked** while an open
 question waits or the attempt cap is reached, and **draft** before acceptance. `partial` and
 `abandoned` are closures. The work-in-progress cap, `work.wip_cap`, counts accepted orders that are
-not closed, and `work accept` refuses a new one past it. A failed check or grade counts an attempt;
-at `work.attempt_cap` the order is blocked until it is closed, by whoever
+not closed, and `work accept` refuses a new one past it. A grade whose verdict is `unmet` counts an
+attempt; a failed check does not, since its cause may be cockpit's. Under `checks` and `off` nothing
+judges, so there is no cap. At `work.attempt_cap` the order is blocked until it is closed, by whoever
 [`[work.gates]`](#who-passes-each-gate) names for `signoff`, or given fresh attempts; the refusal
 names who. An amendment a person or CI accepts resets the count. One the agent accepts keeps it, or
 reordering a list in its own contract would undo the cap. When the contract is right and the
@@ -86,7 +87,7 @@ contract and base. The record keeps the failed count, the cause and, in brief, w
 - **accept** records the contract. Run it again after editing an accepted order to accept the change
   (an [amendment](#amendments)). The check base stays the commits recorded at first acceptance.
 - **check** runs every criterion's check and the order's gates, in the order the contract lists
-  them.
+  them. It records nothing: it is feedback before a grade.
 - **grade** grades the order the way [`[work] grading`](#how-an-order-earns-done) says, and reports
   every changed file outside `scope` since the base commits under `outOfScope` (the order's record
   keeps the first 512 and, past them, the count as `outOfScopeTotal`). Where a model

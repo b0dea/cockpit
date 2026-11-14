@@ -547,7 +547,7 @@ export const Work = z
             .refine(tools => new Set(tools).size === tools.length, 'list each evaluator once').optional()
             .describe('Agent tools that run the independent grader for work grade and cockpit grade, tried in order: codexcli, claudecode, opencode. Defaults to the tools surfaces.tools lists that can evaluate, in that order, with the tool running the command moved last when it is detected (Claude Code or Codex), so another tool grades first. A list given here is used exactly as written.'),
         // Consumers may lower these framework maxima, but cannot raise them.
-        attempt_cap: z.number().int().min(1).max(2).default(2).describe('Failed checks or grades before an order is blocked; may be lowered but not raised.'),
+        attempt_cap: z.number().int().min(1).max(2).default(2).describe('Grades with an unmet verdict before an order is blocked; failed checks do not count, and grading modes that judge nothing have no cap. May be lowered but not raised.'),
         wip_cap: z.number().int().min(1).max(3).default(3).describe('Accepted orders that may be unfinished at once; may be lowered but not raised.'),
         verification_timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(TESTING_STAGE_TIMEOUT_DEFAULT_SECONDS)
             .describe("Seconds one criterion's check command may run before it is stopped and reported as not run."),

@@ -59,7 +59,8 @@ it('accepts, checks, grades and closes a work order, and refuses a grade with ch
     ok(shop, ['work', 'accept', '--work-order', 'WO-1'])
     shop.write('src/catalog.js', largeCatalogue)
     shop.write('notes.txt', 'outside the order\n')
-    expect(ok(shop, ['work', 'check', '--work-order', 'WO-1']).json?.result.state).toBe('checked')
+    // A check is feedback and records nothing, so the order stays accepted.
+    expect(ok(shop, ['work', 'check', '--work-order', 'WO-1']).json?.result.state).toBe('accepted')
     const outside = shop.cockpit(['work', 'grade', '--work-order', 'WO-1'])
     expect(outside.errors, explain(outside)).toEqual(['WORK_GRADE_UNSATISFIED'])
     expect(outside.json?.result.outOfScope).toEqual(['notes.txt'])

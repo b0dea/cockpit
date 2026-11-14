@@ -129,7 +129,7 @@ describe('work-order lifecycle', () => {
         expect((await work(root, ['work', 'status'])).result).toMatchObject({ orders: [{ id: 'WO-1', state: 'draft' }], wip: { open: 0, cap: 3 } })
         expect((await work(root, ['work', 'accept', '--work-order', 'WO-1'])).result).toMatchObject({ state: 'accepted', by: 'agent' })
         expect(record(root, 'WO-1')).toMatchObject({ state: 'accepted', accepted: { by: 'agent', base: { '.': expect.stringMatching(/^[a-f0-9]{40}$/) } } })
-        expect(await work(root, ['work', 'check', '--work-order', 'WO-1'])).toMatchObject({ status: 0, result: { state: 'checked', results: [{ criterion: 'AC1', passed: true }] } })
+        expect(await work(root, ['work', 'check', '--work-order', 'WO-1'])).toMatchObject({ status: 0, result: { state: 'accepted', results: [{ criterion: 'AC1', passed: true }] } })
 
         writeFileSync(join(root, 'README.md'), 'outside the scope\n')
         // More changes outside scope than the record lists: the grade fails on all of them, and records the first ones and the count.
@@ -271,7 +271,7 @@ describe('work-order lifecycle', () => {
         expect((await grade({})).diagnostics.map(row => row.code)).not.toContain('EVALUATOR_IS_RUNNING_TOOL')
     }, 120_000)
 
-    it('tracks an order with the grader off: it closes as ungraded whatever its checks showed, says so, and keeps the facts', async () => {
+    it('tracks an order with the grader off: it closes as ungraded whatever its checks showed, and says so', async () => {
         const root = await cockpit('[work]\ngrading = "off"\nattempt_cap = 1')
         const criteria = '  - id: AC1\n    text: The change reads well.\n  - id: AC2\n    text: add(2, 3) returns 5.\n    check: [node, test/add.test.mjs]'
         writeFileSync(join(root, 'workorders/WO-8.md'), order('WO-8', criteria))
@@ -280,13 +280,13 @@ describe('work-order lifecycle', () => {
         expect((await work(root, ['work', 'grade', '--work-order', 'WO-8'])).diagnostics[0]?.message).toMatch(/grading = "off": nothing grades an order; close it with .*work signoff/)
         // A criterion with no check and a check never run hold nothing up.
         const closed = await work(root, ['work', 'signoff', '--work-order', 'WO-8'])
-        expect(closed).toMatchObject({ status: 0, result: { state: 'done', closedAs: 'ungraded', checksNotRun: ['AC2'], checksFailed: [] } })
+        expect(closed).toMatchObject({ status: 0, result: { state: 'done', closedAs: 'ungraded' } })
         expect(record(root, 'WO-8')).toMatchObject({ state: 'done', closure: { how: 'ungraded', by: 'agent' } })
         expect(record(root, 'WO-8').grade).toBeUndefined()
-        expect((await work(root, ['work', 'status'])).result).toMatchObject({ grading: 'off', orders: [{ id: 'WO-8', state: 'done', closedAs: 'ungraded', checksNotRun: ['AC2'] }] })
+        expect((await work(root, ['work', 'status'])).result).toMatchObject({ grading: 'off', orders: [{ id: 'WO-8', state: 'done', closedAs: 'ungraded' }] })
         expect((await work(root, ['work', 'verify'])).status).toBe(0)
 
-        // A check that failed does not block, attempt cap included, and stays on the record.
+        // A check that failed does not block, attempt cap included.
         writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => a - b\n')
         writeFileSync(join(root, 'workorders/WO-9.md'), order('WO-9'))
         await work(root, ['work', 'accept', '--work-order', 'WO-9'])
@@ -298,9 +298,8 @@ describe('work-order lifecycle', () => {
         expect((await work(root, ['work', 'status', '--work-order', 'WO-9'])).result).toMatchObject({ orders: [{ id: 'WO-9', state: 'accepted' }] })
         writeFileSync(join(root, 'cockpit.toml'), offToml)
         const failed = await work(root, ['work', 'signoff', '--work-order', 'WO-9', '--note', 'shipped with the failure known'])
-        expect(failed.result).toMatchObject({ state: 'done', closedAs: 'ungraded', checksFailed: [expect.stringMatching(/^AC1: /)], checksNotRun: [] })
-        expect(record(root, 'WO-9')).toMatchObject({ closure: { how: 'ungraded', note: 'shipped with the failure known' }, checks: { results: [{ criterion: 'AC1', passed: false }] } })
-        expect((await work(root, ['work', 'status', '--work-order', 'WO-9'])).result).toMatchObject({ orders: [{ closedAs: 'ungraded', checksFailed: [expect.stringMatching(/^AC1: /)] }] })
+        expect(failed.result).toMatchObject({ state: 'done', closedAs: 'ungraded' })
+        expect(record(root, 'WO-9')).toMatchObject({ closure: { how: 'ungraded', note: 'shipped with the failure known' } })
 
         for (const close of ['--partial', '--abandon']) {
             const id = close === '--partial' ? 'WO-10' : 'WO-11'
@@ -331,7 +330,6 @@ describe('work-order lifecycle', () => {
         let shown = ''
         expect(await asPerson(person, ['work', 'signoff', '--work-order', 'WO-12'], (prompt, digest) => { shown = prompt; return `signoff ${digest}` })).toBe(0)
         expect(shown).toContain('(ungraded)')
-        expect(shown).toContain('Check not run: AC1')
         expect(record(person, 'WO-12').closure).toMatchObject({ how: 'ungraded', by: 'person' })
 
         // A CI gate can pass with nothing graded: the verify job that confirms it does not ask for a grade.
@@ -343,14 +341,13 @@ describe('work-order lifecycle', () => {
         expect(await work(ci, ['work', 'verify'], { ...process.env, CI: 'true' })).toMatchObject({ status: 0, result: { confirmed: ['WO-13 signoff'], problems: [] } })
 
         // An order the attempt cap blocked under a stricter mode is not left stuck by moving to off.
-        const capped = await cockpit('[work]\ngrading = "checks"\nattempt_cap = 1')
-        writeFileSync(join(capped, 'src/add.mjs'), 'export const add = (a, b) => a - b\n')
+        const capped = await cockpit('[work]\ngrading = "self"\nattempt_cap = 1')
         writeFileSync(join(capped, 'workorders/WO-15.md'), order('WO-15'))
         await work(capped, ['work', 'accept', '--work-order', 'WO-15'])
-        await work(capped, ['work', 'check', '--work-order', 'WO-15'])
+        await work(capped, ['work', 'grade', '--work-order', 'WO-15', '--verdict', 'unmet', '--note', 'not done'])
         expect((await work(capped, ['work', 'status', '--work-order', 'WO-15'])).result).toMatchObject({ orders: [{ state: 'blocked' }] })
-        writeFileSync(join(capped, 'cockpit.toml'), readFileSync(join(capped, 'cockpit.toml'), 'utf8').replace('grading = "checks"', 'grading = "off"'))
-        expect((await work(capped, ['work', 'signoff', '--work-order', 'WO-15'])).result).toMatchObject({ closedAs: 'ungraded', checksFailed: [expect.stringMatching(/^AC1: /)] })
+        writeFileSync(join(capped, 'cockpit.toml'), readFileSync(join(capped, 'cockpit.toml'), 'utf8').replace('grading = "self"', 'grading = "off"'))
+        expect((await work(capped, ['work', 'signoff', '--work-order', 'WO-15'])).result).toMatchObject({ closedAs: 'ungraded' })
 
         const graded = await cockpit('[work]\ngrading = "self"')
         writeFileSync(join(graded, 'workorders/WO-14.md'), order('WO-14'))
@@ -563,8 +560,8 @@ describe('work-order lifecycle', () => {
         expect((await run(['work', 'accept', '--work-order', 'WO-10'])).result).toMatchObject({ amended: true, by: 'agent' })
         writeFileSync(join(tools, 'verdict'), 'unmet')
         expect((await run(['work', 'grade', '--work-order', 'WO-10'])).result).toMatchObject({ criteria: expect.arrayContaining([{ id: 'amendments-hold-bar', verdict: 'unmet', note: expect.any(String) }]) })
-        // A passing check replaces the failed grade; it does not settle what the grade found.
-        expect((await run(['work', 'check', '--work-order', 'WO-10'])).result).toMatchObject({ state: 'checked' })
+        // A passing check does not settle what the grade found.
+        expect((await run(['work', 'check', '--work-order', 'WO-10'])).status).toBe(0)
         // Nor may the agent close the order around it.
         expect((await run(['work', 'signoff', '--work-order', 'WO-10', '--abandon', '--note', 'stopping here'])).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
         writeFileSync(join(root, 'workorders/WO-10.md'), order('WO-10'))
@@ -671,13 +668,29 @@ describe('work-order lifecycle', () => {
         expect(record(root, 'WO-32')).toMatchObject({ state: 'abandoned', closure: { by: 'person' } })
     }, 120_000)
 
+    it('counts only a grade whose verdict is unmet toward the attempt cap, and records nothing for a check', async () => {
+        const root = await cockpit('[work]\ngrading = "self"\nattempt_cap = 1')
+        const run = (args: readonly string[]) => work(root, args)
+        writeFileSync(join(root, 'workorders/WO-16.md'), order('WO-16'))
+        expect((await run(['work', 'accept', '--work-order', 'WO-16'])).status).toBe(0)
+        // A failed check, or a grade failed only by a check, may be cockpit's own bug, so neither spends an attempt.
+        writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => a - b\n')
+        expect((await run(['work', 'check', '--work-order', 'WO-16'])).status).toBe(2)
+        expect(record(root, 'WO-16')).toMatchObject({ state: 'accepted', attempts: 0 })
+        expect(record(root, 'WO-16').checks).toBeUndefined()
+        expect((await run(['work', 'grade', '--work-order', 'WO-16', '--verdict', 'met', '--note', 'read it'])).status).toBe(2)
+        expect((await run(['work', 'status', '--work-order', 'WO-16'])).result).toMatchObject({ orders: [{ state: 'accepted', attempts: 0 }] })
+        expect((await run(['work', 'grade', '--work-order', 'WO-16', '--verdict', 'unmet', '--note', 'add subtracts'])).status).toBe(2)
+        expect((await run(['work', 'status', '--work-order', 'WO-16'])).result).toMatchObject({ orders: [{ state: 'blocked', attempts: 1 }] })
+    }, 120_000)
+
     it('grants a capped order fresh attempts only on a person\'s word, keeping what failed, and an agent\'s amendment keeps the count', async () => {
-        const root = await cockpit('[work]\ngrading = "checks"\nattempt_cap = 1')
+        const root = await cockpit('[work]\ngrading = "self"\nattempt_cap = 1')
         const run = (args: readonly string[]) => work(root, args)
         writeFileSync(join(root, 'workorders/WO-14.md'), order('WO-14'))
         expect((await run(['work', 'accept', '--work-order', 'WO-14'])).status).toBe(0)
         writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => a - b\n')
-        expect((await run(['work', 'check', '--work-order', 'WO-14'])).status).toBe(2)
+        expect((await run(['work', 'grade', '--work-order', 'WO-14', '--verdict', 'unmet', '--note', 'add subtracts'])).status).toBe(2)
         expect((await run(['work', 'check', '--work-order', 'WO-14'])).diagnostics[0]?.message).toMatch(/attempt cap \(1\); record the root cause with work note, then close it with .*--partial\|--abandon --note <why>, or a person grants it fresh attempts with .*work retry .*--note <the root cause> --interactive$/)
         expect((await run(['work', 'accept', '--work-order', 'WO-14'])).diagnostics[0]?.message)
             .toMatch(/^WO-14 is already accepted and workorders\/WO-14\.md has not changed since, so there is nothing to amend; it is at its attempt cap \(1\): /)
@@ -685,11 +698,11 @@ describe('work-order lifecycle', () => {
         expect((await run(retry)).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
         let shown = ''
         expect(await asPerson(root, retry, (prompt, digest) => { shown = prompt; return `retry ${digest}` })).toBe(0)
-        expect(shown).toMatch(/Last failed:\n  check AC1 exit 1\nRoot cause given:\n  add subtracted; fixed in src\/add\.mjs\nwork retry is always a person's step/)
-        expect(record(root, 'WO-14')).toMatchObject({ attempts: 0, retries: [{ by: 'person', attempts: 1, note: 'add subtracted; fixed in src/add.mjs', failed: [{ id: 'check AC1', text: 'exit 1' }] }] })
+        expect(shown).toMatch(/Last failed:\n  AC1 unmet: add subtracts\n  check AC1 exit 1\nRoot cause given:\n  add subtracted; fixed in src\/add\.mjs\nwork retry is always a person's step/)
+        expect(record(root, 'WO-14')).toMatchObject({ attempts: 0, retries: [{ by: 'person', attempts: 1, note: 'add subtracted; fixed in src/add.mjs', failed: [{ id: 'AC1', text: 'unmet: add subtracts' }, { id: 'check AC1', text: 'exit 1' }] }] })
         expect((await run(retry)).diagnostics[0]?.message).toBe('WO-14 has 1 of its 1 attempts left; work retry is for an order at its attempt cap')
         // Rewording its contract does not hand the agent its attempts back.
-        expect((await run(['work', 'check', '--work-order', 'WO-14'])).status).toBe(2)
+        expect((await run(['work', 'grade', '--work-order', 'WO-14', '--verdict', 'unmet', '--note', 'add subtracts'])).status).toBe(2)
         writeFileSync(join(root, 'workorders/WO-14.md'), order('WO-14').replace('scope: [src/, test/]', 'scope: [test/, src/]'))
         expect((await run(['work', 'accept', '--work-order', 'WO-14'])).result).toMatchObject({ amended: true, by: 'agent' })
         expect((await run(['work', 'check', '--work-order', 'WO-14'])).diagnostics[0]?.message).toMatch(/^WO-14 reached the attempt cap \(1\)/)

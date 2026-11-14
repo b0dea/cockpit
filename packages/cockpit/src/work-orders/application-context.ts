@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { decide, type WorkGate } from '../autonomy.js'
 import { RefusalError } from '../environment/contract.js'
 import { REPOSITORY_FILE } from '../repository-path.js'
-import { isGradeMode, type Decider } from '../schema.js'
+import { GRADING, type Decider } from '../schema.js'
 import { WORK_ORDER_ID, workOrderDigest, type WorkOrder } from './contract.js'
 import type { CheckResult, WorkRecord, WorkStore } from './store.js'
 import type { WorkApplicationComposition } from './composition.js'
@@ -82,7 +82,6 @@ export function openQuestions(record: WorkRecord): readonly number[] {
 }
 // The id each check an order declares is recorded under: its criterion's, or its gate's with a prefix.
 const gateCheckId = (gate: string) => `gate:${gate}`
-export const checkIds = (order: Pick<WorkOrder, 'criteria' | 'gates'>) => [...order.criteria.filter(row => row.check).map(row => row.id), ...order.gates.map(gateCheckId)]
 export type WorkRequest = Exclude<WorkApplicationRequest, { operation: 'test-run' | `browser-${string}` }>
 
 export interface WorkContext {
@@ -122,7 +121,8 @@ export function workContext(composition: WorkApplicationComposition, operation: 
         return { id: orderId, order: parsed.value, problems: [], ...(record ? { record } : {}), digest: workOrderDigest(parsed.value, sources, base) }
     }
     // The cap counts failed checks and grades. Off counts none and lifts the cap, so an order an earlier mode capped can still close.
-    const attemptCap = isGradeMode(policy.grading) ? composition.caps.attempts : Infinity
+    // Only a judged grade spends attempts, so a mode where nothing judges has no cap.
+    const attemptCap = GRADING[policy.grading].judged ? composition.caps.attempts : Infinity
     const wip = async () => (await store.list()).filter(record => !TERMINAL.has(record.state)).length
     let records: Promise<ReadonlyMap<string, string>> | undefined
     const decisionRecords = () => records ??= composition.decisionRecords()

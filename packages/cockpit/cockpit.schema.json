@@ -875,7 +875,7 @@
         },
         "attempt_cap": {
           "default": 2,
-          "description": "Failed checks or grades before an order is blocked; may be lowered but not raised.",
+          "description": "Grades with an unmet verdict before an order is blocked; failed checks do not count, and grading modes that judge nothing have no cap. May be lowered but not raised.",
           "type": "integer",
           "minimum": 1,
           "maximum": 2

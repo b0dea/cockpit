@@ -1,4 +1,4 @@
-// Owns the work-order lifecycle: draft → accepted → checked → graded → done, with blocked and stale
+// Owns the work-order lifecycle: draft → accepted → graded → done, with blocked and stale
 // derived from the record and the current file, and partial and abandoned as closures. Each command
 // that passes a gate asks the autonomy policy who may pass it; a person gate returns a continuation
 // the CLI completes only with the digest a person types in a terminal. It also routes the browser and
@@ -16,7 +16,7 @@ import { MAX_RETRIES, MAX_RETRY_FAILURE_TEXT, MAX_RETRY_FAILURES, type WorkRecor
 import { isWorkApplicationComposition, type WorkApplicationComposition } from './composition.js'
 import { captureWorkApplicationRequest, complete, displayState, now, openQuestions, refusal, TERMINAL, unsatisfied, workContext,
     type WorkApplicationOutcome, type WorkApplicationRequest, type WorkRequest } from './application-context.js'
-import { checkFacts, pendingCi, signoff, verify } from './application-closure.js'
+import { pendingCi, signoff, verify } from './application-closure.js'
 import { decideOrder, DECISIONS_UNDECLARED, relatedDecisions, unresolvedDecisions } from './application-decisions.js'
 import { acknowledgeRule, gradeCriteriaFile, gradeOrder, orderAttribution, testRun } from './application-grading.js'
 
@@ -75,7 +75,7 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
             gates: policy.gates, wip: { open: await wip(), cap: composition.caps.wip },
             orders: await Promise.all(rows.map(async row => ({
                 id: row.id, state: displayState(row, attemptCap),
-                ...row.record?.closure ? { closedAs: row.record.closure.how, closedBy: row.record.closure.by, ...row.record.closure.how === 'ungraded' ? checkFacts(row.record) : {} } : {},
+                ...row.record?.closure ? { closedAs: row.record.closure.how, closedBy: row.record.closure.by } : {},
                 ...row.record ? { attempts: row.record.attempts, acceptedBy: row.record.accepted.by, openQuestions: openQuestions(row.record),
                     acknowledgements: row.record.acknowledgements.map(({ by, note, findings }) => ({ by, note, findings })),
                     awaitingCi: pendingCi(row.record), ...row.record.grade ? { grade: { mode: row.record.grade.mode, passed: row.record.grade.passed,
@@ -138,13 +138,9 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         const { order, record } = await current(request.workOrderId)
         const results = await runChecks(order)
         if (!results.length) return refusal(operation, `${order.id} declares no check on any criterion and no gates; add a check, or close it under [work] grading = "self" or "off"`)
+        // A check is feedback for the agent: it records nothing and spends no attempt, since a failure may be cockpit's own.
         const passed = results.every(row => row.passed)
-        await store.update(order.id, async existing => {
-            if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while its checks ran; rerun work check`)
-            return { record: { ...existing, state: passed ? 'checked' : 'accepted', attempts: existing.attempts + (passed || !isGradeMode(policy.grading) ? 0 : 1), grade: undefined,
-                checks: { at: now(), digest: record.accepted.digest, results: [...results] } }, value: undefined }
-        })
-        const value = { id: order.id, state: passed ? 'checked' : 'accepted', results }
+        const value = { id: order.id, state: record.state, results }
         return passed ? complete(operation, value) : unsatisfied(operation, value, `${results.filter(row => !row.passed).map(row => `${row.criterion}: ${row.outcome}`).join('; ')}`)
     }
     if (request.operation === 'work-note') {
