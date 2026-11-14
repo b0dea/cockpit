@@ -148,7 +148,8 @@ describe('guard policy construction', () => {
         source.sibling[0].environment_files.push({ template: 'config/template.example', instance: 'config/runtime.env' })
         mkdirSync(join(root, 'app/config'), { recursive: true })
         writeFileSync(join(root, 'app/package-lock.json'), '{}')
-        writeFileSync(configPath, stringify({ ...source, guards: { hosted_db_hosts: ['db.example.test'],
+        // These tests pin exact grants for reads outside the roots, which the native default leaves to the agent tool.
+        writeFileSync(configPath, stringify({ ...source, guards: { hosted_db_hosts: ['db.example.test'], external_reads: 'grant',
             allow: [{ argv: ['make', 'verify'], reason: 'Repository verification is safe.', cwd: '.' }],
             deny: [{ contains: ['--environment', 'shared'], reason: 'Shared environments are human-operated.', fix: 'Use a local environment.' }],
             ...(declared ? { vendor_endpoint_hosts: ['api.vendor.example.test'] } : {}) } }))
@@ -503,7 +504,7 @@ describe('guard policy construction', () => {
         const stray = plumbing(['commit-tree', plumbing(['write-tree']), '-m', 'Unreferenced'])
         rmSync(index)
         for (const command of [`git show ${stray}`, `git log -p ${stray}`, `git diff ${stray}~0 HEAD`]) {
-            expect(await decide(command), command).toMatchObject({ decision: 'ask', reason: expect.stringContaining('can print stray/.env.production') })
+            expect(await decide(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('can print stray/.env.production') })
         }
         expect(await decide('git log -p')).toMatchObject({ decision: 'allow' })
         mkdirSync(join(root, 'notes'), { recursive: true })
@@ -611,7 +612,7 @@ describe('guard policy construction', () => {
             for (const command of ['rg -n needle package-docs', 'grep -rn needle package-docs']) expect(await search(command), command).toMatchObject({ decision: 'allow' })
             writeFileSync(join(store, '.env'), 'SYNTHETIC_KEY=synthetic\n')
             for (const command of ['rg -n needle package-docs', 'grep -rn needle package-docs']) {
-                expect(await search(command), command).toMatchObject({ decision: 'ask', reason: expect.stringContaining('.env') })
+                expect(await search(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('.env') })
             }
             symlinkSync(join(store, '.env'), join(store, 'secret-alias.md'))
             expect(await decide('package-docs/secret-alias.md')).toMatchObject({ decision: 'deny' })
@@ -670,7 +671,7 @@ describe('guard policy construction', () => {
         writeFileSync(join(root, 'fixtures/.env.local'), 'SYNTHETIC_KEY=synthetic\n')
         try {
             expect(await runGuardEvaluationApplication({ ...request, payload: search, searchPath: '/usr/bin:/bin' }, adapters))
-                .toMatchObject({ decision: { decision: 'ask', reason: expect.stringContaining('would read fixtures/.env.local') } })
+                .toMatchObject({ decision: { decision: 'deny', reason: expect.stringContaining('would read fixtures/.env.local') } })
         } finally { rmSync(join(root, 'fixtures/.env.local'), { force: true }) }
         const secret = join(root, 'env/.secrets/token')
         mkdirSync(dirname(secret), { recursive: true })
@@ -798,13 +799,13 @@ describe('guard policy construction', () => {
         try {
             // ripgrep skips the ignored file, so only searches that would read it ask.
             expect(await decide('rg needle fixtures')).toMatchObject({ decision: 'allow' })
-            expect(await decide('grep -rn needle fixtures')).toMatchObject({ decision: 'ask', reason: expect.stringContaining('would read fixtures/.env,') })
-            expect(await decide('rg --no-ignore needle fixtures')).toMatchObject({ decision: 'ask' })
+            expect(await decide('grep -rn needle fixtures')).toMatchObject({ decision: 'deny', reason: expect.stringContaining('would read fixtures/.env,') })
+            expect(await decide('rg --no-ignore needle fixtures')).toMatchObject({ decision: 'deny' })
             writeFileSync(join(root, 'fixtures/.env.local'), 'SYNTHETIC_KEY=synthetic\n')
-            expect(await decide('rg needle fixtures')).toMatchObject({ decision: 'ask', reason: expect.stringContaining('would read fixtures/.env.local,') })
+            expect(await decide('rg needle fixtures')).toMatchObject({ decision: 'deny', reason: expect.stringContaining('would read fixtures/.env.local,') })
             expect(await decide('git diff')).toMatchObject({ decision: 'allow' })
             execFileSync('git', ['-C', root, 'add', '--force', 'fixtures/.env'])
-            expect(await decide('git diff --cached')).toMatchObject({ decision: 'ask', reason: expect.stringContaining('can print fixtures/.env,') })
+            expect(await decide('git diff --cached')).toMatchObject({ decision: 'deny', reason: expect.stringContaining('can print fixtures/.env,') })
             expect(await decide('git log -p -- app')).toMatchObject({ decision: 'allow' })
         } finally {
             execFileSync('git', ['-C', root, 'rm', '--cached', '--quiet', '--ignore-unmatch', 'fixtures/.env'])
@@ -873,7 +874,7 @@ describe('guard policy construction', () => {
             // The system resolves `..` from where a link leads, so `app/link/..` is app/config, not app.
             const read = async (command: string) => (await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin',
                 payload: { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: root, tool_input: { command } } }, adapters)).decision.decision
-            expect(await read('cat app/link/../runtime.env')).toBe('ask')
+            expect(await read('cat app/link/../runtime.env')).toBe('deny')
             expect(await read('cat app/config/sub/../notes.md')).toBe('allow')
             // A word longer than any file name the volume allows names nothing, so probing it is no failure.
             const long = 'x'.repeat(300)
