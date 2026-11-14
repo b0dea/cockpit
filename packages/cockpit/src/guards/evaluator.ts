@@ -847,6 +847,8 @@ function transferOperands(command: 'cp' | 'install' | 'mv' | 'ln', args: readonl
 }
 
 // Git verbs that write files from a revision or a patch into a work tree, where a symbolic link can arrive.
+// Git verbs that can change which branch is checked out, which a later push or rewrite rests on.
+const BRANCH_SWITCHERS = new Set(['checkout', 'switch', 'rebase', 'bisect', 'pull', 'symbolic-ref', 'update-ref', 'worktree'])
 const GIT_TREE_WRITERS = new Set(['checkout', 'switch', 'restore', 'reset', 'merge', 'pull', 'rebase', 'cherry-pick', 'revert', 'stash', 'am', 'apply',
     'clone', 'worktree', 'read-tree', 'checkout-index', 'submodule', 'mv', 'bisect', 'sparse-checkout'])
 
@@ -869,6 +871,8 @@ function createsLink(invocation: ParsedInvocation, git: GitInvocation | undefine
         if (git.verb === 'worktree' && operands[0] !== 'add') return false
         if (git.verb === 'submodule' && !['update', 'add'].includes(operands[0] ?? '')) return false
         if (git.verb === 'bisect' && ['log', 'visualize', 'view'].includes(operands[0] ?? '')) return false
+        // Without --apply, these report on the patch and write nothing.
+        if (git.verb === 'apply' && git.args.some(arg => /^--(?:check|stat|numstat|summary)$/.test(arg)) && !git.args.includes('--apply')) return false
         return true
     }
     const name = posix.basename(invocation.executable)
@@ -1686,7 +1690,7 @@ export function cockpitShaped(invocation: ParsedInvocation, packages: readonly s
     // Any word: launchers take options before the program (`pnpm --silent exec cockpit`, `node --no-warnings
     // …/cockpit.mjs`), and sync writes `cockpit:*` package scripts that run it by name. A path is resolved and
     // folded, so `@b00dea/./cockpit`, `@B00DEA/cockpit` and `cockpit/dist/cli.js` from `node_modules/@b00dea` count.
-    return [invocation.executable ?? '', ...invocation.argv].some(word => ['cockpit', 'cockpit.mjs'].includes(posix.basename(word))
+    return [invocation.executable ?? '', ...invocation.argv].some(word => !word.endsWith('/') && ['cockpit', 'cockpit.mjs'].includes(posix.basename(word))
         || word.includes('@b00dea/cockpit') || word.startsWith('cockpit:')
         || [word, word.slice(word.indexOf('=') + 1)].some(path => path.includes('/') && installed.some(directory => within(fold(posix.resolve(invocation.cwd, path)), directory))))
 }
@@ -1759,6 +1763,8 @@ const secretVariable = (name: string) => {
 }
 
 /** Whether an invocation prints the environment or a secret-named variable. */
+// jq's `env` builtin and `$ENV`, not a field or a file name that holds the word, such as `.env.schema`.
+const JQ_ENVIRONMENT = /(?<![\w.$-])env\b|\$ENV\b/
 function dumpsEnvironment(invocation: ParsedInvocation): boolean {
     const program = posix.basename(invocation.executable ?? '')
     const argv = invocation.argv
@@ -1776,14 +1782,14 @@ function dumpsEnvironment(invocation: ParsedInvocation): boolean {
     if (program === 'make') return argv.some(arg => arg === '--print-data-base' || /^-[a-zA-Z]+$/.test(arg) && /^[^CfIjloWE]*p/.test(arg.slice(1)))
     if (['awk', 'gawk', 'mawk', 'nawk'].includes(program)) return argv.some(arg => arg.includes('ENVIRON'))
     // A jq filter reads the environment through `env` and `$ENV`, as gh's does with the token in it.
-    if (['jq', 'gojq', 'jaq'].includes(program)) return argv.some(arg => /\benv\b|\$ENV\b/.test(arg))
+    if (['jq', 'gojq', 'jaq'].includes(program)) return argv.some(arg => JQ_ENVIRONMENT.test(arg))
     // `docker inspect` prints a container's or image's environment unless a format names other fields.
     if (program === 'docker' && argv.includes('inspect')) {
         const format = argv.find((arg, at) => ['-f', '--format'].includes(argv[at - 1] ?? '') || /^--format=/.test(arg))
         return format === undefined || /env|\{\{\s*(?:json\s+)?\.\s*\}\}|"config"|\.(?:container)?config\s*\}\}/i.test(format)
     }
     // gh's jq filter reads its own environment, the token included, through `env` and `$ENV`.
-    if (program === 'gh') return argv.some((arg, at) => (['-q', '--jq'].includes(argv[at - 1] ?? '') || /^--jq=/.test(arg)) && /\benv\b|\$ENV\b/.test(arg))
+    if (program === 'gh') return argv.some((arg, at) => (['-q', '--jq'].includes(argv[at - 1] ?? '') || /^--jq=/.test(arg)) && JQ_ENVIRONMENT.test(arg))
     // BSD `ps e` and macOS `ps -E` print each process's environment.
     // A bare letter cluster is BSD syntax; a word after -o, -p and the like is that option's value.
     if (program === 'ps') return argv.some((arg, at) => /^[A-Za-z]+$/.test(arg) && arg.includes('e') && !/^-[A-Za-z]*[oOpqUuGgtk]$/.test(argv[at - 1] ?? '')
@@ -2937,11 +2943,13 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const globRead = READING_EXECUTABLES.has(executableName) && invocation.dynamic === true && !writes && !removed?.paths.length && !optioned && !git && !cockpitCommand(invocation)
             && invocation.words.every(word => !word.dynamic || word.role === 'argument' && plainGlob(word) && inRoots(posix.resolve(invocation.cwd, word.value))
                 && !globReachesProtected(word.value, invocation.cwd))
-        // A reader holding one only reads; the name-based denials still apply to every word it spells.
-        if (invocation.dynamic && !loopRead && !globRead && (writes || removed?.paths.length || optioned || git || cockpitCommand(invocation)
+        // A reader or a writer holding one runs as a program the guard cannot read does; the name-based denials still
+        // apply to every word it spells. A removal, a Git write or push, and a cockpit command are judged by the value.
+        const gitWrites = git !== undefined && (GUARD_BRANCH_VERBS.has(git.verb) || GIT_TREE_WRITERS.has(git.verb) || ['add', 'rm', 'clean', 'branch', 'tag', 'update-ref', 'config'].includes(git.verb))
+        if (invocation.dynamic && !loopRead && !globRead && (removed?.paths.length || gitWrites || cockpitCommand(invocation)
             || executableName === 'gh' && /^(?:gist (?:create|edit)|release (?:create|upload)|(?:secret|variable) set)$/.test(invocation.argv.slice(0, 2).join(' ')))) {
             const word = invocation.words.find(item => item.dynamic)?.value ?? ''
-            holdBoundary(invocation, ask(`${named(invocation)} holds ${unseen(word)}, whose value the guard cannot see, where it decides which file is read or written or which branch is pushed. Write the value out.`))
+            holdBoundary(invocation, ask(`${named(invocation)} holds ${unseen(word)}, whose value the guard cannot see, where it decides which file is removed, what Git writes or which branch is pushed. Write the value out.`))
         }
         const configuration = toolConfigurationWrite(invocation)
         if (configuration === 'refuse') hold(deny(`Refusing ${named(invocation)}: it changes the person's own tool configuration or installs outside the configured roots, which every later command, a person's included, then runs with. A person runs it.`))
@@ -3046,10 +3054,12 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const launcherPath = (lexical: string) => resolved.cockpitLaunchers.some((item) => [item.executable, ...item.argv]
                 .some((spelled) => spelled.includes('/') && posix.resolve(item.cwd, spelled) === lexical))
             for (const [position, word] of invocation.argv.entries()) {
+                // `git log -L <range>:<file>` names its file after the colon; the range may start with `/`, a regular expression.
+                const candidates = git && invocation.argv[position - 1] === '-L' ? [word.slice(word.lastIndexOf(':') + 1)] : undefined
                 // An attached short option value, as in `sed -f.env`, is a candidate too.
                 const attached = /^-[^-]/.test(word) && word.length > 2 ? [word.slice(2)] : []
                 // `@file` is how curl and gh name a file whose content they send.
-                for (const candidate of new Set([word, word.slice(word.indexOf('=') + 1), word.slice(0, Math.max(word.indexOf(':'), 0)), word.slice(word.lastIndexOf(':') + 1), word.slice(word.lastIndexOf('@') + 1), ...attached])) {
+                for (const candidate of new Set(candidates ?? [word, word.slice(word.indexOf('=') + 1), word.slice(0, Math.max(word.indexOf(':'), 0)), word.slice(word.lastIndexOf(':') + 1), word.slice(word.lastIndexOf('@') + 1), ...attached])) {
                     if (!candidate || candidate.startsWith('-') || !scalar(candidate)) continue
                     // Git resolves its operands from the directory -C names.
                     const lexical = posix.resolve(git?.cwd ?? invocation.cwd, candidate)
@@ -3109,7 +3119,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (cockpitCommand(invocation) && !readOnly.has(invocation) && !resolved.cockpitInvocations.some((profile) => profile.executable === invocation.executable
             && profile.cwd === invocation.cwd && profile.argv.length === invocation.argv.length && profile.argv.every((word, at) => word === invocation.argv[at]))) {
             // A word reaching into the installed package without running it reads or copies the guard's own code.
-            const launches = ['cockpit', 'cockpit.mjs', 'node', 'nodejs', 'npx', 'npm', 'pnpm', 'pnpx', 'yarn', 'bun', 'bunx', 'tsx'].includes(executableName)
+            // A package manager reading the registry about the package, as `npm view @b00dea/cockpit versions`, runs nothing.
+            const registryRead = ['npm', 'pnpm', 'yarn', 'bun'].includes(executableName) && /^(?:view|v|info|show|outdated|ls|list|why|explain|search)$/.test(invocation.argv.find(arg => !arg.startsWith('-')) ?? '')
+            const launches = !registryRead && ['cockpit', 'cockpit.mjs', 'node', 'nodejs', 'npx', 'npm', 'pnpm', 'pnpx', 'yarn', 'bun', 'bunx', 'tsx'].includes(executableName)
                 || cockpitShaped({ ...invocation, argv: [] }, [...resolved.cockpitPackageDirectories ?? [], ...resolved.executionDirectories])
             if (launches) holdBoundary(invocation, ask(`${named(invocation)} is a cockpit command an agent does not run unprompted: \`sync\`, \`upgrade\` and the other commands that change what agents may do are a person's. A person runs it in a terminal.`))
         }
@@ -3174,7 +3186,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // An earlier command in the call (`git switch main && git push`) can move the branch the facts
         // describe, so a decision that rests on the current branch needs every earlier command to be read-only.
         const index = invocations.indexOf(invocation)
-        const headMayMove = invocations.slice(0, index).some((earlier) => earlier.executable !== null && !accesses.get(earlier))
+        const headMayMove = invocations.slice(0, index).some((earlier) => BRANCH_SWITCHERS.has(gitInvocation(earlier)?.verb ?? ''))
         const headMoved = ask('An earlier command in this call can change the current branch, which this command acts on. Run it on its own.')
         if (git.verb === 'push' || git.verb === 'send-pack') {
             const operands = git.args.filter(arg => !arg.startsWith('-'))

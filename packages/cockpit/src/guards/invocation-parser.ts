@@ -37,6 +37,8 @@ export interface ParsedInvocation {
     readonly expandsStatus?: true
     /** A word of this invocation holds an expansion the guard cannot see. */
     readonly dynamic?: true
+    /** It reads its standard input from the pipeline stage before it. */
+    readonly piped?: true
     /** It runs as a background job, which outlives the call: its list ends in `&`, or `nohup` or `setsid` detaches it. */
     readonly background?: true
 }
@@ -974,7 +976,8 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
         // Appended as produced, so the invocation limit bounds the work.
         const first = result.length
         const emit = (...items: ParsedInvocation[]) => items.forEach(append)
-        if ((current.length || compound) && gate === '|') for (const directory of ran) emit(...stage(directory))
+        // A stage's own command is the last it emits, after the substitutions that run before it.
+        if ((current.length || compound) && gate === '|') for (const directory of ran) emit(...stage(directory).map((item, at, all) => at === all.length - 1 && item.executable !== null ? { ...item, piped: true as const } : item))
         else if (current.length || compound) {
             const runs = states.filter((state) => gate === undefined || state.ok === (gate === '&&'))
             ran = [...new Set(runs.map((state) => state.directory))]

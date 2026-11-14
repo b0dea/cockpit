@@ -1355,6 +1355,14 @@ describe('allow by default', () => {
         // Variables that only tune a tool, containers, a dry-run clean and API writes off protected branches run.
         'GIT_PAGER=cat git log -3', 'GIT_TERMINAL_PROMPT=0 git fetch origin', 'DOCKER_BUILDKIT=1 docker build .', 'docker run --rm alpine true',
         'docker compose exec web sh', "docker inspect web --format '{{.State.Status}}'", 'git clean -n', 'gh api repos/o/r/issues -f title=x',
+        // Shapes agents use that asked for no reason: a registry read about cockpit, a read-only Git command or a writer
+        // given a variable, a directory named like cockpit, a line-range log, a dry-run patch check, one config key,
+        // ripgrep reading a pipe, a jq filter over a file named .env.schema, and a commit after staging.
+        'npm view @b00dea/cockpit versions --json', 'R=../other; git -C $R log --oneline -8', 'M=$(git rev-parse HEAD^2) && git log -1 --format=%h $M',
+        'B=$(git merge-base HEAD main) && git merge-base --is-ancestor $B HEAD', 'F=src/a.ts && sed -i "" "s/a/b/" "$F"', 'ls cockpit/ cockpit/* | head -40',
+        "git log -L '/\"next\":/,+0:package.json' --format='%h %s'", 'git diff -- src > build/x.patch && git apply --check -R build/x.patch',
+        'git diff --cached --stat | tail -3; git config user.name', "sed -n 1,20p cockpit.toml | rg -o 'tok.{20}'",
+        `jq -r '.[] | select(.File==".env.schema") | .Match' build/report.json`, 'git add -- src/a.ts && git commit -q -m done && git push origin topic',
     ]
     it.each(friction)('allows the everyday call %s', (command) => {
         expect(run(command).decision).toBe('allow')
@@ -1495,7 +1503,7 @@ describe('allow by default', () => {
             'printenv NPM_TOKEN', 'GIT_DIR=/tmp/x git status', 'HUSKY=0 git commit -m done', 'for file in .env src/a.ts; do cat "$file"; done']) {
             seen.push(`${command}: ${marked(command).decision}`)
         }
-        expect(seen).toEqual(['rm -rf "$DIR": ask', 'cp src/a.ts "$OUT": ask', 'git push origin "$BRANCH": ask', 'echo "$GITHUB_TOKEN": deny', 'printenv: deny', 'printenv NPM_TOKEN: deny', 'GIT_DIR=/tmp/x git status: ask', 'HUSKY=0 git commit -m done: deny', 'for file in .env src/a.ts; do cat "$file"; done: deny'])
+        expect(seen).toEqual(['rm -rf "$DIR": ask', 'cp src/a.ts "$OUT": allow', 'git push origin "$BRANCH": ask', 'echo "$GITHUB_TOKEN": deny', 'printenv: deny', 'printenv NPM_TOKEN: deny', 'GIT_DIR=/tmp/x git status: ask', 'HUSKY=0 git commit -m done: deny', 'for file in .env src/a.ts; do cat "$file"; done: deny'])
         // A wide search is judged by the whole tree it reads, hidden and ignored files included.
         const holdsSecret: PathInspection = request => request.operation === 'search'
             ? { ...withGit(request), sensitive: [posix.join(root, 'src/.env')] } : onBranch('refs/heads/topic')(request)
