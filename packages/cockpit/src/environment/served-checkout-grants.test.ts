@@ -39,6 +39,30 @@ describe('Claude Code local guard registration', () => {
         } finally { rmSync(root, { recursive: true, force: true }) }
     })
 
+    it('carries the committed Read and Edit deny rules into the local settings a subdirectory session loads, at the root and the repository top', async () => {
+        const top = realpathSync(mkdtempSync(join(tmpdir(), 'claude-local-deny-')))
+        const root = join(top, 'ops/cockpit')
+        try {
+            mkdirSync(join(root, '.claude'), { recursive: true })
+            mkdirSync(join(top, '.git'))
+            const guard = { matcher: 'Bash', hooks: [{ type: 'command', command: 'H="$r/.cockpit/guards/bash-guard.sh"; /bin/bash "$H" --harness claudecode' }] }
+            const committed = ['Read(/var/secret)', 'Read(/var/secret/**)', 'Edit(/.cockpit/guards/bash-guard.sh)', 'Read(//**/.env)', 'Bash(rm -rf:*)']
+            writeFileSync(join(root, '.claude/settings.json'), `${JSON.stringify({ permissions: { deny: committed }, hooks: { PreToolUse: [guard] } })}\n`)
+            // A person's own rule stays first.
+            writeFileSync(join(root, '.claude/settings.local.json'), `${JSON.stringify({ permissions: { deny: ['Read(/notes/private.md)'] } })}\n`)
+            const local = (directory: string) => JSON.parse(readFileSync(join(directory, '.claude/settings.local.json'), 'utf8'))
+            expect(inspectClaudeLocalGuard(root)).toEqual([expect.objectContaining({ code: 'CLAUDE_LOCAL_HOOK_MISSING' }), expect.objectContaining({ code: 'CLAUDE_LOCAL_HOOK_MISSING' })])
+            expect(await writeClaudeLocalGuard(root)).toEqual({ kind: 'complete' })
+            expect(local(root).permissions.deny).toEqual(['Read(/notes/private.md)', 'Read(/var/secret)', 'Read(/var/secret/**)', 'Edit(/.cockpit/guards/bash-guard.sh)', 'Read(//**/.env)'])
+            // The repository top's file binds every session in the repository, so it names only the cockpit's files, through its place below the top.
+            expect(local(top).permissions.deny).toEqual(['Read(/ops/cockpit/var/secret)', 'Read(/ops/cockpit/var/secret/**)', 'Edit(/ops/cockpit/.cockpit/guards/bash-guard.sh)', 'Read(/ops/cockpit/**/.env)'])
+            expect(inspectClaudeLocalGuard(root)).toEqual([])
+            // A rule taken out of the local file is missing again.
+            writeFileSync(join(root, '.claude/settings.local.json'), `${JSON.stringify({ ...local(root), permissions: { deny: ['Read(/var/secret)'] } })}\n`)
+            expect(inspectClaudeLocalGuard(root)).toEqual([expect.objectContaining({ code: 'CLAUDE_LOCAL_HOOK_MISSING', message: expect.stringContaining('deny rules') })])
+        } finally { rmSync(top, { recursive: true, force: true }) }
+    })
+
     it('flags an agent tool\'s settings below the cockpit root and any settings that switch hooks off', async () => {
         const root = realpathSync(mkdtempSync(join(tmpdir(), 'agent-settings-hazards-')))
         try {

@@ -49,6 +49,7 @@ import { parseOwnershipManifest } from '../../surfaces/ownership.js'
 import { installedPackageMetadata } from '../../package-metadata.js'
 import { ANSWER_CONFIRMATION_PATH } from '../../guards/answer-confirmation.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../../guards/local-identity.js'
+import { inspectGuardRecord } from '../../guards/guard-record.js'
 import {
     guardInstalledDirectories,
     guardLauncherEvidence,
@@ -826,6 +827,8 @@ export async function runGuardEvaluationApplication(
             ...policy.writePaths?.length || agentRoots.length ? { externalSearchDirectories: externalSearchDirectories(searchPath, policy.allowedRoots),
                 guardRuntime: [...new Set([identity.node, dirname(dirname(identity.node)), process.execPath])].filter(path => path !== '/') } : {},
             searchPathRelativeEntry: guardSearchPathRelativeEntry(searchPath),
+            // The guard script on disk is the one the person's sync recorded, so staging it stages what a person ran sync for.
+            ...inspectGuardRecord(identity.root) === 'match' ? { recordedGuardScript: true } : {},
             ripgrepConfigActive: data.ripgrepConfigActive === true }, inspect)
         // A Write or Edit of a skill, command or agent file is judged by the frontmatter it leaves; a file
         // too large to read leaves no text an edit can be proven against.
