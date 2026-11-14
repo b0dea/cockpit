@@ -13,7 +13,6 @@ import {
 import type {
     BuiltinExecutionAuthority,
     BuiltinHarnessRef,
-    CustomHarnessRef,
     SelftestCapability,
     SelftestEvidenceRecord,
     SelftestProbeEvent,
@@ -1359,62 +1358,13 @@ describe('versioned harness selftest evidence', () => {
         }
     })
 
-    it('requires the complete two-harness skill review matrix and accepted custom identity', () => {
+    it('requires the complete two-harness skill review matrix', () => {
         const fixture = selftestFixture()
         try {
             const incomplete = structuredClone(fixture.bundle)
             incomplete.skillReviews.pop()
             expect(validateSelftestEvidenceBundle(incomplete, fixture.expectation, fixture.root, fixture.options).errors)
                 .toContain('skillReviews do not exactly cover the shipped skill and review harness matrix')
-
-            const custom: CustomHarnessRef = {
-                kind: 'custom', id: 'review-shell', declarationSha256: 'c'.repeat(64),
-                module: 'adapters/review-shell.mjs', sourceSha256: 'd'.repeat(64), export: 'generate',
-            }
-            const customExpectation = {
-                ...structuredClone(fixture.expectation),
-                cells: fixture.expectation.cells.map((cell, index) => index === 0
-                    ? { ...structuredClone(cell), harness: structuredClone(custom) }
-                    : structuredClone(cell)),
-            }
-            const customRecord: Mutable<SelftestEvidenceRecord> = {
-                ...structuredClone(fixture.bundle.records[0]),
-                harness: structuredClone(custom),
-                authority: {
-                    kind: 'custom-module', harnessId: custom.id, module: custom.module,
-                    sourceSha256: custom.sourceSha256, export: custom.export, stepId: 'probe-step-1',
-                    startedAt: fixture.bundle.records[0].startedAt, finishedAt: fixture.bundle.records[0].finishedAt,
-                },
-            }
-            const customBundle = {
-                ...structuredClone(fixture.bundle),
-                records: [customRecord, ...structuredClone(fixture.bundle.records.slice(1))],
-            }
-            const { transcriptSha256: _ignored, ...customTranscript } = customRecord
-            writeFileSync(join(fixture.root, customRecord.transcriptPath), JSON.stringify(customTranscript))
-            customRecord.transcriptSha256 = digest(
-                readFileSync(join(fixture.root, customRecord.transcriptPath)),
-            )
-            expect(validateSelftestEvidenceBundle(
-                customBundle, customExpectation, fixture.root, fixture.options,
-            ).errors).toEqual([])
-            const moduleRefused = (module: string) => validateSelftestEvidenceBundle(customBundle, {
-                ...customExpectation,
-                cells: customExpectation.cells.map((cell, index) => index === 0 ? { ...cell, harness: { ...custom, module } } : cell),
-            }, fixture.root, fixture.options).errors.some(error => error.endsWith('.module must be a confined relative path'))
-            expect(moduleRefused('.GIT/hooks/review-shell.mjs')).toBe(true)
-            expect(moduleRefused('adapters/Node_Modules/review-shell.mjs')).toBe(true)
-            expect(moduleRefused('internal/review-shell.mjs')).toBe(false)
-            customRecord.harness = { ...custom, sourceSha256: 'e'.repeat(64) }
-            const authority = customRecord.authority
-            if (authority.kind !== 'custom-module') throw new Error('custom authority fixture was not installed')
-            authority.sourceSha256 = 'e'.repeat(64)
-            expect(validateSelftestEvidenceBundle(
-                customBundle, customExpectation, fixture.root, fixture.options,
-            ).errors).toEqual(expect.arrayContaining([
-                'record 1: harness identity does not equal expected cell',
-                'record 1: custom authority does not match expected harness identity',
-            ]))
         } finally {
             rmSync(fixture.root, { recursive: true, force: true })
         }

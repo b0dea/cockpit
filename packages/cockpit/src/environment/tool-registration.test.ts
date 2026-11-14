@@ -41,9 +41,9 @@ describe('tool add and remove', () => {
         expect(await readFile(configPath, 'utf8')).toBe(`${BASE}\n[surfaces]\ntools = ["claudecode", "codexcli", "opencode", "cursor"]\n`)
         expect(await runToolChange({ operation: 'add', configPath, tool: 'cursor', dryRun: false })).toMatchObject({ status: 0, result: { action: 'unchanged' } })
 
-        const ordered = await cockpit(`${BASE}\n[surfaces]\nbundles = []\ntools = ["opencode", "claudecode"] # opencode first\n`)
+        const ordered = await cockpit(`${BASE}\n[surfaces]\noverlays = []\ntools = ["opencode", "claudecode"] # opencode first\n`)
         await runToolChange({ operation: 'remove', configPath: ordered, tool: 'claudecode', dryRun: false })
-        expect(await readFile(ordered, 'utf8')).toBe(`${BASE}\n[surfaces]\nbundles = []\ntools = ["opencode"] # opencode first\n`)
+        expect(await readFile(ordered, 'utf8')).toBe(`${BASE}\n[surfaces]\noverlays = []\ntools = ["opencode"] # opencode first\n`)
         await runToolChange({ operation: 'add', configPath: ordered, tool: 'codexcli', dryRun: false })
         expect(await tools(ordered)).toEqual(['opencode', 'codexcli'])
     })

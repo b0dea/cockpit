@@ -141,9 +141,6 @@ const STREAM_BYTES = 65_536
 const PROBE_TIMEOUT_MS = 30_000
 const EVIDENCE_EXPIRY_MS = 300_000
 const BUILTIN_EXECUTABLES = Object.freeze({ claudecode: 'claude', codexcli: 'codex', opencode: 'opencode' } as const)
-// Why a custom cell has no probe row; see SelftestProbeSpecification.
-const UNPROBEABLE_REASON = 'selftest runs only built-in tools it found on PATH and you approved by digest, and a custom harness has no such executable'
-const UNPROBEABLE_ACTION = 'measure the capability by hand with a candidate and a deliberately broken control and record it in cockpit.toml'
 
 // A signed-in tool locates its stored sign-in through HOME, so a probe given PATH alone reports
 // every cell as not signed in. The allowlist carries no credential; every other variable, tokens
@@ -849,7 +846,7 @@ export async function runSurfaceSelftestApplication(
     const records: SelftestEvidenceBundle['records'][number][] = []
     const approvedExecutables: OperatorExecutableIdentities = new Map()
     // Every probe with a supported protocol produced evidence. The Claude guard has a protocol even when
-    // no vendor host is declared yet; cells without one, and custom cells, stay outside.
+    // no vendor host is declared yet; cells without one stay outside.
     let measurementComplete = true
     for (const probe of plan.probes) {
         const supported = probe.protocol !== 'native-unsupported/v1' || probe.harness.target === 'claudecode' && probe.capability === 'guard-firing'
@@ -865,12 +862,6 @@ export async function runSurfaceSelftestApplication(
             records.push(failed)
             continue
         }
-        records.push(record)
-    }
-    for (const cell of plan.unprobeable) {
-        const record = surfaceSelftestHumanNeeded(plan.expectation, cell, 'enforcement_probe_required', new Date().toISOString(),
-            `${UNPROBEABLE_REASON}; ${UNPROBEABLE_ACTION} for ${surfaceSelftestCellLabel(cell)}`)
-        if (!record) return refusal('SELFTEST_EXECUTION_INVALID', `could not record ${surfaceSelftestCellLabel(cell)} as human_needed`)
         records.push(record)
     }
     const reviews = surfaceSelftestReviews(plan.expectation, [])
@@ -1149,17 +1140,11 @@ async function writeConfiguredSurfaceSelftestSpecifications(
     }
     const draft = draftSurfaceSelftestSpecifications(checked.result.application.surfaceSelftest, previous)
     if (!draft) return refused('generated selftest projection is invalid')
-    const { specifications, unprobeable, carried } = draft
+    const { specifications, carried } = draft
     const destination = resolve(input.writeProbeSpecificationsPath)
     return {
         status: 0,
-        diagnostics: unprobeable.map((cell) => ({
-            severity: 'warning' as const,
-            code: 'SELFTEST_CUSTOM_PROBE_UNSUPPORTED' satisfies typeof ENVIRONMENT_CODES.SELFTEST_CUSTOM_PROBE_UNSUPPORTED,
-            message: `no row written for ${surfaceSelftestCellLabel(cell)}: ${UNPROBEABLE_REASON}, so selftest records this cell human_needed with enforcement_probe_required`,
-            target: surfaceSelftestCellLabel(cell),
-            fix: 'measure the custom harness capability by hand with a candidate and a deliberately broken control, then record what you saw as its state and measured_on in cockpit.toml (enforced needs an evidence file); do not add a row for it',
-        })),
+        diagnostics: [],
         ...input.replace ? { replace: true } : {},
         artifact: `${JSON.stringify({
             schema: PROBE_SPECIFICATIONS_SCHEMA,
@@ -1211,7 +1196,6 @@ async function writeFreshProbeSpecifications(configPath: string): Promise<string
     }
     const destination = join(root, PROBE_EVIDENCE_ROOT, `probe-specifications-${randomBytes(8).toString('hex')}.json`)
     const drafted = await writeConfiguredSurfaceSelftestSpecifications({ configPath, writeProbeSpecificationsPath: destination })
-    // The draft's warnings name custom cells it wrote no row for; the run records each of those as pending.
     if (drafted.status !== 0 || typeof drafted.artifact !== 'string') return drafted
     const directory = await ensureEvidenceDirectory(root)
     if (typeof directory !== 'string') return selftestRefused('SELFTEST_EXECUTION_INVALID', `fresh probe specifications could not be written: ${directory.reason}`)
@@ -1255,7 +1239,6 @@ export async function runConfiguredSurfaceSelftestOutcome(
         : [{ severity: 'error', code: 'SELFTEST_EXECUTION_INVALID', message: `the selftest rerun under the guard's Node was terminated by ${outcome.signal}` }] }
     const responsibilities = {
         native_protocol_unsupported: 'Unmeasurable by selftest as the files stand: each record says whether a change of yours lets selftest measure it; otherwise rerunning does not clear it',
-        enforcement_probe_required: 'Maintainer: supply paired native evidence for the custom harness',
         executable_missing: 'Operator: install or locate the named tool before retrying',
         authentication_required: 'Operator: review the executable or complete native authentication before retrying',
         isolation_unavailable: 'Unavailable: the probe cannot establish its required isolation; inspect the report before retrying',

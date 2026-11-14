@@ -1,4 +1,4 @@
-import { readFile, writeFile, rename, lstat } from 'node:fs/promises'
+import { readFile, writeFile, lstat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -6,32 +6,11 @@ import { executeProbe } from '../environment-exec/execute.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './command.js'
 import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
 
-const { cleanup, publicationGroups, consumer, skillSurfaces, customHarness, unavailableCustomHarness,
-    surfaceConsumer, writeCustomModule, ownership, bytes } = createGeneratedCommandFixture()
+const { cleanup, publicationGroups, consumer, skillSurfaces, surfaceConsumer, bytes } = createGeneratedCommandFixture()
 afterEach(cleanup)
 
 describe('generated environment command', () => {
 describe('public surface publication transaction', () => {
-        it('refuses an infeasible publication schedule before preparation', async () => {
-            const fixture = await surfaceConsumer('publication-schedule-bound', {
-                custom: customHarness('adapters/synthetic.mjs', 'renderRules', 'custom/entry-00/output.md'),
-            })
-            await writeCustomModule(fixture.root, Array.from({ length: 50 }, (_, index) => ({
-                path: `custom/entry-${String(index).padStart(2, '0')}/output.md`, bytes: 'bounded synthetic output\n',
-            })))
-            let preparations = 0
-            const result = await syncGeneratedEnvironment({ configPath: fixture.configPath }, {
-                execute: async step => {
-                    if (step.labels.action === 'prepare-batch') preparations += 1
-                    return executeProbe(step)
-                },
-            })
-            expect(result).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_PUBLICATION_FAILED' })] })
-            expect(preparations).toBe(0)
-            expect(await readFile(join(fixture.root, 'unmanaged.txt'), 'utf8')).toBe('keep\n')
-            await expect(lstat(join(fixture.root, '.cockpit/generated-environment-ownership.json'))).rejects.toMatchObject({ code: 'ENOENT' })
-        })
-
         it('publishes shipped and extension skills within the bounded sequential schedule', async () => {
             const fixture = await surfaceConsumer('extension-skill-publication', {
                 custom: await skillSurfaces(['alpha', 'beta', 'zeta']),
@@ -115,12 +94,16 @@ describe('public surface publication transaction', () => {
 
         it('refuses generated Markdown ownership delimiters before publication', async () => {
             for (const marker of ['<!-- cockpit:instructions:start -->', '<!-- cockpit:instructions:end -->']) {
-                const fixture = await surfaceConsumer('markdown-delimiter', {
-                    custom: customHarness('adapters/synthetic.mjs', 'renderRules', 'AGENTS.md'),
-                })
+                const fixture = await surfaceConsumer('markdown-delimiter', { custom: `
+    [[surfaces.overlays]]
+    name = "delimiter-rules"
+    feature = "rules"
+    source = "surfaces/delimiter-rules.json"
+    sources = [{ path = "rules/delimiter.md", bytes = ${JSON.stringify(`${marker}
+`)} }]
+    ` })
                 const existing = 'consumer instructions\n'
                 await writeFile(join(fixture.root, 'AGENTS.md'), existing)
-                await writeCustomModule(fixture.root, [{ path: 'AGENTS.md', bytes: `${marker}\n` }])
                 let preparations = 0
                 const result = await syncGeneratedEnvironment({ configPath: fixture.configPath }, {
                     execute: async step => {
@@ -135,118 +118,17 @@ describe('public surface publication transaction', () => {
             }
         })
 
-        it('round-trips mixed-case custom paths and scoped ownership', async () => {
-            const fixture = await surfaceConsumer('custom-order-scope', {
-                custom: customHarness('adapters/synthetic.mjs', 'renderRules', 'custom/a.md'),
-            })
-            await writeCustomModule(fixture.root, [
-                { path: 'custom/a.md', bytes: 'lower\n', scope: 'scoped' },
-                { path: 'custom/Z.md', bytes: 'upper\n', scope: 'scoped' },
-            ])
-            const synchronized = await syncGeneratedEnvironment({ configPath: fixture.configPath })
-            expect(synchronized, JSON.stringify(synchronized.diagnostics)).toMatchObject({ kind: 'complete' })
-            if (synchronized.kind !== 'complete') return
-            expect(synchronized.result.paths.filter(path => path.startsWith('custom/'))).toEqual(['custom/Z.md', 'custom/a.md'])
-            const ledger = await ownership(fixture.root)
-            expect(ledger).toMatchObject({ entries: expect.arrayContaining([
-                expect.objectContaining({ path: 'custom/Z.md', scope: 'scoped' }),
-                expect.objectContaining({ path: 'custom/a.md', scope: 'scoped' }),
-            ]) })
-            expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
-            expect(await bytes(fixture.root, ['custom/Z.md', 'custom/a.md'])).toEqual({
-                'custom/Z.md': 'upper\n', 'custom/a.md': 'lower\n',
-            })
-        })
-
-        it('revalidates a shared module for each custom harness', async () => {
-            const module = 'adapters/synthetic.mjs'
-            const fixture = await surfaceConsumer('custom-shared-module', { custom:
-                customHarness(module, 'renderRules', 'custom/first.md')
-                    + customHarness(module, 'renderSecond', 'custom/second.md').replace('name = "synthetic-harness"', 'name = "other-harness"'),
-            })
-            const modulePath = join(fixture.root, await writeCustomModule(fixture.root, [{ path: 'custom/first.md', bytes: 'shared\n' }]))
-            const original = await readFile(modulePath, 'utf8')
-            await writeFile(modulePath, original + original.replace('renderRules', 'renderSecond')
-                .replace('"synthetic-harness"', '"other-harness"').replace('custom/first.md', 'custom/second.md'))
-
-            let moduleReads = 0
-            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath }, {
-                execute: async step => {
-                    if (step.labels.action === 'read-file' || step.labels.action === 'read-batch') {
-                        const request = JSON.parse(step.argv[3]!) as { name?: string; entries?: Array<{ action: string; name: string }> }
-                        moduleReads += step.labels.action === 'read-file' ? Number(request.name === 'synthetic.mjs')
-                            : (request.entries ?? []).filter(entry => entry.action === 'read-file' && entry.name === 'synthetic.mjs').length
-                    }
-                    return executeProbe(step)
-                },
-            })).toMatchObject({ kind: 'complete' })
-            expect(moduleReads).toBe(8)
-            expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
-            expect(await bytes(fixture.root, ['custom/first.md', 'custom/second.md'])).toEqual({
-                'custom/first.md': 'shared\n', 'custom/second.md': 'shared\n',
-            })
-        })
-
-        it('authenticates custom modules and does not import unavailable cells', async () => {
-            const missing = await surfaceConsumer('custom-missing', { custom: customHarness('adapters/synthetic.mjs') })
-            await writeCustomModule(missing.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\n' }], 'otherExport')
-            const inert = await surfaceConsumer('custom-inert', { custom: customHarness('adapters/synthetic.mjs') })
-            await writeCustomModule(inert.root, [])
-            const unavailable = await surfaceConsumer('custom-unavailable', { custom: unavailableCustomHarness() })
-            const raced = await surfaceConsumer('custom-race', { custom: customHarness('adapters/synthetic.mjs') })
-            const racedModule = join(raced.root, await writeCustomModule(raced.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\n' }]))
-            let replaced = false
-
-            const outcomes = await Promise.all([
-                syncGeneratedEnvironment({ configPath: missing.configPath }),
-                syncGeneratedEnvironment({ configPath: inert.configPath }),
-                syncGeneratedEnvironment({ configPath: unavailable.configPath }),
-                syncGeneratedEnvironment({ configPath: raced.configPath }, {
-                    execute: async (step) => {
-                        const invokesModule = step.consumedFiles.some((file) => file.path === racedModule)
-                        const outcome = await executeProbe(step)
-                        if (invokesModule && !replaced) {
-                            replaced = true
-                            const original = await readFile(racedModule)
-                            await rename(racedModule, `${racedModule}.held`)
-                            await writeFile(racedModule, original)
-                        }
-                        return outcome
-                    },
-                }),
-            ])
-            expect(outcomes.map(({ kind }) => kind)).toEqual(['refusal', 'refusal', 'complete', 'refusal'])
-            expect(replaced).toBe(true)
-            for (const control of [missing, inert, raced]) {
-                await expect(lstat(join(control.root, '.cockpit/generated-environment-ownership.json'))).rejects.toMatchObject({ code: 'ENOENT' })
-            }
-            await expect(lstat(join(unavailable.root, 'custom/rules.md'))).rejects.toMatchObject({ code: 'ENOENT' })
-        })
-
-        it('preflights combined output bounds before publication', async () => {
-            const module = 'adapters/synthetic.mjs'
-            const bounded = await surfaceConsumer('combined-bound', { custom: customHarness(module, 'renderRules', 'custom/rules-000.md') })
-            await writeCustomModule(bounded.root, Array.from({ length: 253 }, (_, index) => ({
-                path: `custom/rules-${String(index).padStart(3, '0')}.md`, bytes: `custom rule ${index}\n`,
-            })))
-            expect(await syncGeneratedEnvironment({ configPath: bounded.configPath })).toMatchObject({ kind: 'refusal' })
-            await expect(lstat(join(bounded.root, 'custom/rules-000.md'))).rejects.toMatchObject({ code: 'ENOENT' })
-            await expect(lstat(join(bounded.root, '.cockpit/generated-environment-ownership.json'))).rejects.toMatchObject({ code: 'ENOENT' })
-        })
-
         it('compensates both estates on source change', async () => {
-            const module = 'adapters/synthetic.mjs'
-            // The Compose override is the generated estate; the custom harness output is the surface estate.
+            // The Compose override is the generated estate; the copied sibling guide in AGENTS.md is the surface estate.
             const compensated = await surfaceConsumer('cross-estate-compensation', { rules: true,
-                custom: `${customHarness(module)}\n[environment]\ncompose_files = ["compose.yml"]\n` })
+                custom: '\n[environment]\ncompose_files = ["compose.yml"]\n' })
             const compose = join(compensated.root, 'compose.yml')
             await writeFile(compose, `services:\n  app:\n    image: node@sha256:${'8'.repeat(64)}\n    volumes: ["./app:/app"]\n`)
-            await writeCustomModule(compensated.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\nfirst\n' }])
             expect(await syncGeneratedEnvironment({ configPath: compensated.configPath })).toMatchObject({ kind: 'complete' })
-            const observed = await bytes(compensated.root, ['compose.cockpit.yml', 'custom/rules.md'])
+            const observed = await bytes(compensated.root, ['compose.cockpit.yml', 'AGENTS.md'])
             const ledger = await readFile(join(compensated.root, '.cockpit/generated-environment-ownership.json'), 'utf8')
             await writeFile(compose, `${await readFile(compose, 'utf8')}  worker:\n    image: node@sha256:${'9'.repeat(64)}\n`)
-            await writeCustomModule(compensated.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\nsecond\n' }])
+            await writeFile(join(compensated.siblingDirectory, 'AGENTS.md'), 'Second synthetic sibling guide.\n')
             let sourceChanged = false
             const refused = await syncGeneratedEnvironment({ configPath: compensated.configPath }, {
                 execute: async (step) => {

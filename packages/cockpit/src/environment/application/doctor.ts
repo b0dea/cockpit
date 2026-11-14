@@ -77,8 +77,7 @@ export interface DoctorCommandAdapters extends ObservationCommandAdapters {
 }
 
 /** `stated` is whether cockpit.toml writes [work] grading, rather than leaving it to its default. */
-export type WorkGradingInspection = Readonly<{ grading: CockpitConfig['work']['grading']; stated: boolean; evaluators: readonly EvaluatorTool[]
-    harnesses: CockpitConfig['surfaces']['harnesses'] }>
+export type WorkGradingInspection = Readonly<{ grading: CockpitConfig['work']['grading']; stated: boolean; evaluators: readonly EvaluatorTool[] }>
 
 interface DoctorFreshness {
     // Only whether the generated files are current. The full check result, with every owned path's
@@ -163,7 +162,7 @@ async function doctorGuardHostDiagnostics(loading: Promise<LoadedDoctorConfig>):
 async function doctorEvaluatorDiagnostics(loading: Promise<LoadedDoctorConfig>, adapters: DoctorCommandAdapters): Promise<readonly EnvironmentDiagnostic[]> {
     const loaded = await loading
     return loaded.kind === 'complete' && adapters.inspectEvaluator ? adapters.inspectEvaluator({ grading: effectivePolicy(loaded.result.config).grading, stated: loaded.result.gradingStated,
-        evaluators: evaluatorTools(loaded.result.config), harnesses: loaded.result.config.surfaces.harnesses }) : []
+        evaluators: evaluatorTools(loaded.result.config) }) : []
 }
 
 // A product with no declared gate gives test-run nothing to run, so no work in it can be graded PASS;

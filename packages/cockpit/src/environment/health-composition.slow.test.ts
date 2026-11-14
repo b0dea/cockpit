@@ -457,9 +457,6 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
             message: expect.stringContaining('cannot observe ahead of time whether the working agent can spawn a subagent, so this was not checked') })])
         expect(await doctorWith(subagent, false)).toEqual([expect.objectContaining({ severity: 'warning', code: 'EVALUATOR_UNAVAILABLE',
             message: expect.stringMatching(/no stronger path if the working agent cannot spawn a subagent, which cockpit cannot observe ahead of time, because .*Claude Code \(claude\) is not on PATH/) })])
-        const rows = ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'].map(feature => `{ feature = "${feature}", state = "unavailable", measured_on = "2026-09-26", reason = "The harness has no such mechanism" }`).join(', ')
-        expect(await doctorWith(`${subagent}\n\n[surfaces]\nharnesses = [{ name = "team-tool", capabilities = [${rows}] }]`, true)).toEqual([expect.objectContaining({
-            severity: 'warning', code: 'EVALUATOR_UNAVAILABLE', message: expect.stringContaining('cockpit generates none for team-tool'), fix: expect.stringContaining('[work] grading = "independent"') })])
     })
 
     it('preserves a lifecycle owner refusal before observing Docker', async () => {

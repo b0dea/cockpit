@@ -171,9 +171,6 @@ writing, is the person's decision. For a team's own `.claude/settings.json`, `.c
 `SURFACE_ADOPTION_REFUSED` names the adopted key that would switch off or bypass the guard, or that
 cockpit writes with a different value; remove it from the named file and sync again.
 `SURFACE_SOURCE_UNAVAILABLE` means a declared source or active sibling could not be read or checked. Restore that source at its declared root and retry the dry run.
-`SURFACE_CUSTOM_REFUSED` means the named custom harness module did not return a complete result
-bound to its declaration and source digest, or an `enforced` row's evidence file was missing or
-did not match its declared SHA-256. Inspect the module, the evidence file reference, and the broken control.
 
 `GENERATED_STALE_APPROVAL_REQUIRED` means a dry run found stale entries but the apply has no
 approval for their exact digest. Run `sync --interactive` from a terminal outside CI, review the
@@ -449,7 +446,6 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `RUNTIME_UNAVAILABLE` | [see above](#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [see above](#common-refusal-guidance) |
 | `SECRET_FILE_TRACKED` | a person decides with the repository owner: stop tracking each file with git rm --cached <file>, add it to .gitignore, commit, and rotate any credential it held; commit a .env.example with the variable names instead |
-| `SELFTEST_CUSTOM_PROBE_UNSUPPORTED` | measure the custom harness capability by hand with a candidate and a deliberately broken control, then record what you saw as its state and measured_on in cockpit.toml (enforced needs an evidence file); do not add a row for it |
 | `SELFTEST_EXECUTION_INVALID` | [see above](#selftest-and-override-inspection) |
 | `SELFTEST_GUARD_IDENTITY_MISMATCH` | [see above](#selftest-and-override-inspection) |
 | `SELFTEST_SOURCE_INVALID` | [see above](#selftest-and-override-inspection) |
@@ -485,7 +481,6 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SURFACE_ARTIFACT_INVALID` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_BOUNDS` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_CLEANUP_FAILED` | [see above](#merge-ownership-and-generation) |
-| `SURFACE_CUSTOM_REFUSED` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_FEATURE_COVERAGE` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_GENERATION_FAILED` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_GENERATOR_TRUST_WARNING` | [see above](#merge-ownership-and-generation) |

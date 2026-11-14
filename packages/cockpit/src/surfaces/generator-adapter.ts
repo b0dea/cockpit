@@ -11,14 +11,12 @@ import { libexecProgram, type LibexecProgram } from '../environment-exec/libexec
 import { ENVIRONMENT_CODES, snapshotExecutionStep, snapshotGeneratedJson, type ExecutionStep, type JsonSnapshotObject, RefusalError, errorCause, tryParseJson, hasErrorCode } from '../environment/contract.js'
 import {
     bundleSurfaceFiles,
-    captureSurfaceBundleBatch,
     captureSurfaceBatch,
     SURFACE_FILE_MAX_BYTES,
     SURFACE_OUTPUT_MAX_BYTES,
     SURFACE_OUTPUT_MAX_FILES,
     type RenderedSurfaceFile,
     type SurfaceBatch,
-    type SurfaceBundleFormat,
     type SurfaceFeature,
     type SurfaceTarget,
 } from './contract.js'
@@ -64,32 +62,14 @@ export type SurfaceGenerationOutcome =
         files: readonly []
     }>
 
-export interface RenderedSurfaceBundleFile {
-    readonly path: string
-    readonly bytes: string
-    readonly sha256: string
-}
-
-export type SurfaceBundleGenerationOutcome =
-    | Readonly<{
-        kind: 'complete'
-        status: 0
-        diagnostics: readonly []
-        format: SurfaceBundleFormat
-        mechanism: Readonly<{ package: 'rulesync'; version: typeof RULESYNC_VERSION; role: 'packaging' }>
-        files: readonly RenderedSurfaceBundleFile[]
-    }>
-    | Exclude<SurfaceGenerationOutcome, { kind: 'complete' }>
-
 export type SurfaceEstateGenerationOutcome =
     | Readonly<{
         kind: 'complete'
-        batch?: Extract<SurfaceGenerationOutcome, { kind: 'complete' }>
-        bundle?: Extract<SurfaceBundleGenerationOutcome, { kind: 'complete' }>
+        batch: Extract<SurfaceGenerationOutcome, { kind: 'complete' }>
     }>
     | Exclude<SurfaceGenerationOutcome, { kind: 'complete' }>
 
-type GeneratorTarget = HarnessRegistryRow['rulesyncTarget'] | SurfaceBundleFormat
+type GeneratorTarget = HarnessRegistryRow['rulesyncTarget']
 
 interface NodeAuthority {
     readonly path: string
@@ -145,7 +125,6 @@ interface DirectoryIdentity {
 
 interface EstateJob {
     readonly id: string
-    readonly kind: 'batch' | 'bundle'
     readonly target: SurfaceTarget
     readonly generatorTarget: GeneratorTarget
     readonly batch: SurfaceBatch
@@ -250,20 +229,6 @@ function complete(files: readonly RenderedSurfaceFile[], warnings: readonly Surf
         mechanism: { package: 'rulesync' as const, version: RULESYNC_VERSION, role: 'spelling' as const },
         files: files.map(file => ({ ...file })),
         warnings: warnings.length === 0 ? EMPTY_WARNINGS : warnings.map(warning => ({ ...warning })),
-    }
-}
-
-function completeBundle(
-    format: SurfaceBundleFormat,
-    files: readonly RenderedSurfaceFile[],
-): Extract<SurfaceBundleGenerationOutcome, { kind: 'complete' }> {
-    return {
-        kind: 'complete',
-        status: 0,
-        diagnostics: EMPTY_DIAGNOSTICS,
-        format,
-        mechanism: { package: 'rulesync' as const, version: RULESYNC_VERSION, role: 'packaging' as const },
-        files: files.map(({ path, bytes, sha256 }) => ({ path, bytes, sha256 })),
     }
 }
 
@@ -824,51 +789,23 @@ async function cleanupScratch(scratch: string, node: NodeAuthority, program: Lib
 }
 
 export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEstateGenerationOutcome> {
-    // Each nested request retains its input limit; their envelope must admit both.
     const captured = snapshotGeneratedJson(input)
     const request = captured !== null && typeof captured === 'object' && !Array.isArray(captured)
         ? captured as JsonSnapshotObject : undefined
-    const keys = request ? Object.keys(request).sort() : []
-    if (!request || keys.length < 1 || keys.length > 2 || keys.some(key => key !== 'batch' && key !== 'bundle')) {
-        return refuse(diagnostic('SURFACE_INPUT_INVALID', 'surface estate generation input is invalid', 'input', 'surface-estate'))
-    }
-    const batch = request.batch === undefined ? undefined : captureSurfaceBatch(request.batch)
-    const bundleRequest = request.bundle === undefined ? undefined : captureSurfaceBundleBatch(request.bundle)
-    if (request.batch !== undefined && !batch || request.bundle !== undefined && !bundleRequest || !batch && !bundleRequest) {
-        return refuse(diagnostic('SURFACE_INPUT_INVALID', 'surface estate generation input is invalid', 'input', 'surface-estate'))
-    }
-    const bundleBatch = bundleRequest ? captureSurfaceBatch({
-        targets: ['claudecode'],
-        features: bundleRequest.features,
-        sources: bundleRequest.sources,
-        expectedOutputs: { claudecode: bundleRequest.expectedOutputs },
-    }) : undefined
-    if (bundleRequest && !bundleBatch) {
-        return refuse(diagnostic('SURFACE_INPUT_INVALID', 'surface bundle input could not be bound to the neutral contract', 'input', bundleRequest.format))
-    }
-    const jobs: EstateJob[] = [
-        ...batch ? batch.targets.map(target => ({
-            id: `batch-${target}`,
-            kind: 'batch' as const,
-            target,
-            generatorTarget: harnessFact(target).rulesyncTarget,
-            batch,
-            features: batch.features.filter(feature => harnessFact(target).rulesyncFeatures.some(candidate => candidate === feature)
-                && (feature !== 'mcp' || hasTargetMcpServers(batch.sources, target))
-                && (feature !== 'permissions' || (target !== 'codexcli' && target !== 'grokcli')
-                    || permissionRulesForTarget(batch.sources, target))),
-            expected: batch.expectedOutputs[target] ?? EMPTY_FILES,
-        })) : [],
-        ...bundleRequest && bundleBatch ? [{
-            id: `bundle-${bundleRequest.format}`,
-            kind: 'bundle' as const,
-            target: 'claudecode' as const,
-            generatorTarget: bundleRequest.format,
-            batch: bundleBatch,
-            features: bundleBatch.features,
-            expected: bundleRequest.expectedOutputs,
-        }] : [],
-    ]
+    const keys = request ? Object.keys(request) : []
+    const batch = request && keys.length === 1 && keys[0] === 'batch' ? captureSurfaceBatch(request.batch) : undefined
+    if (!batch) return refuse(diagnostic('SURFACE_INPUT_INVALID', 'surface estate generation input is invalid', 'input', 'surface-estate'))
+    const jobs: EstateJob[] = batch.targets.map(target => ({
+        id: `batch-${target}`,
+        target,
+        generatorTarget: harnessFact(target).rulesyncTarget,
+        batch,
+        features: batch.features.filter(feature => harnessFact(target).rulesyncFeatures.some(candidate => candidate === feature)
+            && (feature !== 'mcp' || hasTargetMcpServers(batch.sources, target))
+            && (feature !== 'permissions' || (target !== 'codexcli' && target !== 'grokcli')
+                || permissionRulesForTarget(batch.sources, target))),
+        expected: batch.expectedOutputs[target] ?? EMPTY_FILES,
+    }))
     let node: NodeAuthority
     try { node = await nodeAuthority() } catch (error) {
         return unavailable(diagnostic('SURFACE_NODE_UNAVAILABLE',
@@ -934,13 +871,10 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
                 break
             }
             if (!sameWarnings(firstResult.warnings, secondResult.warnings)
-                || !sameRenderedFiles(firstResult.files, secondResult.files)
-                || job.kind === 'bundle' && firstResult.warnings.length !== 0) {
+                || !sameRenderedFiles(firstResult.files, secondResult.files)) {
                 failure = diagnostic(
                     'SURFACE_STAGE_VARIANCE',
-                    job.kind === 'bundle'
-                        ? 'independent surface bundle staging produced different authenticated results'
-                        : 'independent surface staging produced different target, path, byte, hash, or warning sets',
+                    'independent surface staging produced different target, path, byte, hash, or warning sets',
                     'artifact',
                     job.generatorTarget,
                 )
@@ -950,19 +884,11 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
         }
         if (failure) outcome = refuse(failure)
         else {
-            const coreFiles = jobs.filter(job => job.kind === 'batch').flatMap(job => admitted.get(job.id)!.files)
-            const warnings = jobs.filter(job => job.kind === 'batch').flatMap(job => admitted.get(job.id)!.warnings)
-            const plugin = jobs.find(job => job.kind === 'bundle')
-            const pluginFiles = plugin ? admitted.get(plugin.id)!.files : undefined
-            if (batch && !bundleSurfaceFiles(coreFiles)) {
-                outcome = refuse(diagnostic('SURFACE_ARTIFACT_INVALID', 'surface output failed final bundle admission', 'artifact', 'surface-batch'))
-            } else if (pluginFiles && !bundleSurfaceFiles(pluginFiles)) {
-                outcome = refuse(diagnostic('SURFACE_ARTIFACT_INVALID', 'surface bundle failed final admission', 'artifact', plugin!.generatorTarget))
-            } else outcome = {
-                kind: 'complete' as const,
-                ...(batch ? { batch: complete(coreFiles, warnings) } : {}),
-                ...(bundleRequest && pluginFiles ? { bundle: completeBundle(bundleRequest.format, pluginFiles) } : {}),
-            }
+            const coreFiles = jobs.flatMap(job => admitted.get(job.id)!.files)
+            const warnings = jobs.flatMap(job => admitted.get(job.id)!.warnings)
+            outcome = bundleSurfaceFiles(coreFiles)
+                ? { kind: 'complete' as const, batch: complete(coreFiles, warnings) }
+                : refuse(diagnostic('SURFACE_ARTIFACT_INVALID', 'surface output failed final bundle admission', 'artifact', 'surface-batch'))
         }
     } catch (error) {
         outcome = refuse(diagnostic(
@@ -988,9 +914,5 @@ export async function generateSurfaceBatch(input: unknown): Promise<SurfaceGener
     const batch = captureSurfaceBatch(input)
     if (!batch) return refuse(diagnostic('SURFACE_INPUT_INVALID', 'surface generation input is invalid', 'input', 'surface-batch'))
     const outcome = await generateSurfaceEstate({ batch })
-    return outcome.kind === 'complete' && outcome.batch
-        ? outcome.batch
-        : outcome.kind === 'complete'
-            ? refuse(diagnostic('SURFACE_WORKER_OUTPUT', 'surface estate omitted the batch result', 'worker-output', 'surface-batch'))
-            : outcome
+    return outcome.kind === 'complete' ? outcome.batch : outcome
 }

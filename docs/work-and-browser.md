@@ -226,9 +226,8 @@ refusing a nested run show only when a grade runs; whether an agent can spawn a 
 observed ahead of time (`SUBAGENT_AVAILABILITY_UNOBSERVED` says so). Under `checks`, `self` or `off`
 it says nothing about evaluators, though `cockpit grade --criteria` runs one in every mode.
 
-`subagent` needs the generated evaluator definition: `check` and `sync` refuse it for a declared
-harness without one. Every shipped tool has one, and the [capability matrix](capability-matrix.md)
-records which tools were shown to offer it. Cursor and Grok Build have no guard, cannot be listed in
+`subagent` needs the generated evaluator definition. Every shipped tool has one, and the
+[capability matrix](capability-matrix.md) records which tools were shown to offer it. Cursor and Grok Build have no guard, cannot be listed in
 `work.evaluators` and are only ever listed beside a guarded tool. From them, `independent` runs a
 listed Claude Code, Codex or OpenCode on `PATH`; `subagent` writes the definition, which no run has
 shown either tool offering; `checks`, `self` and `off` need no tool.

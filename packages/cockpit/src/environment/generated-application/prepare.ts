@@ -293,7 +293,6 @@ export async function prepare(input: unknown, adapters: GeneratedEnvironmentComm
         openCodeGrantRoots: [],
         sourceEvidence: [],
         sourceRoots: [],
-        customSources: [],
         adoptedSources: [],
         surfaceAssets: [],
         warnings: [],

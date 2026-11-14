@@ -123,7 +123,7 @@ const expectedOutputs = {
     opencode: ['.opencode/agents/reviewer.md', '.opencode/plugins/rulesync-hooks.js', '.opencode/skills/check/SKILL.md', 'AGENTS.md', 'opencode.jsonc'],
 } as const
 
-it('dispatches a complete core and plugin estate through two generators, two readers, and one settled cleanup', async () => {
+it('dispatches a complete estate through two generators, two readers, and one settled cleanup', async () => {
     const outcome = await generateSurfaceEstate({
         batch: {
             targets: ['claudecode', 'codexcli', 'opencode'],
@@ -131,21 +131,11 @@ it('dispatches a complete core and plugin estate through two generators, two rea
             sources,
             expectedOutputs,
         },
-        bundle: {
-            format: 'claudecode-plugin',
-            features: ['mcp', 'subagents', 'skills', 'hooks'],
-            sources: sources.filter(source => !source.path.startsWith('rules/') && source.path !== 'permissions.jsonc'),
-            expectedOutputs: ['.mcp.json', 'agents/reviewer.md', 'hooks/hooks.json', 'skills/check/SKILL.md'],
-        },
     })
 
     expect(outcome.kind, JSON.stringify(outcome)).toBe('complete')
     if (outcome.kind !== 'complete') return
-    expect(outcome.batch).toBeDefined()
-    if (!outcome.batch) return
     expect(outcome.batch.files.every(file => file.sha256 === createHash('sha256').update(file.bytes).digest('hex'))).toBe(true)
-    expect(outcome.bundle?.files).toHaveLength(4)
-    expect(outcome.bundle?.files.every(file => file.sha256 === createHash('sha256').update(file.bytes).digest('hex'))).toBe(true)
 
     const generators = dispatch.steps.filter(step => step.id.startsWith('surface-estate-generate-'))
     const readers = dispatch.steps.filter(step => step.id.startsWith('surface-estate-read-'))
@@ -160,8 +150,8 @@ it('dispatches a complete core and plugin estate through two generators, two rea
             dispatch.events.indexOf(`end:generate:${reader.cwd}`),
         )
         const request = JSON.parse(reader.argv[3]!) as { jobs: Array<{ outputRoot: string; identity: { dev: number; ino: number } }> }
-        expect(request.jobs).toHaveLength(4)
-        expect(new Set(request.jobs.map(job => job.outputRoot)).size).toBe(4)
+        expect(request.jobs).toHaveLength(3)
+        expect(new Set(request.jobs.map(job => job.outputRoot)).size).toBe(3)
         expect(request.jobs.every(job => Number.isSafeInteger(job.identity.dev) && Number.isSafeInteger(job.identity.ino))).toBe(true)
     }
     expect(dispatch.cleanupActive).toBe(0)
@@ -200,23 +190,6 @@ it('rejects accessor envelopes without invoking them or spawning a worker', asyn
     await expect(generateSurfaceEstate(request)).resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'SURFACE_INPUT_INVALID' }] })
     expect(accessed).toBe(false)
     expect(dispatch.steps).toEqual([])
-})
-
-it('preserves separate accepted input bounds for a large core and plugin pair', async () => {
-    const skills = Array.from({ length: 10 }, (_, index) => ({
-        path: `skills/check-${index}/SKILL.md`,
-        bytes: `---\nname: check-${index}\ndescription: Checks a synthetic fixture.\ntargets: ["*"]\n---\n${'Synthetic guidance. '.repeat(3000)}\n`,
-    }))
-    const batch = { targets: ['claudecode'], features: ['skills'], sources: skills,
-        expectedOutputs: { claudecode: skills.map(source => `.claude/${source.path}`) } }
-    const bundle = { format: 'claudecode-plugin', features: ['skills'], sources: skills,
-        expectedOutputs: skills.map(source => source.path) }
-    expect(Buffer.byteLength(JSON.stringify({ batch, bundle }))).toBeGreaterThan(1_048_576)
-    const outcome = await generateSurfaceEstate({ batch, bundle })
-    expect(outcome.kind, JSON.stringify(outcome)).toBe('complete')
-    if (outcome.kind !== 'complete') return
-    expect(outcome.batch?.files).toHaveLength(10)
-    expect(outcome.bundle?.files).toHaveLength(10)
 })
 
 it('keeps an earlier authenticated refusal ahead of a later receipt close failure', async () => {

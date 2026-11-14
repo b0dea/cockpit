@@ -4,7 +4,6 @@ import { expect, expectTypeOf, it } from 'vitest'
 
 import {
     bundleSurfaceFiles,
-    captureSurfaceBundleBatch,
     captureSurfaceBatch,
     SURFACE_FILE_MAX_BYTES,
     SURFACE_OUTPUT_MAX_BYTES,
@@ -57,23 +56,6 @@ it('captures one exact complete batch as a caller-independent copy', () => {
     expectTypeOf<SurfaceTarget>().toEqualTypeOf<'claudecode' | 'codexcli' | 'opencode' | 'cursor' | 'grokcli'>()
     expectTypeOf<SurfaceFeature>().toEqualTypeOf<'rules' | 'mcp' | 'subagents' | 'skills' | 'hooks' | 'permissions'>()
     expectTypeOf<SurfaceSourceFile>().toMatchTypeOf<Readonly<{ path: string; bytes: string }>>()
-})
-
-it('captures only measured Claude plugin component families as an opt-in bundle', () => {
-    const batch = completeBatch()
-    const input = {
-        format: 'claudecode-plugin',
-        features: ['mcp', 'subagents', 'skills', 'hooks'],
-        sources: batch.sources.filter(source => !source.path.startsWith('rules/') && source.path !== 'permissions.jsonc'),
-        expectedOutputs: ['.mcp.json', 'agents/reviewer.md', 'hooks/hooks.json', 'skills/check/SKILL.md'],
-    }
-
-    const captured = captureSurfaceBundleBatch(input)
-
-    expect(captured).toEqual(input)
-    expect(captureSurfaceBundleBatch({ ...input, features: ['rules'] })).toBeUndefined()
-    expect(captureSurfaceBundleBatch({ ...input, format: 'unknown' })).toBeUndefined()
-    expect(captureSurfaceBundleBatch({ ...input, expectedOutputs: [] })).toBeUndefined()
 })
 
 it('rejects non-own input without invoking accessors', () => {

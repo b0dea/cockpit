@@ -128,9 +128,6 @@ export function renderCockpitSchema(): string {
         { path: 'surfaces.overlays[].sources', rule: 'feature_namespace_and_complete_skill_definitions' },
         { path: 'surfaces.overlays[].sources[].bytes', rule: 'utf8_byte_length_at_most_65536' },
         { path: 'surfaces.overlays[].replaces.name', rule: 'matches_declaration_name' },
-        { path: 'surfaces.harnesses[].name', rule: 'unique' },
-        { path: 'surfaces.harnesses[].capabilities', rule: 'one_row_per_surface_feature' },
-        { path: 'surfaces.harnesses[].capabilities[].spelling', rule: 'unique_when_emitted' },
     ]
     schema['x-cockpit-editor-limitations'] = [
         { path: 'sibling[].environment_files[].instance', rule: 'unique' },
@@ -150,9 +147,6 @@ export function renderCockpitSchema(): string {
         { path: 'surfaces.overlays[].sources', rule: 'feature_namespace_and_complete_skill_definitions' },
         { path: 'surfaces.overlays[].sources[].bytes', rule: 'utf8_byte_length_at_most_65536' },
         { path: 'surfaces.overlays[].replaces.name', rule: 'matches_declaration_name' },
-        { path: 'surfaces.harnesses[].name', rule: 'unique' },
-        { path: 'surfaces.harnesses[].capabilities', rule: 'one_row_per_surface_feature' },
-        { path: 'surfaces.harnesses[].capabilities[].spelling', rule: 'unique_when_emitted' },
     ]
 
     // Found by shape, so every table that embeds a provenance carries the rule, wherever it sits.

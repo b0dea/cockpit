@@ -39,7 +39,7 @@ function input() {
         skillReferences: [],
         testing: null,
         instructions: null,
-        customHarnesses: [], customReceipts: [], sourceEvidence: [],
+        sourceEvidence: [],
     }
 }
 
@@ -229,43 +229,6 @@ describe('surface rendering', () => {
         expect(result).toMatchObject({ kind: 'complete' })
         if (result.kind !== 'complete') return
         expect(result.entries.filter(entry => entry.path.startsWith('custom/')).map(entry => entry.path)).toEqual(['custom/Z.md', 'custom/a.md'])
-    })
-
-    it('preserves custom output scope and validates its declared module and result digest', () => {
-        const value = input()
-        value.configuredHarnesses.push('review-shell')
-        value.configuredHarnesses.sort()
-        const unavailable = ['mcp', 'subagents', 'skills', 'hooks', 'permissions'].map(feature => ({
-            feature, state: 'unavailable', measured_on: '2026-09-26', reason: `No ${feature} mechanism is available`,
-        }))
-        value.customHarnesses.push({
-            name: 'review-shell',
-            capabilities: [{ feature: 'rules', state: 'instructed', measured_on: '2026-09-26', spelling: 'review.txt', control: 'controls/review.json', mechanism: { module: 'adapters/review.mjs', export: 'renderRules' } }, ...unavailable],
-        } as never)
-        const files = [{ path: 'review.txt', bytes: 'review\n', sha256: digest('review\n'), scope: 'scoped' }]
-        value.customReceipts.push({ harness: 'review-shell', feature: 'rules', state: 'instructed', measuredOn: '2026-09-26',
-            module: 'adapters/review.mjs', export: 'renderRules', sourceSha256: 'a'.repeat(64), resultSha256: surfaceModelSha256(files)!, files } as never)
-        const result = renderSurfaceSet(value)
-        expect(result).toMatchObject({ kind: 'complete', inputs: [expect.objectContaining({ kind: 'custom-harness', harness: 'review-shell' })] })
-        if (result.kind === 'complete') {
-            expect(result.entries.find(entry => entry.path === 'review.txt')).toMatchObject({ scope: 'scoped' })
-        }
-
-        const conflictingFiles = [
-            { path: 'review.txt', bytes: 'review\n', sha256: digest('review\n'), scope: 'scoped' },
-            { path: 'review.txt', bytes: 'review\n', sha256: digest('review\n'), scope: 'always' },
-        ]
-        value.customReceipts[0] = { ...(value.customReceipts[0] as unknown as Record<string, unknown>),
-            files: conflictingFiles, resultSha256: surfaceModelSha256(conflictingFiles)! } as never
-        expect(renderSurfaceSet(value)).toMatchObject({ kind: 'refusal', diagnostic: { code: 'SURFACE_PATH_CONFLICT', target: 'review.txt' } })
-
-        value.customReceipts[0] = { ...(value.customReceipts[0] as unknown as Record<string, unknown>),
-            export: 'missingExport', files, resultSha256: surfaceModelSha256(files)! } as never
-        expect(renderSurfaceSet(value)).toMatchObject({ kind: 'refusal' })
-
-        value.customReceipts[0] = { ...(value.customReceipts[0] as unknown as Record<string, unknown>), export: 'renderRules',
-            files: [], resultSha256: surfaceModelSha256([])! } as never
-        expect(renderSurfaceSet(value)).toMatchObject({ kind: 'refusal' })
     })
 
     it('retains an exact Codex tool allowlist when replacing the browser launch transport', () => {

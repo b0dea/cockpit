@@ -113,12 +113,9 @@ function opencode(members: Array<{ key: string; valueBytes: string }>): SurfaceD
 }
 
 describe('surface ownership', () => {
-    it('accepts the complete shipped estate plus the maximum custom harness set', () => {
-        const custom = Array.from({ length: 64 }, (_, index) => `custom-${String(index).padStart(2, '0')}`)
-        expect(classifySurfaceOwnership({
-            configuredHarnesses: [...SURFACE_TARGETS, ...custom].sort(),
-            entries: [],
-        })).toMatchObject({ kind: 'complete' })
+    it('accepts the complete shipped estate and refuses a harness cockpit does not ship', () => {
+        expect(classifySurfaceOwnership({ configuredHarnesses: [...SURFACE_TARGETS].sort(), entries: [] })).toMatchObject({ kind: 'complete' })
+        expect(classifySurfaceOwnership({ configuredHarnesses: [...SURFACE_TARGETS, 'team-tool'].sort(), entries: [] })).toMatchObject({ kind: 'refusal' })
     })
 
     it('requires sorted configured harness sets and refuses whole-file ownership of forced shared paths', () => {

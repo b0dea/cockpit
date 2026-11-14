@@ -74,30 +74,6 @@ export function expectedSurfaceOutputs(
     return Object.fromEntries(tools.map(target => [target, [...new Set(rows[target])].sort(compareCodeUnits)])) as Readonly<Partial<Record<SurfaceTarget, readonly string[]>>>
 }
 
-export function expectedClaudePluginOutputs(
-    features: readonly SurfaceFeature[],
-    sources: readonly SurfaceSourceFile[],
-): readonly string[] {
-    const rows: string[] = []
-    if (features.includes('mcp')) rows.push('.mcp.json')
-    if (features.includes('hooks')) rows.push('hooks/hooks.json')
-    if (features.includes('subagents')) for (const source of sources.filter(row => row.path.startsWith('subagents/'))) {
-        rows.push(`agents/${source.path.slice('subagents/'.length)}`)
-    }
-    if (features.includes('skills')) for (const source of sources.filter(row => row.path.startsWith('skills/'))) {
-        rows.push(source.path)
-    }
-    return [...new Set(rows)].sort(compareCodeUnits)
-}
-
-export function claudePluginManifest(): Readonly<{ bytes: string; sha256: string }> {
-    const bytes = `${JSON.stringify({
-        name: 'cockpit-surfaces',
-        description: 'Generated cockpit agent surfaces.',
-    }, null, 2)}\n`
-    return { bytes, sha256: sha256(bytes) }
-}
-
 // A rules overlay is written into the instruction file every harness loads at start, so Rulesync
 // must see it as a root rule. A rule that already says `root: false` (Rulesync's default spelling)
 // is still always loaded; one that narrows itself with `globs` cannot be, so it is refused by name

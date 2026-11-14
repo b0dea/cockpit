@@ -950,8 +950,7 @@ What the checks compare:
   path is still cloned by `setup`, but `preflight` refuses it: declare the hosted https or ssh
   remote, or remove `remote` and set `acquire = "none"`.
 - **Surfaces.** Generated files must match the ownership manifest and stay within the guide line cap
-  and the built-in skill caps; missing or edited ones block health. Custom outputs and plugin bundle
-  copies are checked for being current, but no always-loaded cap applies. Whether each harness
+  and the built-in skill caps; missing or edited ones block health. Whether each harness
   enforces the files is in the [capability matrix](capability-matrix.md).
 - **Grants.** Directory grants are checked only when a sibling declares `mount = "always"`.
 - **Mounts and ports.** Declared binds must match the current mounts exactly; no bind mounts passes

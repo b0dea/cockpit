@@ -13,74 +13,34 @@ import { CockpitConfig } from '../schema.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { generatedApplicationProjection } from '../environment/generated-application/authorities.js'
 import { type GeneratedStaleRemovalApprovalRequest } from '../environment/generated-application/shared.js'
-import { observeGeneratedApplicationSurfaces } from '../environment/generated-application/surface-observation.js'
 import { surfaceDeclarationSha256 } from '../surfaces/merge.js'
 import { DEFAULT_SURFACE_TOOLS } from '../surfaces/harness-registry.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment, syncTeamGeneratedEnvironment } from './command.js'
 import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
 
-const { roots, cleanup, publicationGroups, consumer, customHarness, enforcedCustomHarness,
-    unavailableCustomHarness, surfaceConsumer, digest, writeCustomModule, ownership, bytes } = createGeneratedCommandFixture()
+const { roots, cleanup, publicationGroups, consumer, surfaceConsumer, digest, ownership, bytes } = createGeneratedCommandFixture()
 afterEach(cleanup)
+
+// Cursor is listed beside the default tools so that dropping it again leaves its whole files stale.
+const WITH_CURSOR = '\n[surfaces]\ntools = ["claudecode", "codexcli", "opencode", "cursor"]\n'
+const withoutCursor = (declaration: string) => declaration.replace(', "cursor"]', ']')
 
 describe('generated environment command', () => {
 describe('public surface publication transaction', () => {
-        it.each([
-            { path: 'package.json', state: 'missing' },
-            { path: 'package.json', state: 'unchanged' },
-            { path: 'package.json', state: 'stale' },
-            { path: '.GITIGNORE', state: 'missing' },
-        ])('preserves metadata when its $state destination overlaps generated $path', async ({ path, state }) => {
-            const manifest = '{"private":true}\n'
-            const fixture = await surfaceConsumer('metadata-output', {
-                custom: customHarness('adapters/synthetic.mjs', 'renderRules', path),
-            })
-            await writeCustomModule(fixture.root, [{ path, bytes: manifest }])
-            if (state !== 'missing') {
-                expect(await syncGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
-                if (state === 'stale') {
-                    const config = await readFile(fixture.configPath, 'utf8')
-                    await writeFile(fixture.configPath, config.slice(0, config.indexOf('[[surfaces.harnesses]]')))
-                }
-            }
-            const outcome = await syncTeamGeneratedEnvironment({ configPath: fixture.configPath }, {
-                authorizeStaleRemoval: async request => ({ format: 'cockpit-stale-removal-approval/v1', digest: request.digest }),
-            })
-            if (state === 'missing') await expect(lstat(join(fixture.root, 'package.json'))).rejects.toMatchObject({ code: 'ENOENT' })
-            else expect(await readFile(join(fixture.root, 'package.json'), 'utf8')).toBe(manifest)
-            await expect(lstat(join(fixture.root, '.gitignore'))).rejects.toMatchObject({ code: 'ENOENT' })
-            expect(outcome).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'TEAM_METADATA_UNAVAILABLE' })] })
-        })
-
-        it('refuses pending metadata writes that are authenticated custom inputs', async () => {
-            const manifest = '{"private":true}\n'
-            const fixture = await surfaceConsumer('metadata-input', {
-                custom: enforcedCustomHarness('adapters/synthetic.mjs', digest(manifest), 'package.json'),
-            })
-            await writeCustomModule(fixture.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\n' }])
-            await writeFile(join(fixture.root, 'package.json'), manifest)
-            await writeFile(join(fixture.root, '.gitignore'), 'operator-owned\n')
-
-            expect(await syncTeamGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({
-                kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'TEAM_METADATA_UNAVAILABLE', target: 'package.json' })],
-            })
-            expect(await readFile(join(fixture.root, 'package.json'), 'utf8')).toBe(manifest)
-            expect(await readFile(join(fixture.root, '.gitignore'), 'utf8')).toBe('operator-owned\n')
-            await expect(lstat(join(fixture.root, 'custom/rules.md'))).rejects.toMatchObject({ code: 'ENOENT' })
-        })
-
         it('admits exact stale removal once before applying pending team metadata', async () => {
-            const fixture = await surfaceConsumer('metadata-stale-approval', { custom: customHarness('adapters/synthetic.mjs') })
-            await writeCustomModule(fixture.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\n' }])
-            expect(await syncTeamGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
-            const config = await readFile(fixture.configPath, 'utf8')
-            const removed = config.slice(0, config.indexOf('[[surfaces.harnesses]]'))
+            const fixture = await surfaceConsumer('metadata-stale-approval', { custom: WITH_CURSOR })
+            const first = await syncTeamGeneratedEnvironment({ configPath: fixture.configPath })
+            expect(first).toMatchObject({ kind: 'complete' })
+            if (first.kind !== 'complete') return
+            const cursorFile = first.result.paths.find(path => path.startsWith('.cursor/'))!
+            expect(cursorFile).toBeDefined()
+            const removed = withoutCursor(await readFile(fixture.configPath, 'utf8'))
             await writeFile(fixture.configPath, removed)
-            // Removing a harness widens what agents may do, so this stands for the sync a person confirmed.
+            // Dropping a tool may widen what agents do, so this stands for the sync a person confirmed.
             const confirmed = { configPath: fixture.configPath, guardWidening: { configSha256: createHash('sha256').update(removed).digest('hex') } }
             const manifest = '{"private":true}\n'
             await writeFile(join(fixture.root, 'package.json'), manifest)
-            const before = await bytes(fixture.root, ['package.json', '.gitignore', 'custom/rules.md', '.cockpit/generated-environment-ownership.json'])
+            const before = await bytes(fixture.root, ['package.json', '.gitignore', cursorFile, '.cockpit/generated-environment-ownership.json'])
             expect(await syncTeamGeneratedEnvironment(confirmed)).toMatchObject({
                 kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_STALE_APPROVAL_REQUIRED' })],
             })
@@ -96,96 +56,8 @@ describe('public surface publication transaction', () => {
             expect(outcome, JSON.stringify(outcome.diagnostics)).toMatchObject({ kind: 'complete' })
             expect(approvals).toBe(1)
             expect(await readFile(join(fixture.root, 'package.json'), 'utf8')).not.toBe(manifest)
-            await expect(lstat(join(fixture.root, 'custom/rules.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+            await expect(lstat(join(fixture.root, cursorFile))).rejects.toMatchObject({ code: 'ENOENT' })
         })
-
-        it('confines custom check writes to scratch for a self-contained module', async () => {
-            const fixture = await surfaceConsumer('custom-read-only', { custom: customHarness('adapters/synthetic.mjs', 'renderRules', 'custom/alpha/SKILL.md') })
-            const output = [{ path: 'custom/alpha/SKILL.md', bytes: 'custom/alpha/SKILL.md\nscratch verified\n' }]
-            const modulePath = join(fixture.root, await writeCustomModule(fixture.root, output))
-            const original = await readFile(modulePath, 'utf8')
-            await writeFile(modulePath, `import { writeFile, readFile } from 'node:fs/promises'
-const marker = "scratch verified"
-${original.replace('  return {', `  await writeFile('scratch-proof', marker)
-  if (await readFile('scratch-proof', 'utf8') !== marker) throw new Error('scratch readback')
-  return {`)}`)
-            const steps: Parameters<typeof executeProbe>[0][] = []
-            const adapters = { execute: async (step: Parameters<typeof executeProbe>[0]) => {
-                if (step.id.startsWith('custom-surface-')) steps.push(step)
-                return executeProbe(step)
-            } }
-            const synced = await syncGeneratedEnvironment({ configPath: fixture.configPath }, adapters)
-            expect(synced, JSON.stringify(synced)).toMatchObject({ kind: 'complete' })
-            if (synced.kind !== 'complete') throw new Error('custom publication unavailable')
-            const skills = observeGeneratedApplicationSurfaces(synced.result.application)
-                ?.find(row => row.code === 'SKILL_BUDGET_UNAVAILABLE')
-            expect(skills).toMatchObject({ observed: { state: 'available', value: {
-                inventory: expect.any(Array), costs: expect.any(Array),
-            } } })
-            expect(JSON.stringify(skills)).not.toContain('custom/alpha/SKILL.md')
-            expect(synced.result.application.surfaceSelftest.entries).toContainEqual(expect.objectContaining({
-                path: 'custom/alpha/SKILL.md', sha256: digest(output[0].bytes),
-            }))
-            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath, dryRun: true }, adapters)).toMatchObject({ kind: 'complete' })
-            expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
-            expect(steps).toHaveLength(2)
-            for (const step of steps) {
-                expect(step.cwd).not.toBe(fixture.root)
-                expect(step.argv).toContain(`--allow-fs-write=${step.cwd}`)
-                expect(step.argv.filter(argument => argument.startsWith('--allow-fs-write='))).toHaveLength(1)
-                expect(step.argv.some(argument => argument === '--permission' || argument === '--experimental-permission')).toBe(true)
-                expect(step.argv).not.toEqual(expect.arrayContaining(['--allow-child-process', '--allow-worker', '--allow-addons']))
-                for (const grant of ['--allow-child-process', '--allow-worker', '--allow-addons']) expect(step.argv).not.toContain(grant)
-                await expect(lstat(step.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
-            }
-            await expect(lstat(join(fixture.root, 'scratch-proof'))).rejects.toMatchObject({ code: 'ENOENT' })
-            const before = await readFile(join(fixture.root, 'unmanaged.txt'), 'utf8')
-            for (const target of ['unmanaged.txt', 'attempted-output.txt']) {
-                await writeFile(modulePath, `import { writeFile } from 'node:fs/promises'
-${original.replace('  return {', `  await writeFile(${JSON.stringify(join(fixture.root, target))}, 'attempted consumer write')
-  return {`)}`)
-                expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({
-                    kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'SURFACE_CUSTOM_REFUSED' })],
-                })
-                expect(await readFile(join(fixture.root, 'unmanaged.txt'), 'utf8')).toBe(before)
-                await expect(lstat(join(fixture.root, 'attempted-output.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
-            }
-        }, 240_000)
-
-        it('refuses a custom module with an adjacent dependency', async () => {
-            const fixture = await surfaceConsumer('custom-adjacent-dependency', { custom: customHarness('adapters/synthetic.mjs') })
-            const modulePath = join(fixture.root, await writeCustomModule(fixture.root, [{ path: 'custom/seed.md', bytes: 'custom/rules.md\n' }]))
-            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
-            await writeCustomModule(fixture.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\n' }])
-            const original = await readFile(modulePath, 'utf8')
-            await writeFile(join(fixture.root, 'adapters/dependency.mjs'), 'export const marker = "dependency loaded"\n')
-            await writeFile(modulePath, `import { marker } from './dependency.mjs'\n${original.replace('  return {', `  if (marker !== 'dependency loaded') throw new Error('dependency')\n  return {`)}`)
-
-            expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({
-                kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'SURFACE_CUSTOM_REFUSED' })],
-            })
-            await expect(lstat(join(fixture.root, 'custom/rules.md'))).rejects.toMatchObject({ code: 'ENOENT' })
-        }, 120_000)
-
-        it('refuses custom dispatch when filesystem permission flags are unsupported', async () => {
-            const fixture = await surfaceConsumer('custom-permission-unavailable', { custom: customHarness('adapters/synthetic.mjs') })
-            await writeCustomModule(fixture.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\n' }])
-            let invocations = 0
-            const descriptor = Object.getOwnPropertyDescriptor(process, 'allowedNodeEnvironmentFlags')!
-            const adapters = { execute: async (step: Parameters<typeof executeProbe>[0]) => {
-                if (step.id.startsWith('custom-surface-')) invocations += 1
-                return executeProbe(step)
-            } }
-            try {
-                Object.defineProperty(process, 'allowedNodeEnvironmentFlags', { configurable: true, value: new Set() })
-                expect(await syncGeneratedEnvironment({ configPath: fixture.configPath, dryRun: true }, adapters)).toMatchObject({
-                    kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'SURFACE_CUSTOM_REFUSED' })],
-                })
-                expect(invocations).toBe(0)
-            } finally {
-                Object.defineProperty(process, 'allowedNodeEnvironmentFlags', descriptor)
-            }
-        }, 120_000)
 
         it.each([false, true])('issues active surface overrides and changed originals only from the authenticated merge (additional skill: %s)', async additionalSkill => {
             const fixture = await surfaceConsumer('surface-override-projection')
@@ -253,110 +125,18 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             expect(pinned.diagnostics).not.toContainEqual(expect.objectContaining({ code: 'OVERRIDDEN_CORE_CHANGED' }))
         }, 120_000)
 
-        it('authenticates enforced custom evidence before invoking its declared module', async () => {
-            const module = 'adapters/synthetic.mjs'
-            const evidenceReference = 'evidence/rules.json'
-            const evidenceBytes = '{"harness":"synthetic-harness","feature":"rules","measuredOn":"2026-09-26"}\n'
-            const evidenceSha256 = digest(evidenceBytes)
-            const fixture = await surfaceConsumer('custom-enforced-evidence', {
-                custom: enforcedCustomHarness(module, evidenceSha256, evidenceReference),
-            })
-            await writeCustomModule(fixture.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\nenforced\n' }])
-            let invocations = 0
-            const adapters = {
-                execute: async (step: Parameters<typeof executeProbe>[0]) => {
-                    if (step.id.startsWith('custom-surface-')) invocations += 1
-                    return executeProbe(step)
-                },
-            }
-
-            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath }, adapters)).toMatchObject({
-                kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'SURFACE_CUSTOM_REFUSED' })],
-            })
-            expect(invocations).toBe(0)
-            await mkdir(join(fixture.root, 'evidence'))
-            await writeFile(join(fixture.root, evidenceReference), 'mismatched evidence\n')
-            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath }, adapters)).toMatchObject({
-                kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'SURFACE_CUSTOM_REFUSED' })],
-            })
-            expect(invocations).toBe(0)
-
-            await writeFile(join(fixture.root, evidenceReference), evidenceBytes)
-            const synced = await syncGeneratedEnvironment({ configPath: fixture.configPath }, adapters)
-            expect(synced, JSON.stringify(synced.diagnostics)).toMatchObject({ kind: 'complete' })
-            expect(invocations).toBe(1)
-            if (synced.kind !== 'complete') return
-            expect(synced.result.application.surfaceSelftest.custom).toContainEqual(expect.objectContaining({
-                harness: 'synthetic-harness', feature: 'rules', state: 'enforced', measuredOn: '2026-09-26',
-                evidence: { reference: evidenceReference, sha256: evidenceSha256 },
-            }))
-        }, 240_000)
-
-        it('publishes an opted-in Claude plugin bundle without claiming unmanaged bundle files', async () => {
-            const fixture = await surfaceConsumer('claude-plugin-bundle', { bundles: true })
-            const bundleRoot = '.cockpit/bundles/claudecode-plugin'
-            const manifest = `${bundleRoot}/.claude-plugin/plugin.json`
-            const skill = `${bundleRoot}/skills/cockpit-setup/SKILL.md`
-            const unmanaged = `${bundleRoot}/consumer-note.txt`
-
-            const preview = await syncGeneratedEnvironment({ configPath: fixture.configPath, dryRun: true })
-            expect(preview, JSON.stringify(preview.diagnostics)).toMatchObject({ kind: 'complete', result: { dryRun: true } })
-            if (preview.kind !== 'complete') return
-            expect(preview.result.changes).toEqual(expect.arrayContaining([
-                { operation: 'write', path: manifest },
-                { operation: 'write', path: skill },
-                // The skill tells the agent to read this reference, so the bundle carries it.
-                { operation: 'write', path: `${bundleRoot}/skills/cockpit-setup/references/test-data-and-personas.md` },
-            ]))
-            await expect(lstat(join(fixture.root, manifest))).rejects.toMatchObject({ code: 'ENOENT' })
-
-            const synced = await syncGeneratedEnvironment({ configPath: fixture.configPath })
-            expect(synced).toMatchObject({ kind: 'complete' })
-            if (synced.kind !== 'complete') throw new Error('plugin publication unavailable')
-            const skills = observeGeneratedApplicationSurfaces(synced.result.application)
-                ?.find(row => row.code === 'SKILL_BUDGET_UNAVAILABLE')
-            expect(skills).toMatchObject({ observed: { state: 'available', value: { inventory: expect.any(Array) } } })
-            expect(JSON.stringify(skills)).not.toContain(bundleRoot)
-            expect(synced.result.application.surfaceSelftest.entries).toContainEqual(expect.objectContaining({ path: skill }))
-            expect(JSON.parse(await readFile(join(fixture.root, manifest), 'utf8'))).toEqual({
-                name: 'cockpit-surfaces',
-                description: 'Generated cockpit agent surfaces.',
-            })
-            await writeFile(join(fixture.root, unmanaged), 'consumer owned\n')
-            expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
-            expect(await readFile(join(fixture.root, unmanaged), 'utf8')).toBe('consumer owned\n')
-
-            await writeFile(join(fixture.root, skill), 'changed\n')
-            expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({
-                kind: 'refusal', diagnostics: [expect.objectContaining({ target: skill })],
-            })
-            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({
-                kind: 'refusal', diagnostics: [expect.objectContaining({ target: skill })],
-            })
-            expect(await readFile(join(fixture.root, skill), 'utf8')).toBe('changed\n')
-            expect(await readFile(join(fixture.root, unmanaged), 'utf8')).toBe('consumer owned\n')
-        }, 360_000)
-
         it('projects authenticated selftest inputs without issuing cloned authority', async () => {
-            const fixture = await surfaceConsumer('selftest-projection', {
-                rules: true, custom: customHarness('adapters/synthetic.mjs'),
-            })
-            await writeCustomModule(fixture.root, [{ path: 'custom/rules.md', bytes: 'synthetic custom rules\n' }])
-            const unavailable = await surfaceConsumer('selftest-unavailable', { custom: unavailableCustomHarness() })
-            const [synced, absent] = await Promise.all([
-                syncGeneratedEnvironment({ configPath: fixture.configPath }),
-                syncGeneratedEnvironment({ configPath: unavailable.configPath }),
-            ])
+            const fixture = await surfaceConsumer('selftest-projection', { rules: true })
+            const synced = await syncGeneratedEnvironment({ configPath: fixture.configPath })
             expect(synced.kind).toBe('complete')
-            expect(absent.kind).toBe('complete')
-            if (synced.kind !== 'complete' || absent.kind !== 'complete') throw new Error('selftest projection producer refused')
+            if (synced.kind !== 'complete') throw new Error('selftest projection producer refused')
             const application = generatedApplicationProjection(synced.result.application)
             expect(application).toBe(synced.result.application)
             expect(generatedApplicationProjection({ ...application })).toBeUndefined()
             const projection = application!.surfaceSelftest
-            const { schema, configuredHarnesses, declarations, entries, custom, guardProbeHost, guardHookCommand, cockpitHookCommands, rootGuideFile } = projection
+            const { schema, configuredHarnesses, entries, guardProbeHost, guardHookCommand, cockpitHookCommands, rootGuideFile } = projection
             expect(projection.manifestSha256).toBe(createHash('sha256').update(JSON.stringify({
-                schema, configuredHarnesses, declarations, entries, custom, guardProbeHost, guardHookCommand, cockpitHookCommands, rootGuideFile,
+                schema, configuredHarnesses, entries, guardProbeHost, guardHookCommand, cockpitHookCommands, rootGuideFile,
             })).digest('hex'))
             // The digest binds the root AGENTS.md as the tools load it, exactly as sync wrote it.
             expect(rootGuideFile).toBe(await readFile(join(fixture.root, 'AGENTS.md'), 'utf8'))
@@ -367,56 +147,42 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             expect(settings?.kind === 'file' && JSON.parse(settings.bytes).hooks.PreToolUse.flatMap((group: { hooks: { command: string }[] }) => group.hooks)
                 .filter((hook: { command: string }) => hook.command === guardHookCommand)).toHaveLength(1)
             expect(guardHookCommand).toContain('.cockpit/guards/bash-guard.sh')
-            expect(configuredHarnesses).toEqual([...DEFAULT_SURFACE_TOOLS, 'synthetic-harness'].sort())
-            expect(declarations).toHaveLength(1)
-            expect(declarations[0]?.capabilities).toHaveLength(6)
-            expect(custom).toHaveLength(1)
-            expect(custom[0]).toMatchObject({
-                harness: 'synthetic-harness', feature: 'rules', state: 'instructed',
-                module: 'adapters/synthetic.mjs', export: 'renderRules', measuredOn: '2026-09-26',
-                sourceSha256: createHash('sha256').update(await readFile(join(fixture.root, 'adapters/synthetic.mjs'))).digest('hex'),
-                sources: [{ path: 'rules/synthetic.md', bytes: 'Read the synthetic sibling guide before editing.\n' }],
-            })
-            expect(entries).toContainEqual(expect.objectContaining({ path: 'custom/rules.md', bytes: 'synthetic custom rules\n' }))
+            expect(configuredHarnesses).toEqual([...DEFAULT_SURFACE_TOOLS].sort())
             const checked = await checkGeneratedEnvironment({ configPath: fixture.configPath })
             expect(checked.kind).toBe('complete')
             if (checked.kind !== 'complete') throw new Error('selftest projection check refused')
             expect(checked.result.application.surfaceSelftest).toEqual(projection)
-            const unavailableProjection = absent.result.application.surfaceSelftest
-            expect(unavailableProjection.custom).toEqual([])
-            expect(unavailableProjection.declarations[0]?.capabilities.every(row => row.state === 'unavailable')).toBe(true)
-            expect(unavailableProjection.entries.some(row => row.harnesses.includes('synthetic-harness'))).toBe(false)
         }, 180_000)
 
         it('reconciles generated whole files and copied sibling guides and removes exact stale ownership', async () => {
-            const module = 'adapters/synthetic.mjs'
             // A person approves stale deletions here, so a plain sync refuses one and check names the approving command.
             const first = await surfaceConsumer('surface-reconcile', { rules: true,
-                custom: `\n[autonomy]\nstale_delete = "person"\n${customHarness(module)}` })
-            await writeCustomModule(first.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\nfirst\n' }])
+                custom: `\n[autonomy]\nstale_delete = "person"\n${WITH_CURSOR}` })
 
             const synced = await syncGeneratedEnvironment({ configPath: first.configPath })
             expect(synced).toMatchObject({ kind: 'complete' })
             if (synced.kind !== 'complete') return
-            expect(synced.result.paths).toEqual(expect.arrayContaining(['custom/rules.md', 'AGENTS.md']))
+            const cursorFiles = synced.result.paths.filter(path => path.startsWith('.cursor/'))
+            const cursorFile = cursorFiles[0]!
+            expect(synced.result.paths).toEqual(expect.arrayContaining([cursorFile, 'AGENTS.md']))
             expect(synced.result.paths.some(path => path.startsWith('.sibling-'))).toBe(false)
-            const customRules = await readFile(join(first.root, 'custom/rules.md'))
+            const cursorBytes = await readFile(join(first.root, cursorFile))
             expect(await readFile(join(first.root, 'AGENTS.md'), 'utf8')).toContain('## Instructions for sibling `app` (its AGENTS.md)')
             const ledger = await ownership(first.root)
-            const reconciledPaths = new Set(['custom/rules.md'])
+            const reconciledPaths = new Set([cursorFile])
             const reconciledOwnership = (ledger.entries as readonly { path: string }[])
                 .filter(({ path }) => reconciledPaths.has(path))
             expect(ledger).toMatchObject({ format: 'cockpit-generated-ownership/v3' })
-            expect(JSON.stringify(ledger)).toContain('custom/rules.md')
+            expect(JSON.stringify(ledger)).toContain(cursorFile)
             expect((await readdir(join(first.root, '.cockpit'))).filter((path) => path.includes('ownership'))).toEqual([
                 'generated-environment-ownership.json',
             ])
 
-            await rm(join(first.root, 'custom/rules.md'))
-            await expect(lstat(join(first.root, 'custom/rules.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+            await rm(join(first.root, cursorFile))
+            await expect(lstat(join(first.root, cursorFile))).rejects.toMatchObject({ code: 'ENOENT' })
             const repaired = await syncGeneratedEnvironment({ configPath: first.configPath })
             expect(repaired, JSON.stringify(repaired.diagnostics)).toMatchObject({ kind: 'complete' })
-            await expect(readFile(join(first.root, 'custom/rules.md'))).resolves.toEqual(customRules)
+            await expect(readFile(join(first.root, cursorFile))).resolves.toEqual(cursorBytes)
             const repairedLedger = await ownership(first.root)
             expect((repairedLedger.entries as readonly { path: string }[]).filter(({ path }) => reconciledPaths.has(path)))
                 .toEqual(reconciledOwnership)
@@ -443,15 +209,12 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
                 await rename(clone, first.root)
             }
 
-            const active = await readFile(first.configPath, 'utf8')
-            const withoutSurfaces = active
-                .slice(0, active.indexOf('[[surfaces.harnesses]]'))
+            const withoutSurfaces = withoutCursor(await readFile(first.configPath, 'utf8'))
                 .replace('guides = ["AGENTS.md"]', 'guides = []')
             await writeFile(first.configPath, withoutSurfaces)
             // Plain sync refuses a stale removal, so check names the command that can approve it.
             expect(await checkGeneratedEnvironment({ configPath: first.configPath })).toMatchObject({ kind: 'refusal',
                 diagnostics: [expect.objectContaining({ code: 'GENERATED_ARTIFACT_DRIFT', fix: expect.stringContaining('sync --config <your cockpit.toml> --interactive') })] })
-            const staleCustom = await readFile(join(first.root, 'custom/rules.md'))
             let staleApprovalRequest: GeneratedStaleRemovalApprovalRequest | undefined
             const removed = await syncGeneratedEnvironment({ configPath: first.configPath }, {
                 authorizeStaleRemoval: async request => {
@@ -460,10 +223,9 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
                 },
             })
             expect(removed, JSON.stringify(removed.diagnostics)).toMatchObject({ kind: 'complete' })
-            expect(staleApprovalRequest).toMatchObject({
-                entries: [{ path: 'custom/rules.md', current: { kind: 'file', sha256: digest(staleCustom) } }],
-            })
-            await expect(lstat(join(first.root, 'custom/rules.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+            expect(staleApprovalRequest?.entries.map(entry => entry.path).sort()).toEqual([...cursorFiles].sort())
+            expect(staleApprovalRequest?.entries).toContainEqual(expect.objectContaining({ path: cursorFile, current: expect.objectContaining({ kind: 'file', sha256: digest(cursorBytes) }) }))
+            for (const path of cursorFiles) await expect(lstat(join(first.root, path))).rejects.toMatchObject({ code: 'ENOENT' })
             expect(await readFile(join(first.root, 'AGENTS.md'), 'utf8')).not.toContain('Instructions for sibling `app`')
         }, 180_000)
 
@@ -501,17 +263,17 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
         }, 180_000)
 
         it('refuses changed stale ownership and preserves consumer bytes', async () => {
-            const module = 'adapters/synthetic.mjs'
-            const changed = await surfaceConsumer('surface-stale-changed', { custom: customHarness(module) })
-            await writeCustomModule(changed.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\nowned\n' }])
-            expect(await syncGeneratedEnvironment({ configPath: changed.configPath })).toMatchObject({ kind: 'complete' })
-            const changedConfig = await readFile(changed.configPath, 'utf8')
-            await writeFile(changed.configPath, changedConfig.slice(0, changedConfig.indexOf('[[surfaces.harnesses]]')))
-            await writeFile(join(changed.root, 'custom/rules.md'), 'consumer bytes\n')
+            const changed = await surfaceConsumer('surface-stale-changed', { custom: WITH_CURSOR })
+            const synced = await syncGeneratedEnvironment({ configPath: changed.configPath })
+            expect(synced).toMatchObject({ kind: 'complete' })
+            if (synced.kind !== 'complete') return
+            const cursorFile = synced.result.paths.find(path => path.startsWith('.cursor/'))!
+            await writeFile(changed.configPath, withoutCursor(await readFile(changed.configPath, 'utf8')))
+            await writeFile(join(changed.root, cursorFile), 'consumer bytes\n')
             expect(await syncGeneratedEnvironment({ configPath: changed.configPath })).toMatchObject({
-                kind: 'refusal', diagnostics: [expect.objectContaining({ target: 'custom/rules.md' })],
+                kind: 'refusal', diagnostics: [expect.objectContaining({ target: cursorFile })],
             })
-            expect(await readFile(join(changed.root, 'custom/rules.md'), 'utf8')).toBe('consumer bytes\n')
+            expect(await readFile(join(changed.root, cursorFile), 'utf8')).toBe('consumer bytes\n')
         })
 
         it('preserves an active unmanaged Claude import without claiming ownership', async () => {

@@ -70,15 +70,6 @@ describe('project command scalar schema parity', () => {
     })
 })
 
-type JsonObject = Record<string, unknown>
-const allSurfaceFeatures = ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const
-
-function unavailableCapabilities() {
-    return allSurfaceFeatures.map((feature) => ({
-        feature, state: 'unavailable' as const, measured_on: '2026-09-26', reason: `No ${feature} mechanism`,
-    }))
-}
-
 const derivedRowAndSeedRuntimeChecks = [
     { path: 'sibling[].derives.mcp_sources[].path', rule: 'unique_within_sibling' },
     { path: 'environment.seed', rule: 'requires_resettable_volumes' },
@@ -90,9 +81,6 @@ const surfaceRuntimeChecks = [
         { path: 'surfaces.overlays[].sources', rule: 'feature_namespace_and_complete_skill_definitions' },
     { path: 'surfaces.overlays[].sources[].bytes', rule: 'utf8_byte_length_at_most_65536' },
     { path: 'surfaces.overlays[].replaces.name', rule: 'matches_declaration_name' },
-    { path: 'surfaces.harnesses[].name', rule: 'unique' },
-    { path: 'surfaces.harnesses[].capabilities', rule: 'one_row_per_surface_feature' },
-    { path: 'surfaces.harnesses[].capabilities[].spelling', rule: 'unique_when_emitted' },
 ]
 
 // @ts-expect-error arbitrary strings are not valid sibling mount modes
@@ -101,6 +89,8 @@ const invalidSiblingMount: Sibling['mount'] = 'banana'
 const invalidConfigMount: CockpitConfig['sibling'][number]['mount'] = 'banana'
 void invalidSiblingMount
 void invalidConfigMount
+
+type JsonObject = Record<string, unknown>
 
 function object(value: unknown): JsonObject {
     expect(value).toBeTypeOf('object')
@@ -176,13 +166,6 @@ describe('the published cockpit schema', () => {
                     name: 'consumer-guide', feature: 'rules', source: 'surfaces/consumer-guide.json',
                     sources: [{ path: 'rules/consumer-guide.md', bytes: '# Consumer guide\n' }],
                 }],
-                harnesses: [{
-                    name: 'synthetic-harness', capabilities: [{
-                        feature: 'rules', state: 'instructed', measured_on: '2026-09-26',
-                        spelling: 'config/rules.md', control: 'controls/rules.json',
-                        mechanism: { module: 'adapters/synthetic.mjs', export: 'renderRules' },
-                    }, ...unavailableCapabilities().slice(1)],
-                }],
             },
         }
         expect(CockpitConfig.safeParse(config).success).toBe(true)
@@ -191,18 +174,7 @@ describe('the published cockpit schema', () => {
         const schema = JSON.parse(renderCockpitSchema())
         for (const metadata of ['x-cockpit-runtime-checks', 'x-cockpit-editor-limitations']) {
             expect(schema[metadata]).toContainEqual({ path: 'surfaces.overlays[].name', rule: 'unique' })
-            expect(schema[metadata]).toContainEqual({
-                path: 'surfaces.harnesses[].capabilities', rule: 'one_row_per_surface_feature',
-            })
         }
-    })
-
-    it.each(['claudecode', 'codexcli', 'opencode'])('rejects shipped custom harness identity %s in runtime and editor schemas', (name) => {
-        const config = { ...structuredClone(validConfig), surfaces: { harnesses: [{
-            name, capabilities: unavailableCapabilities(),
-        }] } }
-        expect(CockpitConfig.safeParse(config).success).toBe(false)
-        expect(editorAccepts(config)).toBe(false)
     })
 
     it('names the runtime-only source namespace relation for editors', () => {
@@ -218,66 +190,6 @@ describe('the published cockpit schema', () => {
                 path: 'surfaces.overlays[].sources', rule: 'feature_namespace_and_complete_skill_definitions',
             })
         }
-    })
-
-    it('keeps unavailable custom harness cells structurally free of emitted controls', () => {
-        const config = {
-            ...structuredClone(validConfig),
-            surfaces: { harnesses: [{
-                name: 'synthetic-harness', capabilities: unavailableCapabilities().map(
-                    (capability) => capability.feature === 'hooks' ? { ...capability, spelling: 'hooks.json' } : capability,
-                ),
-            }] },
-        }
-        expect(CockpitConfig.safeParse(config).success).toBe(false)
-        expect(editorAccepts(config)).toBe(false)
-    })
-
-    const capabilityBase = { feature: 'rules', measured_on: '2026-09-26' } as const
-    const mechanism = { module: 'adapters/synthetic.mjs', export: 'renderRules' }
-    const evidence = { reference: 'evidence/rules.json', sha256: 'a'.repeat(64) }
-    const emitted = { spelling: 'config/rules.md', control: 'controls/rules.json', mechanism }
-    const validCapabilities = {
-        enforced: { ...capabilityBase, ...emitted, state: 'enforced', evidence },
-        instructed: { ...capabilityBase, ...emitted, state: 'instructed' },
-        unavailable: { ...capabilityBase, state: 'unavailable', reason: 'No rules mechanism' },
-    } as const
-
-    function configWithRulesCapability(capability: JsonObject) {
-        return { ...structuredClone(validConfig), surfaces: { harnesses: [{
-            name: 'synthetic-harness', capabilities: [capability, ...unavailableCapabilities().slice(1)],
-        }] } }
-    }
-
-    it.each(Object.entries(validCapabilities))(
-        'accepts a valid %s custom harness capability in runtime and editor schemas',
-        (_state, capability) => {
-            const config = configWithRulesCapability(capability)
-            expect(CockpitConfig.safeParse(config).success).toBe(true)
-            expect(editorAccepts(config)).toBe(true)
-        },
-    )
-
-    it.each([
-        ['enforced missing evidence', { ...validCapabilities.enforced, evidence: undefined }],
-        ['enforced missing spelling', { ...validCapabilities.enforced, spelling: undefined }],
-        ['enforced missing control', { ...validCapabilities.enforced, control: undefined }],
-        ['enforced missing mechanism', { ...validCapabilities.enforced, mechanism: undefined }],
-        ['enforced with reason', { ...validCapabilities.enforced, reason: 'Not unavailable' }],
-        ['instructed missing spelling', { ...validCapabilities.instructed, spelling: undefined }],
-        ['instructed missing control', { ...validCapabilities.instructed, control: undefined }],
-        ['instructed missing mechanism', { ...validCapabilities.instructed, mechanism: undefined }],
-        ['instructed with evidence', { ...validCapabilities.instructed, evidence }],
-        ['instructed with reason', { ...validCapabilities.instructed, reason: 'Not unavailable' }],
-        ['unavailable missing reason', { ...validCapabilities.unavailable, reason: undefined }],
-        ['unavailable with spelling', { ...validCapabilities.unavailable, spelling: emitted.spelling }],
-        ['unavailable with control', { ...validCapabilities.unavailable, control: emitted.control }],
-        ['unavailable with mechanism', { ...validCapabilities.unavailable, mechanism }],
-        ['unavailable with evidence', { ...validCapabilities.unavailable, evidence }],
-    ])('rejects %s in runtime and editor schemas', (_label, capability) => {
-        const config = configWithRulesCapability(capability)
-        expect(CockpitConfig.safeParse(config).success).toBe(false)
-        expect(editorAccepts(config)).toBe(false)
     })
 
     it.each(['mcp', 'permissions'])('rejects raw %s overlays in runtime and editor schemas', (feature) => {

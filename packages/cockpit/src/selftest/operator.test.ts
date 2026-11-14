@@ -1,5 +1,6 @@
 import { PassThrough, Writable } from 'node:stream'
 import { describe, expect, it } from 'vitest'
+import { ENVIRONMENT_CODES } from '../environment/contract.js'
 import { runSelftestOperatorCommand, selftestApprovalCommands } from '../environment/selftest-application.js'
 import { nativeInputInvocation } from '../../libexec/native-selftest-input.mjs'
 
@@ -72,5 +73,55 @@ describe('selftest terminal review', () => {
             : [entry])
         const key = (value: unknown) => JSON.stringify(value)
         expect(expanded.map(key).sort()).toEqual(rows.map(key).sort())
+    })
+})
+
+describe('selftest operator admission', () => {
+    it('refuses JSON, CI and missing terminal authority before dispatch or approval', async () => {
+        let calls = 0
+        let approvals = 0
+        const input = { configPath: 'cockpit.toml', probeSpecificationsPath: 'probe.json', env: {} }
+        const handler = async () => {
+            calls += 1
+            return { status: 0, diagnostics: [], result: null }
+        }
+        const confirm = async () => { approvals += 1; return 'a'.repeat(64) }
+        const approvedIo = {
+            stderr: { write: () => true },
+            confirmSelftestExecutable: confirm,
+            confirmSelftestProbeSpecifications: confirm,
+        }
+        for (const options of [
+            { interactive: true, json: true, ci: undefined },
+            { interactive: true, json: false, ci: '1' },
+        ]) {
+            expect(await runSelftestOperatorCommand(input, options, approvedIo, handler)).toMatchObject({
+                status: 2, result: null,
+                diagnostics: [{ code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE }],
+            })
+        }
+        expect(await runSelftestOperatorCommand(input, { interactive: true, json: false, ci: undefined }, {
+            stderr: { write: () => true },
+            confirmSelftestExecutable: confirm,
+        }, handler)).toMatchObject({ status: 2, result: null })
+        expect(calls).toBe(0)
+        expect(approvals).toBe(0)
+    })
+
+    it('leaves noninteractive requests without independently supplied executable or probe approval', async () => {
+        const input = { configPath: 'cockpit.toml', probeSpecificationsPath: 'probe.json', env: {} }
+        let observed: unknown
+        let approvals = 0
+        const confirm = async () => { approvals += 1; return 'a'.repeat(64) }
+        expect(await runSelftestOperatorCommand(input, { interactive: false, json: true, ci: '1' }, {
+            stderr: { write: () => true },
+            confirmSelftestExecutable: confirm,
+            confirmSelftestProbeSpecifications: confirm,
+        }, async (request) => {
+            observed = request
+            return { status: 0, diagnostics: [], result: null }
+        })).toEqual({ status: 0, diagnostics: [], result: null })
+        expect(observed).toBe(input)
+        expect(approvals).toBe(0)
     })
 })

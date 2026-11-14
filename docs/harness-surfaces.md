@@ -56,12 +56,6 @@ its bytes before loading it. Cockpit itself handles declaration merging, restric
 approval, sibling guide copies, capability state, ownership and publication, and accepts a result
 only when the files reported match those read back from the isolated output directory.
 
-**Plugin bundle.** `[surfaces].bundles = ["claudecode-plugin"]` also publishes a Claude plugin
-bundle at **.cockpit/bundles/claudecode-plugin/**: a manifest plus the generated skills, subagents,
-overlay hooks and MCP declaration that apply. It does not carry the guard hook, which stays in the
-checkout's own `.claude/settings.json`. Writing the bundle does not show that Claude loaded it; that
-needs a run in Claude Code.
-
 ## Capability states
 
 The [capability matrix](capability-matrix.md) is the one record of each built-in harness's state,
@@ -216,21 +210,6 @@ a personal `"edit": "ask"` is lost, while `"edit": { "*": "ask" }` keeps asking 
 `$schema` member OpenCode would otherwise insert at every start, which made later checks report
 `SURFACE_STATE_CONFLICT`.
 
-### Custom harnesses
-
-A custom harness declares exactly one row for every feature. Each row that is not `unavailable`
-names a test date, the output spelling, a deliberately broken control, and the module export that
-produces it. Cockpit checks the module's source and its result. For an `enforced` row it also
-requires the named evidence file to match its declared SHA-256, before running the module and again
-before publishing. That ties the declaration to one file; confirming real enforcement still needs a
-separate paired test of the tool.
-
-Modules must be self-contained: cockpit imports one only if its bytes match the declaration, and
-refuses relative imports. It runs in a worker that can write only to its own temporary directory and
-cannot start child processes, worker threads or native addons; if the installed Node.js cannot
-restrict filesystem access, cockpit refuses to run it. These limits restrict ordinary file writes;
-they are not a sandbox against malicious code.
-
 ### Guard adapters
 
 The checked-in adapters (the [Claude](../packages/cockpit/surfaces/guards/claude.adapter.json),
@@ -308,9 +287,7 @@ conflict, and any other stale path in the same sync still needs the stale-remova
 | Claude Code | An authenticated `PreToolUse` guard scoped to the restricted server namespaces. It denies unlisted tools and defers listed tools to Claude Code's existing permission rules; listing a tool grants no native permission. Start Claude Code from the cockpit checkout and trust the workspace so its project hooks load. Claude Code rewrites a dot in a tool name to an underscore and keeps only the first of two tools that collide, so a listed `read_record` also admits a server tool named `read.record`. |
 | Other harnesses | Omit restricted servers and report `MCP_TRANSPORT_UNAVAILABLE`. |
 
-Restricted servers cannot be included in the Claude plugin bundle, whose tool namespace has not been
-measured; remove that bundle from `[surfaces].bundles` to use the checkout's guarded server.
-Unrestricted servers and plugin tools do not pass through this guard.
+Unrestricted servers do not pass through this guard.
 
 Review what each allowed tool actually does. A name, a token scope or `readOnlyHint` is not an
 enforcement boundary. A generic dispatcher such as `execute_tool` can expose writes through its
@@ -570,7 +547,7 @@ the command exits non-zero. A change to the reviewed artifact, configuration, ge
 approved executable or guard runtime, an unusable probe directory, or evidence that fails validation
 still stops the whole run; a changed input is named with its path. `summary.measurementComplete` is
 true only when every cell with a supported protocol produced evidence, the Claude guard included;
-cells cockpit has no protocol for, custom cells and skill reviews remain outside it.
+cells cockpit has no protocol for and skill reviews remain outside it.
 
 Each completed run prints a path to its private structured JSON report under `.cockpit/local/probes`.
 It retains the bundle, validation results, per-cell reasons, diagnostics and summary from that run;
@@ -598,8 +575,6 @@ trust and policy files remain unchanged. Missing executables or authentication l
 operator remainder; unsupported output shapes, size limits and failed controls fail their cell.
 The [validator](../packages/cockpit/libexec/validate-harness-evidence.mjs) holds the evidence limits.
 
-Custom harness cells get no executable row and remain `human_needed` with
-`enforcement_probe_required`. Measure a custom capability and record its `state` and `measured_on`.
 Claude Code and Codex skill reviews stay pending until the required review results exist. A passing
 skill review must bind successful evidence covering every declared skill feature; unavailable or
 partial evidence cannot substantiate all passing checks.

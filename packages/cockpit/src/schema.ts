@@ -5,7 +5,7 @@ import { parseDocument } from 'yaml'
 import { browserProxyAuthorityMatches } from './browser/proxy.js'
 import { ENTRYPOINT_KINDS } from './entrypoint-kinds.js'
 import { GUARD_HOST_LIMITS, GUARD_HOST_PATTERN, normalizeGuardHost } from './guards/host.js'
-import { SURFACE_BUNDLE_FORMATS, SURFACE_FEATURES, SURFACE_TARGETS, surfaceSourcesMatchFeature } from './surfaces/contract.js'
+import { SURFACE_FEATURES, SURFACE_TARGETS, surfaceSourcesMatchFeature } from './surfaces/contract.js'
 import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS } from './surfaces/harness-registry.js'
 import { RefusalError, errorCause } from './environment/contract.js'
 import { REPOSITORY_FILE, REPOSITORY_PATH, splitRepositoryPath } from './repository-path.js'
@@ -824,54 +824,6 @@ export const SurfaceOverlay = SurfaceDeclaration.safeExtend({
     feature: z.enum(['rules', 'subagents', 'skills', 'hooks']).describe('Kind of surface the overlay provides.'),
 })
 
-const HarnessMechanism = z.object({
-    module: SurfacePath.describe('Module that implements the capability.'),
-    export: z.string().regex(/^[A-Za-z_$][A-Za-z0-9_$]*$/).max(128).describe('Export of the module that implements the capability.'),
-}).strict()
-
-const HarnessCapabilityBase = {
-    feature: z.enum(SURFACE_FEATURES).describe('Surface feature this row describes.'),
-    measured_on: z.string().date().describe('Date the capability was measured.'),
-} as const
-
-const HarnessEmittedCapability = {
-    ...HarnessCapabilityBase,
-    spelling: SurfacePath.describe('File the harness reads for this feature.'),
-    control: SurfacePath.describe('Path of the deliberately broken control file the capability was measured against.'),
-    mechanism: HarnessMechanism.describe('Code that emits the surface.'),
-} as const
-
-const CustomHarnessCapability = z.discriminatedUnion('state', [
-    z.object({
-        ...HarnessEmittedCapability,
-        state: z.literal('enforced').describe('Whether the harness enforces, only instructs, or lacks this capability.'),
-        evidence: z.object({ reference: SurfacePath.describe('Probe record or file, relative to the cockpit.'), sha256: SurfaceSha256.describe('SHA-256 of the evidence.') }).strict().describe('Evidence that the harness enforces the capability.'),
-    }).strict(),
-    z.object({
-        ...HarnessEmittedCapability,
-        state: z.literal('instructed').describe('Whether the harness enforces, only instructs, or lacks this capability.'),
-    }).strict(),
-    z.object({
-        ...HarnessCapabilityBase,
-        state: z.literal('unavailable').describe('Whether the harness enforces, only instructs, or lacks this capability.'),
-        reason: DeclarationReason.describe('Why the capability is unavailable.'),
-    }).strict(),
-])
-
-export const CustomHarness = z.object({
-    name: SurfaceName.regex(new RegExp(`^(?!(?:${SURFACE_TARGETS.join('|')})$)`), 'custom harness names cannot replace shipped targets').describe('Name of the custom harness; cannot reuse a shipped one.'),
-    capabilities: z.array(CustomHarnessCapability).length(SURFACE_FEATURES.length).describe('One row per surface feature saying what the harness supports.'),
-}).strict().superRefine((harness, ctx) => {
-    const features = harness.capabilities.map((capability) => capability.feature)
-    if (hasDuplicate(features) || SURFACE_FEATURES.some((feature) => !features.includes(feature))) {
-        ctx.addIssue({ code: 'custom', path: ['capabilities'], message: 'capabilities must hold exactly one row for each surface feature' })
-    }
-    const spellings = harness.capabilities.flatMap((capability) => capability.state === 'unavailable' ? [] : [capability.spelling])
-    if (hasDuplicate(spellings)) {
-        ctx.addIssue({ code: 'custom', path: ['capabilities'], message: 'emitted capability spellings must be unique' })
-    }
-})
-
 const Surfaces = z.object({
     // A list rather than per-tool switches so `tool add` and `tool remove` edit one line. A cockpit with
     // no guarded tool would render instructions and skills and enforce nothing, so one must be listed.
@@ -881,14 +833,9 @@ const Surfaces = z.object({
             `list at least one tool cockpit has a guard for (${GUARD_SURFACE_TARGETS.join(', ')})`)
         .describe(`Agent tools whose instructions, skills and settings sync writes and check compares. Defaults to the tools whose guard is measured (${DEFAULT_SURFACE_TOOLS.join(', ')}); the other shipped targets are written only when listed.`),
     overlays: z.array(SurfaceOverlay).max(256).default([]).describe('Team-owned rules, subagents, skills and hooks added to the generated surfaces.'),
-    harnesses: z.array(CustomHarness).max(64).default([]).describe('Agent tools beyond the shipped ones, with measured capabilities.'),
-    bundles: z.array(z.enum(SURFACE_BUNDLE_FORMATS)).max(SURFACE_BUNDLE_FORMATS.length).default([]).describe('Bundle formats to publish, such as a Claude plugin bundle.'),
 }).strict().superRefine((surfaces, ctx) => {
     if (hasDuplicate(surfaces.overlays.map((overlay) => overlay.name))) {
         ctx.addIssue({ code: 'custom', path: ['overlays'], message: 'overlay names must be unique' })
-    }
-    if (hasDuplicate(surfaces.harnesses.map((harness) => harness.name))) {
-        ctx.addIssue({ code: 'custom', path: ['harnesses'], message: 'custom harness names must be unique' })
     }
 })
 
@@ -1091,8 +1038,6 @@ type SurfaceSource = z.infer<typeof SurfaceSource>
 type SurfaceOverrideReference = z.infer<typeof SurfaceOverrideReference>
 export type SurfaceDeclaration = z.infer<typeof SurfaceDeclaration>
 export type SurfaceOverlay = z.infer<typeof SurfaceOverlay>
-type CustomHarnessCapability = z.infer<typeof CustomHarnessCapability>
-export type CustomHarness = z.infer<typeof CustomHarness>
 export type Surfaces = z.infer<typeof Surfaces>
 
 /** Rows the stack bind-mounts under the given profile set — the projection's import list. */

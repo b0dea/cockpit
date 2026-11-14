@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { ENTRYPOINT_KINDS } from './entrypoint-kinds.js'
 import { browserPreapprovalRequested } from './config/load.js'
 import { Autonomy, Browser, Docs, EntrypointDerivative, Environment, InstallPolicy, Sibling, Testing, Work } from './schema.js'
-import { CockpitConfig, CustomHarness, Guards, SurfaceDeclaration, SurfaceOverlay } from './schema.js'
+import { CockpitConfig, Guards, SurfaceDeclaration, SurfaceOverlay } from './schema.js'
 import { renderCockpitSchema } from './schema-json.js'
 import { compileDraft04Schema } from '../test-support/draft04-validator.js'
 import { parse as parseToml, stringify } from 'smol-toml'
@@ -112,50 +112,17 @@ const surfaceDeclaration = {
     sources: [{ path: 'rules/consumer-guide.md', bytes: '# Consumer guide\n' }],
 }
 
-const customHarness = {
-    name: 'synthetic-harness',
-    capabilities: [
-        {
-            feature: 'rules',
-            state: 'instructed',
-            measured_on: '2026-09-26',
-            spelling: 'config/rules.md',
-            control: 'controls/rules.json',
-            mechanism: { module: 'adapters/synthetic.mjs', export: 'renderRules' },
-        },
-        {
-            feature: 'mcp',
-            state: 'unavailable',
-            measured_on: '2026-09-26',
-            reason: 'The harness has no MCP mechanism',
-        },
-        ...['subagents', 'skills', 'hooks', 'permissions'].map((feature) => ({
-            feature,
-            state: 'unavailable',
-            measured_on: '2026-09-26',
-            reason: `The harness has no ${feature} mechanism`,
-        })),
-    ],
-}
-
 describe('consumer surface declarations', () => {
-    it('accepts strict overlay sources and a complete dated custom harness matrix', () => {
+    it('accepts strict overlay sources', () => {
         expect(SurfaceDeclaration.safeParse(surfaceDeclaration).success).toBe(true)
         expect(SurfaceOverlay.safeParse(surfaceDeclaration).success).toBe(true)
-        expect(CustomHarness.safeParse(customHarness).success).toBe(true)
-        const enforced = structuredClone(customHarness)
-        Object.assign(enforced.capabilities[0]!, {
-            state: 'enforced',
-            evidence: { reference: 'evidence/rules.json', sha256: 'a'.repeat(64) },
-        })
-        expect(CustomHarness.safeParse(enforced).success).toBe(true)
         const parsed = CockpitConfig.parse({
             cockpit: { name: 'synthetic' },
             sibling: [{ slug: 'app', dir: 'app', mount: 'none', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic source' }],
             ports: { bases: {} },
-            surfaces: { overlays: [surfaceDeclaration], harnesses: [customHarness], bundles: ['claudecode-plugin'] },
+            surfaces: { overlays: [surfaceDeclaration] },
         })
-        expect(parsed.surfaces).toEqual({ tools: ['claudecode', 'codexcli', 'opencode'], overlays: [surfaceDeclaration], harnesses: [customHarness], bundles: ['claudecode-plugin'] })
+        expect(parsed.surfaces).toEqual({ tools: ['claudecode', 'codexcli', 'opencode'], overlays: [surfaceDeclaration] })
     })
 
     // A cloned repository's cockpit.toml is hostile input: `dir` is resolved under the siblings
@@ -235,26 +202,13 @@ describe('consumer surface declarations', () => {
         }).success).toBe(false)
     })
 
-    it.each([
-        ['missing date', () => { const value = structuredClone(customHarness); Reflect.deleteProperty(value.capabilities[0]!, 'measured_on'); return value }],
-        ['missing mechanism', () => { const value = structuredClone(customHarness); Reflect.deleteProperty(value.capabilities[0]!, 'mechanism'); return value }],
-        ['fake enforced claim', () => { const value = structuredClone(customHarness); Object.assign(value.capabilities[0]!, { state: 'enforced' }); return value }],
-        ['unavailable emitted spelling', () => { const value = structuredClone(customHarness); Object.assign(value.capabilities[1]!, { spelling: 'hooks.json' }); return value }],
-        ['unavailable emitted mechanism', () => { const value = structuredClone(customHarness); Object.assign(value.capabilities[1]!, { mechanism: { module: 'adapter.mjs', export: 'renderHooks' } }); return value }],
-        ['missing feature cell', () => { const value = structuredClone(customHarness); value.capabilities.pop(); return value }],
-        ['duplicate feature cell', () => { const value = structuredClone(customHarness); value.capabilities[1] = structuredClone(value.capabilities[2]!); return value }],
-    ])('rejects a custom harness with %s', (_label, build) => {
-        expect(CustomHarness.safeParse(build()).success).toBe(false)
-    })
-
-    it('rejects duplicate surface and harness identities at the config boundary', () => {
+    it('rejects duplicate surface identities at the config boundary', () => {
         const base = {
             cockpit: { name: 'synthetic' },
             sibling: [{ slug: 'app', dir: 'app', mount: 'none', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic source' }],
             ports: { bases: {} },
         }
         expect(CockpitConfig.safeParse({ ...base, surfaces: { overlays: [surfaceDeclaration, surfaceDeclaration] } }).success).toBe(false)
-        expect(CockpitConfig.safeParse({ ...base, surfaces: { harnesses: [customHarness, customHarness] } }).success).toBe(false)
     })
 
     it('defaults to the measured tools and lists any other shipped tool only when asked, never none or only unguarded ones', () => {
@@ -263,7 +217,7 @@ describe('consumer surface declarations', () => {
             sibling: [{ slug: 'app', dir: 'app', mount: 'none', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic source' }],
             ports: { bases: {} },
         }
-        expect(CockpitConfig.parse(base).surfaces).toEqual({ tools: ['claudecode', 'codexcli', 'opencode'], overlays: [], harnesses: [], bundles: [] })
+        expect(CockpitConfig.parse(base).surfaces).toEqual({ tools: ['claudecode', 'codexcli', 'opencode'], overlays: [] })
         expect(CockpitConfig.parse({ ...base, surfaces: { tools: ['claudecode', 'cursor'] } }).surfaces.tools).toEqual(['claudecode', 'cursor'])
         for (const tools of [[], ['cursor'], ['cursor', 'grokcli'], ['claudecode', 'claudecode'], ['claudecode', 'unknown']]) {
             expect(CockpitConfig.safeParse({ ...base, surfaces: { tools } }).success, JSON.stringify(tools)).toBe(false)
