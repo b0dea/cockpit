@@ -3026,7 +3026,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const secret = glob ? posix.basename(folded).startsWith('.') && SECRET_SAMPLES.some((name) => name.startsWith('.') && glob.test(name)) || credential(posix.dirname(folded))
                 || plainGlob(word) && globReachesProtected(word.value, invocation.cwd) || globNamesProtected(word.value, invocation.cwd)
                 : dotenvSecret(folded) || folded.split('/').includes('.secrets') || resolved.instances.some((item) => within(folded, fold(item.path))) || inSecretPath(folded) || namesCredential(folded)
-            if (secret && !approvalBarriers.has(invocation)) approvalBarriers.set(invocation, ask(`${invocation.executable === null ? 'This command' : named(invocation)} holds ${shownGuardWord(word.value)}, which names or can match an environment file, secrets directory, declared instance or credential store. Name the files it needs.`))
+            if (secret) hold(deny(`Refusing ${invocation.executable === null ? 'this command' : named(invocation)}: it holds ${shownGuardWord(word.value)}, which names or can match an environment file, secrets directory, declared instance or credential store. Name the files it needs.`))
         }
         // A declared rule admits a command the profile cannot classify, but never past the secret names
         // or the roots: macOS `cat a .env -x` prints .env before it rejects -x, and `git show HEAD:.env`
