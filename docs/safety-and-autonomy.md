@@ -127,8 +127,9 @@ Limits, stated plainly:
   missing. A session started in a subdirectory then runs the guard too. A local file in a directory
   between the repository's top and the session's is not read, so for a cockpit below its repository's
   top `sync` also writes the registration into the top's `.claude/settings.local.json`, where it runs
-  the guard only for a session started inside the cockpit and does nothing elsewhere in the
-  repository; that file lies outside the cockpit's own ignore rules, so keep it ignored there.
+  the guard only for a session started inside the cockpit, by any spelling of its path, and does
+  nothing elsewhere in the repository; that file lies outside the cockpit's own ignore rules, so
+  `sync` also lists it in that repository's `.git/info/exclude`.
   `doctor` checks both files. Measured on 2026-11-13 with Claude Code 2.1.323 and its default setting sources, in a
   throwaway repository:
   - started one or two directories below the root, no root `.claude/settings.json` hook ran while

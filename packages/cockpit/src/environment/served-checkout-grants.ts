@@ -17,7 +17,7 @@
  *   it the same write was refused.
  * Cursor and Grok Build were not installed, so nothing is written for them.
  */
-import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { appendFile, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { lstatSync, readdirSync, realpathSync } from 'node:fs'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { readBoundedFile } from '../bounded-read.js'
@@ -283,10 +283,11 @@ function repositoryTopAbove(root: string): string | undefined {
 /**
  * The guard entries for the repository top's local settings: each runs the guard only for a session that
  * started inside the cockpit below its root, and does nothing elsewhere in the repository, or at the
- * root, whose own settings register the guard.
+ * root, whose own settings register the guard. The session directory is compared as its real path, since
+ * one spelled through a link would otherwise fall outside the root's real path and run no guard.
  */
 function gatedEntries(root: string, wanted: readonly HookEntry[]): readonly HookEntry[] {
-    const gate = `C='${root.replaceAll("'", "'\\''")}'; case "\${CLAUDE_PROJECT_DIR:-$(pwd -P)}" in "$C"/*) ;; *) exit 0;; esac; `
+    const gate = `C='${realpathSync(root).replaceAll("'", "'\\''")}'; D=$(cd -P -- "\${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null && pwd -P) || D=\${CLAUDE_PROJECT_DIR:-}; case "$D" in "$C"/*) ;; *) exit 0;; esac; `
     return wanted.map(entry => ({ ...entry, hooks: entry.hooks.map(hook => guardCommand(hook) ? { ...hook, command: gate + (hook as { command: string }).command } : hook) }))
 }
 
@@ -334,14 +335,40 @@ export async function writeClaudeLocalGuard(root: string): Promise<Readonly<{ ki
     for (const settingsRoot of top === undefined ? [root] : [root, top]) {
         const files = claudeGuardFiles(root, settingsRoot)
         if ('reason' in files) return { kind: 'refusal', message: files.reason }
-        if (files.local === undefined && files.wanted.length === 0) continue
-        const merged = mergeClaudeLocalGuard(files.local?.value, files.wanted, files.deny)
-        if (merged === undefined) continue
-        if ('reason' in merged) return { kind: 'refusal', message: `${join(settingsRoot, CLAUDE_LOCAL_SETTINGS)} could not take the guard registration: ${merged.reason}` }
-        try { await writeClaudeLocalSettings(settingsRoot, merged.bytes) }
+        const merged = files.local === undefined && files.wanted.length === 0 ? undefined : mergeClaudeLocalGuard(files.local?.value, files.wanted, files.deny)
+        if (merged !== undefined && 'reason' in merged) return { kind: 'refusal', message: `${join(settingsRoot, CLAUDE_LOCAL_SETTINGS)} could not take the guard registration: ${merged.reason}` }
+        try { if (merged !== undefined) await writeClaudeLocalSettings(settingsRoot, merged.bytes) }
         catch (error) { return { kind: 'refusal', message: `${join(settingsRoot, CLAUDE_LOCAL_SETTINGS)} could not be written: ${errorCause(error)}` } }
+        const unexcluded = settingsRoot === top && files.wanted.length ? await excludeLocalSettings(top) : undefined
+        if (unexcluded) return { kind: 'refusal', message: unexcluded }
     }
     return { kind: 'complete' }
+}
+
+const LOCAL_SETTINGS_EXCLUDE = `/${CLAUDE_LOCAL_SETTINGS}`
+
+/**
+ * Lists the repository top's local settings in that repository's own exclude file, which Git never commits:
+ * the file names the cockpit by its absolute path, and the cockpit's ignore rules do not reach that far up.
+ * The exclude file is shared by the repository's worktrees; the line is added once and nothing else changes.
+ * Undefined once it is listed, or a reason when it cannot be.
+ */
+async function excludeLocalSettings(top: string): Promise<string | undefined> {
+    const common = gitCommonDirectory(top)
+    if (common === undefined) return `the Git directory of ${top} could not be found, so ${join(top, CLAUDE_LOCAL_SETTINGS)} could not be kept out of Git there`
+    const path = join(common, 'info/exclude')
+    let text = ''
+    try {
+        const read = readBoundedFile(path, SETTINGS_MAX_BYTES)
+        if (read.kind !== 'complete') return `${path} is too large to read`
+        text = read.bytes.toString('utf8')
+    } catch (error) { if (!isMissing(error)) return `${path} could not be read: ${errorCause(error)}` }
+    if (text.split('\n').some(line => line.trim() === LOCAL_SETTINGS_EXCLUDE)) return undefined
+    try {
+        await mkdir(dirname(path), { recursive: true })
+        await appendFile(path, `${text && !text.endsWith('\n') ? '\n' : ''}${LOCAL_SETTINGS_EXCLUDE}\n`)
+    } catch (error) { return `${path} could not be written: ${errorCause(error)}` }
+    return undefined
 }
 
 /** Doctor's finding when Claude Code sessions started below the cockpit root would run without the guard. */
