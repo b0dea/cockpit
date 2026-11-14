@@ -25,8 +25,8 @@ Keep the product's `Makefile`, task runner or scripts your own, so people and CI
 without cockpit:
 
 1. Expose a narrow target, such as `make verify`.
-2. Add a skill overlay that tells agents when to use it. Put the procedure in its own file with
-   `loading: pull` and `budget: uncapped` frontmatter, so agents load it only when needed.
+2. Add a skill overlay with a `name` and a `description` that tells agents when to use it. Put the
+   procedure in its own file beside it, so agents load it only when needed.
 3. Add an exact guard allow for the target, with a reason.
 
 The [extended example](../examples/extended/README.md) shows this pattern.

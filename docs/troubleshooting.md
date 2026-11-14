@@ -238,11 +238,10 @@ A sibling guide holding one of cockpit's own `<!-- cockpit:instructions:` or `<!
 markers is refused as `PROJECTION_INPUT_INVALID`, because its copy would end or split cockpit's
 region of the root **AGENTS.md**; remove the marker from the guide.
 
-For `SKILL_INPUT_INVALID`, `SKILL_FRONTMATTER_INVALID`, `SKILL_CONTRACT_INVALID`,
-`SKILL_IDENTITY_INVALID`, `SKILL_NAME_DUPLICATE`, `SKILL_TOOL_EQUIVALENCE_MISSING`,
-`SKILL_PROCEDURE_MISSING`, `SKILL_COMMAND_UNDECLARED`, `SKILL_ENTRY_POINT_EXCEEDED`, or
-`SKILL_DECISION_LOGIC_EMBEDDED`, correct the shipped skill entry point or shared procedure named
-by the diagnostic. `SKILL_RENDER_INVALID` and `SKILL_RENDER_INVENTORY_INVALID` mean generated
+For `SKILL_INPUT_INVALID`, `SKILL_FRONTMATTER_INVALID`, `SKILL_IDENTITY_INVALID`,
+`SKILL_NAME_DUPLICATE` or `SKILL_PROCEDURE_MISSING`, correct the skill entry point or procedure
+named by the diagnostic: every skill needs a unique `name` matching its directory and a
+`description`. `SKILL_RENDER_INVALID` and `SKILL_RENDER_INVENTORY_INVALID` mean generated
 files do not match the skill contract. `SKILL_STANDING_COST_EXCEEDED` means the always-loaded
 skill entry points are too large. Shrink them; moving decision logic into another always-loaded
 file is not a repair.
@@ -468,10 +467,6 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SIBLING_INSTRUCTIONS_MISSING` | a person writes AGENTS.md with what an agent must know to work in the repository, then runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> --write-instruction-files to add the CLAUDE.md that imports it |
 | `SIBLING_INSTRUCTIONS_TOOL_ONLY` | a person moves the instructions every tool needs from those files into AGENTS.md, and keeps only settings specific to one tool where they are |
 | `SIBLING_INSTRUCTIONS_UNLINKED` | a person merges the instructions every tool needs into AGENTS.md, then makes CLAUDE.md a line reading @AGENTS.md followed only by instructions that apply to Claude Code alone |
-| `SKILL_COMMAND_UNDECLARED` | [see above](#sibling-projection-and-skills) |
-| `SKILL_CONTRACT_INVALID` | [see above](#sibling-projection-and-skills) |
-| `SKILL_DECISION_LOGIC_EMBEDDED` | [see above](#sibling-projection-and-skills) |
-| `SKILL_ENTRY_POINT_EXCEEDED` | [see above](#sibling-projection-and-skills) |
 | `SKILL_FRONTMATTER_INVALID` | [see above](#sibling-projection-and-skills) |
 | `SKILL_IDENTITY_INVALID` | [see above](#sibling-projection-and-skills) |
 | `SKILL_INPUT_INVALID` | [see above](#sibling-projection-and-skills) |
@@ -480,7 +475,6 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SKILL_RENDER_INVALID` | [see above](#sibling-projection-and-skills) |
 | `SKILL_RENDER_INVENTORY_INVALID` | [see above](#sibling-projection-and-skills) |
 | `SKILL_STANDING_COST_EXCEEDED` | [see above](#sibling-projection-and-skills) |
-| `SKILL_TOOL_EQUIVALENCE_MISSING` | [see above](#sibling-projection-and-skills) |
 | `STACKS_ORPHANED` | [see above](#clear-cockpit-state) |
 | `STATE_FORMAT_UNSUPPORTED` | [see above](#clear-cockpit-state) |
 | `STATE_LOCKED` | [see above](#clear-cockpit-state) |

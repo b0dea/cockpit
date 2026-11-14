@@ -244,7 +244,7 @@ describe('generated environment command', () => {
         expect(await bytes(root, first.result.paths)).toEqual(edited)
     }, 120_000)
 
-    it('derives optional Codex sidecar inventory before skill contract validation', async () => {
+    it('admits a skill overlay with only a name and description, without a Codex sidecar', async () => {
         const overlay = `
 [[surfaces.overlays]]
 name = "synthetic-skill"
@@ -252,14 +252,14 @@ feature = "skills"
 source = "surfaces/synthetic-skill.json"
 sources = [{ path = "skills/alpha/SKILL.md", bytes = "---\\nname: alpha\\ndescription: Synthetic alpha skill.\\n---\\nUse synthetic alpha.\\n" }]
 `
-        const { configPath } = await surfaceConsumer('skill-without-codex-sidecar', { custom: overlay })
+        const { root, configPath } = await surfaceConsumer('skill-without-codex-sidecar', { custom: overlay })
 
         const result = await syncGeneratedEnvironment({ configPath })
 
-        expect(result).toMatchObject({
-            kind: 'refusal',
-            diagnostics: [expect.objectContaining({ code: 'SKILL_FRONTMATTER_INVALID', target: 'skills/alpha/SKILL.md' })],
-        })
+        // A skill with only a name and description is admitted, and gets no Codex sidecar it never asked for.
+        expect(result, JSON.stringify(result.diagnostics)).toMatchObject({ kind: 'complete' })
+        expect(await readFile(join(root, '.agents/skills/alpha/SKILL.md'), 'utf8')).toContain('Use synthetic alpha.')
+        await expect(lstat(join(root, '.agents/skills/alpha/agents/openai.yaml'))).rejects.toMatchObject({ code: 'ENOENT' })
     })
 
     it.each([['executable-frontmatter', ''], ['bom-executable-frontmatter', '\uFEFF']])('refuses executable Markdown frontmatter before generator dispatch (%s)', async (name, prefix) => {

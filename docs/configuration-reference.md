@@ -646,7 +646,7 @@ cockpit checks these rules when it loads the configuration (`x-cockpit-runtime-c
 
 ## Skill size limits
 
-Agent tools load every skill's frontmatter into each session and its entry point whenever the skill is used, so cockpit caps both and keeps the detail in a procedure file the agent reads only when it needs it. The limits come from `packages/cockpit/surfaces/skills/collection.json`, SHA-256 `d5ae65d3f69fbb6a33db2e8a63f93b936a37c8c0566cabdc3f248de6018ed7da`.
+Agent tools load every skill's frontmatter into each session, so cockpit caps its total size per tool; the shipped skills keep their detail in a procedure file the agent reads only when it needs it. The limits come from `packages/cockpit/surfaces/skills/collection.json`, SHA-256 `d5ae65d3f69fbb6a33db2e8a63f93b936a37c8c0566cabdc3f248de6018ed7da`.
 
 | Target | Measured as | Limit | Detail moved to |
 | --- | --- | --- | --- |
@@ -655,13 +655,6 @@ Agent tools load every skill's frontmatter into each session and its entry point
 | opencode | frontmatter_bytes | 8192 | each skill's procedure |
 | cursor | frontmatter_bytes | 8192 | each skill's procedure |
 | grokcli | frontmatter_bytes | 8192 | each skill's procedure |
-
-| Skill entry point | Measured as | Limit | Detail moved to |
-| --- | --- | --- | --- |
-| `packages/cockpit/surfaces/skills/cockpit-setup.skill.md` | lines | 14 | `packages/cockpit/surfaces/skills/procedures/setup.md` |
-| `packages/cockpit/surfaces/skills/cockpit-explain.skill.md` | lines | 7 | `packages/cockpit/surfaces/skills/procedures/explain.md` |
-| `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 12 | `packages/cockpit/surfaces/skills/procedures/fix.md` |
-| `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 9 | `packages/cockpit/surfaces/skills/procedures/work.md` |
 
 Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `3dc54962814dfb7532d71e3f5f09e04688e00aade6fb309e06da9707d72530b4`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `b773dcb3fa3ec3b9edcb079edaf2ac004fd4ecea7fdec9dbed6d86d4495c33a9`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `26aceeaf0cf347a833e33f29bb8bed5a7059269f2a1150779ae355c62c6ff4ea`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `f7ae0ab5ff4dc4f50f9afad9c78650285dedd6d66f7c0af681fff431e187d6c7`).
 

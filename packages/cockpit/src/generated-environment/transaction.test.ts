@@ -304,7 +304,7 @@ async function bootstrapPublication() {
         [`skills/cockpit-${part}/procedures/${part}.md`, bytes.get(`skills/procedures/${part}.md`)!],
     ]).map(([path, body]) => ({ path: path!, bytes: body!.replace('{{tool-equivalence}}', 'Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.') }))
     const collectionBytes = bytes.get('skills/collection.json')!
-    const inspected = await inspectSkillSet({ sources, tools: ['claudecode', 'codexcli', 'opencode'], collection: { path: 'skills/collection.json', bytes: collectionBytes, sha256: digest(collectionBytes) },
+    const inspected = await inspectSkillSet({ sources, collection: { path: 'skills/collection.json', bytes: collectionBytes, sha256: digest(collectionBytes) },
         procedures: (['setup', 'explain', 'fix', 'work'] as const).map(part => {
             const body = bytes.get(`skills/procedures/${part}.md`)!
             return { path: `skills/procedures/${part}.md`, bytes: body, sha256: digest(body) }

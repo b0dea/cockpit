@@ -317,7 +317,6 @@ describe('reference pages', () => {
         // Skill size limits name the files a maintainer edits, not the paths skills install to.
         expect(configuration).toContain('The limits come from `packages/cockpit/surfaces/skills/collection.json`')
         expect(configuration).toContain('Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md`')
-        expect(configuration).toMatch(/^\| `packages\/cockpit\/surfaces\/skills\/cockpit-setup\.skill\.md` \| lines \| \d+ \| `packages\/cockpit\/surfaces\/skills\/procedures\/setup\.md` \|$/m)
         expect(configuration).not.toMatch(/`skills\/(?:collection\.json|procedures\/[a-z-]+\.md|[a-z-]+\/SKILL\.md)`/)
     })
 

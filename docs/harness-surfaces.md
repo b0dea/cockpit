@@ -438,10 +438,9 @@ own commands, so an agent drives the stack, the tests and the grading the same w
 | `cockpit-setup` | Add a repository, upgrade, diagnose, clear a stale or orphaned stack, or make a repository's guides reach every tool. |
 | `adopt-cockpit` | Set cockpit up in a repository that has none yet. Install it on its own with `npx skills add b0dea/cockpit --skill adopt-cockpit`. |
 
-Each skill declares its trigger, each harness's equivalent tool name, the cockpit commands it may
-run, what it changes, what it must not do, its review requirements and a line cap. The renderer
-refuses embedded decision logic, undeclared commands, missing tool equivalents, missing procedures,
-duplicate names, and skills over the always-loaded size limit.
+A skill you add through a `skills` overlay needs only a `name` matching its directory and a
+`description` saying when to use it; it may carry any files of its own. The renderer refuses
+duplicate names and skill sets over the always-loaded size limit.
 
 `selftest` is optional. Cockpit is usable once `check` passes; selftest gathers native evidence
 of what the tools on your machine actually load and enforce, and a person runs it, when they want

@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto'
 import { parseDocument, visit } from 'yaml'
 
-import { commandSpelling, commands } from '../command-table.js'
 import { stripDevelopmentMarkers } from './development-markers.js'
 import { snapshotGeneratedJson, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 import {
@@ -20,7 +19,7 @@ import {
     type SurfaceSourceFile,
     type SurfaceTarget,
 } from './contract.js'
-import { GUARD_SURFACE_TARGETS, harnessFact, type GuardSurfaceTarget } from './harness-registry.js'
+import { harnessFact } from './harness-registry.js'
 import { exactKeys } from '../exact-keys.js'
 
 /** The skill `cockpit init` installs first; init and the reference renderer both address it by this name. */
@@ -48,7 +47,6 @@ export interface AdmittedSkillCollection {
     readonly caps: Readonly<Record<SurfaceTarget, number>>
     /** The packaged procedures of the shipped skills, each read on demand by the skill that names it. */
     readonly procedures: readonly Readonly<{ path: string; sha256: string; loading: 'pull'; budget: 'uncapped' }>[]
-    readonly entrypoints: readonly Readonly<{ path: string; cap: number; metric: 'lines'; displacement: string }>[]
 }
 
 export type SkillContractResult =
@@ -107,8 +105,6 @@ export function isInspectedBootstrapOutputs(value: unknown): value is InspectedB
 
 interface CapturedInput {
     readonly sources: readonly SurfaceSourceFile[]
-    /** The tools whose entry points are checked for their shell-tool name. */
-    readonly tools: readonly SurfaceTarget[]
     readonly declaredExtensions: readonly string[]
     readonly collection: Readonly<{ path: string; bytes: string; sha256: string }>
     readonly procedures: readonly Readonly<{ path: string; bytes: string; sha256: string }>[]
@@ -123,31 +119,20 @@ interface CapturedRenderedInput extends CapturedInput {
 
 interface SkillDeclaration {
     readonly name: string
-    readonly procedure: string
-    readonly cap: number
+    /** A shipped skill's packaged procedure; a declared extension may carry any files of its own. */
+    readonly procedure?: string
 }
 
 const DESCRIPTION_MAX_BYTES = 512
-const ENTRY_POINT_MAX_LINES = 32
 const INSTALLED_SET_CAP_MAX_BYTES = 65_536
 const NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
-const COMMAND = /`cockpit\s+([a-z][a-z-]*)(?:\s+([a-z][a-z-]*))?/g
-const INLINE_NUMBERED_STEP = /^\s*\d+[.)]\s+/m
-const INLINE_FENCE = /^\s*```/m
-const COPIED_DECISION_LOGIC = /(?:\bparse\w*\s+(?:the\s+)?(?:registry|cockpit\.toml)|\bTOML\.parse\b|^\s*\[[a-z][a-z0-9_.-]*\]\s*$|\|\s*(?:tier|mount|data mode|verdict)\s*\|)/im
-const MISLEADING_COMPLETION = /\b(?:report|declare|claim)\w*\s+(?:the\s+)?(?:work\s+)?(?:complete|successful|green)\s+without\b/i
-const ALLOWED_COMMANDS: ReadonlySet<string> = new Set(commands.map(command => command.name))
+const PROCEDURE = /^procedures\/[a-z0-9][a-z0-9-]*\.md$/
 const TARGET_PATH_PREFIX: Readonly<Record<SurfaceTarget, string>> = Object.freeze(Object.fromEntries(
     SURFACE_TARGETS.map(target => [target, harnessFact(target).outputs.skills]),
 )) as Readonly<Record<SurfaceTarget, string>>
 
 function object(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== undefined && value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
-function strings(value: JsonSnapshot | undefined): readonly string[] | undefined {
-    return Array.isArray(value) && value.length > 0 && value.every(item => typeof item === 'string' && item.length > 0)
-        && new Set(value).size === value.length ? value as readonly string[] : undefined
 }
 
 function refusal(code: string, message: string, target?: string): Extract<SkillContractResult, { kind: 'refusal' }> {
@@ -170,10 +155,8 @@ function authenticatedAsset(value: JsonSnapshot | undefined, path: string | RegE
 
 function captureInput(input: unknown): CapturedInput | undefined {
     const captured = snapshotJson(input)
-    if (!object(captured) || !exactKeys(captured, ['sources', 'collection', 'procedures', 'tools',
+    if (!object(captured) || !exactKeys(captured, ['sources', 'collection', 'procedures',
         ...(Object.hasOwn(captured, 'declaredExtensions') ? ['declaredExtensions'] : [])]) || !Array.isArray(captured.sources)
-        || !Array.isArray(captured.tools) || captured.tools.length === 0 || new Set(captured.tools).size !== captured.tools.length
-        || !captured.tools.every(tool => SURFACE_TARGETS.includes(tool as SurfaceTarget))
         || !authenticatedAsset(captured.collection, 'skills/collection.json')
         || !Array.isArray(captured.procedures) || captured.procedures.length === 0 || captured.procedures.length > 16
         || !captured.procedures.every(procedure => authenticatedAsset(procedure, PROCEDURE_ASSET))
@@ -218,7 +201,7 @@ function captureRenderedInput(input: unknown): CapturedRenderedInput | undefined
         && new Set(captured.targets).size === captured.targets.length
         ? SURFACE_TARGETS.filter(target => (captured.targets as readonly JsonSnapshot[]).includes(target)) : undefined
     if (!targets) return undefined
-    const base = captureInput({ sources: captured.sources, tools: targets, collection: captured.collection, procedures: captured.procedures,
+    const base = captureInput({ sources: captured.sources, collection: captured.collection, procedures: captured.procedures,
         ...(Object.hasOwn(captured, 'declaredExtensions') ? { declaredExtensions: captured.declaredExtensions } : {}) })
     const generated = captured.generated
     if (!base || !object(generated) || !exactKeys(generated, ['kind', 'status', 'diagnostics', 'mechanism', 'files', 'warnings'])
@@ -249,94 +232,47 @@ function parseEntryPoint(bytes: string): { frontmatter: JsonSnapshotObject; body
     return { frontmatter, body: bytes.slice(end + 5).trim(), rawFrontmatter }
 }
 
-function targetEquivalences(value: JsonSnapshot | undefined): Readonly<Record<GuardSurfaceTarget, readonly string[]>> | undefined {
-    if (!object(value) || !exactKeys(value, GUARD_SURFACE_TARGETS)) return undefined
-    const claudecode = strings(value.claudecode)
-    const codexcli = strings(value.codexcli)
-    const opencode = strings(value.opencode)
-    if (!claudecode || !codexcli || !opencode) return undefined
-    return { claudecode, codexcli, opencode }
-}
-
 function sameStrings(value: JsonSnapshot | undefined, expected: readonly string[]): boolean {
     return Array.isArray(value) && value.length === expected.length
         && value.every((item, index) => item === expected[index])
 }
 
-function targetToolsMatch(frontmatter: JsonSnapshotObject, equivalences: Readonly<Record<GuardSurfaceTarget, readonly string[]>>): boolean {
-    const claude = frontmatter.claudecode
-    const opencode = frontmatter.opencode
-    const codex = frontmatter.codexcli
-    if (!object(claude) || !exactKeys(claude, ['allowed-tools']) || !sameStrings(claude['allowed-tools'], equivalences.claudecode)
-        || !object(opencode) || !exactKeys(opencode, ['allowed-tools']) || !sameStrings(opencode['allowed-tools'], equivalences.opencode)
-        || !object(codex) || !exactKeys(codex, ['dependencies'])) return false
-    const dependencies = codex.dependencies
-    if (!object(dependencies) || !exactKeys(dependencies, ['tools']) || !Array.isArray(dependencies.tools)
-        || dependencies.tools.length !== 1 || !object(dependencies.tools[0])) return false
-    const executable = dependencies.tools[0]
-    return exactKeys(executable, ['type', 'value', 'description']) && executable.type === 'executable'
-        && executable.value === 'cockpit' && typeof executable.description === 'string' && executable.description.length > 0
-}
-
-function declaration(source: SurfaceSourceFile, renderedTools: readonly SurfaceTarget[]): SkillDeclaration | SkillContractResult {
+// Only what a harness needs to list and trigger a skill is checked at runtime; the shipped skills'
+// house style (line caps, declared commands, tool names) is held by their own tests.
+function declaration(source: SurfaceSourceFile): SkillDeclaration | SkillContractResult {
     const parsed = parseEntryPoint(source.bytes)
     if (!parsed) return refusal('SKILL_FRONTMATTER_INVALID', 'skill frontmatter is missing, malformed, aliased, duplicated, or unbounded', source.path)
-    const { frontmatter, body } = parsed
-    if (!exactKeys(frontmatter, ['name', 'description', 'targets', 'cockpit', 'claudecode', 'codexcli', 'opencode'])) {
-        return refusal('SKILL_FRONTMATTER_INVALID', 'skill frontmatter contains an unexpected or missing field', source.path)
+    const { frontmatter } = parsed
+    if (typeof frontmatter.name !== 'string' || !NAME.test(frontmatter.name)
+        || typeof frontmatter.description !== 'string' || frontmatter.description.trim().length === 0
+        || Buffer.byteLength(frontmatter.description) > DESCRIPTION_MAX_BYTES) {
+        return refusal('SKILL_IDENTITY_INVALID', `skill name or description is missing or invalid (a description is at most ${DESCRIPTION_MAX_BYTES} bytes)`, source.path)
     }
     const contract = frontmatter.cockpit
-    if (!object(contract) || !exactKeys(contract, [
-        'commands', 'changes', 'entry-point-lines', 'non-goals', 'procedure', 'review', 'tool-equivalences', 'tools',
-    ])) return refusal('SKILL_CONTRACT_INVALID', 'cockpit skill metadata is incomplete', source.path)
-    if (typeof frontmatter.name !== 'string' || !NAME.test(frontmatter.name)
-        || typeof frontmatter.description !== 'string' || !frontmatter.description.startsWith('Use when ')
-        || Buffer.byteLength(frontmatter.description) > DESCRIPTION_MAX_BYTES
-        || !Array.isArray(frontmatter.targets) || frontmatter.targets.length !== 1 || frontmatter.targets[0] !== '*') {
-        return refusal('SKILL_IDENTITY_INVALID', 'skill name, trigger description, or targets are invalid', source.path)
-    }
-    const tools = strings(contract.tools)
-    const declaredCommands = strings(contract.commands)
-    const changes = strings(contract.changes)
-    const nonGoals = strings(contract['non-goals'])
-    const equivalences = targetEquivalences(contract['tool-equivalences'])
-    const review = contract.review
-    const entryPointLines = contract['entry-point-lines']
-    if (!tools || !declaredCommands || !changes || !nonGoals || !equivalences || typeof contract.procedure !== 'string'
-        || !/^procedures\/[a-z0-9][a-z0-9-]*\.md$/.test(contract.procedure)
-        || !Number.isSafeInteger(entryPointLines) || Number(entryPointLines) < 1 || Number(entryPointLines) > ENTRY_POINT_MAX_LINES
-        || !object(review) || !exactKeys(review, ['mechanical', 'judgment'])
-        || typeof review.mechanical !== 'string' || review.mechanical.length === 0
-        || review.judgment !== 'accepted' && review.judgment !== 'pending') {
-        return refusal('SKILL_CONTRACT_INVALID', 'skill tools, effects, procedure, review, or line cap are invalid', source.path)
-    }
-    if (!targetToolsMatch(frontmatter, equivalences)) {
-        return refusal('SKILL_TOOL_EQUIVALENCE_MISSING', 'skill native tool declarations do not match its equivalence contract', source.path)
-    }
-    const actualLines = body.length === 0 ? 0 : body.split(/\r?\n/).length
-    if (actualLines === 0 || actualLines > Number(entryPointLines) || INLINE_NUMBERED_STEP.test(body) || INLINE_FENCE.test(body)) {
-        return refusal('SKILL_ENTRY_POINT_EXCEEDED', 'skill entry point exceeds its declared line cap or embeds a procedure', source.path)
-    }
-    if (COPIED_DECISION_LOGIC.test(body) || MISLEADING_COMPLETION.test(body)) {
-        return refusal('SKILL_DECISION_LOGIC_EMBEDDED', 'skill entry point copies decision logic or makes an unauthenticated completion claim', source.path)
-    }
-    if (declaredCommands.some(command => !ALLOWED_COMMANDS.has(command))) {
-        return refusal('SKILL_COMMAND_UNDECLARED', 'skill declares a command that is not in the cockpit command table', source.path)
-    }
-    const invoked = [...body.matchAll(COMMAND)].map(match => commandSpelling(match.slice(1).filter(word => word !== undefined)).name ?? match[1]!)
-    if (invoked.some(command => !declaredCommands.includes(command) || !ALLOWED_COMMANDS.has(command))) {
-        return refusal('SKILL_COMMAND_UNDECLARED', 'skill invokes an undeclared cockpit command', source.path)
-    }
-    if (body.includes('{{')) {
-        return refusal('SKILL_TOOL_EQUIVALENCE_MISSING', 'skill entry point still holds an unrendered placeholder', source.path)
-    }
-    // An entry point names the shell tool of the harnesses the cockpit renders for, and only those.
-    for (const target of GUARD_SURFACE_TARGETS.filter(guard => renderedTools.includes(guard))) {
-        if (!equivalences[target].every(tool => body.includes(`\`${tool}\``))) {
-            return refusal('SKILL_TOOL_EQUIVALENCE_MISSING', `skill entry point omits the ${target} tool equivalence`, source.path)
-        }
-    }
-    return { name: frontmatter.name, procedure: contract.procedure, cap: Number(entryPointLines) }
+    const procedure = object(contract) && typeof contract.procedure === 'string' ? contract.procedure : undefined
+    return { name: frontmatter.name, ...(procedure === undefined ? {} : { procedure }) }
+}
+
+/** Rulesync writes a Codex `agents/openai.yaml` beside a skill only when its frontmatter carries Codex metadata. */
+export function expectsCodexSkillSidecar(bytes: string): boolean {
+    if (!bytes.startsWith('---\n')) return false
+    const end = bytes.indexOf('\n---\n', 4)
+    if (end < 0) return false
+    let frontmatter: unknown
+    try {
+        const document = parseDocument(bytes.slice(4, end), { uniqueKeys: true })
+        if (document.errors.length > 0) return false
+        frontmatter = document.toJS({ maxAliasCount: 0 }) as unknown
+    } catch { /* unparseable input is malformed; the caller refuses it. */ return false }
+    if (!frontmatter || typeof frontmatter !== 'object' || Array.isArray(frontmatter)) return false
+    const codexcli = (frontmatter as Record<string, unknown>).codexcli
+    if (!codexcli || typeof codexcli !== 'object' || Array.isArray(codexcli)) return false
+    const metadata = codexcli as Record<string, unknown>
+    const sections = ['interface', 'policy', 'dependencies'].map(key => metadata[key])
+    const records = sections.filter((section): section is Record<string, unknown> =>
+        section !== null && typeof section === 'object' && !Array.isArray(section))
+    return records.some(section => Object.keys(section).length > 0)
+        || records.length > 0 && typeof metadata['short-description'] === 'string'
 }
 
 function expectedOutputs(skills: readonly SkillDeclaration[], sources: readonly SurfaceSourceFile[]): Record<SurfaceTarget, readonly string[]> {
@@ -345,7 +281,9 @@ function expectedOutputs(skills: readonly SkillDeclaration[], sources: readonly 
         const match = /^skills\/([^/]+)\/(.+)$/.exec(source.path)
         if (!match || !skills.some(skill => skill.name === match[1])) return []
         const output = [`${TARGET_PATH_PREFIX[target]}/${match[1]}/${match[2]}`]
-        if (target === 'codexcli' && match[2] === 'SKILL.md') output.push(`${TARGET_PATH_PREFIX[target]}/${match[1]}/agents/openai.yaml`)
+        if (target === 'codexcli' && match[2] === 'SKILL.md' && expectsCodexSkillSidecar(source.bytes)) {
+            output.push(`${TARGET_PATH_PREFIX[target]}/${match[1]}/agents/openai.yaml`)
+        }
         return output
     })
     return paths
@@ -369,17 +307,20 @@ function admitDeclarations(captured: CapturedInput): SkillDeclaration[] | SkillC
     const entrySources = captured.sources.filter(source => source.path.endsWith('/SKILL.md'))
     const declarations: SkillDeclaration[] = []
     for (const source of entrySources) {
-        const admitted = declaration(source, captured.tools)
+        const admitted = declaration(source)
         if ('kind' in admitted) return admitted
         if (declarations.some(skill => skill.name === admitted.name) || source.path !== `skills/${admitted.name}/SKILL.md`) {
             return refusal('SKILL_NAME_DUPLICATE', 'skill names must be unique and match their source directory', source.path)
         }
+        if (captured.declaredExtensions.includes(admitted.name)) {
+            declarations.push({ name: admitted.name })
+            continue
+        }
+        // A shipped skill's procedure is exactly the packaged file its entry point names.
         const procedurePath = `skills/${admitted.name}/${admitted.procedure}`
         const procedure = captured.sources.find(candidate => candidate.path === procedurePath)
-        const extension = captured.declaredExtensions.includes(admitted.name)
-        // A shipped skill's procedure is exactly the packaged file its entry point names.
         const packaged = captured.procedures.find(candidate => candidate.path === `skills/${admitted.procedure}`)
-        if (!procedure || (extension ? !pulledProcedure(procedure.bytes) : procedure.bytes !== packaged?.bytes)) {
+        if (admitted.procedure === undefined || !PROCEDURE.test(admitted.procedure) || !procedure || procedure.bytes !== packaged?.bytes) {
             return refusal('SKILL_PROCEDURE_MISSING', 'skill procedure is missing or empty', procedurePath)
         }
         declarations.push(admitted)
@@ -387,10 +328,12 @@ function admitDeclarations(captured: CapturedInput): SkillDeclaration[] | SkillC
     if (!sameStrings(declarations.map(skill => skill.name).sort(), [...captured.authority.skills, ...captured.declaredExtensions].sort())) {
         return refusal('SKILL_INPUT_INVALID', 'skill set does not match the declared collection inventory')
     }
-    const permittedPaths = new Set(declarations.flatMap(skill => [
-        `skills/${skill.name}/SKILL.md`, `skills/${skill.name}/${skill.procedure}`,
-    ]))
-    if (captured.sources.length !== permittedPaths.size || captured.sources.some(source => !permittedPaths.has(source.path))) {
+    // A shipped skill is exactly its entry point and procedure; a declared extension owns its directory.
+    const permittedPaths = new Set(declarations.flatMap(skill => skill.procedure === undefined ? []
+        : [`skills/${skill.name}/SKILL.md`, `skills/${skill.name}/${skill.procedure}`]))
+    const extensions = declarations.filter(skill => skill.procedure === undefined).map(skill => `skills/${skill.name}/`)
+    if (captured.sources.some(source => !permittedPaths.has(source.path) && !extensions.some(prefix => source.path.startsWith(prefix)))
+        || [...permittedPaths].some(path => !captured.sources.some(source => source.path === path))) {
         return refusal('SKILL_INPUT_INVALID', 'skill sources do not exactly match the declared entry points and procedures')
     }
     return declarations
@@ -432,9 +375,6 @@ function inspectRendered(
         caps: { ...captured.authority.caps },
         procedures: captured.procedures.map(procedure => ({ path: procedure.path, sha256: procedure.sha256,
             loading: 'pull' as const, budget: 'uncapped' as const })),
-        entrypoints: declarations.map(skill => ({ path: `skills/${skill.name}/SKILL.md`,
-            cap: skill.cap, metric: 'lines' as const, displacement: captured.declaredExtensions.includes(skill.name)
-                ? `skills/${skill.name}/${skill.procedure}` : `skills/${skill.procedure}` })),
     }
     const result = {
         kind: 'complete' as const,

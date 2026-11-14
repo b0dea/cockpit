@@ -9,10 +9,7 @@ cockpit:
     codexcli: [shell]
     opencode: [bash]
   commands: [doctor, up, ps, logs, exec, rebuild, restart, use, sleep, check, test-run]
-  changes: [the repository that owns the reproduced defect]
-  non-goals: [scaffolding a cockpit, creating programme ceremony, copying environment policy]
   procedure: procedures/fix.md
-  review: { mechanical: cockpit-skill-contract, judgment: pending }
   entry-point-lines: 12
 claudecode:
   allowed-tools: [Bash]

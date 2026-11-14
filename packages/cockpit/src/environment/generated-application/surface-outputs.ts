@@ -4,6 +4,7 @@ import { parseDocument } from 'yaml'
 import { SURFACE_TARGETS, type SurfaceFeature, type SurfaceSourceFile, type SurfaceTarget } from '../../surfaces/contract.js'
 import { harnessFact, isGuardSurfaceTarget } from '../../surfaces/harness-registry.js'
 import { RULESYNC_VERSION, type SurfaceGenerationOutcome } from '../../surfaces/generator-adapter.js'
+import { expectsCodexSkillSidecar } from '../../surfaces/skill-contract.js'
 import { hasTargetMcpServers, type McpCollectionOutcome, type McpHarnessServer } from '../../surfaces/mcp.js'
 import { codexWritableRoot, shippedInstructionCapabilities } from '../../surfaces/projection.js'
 import { surfaceModelSha256, type NativeFragmentSet } from '../../surfaces/render.js'
@@ -119,26 +120,6 @@ export function alwaysLoadedRule(bytes: string): Readonly<{ kind: 'complete'; by
     return { kind: 'complete', bytes: `---\n${document.toString()}---\n${bytes.slice(end + 5)}` }
 }
 
-function expectsCodexSkillSidecar(bytes: string): boolean {
-    if (!bytes.startsWith('---\n')) return false
-    const end = bytes.indexOf('\n---\n', 4)
-    if (end < 0) return false
-    let frontmatter: unknown
-    try {
-        const document = parseDocument(bytes.slice(4, end), { uniqueKeys: true })
-        if (document.errors.length > 0) return false
-        frontmatter = document.toJS({ maxAliasCount: 0 }) as unknown
-    } catch { /* unparseable input is malformed; the caller refuses it. */ return false }
-    if (!frontmatter || typeof frontmatter !== 'object' || Array.isArray(frontmatter)) return false
-    const codexcli = (frontmatter as Record<string, unknown>).codexcli
-    if (!codexcli || typeof codexcli !== 'object' || Array.isArray(codexcli)) return false
-    const metadata = codexcli as Record<string, unknown>
-    const sections = ['interface', 'policy', 'dependencies'].map(key => metadata[key])
-    const records = sections.filter((section): section is Record<string, unknown> =>
-        section !== null && typeof section === 'object' && !Array.isArray(section))
-    return records.some(section => Object.keys(section).length > 0)
-        || records.length > 0 && typeof metadata['short-description'] === 'string'
-}
 
 export function emptyGeneration(): Extract<SurfaceGenerationOutcome, { kind: 'complete' }> {
     return {
