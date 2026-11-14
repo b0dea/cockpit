@@ -289,26 +289,19 @@ describe('environment declarations', () => {
         expect(validate(minimal), JSON.stringify(validate.errors)).toBe(true)
     })
 
-    it('lets a declaration omit observed_on only when this configuration file is its source', async () => {
+    // Nothing reads a provenance's date or kind; they were required only because the schema said so.
+    it('accepts a provenance that names only its source and reason', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'cockpit-provenance-'))
         try {
             const path = join(directory, 'cockpit.toml')
-            const undated = (source: string) => {
-                const config = structuredClone(stackConfig)
-                config.sibling[0]!.derives.mcp_sources[0]!.provenance = { source, kind: 'declared', reason: 'Written in the configuration' } as typeof provenance
-                return config
-            }
-            await writeFile(path, stringify(undated('cockpit.toml')))
+            const config = structuredClone(stackConfig)
+            config.sibling[0]!.derives.mcp_sources[0]!.provenance = { source: 'docs/runtime.md', reason: 'Written in the runtime notes' } as typeof provenance
+            await writeFile(path, stringify(config))
             expect((await loadCockpitConfig(path)).kind).toBe('complete')
-            await writeFile(path, stringify(undated('docs/runtime.md')))
-            expect(await loadCockpitConfig(path)).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
-                message: expect.stringContaining('sibling.0.derives.mcp_sources.0.provenance: provenance without observed_on must name this configuration file (cockpit.toml)'),
-                fix: expect.stringContaining('observed_on'),
-            })] })
-            const measured = undated('cockpit.toml')
-            measured.sibling[0]!.derives.mcp_sources[0]!.provenance.kind = 'measured'
-            expect(CockpitConfig.safeParse(measured).success).toBe(false)
-            expect(publishedCockpitValidator(measured)).toBe(false)
+            expect(publishedCockpitValidator(config), JSON.stringify(publishedCockpitValidator.errors)).toBe(true)
+            config.sibling[0]!.derives.mcp_sources[0]!.provenance = { source: 'docs/runtime.md', reason: 'Guessed', kind: 'inferred' } as typeof provenance
+            expect(CockpitConfig.safeParse(config).success).toBe(false)
+            expect(publishedCockpitValidator(config)).toBe(false)
         } finally {
             await rm(directory, { recursive: true, force: true })
         }

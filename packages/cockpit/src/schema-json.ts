@@ -149,9 +149,9 @@ export function renderCockpitSchema(): string {
         const fields = node.properties as Record<string, JsonSchema> | undefined
         if (fields?.observed_on && fields.kind && fields.source) {
             node.anyOf = [
-                { properties: { kind: { enum: ['declared'] } } },
-                { properties: { kind: { enum: ['measured'] } }, required: ['observed_on'] },
-                { properties: { kind: { enum: ['inferred'] }, confirmed: { enum: [true] } }, required: ['confirmed', 'observed_on'] },
+                { not: { required: ['kind'] } },
+                { properties: { kind: { enum: ['declared', 'measured'] } } },
+                { properties: { kind: { enum: ['inferred'] }, confirmed: { enum: [true] } }, required: ['confirmed'] },
             ]
         }
         for (const value of Object.values(node)) {

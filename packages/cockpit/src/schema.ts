@@ -174,14 +174,12 @@ const EnvironmentName = z.string().regex(/^[A-Z][A-Z0-9_]*$/).max(128)
 // schema cannot see the file name.
 export const Provenance = z.object({
     source: SafeRelativePath.max(4096).describe('File or place the value came from, relative to the repository.'),
-    observed_on: z.string().date().optional().describe('Date the source was looked at; required unless kind is declared.'),
-    kind: z.enum(['declared', 'measured', 'inferred']).describe('How the value was established: declared by this file, measured, or inferred.'),
+    observed_on: z.string().date().optional().describe('Date the source was looked at, for the reviewer.'),
+    kind: z.enum(['declared', 'measured', 'inferred']).optional().describe('How the value was established: declared by this file, measured, or inferred.'),
     reason: DeclarationReason.describe('Why the value is what it is.'),
     confirmed: z.boolean().optional().describe('Set to true once a person has confirmed an inferred value; inferred values require it.'),
 }).strict().refine((value) => value.kind !== 'inferred' || value.confirmed === true, {
     path: ['confirmed'], message: 'inferred declarations require explicit confirmation',
-}).refine((value) => value.kind === 'declared' || value.observed_on !== undefined, {
-    path: ['observed_on'], message: 'measured and inferred provenance require observed_on',
 })
 
 

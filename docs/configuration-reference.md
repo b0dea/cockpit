@@ -157,12 +157,12 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
 | `source` | File or place the value came from, relative to the repository. | string |  | required; pattern [P1](#patterns); at most 4096 characters |
-| `observed_on` | Date the source was looked at; required unless kind is declared. | string |  | format `date`; pattern `^(?:(?:\d\d[2468][048]\|\d\d[13579][26]\|\d\d0[48]\|[02468][048]00\|[13579][26]00)-02-29\|\d{4}-(?:(?:0[13578]\|1[02])-(?:0[1-9]\|[12]\d\|3[01])\|(?:0[469]\|11)-(?:0[1-9]\|[12]\d\|30)\|(?:02)-(?:0[1-9]\|1\d\|2[0-8])))$` |
-| `kind` | How the value was established: declared by this file, measured, or inferred. | string |  | required; one of `"declared"`, `"measured"`, `"inferred"` |
+| `observed_on` | Date the source was looked at, for the reviewer. | string |  | format `date`; pattern `^(?:(?:\d\d[2468][048]\|\d\d[13579][26]\|\d\d0[48]\|[02468][048]00\|[13579][26]00)-02-29\|\d{4}-(?:(?:0[13578]\|1[02])-(?:0[1-9]\|[12]\d\|3[01])\|(?:0[469]\|11)-(?:0[1-9]\|[12]\d\|30)\|(?:02)-(?:0[1-9]\|1\d\|2[0-8])))$` |
+| `kind` | How the value was established: declared by this file, measured, or inferred. | string |  | one of `"declared"`, `"measured"`, `"inferred"` |
 | `reason` | Why the value is what it is. | string |  | required; pattern `\S`; 1–4096 characters |
 | `confirmed` | Set to true once a person has confirmed an inferred value; inferred values require it. | boolean |  |  |
 
-- Must match at least one of `[{"properties":{"kind":{"enum":["declared"]}}},{"properties":{"kind":{"enum":["measured"]}},"required":["observed_on"]},{"properties":{"kind":{"enum":["inferred"]},"confirmed":{"enum":[true]}},"required":["confirmed","observed_on"]}]`.
+- Must match at least one of `[{"not":{"required":["kind"]}},{"properties":{"kind":{"enum":["declared","measured"]}}},{"properties":{"kind":{"enum":["inferred"]},"confirmed":{"enum":[true]}},"required":["confirmed"]}]`.
 
 ### `[ports]`
 

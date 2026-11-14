@@ -228,19 +228,19 @@
                           "description": "File or place the value came from, relative to the repository."
                         },
                         "observed_on": {
-                          "description": "Date the source was looked at; required unless kind is declared.",
+                          "description": "Date the source was looked at, for the reviewer.",
                           "type": "string",
                           "format": "date",
                           "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
                         },
                         "kind": {
+                          "description": "How the value was established: declared by this file, measured, or inferred.",
                           "type": "string",
                           "enum": [
                             "declared",
                             "measured",
                             "inferred"
-                          ],
-                          "description": "How the value was established: declared by this file, measured, or inferred."
+                          ]
                         },
                         "reason": {
                           "type": "string",
@@ -256,32 +256,27 @@
                       },
                       "required": [
                         "source",
-                        "kind",
                         "reason"
                       ],
                       "additionalProperties": false,
                       "description": "Where this MCP source declaration came from.",
                       "anyOf": [
                         {
-                          "properties": {
-                            "kind": {
-                              "enum": [
-                                "declared"
-                              ]
-                            }
+                          "not": {
+                            "required": [
+                              "kind"
+                            ]
                           }
                         },
                         {
                           "properties": {
                             "kind": {
                               "enum": [
+                                "declared",
                                 "measured"
                               ]
                             }
-                          },
-                          "required": [
-                            "observed_on"
-                          ]
+                          }
                         },
                         {
                           "properties": {
@@ -297,8 +292,7 @@
                             }
                           },
                           "required": [
-                            "confirmed",
-                            "observed_on"
+                            "confirmed"
                           ]
                         }
                       ]

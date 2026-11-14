@@ -68,9 +68,8 @@ export async function writeVerifiedConfig(input: VerifiedWriteInput): Promise<Ve
         return refuse(ENVIRONMENT_CODES.CONFIG_CHANGED_DURING_EXECUTION, messages.changedBefore)
     }
     const next = input.edit(read.bytes.toString('utf8'))
-    // Keep the candidate's basename equal to the real configuration name. Declared provenance
-    // may intentionally name cockpit.toml without observed_on; validating it under a random
-    // temporary basename would reject bytes that become valid at the atomic destination.
+    // Keep the candidate's basename equal to the real configuration name, so it is validated as the
+    // file it replaces.
     const temporaryRoot = join(dirname(path), `.${basename(path)}.${input.temporaryTag}-${randomBytes(8).toString('hex')}`)
     const temporary = join(temporaryRoot, basename(path))
     let created = false
