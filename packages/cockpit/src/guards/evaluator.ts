@@ -2853,8 +2853,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (writes.uncertain) hold(unavailable(`${named(invocation)} uses a form of this writer the guard does not model, so it cannot tell where it writes. `
                 + 'Use one it reads: `tar -xf <archive> -C <dir>`, `tar -czf <archive> <paths>` or `tar -tf <archive>`, `rsync -a <src>/ <dst>/` for a recursive copy, '
                 + 'or `cp`, `mv`, `ln` and `install` with plain operands; otherwise a person runs it.'))
-        } else if (!access && git?.verb !== 'add') {
-            // Staging writes the index, never the named file, and its operands are inspected as staged below.
+        } else if (!access && git?.verb !== 'add' && git?.verb !== 'commit') {
+            // Staging writes the index, never the named file, and its operands, and a commit's, are inspected as staged below.
             for (const arg of git?.args ?? operands) {
                 if (++possibleControlCount <= GUARD_INPUT_LIMITS.paths) {
                     inspectPossibleControlOperand(invocation, arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg, git?.cwd ?? invocation.cwd,
@@ -3310,6 +3310,15 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 }
             }
             if (!operands) holdBoundary(invocation, ask('Staging without explicit paths requires human approval.'))
+        }
+        // `git commit <paths>` stages what it names before it commits, as `git add` would.
+        if (git.verb === 'commit') {
+            for (const arg of gitOperands(git.args, ['-m', '--message', '-F', '--file', '-C', '--reuse-message', '-c', '--reedit-message', '--author', '--date',
+                '--fixup', '--squash', '-t', '--template', '--trailer', '--cleanup', '--pathspec-from-file'])) {
+                pathCount++
+                if (arg.startsWith(':') || /[*?\[]/.test(arg)) hold(unavailable('Unproven Git staging pathspec grammar.'))
+                else inspectStage(invocation, arg, git.cwd)
+            }
         }
     }
     linking = false

@@ -43,8 +43,9 @@ route that works.
 
 Integrity holds through the record `sync` writes: the hook runs the guard script only while it matches
 the digest recorded below `~/.cockpit/guards`, so a guard changed by any route holds every later call
-until a person syncs. Staging the guard script as that sync recorded it is allowed; any other guard
-file is refused with the `! git add -- <paths>` command a person runs.
+until a person syncs. Staging or committing the guard script as that sync recorded it is allowed, by `git add` or by
+`git commit <paths>`; any other guard file is refused with the `! git add -- <paths>` command a person
+runs.
 
 The blocked list below is refused in every mode, and no `[[guards.allow]]` rule overrides it. Where a row says a case asks, no rule admits that case either:
 

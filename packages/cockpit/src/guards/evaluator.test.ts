@@ -2774,8 +2774,12 @@ describe('installed code, search path and secret links', () => {
         // The cockpit's own guard script, as the person's last sync recorded it, is staged and committed with the upgrade that
         // wrote it; one that differs, another guard file or the directory is a person's to stage, named ready to paste after `!`.
         const recorded = { ...configured, recordedGuardScript: true as const }
-        expect(evaluateGuard(parseGuardInput(shellPayload('git add .cockpit/guards/bash-guard.sh package.json && git commit -m "Upgrade cockpit"')), recorded, withGit).decision).toBe('allow')
+        for (const command of ['git add .cockpit/guards/bash-guard.sh package.json && git commit -m "Upgrade cockpit"', 'git commit -m "Upgrade cockpit" -- .cockpit/guards/bash-guard.sh package.json',
+            'git commit -m "Upgrade cockpit" .cockpit/guards/bash-guard.sh']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), recorded, withGit).decision, command).toBe('allow')
+        }
         for (const [command, staged, judged] of [['git add .cockpit/guards/bash-guard.sh', '.cockpit/guards/bash-guard.sh', configured],
+            ['git commit -m Upgrade -- .cockpit/guards/bash-guard.sh', '.cockpit/guards/bash-guard.sh', configured], ['git commit -m Upgrade .cockpit/guards', '.cockpit/guards', recorded],
             ["git add -- .cockpit/guards/bash-guard.sh 'app/.cockpit/guards/my guard.sh'", "'app/.cockpit/guards/my guard.sh'", recorded],
             ['git add .cockpit/guards', '.cockpit/guards', recorded]] as const) {
             expect(evaluateGuard(parseGuardInput(shellPayload(command)), judged, withGit), command).toEqual({ decision: 'deny',
