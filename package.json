@@ -19,6 +19,7 @@
     "test": "vitest run",
     "test:fast": "vitest run --project fast",
     "test:changed": "node scripts/run-changed-tests.mjs",
+    "test:journey": "vitest run --project slow packages/cockpit/src/journey",
     "typecheck": "node node_modules/typescript/bin/tsc --build --singleThreaded"
   },
   "devDependencies": {
