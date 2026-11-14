@@ -3,11 +3,14 @@ import { existsSync, readFileSync } from 'node:fs'
 import { basename, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// `vitest --changed <base>` selects every test whose import graph reaches a changed file, in both
-// tiers, deleted files and shared test configuration included. It cannot see a test that reads a
-// file by path (a manifest, a workflow, a shipped template, a fixture, the dependency rules) or one
-// that owns prose; this script adds those owners to vitest's own selection and runs them together.
+// By default this runs the fast tests beside each changed file: a changed test, and for a changed
+// module `dir/name.ts` the tests `dir/name.test.ts` and `dir/name.<part>.test.ts`. Hub modules are
+// imported almost everywhere, so following the import graph selected most of the suite; that
+// selection, both tiers, is `--all`, and CI runs everything. Neither can see a test that reads a file
+// by path (a manifest, a workflow, a shipped template, a fixture, the dependency rules) or one that
+// owns prose, so both add those owners.
 const TEST_PATH = /^packages\/[^/]+\/src\/.+\.(?:test|spec)\.[cm]?[jt]sx?$/
+const SLOW_TEST = /\.slow\.test\.ts$/
 const SOURCE_MODULE = /^packages\/[^/]+\/src\/.+\.[cm]?tsx?$/
 const CHANGESET_FRAGMENT = /^\.changeset\/(?!README\.md$)[^/]+\.md$/
 const SRC = 'packages/cockpit/src/'
@@ -48,29 +51,47 @@ function ownersOutsideImportGraph(changed, tests, read) {
     return owners
 }
 
+// The tests beside a changed module, named for it, in the same directory.
+function adjacentTests(changed, tests) {
+    const adjacent = new Set()
+    for (const path of changed) {
+        if (TEST_PATH.test(path)) { adjacent.add(path); continue }
+        if (!SOURCE_MODULE.test(path)) continue
+        const stem = path.replace(/\.[cm]?tsx?$/, '')
+        for (const test of tests) if (test.startsWith(`${stem}.`) && !test.slice(stem.length + 1).includes('/')) adjacent.add(test)
+    }
+    return adjacent
+}
+
 function runChangedTestsCli(argv) {
-    const [base, ...rest] = argv
+    const all = argv[0] === '--all'
+    const [base, ...rest] = all ? argv.slice(1) : argv
     if (!base || base.startsWith('-')) {
-        console.error('CHANGED_TEST_SELECTION_INVALID: usage: npm run test:changed -- <base-commit-ish> [vitest options]')
+        console.error('CHANGED_TEST_SELECTION_INVALID: usage: npm run test:changed[:all] -- <base-commit-ish> [vitest options]')
         return 2
     }
     try {
         const root = git(['rev-parse', '--show-toplevel']).trim()
         const vitest = resolve(root, 'node_modules/vitest/vitest.mjs')
         const run = (args, stdio) => spawnSync(process.execPath, [vitest, ...args], { cwd: root, stdio, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
-        const listed = run(['list', '--filesOnly', '--json', '--changed', base], ['ignore', 'pipe', 'inherit'])
-        if (listed.status !== 0) return listed.status ?? 2
-        const selected = new Set(JSON.parse(listed.stdout).map(({ file }) => relative(root, file)))
-
+        // An unknown base fails here, before any selection.
+        git(['rev-parse', '--verify', '--quiet', `${base}^{commit}`])
         const changed = [...new Set([
             ...git(['diff', '--no-renames', '--name-only', '-z', base, '--']).split('\0'),
             ...git(['ls-files', '-z', '--others', '--exclude-standard']).split('\0'),
         ])].filter(Boolean)
         const tests = git(['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', 'packages/*/src/**']).split('\0')
             .filter(path => TEST_PATH.test(path) && existsSync(resolve(root, path)))
+        let selected
+        if (all) {
+            const listed = run(['list', '--filesOnly', '--json', '--changed', base], ['ignore', 'pipe', 'inherit'])
+            if (listed.status !== 0) return listed.status ?? 2
+            selected = new Set(JSON.parse(listed.stdout).map(({ file }) => relative(root, file)))
+        } else selected = adjacentTests(changed, tests)
         const texts = new Map()
         const read = path => texts.get(path) ?? texts.set(path, readFileSync(resolve(root, path), 'utf8')).get(path)
         for (const owner of ownersOutsideImportGraph(changed, tests, read)) if (tests.includes(owner)) selected.add(owner)
+        if (!all) for (const test of selected) if (SLOW_TEST.test(test) || !tests.includes(test)) selected.delete(test)
 
         if (selected.size === 0) {
             console.log('changed tests: no test owns a changed file; nothing dispatched')

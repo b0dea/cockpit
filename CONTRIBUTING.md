@@ -36,9 +36,10 @@ npm test -- packages/cockpit/src/tree-hygiene.test.ts
 - `npm test` runs Vitest's fast and slow projects, capped at four workers; it takes file paths and
   `-t '<test name>'` after `--`. `npm run test:fast` runs the fast project only. A skipped or todo
   test fails the run unless **scripts/skip-allowlist-reporter.mjs** lists it.
-- `npm run test:changed -- <base-commit>` runs, in both tiers, the tests that import what changed
-  since that commit (Vitest's `--changed`), plus the tests that read a changed file by name rather
-  than import it. Most source changes reach nearly every test, so read its file count.
+- `npm run test:changed -- <base-commit>` runs the fast tests beside what changed since that commit
+  (`name.test.ts` and `name.<part>.test.ts` for a changed `name.ts`), plus the tests that read a
+  changed file by name. `npm run test:changed:all -- <base-commit>` adds every test in either tier
+  that imports what changed (Vitest's `--changed`); most source changes reach nearly every test.
 - `*.slow.test.ts` is the slow tier. [Test tiers](docs/contributing/testing.md#test-tiers) says what
   belongs there.
 

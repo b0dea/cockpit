@@ -6,8 +6,8 @@ How tests split into a fast and a slow tier, which module owns each harness surf
 
 A test file named `*.slow.test.ts` is in the slow tier; every other file is in the fast tier.
 They are the `slow` and `fast` projects in `vitest.config.ts`. `npm test` runs both and
-`npm run test:fast` runs the fast project. `npm run test:changed -- <base-commit>` runs the
-owners of a change in both tiers.
+`npm run test:fast` runs the fast project. `npm run test:changed -- <base-commit>` runs the fast
+tests beside a change, and `npm run test:changed:all -- <base-commit>` its owners in both tiers.
 
 A file belongs in the slow tier when its cost is set by something other than the code under test:
 

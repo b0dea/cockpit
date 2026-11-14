@@ -16,7 +16,8 @@ afterEach(() => {
 })
 
 // A real repository running the real Vitest: the selection is the union of Vitest's own `--changed`
-// and the owners the script adds, so a fake runner would pin neither.
+// (or, by default, the tests beside each changed file) and the owners the script adds, so a fake
+// runner would pin neither.
 function repository(files: Record<string, string>) {
     const root = mkdtempSync(join(tmpdir(), 'cockpit-changed-tests-'))
     roots.push(root)
@@ -35,8 +36,8 @@ function repository(files: Record<string, string>) {
     git('add', '.')
     git('commit', '--quiet', '-m', 'synthetic base')
     const base = git('rev-parse', 'HEAD').trim()
-    const run = (from = base) => {
-        const result = spawnSync(process.execPath, [SCRIPT, from, '--reporter=verbose'], { cwd: root, encoding: 'utf8' })
+    const run = (from = base, mode: 'adjacent' | 'all' = 'all') => {
+        const result = spawnSync(process.execPath, [SCRIPT, ...mode === 'all' ? ['--all'] : [], from, '--reporter=verbose'], { cwd: root, encoding: 'utf8' })
         const ran = [...new Set(result.stdout.match(/packages\/\S+?\.test\.ts/g) ?? [])].sort()
         return { ...result, ran }
     }
@@ -44,6 +45,25 @@ function repository(files: Record<string, string>) {
 }
 
 describe('changed test runner', () => {
+    it('by default runs only the fast tests beside a changed file, whatever imports it', () => {
+        const fixture = repository({
+            [`${SRC}value.ts`]: 'export const value = 1\n',
+            [`${SRC}value.test.ts`]: "import './value.js'\n" + PASSING,
+            [`${SRC}value.render.test.ts`]: "import './value.js'\n" + PASSING,
+            [`${SRC}value.slow.test.ts`]: "import './value.js'\n" + PASSING,
+            [`${SRC}direct.test.ts`]: "import './value.js'\n" + PASSING,
+            [`${SRC}edited.test.ts`]: PASSING,
+            [`${SRC}architecture.test.ts`]: PASSING,
+        })
+        fixture.write(`${SRC}value.ts`, 'export const value = 2\n')
+        fixture.write(`${SRC}edited.test.ts`, `// edited\n${PASSING}`)
+
+        const result = fixture.run(undefined, 'adjacent')
+
+        expect(result.status, result.stdout + result.stderr).toBe(0)
+        expect(result.ran).toEqual([`${SRC}architecture.test.ts`, `${SRC}edited.test.ts`, `${SRC}value.render.test.ts`, `${SRC}value.test.ts`])
+    })
+
     it('runs the tests that import a changed file in either tier, and none of the others', () => {
         const fixture = repository({
             [`${SRC}value.ts`]: 'export const value = 1\n',
@@ -113,12 +133,12 @@ describe('changed test runner', () => {
     it('runs nothing for a deleted test, says so when no test owns the change, and refuses an unknown base', () => {
         const fixture = repository({ [`${SRC}gone.test.ts`]: PASSING, [`${SRC}kept.test.ts`]: PASSING, 'notes.txt': 'a\n' })
         fixture.git('rm', '--quiet', `${SRC}gone.test.ts`)
-        const deleted = fixture.run()
+        const deleted = fixture.run(undefined, 'adjacent')
         expect(deleted.status, deleted.stdout + deleted.stderr).toBe(0)
         expect(deleted.ran).toEqual([])
         expect(deleted.stdout).toContain('nothing dispatched')
 
-        const unknown = fixture.run('no-such-revision')
+        const unknown = fixture.run('no-such-revision', 'adjacent')
         expect(unknown.status).not.toBe(0)
         expect(unknown.ran).toEqual([])
     })
