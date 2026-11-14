@@ -17,8 +17,6 @@ export interface InvocationWord {
     readonly name?: string
 }
 export interface GuardParseOptions {
-    /** `mark` emits a word whose expansion the guard cannot see, flagged `dynamic`, where `refuse` (the default) refuses the command. */
-    readonly dynamicWords?: 'refuse' | 'mark'
     /** HOME of the process that runs the command: a leading `~` or `~/`, `$HOME` and `${HOME}` expand to it. */
     readonly home?: string
     /** CDPATH of that process; when empty, `cd name` resolves from the working directory. */
@@ -37,7 +35,7 @@ export interface ParsedInvocation {
      * cannot see, so a word holding it is never proven to name a path.
      */
     readonly expandsStatus?: true
-    /** A word of this invocation is dynamic; only `dynamicWords: 'mark'` emits one. */
+    /** A word of this invocation holds an expansion the guard cannot see. */
     readonly dynamic?: true
     /** It runs as a background job, which outlives the call: its list ends in `&`, or `nohup` or `setsid` detaches it. */
     readonly background?: true
@@ -95,8 +93,6 @@ interface Token {
     quoted?: boolean
     dynamic?: boolean
     status?: boolean
-    /** Which way forward a refusal of this dynamic word names. */
-    hint?: 'heredoc' | 'glob'
     /** Command text of each `$(…)` or backquote substitution in the word, run where the command runs. */
     substitutions?: string[]
     /** One of several words a brace expansion produced. */
@@ -277,7 +273,6 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
         let dynamic = false
         let status = false
         let evaluates = false
-        let hint: Token['hint']
         const substitutions: string[] = []
         // Open braces by position in `value`, with the unquoted commas directly inside each and whether any of it was quoted.
         const braces: { at: number; commas: number[]; quoted: boolean }[] = []
@@ -323,7 +318,6 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
                 if (literal !== undefined) value += literal
                 else {
                     dynamic = true
-                    if (inner.tokens.some((token) => token.kind === 'op' && token.value.startsWith('<<'))) hint = 'heredoc'
                     value += `$(${text})`
                 }
                 index = inner.end
@@ -410,10 +404,7 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
             // zsh reads `$~x` and `$=x` as glob and split flags, `$[…]` is arithmetic, and `$x[…]` a subscript evaluated as arithmetic.
             if (quote !== "'" && c === '$' && evaluatingReference(command, index + 1)) evaluates = true
             // A tilde expands only where a word starts, or after `=` or `:` in an assignment; `HEAD~1` stays literal.
-            if (quote !== "'" && (c === '$' || !quote && (/[*?\[]/.test(c) || c === '~' && (value === '' && !quoted || /[=:]$/.test(value))))) {
-                dynamic = true
-                if (/[*?\[]/.test(c)) hint ??= 'glob'
-            }
+            if (quote !== "'" && (c === '$' || !quote && (/[*?\[]/.test(c) || c === '~' && (value === '' && !quoted || /[=:]$/.test(value))))) dynamic = true
             value += c
             index++
         }
@@ -427,7 +418,7 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
         for (const [i, item] of values.entries()) {
             if (++words > GUARD_INPUT_LIMITS.words || Buffer.byteLength(item) > GUARD_INPUT_LIMITS.wordBytes) refuse('Guard word limit exceeded.')
             tokens.push({ kind: 'word', value: item, quoted, dynamic, status, ...evaluates ? { evaluates } : {},
-                ...hint ? { hint } : {}, ...substitutions.length && !i ? { substitutions } : {}, ...expansion ? { braced: true } : {} })
+                ...substitutions.length && !i ? { substitutions } : {}, ...expansion ? { braced: true } : {} })
         }
         if (awaitingDocument !== undefined) {
             if (dynamic || status || !value || expansion || substitutions.length) refuse('Unsupported heredoc delimiter.')
@@ -506,12 +497,6 @@ const XARGS_REFUSAL = 'xargs is read only with -0, -r, -t, -x, -o, -p, -n, -L, -
 const DEVICE_SINKS = new Set(['/dev/null', '/dev/stdout', '/dev/stderr'])
 const reserved = new Set(['if', 'then', 'else', 'fi', 'for', 'while', 'until', 'do', 'done', 'case', 'esac', 'select', 'time', '!', 'coproc', 'repeat', '[['])
 
-function dynamicRefusal(token: Token): never {
-    const forward = token.hint === 'heredoc'
-        ? "For a commit message, quote the heredoc delimiter (<<'EOF') so the text is literal, or pass it on standard input with git commit -F - <<'EOF'."
-        : token.hint === 'glob' ? "Write the paths out, or list them first with rg --files -g '<glob>' or fd." : 'Write the command and its paths out literally.'
-    refuse(`Dynamic command construction is unsupported: ${shown(token.value)} holds a variable, command substitution, glob, home-directory tilde or zsh =command whose expansion the guard cannot see. ${forward}`)
-}
 function evaluationRefusal(token: Token): never {
     refuse(`${shown(token.value)} holds an expansion that can run code the guard cannot see: arithmetic on a subscript, a prompt or zsh flag expansion, or a zsh glob made from a value. Write the value out.`)
 }
@@ -649,10 +634,6 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
         }
         return [{ executable: null, argv: [], cwd, wrapped: false, words: [...words, ...args.map(({ value }) => ({ role: 'definition' as const, value }))], redirects: redirectPaths }]
     }
-    if (options.dynamicWords !== 'mark') {
-        const expanded = args.find((token) => token.dynamic)
-        if (expanded) dynamicRefusal(expanded)
-    }
     const evaluating = args.find((token) => token.evaluates)
     if (evaluating) evaluationRefusal(evaluating)
     let cursor = 0
@@ -739,7 +720,6 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
         }
         if (wrapper === 'xargs') {
             const input: Token = { kind: 'word', value: XARGS_INPUT, quoted: false, dynamic: true, status: false }
-            if (options.dynamicWords !== 'mark') dynamicRefusal(input)
             args.push(input)
         }
     }
@@ -1033,7 +1013,7 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
             }
             refuse(compound.kind === 'for' ? LOOP_REFUSAL : compound.kind === 'while' ? WHILE_REFUSAL : SUBSHELL_REFUSAL)
         }
-        if (!current.length && !compound && token.kind === 'word' && !token.quoted && (token.value === 'for' && options.dynamicWords === 'mark' || token.value === 'while' || token.value === 'until')) {
+        if (!current.length && !compound && token.kind === 'word' && !token.quoted && (token.value === 'for' || token.value === 'while' || token.value === 'until')) {
             ({ compound, end: i } = token.value === 'for' ? readLoop(tokens, i) : readWhile(tokens, i))
             context.seen.loop = true
             needsCommand = false
@@ -1171,7 +1151,6 @@ function captureBytes(input: Uint8Array): Uint8Array {
 /** Capture once: the evaluator never consumes native payloads or reparses shell text. */
 export function parseGuardInput(input: unknown, options: GuardParseOptions = {}): GuardParseResult {
     try {
-        if (![undefined, 'refuse', 'mark'].includes(options.dynamicWords)) refuse('Unknown guard dynamic word mode.')
         if (options.home !== undefined && !posix.isAbsolute(path(options.home))) refuse('The guard was given a HOME that is not an absolute path.')
         let decoded = input
         if (typeof input === 'object' && input !== null && isProxy(input)) refuse('Guard input must be own data.')

@@ -220,8 +220,7 @@ modes.
   that bypass or change branch protection, changes to the guard itself, and privilege escalation or
   downloaded code piped to an interpreter. An agent may run `sync` where `[autonomy] sync = "agent"`,
   except for an edit that widens what agents may do, which a person confirms at `sync --interactive`.
-  `[guards] default = "ask"` is the strict mode, which asks for every command the guard cannot prove
-  safe.
+  For a stricter boundary, run the agent tool in its own OS sandbox.
 - **Sees** shell commands in all three tools. In Claude Code also its Edit and Write tools, and its
   Read tool through generated deny rules. Those rules also refuse documentation names such as
   `.env.example`, to Read and to a recognized shell read such as `cat` (measured 2026-11-05), so an

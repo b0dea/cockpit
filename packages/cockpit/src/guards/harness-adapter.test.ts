@@ -90,9 +90,9 @@ describe('closed native guard representation', () => {
 
 describe('OpenCode input', () => {
     it('normalizes only OpenCode field names and leaves unsupported shell interpretation to the single parser', () => {
-        const raw = { tool: 'bash', args: { command: 'echo $(dynamic)' }, cwd }
+        const raw = { tool: 'bash', args: { command: 'echo $((1 + 2))' }, cwd }
         const normalized = normalizeOpenCodeInput(raw)
-        expect(normalized).toEqual({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'echo $(dynamic)' }, cwd })
+        expect(normalized).toEqual({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'echo $((1 + 2))' }, cwd })
         expect(parseGuardInput(normalized).status).toBe('unavailable')
         expect(normalizeOpenCodeInput({ tool: 'apply_patch', args: { patchText: 'raw patch' }, cwd })).toEqual({ hook_event_name: 'PreToolUse', tool_name: 'apply_patch', tool_input: { command: 'raw patch' }, cwd })
         expect(normalizeOpenCodeInput({ tool: 'write', args: { filePath: 'src/a.ts', content: 'text' }, cwd })).toEqual({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: 'src/a.ts' }, cwd })

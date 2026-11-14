@@ -38,7 +38,6 @@ The values cockpit uses for a key the configuration leaves out.
     "allow": [],
     "deny": [],
     "read_paths": [],
-    "default": "allow",
     "secret_paths": [],
     "related_checkouts": [],
     "unresolved": "ask",
@@ -182,7 +181,6 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `allow` | Exceptions that admit a command the guard would otherwise ask about, such as a program it does not know or inline interpreter code; an entry never admits a blocked command, such as a secret read, a write outside the cockpit, a protected-branch or force push, or a change to the guard. | array of table: [`[[guards.allow]]`](#guardsallow) | `[]` | at most 64 items |
 | `deny` | Commands refused in addition to the built-in rules. | array of table, one of: [`[[guards.deny]]` form 1](#guardsdeny-form-1), [`[[guards.deny]]` form 2](#guardsdeny-form-2) | `[]` | at most 64 items |
 | `read_paths` | Files and directories outside the cockpit whose named files agents may read, list and search; never written, searched recursively or used as a working directory. | array of table: [`[[guards.read_paths]]`](#guardsread_paths) | `[]` | at most 64 items |
-| `default` | What the guard does with a shell command outside its blocked list: allow runs a command whose executable is a development tool it knows, a project program inside the roots and package scripts, and asks about an unknown program or inline interpreter code, which a person approves or admits with an allow entry; ask is the strict mode, which admits only the read-only commands the guard classifies, declared build and test commands and allow entries, and asks for every other command. Secrets, writes outside the cockpit, protected branches and force pushes, declared hosts, the guard itself and privilege escalation are refused in both modes. | string | `"allow"` | one of `"allow"`, `"ask"` |
 | `secret_paths` | Files and directories, relative to the cockpit or as <sibling slug>:path in a sibling, that agents never read, write, search or stage, as an .env file is kept from them; the guard refuses them on every agent tool and Claude Code's own file tools are denied them too. | array of string | `[]` | at most 64 items; each item: pattern [P4](#patterns), at most 1024 characters |
 | `related_checkouts` | Other checkouts agents may read, search and inspect with read-only Git, such as the upstream of a tool this cockpit installs: an absolute path, a ~/ path or a path relative to the cockpit. Writes there, Git commands that change them, and secret names stay refused. | array of string | `[]` | at most 16 items; each item: pattern `^(?:\/\|~\/\|(?:\.\.\/)*)[^\x00-\x1f\x7f]+$`, at most 4096 characters |
 | `unresolved` | What the guard does with a command it would ask a person about: ask prompts where the agent tool can (Claude Code) and refuses where it cannot; deny refuses everywhere, naming the reason and the route, so an autonomous session continues another way instead of waiting. | string | `"ask"` | one of `"ask"`, `"deny"` |

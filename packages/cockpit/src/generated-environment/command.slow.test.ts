@@ -82,12 +82,6 @@ describe('public generated repair', () => {
 })
 
 
-// Switches a fixture's guard to the strict mode, where only exact profiles and grants run unprompted.
-async function strictGuard(configPath: string): Promise<void> {
-    const text = await readFile(configPath, 'utf8')
-    await writeFile(configPath, /^\[guards\]$/m.test(text) ? text.replace(/^\[guards\]$/m, '[guards]\ndefault = "ask"') : `${text}\n[guards]\ndefault = "ask"\n`)
-}
-
 it('prepares canonical currentness with genuine producer facts and no wall-clock field', async () => {
     const { root, configPath } = await composeConsumer('producer-currentness')
     const first = '2026-10-22T12:00:00.000Z'
@@ -413,8 +407,6 @@ it('consumes vendor and exact build/test authority through installed hook regist
     const { root, configPath } = await surfaceConsumer('installed-authority')
     expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
     await writeFile(join(root, 'app/package-lock.json'), '{}')
-    // Exact build and test tuples are what the strict mode admits; the allow default runs any spelling.
-    await strictGuard(configPath)
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
     const registered = async (path: string) => JSON.parse(await readFile(join(root, path), 'utf8')).hooks.PreToolUse
         .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('bash-guard.sh')).command as string
@@ -487,8 +479,6 @@ gates = [{ id = "quick", tier = "targeted", stages = ["quick"], changes = "Synth
 ` })
     expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
     await writeFile(join(root, 'app/package-lock.json'), '{}')
-    // Which spellings prove the installed cockpit shows in the strict mode, where an unproven one asks.
-    await strictGuard(configPath)
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
     const hook = (JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8')).hooks.PreToolUse
         .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('bash-guard.sh')).command) as string

@@ -2,7 +2,7 @@ import type { ParsedInvocation, InvocationWord } from '../invocation-parser.js'
 
 const rows = [
     { name: 'separate push', candidate: 'git push origin feature; git push origin main', control: 'git push origin feature; printf main', decision: 'deny' },
-    { name: 'timeout values', candidate: 'timeout -s TERM -k 5 60 git reset --hard', control: 'printf "timeout -s TERM -k 5 60 git reset --hard"', decision: 'ask' },
+    { name: 'timeout values', candidate: 'timeout -s TERM -k 5 60 git clean -fd', control: 'printf "timeout -s TERM -k 5 60 git clean -fd"', decision: 'ask' },
     { name: 'nice adjustment', candidate: 'nice -n 10 git clean -fd', control: 'printf "nice -n 10 git clean -fd"', decision: 'ask' },
     { name: 'session detacher', candidate: 'setsid --wait nohup git push origin main', control: 'printf "setsid --wait nohup git push origin main"', decision: 'deny' },
     { name: 'environment cwd', candidate: 'env -C config git push origin main', control: 'printf "env -C config git push origin main"', decision: 'deny' },
@@ -33,12 +33,12 @@ const definition = (...values: string[]) => expected(null, [], values.map((value
 const here = (body: string) => expected('cat', [], [{ role: 'redirect-target', value: 'END' }, { role: 'heredoc-body', value: body }])
 const redirect = (executable: string, argv: string[], target: string) => ({ ...expected(executable, argv, [{ role: 'redirect-target', value: target }]), redirects: [{ target, write: true, truncate: true }] })
 const defined = 'Unsupported executable or defined command invocation.'
-const dynamic = (word: string) => `Dynamic command construction is unsupported: ${JSON.stringify(word)} holds a variable, command substitution, glob, home-directory tilde or zsh =command whose expansion the guard cannot see. Write the command and its paths out literally.`
+const program = (word: string) => `${JSON.stringify(word)} chooses the program to run through an expansion the guard cannot see. Write the program name out.`
 // `background` marks a candidate that sends a job to the background, as `setsid` and `nohup` do.
 interface CapturePair { candidate: readonly ParsedInvocation[] | string; control: readonly ParsedInvocation[]; background?: true }
 const captures: Record<typeof rows[number]['name'], CapturePair> = {
     'separate push': { candidate: [git('push', 'origin', 'feature'), git('push', 'origin', 'main')], control: [git('push', 'origin', 'feature'), printf('main')] },
-    'timeout values': { candidate: [expected('git', ['reset', '--hard'], wrapper('-s', 'TERM', '-k', '5', '60'), true)], control: [printf('timeout -s TERM -k 5 60 git reset --hard')] },
+    'timeout values': { candidate: [expected('git', ['clean', '-fd'], wrapper('-s', 'TERM', '-k', '5', '60'), true)], control: [printf('timeout -s TERM -k 5 60 git clean -fd')] },
     'nice adjustment': { candidate: [expected('git', ['clean', '-fd'], wrapper('-n', '10'), true)], control: [printf('nice -n 10 git clean -fd')] },
     'session detacher': { candidate: [{ ...expected('git', ['push', 'origin', 'main'], wrapper('--wait'), true), background: true }], control: [printf('setsid --wait nohup git push origin main')], background: true },
     'environment cwd': { candidate: [{ ...expected('git', ['push', 'origin', 'main'], wrapper('-C', 'config'), true), cwd: '/workspace/project/config' }], control: [printf('env -C config git push origin main')] },
@@ -51,9 +51,9 @@ const captures: Record<typeof rows[number]['name'], CapturePair> = {
     'function definition': { candidate: defined, control: [printf('ship() { git push origin main; }')] },
     'alias definition': { candidate: defined, control: [definition('alias', 'ship=git push origin main'), printf('ok')] },
     'assignment host': { candidate: [expected('printf', ['ok'], [{ role: 'environment-assignment-value', value: 'https://db.example.test', name: 'DB_URL' }])], control: [printf('NOTE=git push origin main')] },
-    'command variable': { candidate: dynamic('$cmd'), control: [printf('$cmd push origin main')] },
-    'variable indirection': { candidate: dynamic('${!name}'), control: [printf('${!name} push origin main')] },
-    'command substitution': { candidate: dynamic('$(printf git)'), control: [printf('$(printf git) push origin main')] },
+    'command variable': { candidate: program('$cmd'), control: [printf('$cmd push origin main')] },
+    'variable indirection': { candidate: '"${!name}" holds an expansion that can run code the guard cannot see: arithmetic on a subscript, a prompt or zsh flag expansion, or a zsh glob made from a value. Write the value out.', control: [printf('${!name} push origin main')] },
+    'command substitution': { candidate: program('$(printf git)'), control: [printf('$(printf git) push origin main')] },
 }
 const protectedPush = 'Refusing push to a declared protected branch.'
 const uncaptured = 'Guard input is unavailable or was not captured by the invocation parser.'

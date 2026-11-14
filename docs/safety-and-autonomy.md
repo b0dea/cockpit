@@ -8,7 +8,7 @@ What the guard allows, asks about, denies or cannot evaluate, and why. The
 
 The guard protects against a capable agent making a mistake or following injected text, not against a
 determined attacker: a project script it cannot read runs, so a program it cannot read runs too. By
-default (`[guards] default = "allow"`) a command runs unless the guard finds one of the blocked items
+default a command runs unless the guard finds one of the blocked items
 below in what the call spells: its arguments, redirects, assignments, file tool paths, and the text of
 inline interpreter code (`python3 -c`, `node -e`, a heredoc script). A program the guard does not
 know, a word it cannot expand, a variable, a glob that cannot match a secret name, and a read whose
@@ -29,8 +29,6 @@ a command crosses a blocked line:
 - reads outside the roots under `external_reads = "grant"`, and a cockpit command that changes what
   agents may do.
 
-`default = "ask"` is the strict mode: it admits only the read-only commands the guard classifies,
-declared build and test commands and `[[guards.allow]]` entries, and asks for everything else.
 Integrity holds through the record `sync` writes: the hook runs the guard script only while it matches
 the digest recorded below `~/.cockpit/guards`, so a guard changed by any route holds every later call
 until a person syncs. Staging the guard script as that sync recorded it is allowed; any other guard
@@ -137,12 +135,8 @@ assignment, a cockpit command its table does not admit, an unproven cockpit laun
 files or that rests on a patch whose targets it cannot read, a `gh` merge or repository edit, a
 tool-configuration write to the project's `.npmrc`, and an install from a URL or Git source.
 
-`[guards] default = "ask"` is the strict mode: the guard admits only the read-only commands it
-classifies, declared build and test commands, cockpit's own agent commands and `[[guards.allow]]`
-rules, each one exact command, and asks for everything else, which is every command it cannot prove
-safe. The rest of this page describes the blocked list and the strict mode's prompts; where a rule
-applies only in one mode, it says so. Changing `ask` to `allow` widens what agents may do, so it
-waits for a person's sync.
+There is no strict mode: a team that needs a boundary the guard does not give runs the agent tool in
+its own OS sandbox.
 
 ## Outcome vocabulary
 
@@ -412,11 +406,8 @@ names the current branch; the guard asks Git for both. A destination Git cannot 
 ambiguous source-only revisions, symbolic aliases and wildcards, ask and name the spelling that
 works, `git push origin <branch>:<branch>`. No grant overrides either boundary.
 
-In the strict mode these produce `ask`: unresolved Git execution context, destructive Git reset or clean forms, staging
-by explicit path (a person approves or runs it), staging without explicit paths, wrapped or
-environment-modifying commands, unmatched invocation profiles, and any removal without a grant. An
-explicit removal outside configured roots stays at `ask` even when a declared allow matches, because
-cockpit cannot verify its target.
+Staging without explicit paths asks. An explicit removal outside configured roots stays at `ask`
+even when a declared allow matches, because cockpit cannot verify its target.
 
 `git add -A`, `git add .` or a directory operand covering a secrets directory at any depth or an
 environment instance is a hard denial: stage the changed files by name. The guard walks the operand
@@ -424,10 +415,7 @@ to find nested secrets directories; a tree past the walk's bound stays at `ask`,
 fails is `unavailable`. Unsupported staging options or unproven pathspec grammar produce
 `unavailable`.
 
-In the strict mode, any other refused command gets an `ask` that names the command and gives three
-ways forward: a person approves it, a person runs it in a terminal, or a person admits it under
-`[guards] allow`; for tests it points to `cockpit test-run`. Under the allow default these commands
-run, except a program the guard does not know or inline interpreter code, a reading command such as
+Any other command runs, except a program the guard does not know or inline interpreter code, a reading command such as
 `cat`, `rg` or `grep` whose shape the read-only profile could not prove reads no secret, Git that
 prints committed content outside the profile, and a cockpit command its own table does not admit.
 
@@ -461,13 +449,9 @@ for what would still ask. Each vector starts with the executable.
 `[[guards.deny]]` matches a command-vector prefix or a contiguous sequence and may name a safe fix.
 `[[guards.allow]]` matches a prefix, optionally only at one checkout-relative working directory. An
 allow cannot bypass a hosted endpoint, protected branch, secret path, malformed capture or
-unavailable filesystem evidence. In the strict mode wrapped and environment-modifying invocations
-are never allowed by a declared rule, because wrappers can change which program runs; the one
-exception is the program a package launcher runs, which a rule or declared command for the launcher
-spelling admits, as `pnpm exec vitest run` is admitted by a rule for it. A rule that admits an interpreter,
+unavailable filesystem evidence. A rule that admits an interpreter,
 such as `["node"]`, `["python3"]` or `["perl"]`, admits whatever code it is given, inline or in a
-file, and the guard cannot see what that code writes, guard controls included; without such a rule
-inline code asks under the allow default, and every interpreter run asks in the strict mode.
+file, and the guard cannot see what that code writes, guard controls included.
 
 Malformed or oversized input, incomplete policy, escaped or symlinked path evidence, inspection
 failure and exceeded limits produce `unavailable`. The
@@ -508,8 +492,7 @@ or a URL; `gh api` is left out, because its `GET` returns any file the repositor
   `log`, `diff`, `color`, `advice`, `safe` or `gpg` section, with scope and display flags; a listing,
   a pattern, `--file` or a key in another section, such as `remote.origin.url`, `http.extraHeader`
   or `credential.helper`, can print a credential, so it asks. Every configuration write is refused.
-  In the strict mode `git fetch` writes objects and refs under `.git`, which agents do not write, so it asks: read the
-  other repository in place with `git -C <repository> log`, or a person runs the fetch. `shasum` hashes
+  `shasum` hashes
   named files, including guard controls, with algorithm and text/binary options. Check mode is
   excluded because a checksum manifest names additional files. `cmp` and `diff` read guard controls
   as any other file; `diff` is judged as reading everything below each operand, because a directory
@@ -555,8 +538,7 @@ or a URL; `gh api` is left out, because its `GET` returns any file the repositor
   assignment value or loop item that names one asks too, since the word that uses it is not visible
   (`f=.env; nl "$f"`). `~` and `$HOME` are expanded unless the call changes HOME.
   `git commit -m "$(cat <<'EOF' … EOF)"` is read as the literal message it is. Printing the
-  environment or a variable named as a secret (`echo "$API_TOKEN"`) is refused. In the strict mode
-  every such word is refused.
+  environment or a variable named as a secret (`echo "$API_TOKEN"`) is refused.
 - A push or history rewrite that rests on the current branch asks when an earlier command in the
   same call is not read-only, since it could move the branch.
 - A pipeline or chain is permitted only when every segment is. Redirecting output to `/dev/null`,

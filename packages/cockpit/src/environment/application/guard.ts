@@ -455,9 +455,9 @@ export async function runGuardEvaluationApplication(
         if (git.state !== 'available') return unavailable('Guard checkout observation requires an authenticated Git executable.')
         const checkout = await adapters.observeCheckout({ source: loaded.result.source, cockpitName: config.cockpit.name,
             observedAt: new Date().toISOString(), env: {}, gitExecutable: git.value })
-        // Under the allow default a word the guard cannot expand is marked, not refused: the evaluator
-        // refuses it only where it decides what is read, written or pushed.
-        const parsed = parseGuardInput(data.payload, { dynamicWords: config.guards.default === 'allow' ? 'mark' : 'refuse', home: homedir() })
+        // A word the guard cannot expand is marked, not refused: the evaluator refuses it only where it
+        // decides what is read, written or pushed.
+        const parsed = parseGuardInput(data.payload, { home: homedir() })
         if (parsed.status !== 'parsed') return unavailable(parsed.reason)
         // The harness reports the agent's working directory and starts the guard in a canonical one; they differ when
         // the agent's shell changed directory through a link or under another spelling.
@@ -1090,7 +1090,7 @@ export async function prepareGuardEvaluationPolicy(
                     argv: [...('prefix' in rule ? rule.prefix : rule.contains)], reason: rule.reason,
                     ...(rule.fix === undefined ? {} : { fix: rule.fix }),
                 })),
-                ripgrepConfigActive: false, externalReads: config.guards.external_reads, defaultDecision: config.guards.default,
+                ripgrepConfigActive: false, externalReads: config.guards.external_reads,
                 unresolved: config.guards.unresolved,
                 homeDirectory: realpathSync(homedir()),
                 // A related checkout is granted only where it already exists under exactly the spelling declared: a

@@ -707,15 +707,6 @@
             "additionalProperties": false
           }
         },
-        "default": {
-          "default": "allow",
-          "description": "What the guard does with a shell command outside its blocked list: allow runs a command whose executable is a development tool it knows, a project program inside the roots and package scripts, and asks about an unknown program or inline interpreter code, which a person approves or admits with an allow entry; ask is the strict mode, which admits only the read-only commands the guard classifies, declared build and test commands and allow entries, and asks for every other command. Secrets, writes outside the cockpit, protected branches and force pushes, declared hosts, the guard itself and privilege escalation are refused in both modes.",
-          "type": "string",
-          "enum": [
-            "allow",
-            "ask"
-          ]
-        },
         "secret_paths": {
           "default": [],
           "description": "Files and directories, relative to the cockpit or as <sibling slug>:path in a sibling, that agents never read, write, search or stage, as an .env file is kept from them; the guard refuses them on every agent tool and Claude Code's own file tools are denied them too.",

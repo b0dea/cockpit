@@ -26,7 +26,6 @@ const declared: Declared = {
     ],
     ports: { bases: { WEB_PORT: 3000 } },
     guards: {
-        default: 'ask',
         hosted_db_hosts: ['db.example.test'], vendor_endpoint_hosts: ['api.vendor.example.test'],
         allow: [{ argv: ['make', 'verify'], reason: 'Verification is safe.' }],
         deny: [{ prefix: ['make', 'deploy'], reason: 'Deploys are a person\'s.' }],
@@ -66,7 +65,6 @@ describe('policyChange', () => {
         ['a new related checkout', config => config.guards.related_checkouts.push('~/src/tool'), ['guards.related_checkouts']],
         ['unresolved commands asking again', config => { config.guards.unresolved = 'ask' }, ['guards.unresolved']],
         ['a new write path', config => { config.guards.write_paths = [{ path: '~/Downloads', reason: 'Inputs a person drops in.' }] }, ['guards.write_paths']],
-        ['strict mode turned into the allow default', config => { config.guards.default = 'allow' }, ['guards.default']],
         ['an autonomy decision moved toward agent', config => { config.autonomy = { reset: 'agent' } }, ['autonomy.reset']],
         ['a work gate moved toward agent', config => { config.work.gates.accept = 'agent' }, ['work.gates.accept']],
         ['weaker grading', config => { config.work.grading = 'self' }, ['work.grading']],

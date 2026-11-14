@@ -579,7 +579,7 @@ function cockpit(argv: readonly string[]): Classified {
  * The paths an exact read-only invocation touches, or undefined when it is not one. `cockpit` holds
  * the cockpit arguments only when the application proved the invocation starts the installed cockpit.
  */
-export function classifyReadOnlyInvocation(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean; readonly cockpit?: readonly string[]; readonly wideSearch?: boolean } = { ripgrepConfigActive: false }): ReadOnlyAccess | undefined {
+export function classifyReadOnlyInvocation(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean; readonly cockpit?: readonly string[] } = { ripgrepConfigActive: false }): ReadOnlyAccess | undefined {
     if (invocation.executable === null || invocation.wrapped || invocation.redirects.some(redirect => redirect.write)
         || invocation.words.some(word => word.role === 'environment-assignment-value')
         // A word whose expansion the guard cannot see names no path it can inspect; echo and printf name none.
@@ -594,7 +594,7 @@ export function classifyReadOnlyInvocation(invocation: ParsedInvocation, environ
         ? undefined : access
 }
 
-function classify(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean; readonly cockpit?: readonly string[]; readonly wideSearch?: boolean },
+function classify(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean; readonly cockpit?: readonly string[] },
     shape: (classified: Classified) => ReadOnlyAccess | undefined, inputs: readonly string[]): ReadOnlyAccess | undefined {
     const argv = invocation.argv
     if (environment.cockpit) return shape(cockpit(environment.cockpit))
@@ -630,7 +630,7 @@ function classify(invocation: ParsedInvocation, environment: { readonly ripgrepC
             if (environment.ripgrepConfigActive) return undefined
             const narrow = shape(search(argv, RG, true))
             if (narrow) return { ...narrow, skipsIgnored: true }
-            return environment.wideSearch ? shape(search(argv, RG_WIDE, true)) : undefined
+            return shape(search(argv, RG_WIDE, true))
         }
         case 'fd': {
             const parsed = parseOptions(argv, FD)

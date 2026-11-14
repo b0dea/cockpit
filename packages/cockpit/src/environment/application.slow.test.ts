@@ -432,12 +432,8 @@ describe('guard policy construction', () => {
             return (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'codexcli', cwd: root,
                 payload: shellPayload(command, root), searchPath: '/usr/bin:/bin', ...environment }, adapters)).decision
         }
-        const configure = async (mode: 'allow' | 'ask') => {
-            config.guards.default = mode
-            writeFileSync(configPath, stringify(config))
-            expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
-        }
-        await configure('allow')
+        writeFileSync(configPath, stringify(config))
+        expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
         for (const command of ['git commit -m done', 'npm run build', 'git switch -c topic', 'git commit -m "$(cat <<\'EOF\'\nFix the parser\nEOF\n)"',
             'NODE_ENV=test npm test', 'rg --files app -g package-lock.json']) {
             expect(await decide(command), command).toMatchObject({ decision: 'allow' })
@@ -485,8 +481,6 @@ describe('guard policy construction', () => {
         expect((await decide('git merge main')).decision).not.toBe('allow')
         git('reset', '--soft', 'HEAD@{1}')
         expect(await decide('git merge main')).toMatchObject({ decision: 'allow' })
-        await configure('ask')
-        expect((await decide('git commit -m done')).decision).toBe('ask')
     }, 120_000)
 
     it('asks Git which environment files history holds before a command prints a commit, through the installed guard', async () => {
@@ -1302,7 +1296,7 @@ describe('guard policy construction', () => {
             protectedBranches: ['main', 'master'], hostedDatabaseHosts: ['db.example.test'], vendorHosts: ['api.vendor.example.test'],
             declaredAllows: [{ argv: ['make', 'verify'], reason: 'Repository verification is safe.', cwd: root }],
             declaredDenies: [{ match: 'contains', argv: ['--environment', 'shared'], reason: 'Shared environments are human-operated.', fix: 'Use a local environment.' }],
-            ripgrepConfigActive: false, externalReads: 'grant', readPaths: [], defaultDecision: 'allow', homeDirectory: realpathSync(homedir()),
+            ripgrepConfigActive: false, externalReads: 'grant', readPaths: [], homeDirectory: realpathSync(homedir()),
             secretPaths: [], relatedCheckouts: [], relatedReserved: [], writePaths: [], unresolved: 'ask',
             // The running package lives outside this checkout, so no installed directory is in reach; the
             // package itself is carried wherever it is, since a path into it runs cockpit.
@@ -1387,17 +1381,13 @@ describe('guard policy construction', () => {
             const result = await prepareGuardEvaluationPolicy(input)
             expect(result.kind, JSON.stringify(result)).toBe('complete')
             if (result.kind !== 'complete') throw new Error(JSON.stringify(result))
-            // The strict mode, where only the exact tuple is admitted and every other spelling asks.
-            const policy = { ...result.result.policy, defaultDecision: 'ask' as const }
+            const policy = result.result.policy
             expect(policy.projectCommands.map(command => [command.executable, ...command.argv])).toEqual([tuple, tuple])
             const rendered = renderGuardProjectCommand(tuple)
             if (rendered.kind !== 'complete') throw new Error(JSON.stringify(rendered))
             const inspect = ({ path, cwd }: { path: string; cwd: string }) => ({ status: 'resolved', path: resolve(cwd, path), symlink: false, identity: null, ancestors: [] })
             const decide = (command: string, cwd = join(root, 'app')) => evaluateGuard(parseGuardInput(shellPayload(command, cwd)), policy, inspect)
             expect(decide(rendered.command).decision).toBe('allow')
-            expect(decide(`${rendered.command} extra`).decision).toBe('ask')
-            expect(decide(`'${executable}x' '*' '**' '?' '[' ']' 'file[1]?.txt'`).decision).toBe('ask')
-            expect(decide(rendered.command, root).decision).toBe('ask')
             expect(decide(`${rendered.command}; curl https://api.vendor.example.test`)).toMatchObject({ decision: 'deny', reason: 'Refusing executable use of a declared vendor host.' })
             tuple[1] = 'changed'
             expect(policy.projectCommands[0]?.argv[0]).toBe('*')

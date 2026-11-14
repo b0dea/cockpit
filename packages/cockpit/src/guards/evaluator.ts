@@ -102,11 +102,6 @@ export interface GuardEvaluationPolicy {
     readonly externalReads?: 'grant' | 'native'
     /** Canonical files and directories outside the roots whose named files may be read. */
     readonly readPaths?: readonly string[]
-    /**
-     * `allow` admits every command outside the blocked list; `ask`, the strict mode, admits only the
-     * read-only commands it classifies, declared commands and grants. Absent means `ask`.
-     */
-    readonly defaultDecision?: 'allow' | 'ask'
     /** The home directory of whoever runs the agent, where the credential stores below it live. */
     readonly homeDirectory?: string
     /** The installed cockpit package's own directory under every spelling, wherever it is installed. */
@@ -263,11 +258,9 @@ const unavailable = (reason: string): GuardDecision => ({ decision: 'unavailable
 /** A word as a POSIX shell reads it back: bare when it holds only safe characters, single-quoted otherwise. */
 const shellWord = (word: string) => /^[\w./@%+=:,-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`
 const ask = (reason: string): GuardDecision => ({ decision: 'ask', reason })
-// Under the allow default the guard asks only where a person's judgment is the point, or where it cannot tell whether a
-// command crosses a refused boundary (a protected branch, a guard control, a write outside the roots); every other ask
-// is a form it cannot prove safe, which runs, as a project script it cannot read runs. Strict mode asks for both.
-const PERSON = new WeakSet<GuardDecision>()
-const personAsk = (reason: string): GuardDecision => { const decision = ask(reason); PERSON.add(decision); return decision }
+// The guard asks only where a person's judgment is the point, or where it cannot tell whether a command crosses a
+// refused boundary (a protected branch, a guard control); any other form it cannot prove safe runs, as a project
+// script it cannot read runs.
 const UNPROVEN_LAUNCHER = 'This cockpit command requires human approval: the guard could not prove it starts the installed cockpit. '
     + 'npx --no cockpit counts only from the cockpit root with no root .npmrc and no bin in the root package.json, and bare cockpit only when '
     + 'the command search path finds the installed package. From the cockpit root, use the installed package entrypoint, for example '
@@ -333,7 +326,7 @@ function agentAreas(p: JsonSnapshotObject): boolean {
 }
 function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     const p = snapshotJson(value)
-    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'searchPathRelativeEntry', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands', ...p.mcpAllowedTools === undefined ? [] : ['mcpAllowedTools'], ...p.externalReads === undefined ? [] : ['externalReads'], ...p.readPaths === undefined ? [] : ['readPaths'], ...p.defaultDecision === undefined ? [] : ['defaultDecision'], ...p.homeDirectory === undefined ? [] : ['homeDirectory'], ...p.cockpitPackageDirectories === undefined ? [] : ['cockpitPackageDirectories'],
+    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'searchPathRelativeEntry', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands', ...p.mcpAllowedTools === undefined ? [] : ['mcpAllowedTools'], ...p.externalReads === undefined ? [] : ['externalReads'], ...p.readPaths === undefined ? [] : ['readPaths'], ...p.homeDirectory === undefined ? [] : ['homeDirectory'], ...p.cockpitPackageDirectories === undefined ? [] : ['cockpitPackageDirectories'],
         ...['secretPaths', 'relatedCheckouts', 'unresolved', 'writePaths', 'relatedReserved', 'externalSearchDirectories', 'guardRuntime',
             'agentHomes', 'agentMemoryKeys', 'agentType', 'agentWorkspaces', 'agentReadAreas', 'recordedGuardScript'].filter(key => p[key] !== undefined)])
         || p.recordedGuardScript !== undefined && p.recordedGuardScript !== true
@@ -348,7 +341,6 @@ function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
         || p.relatedCheckouts !== undefined && (!strings(p.relatedCheckouts) || p.relatedCheckouts.length > 16 || !p.relatedCheckouts.every(canonical))
         || p.externalSearchDirectories !== undefined && (!strings(p.externalSearchDirectories) || p.externalSearchDirectories.length > GUARD_LOCATION_LIMITS.searchPathDirectories
             || !p.externalSearchDirectories.every(canonical))
-        || p.defaultDecision !== undefined && p.defaultDecision !== 'allow' && p.defaultDecision !== 'ask'
         || p.homeDirectory !== undefined && (!canonical(p.homeDirectory) || p.homeDirectory === '/')
         || p.cockpitPackageDirectories !== undefined && (!strings(p.cockpitPackageDirectories) || p.cockpitPackageDirectories.length > GUARD_LOCATION_LIMITS.packageDirectories
             || !p.cockpitPackageDirectories.every(canonical))
@@ -455,19 +447,6 @@ function toolConfigurationWrite(invocation: ParsedInvocation): 'refuse' | 'proje
     if (name === 'gh' && (first === 'config' && second === 'set' || first === 'alias' && ['set', 'import'].includes(second ?? '')
         || ['extension', 'extensions', 'ext'].includes(first ?? '') && ['install', 'upgrade'].includes(second ?? ''))) return 'refuse'
     return undefined
-}
-
-// A URL, or a package spelled as a Git source, as the parser's launchers judge it.
-const REMOTE_PACKAGE = /:\/\/|^(?:git\+|github:|gitlab:|bitbucket:|gist:)/i
-/** The first package an install fetches from a URL or a Git host rather than a registry, whose install scripts then run. */
-function remoteInstallSource(invocation: ParsedInvocation): string | undefined {
-    const name = posix.basename(invocation.executable ?? '')
-    const argv = name === 'uv' && invocation.argv[0] === 'pip' ? invocation.argv.slice(1) : invocation.argv
-    const operands = argv.filter(arg => !arg.startsWith('-'))
-    if (['pip', 'pip3'].includes(name) || name === 'uv' && invocation.argv[0] === 'pip') return operands[0] === 'install' ? operands.slice(1).find(arg => REMOTE_PACKAGE.test(arg)) : undefined
-    if (!['npm', 'pnpm', 'yarn', 'bun'].includes(name) || !['i', 'install', 'add', 'update', 'up'].includes(operands[0] ?? '')) return undefined
-    // npm and its peers read `owner/repo` as a GitHub repository.
-    return operands.slice(1).find(arg => REMOTE_PACKAGE.test(arg) || /^[^@./][^/]*\/[^/]/.test(arg))
 }
 
 function ruleMatches(invocation: ParsedInvocation, rule: GuardDeclaredAllow | GuardDeclaredDeny): boolean {
@@ -1362,8 +1341,8 @@ function pushDecision(args: readonly string[], branches: readonly string[], fact
     }
     if (forced) return deny('Refusing a force push: it can discard commits on the remote. Push new commits instead, or a person runs it.')
     if (deleting) return deny('Refusing to delete remote branches: `--delete`, `:<branch>`, `--prune` and `--mirror` remove branches on the remote. A person runs it.')
-    if (unknownOption !== undefined) return personAsk(`The guard does not know the push option ${shownGuardWord(unknownOption)}, which may change what or where this push sends. Push without it, or a person runs it.`)
-    if (uncertain) return personAsk('The guard could not tell which remote branch this push updates. Name it: `git push origin <branch>:<branch>`.')
+    if (unknownOption !== undefined) return ask(`The guard does not know the push option ${shownGuardWord(unknownOption)}, which may change what or where this push sends. Push without it, or a person runs it.`)
+    if (uncertain) return ask('The guard could not tell which remote branch this push updates. Name it: `git push origin <branch>:<branch>`.')
     return undefined
 }
 
@@ -1789,6 +1768,8 @@ function dumpsEnvironment(invocation: ParsedInvocation): boolean {
     // `make -p` prints its database, every environment variable included; -C, -f, -I, -j, -l, -o, -W and -E take a value.
     if (program === 'make') return argv.some(arg => arg === '--print-data-base' || /^-[a-zA-Z]+$/.test(arg) && /^[^CfIjloWE]*p/.test(arg.slice(1)))
     if (['awk', 'gawk', 'mawk', 'nawk'].includes(program)) return argv.some(arg => arg.includes('ENVIRON'))
+    // A jq filter reads the environment through `env` and `$ENV`, as gh's does with the token in it.
+    if (['jq', 'gojq', 'jaq'].includes(program)) return argv.some(arg => /\benv\b|\$ENV\b/.test(arg))
     // gh's jq filter reads its own environment, the token included, through `env` and `$ENV`.
     if (program === 'gh') return argv.some((arg, at) => (['-q', '--jq'].includes(argv[at - 1] ?? '') || /^--jq=/.test(arg)) && /\benv\b|\$ENV\b/.test(arg))
     // BSD `ps e` and macOS `ps -E` print each process's environment.
@@ -2115,7 +2096,6 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const holdBoundary = (invocation: ParsedInvocation, decision: GuardDecision) => {
         if (!boundaryAsks.has(invocation)) boundaryAsks.set(invocation, decision)
     }
-    const open = resolved.defaultDecision === 'allow'
     // In the agent tool's own directories only the credential entries and key-file names are credentials; the
     // directory as a whole is not, or the agent could not read back its own memory and tool output.
     const credential = (folded: string) => {
@@ -2276,7 +2256,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // The home directory itself, as `mkdir -p` names it on the way to an entry.
         if (!home || !segments.length) return true
         if (!entry) {
-            unclassifiedAsk ??= personAsk(`${shownGuardWord(request.path)} is in ${owner} under ${segments[0]}, which cockpit does not classify as the tool's data, a control or a credential, so a person decides whether an agent writes it.`)
+            unclassifiedAsk ??= ask(`${shownGuardWord(request.path)} is in ${owner} under ${segments[0]}, which cockpit does not classify as the tool's data, a control or a credential, so a person decides whether an agent writes it.`)
             return true
         }
         if (home.tool === 'claude') {
@@ -2287,7 +2267,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const subagent = /^agent-memory\/([^/]+)/.exec(relative)?.[1]
             if (subagent !== undefined && subagent !== fold(resolved.agentType ?? '')) return refuse('it is the memory of a subagent other than the one making this call, which loads into that subagent in every project')
         }
-        if (entry.kind === 'confirm') unclassifiedAsk ??= personAsk(`${shownGuardWord(request.path)}: ${entry.why}, so a person approves an agent writing it.`)
+        if (entry.kind === 'confirm') unclassifiedAsk ??= ask(`${shownGuardWord(request.path)}: ${entry.why}, so a person approves an agent writing it.`)
         return true
     }
     const judgeExternalWrite = (request: PathInspectionRequest, lexical: string, removing = false) => {
@@ -2358,7 +2338,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // or one that may place a whole directory where agent tools keep instructions, carries none to read.
         if (request.operation === 'write' && input.tool !== 'Write' && input.tool !== 'Edit'
             && (agentInstructionFile(folded) || controlCoverage && instructionDirectory(folded))) {
-            unclassifiedAsk ??= personAsk(`${shownGuardWord(request.path)} is or may hold a skill, command or agent file, whose frontmatter can register hooks or MCP servers that Claude Code runs outside the guard, and this writer carries no text the guard can read. Use the Write or Edit tool, or a person approves it.`)
+            unclassifiedAsk ??= ask(`${shownGuardWord(request.path)} is or may hold a skill, command or agent file, whose frontmatter can register hooks or MCP servers that Claude Code runs outside the guard, and this writer carries no text the guard can read. Use the Write or Edit tool, or a person approves it.`)
         }
         if (mutating && dotenvSecret(folded)) hold(dotenvDenial)
         if (mutating && (inSecretPath(folded) || (staging || removing) && coversSecretPath(folded))) hold(staging && !inSecretPath(folded) ? coveringStageDenial : secretPathDenial)
@@ -2411,7 +2391,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             return
         }
         const found = walked.sensitive as readonly string[] | null
-        if (found === null) holdBoundary(invocation, personAsk(`Staging ${path} covers more than the guard walks to prove it holds no secrets directory. Stage the changed files by name.`))
+        if (found === null) holdBoundary(invocation, ask(`Staging ${path} covers more than the guard walks to prove it holds no secrets directory. Stage the changed files by name.`))
         else if (found.some((item) => fold(item).split('/').includes('.secrets'))) hold(coveringStageDenial)
     }
     // Removing a control, anything below a control directory, or a directory containing one can
@@ -2457,7 +2437,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const lexical = posix.resolve(cwd, path)
         if (!resolved.allowedRoots.some((root) => within(lexical, root))) return
         const folded = fold(lexical)
-        const holdsControl = () => holdBoundary(invocation, personAsk(`${named(invocation)} names ${shownGuardWord(path)}, which holds guard files, and the guard does not know whether it writes them. `
+        const holdsControl = () => holdBoundary(invocation, ask(`${named(invocation)} names ${shownGuardWord(path)}, which holds guard files, and the guard does not know whether it writes them. `
             + 'Name the files it needs that are not guard controls, or run it from a subdirectory; otherwise a person approves it or runs it.'))
         if (controlFiles.some((target) => folded === fold(target)) || controlDirectories.some((target) => within(folded, fold(target)))) { hold(unclassifiedControl); return }
         if (covering && [...controlFiles, ...controlDirectories].some((target) => within(fold(target), folded))) { holdsControl(); return }
@@ -2491,7 +2471,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // A symbolic link resolves from the directory it is made in, a hard link from the working directory.
         const targets = symbolic ? destinations.map(path => posix.resolve(posix.dirname(posix.resolve(cwd, path)), source)) : [posix.resolve(cwd, source)]
         if (targets.some(target => !inRoots(target))) {
-            holdBoundary(invocation, personAsk(`${named(invocation)} links to ${shownGuardWord(source)}, outside the configured roots, which every later command could then read or write through the link. A person makes the link.`))
+            holdBoundary(invocation, ask(`${named(invocation)} links to ${shownGuardWord(source)}, outside the configured roots, which every later command could then read or write through the link. A person makes the link.`))
             return
         }
         pathCount++
@@ -2534,27 +2514,27 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             // The application admits only an existing regular file, or a directory to list, there.
             if (external && !approvedExternalRead && !readableOutside(lexical)) {
                 safe = false
-                searchBlocker ??= personAsk(`${shownGuardWord(path)} is outside the configured roots, where the guard cannot prove it holds no secret. A person can list it under [guards] read_paths, hand such reads to the agent tool's own permissions with [guards] external_reads = "native", or admit this complete command with an explicit managed cwd under [guards] allow, then sync. Native permission still applies; trusting hooks again does not add location authority.`)
+                searchBlocker ??= ask(`${shownGuardWord(path)} is outside the configured roots, where the guard cannot prove it holds no secret. A person can list it under [guards] read_paths, hand such reads to the agent tool's own permissions with [guards] external_reads = "native", or admit this complete command with an explicit managed cwd under [guards] allow, then sync. Native permission still applies; trusting hooks again does not add location authority.`)
                 return
             }
             pathCount++
             // Another `.env*` name, such as `.envrc`, is not known to hold secrets, nor to be data.
-            if (kind === 'read' && /^\.env/.test(posix.basename(folded)) && !documentation(folded)) { safe = false; searchBlocker ??= personAsk(`${shownGuardWord(path)} has an .env-like name, such as .envrc, that is not known to hold no secret. A person reads it.`) }
+            if (kind === 'read' && /^\.env/.test(posix.basename(folded)) && !documentation(folded)) { safe = false; searchBlocker ??= ask(`${shownGuardWord(path)} has an .env-like name, such as .envrc, that is not known to hold no secret. A person reads it.`) }
             // Unenumerated secrets leave every content read unproven, and a second hard link to a
             // protected file leaves every recursive search unproven: either may reach it unnamed.
             if (kind !== 'listing' && !secretFiles || kind === 'tree' && resolved.protectedFilesLinked) safe = false
             const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: kind === 'tree' ? access.skipsIgnored ? 'unignored-search' : 'search' : kind === 'listing' && external ? 'list' : 'read',
                 ...kind === 'tree' && access.followsLinks ? { followsLinks: true as const } : {} })
             if (!evidence || external && evidence.identity === null && !(kind === 'read' && access.revisionOperands)) {
-                if (external && kind === 'tree' && evidence) searchBlocker ??= personAsk(`${shownGuardWord(path)} does not exist outside the configured roots. Name an existing regular file.`)
-                else if (external && kind === 'tree') searchBlocker ??= personAsk(`A search of ${shownGuardWord(path)} outside the configured roots must name a regular file: there the guard recognises only .env and .secrets names, not other credential files, so it does not search a directory or follow a link. Search the named files instead.`)
+                if (external && kind === 'tree' && evidence) searchBlocker ??= ask(`${shownGuardWord(path)} does not exist outside the configured roots. Name an existing regular file.`)
+                else if (external && kind === 'tree') searchBlocker ??= ask(`A search of ${shownGuardWord(path)} outside the configured roots must name a regular file: there the guard recognises only .env and .secrets names, not other credential files, so it does not search a directory or follow a link. Search the named files instead.`)
                 // A spelling that leaves a link through `..`, or a path the inspector could not read, may reach a protected file.
-                else if (!evidence) searchBlocker ??= personAsk(`${shownGuardWord(path)} leads through a link the guard does not follow, or could not be inspected${inspectionFailure === undefined ? '' : ` (${inspectionFailure})`}. Name the file it leads to.`)
+                else if (!evidence) searchBlocker ??= ask(`${shownGuardWord(path)} leads through a link the guard does not follow, or could not be inspected${inspectionFailure === undefined ? '' : ` (${inspectionFailure})`}. Name the file it leads to.`)
                 safe = false
                 return
             }
             const canonicalName = fold(typeof evidence.canonicalPath === 'string' ? evidence.canonicalPath : lexical)
-            if (kind === 'read' && /^\.env/.test(posix.basename(canonicalName)) && !documentation(canonicalName)) { safe = false; searchBlocker ??= personAsk(`${shownGuardWord(path)} has an .env-like name, such as .envrc, that is not known to hold no secret. A person reads it.`) }
+            if (kind === 'read' && /^\.env/.test(posix.basename(canonicalName)) && !documentation(canonicalName)) { safe = false; searchBlocker ??= ask(`${shownGuardWord(path)} has an .env-like name, such as .envrc, that is not known to hold no secret. A person reads it.`) }
             if (kind !== 'listing' && dotenvSecret(canonicalName)) hold(dotenvDenial)
             if (kind !== 'listing' && credential(canonicalName)) hold(credentialDenial)
             if (kind !== 'listing' && canonicalName.split('/').includes('.secrets')) hold(readDenial)
@@ -2581,13 +2561,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             safe = false
             const shown = (target: string) => posix.relative(access.cwd, target) || '.'
             // A protected path that exists now is a person's to read past; one that might appear first is not.
-            searchBlocker = (present !== undefined || sensitive !== null && unseen !== undefined ? personAsk : ask)(present !== undefined
+            searchBlocker = present !== undefined || sensitive !== null && unseen !== undefined ? ask(present !== undefined
                 ? `A recursive search of ${path} would read ${shown(present)}, ${(resolved.secretPaths ?? []).includes(present) ? 'a path [guards] secret_paths declares secret' : 'a declared environment instance or secrets directory'}. Search a path that does not contain it.`
-                : sensitive === null
-                    ? `A recursive search of ${path} covers more than the guard walks to prove it reads no environment file or secrets directory. Search a narrower path.`
-                    : unseen !== undefined
-                        ? `A recursive search of ${path} would read ${shown(unseen)}, an environment file or secrets directory that is not a declared template. Search a path that does not contain it.`
-                        : `A recursive search of ${path} could read an environment file or secrets directory that another command in this call creates first. Run the search on its own.`)
+                : `A recursive search of ${path} would read ${shown(unseen!)}, an environment file or secrets directory that is not a declared template. Search a path that does not contain it.`) : undefined
         }
         for (const path of access.requires ?? []) {
             const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: 'read' })
@@ -2607,11 +2583,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const once = exposes(committed)
             if (!tracked || !committed || exposed !== undefined || once !== undefined || !chainReadOnly) {
                 safe = false
-                searchBlocker = (tracked && committed && (exposed !== undefined || once !== undefined) ? personAsk : ask)(!tracked ? 'The guard could not list the environment files and secrets this repository tracks, so it cannot prove this Git command prints none of them.'
-                    : !committed ? 'The guard could not list the environment files and secrets this repository\'s history holds, so it cannot prove this Git command prints none of them.'
-                        : exposed !== undefined ? `This Git command can print ${posix.relative(access.cwd, exposed)}, a tracked environment file, secrets file or declared instance. Limit it with \`-- <path>\` to paths that do not hold one.`
-                            : once !== undefined ? `This Git command can print ${posix.relative(access.cwd, once)}, an environment file, secrets file or declared instance the repository's history holds. Limit it with \`-- <path>\` to paths that never held one.`
-                                : 'This Git command prints committed content, and another command in this call can change what the repository tracks first. Run it on its own.')
+                searchBlocker = tracked && committed && (exposed !== undefined || once !== undefined) ? ask(exposed !== undefined ? `This Git command can print ${posix.relative(access.cwd, exposed)}, a tracked environment file, secrets file or declared instance. Limit it with \`-- <path>\` to paths that do not hold one.`
+                            : `This Git command can print ${posix.relative(access.cwd, once!)}, an environment file, secrets file or declared instance the repository's history holds. Limit it with \`-- <path>\` to paths that never held one.`) : undefined
             }
         }
         for (const path of access.reads) visit(path, 'read')
@@ -2635,7 +2608,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (cockpit) return { cockpit, operands: cockpit }
         const prefix = launcherPrefix(invocation)
         if (prefix === undefined || !['npx', 'cockpit'].includes(invocation.executable!)) return { operands: invocation.argv }
-        holdBoundary(invocation, personAsk(UNPROVEN_LAUNCHER))
+        holdBoundary(invocation, ask(UNPROVEN_LAUNCHER))
         return { operands: invocation.argv.slice(prefix) }
     }
     // A session runs the words after `--` as a command, with no shell, in its own directory, and exec
@@ -2656,7 +2629,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     })
     const accesses = new Map(invocations.map((invocation) => {
         const cockpit = provenCockpit(invocation)
-        return [invocation, classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive, wideSearch: open, ...(cockpit ? { cockpit } : {}) })]
+        return [invocation, classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive, ...(cockpit ? { cockpit } : {}) })]
     }))
     // A definition or a `cd` runs nothing, so it cannot create a path before a search reads it; a bare redirect writes one.
     const externalGit = (invocation: ParsedInvocation, access: ReadOnlyAccess | undefined) => invocation.executable === 'git' && access !== undefined
@@ -2764,42 +2737,42 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // not reach. A worktree carries its own committed guard, so `git worktree add` is not one.
         if (git && (['init', 'clone'].includes(git.verb) || git.verb === 'submodule' && git.args.find(arg => !arg.startsWith('-')) === 'add')) {
             const targets = ['.', ...git.args.filter(arg => !arg.startsWith('-') && arg !== 'add' && !/^[a-z][a-z0-9+.-]*:\/\//i.test(arg) && !/^[^/]*:/.test(arg))]
-            if (targets.some(target => inRoots(posix.resolve(git.cwd, target)))) holdBoundary(invocation, personAsk(`${named(invocation)} creates a Git repository inside the cockpit, and Claude Code loads no hook from the cockpit's settings for a session started in it, so the guard would not run there. `
+            if (targets.some(target => inRoots(posix.resolve(git.cwd, target)))) holdBoundary(invocation, ask(`${named(invocation)} creates a Git repository inside the cockpit, and Claude Code loads no hook from the cockpit's settings for a session started in it, so the guard would not run there. `
                 + 'Use `git worktree add`, whose checkout carries the guard, or create the repository outside the cockpit; otherwise a person runs it.'))
         }
         // An extraction writes members whose names only its archive holds, so the archive is listed first and
         // each member judged where it lands, at any depth.
         const extracted = guardExtraction(invocation)
         if (extracted === 'unmodelled') {
-            holdBoundary(invocation, personAsk(`${named(invocation)} extracts members the guard cannot list before they land. Extract with \`tar -xf <archive>\` or \`unzip <archive>\`, which it lists, or a person runs it.`))
+            holdBoundary(invocation, ask(`${named(invocation)} extracts members the guard cannot list before they land. Extract with \`tar -xf <archive>\` or \`unzip <archive>\`, which it lists, or a person runs it.`))
         } else if (extracted && inRoots(posix.resolve(invocation.cwd, extracted.destination))) {
             const destination = posix.resolve(invocation.cwd, extracted.destination)
             const listed = archiveFacts(extracted.archive, invocation.cwd, extracted.format)
-            if (listed === undefined) holdBoundary(invocation, personAsk(`${named(invocation)} extracts an archive the guard could not list, so it cannot tell whether a member is an agent tool's settings, hooks or skill. A person runs it.`))
+            if (listed === undefined) holdBoundary(invocation, ask(`${named(invocation)} extracts an archive the guard could not list, so it cannot tell whether a member is an agent tool's settings, hooks or skill. A person runs it.`))
             // A link member lets a later member, or a later command, write through it where its name does not say.
-            else if (listed.links) holdBoundary(invocation, personAsk(`${named(invocation)} extracts an archive holding a link, symbolic or hard, which a later member or command can write through. A person runs it.`))
+            else if (listed.links) holdBoundary(invocation, ask(`${named(invocation)} extracts an archive holding a link, symbolic or hard, which a later member or command can write through. A person runs it.`))
             for (const entry of listed?.entries ?? []) {
                 if (entry.startsWith('/') || entry.split('/').includes('..')) {
-                    holdBoundary(invocation, personAsk(`${named(invocation)} extracts ${shownGuardWord(entry)}, which names a place outside its destination. A person runs it.`))
+                    holdBoundary(invocation, ask(`${named(invocation)} extracts ${shownGuardWord(entry)}, which names a place outside its destination. A person runs it.`))
                     continue
                 }
                 const folded = fold(posix.join(destination, entry))
                 if (plantedAgentControl(folded)) hold(guardScriptLocation(folded) ? guardScriptDenial : nestedConfigurationDenial)
-                else if (agentInstructionFile(folded)) holdBoundary(invocation, personAsk(`${named(invocation)} extracts ${shownGuardWord(entry)}, a skill, command or agent file whose text the guard cannot read before it lands. A person runs it.`))
+                else if (agentInstructionFile(folded)) holdBoundary(invocation, ask(`${named(invocation)} extracts ${shownGuardWord(entry)}, a skill, command or agent file whose text the guard cannot read before it lands. A person runs it.`))
             }
         }
         // A clone into the roots is a repository a session started in it loads without the guard.
         const ghWords = invocation.argv.filter(arg => !arg.startsWith('-'))
         if (posix.basename(invocation.executable ?? '') === 'gh' && materialisesRepository(invocation) && !['release', 'run'].includes(ghWords[0] ?? '')
             && inRoots(posix.resolve(invocation.cwd, ghWords[1] === 'clone' && ghWords[3] !== undefined ? ghWords[3] : '.'))) {
-            holdBoundary(invocation, personAsk(`${named(invocation)} clones a repository inside the cockpit, where a session started in it loads no cockpit hook. Clone it outside the cockpit, or a person runs it.`))
+            holdBoundary(invocation, ask(`${named(invocation)} clones a repository inside the cockpit, where a session started in it loads no cockpit hook. Clone it outside the cockpit, or a person runs it.`))
         }
         settingExecutable = setsExecutableBit(invocation)
         const executableName = posix.basename(invocation.executable ?? '')
         const removed = removedOperands(invocation, git)
         for (const path of removed?.paths ?? []) {
             if (inspectRemoval(path, removed!.cwd) && !approvalBarriers.has(invocation)) {
-                approvalBarriers.set(invocation, personAsk('Removal outside configured roots requires human approval.'))
+                approvalBarriers.set(invocation, ask('Removal outside configured roots requires human approval.'))
             }
         }
         const { operands } = launchedCockpit(invocation)
@@ -2808,8 +2781,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // as surely as `cat .env`, and `$(< .env)` with no command at all. The read-only profile inspects a
         // classified command's inputs; any other command's are inspected here.
         const inputs = invocation.redirects.filter((redirect) => !redirect.write).map((redirect) => redirect.target)
-        if (!access && inputs.length && !inspectReadOnly({ cwd: invocation.cwd, reads: inputs, trees: [], listings: [] }, chainReadOnly) && !approvalBarriers.has(invocation)) {
-            approvalBarriers.set(invocation, searchBlocker ?? ask(`${named(invocation)} reads ${shownGuardWord(inputs[0]!)} through an input redirect, which the guard cannot prove holds no secret: a link, an undeclared .env name, or a file outside the configured roots. Name a file the read-only profile can inspect.`))
+        if (!access && inputs.length && !inspectReadOnly({ cwd: invocation.cwd, reads: inputs, trees: [], listings: [] }, chainReadOnly) && searchBlocker && !approvalBarriers.has(invocation)) {
+            approvalBarriers.set(invocation, searchBlocker)
         }
         const writes: VisibleWrites | undefined = git?.verb === 'mv' ? (() => {
             const transfer = transferOperands('mv', git.args)
@@ -2877,7 +2850,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (reached.length && patterns && !recursive) {
                 if (reached.some(target => patterns.some(pattern => globExpression(fold(pattern)).test(posix.basename(fold(target)))))) hold(controlDenial)
             } else if (reached.length) {
-                holdBoundary(invocation, personAsk(`${named(invocation)} downloads files whose names the guard cannot see into ${shownGuardWord(path)}, which holds guard files. Download into another directory, such as build/, or name the release assets with -p; otherwise a person runs it.`))
+                holdBoundary(invocation, ask(`${named(invocation)} downloads files whose names the guard cannot see into ${shownGuardWord(path)}, which holds guard files. Download into another directory, such as build/, or name the release assets with -p; otherwise a person runs it.`))
             }
         }
         // A writer the guard does not model writes some operand: one outside the roots is judged as a
@@ -2901,11 +2874,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const sources = sourceTrees(invocation)
         const othersReadOnly = invocations.every(other => other === invocation || accesses.get(other) !== undefined || other.executable === null && !other.redirects.some(redirect => redirect.write))
         if (sources?.paths.length && !inspectReadOnly({ cwd: invocation.cwd, reads: [], trees: sources.paths, listings: [], ...sources.followsLinks ? { followsLinks: true as const } : {} }, othersReadOnly)
-            && !approvalBarriers.has(invocation)) {
-            approvalBarriers.set(invocation, searchBlocker ?? ask(`${named(invocation)} reads every file below its sources, which the guard cannot prove hold no secret. Name the files it needs.`))
-        }
-        if (posix.basename(invocation.executable ?? '') === 'unzip' && invocation.argv.some(arg => /^-[a-zA-Z]*[pc]/.test(arg))) {
-            holdBoundary(invocation, ask(`${named(invocation)} prints the files an archive holds, which the guard cannot list. Extract it into the cockpit and read the files by name.`))
+            && searchBlocker && !approvalBarriers.has(invocation)) {
+            approvalBarriers.set(invocation, searchBlocker)
         }
         // A word whose expansion the guard cannot see decides nothing it inspects: a path read, written,
         // removed or pushed, or a cockpit command. Elsewhere it is the program's own business.
@@ -2921,13 +2891,11 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (invocation.dynamic && !loopRead && !globRead && (writes || removed?.paths.length || optioned || git || cockpitCommand(invocation)
             || executableName === 'gh' && /^(?:gist (?:create|edit)|release (?:create|upload)|(?:secret|variable) set)$/.test(invocation.argv.slice(0, 2).join(' ')))) {
             const word = invocation.words.find(item => item.dynamic)?.value ?? ''
-            holdBoundary(invocation, personAsk(`${named(invocation)} holds ${unseen(word)}, whose value the guard cannot see, where it decides which file is read or written or which branch is pushed. Write the value out.`))
+            holdBoundary(invocation, ask(`${named(invocation)} holds ${unseen(word)}, whose value the guard cannot see, where it decides which file is read or written or which branch is pushed. Write the value out.`))
         }
         const configuration = toolConfigurationWrite(invocation)
         if (configuration === 'refuse') hold(deny(`Refusing ${named(invocation)}: it changes the person's own tool configuration or installs outside the configured roots, which every later command, a person's included, then runs with. A person runs it.`))
-        else if (configuration === 'project') holdBoundary(invocation, personAsk(`${named(invocation)} writes the project's .npmrc, whose settings npm applies to every later npm and npx command there. A person approves it or edits the file.`))
-        const remote = remoteInstallSource(invocation)
-        if (remote !== undefined) holdBoundary(invocation, ask(`${named(invocation)} installs ${shownGuardWord(remote)}, a package from a URL or a Git host, whose install scripts run code the guard cannot read. Install it from the registry by name, or download it into the cockpit and read it first.`))
+        else if (configuration === 'project') holdBoundary(invocation, ask(`${named(invocation)} writes the project's .npmrc, whose settings npm applies to every later npm and npx command there. A person approves it or edits the file.`))
         // Printing the environment, or a variable whose name marks it as a secret, prints credentials.
         if (dumpsEnvironment(invocation)) {
             hold(deny('Refusing to print the environment or a variable named as a secret: its value is a credential. Print a non-secret variable by name, or list names with `cockpit env keys`.'))
@@ -2948,7 +2916,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             && manifestFacts(nodeScript, invocation.cwd)?.name === '@b00dea/cockpit'
         if (copied && /^(?:sync|upgrade)$/.test(invocation.argv[invocation.argv.indexOf(nodeScript!) + 1] ?? '')) {
             hold(deny(`Refusing ${named(invocation)}: it runs sync or upgrade from a copy of cockpit, which would make the guard run that copy. A person runs \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>\` in a terminal.`))
-        } else if (copied) holdBoundary(invocation, ask(`${named(invocation)} runs a copy of cockpit outside the installed package. Run the installed \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs\`, or a person runs it.`))
+        }
         // `gh api` writes repository state outside any push the guard sees: a ref, a file committed to a
         // branch, a merge, or branch protection.
         const api = posix.basename(invocation.executable ?? '') === 'gh' && invocation.argv[0] === 'api' ? ghApiCall(invocation.argv.slice(1)) : undefined
@@ -2960,7 +2928,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 || protectedBranch(/(?:^|\/)branches\/([^/?]+)/.exec(api.endpoint)?.[1]) || fieldBranch !== undefined) {
                 hold(deny('Refusing a GitHub API write that moves, forces or deletes a branch, commits or merges into a protected branch, or changes branch protection: push to a work branch instead, or a person runs it.'))
             }
-            holdBoundary(invocation, personAsk(`${named(invocation)} writes through the GitHub API (${api.method}${api.endpoint === 'graphql' ? ' GraphQL mutation' : ''}), which changes the repository or its host outside any push the guard judges. A person runs it, or approves it here.`))
+            holdBoundary(invocation, ask(`${named(invocation)} writes through the GitHub API (${api.method}${api.endpoint === 'graphql' ? ' GraphQL mutation' : ''}), which changes the repository or its host outside any push the guard judges. A person runs it, or approves it here.`))
         }
         // gh's own commands that merge into, force or delete a repository's branches, or change who may.
         const gh = posix.basename(invocation.executable ?? '') === 'gh' ? invocation.argv.filter((arg, at) => !arg.startsWith('-') && !['-R', '--repo'].includes(invocation.argv[at - 1] ?? '')).slice(0, 2).join(' ') : ''
@@ -2968,36 +2936,36 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             || gh === 'repo delete' || gh === 'repo edit' && invocation.argv.some(arg => /^--(?:default-branch|visibility|enable-|allow-update-branch|delete-branch-on-merge)/.test(arg))) {
             hold(deny(`Refusing ${named(invocation)}: it bypasses branch protection, overwrites or deletes a repository's branches, or changes its default branch, visibility or merge settings. A person runs it.`))
         } else if (gh === 'pr merge') {
-            holdBoundary(invocation, personAsk(`${named(invocation)} merges into the pull request's base branch, which is usually protected and which the guard cannot see. Merging is a person's or CI's decision: a person runs it, or approves it here.`))
+            holdBoundary(invocation, ask(`${named(invocation)} merges into the pull request's base branch, which is usually protected and which the guard cannot see. Merging is a person's or CI's decision: a person runs it, or approves it here.`))
         } else if (['repo edit', 'repo rename', 'repo archive', 'repo unarchive'].includes(gh)) {
-            holdBoundary(invocation, personAsk(`${named(invocation)} changes the repository on its host. A person runs it, or approves it here.`))
+            holdBoundary(invocation, ask(`${named(invocation)} changes the repository on its host. A person runs it, or approves it here.`))
         } else if (GH_PUBLISHES.test(gh)) {
-            holdBoundary(invocation, personAsk(`${named(invocation)} publishes a release or a secret, deletes from the repository's host, or starts CI runs that spend its minutes. A person runs it, or approves it here.`))
+            holdBoundary(invocation, ask(`${named(invocation)} publishes a release or a secret, deletes from the repository's host, or starts CI runs that spend its minutes. A person runs it, or approves it here.`))
         }
         const prefixed = (invocation.words.filter((word) => word.role === 'environment-assignment-value') as ReadonlyArray<{ readonly value: string; readonly name?: string }>).find(steers)
-        if (open && prefixed) holdBoundary(invocation, personAsk(prefixed.name === undefined ? 'An environment assignment the guard could not name requires human approval.'
+        if (prefixed) holdBoundary(invocation, ask(prefixed.name === undefined ? 'An environment assignment the guard could not name requires human approval.'
             : `${named(invocation)} sets ${prefixed.name}, which changes what Git, its hooks, Docker, the shell or the command search path runs. Run it without that assignment.`))
         // Exported variables reach every later command in the call, so they steer it as a prefix assignment does.
         const program = posix.basename(invocation.executable ?? '')
         if (['export', 'declare', 'typeset', 'readonly', 'local'].includes(program)) {
             const exported = invocation.argv.filter(arg => /^[A-Za-z_][A-Za-z0-9_]*=/.test(arg)).map(arg => ({ name: arg.slice(0, arg.indexOf('=')), value: arg.slice(arg.indexOf('=') + 1) }))
             const steered = exported.find(steers)
-            if (steered) holdBoundary(invocation, personAsk(`${named(invocation)} sets ${steered.name}, which changes what Git, its hooks, Docker, the shell or the command search path runs for the rest of the call. Run it without that assignment.`))
+            if (steered) holdBoundary(invocation, ask(`${named(invocation)} sets ${steered.name}, which changes what Git, its hooks, Docker, the shell or the command search path runs for the rest of the call. Run it without that assignment.`))
         }
         // Removing a session marker, or every variable with `env -i`, hides that an agent runs what follows.
         const marker = (word: string) => /^(?:CLAUDECODE|CODEX_THREAD_ID|OPENCODE)$/.test(word)
         if (program === 'unset' && invocation.argv.some(marker)
             || invocation.words.some(word => word.role === 'wrapper-option-value' && (/^(?:-i|--ignore-environment)$/.test(word.value) || marker(word.value)))) {
-            holdBoundary(invocation, personAsk(`${named(invocation)} removes the variable that marks the agent's session, or the whole environment. Run it without removing it.`))
+            holdBoundary(invocation, ask(`${named(invocation)} removes the variable that marks the agent's session, or the whole environment. Run it without removing it.`))
         }
         if (program === 'set' && invocation.argv.some(arg => /^-[a-zA-Z]*a/.test(arg) || arg === 'allexport') || program === 'setopt' && invocation.argv.some(arg => /^(?:allexport|all_export)$/i.test(arg))) {
-            holdBoundary(invocation, personAsk('Exporting every assignment hides which variables steer later commands. Set the variables a command needs as a prefix of that command.'))
+            holdBoundary(invocation, ask('Exporting every assignment hides which variables steer later commands. Set the variables a command needs as a prefix of that command.'))
         }
         // Assignment values and loop items are visible even where the words that use them are not:
         // `f=.env; nl "$f"` and `for f in .env; do nl "$f"; done` read the names they hold.
         const held = invocation.words.filter((word) => word.role === 'environment-assignment-value' || invocation.executable === null && word.role === 'argument')
         // An unexpanded glob in a command's own words names whatever it matches.
-        const globs = open && !access ? invocation.words.filter((word) => word.dynamic && word.role === 'argument' && /[*?[]/.test(word.value) && !word.value.includes('$')) : []
+        const globs = !access ? invocation.words.filter((word) => word.dynamic && word.role === 'argument' && /[*?[]/.test(word.value) && !word.value.includes('$')) : []
         for (const word of [...held, ...globs]) {
             const lexical = posix.resolve(invocation.cwd, word.value)
             const folded = fold(lexical)
@@ -3008,17 +2976,15 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const secret = glob ? posix.basename(folded).startsWith('.') && SECRET_SAMPLES.some((name) => name.startsWith('.') && glob.test(name)) || credential(posix.dirname(folded))
                 || plainGlob(word) && globReachesProtected(word.value, invocation.cwd) || globNamesProtected(word.value, invocation.cwd)
                 : dotenvSecret(folded) || folded.split('/').includes('.secrets') || resolved.instances.some((item) => within(folded, fold(item.path))) || inSecretPath(folded) || credential(folded)
-            if (secret && !approvalBarriers.has(invocation)) approvalBarriers.set(invocation, personAsk(`${invocation.executable === null ? 'This command' : named(invocation)} holds ${shownGuardWord(word.value)}, which names or can match an environment file, secrets directory, declared instance or credential store. Name the files it needs.`))
+            if (secret && !approvalBarriers.has(invocation)) approvalBarriers.set(invocation, ask(`${invocation.executable === null ? 'This command' : named(invocation)} holds ${shownGuardWord(word.value)}, which names or can match an environment file, secrets directory, declared instance or credential store. Name the files it needs.`))
         }
         // A declared rule admits a command the profile cannot classify, but never past the secret names
         // or the roots: macOS `cat a .env -x` prints .env before it rejects -x, and `git show HEAD:.env`
         // prints a committed one. Each argument is judged whole, after `=` and after `:`.
         // A visible writer's operands already meet the stronger mutation and link denials above.
-        if (!access && !writes && !removed?.paths.length && (open || resolved.declaredAllows.some(rule => ruleMatches(invocation, rule)))) {
-            // Under the allow default any program may read, print or send what it names, so naming a secret refuses it;
-            // a grant admits only what it spells, so there a program that may just pass the name on is a person's to decide.
-            const secretName = (decision: GuardDecision) => open || READING_EXECUTABLES.has(invocation.executable!) ? hold(decision)
-                : !approvalBarriers.has(invocation) && approvalBarriers.set(invocation, personAsk(`${named(invocation)} names an environment file, secrets directory or declared instance, so a [guards] allow rule does not admit it. A person approves it or runs it, or declares it as a project command.`))
+        if (!access && !writes && !removed?.paths.length) {
+            // Any program may read, print or send what it names, so naming a secret refuses it.
+            const secretName = hold
             // Words of a nested command, after a proven cockpit's `--` or the program a launcher runs, are
             // judged as that command, so they are not paths this one reads; nor is a proven cockpit launcher.
             const followed = invocations[invocations.indexOf(invocation) + 1]
@@ -3039,21 +3005,22 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 // `@file` is how curl and gh name a file whose content they send.
                 for (const candidate of new Set([word, word.slice(word.indexOf('=') + 1), word.slice(word.lastIndexOf(':') + 1), word.slice(word.lastIndexOf('@') + 1), ...attached, ...tokens])) {
                     if (!candidate || candidate.startsWith('-') || !scalar(candidate)) continue
-                    const lexical = posix.resolve(invocation.cwd, candidate)
+                    // Git resolves its operands from the directory -C names.
+                    const lexical = posix.resolve(git?.cwd ?? invocation.cwd, candidate)
                     const folded = fold(lexical)
                     if (dotenvSecret(folded)) secretName(dotenvDenial)
                     if (credential(folded)) hold(credentialDenial)
                     holdGitConfigRead(lexical)
                     // In the allow default any command may read what it names, so a path outside the roots
                     // follows external_reads for every command, not only the reading ones.
-                    if (open && position < nestedFrom && position !== scriptAt && !launcherPath(lexical) && (candidate === word || candidate === word.slice(word.indexOf('=') + 1)) && (posix.isAbsolute(candidate) || candidate.split('/').includes('..'))
+                    if (position < nestedFrom && position !== scriptAt && !launcherPath(lexical) && (candidate === word || candidate === word.slice(word.indexOf('=') + 1)) && (posix.isAbsolute(candidate) || candidate.split('/').includes('..'))
                         && !lexical.startsWith('/dev/') && !resolved.allowedRoots.some(root => within(lexical, root)) && !readableOutside(lexical) && !approvalBarriers.has(invocation)) {
-                        approvalBarriers.set(invocation, personAsk(`${named(invocation)} names ${shownGuardWord(candidate)}, outside the configured roots. A person can list the location under [guards] read_paths or set [guards] external_reads = "native", then sync; or a person runs it.`))
+                        approvalBarriers.set(invocation, ask(`${named(invocation)} names ${shownGuardWord(candidate)}, outside the configured roots. A person can list the location under [guards] read_paths or set [guards] external_reads = "native", then sync; or a person runs it.`))
                     }
                     if (folded.split('/').includes('.secrets') || resolved.instances.some((item) => within(folded, fold(item.path)))) secretName(readDenial)
                     if (inSecretPath(folded)) secretName(secretPathDenial)
                     if (READING_EXECUTABLES.has(invocation.executable!) && position !== scriptAt && !resolved.allowedRoots.some(root => within(lexical, root)) && !readableOutside(lexical) && !approvalBarriers.has(invocation)) {
-                        approvalBarriers.set(invocation, personAsk(`${named(invocation)} names ${shownGuardWord(candidate)}, outside the configured roots, with words the read-only profile cannot classify, so a [guards] allow rule does not admit it. Run it as the rule names it, or a person reviews and admits this complete argv.`))
+                        approvalBarriers.set(invocation, ask(`${named(invocation)} names ${shownGuardWord(candidate)}, outside the configured roots, with words the read-only profile cannot classify, so a [guards] allow rule does not admit it. Run it as the rule names it, or a person reviews and admits this complete argv.`))
                     }
                 }
             }
@@ -3083,10 +3050,10 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             return visibleLoops.get(variable)!.map(item => classifyReadOnlyInvocation({ ...literal,
                 argv: invocation.argv.map(arg => /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/.test(arg) ? item : arg),
                 words: invocation.words.map(word => word.dynamic ? { role: word.role, value: item } : word) },
-                { ripgrepConfigActive: resolved.ripgrepConfigActive, wideSearch: open }))
+                { ripgrepConfigActive: resolved.ripgrepConfigActive }))
         })() : undefined
         const globAccess = globRead ? (() => { const { dynamic: _, ...literal } = invocation
-            return classifyReadOnlyInvocation({ ...literal, words: invocation.words.map(({ dynamic: __, ...word }) => word) }, { ripgrepConfigActive: resolved.ripgrepConfigActive, wideSearch: open }) })() : undefined
+            return classifyReadOnlyInvocation({ ...literal, words: invocation.words.map(({ dynamic: __, ...word }) => word) }, { ripgrepConfigActive: resolved.ripgrepConfigActive }) })() : undefined
         if (loopAccesses?.length && loopAccesses.every(item => item !== undefined && inspectReadOnly(item, chainReadOnly))) readOnly.add(invocation)
         else if (globAccess && inspectReadOnly(globAccess, chainReadOnly)) readOnly.add(invocation)
         else if (access && inspectReadOnly(access, chainReadOnly || nativeGit && alone, approvedExternalRead)) readOnly.add(invocation)
@@ -3098,12 +3065,10 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             // A word reaching into the installed package without running it reads or copies the guard's own code.
             const launches = ['cockpit', 'cockpit.mjs', 'node', 'nodejs', 'npx', 'npm', 'pnpm', 'pnpx', 'yarn', 'bun', 'bunx', 'tsx'].includes(executableName)
                 || cockpitShaped({ ...invocation, argv: [] }, [...resolved.cockpitPackageDirectories ?? [], ...resolved.executionDirectories])
-            holdBoundary(invocation, (launches ? personAsk : ask)(launches
-                ? `${named(invocation)} is a cockpit command an agent does not run unprompted: \`sync\`, \`upgrade\` and the other commands that change what agents may do are a person's. A person runs it in a terminal.`
-                : `${named(invocation)} reads or copies the installed cockpit package, the code the guard runs, and a copy run later is not the installed cockpit. A person runs it.`))
+            if (launches) holdBoundary(invocation, ask(`${named(invocation)} is a cockpit command an agent does not run unprompted: \`sync\`, \`upgrade\` and the other commands that change what agents may do are a person's. A person runs it in a terminal.`))
         }
         if (external && (!approvedExternalRead || !readOnly.has(invocation))) approvalBarriers.set(invocation, searchBlocker
-            ?? personAsk(nativeGit
+            ?? ask(nativeGit
                 ? `${named(invocation)} runs Git in a directory outside the configured roots. With native external reads or in a related checkout the guard admits a read-only Git command there only as the whole call, from a directory holding its own .git, with operands that name regular files or revisions rather than directories or links: run it on its own from the repository's top directory.`
                 : !exactGrant
                     ? `${named(invocation)} reads outside the configured roots. A person can list the location under [guards] read_paths, set [guards] external_reads = "native", or admit this complete command with an explicit managed cwd under [guards] allow, then sync; native permission still applies.`
@@ -3116,35 +3081,28 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (!profile.reads?.length || profile.executable !== invocation.executable || profile.cwd !== invocation.cwd
                 || profile.argv.length !== invocation.argv.length || profile.argv.some((word, i) => word !== invocation.argv[i])) continue
             if (!inspectReadOnly({ cwd: profile.cwd, reads: profile.reads, trees: [], listings: [] })) {
-                holdAsk(invocation, personAsk('This cockpit command reads a file the guard cannot prove safe to read: a symlink, an undeclared .env file or one outside the configured roots.'))
+                holdAsk(invocation, ask('This cockpit command reads a file the guard cannot prove safe to read: a symlink, an undeclared .env file or one outside the configured roots.'))
             }
             // A command a session runs is not the call itself, whatever the call holds.
             if (profile.alone && (input.invocations.length !== 1 || !input.invocations.includes(invocation) || invocation.redirects.length > 0)) {
-                holdAsk(invocation, personAsk('env schema --replace-from runs without a prompt only as the whole command: another command in this call could change the draft after the guard proved it safe. Run it on its own.'))
+                holdAsk(invocation, ask('env schema --replace-from runs without a prompt only as the whole command: another command in this call could change the draft after the guard proved it safe. Run it on its own.'))
             }
         }
         // A config file or URL list names hosts the guard does not read.
         if (fetcher && invocation.argv.some(arg => /^(?:-K|--config|-i|--input-file)(?:=|$)/.test(arg) || /^-K./.test(arg) || /^-i./.test(arg) && executableName === 'wget')) {
-            holdBoundary(invocation, personAsk(`${named(invocation)} reads its URLs or options from a file or standard input, whose hosts the guard does not read. Name the URL on the command line.`))
-        }
-        // `go run` of a module path builds and runs code fetched from its host.
-        if (executableName === 'go' && invocation.argv[0] === 'run') {
-            const target = invocation.argv.slice(1).find(arg => !arg.startsWith('-'))
-            if (target !== undefined && (target.includes('@') || /^[a-z0-9-]+(?:\.[a-z0-9-]+)+\//i.test(target))) {
-                holdBoundary(invocation, ask(`${named(invocation)} builds and runs a module fetched from its host, which the guard cannot read. Add it to the project and run it by path.`))
-            }
+            holdBoundary(invocation, ask(`${named(invocation)} reads its URLs or options from a file or standard input, whose hosts the guard does not read. Name the URL on the command line.`))
         }
         if (!git) continue
         // `git apply` and `git am` write the paths a patch's headers name, below the top of the work tree.
         const patchFiles = ['apply', 'am'].includes(git.verb) ? appliedPatches(git) : undefined
-        if (patchFiles === null) holdBoundary(invocation, personAsk(`${named(invocation)} applies a patch whose target paths the guard cannot read: from standard input, or with -p, --directory or --unsafe-paths. Name a patch file and apply it with the default paths.`))
+        if (patchFiles === null) holdBoundary(invocation, ask(`${named(invocation)} applies a patch whose target paths the guard cannot read: from standard input, or with -p, --directory or --unsafe-paths. Name a patch file and apply it with the default paths.`))
         for (const file of patchFiles ?? []) {
             let evidence: JsonSnapshot | undefined
             try { evidence = snapshotJson(inspect({ path: file, cwd: git.cwd, operation: 'patch' })) } catch (error) { inspectionFailure = errorCause(error) }
             const targets = record(evidence) && evidence.status === 'resolved' && evidence.path === posix.resolve(git.cwd, file) && strings(evidence.targets) ? evidence.targets : undefined
             // A patch that names no path the guard can read, such as a mail whose body is base64 or
             // quoted-printable, still applies: `git am` decodes it first.
-            if (!targets?.length) { holdBoundary(invocation, personAsk(`${named(invocation)} applies ${shownGuardWord(file)}, whose target paths the guard could not read: an encoded mail body, headers it does not parse, or no diff at all. Apply a patch file inside the cockpit with plain headers.`)); continue }
+            if (!targets?.length) { holdBoundary(invocation, ask(`${named(invocation)} applies ${shownGuardWord(file)}, whose target paths the guard could not read: an encoded mail body, headers it does not parse, or no diff at all. Apply a patch file inside the cockpit with plain headers.`)); continue }
             // The work tree's top is the working directory or one above it.
             const tops: string[] = []
             for (let directory = git.cwd; inRoots(directory); directory = posix.dirname(directory)) { tops.push(directory); if (directory === '/') break }
@@ -3159,8 +3117,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const globals = gitGlobalOptions(invocation.argv)
         const programKey = globals.keys.find(key => GIT_PROGRAM_KEY.test(key))
         if (programKey) hold(deny(`Refusing \`git -c ${programKey}\`: that key chooses a program Git runs or where it loads configuration from, such as the hooks. Run the command without it.`))
-        if (open && git.verb && !GIT_VERBS.has(git.verb)) holdBoundary(invocation, personAsk(`${named(invocation)} runs \`git ${shownGuardWord(git.verb).slice(1, -1)}\`, which is not one of Git's development commands: an alias can run a shell command. Spell the command out, or a person runs it.`))
-        if (git.uncertain && (!open || globals.other)) holdBoundary(invocation, personAsk('Git execution context is not an exact resolved profile: --git-dir, --work-tree, --namespace and --config-env point Git at state the guard does not inspect. Run Git from the repository, or with -C <directory>.'))
+        if (git.verb && !GIT_VERBS.has(git.verb)) holdBoundary(invocation, ask(`${named(invocation)} runs \`git ${shownGuardWord(git.verb).slice(1, -1)}\`, which is not one of Git's development commands: an alias can run a shell command. Spell the command out, or a person runs it.`))
+        if (git.uncertain && globals.other) holdBoundary(invocation, ask('Git execution context is not an exact resolved profile: --git-dir, --work-tree, --namespace and --config-env point Git at state the guard does not inspect. Run Git from the repository, or with -C <directory>.'))
         // Git accepts any unambiguous abbreviation of a long option.
         if (git.args.some(arg => /^--no-veri(?:f|fy)?$/.test(arg)) || git.verb === 'commit' && git.args.some(arg => /^-[a-zA-Z]+$/.test(arg) && /^[^mFcCtSu]*n/.test(arg.slice(1)))) {
             hold(deny('Refusing `--no-verify`: it skips the repository\'s hooks. Run the command without it, and fix what a hook reports.'))
@@ -3171,7 +3129,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // describe, so a decision that rests on the current branch needs every earlier command to be read-only.
         const index = invocations.indexOf(invocation)
         const headMayMove = invocations.slice(0, index).some((earlier) => earlier.executable !== null && !accesses.get(earlier))
-        const headMoved = personAsk('An earlier command in this call can change the current branch, which this command acts on. Run it on its own.')
+        const headMoved = ask('An earlier command in this call can change the current branch, which this command acts on. Run it on its own.')
         if (git.verb === 'push' || git.verb === 'send-pack') {
             const operands = git.args.filter(arg => !arg.startsWith('-'))
             if (headMayMove && (operands.length < 2 || operands.slice(1).some(ref => /^\+?(?:HEAD|@)(?::|$)/.test(ref)))) holdBoundary(invocation, headMoved)
@@ -3194,11 +3152,11 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // A plain pull rebases where pull.rebase or branch.<name>.rebase says so.
         const configuredRebase = git.verb === 'pull' && !rewritesHead && !git.args.some(arg => /^--(?:no-rebase|ff-only|rebase=false)$/.test(arg))
         if ((rewritesHead || configuredRebase) && headMayMove) holdBoundary(invocation, headMoved)
-        if (git.verb === 'update-ref' && git.args.includes('--stdin')) holdBoundary(invocation, personAsk('`git update-ref --stdin` moves refs the guard cannot see. Name the ref on the command line.'))
+        if (git.verb === 'update-ref' && git.args.includes('--stdin')) holdBoundary(invocation, ask('`git update-ref --stdin` moves refs the guard cannot see. Name the ref on the command line.'))
         // Crafting objects and moving refs is how HEAD was moved under a checkout that then wrote a crafted tree
         // over the guard; in the cockpit's own repository a person runs such plumbing.
         if (within(fold(git.cwd), fold(resolved.canonicalRoot)) && plumbingWrite(git)) {
-            holdBoundary(invocation, personAsk(`${named(invocation)} crafts Git objects or moves a ref in the cockpit's repository, which can put content under a later checkout the guard did not judge. A person runs it.`))
+            holdBoundary(invocation, ask(`${named(invocation)} crafts Git objects or moves a ref in the cockpit's repository, which can put content under a later checkout the guard did not judge. A person runs it.`))
         }
         // `git rebase <upstream> <branch>` rewrites that branch.
         if (git.verb === 'rebase' && protectedName(gitOperands(git.args, ['--onto', '-s', '--strategy', '-X', '--strategy-option'])[1])) hold(deny('Refusing to rewrite history on a declared protected branch. Switch to a work branch first.'))
@@ -3210,7 +3168,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (rewritesHead || configuredRebase) {
             const facts = branchFacts(git.cwd)
             if ((rewritesHead || facts?.pullRebase) && protectedName(facts?.head ?? undefined)) hold(deny('Refusing to rewrite history on a declared protected branch. Switch to a work branch first.'))
-            else if (open && !facts?.head) holdBoundary(invocation, personAsk('The guard could not tell which branch this rewrites. Run it on a named work branch.'))
+            else if (!facts?.head) holdBoundary(invocation, ask('The guard could not tell which branch this rewrites. Run it on a named work branch.'))
         }
         const moved = git.verb === 'branch' && git.args.some(arg => /^-[a-zA-Z]*[fDdmMcC]/.test(arg) || ['--force', '--delete', '--move', '--copy'].includes(arg))
             || ['checkout', 'switch'].includes(git.verb) && git.args.some(arg => ['-B', '-C', '--force-create'].includes(arg))
@@ -3220,7 +3178,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // working tree, where they overwrite a guard control as surely as a write would: a commit made in a
         // second worktree and merged back replaced the guard with every step allowed.
         const tree = gitTreeTargets(git)
-        if (tree && 'unmodelled' in tree) holdBoundary(invocation, personAsk(`${named(invocation)} ${tree.unmodelled}. A person runs it.`))
+        if (tree && 'unmodelled' in tree) holdBoundary(invocation, ask(`${named(invocation)} ${tree.unmodelled}. A person runs it.`))
         else if (tree) {
             const answers = tree.targets.map(target => treeFacts(git.cwd, target))
             const changed = answers.flatMap(answer => answer?.changed ?? [])
@@ -3228,13 +3186,13 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const unsettled = answers.flatMap(answer => answer?.unsettled ?? [])
             const guarded = answers.some(answer => answer?.guarded)
             // A new worktree is a checkout a session there loads, not this one's files: a control in it that differs asks.
-            if (unsettled.length) holdBoundary(invocation, personAsk(`${named(invocation)} applies another revision's changes to HEAD, and HEAD differs from the files on disk at ${shownGuardWord(posix.relative(git.cwd, unsettled[0]!) || unsettled[0]!)}, a guard control or agent setting, so what it writes there cannot be judged. Restore the checkout first, or a person runs it.`))
-            if (changed.length && git.verb === 'worktree') holdBoundary(invocation, personAsk(`${named(invocation)} checks out ${shownGuardWord(posix.relative(git.cwd, changed[0]!) || changed[0]!)} different from this checkout's copy, an agent tool's settings, hooks or guard script a session started in the new worktree would load. A person runs it.`))
+            if (unsettled.length) holdBoundary(invocation, ask(`${named(invocation)} applies another revision's changes to HEAD, and HEAD differs from the files on disk at ${shownGuardWord(posix.relative(git.cwd, unsettled[0]!) || unsettled[0]!)}, a guard control or agent setting, so what it writes there cannot be judged. Restore the checkout first, or a person runs it.`))
+            if (changed.length && git.verb === 'worktree') holdBoundary(invocation, ask(`${named(invocation)} checks out ${shownGuardWord(posix.relative(git.cwd, changed[0]!) || changed[0]!)} different from this checkout's copy, an agent tool's settings, hooks or guard script a session started in the new worktree would load. A person runs it.`))
             else if (changed.length) hold(deny(`Refusing ${named(invocation)}: it would write ${shownGuardWord(posix.relative(git.cwd, changed[0]!) || changed[0]!)} into the working tree from the index or another revision, and that path is a guard control, an agent tool's settings, hooks or guard script at any depth, a secrets directory or a declared instance. A person runs it.`))
-            else if (instructions.length) holdBoundary(invocation, personAsk(`${named(invocation)} writes ${shownGuardWord(posix.relative(git.cwd, instructions[0]!) || instructions[0]!)} from the index or another revision: a skill, command or agent file whose frontmatter can register hooks or MCP servers that run outside the guard. A person runs it.`))
-            else if (answers.some(answer => answer === undefined)) holdBoundary(invocation, personAsk(`${named(invocation)} writes another revision's files into the working tree, and the guard could not tell whether they include a guard control: the revision does not resolve, or Git did not answer. A person runs it.`))
-            else if (guarded && tree.unnamed) holdBoundary(invocation, personAsk(`${named(invocation)} brings content into a working tree that holds guard controls, which the guard cannot inspect before it is fetched. Fetch first, then \`git merge --ff-only <remote>/<branch>\`; or a person runs it.`))
-            else if (guarded && headMayMove) holdBoundary(invocation, personAsk(`${named(invocation)} writes another revision's files into a working tree that holds guard controls, and an earlier command in this call can change that revision first. Run it on its own.`))
+            else if (instructions.length) holdBoundary(invocation, ask(`${named(invocation)} writes ${shownGuardWord(posix.relative(git.cwd, instructions[0]!) || instructions[0]!)} from the index or another revision: a skill, command or agent file whose frontmatter can register hooks or MCP servers that run outside the guard. A person runs it.`))
+            else if (answers.some(answer => answer === undefined)) holdBoundary(invocation, ask(`${named(invocation)} writes another revision's files into the working tree, and the guard could not tell whether they include a guard control: the revision does not resolve, or Git did not answer. A person runs it.`))
+            else if (guarded && tree.unnamed) holdBoundary(invocation, ask(`${named(invocation)} brings content into a working tree that holds guard controls, which the guard cannot inspect before it is fetched. Fetch first, then \`git merge --ff-only <remote>/<branch>\`; or a person runs it.`))
+            else if (guarded && headMayMove) holdBoundary(invocation, ask(`${named(invocation)} writes another revision's files into a working tree that holds guard controls, and an earlier command in this call can change that revision first. Run it on its own.`))
         }
         // A glob or magic pathspec matches guard controls its spelling does not name, and `--cacheinfo`
         // stages a path inside one word; both are judged against every control.
@@ -3248,16 +3206,15 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (git.verb === 'checkout-index' && git.args.some(arg => arg === '-a' || arg === '--all' || /^-[a-zA-Z]*a/.test(arg))
             || git.verb === 'read-tree' && git.args.some(arg => arg === '-u' || /^-[a-zA-Z]*u/.test(arg))
             || git.verb === 'sparse-checkout' && !['list', 'check-rules'].includes(gitOperands(git.args, [])[0] ?? 'list')) {
-            holdBoundary(invocation, personAsk(`${named(invocation)} writes every indexed file into the working tree, guard controls included. Check out the files by name.`))
+            holdBoundary(invocation, ask(`${named(invocation)} writes every indexed file into the working tree, guard controls included. Check out the files by name.`))
         }
         if (git.verb === 'checkout-index' && git.args.some(arg => arg.startsWith('--prefix'))) {
-            holdBoundary(invocation, personAsk(`${named(invocation)} writes indexed files below a prefix, where no path the guard reads names them. Check out the files in place.`))
+            holdBoundary(invocation, ask(`${named(invocation)} writes indexed files below a prefix, where no path the guard reads names them. Check out the files in place.`))
         }
-        if (git.verb === 'config' && !gitConfigReads(git.args) && !(open && gitConfigPlainWrite(git.args))) hold(gitMetadataDenial)
-        else if (git.verb === 'config' && gitConfigReads(git.args) && !access) holdAsk(invocation, personAsk(`${named(invocation)} prints configuration the guard cannot bound: a listing, a pattern, another file or a key outside a few sections can print a remote URL, an http header or a credential helper that holds a credential. Read one key with \`git config --get <key>\` from a section such as user, core or init, or a person runs it.`))
+        if (git.verb === 'config' && !gitConfigReads(git.args) && !gitConfigPlainWrite(git.args)) hold(gitMetadataDenial)
+        else if (git.verb === 'config' && gitConfigReads(git.args) && !access) holdAsk(invocation, ask(`${named(invocation)} prints configuration the guard cannot bound: a listing, a pattern, another file or a key outside a few sections can print a remote URL, an http header or a credential helper that holds a credential. Read one key with \`git config --get <key>\` from a section such as user, core or init, or a person runs it.`))
         // Git metadata decides what read-only Git commands show and run, so agents do not write it.
-        if (git.verb === 'fetch' && !open) holdAsk(invocation, ask(`${named(invocation)} requires human approval: fetching writes objects and refs under .git, which agents do not write. To compare with another repository, read it in place with \`git -C <repository> log --oneline <branch>\`, which outside the configured roots needs [guards] external_reads = "native" or a grant; otherwise a person runs the fetch, or admits its complete argv under [guards] allow in ${posix.basename(resolved.configPath)}.`))
-        if (!open && git.verb === 'reset' && git.args.includes('--hard') || git.verb === 'clean' && git.args.some((arg) => /^-[^-]*[fdxX]/.test(arg) || arg === '--force')) holdAsk(invocation, personAsk('Destructive Git operation requires human approval.'))
+        if (git.verb === 'clean' && git.args.some((arg) => /^-[^-]*[fdxX]/.test(arg) || arg === '--force')) holdAsk(invocation, ask('Destructive Git operation requires human approval.'))
         // `git stash -u` and `-a` stage untracked, and with `-a` ignored, files into a commit and remove them, as `git add -A` stages them.
         const stashVerb = git.args.find(arg => !arg.startsWith('-'))
         if (git.verb === 'stash' && (stashVerb === undefined || ['push', 'save'].includes(stashVerb))
@@ -3283,13 +3240,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         }
         // A path outside the repository turns a diff into a whole-tree comparison of files the guard does not judge.
         if (gitPrintsContent(git) && gitContentOperands(git.verb, git.args).revisions.some(arg => (posix.isAbsolute(arg) || arg.startsWith('..')) && !inRoots(posix.resolve(git.cwd, arg)))) {
-            holdBoundary(invocation, personAsk(`${named(invocation)} prints files outside the configured roots, which the guard does not judge. A person runs it.`))
-        }
-        // The stash's third parent and a walk of every ref or the reflog print files the index does not list.
-        if ((gitPrintsContent(git) || git.verb === 'stash' && stashVerb === 'show' && git.args.some(arg => /^(?:-u|--include-untracked|--only-untracked)$/.test(arg)))
-            && (git.args.some(arg => /(?:^|[^\w])stash(?:@\{|$|\^|~)|^refs\/stash/.test(arg)) || git.args.some(arg => /^--(?:all|reflog|walk-reflogs)$|^-g$/.test(arg))
-                && (git.verb !== 'log' && git.verb !== 'whatchanged' || git.args.some(arg => /^(?:-p|-u|--patch|--patch-with-stat|--patch-with-raw|--cc|-c|--full-diff)$/.test(arg))))) {
-            holdBoundary(invocation, ask(`${named(invocation)} can print the stash or every ref, whose commits hold untracked and ignored files the guard does not list, environment files included. Name a branch or commit.`))
+            holdBoundary(invocation, ask(`${named(invocation)} prints files outside the configured roots, which the guard does not judge. A person runs it.`))
         }
         if (git.verb === 'add') {
             let options = true
@@ -3308,7 +3259,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                     else inspectStage(invocation, arg, git.cwd)
                 }
             }
-            if (!operands) holdBoundary(invocation, personAsk('Staging without explicit paths requires human approval.'))
+            if (!operands) holdBoundary(invocation, ask('Staging without explicit paths requires human approval.'))
         }
     }
     linking = false
@@ -3326,7 +3277,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (gitInvocation(invocation)) return !accesses.get(invocation)
             return BACKGROUND_WRITERS.has(posix.basename(invocation.executable))
         })
-        if (racing) unclassifiedAsk ??= personAsk('This call runs a background job that loops, writes files or runs a Git write, which can change what the guard judged for a later call before it runs. Run it in the foreground, or a person approves it.')
+        if (racing) unclassifiedAsk ??= ask('This call runs a background job that loops, writes files or runs a Git write, which can change what the guard judged for a later call before it runs. Run it in the foreground, or a person approves it.')
     }
     if (pathCount > GUARD_INPUT_LIMITS.paths) hold(unavailable('Guard path limit exceeded.'))
     // Named as a person pastes it after `!`, which Claude Code runs without the hook.
@@ -3337,8 +3288,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (declared) return deny(`${declared.reason}${declared.fix ? ` Fix: ${declared.fix}` : ''}`)
     }
     if (authorityUnavailable) return authorityUnavailable
-    // Under the allow default only a person's ask stands; strict mode keeps every ask.
-    const stands = (decision: GuardDecision | undefined): decision is GuardDecision => decision !== undefined && (!open || PERSON.has(decision))
+    const stands = (decision: GuardDecision | undefined): decision is GuardDecision => decision !== undefined
     if (stands(unclassifiedAsk)) return unclassifiedAsk
     const declaredReasons: string[] = []
     for (const invocation of invocations) {
@@ -3348,15 +3298,13 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // protection covers it: a file the agent wrote as packages/web/git runs as `git` there, and a
         // path-spelled launcher's `#!/usr/bin/env node` finds a planted `node` the same way.
         if (resolved.searchPathRelativeEntry !== null && invocation.executable !== null) {
-            return personAsk(`The command search path the agent runs with holds the relative entry ${JSON.stringify(resolved.searchPathRelativeEntry)}${resolved.searchPathRelativeEntry === '' ? ' (an empty entry is the working directory)' : ''}, so ${invocation.executable}, or a program it starts by name, may run a file the agent wrote instead of the permitted program. Remove relative entries from the PATH the agent harness starts with.`)
+            return ask(`The command search path the agent runs with holds the relative entry ${JSON.stringify(resolved.searchPathRelativeEntry)}${resolved.searchPathRelativeEntry === '' ? ' (an empty entry is the working directory)' : ''}, so ${invocation.executable}, or a program it starts by name, may run a file the agent wrote instead of the permitted program. Remove relative entries from the PATH the agent harness starts with.`)
         }
-        // Only a proven read-only command may carry `$?`: as any other argument it could name a path the guard never saw.
-        if (!open && invocation.expandsStatus && !readOnly.has(invocation)) return ask(`${named(invocation)} has an argument holding $?, whose digits the guard cannot see, so it cannot prove which path the argument names. Write the value out, or print it with echo on its own.`)
         const declared = !invocation.wrapped && !invocation.words.some((word) => word.role === 'environment-assignment-value')
             ? resolved.declaredAllows.find(rule => ruleMatches(invocation, rule)) : undefined
         // A rule admits a command, never a search the guard found would read a secret, nor a hard boundary's ask.
         const refusal = searchRefusals.get(invocation)
-        if ((declared || open) && stands(refusal)) return refusal
+        if (stands(refusal)) return refusal
         const boundary = boundaryAsks.get(invocation)
         if (stands(boundary)) return boundary
         if (declared) { declaredReasons.push(declared.reason); continue }
@@ -3369,11 +3317,10 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const pending = askDecisions.get(invocation)
         if (stands(pending)) return pending
         const assignments = invocation.words.filter((word) => word.role === 'environment-assignment-value') as ReadonlyArray<{ readonly value: string; readonly name?: string }>
-        if (!open && (invocation.wrapped || assignments.length)) return ask('Wrapped or environment-modifying invocation requires human approval.')
         // Git's location variables point it at state the guard does not inspect, HOME and XDG_CONFIG_HOME
         // choose the configuration that names hooks, and a relative PATH entry runs a file the agent wrote.
         const steering = assignments.find(steers)
-        if (steering) return personAsk(steering.name === undefined ? 'An environment assignment the guard could not name requires human approval.'
+        if (steering) return ask(steering.name === undefined ? 'An environment assignment the guard could not name requires human approval.'
             : `${named(invocation)} sets ${steering.name}, which changes what Git, the shell or the command search path runs. Run it without that assignment.`)
         if (invocation.executable === null) continue
         const matches = (profile: { executable: string; argv: readonly string[] }, cwd: string) => profile.executable === invocation.executable
@@ -3381,15 +3328,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (resolved.projectCommands.some((profile) => matches(profile, profile.checkoutRoot))) continue
         // A container sees the checkouts it mounts and may hold their credentials, which no host path the guard judged covers.
         const container = containerCommands.has(invocation) || posix.basename(invocation.executable) === 'docker' && invocation.argv.some(word => ['run', 'exec', 'cp'].includes(word))
-        if (container) return personAsk(`${named(invocation)} runs a command in a container, whose filesystem and environment the guard cannot see. A person approves it or runs it in a terminal, or admits it for good under [guards] allow in ${posix.basename(resolved.configPath)}.`)
+        if (container) return ask(`${named(invocation)} runs a command in a container, whose filesystem and environment the guard cannot see. A person approves it or runs it in a terminal, or admits it for good under [guards] allow in ${posix.basename(resolved.configPath)}.`)
         // `docker inspect` prints a container's or image's configuration, its runtime environment included.
-        if (posix.basename(invocation.executable) === 'docker' && invocation.argv.includes('inspect')) return personAsk(`${named(invocation)} prints a container's configuration, whose environment can hold secrets. A person reads it.`)
-        if (open || readOnly.has(invocation) || resolved.cockpitInvocations.some((profile) => matches(profile, profile.cwd))) continue
-        const config = /^[\w./@%+=:,-]+$/.test(resolved.configPath) ? resolved.configPath : `'${resolved.configPath.replaceAll("'", "'\\''")}'`
-        if (invocation.executable === 'node' && invocation.argv[0] === '--test') return ask(`${named(invocation)} requires human approval: Node tests execute code. Keep this Node argv: a person admits it under [guards] allow in ${posix.basename(resolved.configPath)}, `
-            + `or declares it as a [[testing.stages]] command in a gate that agents run with \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run --config ${config} --gate <gate>\`; a gate whose stages use another runner does not run this verifier.`)
-        return searchRefusals.get(invocation) ?? ask(`${named(invocation)} requires human approval: the guard admits only the read-only commands it classifies, a declared build or test command run from its checkout, and [guards] allow rules. `
-            + `A person approves it or runs it in a terminal. To run tests, use \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run --config ${config} --gate <gate>\`; a person can admit a command for good under [guards] allow in ${posix.basename(resolved.configPath)}.`)
+        if (posix.basename(invocation.executable) === 'docker' && invocation.argv.includes('inspect')) return ask(`${named(invocation)} prints a container's configuration, whose environment can hold secrets. A person reads it.`)
     }
     return declaredReasons.length === 1 ? { decision: 'allow', reason: declaredReasons[0]! } : allowed
 }
