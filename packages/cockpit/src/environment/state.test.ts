@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { chmodSync, readdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
 import { dirname, join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
@@ -462,6 +462,28 @@ describe('selectStateRoot', () => {
 })
 
 describe('bootstrap state', () => {
+    it('drops the bootstrap records of a checkout that no longer exists when another checkout selects the root', async () => {
+        const parent = await temporaryDirectory()
+        const home = join(parent, 'home')
+        await Promise.all([mkdir(home), mkdir(join(parent, 'gone')), mkdir(join(parent, 'kept'))])
+        const write = async (name: string) => {
+            const selected = await selectBootstrapStateRoot({ platform: 'linux', home, checkoutRoot: await realpath(join(parent, name)), target: 'codexcli' })
+            if (selected.kind !== 'complete') throw new Error('expected a selected bootstrap state root')
+            const address = selected.value.paths.bootstrap('codexcli')
+            const ownerId = bootstrapHolderId({ checkoutId: address.checkoutId, sessionId: name })
+            expect(await transactState(selected.value, address, { ownerId }, () => bootstrapRecord(address))).toMatchObject({ kind: 'complete' })
+            return address
+        }
+        const gone = await write('gone')
+        const kept = await write('kept')
+        await rm(join(parent, 'gone'), { recursive: true })
+        await mkdir(join(parent, 'fresh'))
+        expect(await selectBootstrapStateRoot({ platform: 'linux', home, checkoutRoot: await realpath(join(parent, 'fresh')), target: 'codexcli' }))
+            .toMatchObject({ kind: 'complete' })
+        await expect(lstat(dirname(dirname(dirname(gone.path))))).rejects.toMatchObject({ code: 'ENOENT' })
+        expect(await readState(kept)).toMatchObject({ kind: 'complete' })
+    })
+
     it('round-trips bootstrap identity through Windows-safe state filenames', async () => {
         const { namespace, address } = await selectedBootstrapNamespace()
         const ownerId = bootstrapHolderId({ checkoutId: address.checkoutId, sessionId: 'portable-state' })
