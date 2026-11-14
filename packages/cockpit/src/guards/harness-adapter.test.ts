@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { adaptGuardDecision, normalizeOpenCodeInput } from './harness-adapter.js'
 import { parseGuardInput } from './invocation-parser.js'
-import { evaluateGuard, GUARD_ROOT_PROTECTIONS } from './evaluator.js'
+import { evaluateGuard, GUARD_DEFERRED_REASONS, GUARD_ROOT_PROTECTIONS } from './evaluator.js'
 
 const cwd = '/workspace/product'
 const protectedIdentities = [...GUARD_ROOT_PROTECTIONS.map(({ path }) => `${cwd}/${path}`), `${cwd}/cockpit.toml`].map(path => ({ path, identity: null, ancestors: [] }))
@@ -92,7 +92,16 @@ describe('closed native guard representation', () => {
     it('represents ask only on the measured prompt harness and refuses unavailable or malformed decisions', () => {
         for (const target of ['claudecode', 'codexcli', 'opencode'] as const) {
             expect(adaptGuardDecision(target, { decision: 'ask', reason: 'Approval required.' }).decision).toBe(target === 'claudecode' ? 'ask' : 'deny')
-            expect(adaptGuardDecision(target, { decision: 'allow', reason: 'Exact match.' })).toMatchObject({ decision: 'allow', exitCode: 0, stdout: '' })
+            // Claude Code prompts for a call the hook leaves unanswered, and its own deny rules still win over an
+            // allow answer (measured); Codex rejects an allow answer as unsupported, and OpenCode's plugin reads none.
+            const allowed = adaptGuardDecision(target, { decision: 'allow', reason: 'Exact match.' })
+            expect(allowed).toMatchObject({ decision: 'allow', exitCode: 0, stderr: '' })
+            expect(allowed.stdout).toBe(target === 'claudecode' ? `${JSON.stringify({ hookSpecificOutput: {
+                hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'Exact match.' } })}\n` : '')
+            // Nor is a call asking to leave Claude Code's sandbox, whose retry an allow answer could approve unprompted.
+            expect(adaptGuardDecision(target, { decision: 'allow', reason: 'Exact match.' }, { leavesSandbox: true }).stdout).toBe('')
+            // An allow the guard leaves to the agent tool's own permissions is not answered on any harness.
+            for (const reason of GUARD_DEFERRED_REASONS) expect(adaptGuardDecision(target, { decision: 'allow', reason })).toMatchObject({ decision: 'allow', exitCode: 0, stdout: '', stderr: '' })
             const unavailable = adaptGuardDecision(target, { decision: 'unavailable', reason: 'Parser absent.' })
             expect(unavailable.decision).toBe('unavailable')
             expect(refusal(target, unavailable)).toBe('Parser absent.')

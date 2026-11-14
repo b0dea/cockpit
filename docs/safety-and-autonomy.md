@@ -574,8 +574,10 @@ or a URL; `gh api` is left out, because its `GET` returns any file the repositor
 
 Each agent tool already has its own permissions for files outside the project: Claude Code's
 permission rules and additional directories, Codex's sandbox and approval policy, OpenCode's
-`external_directory`. Cockpit never overrides them: its successful hook response is neutral, so a
-native denial still wins. What cockpit adds is its own guard on shell commands, and a person picks
+`external_directory`. Cockpit never overrides them: a call that reaches outside the configured roots,
+like a listed MCP tool, gets no answer from the guard, so the tool's own permissions decide it. A call
+the guard judged inside the roots is answered allow on Claude Code, so Claude Code does not prompt for
+it, and a native deny rule still refuses it. What cockpit adds is its own guard on shell commands, and a person picks
 how that guard treats a named file outside the managed roots:
 
 | Setting | A named read outside the roots | Use it when |
@@ -1212,8 +1214,8 @@ decision without adding grants or weakening hard boundaries:
 
 | Harness | Translation and adapter exit |
 | --- | --- |
-| Claude Code | Every decision exits 0; ask and every refusal, unavailable included, are carried in native decision JSON. |
-| Codex CLI | Ask becomes deny, because Codex hooks have no prompt tier, and a decision a human cannot be shown must not let the call run. Every decision exits 0; every refusal, unavailable included, is carried in native decision JSON. |
+| Claude Code | Every decision exits 0; allow, ask and every refusal, unavailable included, are carried in native decision JSON. Allow is answered only for a call the guard judged: a listed MCP tool, a call reaching outside the configured roots, and a call asking to leave Claude Code's sandbox get no answer, so Claude Code's own permissions decide them. |
+| Codex CLI | Ask becomes deny, because Codex hooks have no prompt tier, and a decision a human cannot be shown must not let the call run. Every decision exits 0; every refusal, unavailable included, is carried in native decision JSON. Allow gets no answer, since Codex rejects an allow answer as unsupported. |
 | OpenCode | Ask becomes deny, for the same reason: its plugin hook can only throw or continue. Allow exits 0; every non-allow decision exits 2. |
 
 Unavailable or malformed decisions are refusals on every target, spelled as deny decision JSON for

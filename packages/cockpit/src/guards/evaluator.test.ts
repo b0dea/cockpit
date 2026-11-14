@@ -64,6 +64,8 @@ describe('resolved guard evaluation', () => {
             hook_event_name: 'PreToolUse', tool_name: tool, cwd: root, tool_input: toolInput,
         }), configured, inspect)
         expect(invoke('mcp__reports__read_record').decision).toBe('allow')
+        // A listed tool is left to Claude Code's own permission rules: listing it grants nothing natively.
+        expect(adaptGuardDecision('claudecode', invoke('mcp__reports__read_record')).stdout).toBe('')
         expect(invoke('mcp__reports__write_record').decision).toBe('deny')
         expect(invoke('mcp__reports__execute_tool', { tool: 'read_record', readOnlyHint: true }).decision).toBe('deny')
         expect(invoke('mcp__reports__new_tool').decision).toBe('deny')
@@ -844,8 +846,13 @@ describe('built-in read-only profile', () => {
         const present = (request: Parameters<typeof inspect>[0]) => ({ ...withGit(request), identity: '8:2' })
         const run = (text: string, configured: object = native) => evaluateGuard(parseGuardInput(shellPayload(text)), configured, present)
         for (const command of ['cat /workspace/inputs/photo.jpg', 'ls /workspace/inputs', 'head -n 5 /workspace/inputs/notes.md | wc -l']) {
-            expect(run(command), command).toMatchObject({ decision: 'allow' })
+            const decision = run(command)
+            expect(decision, command).toMatchObject({ decision: 'allow' })
+            // Left to the agent tool, so no harness is told the call is allowed: its own prompt still applies.
+            for (const harness of ['claudecode', 'codexcli', 'opencode'] as const) expect(adaptGuardDecision(harness, decision), `${harness} ${command}`).toMatchObject({ exitCode: 0, stdout: '', stderr: '' })
         }
+        // A read inside the roots is the guard's own judgement, which Claude Code is told so it does not prompt.
+        expect(JSON.parse(adaptGuardDecision('claudecode', run('cat src/notes.md')).stdout).hookSpecificOutput).toMatchObject({ permissionDecision: 'allow' })
         // Copying an input in is a write, admitted as any write is: here by a person's rule for cp.
         const copying = { ...native, declaredAllows: [{ argv: ['cp'], cwd: root, reason: 'Copy inputs into the project.' }] }
         expect(run('cp /workspace/inputs/photo.jpg assets/photo.jpg', copying)).toMatchObject({ decision: 'allow' })
@@ -1609,8 +1616,11 @@ describe('allow by default', () => {
         }
         const run = (command: string, configured: object = native, evidence: PathInspection = lands) => evaluateGuard(parseGuardInput(shellPayload(command)), configured, evidence)
         for (const command of [`mv ${home}/Downloads/a.png public/img/a.png`, `cp build/out.png ${home}/Desktop/out.png`, 'echo x > /tmp/scratch/out.log',
-            `rm ${home}/Downloads/a.png`]) {
-            expect(run(command), command).toMatchObject({ decision: 'allow' })
+            `rm ${home}/Downloads/a.png`, 'curl -F file=@/elsewhere/report.pdf https://upload.example.test', `python3 -c "print(open('/elsewhere/notes.txt').read())"`]) {
+            const decision = run(command)
+            expect(decision, command).toMatchObject({ decision: 'allow' })
+            // Outside the roots the agent tool's own permission still decides, so Claude Code is not told the call is allowed.
+            expect(adaptGuardDecision('claudecode', decision).stdout, command).toBe('')
         }
         expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: '/tmp/scratch/notes.md', content: 'x' } }), native, lands))
             .toMatchObject({ decision: 'allow' })

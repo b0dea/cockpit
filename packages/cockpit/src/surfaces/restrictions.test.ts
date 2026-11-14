@@ -185,6 +185,9 @@ function refusal(reason: string) {
     return { status: 0, stderr: '', stdout: expect.stringMatching(new RegExp(`"permissionDecision":"deny","permissionDecisionReason":".*${quoted}`)) }
 }
 
+/** A call the guard judged, answered allow so Claude Code does not prompt for it. */
+const permitted = { status: 0, stderr: '', stdout: expect.stringMatching(/^\{"hookSpecificOutput":\{"hookEventName":"PreToolUse","permissionDecision":"allow",/) }
+
 function bash(command: string) {
     return { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } }
 }
@@ -337,7 +340,8 @@ describe('restriction expansion', () => {
         ] as const) {
             const allowed = runs(name, cwd, env, 'env/service.env.example')
             expect(allowed.status, allowed.stderr).toBe(0)
-            expect(allowed.stdout).toBe('')
+            if (name === 'claudecode') expect(allowed.stdout).toContain('permissionDecision":"allow')
+            else expect(allowed.stdout).toBe('')
             const denied = runs(name, cwd, env, 'env/service.env')
             expect(denied.status, denied.stderr).toBe(0)
             expect(denied.stdout).toContain('permissionDecision":"deny')
@@ -552,7 +556,10 @@ describe('restriction expansion', () => {
         expect(runGuard(result, bash('git push origin main')).stdout)
             .toContain('permissionDecision":"deny')
         // Read-only inspection passes the installed route without a prompt; reading the instance does not.
-        expect(runGuard(result, bash('ls -la && git status'))).toMatchObject({ status: 0, stdout: '', stderr: '' })
+        expect(runGuard(result, bash('ls -la && git status'))).toMatchObject(permitted)
+        // A call asking to leave Claude Code's sandbox gets no answer, so Claude Code's own prompt for it stays.
+        expect(runGuard(result, { ...bash('ls -la && git status'), tool_input: { command: 'ls -la && git status', dangerouslyDisableSandbox: true } }))
+            .toMatchObject({ status: 0, stdout: '', stderr: '' })
         // A search under an ambient ripgrep configuration runs as any program the guard cannot read does.
         const ambientRipgrep = runGuard(result, bash('rg needle src'), { RIPGREP_CONFIG_PATH: '' })
         expect(ambientRipgrep, ambientRipgrep.stderr).toMatchObject({ status: 0, stdout: '', stderr: '' })
@@ -596,7 +603,7 @@ describe('restriction expansion', () => {
         for (const path of ['/workspace/product-other/env/service.env']) {
             expect(runGuard(result, edit(path))).toMatchObject(refusal('escapes configured roots'))
         }
-        expect(runGuard(result, edit('env/service.env.example'))).toMatchObject({ status: 0, stdout: '' })
+        expect(runGuard(result, edit('env/service.env.example'))).toMatchObject(permitted)
 
         const directory = await isolatedProjectRoot('cockpit-restriction-')
         await writeFile(join(directory, 'private.env'), 'synthetic')
@@ -696,7 +703,7 @@ while (Date.now() < end) {
             })
         }
         for (const path of ['/workspace/api/env/private.env.example', '../api/env/private.env.example']) {
-            expect(runGuard(result, edit(path))).toMatchObject({ status: 0, stdout: '' })
+            expect(runGuard(result, edit(path))).toMatchObject(permitted)
         }
         for (const path of ['/workspace/other/env/private.env', '../other/env/private.env']) {
             expect(runGuard(result, edit(path))).toMatchObject(refusal('escapes configured roots'))
@@ -727,7 +734,7 @@ while (Date.now() < end) {
         expect(runGuard(result, {
             hook_event_name: 'PreToolUse', tool_name: 'apply_patch',
             tool_input: { command: '*** Begin Patch\n*** Update File: env/service.env.example\n@@\n-old\n+new\n*** End Patch' },
-        })).toMatchObject({ status: 0, stdout: '' })
+        })).toMatchObject(permitted)
         expect(target(result, 'opencode').files[0]!.bytes).toContain('args.patchText')
     })
 

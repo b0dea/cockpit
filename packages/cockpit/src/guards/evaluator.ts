@@ -279,6 +279,11 @@ const named = (invocation: ParsedInvocation) => {
 // A word whose value the guard cannot see, as a refusal names it.
 const unseen = (value: string) => value === XARGS_INPUT ? 'the arguments xargs reads from standard input' : shownGuardWord(value)
 const allowed: GuardDecision = Object.freeze({ decision: 'allow', reason: 'Every invocation matches an exact permitted profile or bounded data operation.' })
+// Allows that leave the call to the agent tool's own permissions: a listed MCP tool, and a call reaching
+// outside the configured roots. The adapter answers them with nothing, so the tool's own prompt still applies.
+const mcpDeferred = 'MCP tool satisfies the declared tool restrictions.'
+const outsideDeferred = 'Nothing the guard checks refuses this call; what it reaches outside the configured roots is left to the agent tool\'s own permissions.'
+export const GUARD_DEFERRED_REASONS = Object.freeze([mcpDeferred, outsideDeferred])
 function record(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
@@ -1997,12 +2002,13 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 return deny(`MCP tool ${shownGuardWord(input.tool)} is outside the exact allowlist for ${server}. Fix: use a listed tool or have a person review [mcp.allowed_tools] and sync.`)
             }
         }
-        return { decision: 'allow', reason: 'MCP tool satisfies the declared tool restrictions.' }
+        return { decision: 'allow', reason: mcpDeferred }
     }
     const absolute = (path: string) => `${resolved.canonicalRoot}/${path}`
     // A word leading into the installed package or a package it loads runs cockpit's own code.
     const cockpitCommand = (invocation: ParsedInvocation) => cockpitShaped(invocation, [...resolved.cockpitPackageDirectories ?? [], ...resolved.executionDirectories])
     const inRoots = (lexical: string) => resolved.allowedRoots.some(root => within(lexical, root))
+    let outside = false
     const secretRoot = absolute(SECRETS_ROOT)
     const controlFiles = GUARD_CONTROL_FILES.map(absolute)
     const controlDirectories = GUARD_CONTROL_DIRECTORIES.map(absolute)
@@ -2377,6 +2383,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             return
         }
         const lexical = posix.resolve(request.cwd, request.path)
+        if (!inRoots(lexical)) outside = true
         const mutating = request.operation !== 'cwd'
         const staging = request.operation === 'stage'
         const removing = request.operation === 'remove'
@@ -2471,6 +2478,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (aliasedLocation(lexical)) { hold(aliasDenial(path)); return false }
         if (inRelatedCheckout(lexical) || reservedForRelated(lexical)) { hold(relatedDenial); return false }
         if (!resolved.allowedRoots.some((root) => within(lexical, root))) {
+            outside = true
             // Removing in the agent's own data or workspaces, or below a write path, as `mv` does to its source, is a
             // write there; anywhere else outside it asks, as before.
             const landing = agentHomes.length || agentWorkspaces.length ? externalLanding({ path, cwd, operation: 'write' }, lexical) : undefined
@@ -2552,8 +2560,10 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     // search runs, which is what lets an absent one be ignored.
     // A person's read paths, or native external reads, admit named reads outside the roots; the
     // application then admits only an existing regular file, or a directory to list.
-    const readableOutside = (lexical: string) => resolved.externalReads === 'native' || (resolved.readPaths ?? []).some(path => within(lexical, path)) || inRelatedCheckout(lexical)
-        || agentReadable(lexical)
+    const readableOutside = (lexical: string) => {
+        outside = true
+        return resolved.externalReads === 'native' || (resolved.readPaths ?? []).some(path => within(lexical, path)) || inRelatedCheckout(lexical) || agentReadable(lexical)
+    }
     const inspectReadOnly = (access: ReadOnlyAccess, chainReadOnly = false, approvedExternalRead = false): boolean => {
         let safe = true
         searchBlocker = undefined
@@ -2573,6 +2583,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (kind !== 'listing' && inSecretPath(folded)) hold(secretPathDenial)
             if (kind === 'read') holdGitConfigRead(lexical)
             const external = !resolved.allowedRoots.some((root) => within(lexical, root))
+            if (external) outside = true
             // The application admits only an existing regular file, or a directory to list, there.
             if (external && !approvedExternalRead && !readableOutside(lexical)) {
                 safe = false
@@ -3064,6 +3075,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                     // Git resolves its operands from the directory -C names.
                     const lexical = posix.resolve(git?.cwd ?? invocation.cwd, candidate)
                     const folded = fold(lexical)
+                    // Every spelling counts here, `@file` and attached values included, so an allow answer never covers an outside
+                    // path. Git resolves its operands from its own directory, which the Git checks above inspect.
+                    if (position < nestedFrom && position !== scriptAt && !gitInvocation(invocation) && !launcherPath(lexical) && (posix.isAbsolute(candidate) || candidate.split('/').includes('..')) && !lexical.startsWith('/dev/') && !inRoots(lexical)) outside = true
                     if (dotenvSecret(folded)) secretName(dotenvDenial)
                     if (namesCredential(folded)) hold(credentialDenial)
                     holdGitConfigRead(lexical)
@@ -3382,5 +3396,6 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const pending = askDecisions.get(invocation)
         if (stands(pending)) return pending
     }
+    if (outside) return { decision: 'allow', reason: outsideDeferred }
     return declaredReasons.length === 1 ? { decision: 'allow', reason: declaredReasons[0]! } : allowed
 }

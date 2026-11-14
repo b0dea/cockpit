@@ -533,7 +533,7 @@ describe('public surface publication transaction', () => {
 
             const denied = runGeneratedGuard(fixture.root, join(outside, '.env'))
             expect(denied.stdout, JSON.stringify(denied)).toContain('permissionDecision":"deny')
-            expect(runGeneratedGuard(fixture.root, join(outside, '.env.example'))).toMatchObject({ status: 0, stdout: '' })
+            expect(runGeneratedGuard(fixture.root, join(outside, '.env.example'))).toMatchObject({ status: 0, stdout: expect.stringContaining('permissionDecision":"allow') })
             // A documentation name, so the roots decide rather than the environment-file denial.
             expect(runGeneratedGuard(fixture.root, join(fixture.root, '..', 'unlisted', '.env.example'))).toMatchObject({
                 status: 0, stderr: '', stdout: expect.stringMatching(/"permissionDecision":"deny".*Guard path escapes configured roots\./),

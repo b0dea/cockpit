@@ -419,12 +419,14 @@ it('consumes vendor and exact build/test authority through installed hook regist
         expect(result.stderr).not.toContain('"invocation":')
         return result
     }
+    // A call the guard judged is answered allow, so Claude Code does not prompt for it.
+    const permitted = { status: 0, stderr: '', stdout: expect.stringContaining('permissionDecision":"allow') }
     const codexDenied = invoke('curl https://api.vendor.example.test/messages', root, await registered('.codex/hooks.json'))
     expect(codexDenied).toMatchObject({ status: 0, stderr: '' })
     expect(JSON.parse(codexDenied.stdout))
         .toMatchObject({ hookSpecificOutput: { permissionDecision: 'deny', permissionDecisionReason: 'Refusing executable use of a declared vendor host.' } })
-    expect(invoke('npm run build')).toMatchObject({ status: 0, stdout: '', stderr: '' })
-    expect(invoke('npm test -- unit.test.ts')).toMatchObject({ status: 0, stdout: '', stderr: '' })
+    expect(invoke('npm run build')).toMatchObject(permitted)
+    expect(invoke('npm test -- unit.test.ts')).toMatchObject(permitted)
     expect(invoke('npm run build --extra').stdout).toContain('permissionDecision":"ask')
     expect(invoke('npm run build', root).stdout).toContain('permissionDecision":"ask')
     expect(invoke('curl https://api.vendor.example.test/messages').stdout).toContain('permissionDecision":"deny')
@@ -438,9 +440,9 @@ it('consumes vendor and exact build/test authority through installed hook regist
         .toContain('permissionDecision":"deny","permissionDecisionReason":"Refusing to read or write an environment file')
     expect(invoke('cat web/.env.local').stdout).toContain('permissionDecision":"deny')
     await writeFile(join(root, 'app/.env.schema'), '# @required\nAPI_KEY=\n')
-    expect(invoke('cat .env.schema')).toMatchObject({ status: 0, stdout: '', stderr: '' })
+    expect(invoke('cat .env.schema')).toMatchObject(permitted)
     const launcher = fileURLToPath(new URL('../../bin/cockpit.mjs', import.meta.url))
-    expect(invoke(`${JSON.stringify(launcher)} check --config ${JSON.stringify(configPath)}`, root)).toMatchObject({ status: 0, stdout: '', stderr: '' })
+    expect(invoke(`${JSON.stringify(launcher)} check --config ${JSON.stringify(configPath)}`, root)).toMatchObject(permitted)
     expect(invoke(`${JSON.stringify(launcher)} check --config ${JSON.stringify(configPath)} --unknown`, root).stdout).toContain('permissionDecision":"ask')
     expect(invoke(`${JSON.stringify(launcher)} reset --config ${JSON.stringify(configPath)}`, root).stdout).toContain('permissionDecision":"ask')
     // `git restore` and `sed -i` leave identical bytes in a new file. The guard authenticates the
@@ -448,13 +450,13 @@ it('consumes vendor and exact build/test authority through installed hook regist
     const identical = await readFile(configPath)
     await rm(configPath)
     await writeFile(configPath, identical)
-    expect(invoke('npm run build')).toMatchObject({ status: 0, stdout: '', stderr: '' })
+    expect(invoke('npm run build')).toMatchObject(permitted)
     const original = await readFile(configPath, 'utf8')
     await writeFile(configPath, original.replace('api.vendor.example.test', 'replacement.vendor.example.test')
         .replace('build = [ "npm", "run", "build" ]\n', '').replace('"unit.test.ts" ]', '"other.test.ts" ]'))
     // That edit widens (a vendor host is gone), so it is not applied: calls are judged under the
     // configuration last synced, and a refusal says a person must sync it.
-    expect(invoke('npm run build')).toMatchObject({ status: 0, stdout: '', stderr: '' })
+    expect(invoke('npm run build')).toMatchObject(permitted)
     const pending = invoke('curl https://api.vendor.example.test/messages')
     expect(pending.stdout).toContain('permissionDecision":"deny')
     expect(pending.stdout).toContain('has an unapproved edit that widens what agents may do')
