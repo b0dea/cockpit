@@ -59,14 +59,13 @@ export async function inspectProjectReadiness(
     if (loaded && loaded.kind !== 'complete') return []
     const findings: EnvironmentDiagnostic[] = input.configPath === undefined ? [] : [...await inspectTeamReadiness(input.configPath)]
     const tools: readonly string[] = loaded?.kind === 'complete' ? loaded.result.config.surfaces.tools : input.tools ?? DEFAULT_SURFACE_TOOLS
-    const refusers = ['codexcli', 'opencode'].filter(tool => tools.includes(tool)).map(tool => tool === 'codexcli' ? 'Codex' : 'OpenCode')
     // A package manager may have changed this process's PATH; it is not evidence of the harness's PATH.
     const relativeEntry = guardSearchPathRelativeEntry(input.env.PATH ?? '')
     if (input.configPath !== undefined && relativeEntry !== null) findings.push({
         severity: 'warning' as const,
         // A literal, so the diagnostic inventory captures the fix beside the code.
         code: 'GUARD_SEARCH_PATH_RELATIVE' satisfies typeof ENVIRONMENT_CODES.GUARD_SEARCH_PATH_RELATIVE,
-        message: `This CLI process's PATH holds the relative entry ${JSON.stringify(relativeEntry)}${relativeEntry === '' ? ' (an empty entry is the working directory)' : ''}; a package manager may have added it, so this does not establish the running harness's PATH. An agent harness started with this PATH gets a guard that asks before every command, because a file the agent wrote could run in place of the command${refusers.length > 0 ? `, and ${refusers.join(' and ')} refuse${refusers.length === 1 ? 's' : ''} what it asks about` : ''}`,
+        message: `This CLI process's PATH holds the relative entry ${JSON.stringify(relativeEntry)}${relativeEntry === '' ? ' (an empty entry is the working directory)' : ''}; a package manager may have added it, so this does not establish the running harness's PATH. In an agent harness started with this PATH, a file the agent wrote could run in place of a command the guard allowed.`,
         target: 'PATH',
         fix: 'check PATH in the shell or launcher that starts the agent harness; if it contains relative or empty entries, remove them there and restart the harness',
     })

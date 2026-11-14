@@ -54,7 +54,6 @@ import {
     guardInstalledDirectories,
     guardLauncherEvidence,
     guardSearchDirectories,
-    guardSearchPathRelativeEntry,
     guardSecretFiles,
     guardSensitivePathsBelow,
     guardBranchFacts,
@@ -826,7 +825,6 @@ export async function runGuardEvaluationApplication(
             ...agentAreas,
             ...policy.writePaths?.length || agentRoots.length ? { externalSearchDirectories: externalSearchDirectories(searchPath, policy.allowedRoots),
                 guardRuntime: [...new Set([identity.node, dirname(dirname(identity.node)), process.execPath])].filter(path => path !== '/') } : {},
-            searchPathRelativeEntry: guardSearchPathRelativeEntry(searchPath),
             // The guard script on disk is the one the person's sync recorded, so staging it stages what a person ran sync for.
             ...inspectGuardRecord(identity.root) === 'match' ? { recordedGuardScript: true } : {},
             ripgrepConfigActive: data.ripgrepConfigActive === true }, inspect)
@@ -1115,7 +1113,7 @@ export async function prepareGuardEvaluationPolicy(
                 writePaths: canonicalOutsidePaths(config.guards.write_paths.map(({ path }) => path)).filter(path => !confinedPath(path, realpathSync(homedir()))),
                 readPaths: canonicalOutsidePaths(config.guards.read_paths.map(({ path }) => path)),
                 secretPaths,
-                executionDirectories, cockpitPackageDirectories, searchDirectories: [], searchPathRelativeEntry: null,
+                executionDirectories, cockpitPackageDirectories, searchDirectories: [],
                 secretFileIdentities: secretFiles.identities && [...secretFiles.identities], protectedFilesLinked,
                 cockpitInvocations: [], cockpitLaunchers: [], projectCommands: [],
             }

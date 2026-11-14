@@ -29,7 +29,7 @@ const declared: Declared = {
         hosted_db_hosts: ['db.example.test'], vendor_endpoint_hosts: ['api.vendor.example.test'],
         allow: [{ argv: ['make', 'verify'], reason: 'Verification is safe.' }],
         deny: [{ prefix: ['make', 'deploy'], reason: 'Deploys are a person\'s.' }],
-        secret_paths: ['var/sessions'], related_checkouts: ['../upstream'], unresolved: 'deny',
+        secret_paths: ['var/sessions'], related_checkouts: ['../upstream'], unresolved: 'deny', external_reads: 'grant',
     },
     mcp: { approved: { docs: 'a'.repeat(64) } },
     work: { attempt_cap: 1, gates: { accept: 'person' } },

@@ -1300,7 +1300,7 @@ describe('guard policy construction', () => {
             secretPaths: [], relatedCheckouts: [], relatedReserved: [], writePaths: [], unresolved: 'ask',
             // The running package lives outside this checkout, so no installed directory is in reach; the
             // package itself is carried wherever it is, since a path into it runs cockpit.
-            executionDirectories: [], cockpitPackageDirectories: [realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), '../..'))], searchDirectories: [], searchPathRelativeEntry: null, secretFileIdentities: [], protectedFilesLinked: false,
+            executionDirectories: [], cockpitPackageDirectories: [realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), '../..'))], searchDirectories: [], secretFileIdentities: [], protectedFilesLinked: false,
             cockpitLaunchers: [],
             cockpitInvocations: [], projectCommands: [
                 { executable: 'npm', checkoutRoot: join(root, 'app'), kind: 'build', argv: ['run', 'build'] },

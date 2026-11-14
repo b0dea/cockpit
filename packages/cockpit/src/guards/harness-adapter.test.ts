@@ -34,7 +34,7 @@ describe('closed native guard representation', () => {
         const decision = evaluateGuard(parseGuardInput(payload), {
             canonicalRoot: cwd, configPath: `${cwd}/cockpit.toml`, allowedRoots: [cwd], instances: [], templates: [], protectedIdentities, protectedBranches: ['main'], hostedDatabaseHosts: [], vendorHosts: [],
             declaredAllows: [], declaredDenies: [], ripgrepConfigActive: false,
-            executionDirectories: [], searchDirectories: [], searchPathRelativeEntry: null, secretFileIdentities: [], protectedFilesLinked: false,
+            executionDirectories: [], searchDirectories: [], secretFileIdentities: [], protectedFilesLinked: false,
             cockpitLaunchers: [],
             cockpitInvocations: [{ executable: 'git', cwd, argv: ['push', 'origin', 'HEAD:main'] }], projectCommands: [],
         }, ({ path }) => ({ status: 'resolved', path, symlink: false, identity: null, ancestors: [] }))
@@ -55,7 +55,7 @@ describe('closed native guard representation', () => {
         const decision = evaluateGuard(parseGuardInput(input), {
             canonicalRoot: cwd, configPath: `${cwd}/cockpit.toml`, allowedRoots: [cwd], instances: [], templates: [], protectedIdentities, protectedBranches: ['main'], hostedDatabaseHosts: [], vendorHosts: [],
             declaredAllows: [], declaredDenies: [], ripgrepConfigActive: false,
-            executionDirectories: [], searchDirectories: [], searchPathRelativeEntry: null, secretFileIdentities: [], protectedFilesLinked: false,
+            executionDirectories: [], searchDirectories: [], secretFileIdentities: [], protectedFilesLinked: false,
             cockpitLaunchers: [],
             cockpitInvocations: [{ executable: 'git', cwd, argv: ['push', 'origin', source] }], projectCommands: [],
         }, ({ path }) => ({ status: 'resolved', path, symlink: false, identity: null, ancestors: [] }))

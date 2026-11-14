@@ -22,16 +22,24 @@ builds at run time.
 A person is still asked only where their judgment is the point, or where the guard cannot tell whether
 a command crosses a blocked line:
 
-- a command in a container (`docker run`, `exec`, `cp`, a `cockpit exec`) and `docker inspect`, which
-  prints a container's environment;
-- `gh pr merge`, releases, workflow runs, secrets, repository edits and `gh api` writes;
-- `git clean`, removals outside the configured roots, and links to outside them;
+- `gh pr merge`, releases, workflow runs, secrets and repository edits;
+- `git clean -f` or `-d` (`-x` and `-X`, which also delete ignored files, are refused; `-n` runs), and
+  links to outside the configured roots;
 - a push, rewrite or Git write whose branch, destination or written files the guard cannot resolve,
-  and Git or environment settings that steer them (`GIT_*`, `HOME`, a relative `PATH` entry);
+  and the variables that move Git or a shell's start-up (`GIT_DIR`, `GIT_WORK_TREE`,
+  `GIT_INDEX_FILE`, `GIT_CONFIG*`, `GIT_EXEC_PATH`, `HOME`, `XDG_CONFIG_HOME`, `BASH_ENV`); any other
+  variable, such as `GIT_PAGER` or `DOCKER_BUILDKIT`, runs, and a hook manager's skip variable
+  (`HUSKY=0`, `SKIP`, `LEFTHOOK=0`) is refused as `--no-verify` is;
 - an extraction, clone, `git init` or instruction file that could plant agent settings or a skill;
-- a search or Git print that would read a secret that exists now;
-- reads outside the roots under `external_reads = "grant"`, and a cockpit command that changes what
-  agents may do.
+- reads outside the roots under `external_reads = "grant"` (the default is `"native"`, which leaves
+  them to the agent tool), and a cockpit command that changes what agents may do.
+
+Containers run: `docker run`, `exec` and `cp` and `cockpit exec` are judged by what the call spells,
+so a mounted credential store or an `--env-file .env` is refused. `docker inspect` without a format, or
+with one that reaches the environment, is refused as an environment dump. A search or Git print that
+would read a secret that exists now, a read of an `.env`-like name such as `.envrc`, a read through a
+link the guard cannot inspect, and a removal outside the configured roots are refused, each with the
+route that works.
 
 Integrity holds through the record `sync` writes: the hook runs the guard script only while it matches
 the digest recorded below `~/.cockpit/guards`, so a guard changed by any route holds every later call
