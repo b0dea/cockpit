@@ -562,7 +562,7 @@ describe('restriction expansion', () => {
             .toMatchObject({ status: 0, stdout: '', stderr: '' })
         // A search under an ambient ripgrep configuration runs as any program the guard cannot read does.
         const ambientRipgrep = runGuard(result, bash('rg needle src'), { RIPGREP_CONFIG_PATH: '' })
-        expect(ambientRipgrep, ambientRipgrep.stderr).toMatchObject({ status: 0, stdout: '', stderr: '' })
+        expect(ambientRipgrep, ambientRipgrep.stderr).toMatchObject(permitted)
         expect(JSON.parse(runGuard(result, bash('cat env/service.env')).stdout)).toMatchObject({ hookSpecificOutput: {
             permissionDecision: 'deny', permissionDecisionReason: 'Refusing to read a declared environment instance or secrets directory into the agent context.',
         } })
@@ -572,7 +572,7 @@ describe('restriction expansion', () => {
         } })))
         // Policy is read from the configuration at run time, so the committed guard bytes do not change.
         expect(hostChanged.sharedGuard.sha256).toBe(result.sharedGuard.sha256)
-        expect(runGuard(hostChanged, bash('psql postgresql://db.example.test/app'))).toMatchObject({ status: 0, stdout: '', stderr: '' })
+        expect(runGuard(hostChanged, bash('psql postgresql://db.example.test/app'))).toMatchObject(permitted)
         expect(runGuard(hostChanged, bash('psql postgresql://archive.example.test/app')).stdout)
             .toContain('permissionDecision":"deny')
 
@@ -580,7 +580,7 @@ describe('restriction expansion', () => {
             ...baseInput.policy, protected_branches: ['release'],
         } })))
         expect(branchChanged.sharedGuard.sha256).toBe(result.sharedGuard.sha256)
-        expect(runGuard(branchChanged, bash('git push origin main'))).toMatchObject({ status: 0, stdout: '', stderr: '' })
+        expect(runGuard(branchChanged, bash('git push origin main'))).toMatchObject(permitted)
         expect(runGuard(branchChanged, bash('git push origin release')).stdout)
             .toContain('permissionDecision":"deny')
 
@@ -715,7 +715,7 @@ while (Date.now() < end) {
         })).toMatchObject({ status: 0, stdout: expect.stringContaining('permissionDecision":"deny') })
         expect(runGuard(result, bash('git add ../api/env/private.env')).stdout)
             .toContain('permissionDecision":"deny')
-        expect(runGuard(result, bash('git add ../api/env/private.env.example'))).toMatchObject({ status: 0, stdout: '', stderr: '' })
+        expect(runGuard(result, bash('git add ../api/env/private.env.example'))).toMatchObject(permitted)
     })
 
     it('denies every patch spelling including Move-to and leaves the tracked template editable', async () => {
@@ -746,7 +746,7 @@ while (Date.now() < end) {
 
         expect(runGuard(result, bash('git add ./env/reports/private.env')).stdout)
             .toContain('permissionDecision":"deny')
-        expect(runGuard(result, bash('git add env/service.env.example'))).toMatchObject({ status: 0, stdout: '', stderr: '' })
+        expect(runGuard(result, bash('git add env/service.env.example'))).toMatchObject(permitted)
         expect(result.sharedGuard.bytes).not.toContain('reports-instance')
     })
 

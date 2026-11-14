@@ -2151,7 +2151,10 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (resolved.vendorHosts.some(host => hostUsed(text, host))) return deny('Refusing executable use of a declared vendor host.')
         const tokens = text.split(/[^\w./@~+-]+/).filter(Boolean)
         for (const token of tokens) {
-            const folded = fold(posix.resolve(cwd, token.startsWith('~/') && home !== undefined ? home + token.slice(1) : token))
+            const lexical = posix.resolve(cwd, token.startsWith('~/') && home !== undefined ? home + token.slice(1) : token)
+            const folded = fold(lexical)
+            // A path the text reaches outside the roots is the agent tool's to permit, so the call gets no allow answer.
+            if (token.includes('/') && !inRoots(lexical)) outside = true
             if (dotenvSecret(folded)) return dotenvDenial
             if (folded.split('/').includes('.secrets') || resolved.instances.some(item => within(folded, fold(item.path)))) return readDenial
             if (inSecretPath(folded)) return secretPathDenial
@@ -2173,8 +2176,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         }
         return undefined
     }
-    if (input.unreadable) return textDenial(input.unreadable.text, input.cwd) ?? { decision: 'allow',
-        reason: `The guard does not read this shell form (${input.unreadable.reason}), and its text names nothing the guard refuses, so it runs.` }
+    if (input.unreadable) return textDenial(input.unreadable.text, input.cwd) ?? { decision: 'allow', reason: outside ? outsideDeferred
+        : `The guard does not read this shell form (${input.unreadable.reason}), and its text names nothing the guard refuses, so it runs.` }
     // The current branch and where a bare push goes, for the repository at `cwd`, as Git reports them.
     const branchFacts = (cwd: string): BranchFacts | undefined => {
         let evidence: JsonSnapshot | undefined
@@ -3077,7 +3080,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                     const folded = fold(lexical)
                     // Every spelling counts here, `@file` and attached values included, so an allow answer never covers an outside
                     // path. Git resolves its operands from its own directory, which the Git checks above inspect.
-                    if (position < nestedFrom && position !== scriptAt && !gitInvocation(invocation) && !launcherPath(lexical) && (posix.isAbsolute(candidate) || candidate.split('/').includes('..')) && !lexical.startsWith('/dev/') && !inRoots(lexical)) outside = true
+                    if (position < nestedFrom && position !== scriptAt && !gitInvocation(invocation) && !URL_OPERAND.test(word) && !launcherPath(lexical) && (posix.isAbsolute(candidate) || candidate.split('/').includes('..')) && !lexical.startsWith('/dev/') && !inRoots(lexical)) outside = true
                     if (dotenvSecret(folded)) secretName(dotenvDenial)
                     if (namesCredential(folded)) hold(credentialDenial)
                     holdGitConfigRead(lexical)
