@@ -6,20 +6,24 @@
 // else exits 64 and names itself, so a new call fails a journey instead of passing unnoticed.
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
 
 const [, , stateDir, yamlUrl, ...invocation] = process.argv
 appendFileSync(join(stateDir, 'calls.jsonl'), `${JSON.stringify(invocation)}\n`)
 // cockpit issues some calls in parallel; one call at a time keeps state.json whole. A holder that
-// was killed, as cockpit kills a call past its timeout, leaves its lock to the next caller.
+// was killed, as cockpit kills a call past its timeout, leaves its lock to the next caller; so does
+// one killed before it wrote its pid, once the lock is a few seconds old.
 const lock = join(stateDir, 'lock')
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 for (;;) {
     try { mkdirSync(lock); writeFileSync(join(lock, 'pid'), String(process.pid)); break } catch (error) { if (error.code !== 'EEXIST') throw error }
     let holder = 0
     try { holder = Number(readFileSync(join(lock, 'pid'), 'utf8')) } catch (error) { if (error.code !== 'ENOENT') throw error }
-    try { if (holder > 0) process.kill(holder, 0) } catch (error) { if (error.code === 'ESRCH') rmSync(lock, { recursive: true, force: true }) }
+    try {
+        if (holder > 0) process.kill(holder, 0)
+        else if (Date.now() - statSync(lock).mtimeMs > 3000) rmSync(lock, { recursive: true, force: true })
+    } catch (error) { if (error.code === 'ESRCH') rmSync(lock, { recursive: true, force: true }); else if (error.code !== 'ENOENT') throw error }
     sleep(5)
 }
 process.on('exit', () => rmSync(lock, { recursive: true, force: true }))
@@ -162,8 +166,9 @@ function execIn(key, argv) {
     process.exitCode = result.status ?? 1
 }
 // A published port really listens while its container runs, as Docker's port forwarder does,
-// because preflight connects to each leased port. Listener pids live in state.json so stop, down
-// and the journey's own cleanup can end them.
+// because preflight connects to each leased port. stop and down end a listener by its pid; one the
+// state never recorded, after a failed call or a failed journey, ends itself once the state
+// directory is gone, so removing the scratch tree leaves nothing listening.
 function start(container) {
     container.State = { Status: 'running', Running: true, Health: { Status: 'healthy' } }
     mkdirSync(processDirectory(container), { recursive: true })
@@ -174,9 +179,14 @@ function start(container) {
         const report = (text) => `require('fs').writeFileSync(${JSON.stringify(ready)}, ${text})`
         const child = spawn(process.execPath, ['-e', `require('net').createServer((s) => s.end())
             .on('error', (error) => { ${report('error.message')}; process.exit(1) })
-            .listen(${HostPort}, ${JSON.stringify(HostIp)}, () => ${report("'listening'")})`], { detached: true, stdio: 'ignore' })
+            .listen(${HostPort}, ${JSON.stringify(HostIp)}, () => ${report("'listening'")})
+            setInterval(() => require('fs').existsSync(${JSON.stringify(stateDir)}) || process.exit(0), 1000)`], { detached: true, stdio: 'ignore' })
         child.unref()
-        while (!existsSync(ready)) sleep(5)
+        const deadline = Date.now() + 10_000
+        while (!existsSync(ready)) {
+            if (Date.now() > deadline) fail(`Error response from daemon: the listener for ${HostIp}:${HostPort} did not start`)
+            sleep(5)
+        }
         const outcome = readFileSync(ready, 'utf8')
         rmSync(ready)
         if (outcome !== 'listening') fail(`Error response from daemon: ports are not available: ${HostIp}:${HostPort}: ${outcome}`)

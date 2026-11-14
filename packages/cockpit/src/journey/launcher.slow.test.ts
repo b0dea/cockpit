@@ -1,8 +1,8 @@
 import { spawnSync } from 'node:child_process'
 import { constants, copyFileSync, mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterAll, expect, it } from 'vitest'
-import { createProduct, explain, removeScratch, type Product, type Run } from '../test-support/journey/harness.js'
+import { createProduct, explain, JOURNEY_TIMEOUT, type Product, removeScratch, type Run } from '../test-support/journey/harness.js'
 
 afterAll(removeScratch)
 
@@ -33,7 +33,7 @@ it('behaves the same through every documented launcher, any Node binary and unde
     const otherNode = join(otherBin, 'node')
     mkdirSync(otherBin)
     copyFileSync(process.execPath, otherNode, constants.COPYFILE_FICLONE)
-    const agentPath = `${otherBin}:${shop.env.PATH}`
+    const agentPath = `${otherBin}:${dirname(process.execPath)}:${shop.env.PATH}`
     const launchers = [
         ['./node_modules/.bin/cockpit'],
         ['node', PACKAGE_LAUNCHER],
@@ -50,7 +50,7 @@ it('behaves the same through every documented launcher, any Node binary and unde
     }
     // The control: the same hook refuses what it must, so `allow` above is a judgement, not silence.
     expect(guardDecision(shop, 'git push --force origin main', agentPath)).toBe('deny')
-})
+}, JOURNEY_TIMEOUT)
 
 it('runs under pnpm\'s layout, through its shim and through the package path', () => {
     const shop = createProduct('pnpm', { layout: 'pnpm' })
@@ -60,4 +60,4 @@ it('runs under pnpm\'s layout, through its shim and through the package path', (
         const check = shop.cockpit(['check'], { launcher })
         expect(check.status, `${launcher.join(' ')}: ${explain(check)}`).toBe(0)
     }
-})
+}, JOURNEY_TIMEOUT)

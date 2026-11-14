@@ -18,16 +18,9 @@ const yamlParser = pathToFileURL(join(repositoryRoot, 'node_modules/yaml/dist/in
 
 // One scratch directory per test file holds every product, home and fake daemon.
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-journey-')))
-const daemons: string[] = []
 
-/** Ends the port listeners of every fake container still running, then removes the scratch tree. */
+/** Removes the scratch tree; a fake container's port listener ends itself once its daemon's state is gone. */
 export function removeScratch(): void {
-    for (const statePath of daemons) {
-        const state = JSON.parse(readFileSync(statePath, 'utf8')) as { containers: { listeners?: number[] }[] }
-        for (const pid of state.containers.flatMap((container) => container.listeners ?? [])) {
-            try { process.kill(pid) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error }
-        }
-    }
     rmSync(scratch, { recursive: true, force: true })
 }
 
@@ -184,13 +177,14 @@ export function createMachine(name: string, options: { realDocker?: string } = {
         serverVersion: '29.0.0', composeVersion: '2.40.0', operatingSystem: 'Docker Desktop', memTotal: 8 * 1024 ** 3, cpus: 4, sequence: 1,
         images: { 'node:22-alpine': `sha256:${'a'.repeat(64)}` }, containers: [], volumes: [], networks: [],
     }))
-    daemons.push(join(state, 'state.json'))
     if (options.realDocker) symlinkSync(options.realDocker, join(bin, 'docker'))
     else writeFileSync(join(bin, 'docker'), `#!/bin/sh\nexec ${[process.execPath, fakeDocker, state, yamlParser].map((arg) => JSON.stringify(arg)).join(' ')} "$@"\n`, { mode: 0o755 })
+    // node, npm and npx of the runtime running the suite, but not the rest of its directory: a global
+    // agent tool installed there would answer as a real evaluator.
+    for (const tool of ['node', 'npm', 'npx']) symlinkSync(join(dirname(process.execPath), tool), join(bin, tool))
     return {
         home, tmp,
-        // Node first after docker, so `node` and `npm` resolve to the runtime running the suite.
-        path: [bin, dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter),
+        path: [bin, '/usr/bin', '/bin'].join(delimiter),
         docker: {
             calls: () => readFileSync(join(state, 'calls.jsonl'), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)),
             state: () => JSON.parse(readFileSync(join(state, 'state.json'), 'utf8')),
@@ -257,6 +251,10 @@ function productAt(root: string, machine: Machine): Product {
         git: (...args) => execFileSync('git', args, { cwd: root, env, encoding: 'utf8' }),
     }
 }
+
+// Every command is a fresh process and the stack journeys run dozens, so a journey takes a minute
+// on a quiet machine and several on a loaded one; the suite default of one minute is too short.
+export const JOURNEY_TIMEOUT = 300_000
 
 /** A failure message naming the exit code and every diagnostic. */
 export function explain(run: Run): string {

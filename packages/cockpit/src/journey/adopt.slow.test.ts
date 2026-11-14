@@ -1,5 +1,5 @@
 import { afterAll, expect, it } from 'vitest'
-import { createProduct, exists, explain, ok, removeScratch } from '../test-support/journey/harness.js'
+import { createProduct, exists, explain, JOURNEY_TIMEOUT, ok, removeScratch } from '../test-support/journey/harness.js'
 
 afterAll(removeScratch)
 
@@ -66,4 +66,4 @@ it('adopts a product without a terminal, then check catches a hand edit that syn
     expect(refused.status).toBe(2)
     expect(refused.errors).toContain('SURFACE_STATE_CONFLICT')
     expect(shop.read(skill)).toBe(edited)
-})
+}, JOURNEY_TIMEOUT)

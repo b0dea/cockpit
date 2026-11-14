@@ -1,5 +1,5 @@
 import { afterAll, expect, it } from 'vitest'
-import { createProduct, ok, removeScratch } from '../test-support/journey/harness.js'
+import { createProduct, JOURNEY_TIMEOUT, ok, removeScratch } from '../test-support/journey/harness.js'
 
 afterAll(removeScratch)
 
@@ -28,4 +28,4 @@ reason = "Deploys a throwaway preview"
     expect(sync.status).toBe(2)
     expect(sync.errors).toContain('GUARD_CONFIG_WIDENED')
     expect(shop.read('.claude/settings.json')).toBe(settings)
-})
+}, JOURNEY_TIMEOUT)

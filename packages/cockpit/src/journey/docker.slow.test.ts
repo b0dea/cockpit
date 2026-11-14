@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { afterAll, expect, it } from 'vitest'
-import { createMachine, createProduct, ok, PRODUCT_FILES, removeScratch } from '../test-support/journey/harness.js'
+import { createMachine, createProduct, explain, JOURNEY_TIMEOUT, ok, PRODUCT_FILES, removeScratch } from '../test-support/journey/harness.js'
 
 afterAll(removeScratch)
 
@@ -20,10 +20,16 @@ it.skipIf(process.env.COCKPIT_JOURNEY_DOCKER !== '1')('brings a tiny stack up an
     ok(shop, ['sync'])
     ok(shop, ['check'])
     ok(shop, ['runtime', 'measure', '--image', image])
+    let stackId: string | undefined
     try {
-        ok(shop, ['up'])
+        stackId = ok(shop, ['up']).json?.result.stackId
         expect(ok(shop, ['ps']).json?.result.services).toEqual([expect.objectContaining({ service: 'app', state: 'running' })])
     } finally {
-        ok(shop, ['down'])
+        const down = shop.cockpit(['down'])
+        // down keeps the stack's named volumes by design; the journey removes the ones it made.
+        const volumes = stackId === undefined ? [] : execFileSync(docker, ['volume', 'ls', '-q', '--filter', `label=dev.b0dea.cockpit.stack-id=${stackId}`],
+            { encoding: 'utf8', env: shop.env }).split('\n').filter(Boolean)
+        if (volumes.length > 0) execFileSync(docker, ['volume', 'rm', ...volumes], { env: shop.env })
+        expect(down.status, explain(down)).toBe(0)
     }
-})
+}, JOURNEY_TIMEOUT)

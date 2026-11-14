@@ -1,5 +1,5 @@
 import { afterAll, expect, it } from 'vitest'
-import { cloneProduct, createMachine, createProduct, explain, ok, type Product, removeScratch } from '../test-support/journey/harness.js'
+import { cloneProduct, createMachine, createProduct, explain, JOURNEY_TIMEOUT, ok, type Product, removeScratch } from '../test-support/journey/harness.js'
 
 afterAll(removeScratch)
 
@@ -45,7 +45,7 @@ it('starts the stack, shows it to every later command, resets only declared data
     expect(volumes()).toEqual(['cache', 'data'])
     expect(ok(shop, ['up']).json?.result.change).toBe('started')
     ok(shop, ['down'])
-})
+}, JOURNEY_TIMEOUT)
 
 it('gives two checkouts of one product their own ports and stacks, and neither can stop the other', () => {
     const machine = createMachine('laptop')
@@ -70,12 +70,12 @@ it('gives two checkouts of one product their own ports and stacks, and neither c
     const before = machine.docker.calls().length
     ok(second, ['down'])
     // Teardown names what it removes by id, and only what carries this stack's label.
-    for (const argv of removals(machine.docker.calls().slice(before)).filter((call) => call.includes('container'))) {
-        expect(secondContainers.has(argv.at(-1)!), argv.join(' ')).toBe(true)
-    }
+    const removed = removals(machine.docker.calls().slice(before)).filter((call) => call.includes('container'))
+        .flatMap((call) => call.slice(call.indexOf('rm') + 1).filter((arg) => !arg.startsWith('-')))
+    expect([...new Set(removed)].sort()).toEqual([...secondContainers].sort())
     expect(owned(secondUp.stackId).size).toBe(0)
     expect(owned(firstUp.stackId)).toEqual(firstContainers)
     expect(ok(first, ['ps']).json?.result.services).toEqual([expect.objectContaining({ state: 'running' })])
     ok(first, ['preflight'])
     ok(first, ['down'])
-})
+}, JOURNEY_TIMEOUT)

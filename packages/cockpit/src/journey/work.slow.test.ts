@@ -1,5 +1,5 @@
 import { afterAll, expect, it } from 'vitest'
-import { createProduct, explain, ok, type Product, PRODUCT_FILES, removeScratch } from '../test-support/journey/harness.js'
+import { createProduct, explain, JOURNEY_TIMEOUT, ok, type Product, PRODUCT_FILES, removeScratch } from '../test-support/journey/harness.js'
 
 afterAll(removeScratch)
 
@@ -49,7 +49,7 @@ it('passes only the complete gate, fails it when a stage fails, and is not stopp
     expect(failing.status).toBe(2)
     expect(failing.errors).toEqual(['TEST_GATE_UNSATISFIED'])
     expect(failing.json?.result.verdict).toBe('FAIL')
-})
+}, JOURNEY_TIMEOUT)
 
 // grading = "checks" is the mode that needs no model: cockpit runs every criterion's check and
 // grades by rule. A model-graded order (independent, subagent) is not covered: the evaluator is an
@@ -72,16 +72,16 @@ it('accepts, checks, grades and closes a work order, and refuses a grade with ch
     // An ad hoc grade always asks an independent evaluator; with none installed it refuses and says so.
     shop.write('criteria.md', '---\ncriteria:\n  - id: AC1\n    text: The unit tests pass.\n    check: { gate: unit }\n---\n')
     const adHoc = shop.cockpit(['grade', '--criteria', 'criteria.md'])
-    expect(adHoc.status).toBe(2)
+    expect(adHoc.errors).toEqual(['WORK_APPLICATION_REFUSED'])
     expect(adHoc.json?.diagnostics?.[0]?.message).toContain('EVALUATOR_UNAVAILABLE')
-})
+}, JOURNEY_TIMEOUT)
 
-// Found by this journey: with a sibling that is a plain directory of the cockpit's own repository,
-// as in examples/compose-first, the grade diffs the whole repository as that sibling, so editing a
-// tracked file in scope is reported outside scope as `app:src/catalog.js` (WORK_GRADE_UNSATISFIED).
+// Fails on main: with a sibling that is a plain directory of the cockpit's own repository, as in
+// examples/compose-first, the grade diffs the whole repository as that sibling, so an edit to a
+// tracked file in scope is reported outside it as `app:src/catalog.js` (WORK_GRADE_UNSATISFIED).
 it.fails('grades an edit to a tracked file in scope as in scope when a sibling is a directory of the cockpit repository', () => {
     const shop = adopted('subdirectory-sibling', PRODUCT_FILES['cockpit.toml'])
     ok(shop, ['work', 'accept', '--work-order', 'WO-1'])
     shop.write('src/catalog.js', largeCatalogue)
     ok(shop, ['work', 'grade', '--work-order', 'WO-1'])
-})
+}, JOURNEY_TIMEOUT)
