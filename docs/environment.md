@@ -683,15 +683,17 @@ than its absence, makes the schema unavailable. A sibling is read from the check
 serves. A linked worktree of the cockpit with no store uses its main checkout's, at the same place;
 a repository laid out any other way, or Git failing, leaves the schema with no store.
 
-Only key names and a category are kept; values and Varlock's messages are discarded. Each row below
-is `ENV_SCHEMA_UNHEALTHY`, with schemas labelled `<slug> (<relative dir>)`.
+Only key names and a category are kept; values and Varlock's messages are discarded. Each finding
+below is an `ENV_SCHEMA_UNHEALTHY` warning, with schemas labelled `<slug> (<relative dir>)`. The
+product's environment is the product's to fix, so a finding warns and never fails `preflight` or
+`doctor`.
 
-| Varlock reports | Row | Named as |
-| --- | --- | --- |
-| The required-empty message for a key | fails | `missing required <keys>` |
-| Any other key error, such as a failed resolver or a value that does not coerce | unavailable, unless another key is missing | `could not validate or resolve <keys>` |
-| An error at the root of the report, such as a bad plugin | fails | `schema could not be loaded` |
-| A timeout, or an exit without a readable report | unavailable | the cause |
+| Varlock reports | Named as |
+| --- | --- |
+| The required-empty message for a key | `missing required <keys>` |
+| Any other key error, such as a failed resolver or a value that does not coerce | `could not validate or resolve <keys>` |
+| An error at the root of the report, such as a bad plugin | `schema could not be loaded` |
+| A timeout, or an exit without a readable report | the cause |
 
 A key that could not be resolved is not called invalid: the provider may be signed out or
 unreachable. Sign in and rerun. To diagnose, a person runs

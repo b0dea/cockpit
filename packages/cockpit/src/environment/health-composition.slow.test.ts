@@ -1037,35 +1037,36 @@ describe('env schema health', () => {
         await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
     })
 
-    it('fails preflight naming the invalid keys and the fix', async () => {
+    // A product's own env gap is the product's to fix; it must not stop every agent's preflight.
+    it('warns in preflight, without failing the row, naming the invalid keys and the fix', async () => {
         const candidate = await fixture({ machineOnly: true })
         await withVarlock(candidate, printing(report({ DATABASE_URL: 'Value is required but is currently empty', PORT: 'Unable to coerce string to number' }), 1))
 
         const { preflight, row } = await health(candidate)
 
-        expect(row(preflight)).toMatchObject({ verdict: 'fail', remedy: expect.stringContaining('have a person run `VARLOCK_TELEMETRY_DISABLED=true varlock load --path <schema directory> --path') })
+        expect(row(preflight)).toMatchObject({ verdict: 'pass' })
         expect(preflight.diagnostics).toContainEqual(expect.objectContaining({
-            severity: 'error',
+            severity: 'warning',
             code: 'ENV_SCHEMA_UNHEALTHY',
             message: expect.stringMatching(/api .*missing required DATABASE_URL.*could not validate or resolve PORT/),
-            fix: expect.stringContaining('have a person run `VARLOCK_TELEMETRY_DISABLED=true varlock load --path <schema directory> --path'),
+            // An agent is pointed at the names it can read itself.
+            fix: expect.stringMatching(/have a person run `VARLOCK_TELEMETRY_DISABLED=true varlock load --path <schema directory> --path.*\.\/node_modules\/@b00dea\/cockpit\/bin\/cockpit\.mjs env keys --config <your cockpit\.toml>/),
         }))
-        // An agent is pointed at the names it can read itself.
-        expect(row(preflight)!.remedy).toContain('./node_modules/@b00dea/cockpit/bin/cockpit.mjs env keys --config <your cockpit.toml>')
     })
 
-    it('blocks preflight on a provider it cannot resolve through, as unavailable and naming keys only', async () => {
+    it('warns on a provider it cannot resolve through, naming keys only', async () => {
         const candidate = await fixture({ machineOnly: true })
         await withVarlock(candidate, printing(report({ API_KEY: `exec(): command failed (exit code 3): ${SECRET}` }), 1))
 
         const { doctor, preflight, row } = await health(candidate)
 
-        expect(row(preflight)).toMatchObject({ verdict: 'unavailable', remedy: expect.stringContaining('sign in to it, then rerun') })
-        expect(preflight).toMatchObject({ kind: 'blocked', status: 2 })
-        expect(row(doctor)).toMatchObject({ verdict: 'unavailable' })
-        expect(preflight.diagnostics).toContainEqual(expect.objectContaining({
-            severity: 'error', code: 'ENV_SCHEMA_UNHEALTHY', message: expect.stringMatching(/api .*could not validate or resolve API_KEY/),
-        }))
+        for (const result of [doctor, preflight]) {
+            expect(row(result)).toMatchObject({ verdict: 'pass' })
+            expect(result.diagnostics).toContainEqual(expect.objectContaining({
+                severity: 'warning', code: 'ENV_SCHEMA_UNHEALTHY', message: expect.stringMatching(/api .*could not validate or resolve API_KEY/),
+                fix: expect.stringContaining('sign in to it, then rerun'),
+            }))
+        }
         expect(JSON.stringify([doctor, preflight])).not.toContain(SECRET)
     })
 
@@ -1096,9 +1097,9 @@ describe('env schema health', () => {
         const { doctor, preflight, row } = await health(candidate)
 
         expect(preflight.diagnostics).toEqual([expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED' })])
-        expect(row(doctor)).toMatchObject({ verdict: 'fail', remedy: expect.stringContaining('cockpit doctor on a cockpit that declares no runtime') })
-        expect(doctor.diagnostics).toContainEqual(expect.objectContaining({ code: 'ENV_SCHEMA_UNHEALTHY', message: expect.stringContaining('missing required API_KEY') }))
-        expect((doctor.result as { readiness?: { gaps: readonly { id: string; level: string }[] } }).readiness?.gaps).toContainEqual(expect.objectContaining({ id: 'env-schema', level: 'required' }))
+        expect(row(doctor)).toMatchObject({ verdict: 'pass' })
+        expect(doctor.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'ENV_SCHEMA_UNHEALTHY', message: expect.stringContaining('missing required API_KEY'),
+            fix: expect.stringContaining('cockpit doctor on a cockpit that declares no runtime') }))
     })
 
     it('names a varlock timeout instead of hanging', async () => {
@@ -1107,9 +1108,9 @@ describe('env schema health', () => {
 
         const { preflight, row } = await health(candidate, { timeoutMs: 400 })
 
-        expect(row(preflight)).toMatchObject({ verdict: 'unavailable' })
+        expect(row(preflight)).toMatchObject({ verdict: 'pass' })
         expect(preflight.diagnostics).toContainEqual(expect.objectContaining({
-            code: 'ENV_SCHEMA_UNHEALTHY',
+            severity: 'warning', code: 'ENV_SCHEMA_UNHEALTHY',
             message: expect.stringMatching(/api .*varlock timed out after 400 ms/),
         }))
     })

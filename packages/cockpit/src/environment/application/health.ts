@@ -24,7 +24,7 @@ import {
     type PreflightContext,
     type PreflightEvaluation,
 } from '../observations.js'
-import { ENV_SCHEMA_OVERRIDE_NAME_LIMIT, envSchemaNotRun, envSchemaOverrides, envSchemaToolMissing } from '../env-schema-observation.js'
+import { ENV_SCHEMA_OVERRIDE_NAME_LIMIT, envSchemaNotRun, envSchemaOverrides, envSchemaToolMissing, envSchemaUnhealthy } from '../env-schema-observation.js'
 import { SURFACE_OBSERVATION_CODES } from '../generated-application/surface-observation.js'
 import {
     createComparisonRemoteRefStep,
@@ -511,6 +511,9 @@ export function healthDiagnostics(health: HealthEvaluation): readonly Environmen
         target: sibling,
         fix: 'install Varlock (https://varlock.dev) and put it on PATH',
     })))
+    const unhealthy = health.preflight.checks.flatMap((check) => envSchemaUnhealthy(check).map(({ reason, remedy }): EnvironmentDiagnostic => ({
+        severity: 'warning', code: ENVIRONMENT_CODES.ENV_SCHEMA_UNHEALTHY, message: reason, target: 'env-schema', fix: remedy,
+    })))
     const uncommitted = health.preflight.checks.flatMap((check) => envSchemaNotRun(check).map(({ schema, load }): EnvironmentDiagnostic => ({
         severity: 'warning',
         code: ENVIRONMENT_CODES.ENV_SCHEMA_UNCOMMITTED,
@@ -537,7 +540,7 @@ export function healthDiagnostics(health: HealthEvaluation): readonly Environmen
         } satisfies EnvironmentDiagnostic] : []
     })
     return [...health.stopped === null ? [] : [health.stopped], ...health.notices,
-        ...health.producerRefusals, ...checks, ...dirty, ...advisories, ...uncommitted, ...overridden, ...producerFailures, ...comparisons]
+        ...health.producerRefusals, ...checks, ...dirty, ...unhealthy, ...advisories, ...uncommitted, ...overridden, ...producerFailures, ...comparisons]
 }
 
 function unavailablePreflight(message: string, forwarded?: readonly EnvironmentDiagnostic[]): PreflightCommandResult {
