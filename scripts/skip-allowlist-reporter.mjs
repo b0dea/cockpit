@@ -9,6 +9,8 @@ const EXPECTED_SKIPS = [
         /refuses ownership aliases of authenticated inputs on case-insensitive filesystems$/,
         /refuses ownership alias checks during a restored (?:input|root) namespace swap$/,
     ] : []),
+    // The real-Docker journey runs only where a person opts in with COCKPIT_JOURNEY_DOCKER=1.
+    ...(process.env.COCKPIT_JOURNEY_DOCKER === '1' ? [] : [/brings a tiny stack up and down against the real Docker daemon$/]),
 ]
 // Needs the maintainer's private material, which a clean public clone does not have.
 const NEEDS_INTERNAL = /configures the site-specific list, having the material for it$/

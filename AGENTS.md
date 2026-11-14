@@ -70,6 +70,7 @@ it does not get a second process runner or an independent health verdict.
 npm ci --ignore-scripts
 npm run test:changed -- <base-commit>  # tests that import or read what changed, both tiers
 npm run test:fast                      # fast project only
+npm run test:journey                   # adopter journeys from the packed tarball; npm run build first
 npm test -- <test file>                # targeted run; bare `npm test` is both projects
 npm run typecheck
 npm run lint:docs                      # cockpit:ref targets, codes, glossary links, docs indexes
