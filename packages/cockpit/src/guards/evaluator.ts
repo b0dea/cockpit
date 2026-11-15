@@ -283,8 +283,7 @@ const allowed: GuardDecision = Object.freeze({ decision: 'allow', reason: 'Every
 // outside the configured roots. The adapter answers them with nothing, so the tool's own prompt still applies.
 const mcpDeferred = 'MCP tool satisfies the declared tool restrictions.'
 const outsideDeferred = 'Nothing the guard checks refuses this call; what it reaches outside the configured roots is left to the agent tool\'s own permissions.'
-const unreadDeferred = 'Part of this call is shell the guard does not read, and nothing it spells is refused; whether it runs is left to the agent tool\'s own permissions.'
-export const GUARD_DEFERRED_REASONS = Object.freeze([mcpDeferred, outsideDeferred, unreadDeferred])
+export const GUARD_DEFERRED_REASONS = Object.freeze([mcpDeferred, outsideDeferred])
 function record(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
@@ -1275,7 +1274,6 @@ function removedOperands(invocation: ParsedInvocation, git: GitInvocation | unde
 interface BranchFacts { readonly head: string | null; readonly push: string | null; readonly pushDefault: string | null; readonly pushRefspecs: boolean; readonly pullRebase: boolean }
 
 const PUSH_FORCE = /^(?:-f|--force|--force-with-lease(?:=.*)?|--force-if-includes)$/
-const PUSH_WORDS_END: ReadonlySet<string> = new Set([';', 'then', 'do', 'done', 'fi', 'else', 'elif', 'esac'])
 const PUSH_DELETE = /^(?:-d|--delete|--prune|--mirror)$/
 // Git accepts any unambiguous prefix of a long option: `--for` and `--forc` can only be a force option.
 const forceAbbreviation = (value: string) => value.length >= 5 && ['--force', '--force-with-lease', '--force-if-includes'].some(option => option.startsWith(value.split('=')[0]!))
@@ -2146,15 +2144,11 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         : inSecretPath(folded) ? secretPathDenial : namesCredential(folded) ? credentialDenial : undefined
     // Words that spell Git skipping its hooks or pushing by force, deleting or to a protected branch, whatever runs them.
     const gitWords = (words: readonly string[]) => { const git = words.findIndex(word => posix.basename(word) === 'git'); return git < 0 ? [] : words.slice(git + 1) }
-    // Git's own push rules, without the repository facts a spelled push lacks. The push's words end at the next command
-    // separator or shell keyword, so a branch a later command names is not its destination.
+    // Git's own push rules, without the repository facts a spelled push lacks.
     const spelledPush = (words: readonly string[]): GuardDecision | undefined => {
         const after = gitWords(words)
         const push = after.indexOf('push')
-        if (push < 0) return undefined
-        const rest = after.slice(push + 1)
-        const end = rest.findIndex(word => PUSH_WORDS_END.has(word))
-        return pushDecision(end < 0 ? rest : rest.slice(0, end), resolved.protectedBranches, undefined)
+        return push < 0 ? undefined : pushDecision(after.slice(push + 1), resolved.protectedBranches, undefined)
     }
     const gitWordsDenial = (words: readonly string[]): GuardDecision | undefined => {
         if (gitWords(words).includes('--no-verify')) return deny('Refusing --no-verify: it skips the hooks a commit or push runs.')
@@ -2183,12 +2177,17 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         }
         if (tokens.some(token => /^(?:sudo|doas|pkexec)$/.test(token))) return deny('Refusing privilege escalation: it is a person\'s action. Ask them to run it in their own terminal.')
         if (/\b(?:curl|wget)\b[^|;&]*\|\s*(?:\S*\/)?(?:sh|bash|zsh|dash|python[\d.]*|node|perl|ruby)\b/.test(text)) return deny('Refusing to run downloaded text as code. Download the file into the cockpit, read it, then run it by path.')
-        // Words keep `:` and `-`, so `HEAD:main`, `:topic` and `-uf` reach Git's push rules; an assignment's value, `cmd=git`, is a word,
-        // and each command separator becomes `;`.
-        return gitWordsDenial(text.replace(/;;|&&|\|\||[;&|\n)]/g, ' ; ').split(/[\s'"`(,[\]=]+/).filter(Boolean))
+        // Words keep `:` and `-`, so `HEAD:main`, `:topic` and `-uf` reach Git's push rules; an assignment's value, `cmd=git`, is a word.
+        return gitWordsDenial(text.split(/[\s'"`(),[\]=;&|]+/).filter(Boolean))
     }
-    // A simple command the parser cannot read is judged by the names its text spells; the rest of the call meets every rule.
-    if (input.unreadable) { const refusal = textDenial(input.unreadable.text, input.cwd); if (refusal) hold(refusal) }
+    // Shell the parser does not read is judged by the words its text spells: a refused name, host or push, or a person's
+    // declared deny. Nothing else about it is known, so it otherwise asks; Codex and OpenCode refuse an ask.
+    if (input.unreadable) {
+        const words = input.unreadable.text.split(/[\s;&|()<>`"'{}]+/).filter(Boolean)
+        const declared = resolved.declaredDenies.find(rule => words.some((_, at) => rule.argv.every((word, offset) => words[at + offset] === word)))
+        return textDenial(input.unreadable.text, input.cwd) ?? (declared ? deny(`${declared.reason}${declared.fix ? ` Fix: ${declared.fix}` : ''}`)
+            : ask(`The guard does not read this shell form (${input.unreadable.reason}) Write it as plain commands joined with &&, use \`[ … ] &&\` or \`if\`, or put it in a script file.`))
+    }
     // The current branch and where a bare push goes, for the repository at `cwd`, as Git reports them.
     const branchFacts = (cwd: string): BranchFacts | undefined => {
         let evidence: JsonSnapshot | undefined
@@ -3099,8 +3098,10 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const candidates = git && invocation.argv[position - 1] === '-L' ? [word.slice(word.lastIndexOf(':') + 1)] : undefined
             // An attached short option value, as in `sed -f.env`, is a candidate too.
             const attached = /^-[^-]/.test(word) && word.length > 2 ? [word.slice(2)] : []
+            // `${NAME:-word}` and its kin stand for their default word when NAME is unset.
+            const defaults = [...word.matchAll(/\$\{[A-Za-z_]\w*:?[-=]([^}]*)\}/g)].map(([, value]) => value!.startsWith('~/') && resolved.homeDirectory !== undefined ? resolved.homeDirectory + value!.slice(1) : value!)
             // `@file` is how curl and gh name a file whose content they send.
-            for (const candidate of new Set(candidates ?? [word, word.slice(word.indexOf('=') + 1), word.slice(0, Math.max(word.indexOf(':'), 0)), word.slice(word.lastIndexOf(':') + 1), word.slice(word.lastIndexOf('@') + 1), ...attached])) {
+            for (const candidate of new Set(candidates ?? [word, word.slice(word.indexOf('=') + 1), word.slice(0, Math.max(word.indexOf(':'), 0)), word.slice(word.lastIndexOf(':') + 1), word.slice(word.lastIndexOf('@') + 1), ...attached, ...defaults])) {
                 if (!candidate || candidate.startsWith('-') || !scalar(candidate)) continue
                 // Git resolves its operands from the directory -C names.
                 const lexical = posix.resolve(git?.cwd ?? invocation.cwd, candidate)
@@ -3428,7 +3429,6 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const pending = askDecisions.get(invocation)
         if (stands(pending)) return pending
     }
-    if (input.unreadable) return { decision: 'allow', reason: unreadDeferred }
     if (outside) return { decision: 'allow', reason: outsideDeferred }
     return declaredReasons.length === 1 ? { decision: 'allow', reason: declaredReasons[0]! } : allowed
 }

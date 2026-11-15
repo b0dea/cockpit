@@ -17,6 +17,8 @@ export interface InvocationWord {
     readonly name?: string
 }
 export interface GuardParseOptions {
+    /** Names the call assigns only integer literals, which arithmetic may read. Set by the parser itself. */
+    readonly integers?: ReadonlySet<string>
     /** HOME of the process that runs the command: a leading `~` or `~/`, `$HOME` and `${HOME}` expand to it. */
     readonly home?: string
     /** CDPATH of that process; when empty, `cd name` resolves from the working directory. */
@@ -326,8 +328,12 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
                 if (command[index + 2] === '(') {
                     const close = command.indexOf('))', index + 3)
                     const body = close < 0 ? '' : command.slice(index + 3, close)
-                    // Names, numbers and operators compute a number; a subscript or substitution in it could run a command.
-                    if (close < 0 || !/^[\w\s+\-*/%<>=!&|^~?:,()]*$/.test(body.replace(/\$\{?[A-Za-z_]\w*\}?/g, 'x'))) refuse('Arithmetic expansion $((…)) is read only with names, numbers and operators. Compute the number and write it out.')
+                    // Bash evaluates a name's value as arithmetic too, which can run a command in a subscript, so a name is read
+                    // only when this call assigns it an integer literal and nothing else.
+                    const names = body.match(/[A-Za-z_]\w*/g) ?? []
+                    if (close < 0 || !/^[\w\s+\-*/%<>=!&|^~?:,()$]*$/.test(body) || names.some(name => !options.integers?.has(name))) {
+                        refuse('Arithmetic expansion $((…)) is read only over numbers and names this call sets to an integer. Compute the number and write it out.')
+                    }
                     dynamic = true
                     value += `$((${body}))`
                     index = close + 2
@@ -370,7 +376,7 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
                 if (!name || /[{$`'"\\\s]/.test(name)) refuse(`Unsupported parameter expansion in ${shown(command.slice(index, close < 0 ? undefined : close + 1))}. Write the value out.`)
                 // Anything but a plain reference can evaluate: `${x:y}`, `${a[i]}` and `${!y}` do arithmetic, `${x@P}` and zsh `${(e)x}` substitute commands.
                 // A literal index or `@`, as in `${PIPESTATUS[0]}`, is no arithmetic that can run anything.
-                if (!/^(?:[A-Za-z_][A-Za-z0-9_]*(?:\[(?:\d+|[@*])\])?|\d+|[@*#?$!-]|[A-Za-z_][A-Za-z0-9_]*:?[-=+?][^[\]]*)$/.test(name)) evaluates = true
+                if (!/^(?:[A-Za-z_][A-Za-z0-9_]*(?:\[(?:\d+|[@*])\])?|\d+|[@*#?$!-]|[A-Za-z_][A-Za-z0-9_]*:?[-=][^[\]]*)$/.test(name)) evaluates = true
                 if (name === 'HOME' && home !== undefined && (quote || plainHome)) value += home
                 else {
                     dynamic = true
@@ -826,13 +832,15 @@ function changedDirectory(tokens: readonly Token[], context: Context): string | 
 
 /**
  * A compound command the guard reads whole: a `for` loop, its BODY judged with `$NAME` as a dynamic word; a `while` or
- * `until` loop, its condition and BODY judged as the commands they are; or a subshell `( … )`. `redirects` are the
+ * `until` loop, its condition and BODY judged as the commands they are; an `if`, each condition and branch judged
+ * as the commands they are; or a subshell `( … )`. `redirects` are the
  * redirect tokens after it, which apply to every command inside.
  */
 type Compound = (
     | { readonly kind: 'for'; readonly name: string; readonly items: readonly Token[]; readonly body: Token[] }
     | { readonly kind: 'while'; readonly condition: Token[]; readonly body: Token[] }
     | { readonly kind: 'subshell'; readonly body: Token[] }
+    | { readonly kind: 'if'; readonly parts: readonly Token[][] }
 ) & { readonly redirects: Token[] }
 const keyword = (tokens: readonly Token[], index: number, value: string) => tokens[index]?.kind === 'word' && tokens[index]!.value === value && !tokens[index]!.quoted
 /** Where a command starts: at `start`, or after a separator or brace. */
@@ -875,6 +883,30 @@ function readWhile(tokens: readonly Token[], at: number): { compound: Compound; 
     return { compound: { kind: 'while', condition, body, redirects: [] }, end }
 }
 
+const IF_REFUSAL = 'An if is parsed only as `if COMMANDS; then COMMANDS; [elif COMMANDS; then COMMANDS;] [else COMMANDS;] fi`, followed by redirects, a separator or the end of the command.'
+
+/** `if` from `at` to the `fi` that closes it: its conditions and branches in order, each holding at least one word. */
+function readIf(tokens: readonly Token[], at: number): { compound: Compound; end: number } {
+    const parts: Token[][] = []
+    let start = at + 1
+    // `then` closes a condition; `elif`, `else` and `fi` close a branch, and only `fi` follows `else`.
+    let closes = ['then']
+    for (let depth = 0, index = start; index < tokens.length; index++) {
+        if (!commandStart(tokens, index, start)) continue
+        if (keyword(tokens, index, 'if')) { depth++; continue }
+        if (depth) { if (keyword(tokens, index, 'fi')) depth--; continue }
+        const word = ['then', 'elif', 'else', 'fi'].find(item => keyword(tokens, index, item))
+        if (word === undefined) continue
+        const part = tokens.slice(start, index)
+        if (!closes.includes(word) || !part.some(token => token.kind === 'word')) refuse(IF_REFUSAL)
+        parts.push(part)
+        if (word === 'fi') return { compound: { kind: 'if', parts, redirects: [] }, end: index }
+        closes = word === 'then' ? ['elif', 'else', 'fi'] : word === 'else' ? ['fi'] : ['then']
+        start = index + 1
+    }
+    refuse('Unterminated if.')
+}
+
 function readSubshell(tokens: readonly Token[], at: number): { compound: Compound; end: number } {
     for (let depth = 0, index = at + 1; index < tokens.length; index++) {
         const token = tokens[index]!
@@ -891,6 +923,7 @@ function readSubshell(tokens: readonly Token[], at: number): { compound: Compoun
 
 /** Every token a compound command holds, for the checks that read a command's words. */
 function compoundTokens(compound: Compound): readonly Token[] {
+    if (compound.kind === 'if') return [...compound.parts.flat(), ...compound.redirects]
     return [...compound.kind === 'for' ? compound.items : compound.kind === 'while' ? compound.condition : [], ...compound.body, ...compound.redirects]
 }
 
@@ -923,84 +956,6 @@ function parseShell(command: string, cwd: string, context: Context): ParsedInvoc
         options = { ...options, ...names(NAMES_HOME) ? { home: undefined } : {}, ...names(CHANGES_CD) ? { cdpath: undefined } : {} }
     }
     return parseTokens(lex(command, options).tokens, cwd, { ...context, options }, true)
-}
-
-const LEADING_KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'while', 'until', 'do', '!', '{'])
-const CLOSING_KEYWORDS = new Set(['fi', 'done', 'esac', '}'])
-/**
- * Shell text the parser does not read whole, cut into the simple commands it runs: at command separators, grouping and
- * shell keywords, outside quotes, expansions and heredoc bodies. A `case`, `for` or `select` header and a case pattern
- * name no command, and `[[ … ]]` is read as `test` with its words.
- */
-function simpleCommands(command: string): { readonly pieces: readonly string[]; readonly background: boolean; readonly loop: boolean } {
-    const pieces: string[] = []
-    let background = false
-    let loop = false
-    let current = ''
-    let pattern = false
-    const flush = (endsPattern = false) => {
-        let words = current.trim()
-        current = ''
-        let first: string | undefined
-        while ((first = /^\S+/.exec(words)?.[0]) !== undefined && LEADING_KEYWORDS.has(first)) {
-            if (first === 'while' || first === 'until') loop = true
-            words = words.slice(first.length).trimStart()
-        }
-        if (first === 'for' || first === 'select') loop = true
-        const dropped = !words || CLOSING_KEYWORDS.has(words) || endsPattern && pattern
-        if (first === 'case') pattern = true
-        if (endsPattern) pattern = false
-        // A `case`, `for` or `select` header runs nothing, but its words still expand, so they are read as `:`'s arguments.
-        const header = first === 'case' || first === 'for' || first === 'select' ? `: ${words.slice(first.length).replace(/^\s*[A-Za-z_]\w*\s+in(?=\s|$)/, '').replace(/\s+in\s*$/, '')}` : undefined
-        if (!dropped) pieces.push(header ?? (/^\[\[\s/.test(words) ? `test ${words.slice(2).replace(/\s*\]\]$/, '').replace(/&&|\|\||[()]/g, ' ')}` : words))
-    }
-    for (let index = 0; index < command.length; index++) {
-        const c = command[index]!
-        const rest = command.slice(index)
-        if (c === "'" || c === '"') {
-            let end = index + 1
-            while (end < command.length && command[end] !== c) end += c === '"' && command[end] === '\\' ? 2 : 1
-            current += command.slice(index, end + 1)
-            index = end
-        } else if (c === '\\') {
-            current += command.slice(index, index + 2)
-            index++
-        } else if (/^(?:\$\(|\$\{|[<>]\(|`)/.test(rest)) {
-            // An expansion or process substitution is one word, however many separators it holds.
-            const close = c === '`' ? '`' : rest[1] === '{' ? '}' : ')'
-            const open = c === '`' ? '' : rest[1]
-            let depth = 0
-            let end = index + (c === '`' ? 1 : 2)
-            for (; end < command.length; end++) {
-                if (command[end] === '\\') { end++; continue }
-                if (open && command[end] === open) depth++
-                else if (command[end] === close && !depth--) break
-            }
-            current += command.slice(index, end + 1)
-            index = end
-        } else if (/^\[\[\s/.test(rest) && !current.trim()) {
-            const end = command.indexOf(']]', index)
-            current += command.slice(index, end < 0 ? undefined : end + 2)
-            index = end < 0 ? command.length : end + 1
-        } else if (/^<<-?\s*['"]?[\w.-]+['"]?/.test(rest) && !rest.startsWith('<<<')) {
-            // A heredoc's body is the command's input, never commands of its own.
-            const delimiter = /^<<-?\s*['"]?([\w.-]+)/.exec(rest)![1]!
-            const lineEnd = command.indexOf('\n', index)
-            const body = lineEnd < 0 ? -1 : command.slice(lineEnd + 1).split('\n').findIndex(line => line.replace(/^\t+/, '') === delimiter)
-            const end = body < 0 ? command.length : lineEnd + 1 + command.slice(lineEnd + 1).split('\n').slice(0, body + 1).join('\n').length
-            current += command.slice(index, end)
-            index = end - 1
-        } else {
-            const separator = /^(?:;;|&&|\|\||[;|&\n()])/.exec(rest)?.[0] ?? (/^[{}](?=\s|$)/.test(rest) && /(?:^|\s)$/.test(current) ? c : undefined)
-            if (separator === undefined) { current += c; continue }
-            if (separator === '&') background = true
-            flush(separator === ')')
-            if (separator === ';;') pattern = true
-            index += separator.length - 1
-        }
-    }
-    flush()
-    return { pieces, background, loop }
 }
 
 function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cdAllowed: boolean): ParsedInvocation[] {
@@ -1050,6 +1005,8 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
         // Redirects after a compound command apply to every command inside, so they are judged once as a bare redirect.
         const redirected = compound.redirects.length ? [...substituted(compound.redirects, directory), ...invocation(compound.redirects, directory, context)] : []
         if (compound.kind === 'subshell') return [...parseTokens(compound.body, directory, deeper, true), ...redirected]
+        // A cd in a branch moves the commands after the if only when that branch runs, so it is refused as in a loop.
+        if (compound.kind === 'if') return [...compound.parts.flatMap(part => parseTokens(part, directory, deeper, false)), ...redirected]
         // A cd in a loop would move every later pass, so its commands are judged once only without one.
         if (compound.kind === 'while') return [...parseTokens(compound.condition, directory, deeper, false), ...parseTokens(compound.body, directory, deeper, false), ...redirected]
         const evaluating = compound.items.find((token) => token.evaluates)
@@ -1066,7 +1023,7 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
         const words = compound ? compoundTokens(compound) : current
         if (gate === '|' && fetched && words.some((token) => token.kind === 'word' && INTERPRETERS.test(posix.basename(token.value)))) forbid(FETCHED_CODE)
         const target = current.length ? changedDirectory(current, context) : undefined
-        if (target !== undefined && !cdAllowed) refuse(`${CD_REFUSAL} A cd inside a loop is not.`)
+        if (target !== undefined && !cdAllowed) refuse(`${CD_REFUSAL} A cd inside a loop or an if is not.`)
         // A pipeline or background job runs `cd` in a subshell in bash, and the last stage of a pipeline in the current shell in zsh.
         if (target !== undefined && (gate === '|' || separator === '|' || separator === '&')) refuse(`${CD_REFUSAL} A cd in a pipeline or background job is not.`)
         // Appended as produced, so the invocation limit bounds the work.
@@ -1119,11 +1076,19 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
                 compound.redirects.push(token)
                 continue
             }
-            refuse(compound.kind === 'for' ? LOOP_REFUSAL : compound.kind === 'while' ? WHILE_REFUSAL : SUBSHELL_REFUSAL)
+            refuse(compound.kind === 'for' ? LOOP_REFUSAL : compound.kind === 'while' ? WHILE_REFUSAL : compound.kind === 'if' ? IF_REFUSAL : SUBSHELL_REFUSAL)
         }
         if (!current.length && !compound && token.kind === 'word' && !token.quoted && (token.value === 'for' || token.value === 'while' || token.value === 'until')) {
             ({ compound, end: i } = token.value === 'for' ? readLoop(tokens, i) : readWhile(tokens, i))
             context.seen.loop = true
+            needsCommand = false
+            closed = undefined
+            continue
+        }
+        // `!` inverts a pipeline's status and runs it as it is.
+        if (!current.length && !compound && token.kind === 'word' && !token.quoted && token.value === '!') continue
+        if (!current.length && !compound && token.kind === 'word' && !token.quoted && token.value === 'if') {
+            ({ compound, end: i } = readIf(tokens, i))
             needsCommand = false
             closed = undefined
             continue
@@ -1292,31 +1257,14 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
         const seen: Seen = { background: false, loop: false }
         let unreadable: { text: string; reason: string } | undefined
         const shell = (command: string): ParsedInvocation[] => {
-            try { return parseShell(command, cwd, { options, definitions: new Set(), depth: 0, seen }) }
+            // Every assignment the text spells, quoted or not: a name counts as an integer only if each one is a bare integer.
+            const assigned = [...command.matchAll(/(?<![\w$-])([A-Za-z_]\w*)=([^\s;&|)]*)/g)]
+            const integers = new Set(assigned.filter(([, name]) => assigned.every(([, other, value]) => other !== name || /^\d+$/.test(value!))).map(([, name]) => name!))
+            try { return parseShell(command, cwd, { options: { ...options, integers }, definitions: new Set(), depth: 0, seen }) }
             catch (error) {
                 if (!(error instanceof RefusalError) || error instanceof ForbiddenConstruct) throw error
-                // Each simple command is judged as it would be on its own; while one stays unread, the whole text is
-                // judged by the names it spells and the call gets no allow answer.
-                const split = simpleCommands(command)
-                const unread: string[] = []
-                // A function or alias one piece defines is still defined in the pieces after it.
-                const definitions = new Set<string>()
-                const parsed = split.pieces.flatMap(piece => {
-                    // A directory change moves the pieces after it to a directory the split does not follow.
-                    if (directoryChangers.has(/^\S+/.exec(piece)?.[0] ?? '')) { unread.push(piece); return [] }
-                    try { return parseShell(piece, cwd, { options, definitions, depth: 0, seen }) }
-                    catch (pieceError) {
-                        if (!(pieceError instanceof RefusalError) || pieceError instanceof ForbiddenConstruct) throw pieceError
-                        unread.push(piece)
-                        return []
-                    }
-                })
-                if (parsed.length > GUARD_INPUT_LIMITS.invocations) forbid('Guard invocation limit exceeded.')
-                if (parsed.reduce((sum, item) => sum + item.words.length, 0) > GUARD_INPUT_LIMITS.words) forbid('Guard word limit exceeded.')
-                if (split.loop) seen.loop = true
-                if (split.background) seen.background = true
-                if (unread.length) unreadable = { text: command, reason: error.message }
-                return split.background ? parsed.map(item => ({ ...item, background: true as const })) : parsed
+                unreadable = { text: command, reason: error.message }
+                return []
             }
         }
         if (tool === 'Monitor') {
