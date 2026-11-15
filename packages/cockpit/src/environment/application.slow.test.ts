@@ -516,7 +516,7 @@ describe('guard policy construction', () => {
         rmSync(join(root, 'notes/.env.local'))
         // The index no longer holds it, but the first commit does, and these print that commit.
         for (const command of ['git log -p', 'git show HEAD', 'git diff HEAD~1 HEAD', 'git grep SYNTHETIC HEAD~1', 'git log -p -- notes']) {
-            expect(await decide(command), command).toMatchObject({ decision: 'ask',
+            expect(await decide(command), command).toMatchObject({ decision: 'deny',
                 reason: expect.stringContaining('can print notes/.env.local, an environment file, secrets file or declared instance the repository\'s history holds') })
         }
         for (const command of ['git show HEAD~1:notes/.env.local', 'git log -p HEAD~1 -- notes/.env.local']) expect(await decide(command), command).toMatchObject({ decision: 'deny' })
@@ -620,7 +620,7 @@ describe('guard policy construction', () => {
             symlinkSync(join(store, '.envrc'), join(store, 'script-alias.md'))
             const scriptRead = await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin',
                 payload: shellPayload('cat package-docs/script-alias.md', root) }, adapters)
-            expect(scriptRead.decision).toMatchObject({ decision: 'ask' })
+            expect(scriptRead.decision).toMatchObject({ decision: 'deny' })
             const outside = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-unapproved-input-')))
             scratch.push(outside)
             writeFileSync(join(outside, 'guide.md'), 'synthetic external guide\n')
@@ -689,8 +689,8 @@ describe('guard policy construction', () => {
             // A relative entry makes any file the agent wrote a candidate for a bare command name.
             const listing = { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: root, tool_input: { command: 'ls fixtures' } }
             expect(await runGuardEvaluationApplication({ ...request, payload: listing, searchPath: '/usr/bin:/bin' }, adapters)).toMatchObject({ decision: { decision: 'allow' } })
-            expect(await runGuardEvaluationApplication({ ...request, payload: listing, searchPath }, adapters))
-                .toMatchObject({ decision: { decision: 'ask', reason: expect.stringContaining('relative entry "relative/bin"') } })
+            // A relative search path entry is doctor's warning, not a prompt on every command.
+            expect(await runGuardEvaluationApplication({ ...request, payload: listing, searchPath }, adapters)).toMatchObject({ decision: { decision: 'allow' } })
         } finally {
             rmSync(join(root, 'env'), { recursive: true, force: true })
             rmSync(join(root, 'notes.txt'), { force: true })
