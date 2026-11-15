@@ -63,8 +63,6 @@ interface GitBinding extends ObservationBinding {
     readonly env: Readonly<Record<string, string>>
     readonly timeoutMs: number
 }
-const issuedGitSteps = new WeakMap<object, GitBinding>()
-const issuedGitResults = new WeakMap<object, GitBinding & { readonly evidence: GitObservationEvidence }>()
 
 function safeObservationEnvironment(env: Readonly<Record<string, string>>): readonly [string, string][] | undefined {
     const entries = Object.entries(env)
@@ -87,7 +85,7 @@ export function createGitObservationStep(input: {
         || !/^stack:[a-f0-9]{64}$/.test(input.stackId) || !/^checkout:[a-f0-9]{64}$/.test(input.checkoutId)
         || typeof input.source !== 'string' || Buffer.byteLength(`${input.source}:adjacency`) > 1_024 || /[\x00-\x1f\x7f]/.test(input.source)
         || !safeEnvironment) return undefined
-    const step = snapshotExecutionStep({
+    return snapshotExecutionStep({
         id: 'git-health',
         argv: [executable.canonicalPath, '-C', input.checkoutRoot, ...GIT_CHILD_CONFIG, 'status', '--porcelain=v2', '--branch', '--untracked-files=normal'],
         argv0: executable.invocationPath,
@@ -104,11 +102,6 @@ export function createGitObservationStep(input: {
         filesystemChecks: [],
         compensation: [],
     })
-    if (step) issuedGitSteps.set(step, Object.freeze({
-        stackId: input.stackId, source: input.source, checkoutId: input.checkoutId,
-        checkoutRoot: input.checkoutRoot, executable, env: Object.freeze(Object.fromEntries(safeEnvironment)), timeoutMs: input.timeoutMs,
-    }))
-    return step
 }
 
 function unavailable(reason: string): GitObservationResult {
@@ -281,20 +274,15 @@ export function observeGit(
     outcome: ExecuteProbeOutcome,
     context: { readonly stackId: StackId; readonly checkoutId: CheckoutId; readonly source: string },
 ): GitObservationResult {
-    const binding = issuedGitSteps.get(step)
-    if (!binding || binding.stackId !== context.stackId || binding.checkoutId !== context.checkoutId || binding.source !== context.source) return unavailable('Git observation context does not match its issued plan')
+    if (step.labels.stackId !== context.stackId || step.labels.checkoutId !== context.checkoutId || step.labels.source !== context.source) {
+        return unavailable('Git observation context does not match its plan')
+    }
     const authenticated = authenticatedExecutionOutcome(outcome, step)
     if (!authenticated || authenticated.kind !== 'complete') return unavailable('Git execution evidence is unavailable or unauthenticated')
     const decoded = decodeGitObservation(authenticated.stdout, { stackId: context.stackId, observedAt: authenticated.receipt.finishedAt,
-        source: context.source, checkoutRoot: binding.checkoutRoot })
+        source: context.source, checkoutRoot: step.cwd })
     if (decoded.kind !== 'complete') return decoded
-    const result = {
-        kind: 'complete' as const,
-        evidence: decoded.evidence,
-        observations: decoded.observations,
-    }
-    issuedGitResults.set(result, Object.freeze({ ...binding, evidence: decoded.evidence }))
-    return result
+    return { kind: 'complete', evidence: decoded.evidence, observations: decoded.observations }
 }
 
 type AcquirePosture = 'auto' | 'manual' | 'none'
@@ -307,15 +295,16 @@ export type ComparisonRemoteResult =
     | Readonly<{ kind: 'unavailable'; code: ComparisonRemoteCode; reason: string; remoteName?: string }>
 
 type ComparisonRemoteRefStage =
-    | Readonly<{ kind: 'probe'; step: ExecutionStep }>
+    | Readonly<{ kind: 'probe'; step: ExecutionStep; binding: ComparisonBinding }>
     | Extract<ComparisonRemoteResult, { kind: 'not-applicable' | 'unavailable' }>
 
 type ComparisonRemoteUrlStage =
-    | Readonly<{ kind: 'probe'; step: ExecutionStep; remoteName: string }>
+    | Readonly<{ kind: 'probe'; step: ExecutionStep; remoteName: string; binding: ComparisonBinding & { readonly remoteName: string; readonly upstreamRef: string } }>
     | Extract<ComparisonRemoteResult, { kind: 'unavailable' }>
 
 type ComparisonRemoteRevalidationStage =
-    | Readonly<{ kind: 'probe'; step: ExecutionStep; remoteName: string }>
+    | Readonly<{ kind: 'probe'; step: ExecutionStep; remoteName: string
+        binding: ComparisonBinding & { readonly remoteName: string; readonly upstreamRef: string; readonly state: 'match' | 'mismatch' } }>
     | Extract<ComparisonRemoteResult, { kind: 'unavailable' }>
 
 interface ComparisonBinding extends GitBinding {
@@ -326,13 +315,6 @@ interface ComparisonBinding extends GitBinding {
     readonly upstream: string
 }
 
-const issuedComparisonRefs = new WeakMap<object, ComparisonBinding>()
-const issuedComparisonUrls = new WeakMap<object, ComparisonBinding & { readonly remoteName: string; readonly upstreamRef: string }>()
-const issuedComparisonRevalidations = new WeakMap<object, ComparisonBinding & {
-    readonly remoteName: string
-    readonly upstreamRef: string
-    readonly state: 'match' | 'mismatch'
-}>()
 const COMPARISON_OUTPUT_LIMIT = 4_096
 const comparisonCode = ENVIRONMENT_CODES.GIT_COMPARISON_REMOTE_MISMATCH
 
@@ -403,21 +385,23 @@ export function createComparisonRemoteRefStep(input: {
         malformed: 'its remote in cockpit.toml is not a repository URL cockpit can read; declare its https or ssh remote',
         unbounded: 'its remote in cockpit.toml is too long to compare; declare its https or ssh remote',
     }[expected.reason]}`)
-    const git = input.git && issuedGitResults.get(input.git)
     const executable = resolvedGitExecutable(input.executable)
-    if (!git || !executable || git.stackId !== input.stackId || git.checkoutId !== input.checkoutId
-        || git.source !== input.source || git.checkoutRoot !== input.checkoutRoot
-        || git.executable.canonicalPath !== executable.canonicalPath || git.executable.sha256 !== executable.sha256) {
+    if (input.git?.kind !== 'complete' || !executable) {
         return comparisonUnavailable(`Git status evidence is unavailable for sibling ${input.sibling}`)
     }
-    const { branch, revision, upstream } = git.evidence
+    const evidence = input.git.evidence
+    const { branch, revision, upstream } = evidence
     if (upstream === null || revision === null || branch === '(detached)') {
         return comparisonUnavailable(`comparison upstream is unavailable for sibling ${input.sibling}`)
     }
-    if (git.evidence.adjacency !== 'aligned') {
-        return comparisonUnavailable(`comparison upstream is ${git.evidence.adjacency} for sibling ${input.sibling}`)
+    if (evidence.adjacency !== 'aligned') {
+        return comparisonUnavailable(`comparison upstream is ${evidence.adjacency} for sibling ${input.sibling}`)
     }
-    const binding = { ...git, sibling: input.sibling, expected: expected.identity, branch, revision, upstream }
+    const binding: ComparisonBinding = {
+        stackId: input.stackId, source: input.source, checkoutId: input.checkoutId, checkoutRoot: input.checkoutRoot,
+        executable, env: input.env, timeoutMs: input.timeoutMs,
+        sibling: input.sibling, expected: expected.identity, branch, revision, upstream,
+    }
     const step = comparisonStep({
         id: `git:${input.sibling}:comparison-ref`, binding, env: input.env, timeoutMs: input.timeoutMs,
         argv: [executable.canonicalPath, '-C', input.checkoutRoot, ...GIT_CHILD_CONFIG, 'for-each-ref',
@@ -425,9 +409,7 @@ export function createComparisonRemoteRefStep(input: {
             '--count=1', '--', `refs/heads/${branch}`],
     })
     if (!step) return comparisonUnavailable(`comparison ref probe is unavailable for sibling ${input.sibling}`)
-    const stage = { kind: 'probe' as const, step }
-    issuedComparisonRefs.set(stage, binding)
-    return stage
+    return { kind: 'probe', step, binding }
 }
 
 function decodeComparisonRef(bytes: Buffer, binding: ComparisonBinding): Readonly<{ remoteName: string; upstreamRef: string }> | undefined {
@@ -446,8 +428,8 @@ function decodeComparisonRef(bytes: Buffer, binding: ComparisonBinding): Readonl
 }
 
 export function observeComparisonRemoteRef(stage: ComparisonRemoteRefStage, outcome: ExecuteProbeOutcome): ComparisonRemoteUrlStage {
-    const binding = issuedComparisonRefs.get(stage)
-    if (!binding || stage.kind !== 'probe') return comparisonUnavailable('comparison ref evidence is unavailable or unauthenticated')
+    if (stage.kind !== 'probe') return comparisonUnavailable('comparison ref evidence is unavailable or unauthenticated')
+    const binding = stage.binding
     const authenticated = authenticatedExecutionOutcome(outcome, stage.step)
     if (!authenticated || authenticated.kind !== 'complete') {
         return comparisonUnavailable(`comparison ref evidence is unavailable for sibling ${binding.sibling}`)
@@ -460,14 +442,12 @@ export function observeComparisonRemoteRef(stage: ComparisonRemoteRefStage, outc
         argv: [binding.executable.canonicalPath, '-C', binding.checkoutRoot, ...GIT_CHILD_CONFIG, 'remote', 'get-url', '--', remoteName],
     })
     if (!step) return comparisonUnavailable(`comparison remote probe is unavailable for sibling ${binding.sibling}`, remoteName)
-    const next = { kind: 'probe' as const, step, remoteName }
-    issuedComparisonUrls.set(next, Object.freeze({ ...binding, remoteName, upstreamRef }))
-    return next
+    return { kind: 'probe', step, remoteName, binding: { ...binding, remoteName, upstreamRef } }
 }
 
 export function observeComparisonRemoteUrl(stage: ComparisonRemoteUrlStage, outcome: ExecuteProbeOutcome): ComparisonRemoteRevalidationStage {
-    const binding = issuedComparisonUrls.get(stage)
-    if (!binding || stage.kind !== 'probe') return comparisonUnavailable('comparison remote evidence is unavailable or unauthenticated')
+    if (stage.kind !== 'probe') return comparisonUnavailable('comparison remote evidence is unavailable or unauthenticated')
+    const binding = stage.binding
     const authenticated = authenticatedExecutionOutcome(outcome, stage.step)
     if (!authenticated || authenticated.kind !== 'complete') {
         return comparisonUnavailable(`comparison remote evidence is unavailable for sibling ${binding.sibling}`, binding.remoteName)
@@ -495,19 +475,15 @@ export function observeComparisonRemoteUrl(stage: ComparisonRemoteUrlStage, outc
             '--', `refs/heads/${binding.branch}`, binding.upstreamRef],
     })
     if (!step) return comparisonUnavailable(`comparison revalidation probe is unavailable for sibling ${binding.sibling}`, binding.remoteName)
-    const next = { kind: 'probe' as const, step, remoteName: binding.remoteName }
-    issuedComparisonRevalidations.set(next, Object.freeze({ ...binding, state }))
-    return next
+    return { kind: 'probe', step, remoteName: binding.remoteName, binding: { ...binding, state } }
 }
 
 export function observeComparisonRemoteRevalidation(
     stage: ComparisonRemoteRevalidationStage,
     outcome: ExecuteProbeOutcome,
 ): ComparisonRemoteResult {
-    const binding = issuedComparisonRevalidations.get(stage)
-    if (!binding || stage.kind !== 'probe') {
-        return comparisonUnavailable('comparison revalidation evidence is unavailable or unauthenticated')
-    }
+    if (stage.kind !== 'probe') return comparisonUnavailable('comparison revalidation evidence is unavailable or unauthenticated')
+    const binding = stage.binding
     const authenticated = authenticatedExecutionOutcome(outcome, stage.step)
     let stable = false
     if (authenticated?.kind === 'complete' && authenticated.stdout.byteLength <= COMPARISON_OUTPUT_LIMIT) {

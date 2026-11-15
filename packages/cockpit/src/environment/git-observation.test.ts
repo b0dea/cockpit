@@ -587,7 +587,7 @@ describe('comparison remote identity evidence', () => {
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
-    it('rejects copied stage authorities and never executes inside the producer', async () => {
+    it('refuses an outcome the executor did not produce at each comparison stage', async () => {
         const { root, executable } = await fixture()
         try {
             execFileSync('git', ['remote', 'add', 'origin', 'https://code.invalid/team/service.git'], { cwd: root })
@@ -602,18 +602,16 @@ describe('comparison remote identity evidence', () => {
             expect(started.kind).toBe('probe')
             if (started.kind !== 'probe') return
             const outcome = await executeProbe(started.step)
-            expect(observeComparisonRemoteRef({ ...started }, outcome)).toMatchObject({ kind: 'unavailable' })
+            expect(observeComparisonRemoteRef(started, { ...outcome })).toMatchObject({ kind: 'unavailable' })
             const selected = observeComparisonRemoteRef(started, outcome)
             expect(selected.kind).toBe('probe')
             if (selected.kind !== 'probe') return
             const urlOutcome = await executeProbe(selected.step)
-            expect(observeComparisonRemoteUrl({ ...selected }, urlOutcome)).toMatchObject({ kind: 'unavailable' })
             expect(observeComparisonRemoteUrl(selected, { ...urlOutcome })).toMatchObject({ kind: 'unavailable' })
             const revalidation = observeComparisonRemoteUrl(selected, urlOutcome)
             expect(revalidation.kind).toBe('probe')
             if (revalidation.kind !== 'probe') return
             const revalidationOutcome = await executeProbe(revalidation.step)
-            expect(observeComparisonRemoteRevalidation({ ...revalidation }, revalidationOutcome)).toMatchObject({ kind: 'unavailable' })
             expect(observeComparisonRemoteRevalidation(revalidation, { ...revalidationOutcome })).toMatchObject({ kind: 'unavailable' })
         } finally { await rm(root, { recursive: true, force: true }) }
     })
