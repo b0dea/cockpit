@@ -21,15 +21,17 @@ name inside a longer word, such as a commit message, a search pattern or a `sed`
 and the option values of a Git read are text, not names, so `git commit -m "Load .env first"` and
 `rg '\.env' docs` run. The guard reads `if`/`elif`/`else`, `for`, `while` and `until`, subshells and
 brace groups, judging every command inside as it would on its own. It also reads here-strings,
-`source FILE`, `${NAME:-word}` (its default word is name-checked like any argument) and arithmetic over
-numbers and names the same call sets to an integer. Shell it does not read, such as `case`, `[[ … ]]`,
-`eval`, `watch`, `xargs -I`, other arithmetic or an expanding heredoc, asks: what runs inside it is not
-known, and bash runs code from places such as a case pattern, a `[[` operand or a name's value in
-arithmetic. Its text is still checked first, and a secret, credential or guard-file name, a declared
-host, a forbidden push or a `[[guards.deny]]` command it spells is refused. Write it as plain commands
-joined with `&&`, use `[ … ] &&` or `if`, or put it in a script file. Codex and OpenCode refuse what
-asks. Privilege escalation, downloaded code piped into an interpreter and a bare `env` are refused for
-their form wherever they appear. A program the guard does not know, a word it cannot expand, a variable, a
+`source FILE`, `${NAME:-word}` (its default word is name-checked wherever a word is) and arithmetic
+over numbers and operators. Shell it does not read, such as `case`, `[[ … ]]`, `eval`, `watch`,
+`xargs -I`, arithmetic over a name, a `cd` after `!` or an expanding heredoc, asks: what runs inside it
+is not known, and bash runs code from places such as a case pattern, a `[[` operand or a name's value in
+arithmetic. Its words are checked first, and it is refused when they name a secret, a credential store,
+a guard file or a declared host, or spell a forbidden push, downloaded code piped into an interpreter,
+privilege escalation or a person's `[[guards.deny]]` command. Rules that need a command's shape, such as
+environment dumps and removals or writes outside the roots, apply only to shell the guard reads. Write
+it as plain commands joined with `&&`, use `[ … ] &&` or `if`, or put it in a script file. Codex and
+OpenCode refuse what asks. A heredoc body is checked as part of the call's text, not tied to the
+command that opened it. A program the guard does not know, a word it cannot expand, a variable, a
 glob that cannot match a secret name, and a read whose form it cannot prove all run. It does not stop a program that finds a secret by itself, or a value it
 builds at run time.
 
