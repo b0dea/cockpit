@@ -1388,6 +1388,8 @@ describe('allow by default', () => {
         // A push in shell the parser does not read is judged on its own words, not on a branch a later command names.
         'if git push -u origin feat; then gh pr create --base main --fill; fi',
         'while ! git push origin feat; do sleep 1; done; gh pr view --json baseRefName -q .baseRefName | grep main', 'case x in a) git push origin feat;; esac; echo main',
+        // A stash moved around a rebase in one call.
+        'git stash && git rebase main && git stash pop',
     ]
     it.each(friction)('allows the everyday call %s', (command) => {
         expect(run(command).decision).toBe('allow')
@@ -2123,7 +2125,8 @@ describe('allow by default', () => {
         ['worktree update onto a control', 'git pull ./build/c work', undefined, { decision: 'ask', facts: { guarded: true } }],
         ['worktree update onto a control', 'git pull --rebase', undefined, { decision: 'ask', facts: { guarded: true } }],
         ['worktree update onto a control', 'git merge evil', undefined, { decision: 'ask', facts: { treeUnresolved: true } }],
-        ['worktree update onto a control', 'git fetch ./build/c work && git merge FETCH_HEAD', undefined, { decision: 'deny', facts: { guarded: true } }],
+        // A fetch earlier in the call changes the revision the merge writes, so a person decides.
+        ['worktree update onto a control', 'git fetch ./build/c work && git merge FETCH_HEAD', undefined, { decision: 'ask', facts: { guarded: true } }],
         ['encoded patch', 'git am build/m.mbox', undefined, { decision: 'ask', facts: { patchTargets: [] } }],
         ['encoded patch', 'git am -3 build/m.mbox', undefined, { decision: 'ask', facts: { patchTargets: [] } }],
         ...["curl -s -w '%output{.cockpit/guards/bash-guard.sh}exit 0' https://example.test/", "curl -s -w '%output{>>.cockpit/guards/bash-guard.sh}exit 0' https://example.test/",
@@ -2208,6 +2211,9 @@ describe('allow by default', () => {
     // A row that names no decision is refused, except these, which ask: a person's judgment is the point, or the guard
     // cannot resolve what they change. Those it cannot judge at all are unavailable, which every harness refuses.
     const askingBypasses = [
+        // A push or rewrite after a Git command in the same call that can move the branch: the guard cannot tell which branch it acts on.
+        'git switch main && git merge --ff-only feature && git push origin HEAD', 'git switch main && git push', 'git checkout main && git reset --hard HEAD~3',
+        'git switch main && git commit --amend --no-edit',
         'npm run cockpit:sync', 'pnpm cockpit:sync', 'pnpm --silent --reporter=silent exec cockpit sync --config cockpit.toml',
         'node --no-warnings ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml',
         'export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.push GIT_CONFIG_VALUE_0=HEAD:refs/heads/main && git push origin',

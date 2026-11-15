@@ -420,7 +420,9 @@ instance, a guard control or the installed cockpit is a hard denial. A call that
 link (`ln`, `cp -s`, a copy that keeps links, `rsync`, an extraction, or Git writing a revision's
 files) or moves or copies an existing one runs nothing else: a link's text resolves where the link
 lies, so one moved within the call could reach a guard control or a secret, and the guard judged the
-call's other paths against the filesystem before it ran. Hard links count too (`ln`, `link`, `cp -l`,
+call's other paths against the filesystem before it ran. Git writing a revision's files counts only
+beside a command that is not Git, since Git's own later writes meet the Git tree checks:
+`git stash && git rebase main && git stash pop` runs. Hard links count too (`ln`, `link`, `cp -l`,
 BSD `install -l`, `pax -l`, `cpio -l`, `rsync --link-dest`), and so do a `gh repo clone`, `gh repo
 fork --clone`, `gh gist clone`, `gh release download` and `gh run download`, which bring whatever
 links the repository or artifact holds. Writing an existing file that has another hard link is

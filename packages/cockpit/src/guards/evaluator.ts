@@ -2744,11 +2744,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         return [...secretPaths, fold(secretRoot), ...resolved.instances.map((item) => fold(item.path))]
             .some(path => parts.some((_, at) => at > 0 && new RegExp(`^${parts.slice(0, at + 1).map(component).join('/')}$`).test(path)))
     }
-    // A call that makes a symbolic link, or moves or copies an existing one, runs nothing else: its link
-    // can be moved to where its text reaches a guard control or a secret, and every other path in the call
-    // was judged before the link existed there. Commands in a pipeline or in the background run beside it,
-    // so the commands before it are held as well as those after.
-    const linkMakers = invocations.filter(invocation => {
+    // Whether a command makes a link, or moves or copies an existing one, which a later write could follow.
+    const makesLink = (invocation: ParsedInvocation) => {
         const git = gitInvocation(invocation)
         if (createsLink(invocation, git)) return true
         const name = posix.basename(invocation.executable ?? '')
@@ -2759,7 +2756,14 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const evidence = resolvedEvidence({ path: source, cwd: git?.cwd ?? invocation.cwd, operation: 'read' })
             return inspectedLink || evidence?.canonicalPath !== undefined
         })
-    })
+    }
+    // A call that makes a symbolic link, or moves or copies an existing one, runs nothing else: its link can be moved to
+    // where its text reaches a guard control or a secret, and every other path in the call was judged before the link
+    // existed there. Commands in a pipeline or in the background run beside it, so those before it are held too. A Git
+    // verb counts only beside a command that is not Git: Git's own later writes meet the Git tree checks, so
+    // `git stash && git rebase main && git stash pop` runs, while `git checkout topic -- links && echo x > links/l` does not.
+    const outsideGit = invocations.some(invocation => !gitInvocation(invocation) && (invocation.executable !== null || invocation.redirects.length))
+    const linkMakers = invocations.filter(invocation => (outsideGit || !gitInvocation(invocation)) && makesLink(invocation))
     if (linkMakers.length && invocations.some(invocation => !linkMakers.includes(invocation) && (invocation.executable !== null || invocation.redirects.length))
         || linkMakers.length > 1) {
         hold(deny(`Refusing ${named(linkMakers[0]!)} with other commands in one call: it makes or moves a symbolic link, which a later command could move to where its text reaches a guard control or a secret, and the guard judges every other path against the filesystem before the call. Make or move the link on its own, then run the rest in a later call.`))
@@ -2808,7 +2812,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         }
         const git = gitInvocation(invocation)
         unseenMembers = writesUnseenMembers(invocation, git)
-        linking = linkMakers.includes(invocation)
+        linking = makesLink(invocation)
         moving = git?.verb === 'mv' || posix.basename(invocation.executable ?? '') === 'mv'
         // Claude Code 2.1.323 loaded no hook from the cockpit's local settings for a session started at or below
         // a `.git` entry under the root (measured 2026-11-13, reproduced with an empty .git directory, a gitdir
@@ -3214,6 +3218,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // describe, so a decision that rests on the current branch needs every earlier command to be read-only.
         const index = invocations.indexOf(invocation)
         const headMayMove = invocations.slice(0, index).some((earlier) => BRANCH_SWITCHERS.has(gitInvocation(earlier)?.verb ?? ''))
+        // A fetch earlier in the call changes FETCH_HEAD and remote-tracking refs, which the tree checks resolve before it runs.
+        const revisionMayMove = headMayMove || invocations.slice(0, index).some((earlier) => gitInvocation(earlier)?.verb === 'fetch')
         const headMoved = ask('An earlier command in this call can change the current branch, which this command acts on. Run it on its own.')
         if (git.verb === 'push' || git.verb === 'send-pack') {
             const operands = git.args.filter(arg => !arg.startsWith('-'))
@@ -3277,7 +3283,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             else if (instructions.length) holdBoundary(invocation, ask(`${named(invocation)} writes ${shownGuardWord(posix.relative(git.cwd, instructions[0]!) || instructions[0]!)} from the index or another revision: a skill, command or agent file whose frontmatter can register hooks or MCP servers that run outside the guard. A person runs it.`))
             else if (answers.some(answer => answer === undefined)) holdBoundary(invocation, ask(`${named(invocation)} writes another revision's files into the working tree, and the guard could not tell whether they include a guard control: the revision does not resolve, or Git did not answer. A person runs it.`))
             else if (guarded && tree.unnamed) holdBoundary(invocation, ask(`${named(invocation)} brings content into a working tree that holds guard controls, which the guard cannot inspect before it is fetched. Fetch first, then \`git merge --ff-only <remote>/<branch>\`; or a person runs it.`))
-            else if (guarded && headMayMove) holdBoundary(invocation, ask(`${named(invocation)} writes another revision's files into a working tree that holds guard controls, and an earlier command in this call can change that revision first. Run it on its own.`))
+            else if (guarded && revisionMayMove) holdBoundary(invocation, ask(`${named(invocation)} writes another revision's files into a working tree that holds guard controls, and an earlier command in this call can change that revision first. Run it on its own.`))
         }
         // A glob or magic pathspec matches guard controls its spelling does not name, and `--cacheinfo`
         // stages a path inside one word; both are judged against every control.
