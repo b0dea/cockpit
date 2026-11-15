@@ -28,6 +28,7 @@ export async function runGuardCommand(
     deadlineMs = GUARD_DEADLINE_MS,
 ): Promise<number> {
     let harness: GuardSurfaceTarget | undefined
+    let leavesSandbox = false
     type Response = Awaited<ReturnType<typeof runGuardEvaluationApplication>>
     const evaluate = async (): Promise<Response> => {
         try {
@@ -45,6 +46,7 @@ export async function runGuardCommand(
             }
             const raw = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes))
             const native = JSON.parse(raw)
+            leavesSandbox = native?.tool_input?.dangerouslyDisableSandbox === true
             const mcp = harness === 'claudecode' && typeof native?.tool_name === 'string' && native.tool_name.startsWith('mcp__')
             if (!mcp && bytes > GUARD_INPUT_LIMITS.inputBytes) throw new RefusalError('Guard input exceeds its byte bound.')
             if (mcp && (native.tool_input === null || typeof native.tool_input !== 'object' || Array.isArray(native.tool_input))) {
@@ -93,7 +95,7 @@ export async function runGuardCommand(
     const projected = JSON.parse(renderJsonResponse({ result: response.decision, diagnostics: response.diagnostics }, response.fixContext)) as { result: typeof response.decision }
     const decision = projected.result.decision === 'ask' && env.COCKPIT_ASK_IS_DENY === '1'
         ? { ...projected.result, decision: 'deny' as const } : projected.result
-    const output = adaptGuardDecision(harness, decision)
+    const output = adaptGuardDecision(harness, decision, { leavesSandbox })
     io.stdout.write(output.stdout)
     io.stderr.write(output.stderr)
     const status: number = output.exitCode

@@ -84,7 +84,6 @@ export interface GuardEvaluationPolicy {
     /** Absolute command search path directories inside the allowed roots, where a planted file shadows a permitted command. */
     readonly searchDirectories: readonly string[]
     /** The first command search path entry that is not absolute, where an empty one is the working directory; null when every entry is absolute. */
-    readonly searchPathRelativeEntry: string | null
     /** Identities of every file in the root secrets directory, or null when it held more than the enumeration bound. */
     readonly secretFileIdentities: readonly string[] | null
     /** Some instance or secrets file has another hard link, which a recursive search can read under an unprotected name. */
@@ -102,11 +101,6 @@ export interface GuardEvaluationPolicy {
     readonly externalReads?: 'grant' | 'native'
     /** Canonical files and directories outside the roots whose named files may be read. */
     readonly readPaths?: readonly string[]
-    /**
-     * `allow` admits every command outside the blocked list; `ask`, the strict mode, admits only the
-     * read-only commands it classifies, declared commands and grants. Absent means `ask`.
-     */
-    readonly defaultDecision?: 'allow' | 'ask'
     /** The home directory of whoever runs the agent, where the credential stores below it live. */
     readonly homeDirectory?: string
     /** The installed cockpit package's own directory under every spelling, wherever it is installed. */
@@ -138,6 +132,8 @@ export interface GuardEvaluationPolicy {
     readonly agentWorkspaces?: readonly GuardAgentWorkspace[]
     /** Directories the agent reads but does not write: its session's own temp tree. */
     readonly agentReadAreas?: readonly string[]
+    /** The cockpit's guard script and identity match the digests the person's last sync recorded. */
+    readonly recordedGuardScript?: true
 }
 export interface GuardAgentHome { readonly tool: AgentHomeTool; readonly path: string }
 export interface GuardAgentWorkspace { readonly kind: 'scratchpad'; readonly path: string }
@@ -258,7 +254,12 @@ export function guardProtectedLocations(input: Readonly<{ canonicalRoot: string;
         { path: input.configPath, type: 'file' as const }, ...input.instances.map((path) => ({ path, type: 'file' as const }))]
 }
 const unavailable = (reason: string): GuardDecision => ({ decision: 'unavailable', reason })
+/** A word as a POSIX shell reads it back: bare when it holds only safe characters, single-quoted otherwise. */
+const shellWord = (word: string) => /^[\w./@%+=:,-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`
 const ask = (reason: string): GuardDecision => ({ decision: 'ask', reason })
+// The guard asks only where a person's judgment is the point, or where it cannot tell whether a command crosses a
+// refused boundary (a protected branch, a guard control); any other form it cannot prove safe runs, as a project
+// script it cannot read runs.
 const UNPROVEN_LAUNCHER = 'This cockpit command requires human approval: the guard could not prove it starts the installed cockpit. '
     + 'npx --no cockpit counts only from the cockpit root with no root .npmrc and no bin in the root package.json, and bare cockpit only when '
     + 'the command search path finds the installed package. From the cockpit root, use the installed package entrypoint, for example '
@@ -278,6 +279,11 @@ const named = (invocation: ParsedInvocation) => {
 // A word whose value the guard cannot see, as a refusal names it.
 const unseen = (value: string) => value === XARGS_INPUT ? 'the arguments xargs reads from standard input' : shownGuardWord(value)
 const allowed: GuardDecision = Object.freeze({ decision: 'allow', reason: 'Every invocation matches an exact permitted profile or bounded data operation.' })
+// Allows that leave the call to the agent tool's own permissions: a listed MCP tool, and a call reaching
+// outside the configured roots. The adapter answers them with nothing, so the tool's own prompt still applies.
+const mcpDeferred = 'MCP tool satisfies the declared tool restrictions.'
+const outsideDeferred = 'Nothing the guard checks refuses this call; what it reaches outside the configured roots is left to the agent tool\'s own permissions.'
+export const GUARD_DEFERRED_REASONS = Object.freeze([mcpDeferred, outsideDeferred])
 function record(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
@@ -324,9 +330,10 @@ function agentAreas(p: JsonSnapshotObject): boolean {
 }
 function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     const p = snapshotJson(value)
-    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'searchPathRelativeEntry', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands', ...p.mcpAllowedTools === undefined ? [] : ['mcpAllowedTools'], ...p.externalReads === undefined ? [] : ['externalReads'], ...p.readPaths === undefined ? [] : ['readPaths'], ...p.defaultDecision === undefined ? [] : ['defaultDecision'], ...p.homeDirectory === undefined ? [] : ['homeDirectory'], ...p.cockpitPackageDirectories === undefined ? [] : ['cockpitPackageDirectories'],
+    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands', ...p.mcpAllowedTools === undefined ? [] : ['mcpAllowedTools'], ...p.externalReads === undefined ? [] : ['externalReads'], ...p.readPaths === undefined ? [] : ['readPaths'], ...p.homeDirectory === undefined ? [] : ['homeDirectory'], ...p.cockpitPackageDirectories === undefined ? [] : ['cockpitPackageDirectories'],
         ...['secretPaths', 'relatedCheckouts', 'unresolved', 'writePaths', 'relatedReserved', 'externalSearchDirectories', 'guardRuntime',
-            'agentHomes', 'agentMemoryKeys', 'agentType', 'agentWorkspaces', 'agentReadAreas'].filter(key => p[key] !== undefined)])
+            'agentHomes', 'agentMemoryKeys', 'agentType', 'agentWorkspaces', 'agentReadAreas', 'recordedGuardScript'].filter(key => p[key] !== undefined)])
+        || p.recordedGuardScript !== undefined && p.recordedGuardScript !== true
         || p.readPaths !== undefined && (!strings(p.readPaths) || p.readPaths.length > 64 || !p.readPaths.every(canonical))
         || p.externalReads !== undefined && p.externalReads !== 'grant' && p.externalReads !== 'native'
         || p.unresolved !== undefined && p.unresolved !== 'ask' && p.unresolved !== 'deny'
@@ -338,7 +345,6 @@ function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
         || p.relatedCheckouts !== undefined && (!strings(p.relatedCheckouts) || p.relatedCheckouts.length > 16 || !p.relatedCheckouts.every(canonical))
         || p.externalSearchDirectories !== undefined && (!strings(p.externalSearchDirectories) || p.externalSearchDirectories.length > GUARD_LOCATION_LIMITS.searchPathDirectories
             || !p.externalSearchDirectories.every(canonical))
-        || p.defaultDecision !== undefined && p.defaultDecision !== 'allow' && p.defaultDecision !== 'ask'
         || p.homeDirectory !== undefined && (!canonical(p.homeDirectory) || p.homeDirectory === '/')
         || p.cockpitPackageDirectories !== undefined && (!strings(p.cockpitPackageDirectories) || p.cockpitPackageDirectories.length > GUARD_LOCATION_LIMITS.packageDirectories
             || !p.cockpitPackageDirectories.every(canonical))
@@ -349,8 +355,6 @@ function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
         || typeof p.ripgrepConfigActive !== 'boolean' || typeof p.protectedFilesLinked !== 'boolean' || !Array.isArray(p.cockpitInvocations) || !Array.isArray(p.cockpitLaunchers) || !Array.isArray(p.projectCommands)
         || !strings(p.executionDirectories) || p.executionDirectories.length > GUARD_LOCATION_LIMITS.packageDirectories
         || !strings(p.searchDirectories) || p.searchDirectories.length > GUARD_LOCATION_LIMITS.searchPathDirectories
-        || p.searchPathRelativeEntry !== null && (typeof p.searchPathRelativeEntry !== 'string' || p.searchPathRelativeEntry.startsWith('/')
-            || /[\x00-\x1f\x7f]/.test(p.searchPathRelativeEntry) || Buffer.byteLength(p.searchPathRelativeEntry) > GUARD_INPUT_LIMITS.wordBytes)
         || p.secretFileIdentities !== null && (!Array.isArray(p.secretFileIdentities) || p.secretFileIdentities.length > GUARD_SECRET_FILE_LIMIT || !p.secretFileIdentities.every(identity))) return undefined
     const roots = p.allowedRoots
     const confined = (value: JsonSnapshot | undefined): value is string => canonical(value) && roots.some((root) => within(value, root))
@@ -407,9 +411,6 @@ function hostUsed(value: string, configured: string): boolean {
 
 // Commands whose arguments name files they read, so a rule for one is a rule for reading those files.
 const READING_EXECUTABLES = new Set(['cat', 'head', 'tail', 'wc', 'shasum', 'jq', 'sed', 'grep', 'rg', 'fd', 'find', 'ls'])
-// Known tools beside those that read, print, copy or send the files their operands name.
-const NAME_READERS = new Set(['xxd', 'od', 'sort', 'nl', 'awk', 'cut', 'uniq', 'tr', 'diff', 'sha256sum', 'md5', 'md5sum', 'stat', 'file', 'tree', 'du',
-    'scp', 'rsync', 'zip', 'tar', 'unzip', 'gzip', 'gunzip'])
 
 /** The operands of a Git verb, without the values of the options in `valued`. */
 function gitOperands(args: readonly string[], valued: readonly string[]): readonly string[] {
@@ -448,19 +449,6 @@ function toolConfigurationWrite(invocation: ParsedInvocation): 'refuse' | 'proje
     if (name === 'gh' && (first === 'config' && second === 'set' || first === 'alias' && ['set', 'import'].includes(second ?? '')
         || ['extension', 'extensions', 'ext'].includes(first ?? '') && ['install', 'upgrade'].includes(second ?? ''))) return 'refuse'
     return undefined
-}
-
-// A URL, or a package spelled as a Git source, as the parser's launchers judge it.
-const REMOTE_PACKAGE = /:\/\/|^(?:git\+|github:|gitlab:|bitbucket:|gist:)/i
-/** The first package an install fetches from a URL or a Git host rather than a registry, whose install scripts then run. */
-function remoteInstallSource(invocation: ParsedInvocation): string | undefined {
-    const name = posix.basename(invocation.executable ?? '')
-    const argv = name === 'uv' && invocation.argv[0] === 'pip' ? invocation.argv.slice(1) : invocation.argv
-    const operands = argv.filter(arg => !arg.startsWith('-'))
-    if (['pip', 'pip3'].includes(name) || name === 'uv' && invocation.argv[0] === 'pip') return operands[0] === 'install' ? operands.slice(1).find(arg => REMOTE_PACKAGE.test(arg)) : undefined
-    if (!['npm', 'pnpm', 'yarn', 'bun'].includes(name) || !['i', 'install', 'add', 'update', 'up'].includes(operands[0] ?? '')) return undefined
-    // npm and its peers read `owner/repo` as a GitHub repository.
-    return operands.slice(1).find(arg => REMOTE_PACKAGE.test(arg) || /^[^@./][^/]*\/[^/]/.test(arg))
 }
 
 function ruleMatches(invocation: ParsedInvocation, rule: GuardDeclaredAllow | GuardDeclaredDeny): boolean {
@@ -864,6 +852,8 @@ function transferOperands(command: 'cp' | 'install' | 'mv' | 'ln', args: readonl
 }
 
 // Git verbs that write files from a revision or a patch into a work tree, where a symbolic link can arrive.
+// Git verbs that can change which branch is checked out, which a later push or rewrite rests on.
+const BRANCH_SWITCHERS = new Set(['checkout', 'switch', 'rebase', 'bisect', 'pull', 'symbolic-ref', 'update-ref', 'worktree'])
 const GIT_TREE_WRITERS = new Set(['checkout', 'switch', 'restore', 'reset', 'merge', 'pull', 'rebase', 'cherry-pick', 'revert', 'stash', 'am', 'apply',
     'clone', 'worktree', 'read-tree', 'checkout-index', 'submodule', 'mv', 'bisect', 'sparse-checkout'])
 
@@ -886,6 +876,8 @@ function createsLink(invocation: ParsedInvocation, git: GitInvocation | undefine
         if (git.verb === 'worktree' && operands[0] !== 'add') return false
         if (git.verb === 'submodule' && !['update', 'add'].includes(operands[0] ?? '')) return false
         if (git.verb === 'bisect' && ['log', 'visualize', 'view'].includes(operands[0] ?? '')) return false
+        // Without --apply, these report on the patch and write nothing.
+        if (git.verb === 'apply' && git.args.some(arg => /^--(?:check|stat|numstat|summary)$/.test(arg)) && !git.args.includes('--apply')) return false
         return true
     }
     const name = posix.basename(invocation.executable)
@@ -1680,33 +1672,6 @@ function gitPrintsContent(git: GitInvocation | undefined): boolean {
     return git !== undefined && (GIT_CONTENT_VERBS.has(git.verb) || git.verb === 'stash' && git.args[0] === 'show')
 }
 
-// `gh api` reads that return file content or patches: a file, tree or archive, a commit's or a
-// comparison's patches, a pull request's files, and GraphQL objects such as a Blob's text.
-const GH_API_CONTENT = /(?:^|\/)(?:contents|readme|tarball|zipball|compare|git\/blobs|git\/trees)(?:[/?]|$)|(?:^|\/)commits\/[^/?]+|(?:^|\/)pulls\/[^/?]+\/files(?:[/?]|$)/
-
-/**
- * gh reads that print committed file content: a pull request's diff unless names only, code search
- * across the host, and a `gh api` read of file content or patches. Its words are read as gh's parser
- * reads them, and a form it cannot read exactly counts when any two words could spell such a command.
- */
-function ghPrintsContent(invocation: ParsedInvocation): boolean {
-    if (posix.basename(invocation.executable ?? '') !== 'gh') return false
-    const { operands, flags, exact } = ghWords(invocation.argv)
-    const command = operands.slice(0, 2).join(' ')
-    if (operands[0] === 'api' || invocation.argv.find(arg => !arg.startsWith('-')) === 'api') {
-        const call = ghApiCall(invocation.argv.slice(invocation.argv.indexOf('api') + 1))
-        const headers = invocation.argv.flatMap((arg, at) => ['-H', '--header'].includes(arg) ? [invocation.argv[at + 1] ?? ''] : /^--header=/.test(arg) ? [arg.slice(9)] : [])
-        return GH_API_CONTENT.test(call.endpoint) || /(?:^|\/)pulls\/[^/?]+$/.test(call.endpoint) && headers.some(header => /diff|patch/i.test(header))
-            || call.endpoint === 'graphql' && call.fields.some(field => /\bBlob\b|\bobject\s*\(|\bentries\b/.test(field))
-    }
-    const words = invocation.argv.filter(arg => !arg.startsWith('-'))
-    const spelled = words.includes('pr') && words.includes('diff') || words.includes('search') && words.includes('code')
-    if (!exact) return spelled
-    if (command === 'pr diff') return !flags.some(flag => ['-w', '--web', '--name-only'].includes(flag))
-    if (command === 'search code') return !flags.some(flag => ['-w', '--web'].includes(flag))
-    return false
-}
-
 /** The `-c` keys before a Git verb, and whether any other global option than `-C` and paging appears. */
 function gitGlobalOptions(argv: readonly string[]): { readonly keys: readonly string[]; readonly other: boolean } {
     const keys: string[] = []
@@ -1730,7 +1695,7 @@ export function cockpitShaped(invocation: ParsedInvocation, packages: readonly s
     // Any word: launchers take options before the program (`pnpm --silent exec cockpit`, `node --no-warnings
     // …/cockpit.mjs`), and sync writes `cockpit:*` package scripts that run it by name. A path is resolved and
     // folded, so `@b00dea/./cockpit`, `@B00DEA/cockpit` and `cockpit/dist/cli.js` from `node_modules/@b00dea` count.
-    return [invocation.executable ?? '', ...invocation.argv].some(word => ['cockpit', 'cockpit.mjs'].includes(posix.basename(word))
+    return [invocation.executable ?? '', ...invocation.argv].some(word => !word.endsWith('/') && ['cockpit', 'cockpit.mjs'].includes(posix.basename(word))
         || word.includes('@b00dea/cockpit') || word.startsWith('cockpit:')
         || [word, word.slice(word.indexOf('=') + 1)].some(path => path.includes('/') && installed.some(directory => within(fold(posix.resolve(invocation.cwd, path)), directory))))
 }
@@ -1775,9 +1740,21 @@ function printsCredential(invocation: ParsedInvocation, git: GitInvocation | und
 
 // A live payment secret or restricted key, as the payment processor issues it: a pasted one lands in shell
 // history and transcripts. Test keys of the same shape reach only test data.
+const liveKeyDenial: GuardDecision = Object.freeze({ decision: 'deny', reason: 'Refusing a live secret key written into the command: a command line lands in shell history and agent transcripts. Read the key from the environment the process runs with, for example through `varlock run -- <command>`, and never paste it.' })
 const LIVE_SECRET_KEY = /(?<![A-Za-z0-9])[sr]k_live_[A-Za-z0-9]{24,}/
 
 // Names a glob is tried against: a pattern that can match one of them may reach a secret.
+// Programs whose arguments or standard-input heredoc can be code.
+const INLINE_CODE = /^(?:python[\d.]*|node|nodejs|ruby|perl|php|deno|bun|tsx|osascript|[gmn]?awk|bash|sh|zsh)$/
+/** The code an interpreter runs from its own words: a `-c`, `-e`, `-p`, `-r` or `--eval` value, an awk program, or a heredoc. */
+function inlineCode(invocation: ParsedInvocation): readonly string[] {
+    const name = posix.basename(invocation.executable ?? '')
+    if (!INLINE_CODE.test(name)) return []
+    const argv = invocation.argv
+    const valued = argv.flatMap((arg, at) => /^(?:-[a-zA-Z]*[ceEpr]|--eval|--print|--command)$/.test(arg) && at + 1 < argv.length ? [argv[at + 1]!] : [])
+    const program = /awk$/.test(name) && !argv.some(arg => /^-[a-zA-Z]*f/.test(arg)) ? argv.filter(arg => !arg.startsWith('-')).slice(0, 1) : []
+    return [...valued, ...program, ...invocation.words.filter(word => word.role === 'heredoc-body').map(word => word.value)]
+}
 const SECRET_SAMPLES = ['.env', '.env.local', '.env.production', '.secrets', 'id_rsa', 'id_ed25519', 'credentials', 'server.pem', 'server.key', '.npmrc', '.netrc',
     '.pgpass', 'auth.json', 'hosts.yml', '.git-credentials', '.vault-token']
 
@@ -1791,6 +1768,8 @@ const secretVariable = (name: string) => {
 }
 
 /** Whether an invocation prints the environment or a secret-named variable. */
+// jq's `env` builtin and `$ENV`, not a field or a file name that holds the word, such as `.env.schema`.
+const JQ_ENVIRONMENT = /(?<![\w.$-])env\b|\$ENV\b/
 function dumpsEnvironment(invocation: ParsedInvocation): boolean {
     const program = posix.basename(invocation.executable ?? '')
     const argv = invocation.argv
@@ -1807,8 +1786,15 @@ function dumpsEnvironment(invocation: ParsedInvocation): boolean {
     // `make -p` prints its database, every environment variable included; -C, -f, -I, -j, -l, -o, -W and -E take a value.
     if (program === 'make') return argv.some(arg => arg === '--print-data-base' || /^-[a-zA-Z]+$/.test(arg) && /^[^CfIjloWE]*p/.test(arg.slice(1)))
     if (['awk', 'gawk', 'mawk', 'nawk'].includes(program)) return argv.some(arg => arg.includes('ENVIRON'))
+    // A jq filter reads the environment through `env` and `$ENV`, as gh's does with the token in it.
+    if (['jq', 'gojq', 'jaq'].includes(program)) return argv.some(arg => JQ_ENVIRONMENT.test(arg))
+    // `docker inspect` prints a container's or image's environment unless a format names other fields.
+    if (program === 'docker' && argv.includes('inspect')) {
+        const format = argv.find((arg, at) => ['-f', '--format'].includes(argv[at - 1] ?? '') || /^--format=/.test(arg))
+        return format === undefined || /env|\{\{\s*(?:json\s+)?\.\s*\}\}|"config"|\.(?:container)?config\s*\}\}/i.test(format)
+    }
     // gh's jq filter reads its own environment, the token included, through `env` and `$ENV`.
-    if (program === 'gh') return argv.some((arg, at) => (['-q', '--jq'].includes(argv[at - 1] ?? '') || /^--jq=/.test(arg)) && /\benv\b|\$ENV\b/.test(arg))
+    if (program === 'gh') return argv.some((arg, at) => (['-q', '--jq'].includes(argv[at - 1] ?? '') || /^--jq=/.test(arg)) && JQ_ENVIRONMENT.test(arg))
     // BSD `ps e` and macOS `ps -E` print each process's environment.
     // A bare letter cluster is BSD syntax; a word after -o, -p and the like is that option's value.
     if (program === 'ps') return argv.some((arg, at) => /^[A-Za-z]+$/.test(arg) && arg.includes('e') && !/^-[A-Za-z]*[oOpqUuGgtk]$/.test(argv[at - 1] ?? '')
@@ -1865,28 +1851,16 @@ function gitProgramOption(git: GitInvocation): boolean {
     return git.args.some(arg => /^--(?:upload-pack|receive-pack|exec)(?:=|$)/.test(arg) || ['clone', 'ls-remote'].includes(git.verb) && arg === '-u')
 }
 
-// Git's location and configuration variables point it at state or programs the guard does not inspect,
-// HOME and XDG_CONFIG_HOME choose the configuration that names hooks, hook managers' switches skip the
-// hooks, a relative PATH entry runs a file the agent wrote, Docker's choose the daemon (any host, or
-// one reached over ssh) and the client configuration a known docker read uses, and the agent tools'
-// session markers are how a person's terminal confirmation tells itself apart from an agent's.
-function steers({ name, value }: { readonly name?: string; readonly value: string }): boolean {
-    return name === undefined || /^(?:GIT_.*|DOCKER_.*|HOME|XDG_CONFIG_HOME|BASH_ENV|ENV|HUSKY.*|SKIP|LEFTHOOK.*|OVERCOMMIT_DISABLE|PRE_COMMIT_ALLOW_NO_CONFIG|CLAUDECODE|CODEX_THREAD_ID|OPENCODE)$/.test(name)
-        || name === 'PATH' && value.split(':').some(entry => !entry.startsWith('/'))
-}
-
-// Programs that run the file named as their first operand.
-const SCRIPT_RUNNERS = new Set(['bash', 'sh', 'zsh', 'node', 'nodejs', 'python', 'python3', 'ruby', 'perl', 'deno', 'bun', 'tsx', 'ts-node'])
-
-/** The file an invocation runs: a program spelled as a path, or the script a shell or interpreter is given. */
-function executedFile(invocation: ParsedInvocation): string | undefined {
-    if (invocation.executable === null) return undefined
-    if (invocation.executable.includes('/')) return posix.resolve(invocation.cwd, invocation.executable)
-    if (!SCRIPT_RUNNERS.has(posix.basename(invocation.executable))) return undefined
-    // `deno run` and `bun run` name the script after their verb.
-    const operands = invocation.argv.filter(arg => !arg.startsWith('-'))
-    const script = ['run', 'exec'].includes(operands[0] ?? '') ? operands[1] : operands[0]
-    return script === undefined ? undefined : posix.resolve(invocation.cwd, script)
+/**
+ * What an assignment does to the commands after it. Git's location variables point it at state the guard does not
+ * inspect, HOME and XDG_CONFIG_HOME choose the configuration that names its hooks, BASH_ENV and ENV run a file as a
+ * shell starts, and the session markers say an agent runs: a person decides those. A hook manager's skip variable
+ * is `--no-verify` by another name. Any other variable, `GIT_PAGER` or `DOCKER_BUILDKIT` among them, runs.
+ */
+function steers({ name, value }: { readonly name?: string; readonly value: string }): 'ask' | 'deny' | undefined {
+    if (name === undefined) return 'ask'
+    if (name === 'SKIP' || /^(?:HUSKY|LEFTHOOK)$/.test(name) && /^(?:0|false)$/i.test(value) || name === 'OVERCOMMIT_DISABLE' && !/^(?:0|false|)$/i.test(value)) return 'deny'
+    return /^(?:GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_CONFIG.*|GIT_EXEC_PATH|GIT_COMMON_DIR|GIT_OBJECT_DIRECTORY|GIT_ALTERNATE_OBJECT_DIRECTORIES|HOME|XDG_CONFIG_HOME|BASH_ENV|ENV|CLAUDECODE|CODEX_THREAD_ID|OPENCODE)$/.test(name) ? 'ask' : undefined
 }
 
 /** The patch files `git apply` or `git am` applies, none for a mode that writes nothing, or null when the targets cannot be read from them. */
@@ -1957,224 +1931,6 @@ function ghApiCall(args: readonly string[]): { readonly endpoint: string; readon
     return { endpoint: endpoint ?? '', method: resolved, fields, writes }
 }
 
-// Development tool families the allow default admits, judged by the guard's rules for them. Anything
-// else asks; a person's [guards] allow rule can admit it.
-const KNOWN_TOOLS = new Set([
-    // Version control and its host.
-    'git', 'gh',
-    // Package managers and the runners that launch a program, which the parser then follows.
-    'npm', 'pnpm', 'yarn', 'bun', 'npx', 'pnpx', 'bunx', 'uv', 'uvx', 'pip', 'pip3', 'poetry', 'pipenv',
-    // Languages and build and test tools running project files.
-    'node', 'nodejs', 'python', 'python3', 'ruby', 'go', 'cargo', 'rustc', 'deno', 'make', 'tsc', 'tsx', 'ts-node', 'eslint', 'prettier', 'biome',
-    'vitest', 'jest', 'mocha', 'playwright', 'pytest', 'ruff', 'mypy', 'turbo', 'nx', 'java', 'javac', 'gradle', 'mvn',
-    // Shells running a script, or a `-c` string the parser judged command by command.
-    'bash', 'sh', 'zsh',
-    // Reading and text utilities.
-    'cat', 'head', 'tail', 'rg', 'grep', 'fd', 'find', 'ls', 'wc', 'sort', 'uniq', 'cut', 'tr', 'nl', 'diff', 'jq', 'yq', 'stat', 'file', 'tree',
-    'which', 'type', 'command', 'echo', 'printf', 'test', '[', 'true', 'false', 'date', 'basename', 'dirname', 'realpath', 'readlink', 'sleep',
-    'pwd', 'ps', 'shasum', 'sha256sum', 'md5', 'md5sum', 'du', 'df', 'uname', 'whoami', 'id', 'hostname', 'seq', 'xxd', 'od', 'awk', 'sed',
-    // Shell builtins that set or show shell state.
-    'export', 'declare', 'typeset', 'readonly', 'local', 'unset', 'set', 'setopt', 'printenv', 'env',
-    // File utilities, judged as writes inside the roots.
-    'mkdir', 'cp', 'mv', 'rm', 'rmdir', 'touch', 'ln', 'tee', 'chmod', 'truncate', 'install', 'dd', 'rimraf', 'del-cli', 'trash',
-    // Archives and copies, judged by their operands.
-    'zip', 'tar', 'rsync', 'scp', 'unzip', 'gzip', 'gunzip',
-    // Process and port inspection, and signals to processes the agent started.
-    'lsof', 'kill', 'pkill', 'base64',
-    // Formatters, linters and runners of project code in other languages; `bundle exec` is followed to the program it runs.
-    'gofmt', 'golangci-lint', 'rustup', 'bundle', 'rspec', 'rake', 'pre-commit',
-    // A static checker that only reads the scripts it is given.
-    'shellcheck',
-    // Downloads, judged by their hosts and output options.
-    'curl', 'wget',
-    // cockpit's own CLI, judged by its command table.
-    'cockpit', 'cockpit.mjs',
-])
-// How each interpreter takes code that is not a file: `inline` options carry it on the command line,
-// `values` take the next word (a `--require` of a data: or http: URL is code too), and `script` options
-// name what runs instead of a file. With no script operand, or `-`, the interpreter runs standard input.
-interface InterpreterOptions { readonly inline: RegExp; readonly values: readonly string[]; readonly attached?: RegExp; readonly script?: RegExp; readonly info: RegExp }
-const NODE_OPTIONS: InterpreterOptions = { inline: /^(?:-e|-p|--eval|--print)(?:=|$)|^-[a-zA-Z]*[ep]$/,
-    values: ['-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions', '--input-type', '--env-file', '--env-file-if-exists', '--title',
-        '--test-name-pattern', '--test-reporter', '--test-reporter-destination', '--watch-path', '--inspect-port', '--redirect-warnings', '--disable-warning'],
-    script: /^--(?:test|run)(?:=|$)/, info: /^(?:-v|--version|-h|--help|--v8-options)$/ }
-const PYTHON_OPTIONS: InterpreterOptions = { inline: /^-[a-zA-Z]*c/, values: ['-X', '-W', '-m'], attached: /^-[XW]./, script: /^-m/, info: /^(?:-V|--version|-h|--help)$/ }
-const INTERPRETER_OPTIONS: Readonly<Record<string, InterpreterOptions>> = {
-    node: NODE_OPTIONS, nodejs: NODE_OPTIONS, python: PYTHON_OPTIONS, python3: PYTHON_OPTIONS,
-    ruby: { inline: /^-[a-zA-Z]*e/, values: ['-I', '-r', '-C', '-E'], attached: /^-[IrCEF]./, info: /^(?:-v|--version|-h|--help)$/ },
-}
-
-/** Whether an interpreter runs code given on its command line, through a data or remote URL, or on standard input. */
-function interpreterCode(options: InterpreterOptions, argv: readonly string[]): boolean {
-    for (let index = 0; index < argv.length; index++) {
-        const arg = argv[index]!
-        if (arg === '--') return argv[index + 1] === undefined || argv[index + 1] === '-'
-        if (arg === '-') return true
-        if (!arg.startsWith('-')) return false
-        if (options.info.test(arg)) return false
-        if (options.attached?.test(arg)) continue
-        if (options.inline.test(arg)) return true
-        const [option, attached] = arg.split(/=(.*)/s)
-        if (options.values.includes(option!)) {
-            const value = attached ?? argv[++index]
-            if (value === undefined || /^(?:data|https?):/i.test(value)) return true
-            if (options.script?.test(option!)) return false
-        } else if (options.script?.test(arg)) return false
-    }
-    return true
-}
-
-// A descriptor or standard input as a file, however it is spelled: what a `<(…)` or pipe produced, which the guard never read.
-const pipedFile = (cwd: string, word: string) => /^\/(?:dev\/(?:fd\/\d+|stdin)|proc\/self\/fd\/\d+)$/.test(posix.resolve(cwd, word))
-
-/** Whether a known tool runs code the guard cannot read: inline code, a program an option names, or a script on standard input. */
-function runsUnreadCode(invocation: ParsedInvocation): boolean {
-    const name = posix.basename(invocation.executable ?? '')
-    const argv = invocation.argv
-    // A script runner takes its script, a module it preloads or a configuration file from any word, an option's value
-    // included, so a word naming a pipe is code wherever it stands.
-    if (SCRIPT_RUNNERS.has(name) && argv.some(arg => pipedFile(invocation.cwd, arg.slice(arg.indexOf('=') + 1)))) return true
-    // make, awk and sed run the program file -f names.
-    if (['make', 'awk', 'gawk', 'mawk', 'nawk', 'sed'].includes(name) && argv.some((arg, at) => /^(?:-f|--file|--makefile)$/.test(argv[at - 1] ?? '') && pipedFile(invocation.cwd, arg)
-        || pipedFile(invocation.cwd, /^(?:-f|--file=|--makefile=)(.+)$/.exec(arg)?.[1] ?? ''))) return true
-    const interpreter = INTERPRETER_OPTIONS[name]
-    if (interpreter) return interpreterCode(interpreter, argv)
-    if (name === 'bun') return argv.some(arg => /^(?:-e|--eval|-p|--print)(?:=|$)/.test(arg))
-    if (name === 'deno') return argv[0] === 'eval'
-    // awk runs commands through system(), getline and pipes, and print or printf can redirect to any file.
-    if (name === 'awk') return argv.some(arg => /system|getline|\||\bprintf?\b[^;}\n]*>/.test(arg))
-    // sed's `e` runs a command and `w` writes a file, as a command or as an `s` flag.
-    if (name === 'sed') return argv.some(arg => /(?:^|;|\s)\d*[ew]\b|\/e\b|\/[gpiImM0-9]*[we](?:\s|;|$)/.test(arg))
-    // `find -exec` runs a program per match.
-    if (name === 'find') return argv.some(arg => /^-(?:exec|execdir|ok|okdir)$/.test(arg))
-    if (name === 'make') return argv.some((arg, at) => /^--eval(?:=|$)|^-E/.test(arg) || ['-f', '--file', '--makefile'].includes(argv[at - 1] ?? '') && arg === '-'
-        || /^(?:-f|--file=|--makefile=)-$/.test(arg))
-    if (name === 'go') return argv.some(arg => /^--?(?:exec|toolexec|vettool)(?:=|$)/.test(arg))
-    if (name === 'rsync') return argv.some(arg => /^--rsh(?:=|$)|^-[a-zA-Z]*e/.test(arg))
-    // scp runs the program -S names, and ssh options or a configuration file can name a command to run.
-    if (name === 'scp') return argv.some((arg, at) => /^-[a-zA-Z]*[SF]/.test(arg) || /(?:Proxy|Local|KnownHosts)Command|PermitLocalCommand/i.test(arg) && (argv[at - 1] === '-o' || arg.startsWith('-o')))
-    if (name === 'zip') return argv.some(arg => /^-TT|^--unzip-command(?:=|$)/.test(arg))
-    if (name === 'shellcheck') return !shellcheckReads(argv)
-    return false
-}
-
-/**
- * Whether `argv` is a shellcheck run that only reads and reports. Every option shellcheck lists is a flag or takes a
- * value; none writes a file or runs a program, but a word it does not list is not assumed to be harmless. File and
- * path values (`--rcfile`, `-P`) are judged as reads by the operand rules, like the scripts themselves. What a script
- * sources under `-x` is read by shellcheck as the script's own `source` lines direct, like a shell reading the script.
- */
-function shellcheckReads(argv: readonly string[]): boolean {
-    const flags = 'axV'
-    const valued = 'iefoPsSW'
-    const longFlags = /^--(?:check-sourced|external-sources|norc|list-optional|version|help|color(?:=\w+)?|extended-analysis=(?:true|false))$/
-    const longValued = new Set(['--include', '--exclude', '--format', '--enable', '--source-path', '--shell', '--severity', '--wiki-link-count', '--rcfile'])
-    for (let index = 0; index < argv.length; index++) {
-        const word = argv[index]!
-        if (word === '--') return true
-        if (word === '-' || !word.startsWith('-')) continue
-        if (word.startsWith('--')) {
-            const [name, attached] = word.split(/=(.*)/s)
-            if (longFlags.test(word)) continue
-            if (!longValued.has(name!)) return false
-            if (attached === undefined && argv[++index] === undefined) return false
-            continue
-        }
-        // A short cluster such as `-xe SC1091`: flags, then at most one value option that takes the rest or the next word.
-        for (let at = 1; at < word.length; at++) {
-            const letter = word[at]!
-            if (flags.includes(letter)) continue
-            // `-C[WHEN]` only ever attaches its value.
-            if (letter === 'C') break
-            if (!valued.includes(letter)) return false
-            if (at === word.length - 1 && argv[++index] === undefined) return false
-            break
-        }
-    }
-    return true
-}
-
-// Docker listings and reports that only read what the daemon holds about images and containers. Anything absent asks: a
-// global option (-H, --host, --context, -c) or DOCKER_* variable points at another daemon the guard cannot see, `exec`
-// and `run` execute, `pull`, `build` and `login` reach the network or the credential store, and `compose` can mount any
-// host path. `docker inspect` and `container inspect` ask because a container's configuration carries the runtime
-// environment, which can hold the secrets of an env file. `docker ps` without --no-trunc shows the shortened command only.
-const DOCKER_LIST_OPTIONS = {
-    flags: new Set(['-a', '--all', '-q', '--quiet', '-s', '--size', '-l', '--latest']),
-    values: new Set(['-f', '--filter', '--format', '-n', '--last']),
-}
-const DOCKER_IMAGE_LIST_OPTIONS = { flags: new Set(['-a', '--all', '-q', '--quiet', '--digests', '--no-trunc']), values: new Set(['-f', '--filter', '--format']) }
-// `-f` is --format here and --filter on the listings.
-const DOCKER_REPORT_OPTIONS = { flags: new Set<string>(), values: new Set(['-f', '--format']), shortFormat: true as const }
-// The top-level fields of `docker image inspect` that are the image's published identity: where it came from, what it is
-// and how big. Config, ContainerConfig and the default output carry Env, which a local build can bake from ARG and ENV.
-const DOCKER_IMAGE_IDENTITY = new Set(['Id', 'RepoTags', 'RepoDigests', 'Created', 'Size', 'Architecture', 'Os', 'Variant', 'Parent'])
-
-/** Whether a `docker image inspect` template reads only identity fields: no root value, no variable, no other field. */
-function dockerIdentityTemplate(template: string): boolean {
-    const actions = [...template.matchAll(/\{\{(.*?)\}\}/gs)].map(match => match[1]!)
-    if (actions.length === 0 || actions.join('{{').includes('}}')) return false
-    return actions.every(action => {
-        const fields = [...action.matchAll(/(?<![\w"$])\.([A-Za-z_]\w*)((?:\.\w+)*)/g)]
-        // A bare `.` or `$` is the whole image, and a quoted name can be indexed into it.
-        return fields.length > 0 && !/(?:^|[\s(|])\.(?![A-Za-z_])|\$|"|'|`/.test(action) && fields.every(field => DOCKER_IMAGE_IDENTITY.has(field[1]!) && field[2] === '')
-    })
-}
-
-function dockerArguments(argv: readonly string[], table: { readonly flags: ReadonlySet<string>; readonly values: ReadonlySet<string>; readonly shortFormat?: true }): { operands: string[]; format: string | undefined } | undefined {
-    const operands: string[] = []
-    let format: string | undefined
-    for (let index = 0; index < argv.length; index++) {
-        const word = argv[index]!
-        if (!word.startsWith('-') || word === '-') { operands.push(word); continue }
-        const [name, attached] = word.split(/=(.*)/s)
-        if (table.flags.has(word)) continue
-        if (!table.values.has(name!)) return undefined
-        const value = attached ?? argv[++index]
-        if (value === undefined) return undefined
-        if (name === '--format' || name === '-f' && table.shortFormat) format = value
-    }
-    return { operands, format }
-}
-
-/** Whether a docker invocation is one of the read-only queries above. */
-function dockerReads(invocation: ParsedInvocation): boolean {
-    // DOCKER_HOST, DOCKER_CONTEXT, DOCKER_CONFIG and the TLS variables redirect the client; an unnamed assignment could be any.
-    if (invocation.words.some(word => word.role === 'environment-assignment-value' && (word.name === undefined || /^DOCKER_/i.test(word.name)))) return false
-    const [first, second, ...rest] = invocation.argv
-    if (first === undefined || first.startsWith('-')) return false
-    if (first === 'ps' || first === 'container' && (second === 'ls' || second === 'list' || second === 'ps')) {
-        return dockerArguments(first === 'ps' ? invocation.argv.slice(1) : rest, DOCKER_LIST_OPTIONS) !== undefined
-    }
-    if (first === 'images' || first === 'image' && (second === 'ls' || second === 'list')) {
-        return dockerArguments(first === 'images' ? invocation.argv.slice(1) : rest, DOCKER_IMAGE_LIST_OPTIONS) !== undefined
-    }
-    // `info` stays out: it reports the daemon's proxy settings, whose URLs can carry credentials.
-    if (first === 'version') return dockerArguments(invocation.argv.slice(1), DOCKER_REPORT_OPTIONS)?.operands.length === 0
-    if (first === 'image' && second === 'inspect') {
-        const parsed = dockerArguments(rest, DOCKER_REPORT_OPTIONS)
-        return parsed !== undefined && parsed.operands.length > 0 && parsed.format !== undefined && dockerIdentityTemplate(parsed.format)
-    }
-    return false
-}
-
-/** Whether an invocation is a development tool the allow default admits, or a program inside the roots. */
-function knownTool(invocation: ParsedInvocation, roots: readonly string[]): boolean {
-    if (invocation.executable === null) return true
-    const name = posix.basename(invocation.executable)
-    // A program spelled as a path inside the roots is the project's own, like a file node runs.
-    const project = invocation.executable.includes('/') && roots.some(root => within(posix.resolve(invocation.cwd, invocation.executable!), root))
-    if (!project && name === 'docker') return dockerReads(invocation)
-    if (!project && !KNOWN_TOOLS.has(name)) return false
-    const [first, second] = invocation.argv
-    // rustup changes the person's toolchains outside the roots unless it only reports.
-    if (name === 'rustup') return /^(?:show|which|help|--version|-V)$/.test(first ?? '') || ['toolchain', 'component', 'target'].includes(first ?? '') && second === 'list'
-    // kill signals the processes it names, never every process (-1, 0) or a process group (a negative pid).
-    if (name === 'kill') return invocation.argv.length > 0 && invocation.argv.every((arg, at) => /^(?:[2-9]|[1-9]\d+|%\d+)$/.test(arg)
-        || at === 0 && /^-(?:\d+|[A-Z][A-Z0-9]*|s)$/.test(arg) && arg !== '-1' || at === 1 && first === '-s' && /^[A-Z][A-Z0-9]*$/.test(arg))
-    return !runsUnreadCode(invocation)
-}
-
 /** Whether `program` is the command the parser followed `launcher` with: its words end the launcher's. */
 function launchedBy(program: ParsedInvocation, launcher: ParsedInvocation): boolean {
     if (program.executable === null || launcher.executable === null || program.cwd !== launcher.cwd) return false
@@ -2241,12 +1997,13 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 return deny(`MCP tool ${shownGuardWord(input.tool)} is outside the exact allowlist for ${server}. Fix: use a listed tool or have a person review [mcp.allowed_tools] and sync.`)
             }
         }
-        return { decision: 'allow', reason: 'MCP tool satisfies the declared tool restrictions.' }
+        return { decision: 'allow', reason: mcpDeferred }
     }
     const absolute = (path: string) => `${resolved.canonicalRoot}/${path}`
     // A word leading into the installed package or a package it loads runs cockpit's own code.
     const cockpitCommand = (invocation: ParsedInvocation) => cockpitShaped(invocation, [...resolved.cockpitPackageDirectories ?? [], ...resolved.executionDirectories])
     const inRoots = (lexical: string) => resolved.allowedRoots.some(root => within(lexical, root))
+    let outside = false
     const secretRoot = absolute(SECRETS_ROOT)
     const controlFiles = GUARD_CONTROL_FILES.map(absolute)
     const controlDirectories = GUARD_CONTROL_DIRECTORIES.map(absolute)
@@ -2299,6 +2056,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     let unclassifiedAsk: GuardDecision | undefined
     const nestedConfigurationDenial = deny('Refusing to write an agent tool\'s settings, hooks or MCP configuration (.claude/settings*.json, .claude/hooks, .mcp.json, .codex/config.toml or hooks.json, opencode.json, .opencode/plugins) at any depth: a session started in that directory loads it, and it can switch the guard off or start code there. A person makes this change.')
     const guardScriptDenial = deny('Refusing to write a path below .cockpit/guards, or a directory named .cockpit: cockpit sync writes the guard script there, and a Codex session runs the one it finds above it. Agents never write one.')
+    // Guard files a call stages, as spelled, which only a person stages unless sync recorded them.
+    const stagedControls: string[] = []
+    const stagedControlDenial = deny('Refusing to stage a guard file.')
     // A file with another hard link is the same file under a name the guard may not protect: writing it
     // writes that one too, the guard's own code or a control included, however each name is spelled.
     const hardLinkDenial = deny('Refusing to write a file that has another hard link: the write changes every name of the file, and the guard cannot see the others. Write a new file instead, or a person removes the extra link.')
@@ -2329,7 +2089,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const manifestPath = absolute(GUARD_CONTROL_FILES[1])
     const structural = [resolved.configPath, manifestPath]
     const structuralDenial = deny(`Refusing to delete, rename, truncate, relink or make unreadable ${posix.basename(resolved.configPath)} or ${GUARD_CONTROL_FILES[1]}: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit ${posix.basename(resolved.configPath)} in place instead.`)
-    const executionDenial = deny('Refusing to change the installed cockpit, a node_modules/.bin directory or a command search path directory: code there runs as the guard or in place of a permitted command.')
+    const executionDenial = deny('Refusing to change the installed cockpit, a node_modules/.bin directory or a command search path directory: code there runs as the guard or in place of a permitted command. To refresh dependencies, reinstall with your package manager\'s clean install instead of removing node_modules.')
     const linkDenial = deny('Refusing to link to a secrets directory, a declared environment instance, a guard control or the installed cockpit: the link would reach it under a name the guard does not protect.')
     // The guard admits `npx --no cockpit` only from a root without an .npmrc, but checks that before
     // the command runs: `printf … > .npmrc && npx --no cockpit …` planted one in between.
@@ -2362,7 +2122,6 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const holdBoundary = (invocation: ParsedInvocation, decision: GuardDecision) => {
         if (!boundaryAsks.has(invocation)) boundaryAsks.set(invocation, decision)
     }
-    const open = resolved.defaultDecision === 'allow'
     // In the agent tool's own directories only the credential entries and key-file names are credentials; the
     // directory as a whole is not, or the agent could not read back its own memory and tool output.
     const credential = (folded: string) => {
@@ -2375,6 +2134,63 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         return credentialStore(folded, resolved.homeDirectory)
     }
     const credentialDenial = deny('Refusing to read, print or send a credential store: SSH and cloud keys, token files such as ~/.npmrc, ~/.netrc or ~/.codex/auth.json, agent tool and deployment CLI logins, shell histories, and .pem, .p12 or id_* key files hold credentials. A person handles them.')
+    // A directory at or above the home directory, such as `/` in a regular expression or a URL path, names no store itself.
+    const home = resolved.homeDirectory === undefined ? undefined : fold(resolved.homeDirectory)
+    const namesCredential = (folded: string) => !(home !== undefined && within(home, folded)) && credential(folded)
+    // A name no agent reads, whichever program names it: an environment file, a secrets directory or declared
+    // instance, a declared secret path, or a credential store or key file.
+    const secretNameDenial = (folded: string): GuardDecision | undefined => dotenvSecret(folded) ? dotenvDenial
+        : folded.split('/').includes('.secrets') || resolved.instances.some(item => within(folded, fold(item.path))) ? readDenial
+        : inSecretPath(folded) ? secretPathDenial : namesCredential(folded) ? credentialDenial : undefined
+    // `${NAME:-word}` and its kin stand for their default word when NAME is unset, so it names what the command may use.
+    const defaultWords = (word: string) => [...word.matchAll(/\$\{[A-Za-z_]\w*:?[-=]([^}]*)\}/g)]
+        .map(([, value]) => value!.startsWith('~/') && resolved.homeDirectory !== undefined ? resolved.homeDirectory + value!.slice(1) : value!)
+    // Words that spell Git skipping its hooks or pushing by force, deleting or to a protected branch, whatever runs them.
+    const gitWords = (words: readonly string[]) => { const git = words.findIndex(word => posix.basename(word) === 'git'); return git < 0 ? [] : words.slice(git + 1) }
+    // Git's own push rules, without the repository facts a spelled push lacks.
+    const spelledPush = (words: readonly string[]): GuardDecision | undefined => {
+        const after = gitWords(words)
+        const push = after.indexOf('push')
+        return push < 0 ? undefined : pushDecision(after.slice(push + 1), resolved.protectedBranches, undefined)
+    }
+    const gitWordsDenial = (words: readonly string[]): GuardDecision | undefined => {
+        if (gitWords(words).includes('--no-verify')) return deny('Refusing --no-verify: it skips the hooks a commit or push runs.')
+        return spelledPush(words)?.decision === 'deny' ? deny('Refusing a forced push, a remote branch deletion or a push that names a protected branch.') : undefined
+    }
+    // Text the guard does not read as commands, an unreadable shell form or inline interpreter code, is judged by the
+    // names it spells: a secret, a credential, a declared host, a guard control or agent setting, the installed cockpit,
+    // a forced or protected-branch push, skipped hooks, privilege, and downloaded code piped into an interpreter.
+    const textDenial = (text: string, cwd: string): GuardDecision | undefined => {
+        if (LIVE_SECRET_KEY.test(text)) return liveKeyDenial
+        if (resolved.hostedDatabaseHosts.some(host => hostUsed(text, host))) return deny('Refusing executable use of a declared hosted database host.')
+        if (resolved.vendorHosts.some(host => hostUsed(text, host))) return deny('Refusing executable use of a declared vendor host.')
+        const tokens = text.split(/[^\w./@~+-]+/).filter(Boolean)
+        for (const token of tokens) {
+            const lexical = posix.resolve(cwd, token.startsWith('~/') && home !== undefined ? home + token.slice(1) : token)
+            const folded = fold(lexical)
+            // A path the text reaches outside the roots is the agent tool's to permit, so the call gets no allow answer.
+            if (token.includes('/') && !inRoots(lexical)) outside = true
+            const secret = secretNameDenial(folded)
+            if (secret) return secret
+            // A bare name may be reached from the home directory, as `cd .aws && cat credentials` reaches it through CDPATH.
+            if (home !== undefined && !/^[/~.]\./.test(token) && !token.startsWith('/') && namesCredential(fold(posix.join(home, token)))) return credentialDenial
+            if (controlFiles.some(path => folded === fold(path)) || controlDirectories.some(path => within(folded, fold(path))) || guardScriptLocation(folded)) return controlDenial
+            if (nestedAgentConfiguration(folded, false)) return nestedConfigurationDenial
+            if (installedCode(folded, false)) return executionDenial
+        }
+        if (tokens.some(token => /^(?:sudo|doas|pkexec)$/.test(token))) return deny('Refusing privilege escalation: it is a person\'s action. Ask them to run it in their own terminal.')
+        if (/\b(?:curl|wget)\b[^|;&]*\|\s*(?:\S*\/)?(?:sh|bash|zsh|dash|source|\.|python[\d.]*|node|perl|ruby)(?![\w.-])/.test(text)) return deny('Refusing to run downloaded text as code. Download the file into the cockpit, read it, then run it by path.')
+        // Words keep `:` and `-`, so `HEAD:main`, `:topic` and `-uf` reach Git's push rules; an assignment's value, `cmd=git`, is a word.
+        return gitWordsDenial(text.split(/[\s'"`(),[\]=;&|]+/).filter(Boolean))
+    }
+    // Shell the parser does not read is judged by the words its text spells: a refused name, host or push, or a person's
+    // declared deny. Nothing else about it is known, so it otherwise asks; Codex and OpenCode refuse an ask.
+    if (input.unreadable) {
+        const words = input.unreadable.text.split(/[\s;&|()<>`"'{}]+/).filter(Boolean)
+        const declared = resolved.declaredDenies.find(rule => words.some((_, at) => rule.argv.every((word, offset) => words[at + offset] === word)))
+        return textDenial(input.unreadable.text, input.cwd) ?? (declared ? deny(`${declared.reason}${declared.fix ? ` Fix: ${declared.fix}` : ''}`)
+            : ask(`The guard does not read this shell form (${input.unreadable.reason}) Write it as plain commands joined with &&, use \`[ … ] &&\` or \`if\`, or put it in a script file.`))
+    }
     // The current branch and where a bare push goes, for the repository at `cwd`, as Git reports them.
     const branchFacts = (cwd: string): BranchFacts | undefined => {
         let evidence: JsonSnapshot | undefined
@@ -2583,6 +2399,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             return
         }
         const lexical = posix.resolve(request.cwd, request.path)
+        if (!inRoots(lexical)) outside = true
         const mutating = request.operation !== 'cwd'
         const staging = request.operation === 'stage'
         const removing = request.operation === 'remove'
@@ -2593,7 +2410,12 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (mutating && (folded.split('/').includes('.secrets') || (staging || removing) && within(fold(secretRoot), folded))) hold(staging && !folded.split('/').includes('.secrets') ? coveringStageDenial : secretDenial)
         // Held first, so a declared instance's own denial, held after it, is the one reported.
         // Held before the control denials, so a control's own denial is the one reported.
-        if ((request.operation === 'write' || staging) && guardScriptLocation(folded)) hold(guardScriptDenial)
+        // Staging the cockpit's own guard script as the person's sync left it stages what they ran sync for.
+        if (staging && guardScriptLocation(folded) && !(resolved.recordedGuardScript && lexical === absolute(GUARD_CONTROL_FILES[0]))) {
+            stagedControls.push(request.path)
+            hold(stagedControlDenial)
+        }
+        if (request.operation === 'write' && guardScriptLocation(folded)) hold(guardScriptDenial)
         // A guard control's own denial, held before or below, names the stronger boundary.
         if (request.operation === 'write' && nestedAgentConfiguration(folded, controlCoverage) && !controlFiles.some(path => folded === fold(path)) && hardDeny === undefined) hold(nestedConfigurationDenial)
         // Write and Edit carry the text they leave, which the guard application judges; any other writer,
@@ -2672,6 +2494,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (aliasedLocation(lexical)) { hold(aliasDenial(path)); return false }
         if (inRelatedCheckout(lexical) || reservedForRelated(lexical)) { hold(relatedDenial); return false }
         if (!resolved.allowedRoots.some((root) => within(lexical, root))) {
+            outside = true
             // Removing in the agent's own data or workspaces, or below a write path, as `mv` does to its source, is a
             // write there; anywhere else outside it asks, as before.
             const landing = agentHomes.length || agentWorkspaces.length ? externalLanding({ path, cwd, operation: 'write' }, lexical) : undefined
@@ -2746,19 +2569,24 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const searchedProtections = [secretRoot, ...resolved.instances.map((item) => item.path), ...resolved.secretPaths ?? []]
     // Why the last inspected search was not safe, when one protected path is the reason.
     let searchBlocker: GuardDecision | undefined
+    const envLike = (path: string) => deny(`Refusing to read ${shownGuardWord(path)}: an .env-like name, such as .envrc, is not known to hold no secret. Read a documented name such as .env.example, or a person reads it.`)
     // A read-only command is allowed only when every path it touches is evidenced inside the
     // configured roots; reading a protected instance is a hard denial, anything doubtful is not safe.
     // `chainReadOnly` says no other command in the call can create a protected path before the
     // search runs, which is what lets an absent one be ignored.
     // A person's read paths, or native external reads, admit named reads outside the roots; the
     // application then admits only an existing regular file, or a directory to list.
-    const readableOutside = (lexical: string) => resolved.externalReads === 'native' || (resolved.readPaths ?? []).some(path => within(lexical, path)) || inRelatedCheckout(lexical)
-        || agentReadable(lexical)
+    const readableOutside = (lexical: string) => {
+        outside = true
+        return resolved.externalReads === 'native' || (resolved.readPaths ?? []).some(path => within(lexical, path)) || inRelatedCheckout(lexical) || agentReadable(lexical)
+    }
     const inspectReadOnly = (access: ReadOnlyAccess, chainReadOnly = false, approvedExternalRead = false): boolean => {
         let safe = true
         searchBlocker = undefined
         const visit = (path: string, kind: 'read' | 'tree' | 'listing') => {
             if (descriptor(path)) return
+            // Names xargs hands a reader are read, so a listing in such a call names what it reads.
+            if (kind === 'listing' && feedsXargs) kind = 'read'
             if (!scalar(path) || Buffer.byteLength(path) > GUARD_INPUT_LIMITS.pathBytes) { safe = false; return }
             const lexical = posix.resolve(access.cwd, path)
             const folded = fold(lexical)
@@ -2771,6 +2599,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (kind !== 'listing' && inSecretPath(folded)) hold(secretPathDenial)
             if (kind === 'read') holdGitConfigRead(lexical)
             const external = !resolved.allowedRoots.some((root) => within(lexical, root))
+            if (external) outside = true
             // The application admits only an existing regular file, or a directory to list, there.
             if (external && !approvedExternalRead && !readableOutside(lexical)) {
                 safe = false
@@ -2779,7 +2608,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             }
             pathCount++
             // Another `.env*` name, such as `.envrc`, is not known to hold secrets, nor to be data.
-            if (kind === 'read' && /^\.env/.test(posix.basename(folded)) && !documentation(folded)) safe = false
+            if (kind === 'read' && /^\.env/.test(posix.basename(folded)) && !documentation(folded)) { safe = false; searchBlocker ??= envLike(path) }
             // Unenumerated secrets leave every content read unproven, and a second hard link to a
             // protected file leaves every recursive search unproven: either may reach it unnamed.
             if (kind !== 'listing' && !secretFiles || kind === 'tree' && resolved.protectedFilesLinked) safe = false
@@ -2788,11 +2617,13 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (!evidence || external && evidence.identity === null && !(kind === 'read' && access.revisionOperands)) {
                 if (external && kind === 'tree' && evidence) searchBlocker ??= ask(`${shownGuardWord(path)} does not exist outside the configured roots. Name an existing regular file.`)
                 else if (external && kind === 'tree') searchBlocker ??= ask(`A search of ${shownGuardWord(path)} outside the configured roots must name a regular file: there the guard recognises only .env and .secrets names, not other credential files, so it does not search a directory or follow a link. Search the named files instead.`)
+                // A spelling that leaves a link through `..`, or a path the inspector could not read, may reach a protected file.
+                else if (!evidence) searchBlocker ??= deny(`Refusing ${shownGuardWord(path)}: it leads through a link the guard does not follow, or could not be inspected${inspectionFailure === undefined ? '' : ` (${inspectionFailure})`}. Name the file it leads to.`)
                 safe = false
                 return
             }
             const canonicalName = fold(typeof evidence.canonicalPath === 'string' ? evidence.canonicalPath : lexical)
-            if (kind === 'read' && /^\.env/.test(posix.basename(canonicalName)) && !documentation(canonicalName)) safe = false
+            if (kind === 'read' && /^\.env/.test(posix.basename(canonicalName)) && !documentation(canonicalName)) { safe = false; searchBlocker ??= envLike(path) }
             if (kind !== 'listing' && dotenvSecret(canonicalName)) hold(dotenvDenial)
             if (kind !== 'listing' && credential(canonicalName)) hold(credentialDenial)
             if (kind !== 'listing' && canonicalName.split('/').includes('.secrets')) hold(readDenial)
@@ -2818,13 +2649,10 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (present === undefined && sensitive !== null && unseen === undefined && chainReadOnly) return
             safe = false
             const shown = (target: string) => posix.relative(access.cwd, target) || '.'
-            searchBlocker = ask(present !== undefined
+            // A protected path that exists now is a person's to read past; one that might appear first is not.
+            searchBlocker = present !== undefined || sensitive !== null && unseen !== undefined ? deny(present !== undefined
                 ? `A recursive search of ${path} would read ${shown(present)}, ${(resolved.secretPaths ?? []).includes(present) ? 'a path [guards] secret_paths declares secret' : 'a declared environment instance or secrets directory'}. Search a path that does not contain it.`
-                : sensitive === null
-                    ? `A recursive search of ${path} covers more than the guard walks to prove it reads no environment file or secrets directory. Search a narrower path.`
-                    : unseen !== undefined
-                        ? `A recursive search of ${path} would read ${shown(unseen)}, an environment file or secrets directory that is not a declared template. Search a path that does not contain it.`
-                        : `A recursive search of ${path} could read an environment file or secrets directory that another command in this call creates first. Run the search on its own.`)
+                : `A recursive search of ${path} would read ${shown(unseen!)}, an environment file or secrets directory that is not a declared template. Search a path that does not contain it.`) : undefined
         }
         for (const path of access.requires ?? []) {
             const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: 'read' })
@@ -2844,11 +2672,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const once = exposes(committed)
             if (!tracked || !committed || exposed !== undefined || once !== undefined || !chainReadOnly) {
                 safe = false
-                searchBlocker = ask(!tracked ? 'The guard could not list the environment files and secrets this repository tracks, so it cannot prove this Git command prints none of them.'
-                    : !committed ? 'The guard could not list the environment files and secrets this repository\'s history holds, so it cannot prove this Git command prints none of them.'
-                        : exposed !== undefined ? `This Git command can print ${posix.relative(access.cwd, exposed)}, a tracked environment file, secrets file or declared instance. Limit it with \`-- <path>\` to paths that do not hold one.`
-                            : once !== undefined ? `This Git command can print ${posix.relative(access.cwd, once)}, an environment file, secrets file or declared instance the repository's history holds. Limit it with \`-- <path>\` to paths that never held one.`
-                                : 'This Git command prints committed content, and another command in this call can change what the repository tracks first. Run it on its own.')
+                searchBlocker = tracked && committed && (exposed !== undefined || once !== undefined) ? deny(exposed !== undefined ? `This Git command can print ${posix.relative(access.cwd, exposed)}, a tracked environment file, secrets file or declared instance. Limit it with \`-- <path>\` to paths that do not hold one.`
+                            : `This Git command can print ${posix.relative(access.cwd, once!)}, an environment file, secrets file or declared instance the repository's history holds. Limit it with \`-- <path>\` to paths that never held one.`) : undefined
             }
         }
         for (const path of access.reads) visit(path, 'read')
@@ -2856,6 +2681,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         for (const path of access.listings) visit(path, 'listing')
         return safe
     }
+    const feedsXargs = input.invocations.some(invocation => invocation.words.some(word => word.value === XARGS_INPUT))
     const readOnly = new Set<ParsedInvocation>()
     const searchRefusals = new Map<ParsedInvocation, GuardDecision>()
     // Launcher words name a package or the launcher, never an operand. Only a proven spelling runs
@@ -2877,22 +2703,18 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     // A session runs the words after `--` as a command, with no shell, in its own directory, and exec
     // runs them in a product container that mounts the checkouts and may hold their credentials, so
     // that command is judged as one more invocation: neither admits more than the guard would. The
-    // name-based denials apply to exec's command as to any other, but a read-only proof is about the
-    // host's files and exec's command sees the container's, so only a declared allow rule or a
-    // build or test command admits it.
-    const containerCommands = new Set<ParsedInvocation>()
+    // name-based denials apply to exec's command as to any other.
     const invocations = input.invocations.flatMap((invocation): ParsedInvocation[] => {
         const cockpit = provenCockpit(invocation)
         const command = cockpit && innerCommand(cockpit)
         if (!command) return [invocation]
         const inner: ParsedInvocation = { executable: command.words[0]!, argv: command.words.slice(1), cwd: invocation.cwd, wrapped: false, redirects: [],
             words: command.words.map((value, index) => ({ role: index ? 'argument' as const : 'executable' as const, value })) }
-        if (command.runs === 'container') containerCommands.add(inner)
         return [invocation, inner]
     })
     const accesses = new Map(invocations.map((invocation) => {
         const cockpit = provenCockpit(invocation)
-        return [invocation, classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive, wideSearch: open, ...(cockpit ? { cockpit } : {}) })]
+        return [invocation, classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive, ...(cockpit ? { cockpit } : {}) })]
     }))
     // A definition or a `cd` runs nothing, so it cannot create a path before a search reads it; a bare redirect writes one.
     const externalGit = (invocation: ParsedInvocation, access: ReadOnlyAccess | undefined) => invocation.executable === 'git' && access !== undefined
@@ -2901,9 +2723,6 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const chainReadOnly = [...accesses].every(([invocation, access]) => access !== undefined && !externalGit(invocation, access)
         || invocation.executable === null && !invocation.redirects.some((redirect) => redirect.write))
     let possibleControlCount = 0
-    // Files and directories a download in this call writes, in the order the commands run.
-    const fetchedFiles = new Set<string>()
-    const fetchedDirectories = new Set<string>()
     // A glob the guard leaves unexpanded: a pattern in the last component only, holding no expansion.
     const plainGlob = (word: { readonly value: string; readonly dynamic?: true }) => word.dynamic === true && /[*?[]/.test(posix.basename(word.value))
         && !/[*?[]/.test(posix.dirname(word.value)) && !/[$`]/.test(word.value)
@@ -2911,18 +2730,6 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const visibleLoops = new Map(invocations.filter(item => item.executable === null && item.words[0]?.role === 'definition'
         && item.words.slice(1).every(word => word.role === 'argument' && (!word.dynamic || plainGlob(word)) && inRoots(posix.resolve(item.cwd, word.value))))
         .map(item => [item.words[0]!.value, item.words.slice(1).map(word => word.value)]))
-    // Variables set in this call to a value the guard cannot judge where it is used: a command substitution, or a
-    // path outside the roots. `f=~/.aws/credentials; xxd "$f"` reads what the assignment names.
-    const opaqueNames = new Set(invocations.flatMap(item => {
-        const assigned = item.words.filter(word => word.role === 'environment-assignment-value' && word.name !== undefined).map(word => ({ name: word.name!, value: word.value }))
-        if (['export', 'declare', 'typeset', 'readonly', 'local'].includes(posix.basename(item.executable ?? ''))) {
-            assigned.push(...item.argv.filter(arg => /^[A-Za-z_][A-Za-z0-9_]*=/.test(arg)).map(arg => ({ name: arg.slice(0, arg.indexOf('=')), value: arg.slice(arg.indexOf('=') + 1) })))
-        }
-        // `printf -v NAME FORMAT …` assigns what the format builds, which the guard does not evaluate.
-        if (posix.basename(item.executable ?? '') === 'printf' && item.argv[0] === '-v' && item.argv[1] !== undefined) assigned.push({ name: item.argv[1], value: '$(printf)' })
-        return assigned.filter(({ value }) => /\$\(|`/.test(value) || posix.isAbsolute(value) && !value.includes(':') && !value.startsWith('/dev/')
-            && !inRoots(posix.resolve(item.cwd, value)) && !readableOutside(posix.resolve(item.cwd, value))).map(({ name }) => name)
-    }))
     const references = (value: string) => [...value.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/g)].map(match => match[1]!)
     // A glob in a path's last component that a declared secret path, instance or the secrets root could
     // match, or that lies inside one: `rg KEY var/sess*` searches the secret directory it expands to.
@@ -2934,11 +2741,17 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         return [...secretPaths, fold(secretRoot), ...resolved.instances.map((item) => fold(item.path))]
             .some((path) => posix.dirname(path) === posix.dirname(folded) && pattern.test(posix.basename(path)))
     }
-    // A call that makes a symbolic link, or moves or copies an existing one, runs nothing else: its link
-    // can be moved to where its text reaches a guard control or a secret, and every other path in the call
-    // was judged before the link existed there. Commands in a pipeline or in the background run beside it,
-    // so the commands before it are held as well as those after.
-    const linkMakers = invocations.filter(invocation => {
+    // A glob anywhere in a path whose leading components could match a declared secret path, an instance or the
+    // secrets root, so it names a path at or below one.
+    const globNamesProtected = (word: string, cwd: string) => {
+        const parts = fold(posix.resolve(cwd, word)).split('/')
+        const component = (part: string) => part.split(/(\*+|\?|\[[^\]]*\])/).map((piece, at) => at % 2
+            ? piece.startsWith('*') ? '[^/]*' : '[^/]' : piece.replace(/[.+^${}()|\\]/g, '\\$&')).join('')
+        return [...secretPaths, fold(secretRoot), ...resolved.instances.map((item) => fold(item.path))]
+            .some(path => parts.some((_, at) => at > 0 && new RegExp(`^${parts.slice(0, at + 1).map(component).join('/')}$`).test(path)))
+    }
+    // Whether a command makes a link, or moves or copies an existing one, which a later write could follow.
+    const makesLink = (invocation: ParsedInvocation) => {
         const git = gitInvocation(invocation)
         if (createsLink(invocation, git)) return true
         const name = posix.basename(invocation.executable ?? '')
@@ -2949,7 +2762,14 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const evidence = resolvedEvidence({ path: source, cwd: git?.cwd ?? invocation.cwd, operation: 'read' })
             return inspectedLink || evidence?.canonicalPath !== undefined
         })
-    })
+    }
+    // A call that makes a symbolic link, or moves or copies an existing one, runs nothing else: its link can be moved to
+    // where its text reaches a guard control or a secret, and every other path in the call was judged before the link
+    // existed there. Commands in a pipeline or in the background run beside it, so those before it are held too. A Git
+    // verb counts only beside a command that is not Git: Git's own later writes meet the Git tree checks, so
+    // `git stash && git rebase main && git stash pop` runs, while `git checkout topic -- links && echo x > links/l` does not.
+    const outsideGit = invocations.some(invocation => !gitInvocation(invocation) && (invocation.executable !== null || invocation.redirects.length))
+    const linkMakers = invocations.filter(invocation => (outsideGit || !gitInvocation(invocation)) && makesLink(invocation))
     if (linkMakers.length && invocations.some(invocation => !linkMakers.includes(invocation) && (invocation.executable !== null || invocation.redirects.length))
         || linkMakers.length > 1) {
         hold(deny(`Refusing ${named(linkMakers[0]!)} with other commands in one call: it makes or moves a symbolic link, which a later command could move to where its text reaches a guard control or a secret, and the guard judges every other path against the filesystem before the call. Make or move the link on its own, then run the rest in a later call.`))
@@ -2973,9 +2793,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // A host passed to printf is still an argument and remains a hard denial.
         // `curl -K -` and `wget -i -` read their URLs from a heredoc.
         const fetcher = ['curl', 'wget'].includes(posix.basename(invocation.executable ?? ''))
-        if (invocation.words.some(word => ['executable', 'argument', 'environment-assignment-value', 'wrapper-option-value'].includes(word.role) && LIVE_SECRET_KEY.test(word.value))) {
-            hold(deny('Refusing a live secret key written into the command: a command line lands in shell history and agent transcripts. Read the key from the environment the process runs with, for example through `varlock run -- <command>`, and never paste it.'))
-        }
+        if (invocation.words.some(word => ['executable', 'argument', 'environment-assignment-value', 'wrapper-option-value'].includes(word.role) && LIVE_SECRET_KEY.test(word.value))) hold(liveKeyDenial)
+        // Inline interpreter code can do anything a command can, so its text meets the whole deny list.
+        for (const code of inlineCode(invocation)) { const refusal = textDenial(code, invocation.cwd); if (refusal) hold(refusal) }
         for (const word of invocation.words) {
             if (!['executable', 'argument', 'environment-assignment-value', ...fetcher ? ['heredoc-body'] : []].includes(word.role)) continue
             if (resolved.hostedDatabaseHosts.some((host) => hostUsed(word.value, host))) hold(deny('Refusing executable use of a declared hosted database host.'))
@@ -2998,7 +2818,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         }
         const git = gitInvocation(invocation)
         unseenMembers = writesUnseenMembers(invocation, git)
-        linking = linkMakers.includes(invocation)
+        linking = makesLink(invocation)
         moving = git?.verb === 'mv' || posix.basename(invocation.executable ?? '') === 'mv'
         // Claude Code 2.1.323 loaded no hook from the cockpit's local settings for a session started at or below
         // a `.git` entry under the root (measured 2026-11-13, reproduced with an empty .git directory, a gitdir
@@ -3040,9 +2860,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const executableName = posix.basename(invocation.executable ?? '')
         const removed = removedOperands(invocation, git)
         for (const path of removed?.paths ?? []) {
-            if (inspectRemoval(path, removed!.cwd) && !approvalBarriers.has(invocation)) {
-                approvalBarriers.set(invocation, ask('Removal outside configured roots requires human approval.'))
-            }
+            if (inspectRemoval(path, removed!.cwd)) hold(deny(`Refusing to remove ${shownGuardWord(path)}: it is outside the configured roots and no [guards] write_paths entry covers it. A person removes it.`))
         }
         const { operands } = launchedCockpit(invocation)
         const access = accesses.get(invocation)
@@ -3050,8 +2868,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // as surely as `cat .env`, and `$(< .env)` with no command at all. The read-only profile inspects a
         // classified command's inputs; any other command's are inspected here.
         const inputs = invocation.redirects.filter((redirect) => !redirect.write).map((redirect) => redirect.target)
-        if (!access && inputs.length && !inspectReadOnly({ cwd: invocation.cwd, reads: inputs, trees: [], listings: [] }, chainReadOnly) && !approvalBarriers.has(invocation)) {
-            approvalBarriers.set(invocation, searchBlocker ?? ask(`${named(invocation)} reads ${shownGuardWord(inputs[0]!)} through an input redirect, which the guard cannot prove holds no secret: a link, an undeclared .env name, or a file outside the configured roots. Name a file the read-only profile can inspect.`))
+        if (!access && inputs.length && !inspectReadOnly({ cwd: invocation.cwd, reads: inputs, trees: [], listings: [] }, chainReadOnly) && searchBlocker && !approvalBarriers.has(invocation)) {
+            approvalBarriers.set(invocation, searchBlocker)
         }
         const writes: VisibleWrites | undefined = git?.verb === 'mv' ? (() => {
             const transfer = transferOperands('mv', git.args)
@@ -3072,12 +2890,12 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (writes.uncertain) hold(unavailable(`${named(invocation)} uses a form of this writer the guard does not model, so it cannot tell where it writes. `
                 + 'Use one it reads: `tar -xf <archive> -C <dir>`, `tar -czf <archive> <paths>` or `tar -tf <archive>`, `rsync -a <src>/ <dst>/` for a recursive copy, '
                 + 'or `cp`, `mv`, `ln` and `install` with plain operands; otherwise a person runs it.'))
-        } else if (!access && git?.verb !== 'add') {
-            // Staging writes the index, never the named file, and its operands are inspected as staged below.
+        } else if (!access && git?.verb !== 'add' && git?.verb !== 'commit') {
+            // Staging writes the index, never the named file, and its operands, and a commit's, are inspected as staged below.
             for (const arg of git?.args ?? operands) {
                 if (++possibleControlCount <= GUARD_INPUT_LIMITS.paths) {
                     inspectPossibleControlOperand(invocation, arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg, git?.cwd ?? invocation.cwd,
-                        git !== undefined || OUTSIDE_WRITERS.has(executableName) || !knownTool(invocation, resolved.allowedRoots))
+                        git !== undefined || OUTSIDE_WRITERS.has(executableName))
                 }
             }
             if (possibleControlCount > GUARD_INPUT_LIMITS.paths) hold(unavailable('Potential guard control operand limit exceeded.'))
@@ -3143,11 +2961,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const sources = sourceTrees(invocation)
         const othersReadOnly = invocations.every(other => other === invocation || accesses.get(other) !== undefined || other.executable === null && !other.redirects.some(redirect => redirect.write))
         if (sources?.paths.length && !inspectReadOnly({ cwd: invocation.cwd, reads: [], trees: sources.paths, listings: [], ...sources.followsLinks ? { followsLinks: true as const } : {} }, othersReadOnly)
-            && !approvalBarriers.has(invocation)) {
-            approvalBarriers.set(invocation, searchBlocker ?? ask(`${named(invocation)} reads every file below its sources, which the guard cannot prove hold no secret. Name the files it needs.`))
-        }
-        if (posix.basename(invocation.executable ?? '') === 'unzip' && invocation.argv.some(arg => /^-[a-zA-Z]*[pc]/.test(arg))) {
-            holdBoundary(invocation, ask(`${named(invocation)} prints the files an archive holds, which the guard cannot list. Extract it into the cockpit and read the files by name.`))
+            && searchBlocker && !approvalBarriers.has(invocation)) {
+            approvalBarriers.set(invocation, searchBlocker)
         }
         // A word whose expansion the guard cannot see decides nothing it inspects: a path read, written,
         // removed or pushed, or a cockpit command. Elsewhere it is the program's own business.
@@ -3159,28 +2974,17 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const globRead = READING_EXECUTABLES.has(executableName) && invocation.dynamic === true && !writes && !removed?.paths.length && !optioned && !git && !cockpitCommand(invocation)
             && invocation.words.every(word => !word.dynamic || word.role === 'argument' && plainGlob(word) && inRoots(posix.resolve(invocation.cwd, word.value))
                 && !globReachesProtected(word.value, invocation.cwd))
-        if (invocation.dynamic && !loopRead && !globRead && (writes || removed?.paths.length || optioned || git || READING_EXECUTABLES.has(executableName) || cockpitCommand(invocation)
-            || NAME_READERS.has(executableName) || executableName === 'gh' && /^(?:gist (?:create|edit)|release (?:create|upload)|(?:secret|variable) set)$/.test(invocation.argv.slice(0, 2).join(' ')))) {
+        // A reader or a writer holding one runs as a program the guard cannot read does; the name-based denials still
+        // apply to every word it spells. A removal, a Git write or push, and a cockpit command are judged by the value.
+        const gitWrites = git !== undefined && (GUARD_BRANCH_VERBS.has(git.verb) || GIT_TREE_WRITERS.has(git.verb) || ['add', 'rm', 'clean', 'branch', 'tag', 'update-ref', 'config'].includes(git.verb))
+        if (invocation.dynamic && !loopRead && !globRead && (removed?.paths.length || gitWrites || cockpitCommand(invocation)
+            || executableName === 'gh' && /^(?:gist (?:create|edit)|release (?:create|upload)|(?:secret|variable) set)$/.test(invocation.argv.slice(0, 2).join(' ')))) {
             const word = invocation.words.find(item => item.dynamic)?.value ?? ''
-            holdBoundary(invocation, ask(`${named(invocation)} holds ${unseen(word)}, whose value the guard cannot see, where it decides which file is read or written or which branch is pushed. Write the value out.`))
+            holdBoundary(invocation, ask(`${named(invocation)} holds ${unseen(word)}, whose value the guard cannot see, where it decides which file is removed, what Git writes or which branch is pushed. Write the value out.`))
         }
-        // Any program may read what an argument names, so one holding a command substitution, or a variable this
-        // call set to one or to a path outside the roots, names a file the guard cannot see; echo and printf only print it.
-        const hidden = open && invocation.executable !== null && !['echo', 'printf'].includes(executableName) ? invocation.words.find(word => word.role === 'argument' && word.dynamic
-            && (/\$\(|`/.test(word.value) || references(word.value).some(name => opaqueNames.has(name)))) : undefined
-        if (hidden) holdBoundary(invocation, ask(hidden.value === XARGS_INPUT
-            ? `${named(invocation)} takes the arguments xargs reads from standard input, so the guard cannot see which file they name. Name the files, or run the command on each by name.`
-            : `${named(invocation)} holds ${shownGuardWord(hidden.value)}, a command substitution or a variable set to one or to a path outside the configured roots, so the guard cannot see which file it names. Write the value out.`))
-        // A variable joined to literal text spells a name neither part shows: `"${F}nv"` with F=app/.e is app/.env.
-        const joined = open && invocation.executable !== null && !(executableName === 'echo' || executableName === 'printf' && invocation.argv[0] !== '-v')
-            ? invocation.words.find(word => word.role === 'argument' && word.dynamic && !word.value.startsWith('-') && word.value.includes('$')
-                && !/^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/.test(word.value)) : undefined
-        if (joined) holdBoundary(invocation, ask(`${named(invocation)} holds ${shownGuardWord(joined.value)}, which joins a variable to other text, so the guard cannot see which file it names. Write the path out.`))
         const configuration = toolConfigurationWrite(invocation)
         if (configuration === 'refuse') hold(deny(`Refusing ${named(invocation)}: it changes the person's own tool configuration or installs outside the configured roots, which every later command, a person's included, then runs with. A person runs it.`))
         else if (configuration === 'project') holdBoundary(invocation, ask(`${named(invocation)} writes the project's .npmrc, whose settings npm applies to every later npm and npx command there. A person approves it or edits the file.`))
-        const remote = remoteInstallSource(invocation)
-        if (remote !== undefined) holdBoundary(invocation, ask(`${named(invocation)} installs ${shownGuardWord(remote)}, a package from a URL or a Git host, whose install scripts run code the guard cannot read. Install it from the registry by name, or download it into the cockpit and read it first.`))
         // Printing the environment, or a variable whose name marks it as a secret, prints credentials.
         if (dumpsEnvironment(invocation)) {
             hold(deny('Refusing to print the environment or a variable named as a secret: its value is a credential. Print a non-secret variable by name, or list names with `cockpit env keys`.'))
@@ -3201,7 +3005,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             && manifestFacts(nodeScript, invocation.cwd)?.name === '@b00dea/cockpit'
         if (copied && /^(?:sync|upgrade)$/.test(invocation.argv[invocation.argv.indexOf(nodeScript!) + 1] ?? '')) {
             hold(deny(`Refusing ${named(invocation)}: it runs sync or upgrade from a copy of cockpit, which would make the guard run that copy. A person runs \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>\` in a terminal.`))
-        } else if (copied) holdBoundary(invocation, ask(`${named(invocation)} runs a copy of cockpit outside the installed package. Run the installed \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs\`, or a person runs it.`))
+        }
         // `gh api` writes repository state outside any push the guard sees: a ref, a file committed to a
         // branch, a merge, or branch protection.
         const api = posix.basename(invocation.executable ?? '') === 'gh' && invocation.argv[0] === 'api' ? ghApiCall(invocation.argv.slice(1)) : undefined
@@ -3213,7 +3017,6 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 || protectedBranch(/(?:^|\/)branches\/([^/?]+)/.exec(api.endpoint)?.[1]) || fieldBranch !== undefined) {
                 hold(deny('Refusing a GitHub API write that moves, forces or deletes a branch, commits or merges into a protected branch, or changes branch protection: push to a work branch instead, or a person runs it.'))
             }
-            holdBoundary(invocation, ask(`${named(invocation)} writes through the GitHub API (${api.method}${api.endpoint === 'graphql' ? ' GraphQL mutation' : ''}), which changes the repository or its host outside any push the guard judges. A person runs it, or approves it here.`))
         }
         // gh's own commands that merge into, force or delete a repository's branches, or change who may.
         const gh = posix.basename(invocation.executable ?? '') === 'gh' ? invocation.argv.filter((arg, at) => !arg.startsWith('-') && !['-R', '--repo'].includes(invocation.argv[at - 1] ?? '')).slice(0, 2).join(' ') : ''
@@ -3227,15 +3030,16 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         } else if (GH_PUBLISHES.test(gh)) {
             holdBoundary(invocation, ask(`${named(invocation)} publishes a release or a secret, deletes from the repository's host, or starts CI runs that spend its minutes. A person runs it, or approves it here.`))
         }
-        const prefixed = (invocation.words.filter((word) => word.role === 'environment-assignment-value') as ReadonlyArray<{ readonly value: string; readonly name?: string }>).find(steers)
-        if (open && prefixed) holdBoundary(invocation, ask(prefixed.name === undefined ? 'An environment assignment the guard could not name requires human approval.'
-            : `${named(invocation)} sets ${prefixed.name}, which changes what Git, its hooks, Docker, the shell or the command search path runs. Run it without that assignment.`))
         // Exported variables reach every later command in the call, so they steer it as a prefix assignment does.
         const program = posix.basename(invocation.executable ?? '')
-        if (['export', 'declare', 'typeset', 'readonly', 'local'].includes(program)) {
-            const exported = invocation.argv.filter(arg => /^[A-Za-z_][A-Za-z0-9_]*=/.test(arg)).map(arg => ({ name: arg.slice(0, arg.indexOf('=')), value: arg.slice(arg.indexOf('=') + 1) }))
-            const steered = exported.find(steers)
-            if (steered) holdBoundary(invocation, ask(`${named(invocation)} sets ${steered.name}, which changes what Git, its hooks, Docker, the shell or the command search path runs for the rest of the call. Run it without that assignment.`))
+        const assigned = [...invocation.words.filter((word) => word.role === 'environment-assignment-value') as ReadonlyArray<{ readonly value: string; readonly name?: string }>,
+            ...['export', 'declare', 'typeset', 'readonly', 'local'].includes(program) ? invocation.argv.filter(arg => /^[A-Za-z_][A-Za-z0-9_]*=/.test(arg))
+                .map(arg => ({ name: arg.slice(0, arg.indexOf('=')), value: arg.slice(arg.indexOf('=') + 1) })) : []]
+        for (const assignment of assigned) {
+            const effect = steers(assignment)
+            if (effect === 'deny') hold(deny(`Refusing ${named(invocation)}: setting ${assignment.name} skips the hooks a commit or push runs, as --no-verify does. Fix what the hook reports instead.`))
+            else if (effect === 'ask') holdBoundary(invocation, ask(assignment.name === undefined ? 'An environment assignment the guard could not name requires human approval.'
+                : `${named(invocation)} sets ${assignment.name}, which changes where Git looks for its repository and configuration, what a shell runs as it starts, or whether an agent is marked as running. Run it without that assignment.`))
         }
         // Removing a session marker, or every variable with `env -i`, hides that an agent runs what follows.
         const marker = (word: string) => /^(?:CLAUDECODE|CODEX_THREAD_ID|OPENCODE)$/.test(word)
@@ -3250,58 +3054,77 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // `f=.env; nl "$f"` and `for f in .env; do nl "$f"; done` read the names they hold.
         const held = invocation.words.filter((word) => word.role === 'environment-assignment-value' || invocation.executable === null && word.role === 'argument')
         // An unexpanded glob in a command's own words names whatever it matches.
-        const globs = open && !access ? invocation.words.filter((word) => word.dynamic && word.role === 'argument' && /[*?[]/.test(word.value) && !word.value.includes('$')) : []
-        for (const word of [...held, ...globs]) {
+        const globs = !access ? invocation.words.filter((word) => word.dynamic && word.role === 'argument' && /[*?[]/.test(word.value) && !word.value.includes('$')) : []
+        for (const word of [...held, ...held.flatMap(item => defaultWords(item.value).map(value => ({ role: item.role, value }))), ...globs]) {
             const lexical = posix.resolve(invocation.cwd, word.value)
             const folded = fold(lexical)
             const glob = (globs.includes(word) || held.includes(word) && plainGlob(word)) && new RegExp(`^${posix.basename(folded).split(/(\*+|\?|\[[^\]]*\])/).map((part, at) => at % 2
                 ? part.startsWith('*') ? '.*' : part === '?' ? '.' : part : part.replace(/[.+^${}()|\\]/g, '\\$&')).join('')}$`)
-            const secret = glob ? SECRET_SAMPLES.some((name) => glob.test(name)) || credential(posix.dirname(folded))
-                : dotenvSecret(folded) || folded.split('/').includes('.secrets') || resolved.instances.some((item) => within(folded, fold(item.path))) || inSecretPath(folded) || credential(folded)
-            if (secret && !approvalBarriers.has(invocation)) approvalBarriers.set(invocation, ask(`${invocation.executable === null ? 'This command' : named(invocation)} holds ${shownGuardWord(word.value)}, which names or can match an environment file, secrets directory, declared instance or credential store. Name the files it needs.`))
+            // A shell glob matches a leading dot only when it spells one, so `*` reaches no `.env`; a key file a glob
+            // matches inside the roots is the project's, and a credential store is judged by its directory.
+            const secret = glob ? posix.basename(folded).startsWith('.') && SECRET_SAMPLES.some((name) => name.startsWith('.') && glob.test(name)) || credential(posix.dirname(folded))
+                || plainGlob(word) && globReachesProtected(word.value, invocation.cwd) || globNamesProtected(word.value, invocation.cwd)
+                : secretNameDenial(folded) !== undefined
+            if (secret) hold(deny(`Refusing ${invocation.executable === null ? 'this command' : named(invocation)}: it holds ${shownGuardWord(word.value)}, which names or can match an environment file, secrets directory, declared instance or credential store. Name the files it needs.`))
         }
-        // A declared rule admits a command the profile cannot classify, but never past the secret names
-        // or the roots: macOS `cat a .env -x` prints .env before it rejects -x, and `git show HEAD:.env`
-        // prints a committed one. Each argument is judged whole, after `=` and after `:`.
-        // A visible writer's operands already meet the stronger mutation and link denials above.
-        if (!access && !writes && !removed?.paths.length && (open || resolved.declaredAllows.some(rule => ruleMatches(invocation, rule)))) {
-            // A known tool reads, prints or sends what it names; another program, such as `docker compose
-            // --env-file .env`, may only pass the name on, so a person decides it.
-            const prints = READING_EXECUTABLES.has(invocation.executable!) || invocation.executable !== null && KNOWN_TOOLS.has(posix.basename(invocation.executable))
-            const secretName = (decision: GuardDecision) => prints ? hold(decision)
-                : !approvalBarriers.has(invocation) && approvalBarriers.set(invocation, ask(`${named(invocation)} names an environment file, secrets directory or declared instance, so a [guards] allow rule does not admit it. A person approves it or runs it, or declares it as a project command.`))
-            // Words of a nested command, after a proven cockpit's `--` or the program a launcher runs, are
-            // judged as that command, so they are not paths this one reads; nor is a proven cockpit launcher.
-            const followed = invocations[invocations.indexOf(invocation) + 1]
-            const nestedFrom = provenCockpit(invocation) ? (invocation.argv.indexOf('--') < 0 ? invocation.argv.length : invocation.argv.indexOf('--'))
-                : followed?.wrapped && launchedBy(followed, invocation) ? invocation.argv.length - followed.argv.length - 1 : invocation.argv.length
-            // A sed or awk script, or a search pattern, is the program's text, not a path it reads.
-            const scriptAt = ['sed', 'awk', 'grep', 'rg', 'jq'].includes(executableName) && !invocation.argv.some(arg => /^(?:-e|-f|--expression|--regexp|--file)(?:=|$)/.test(arg))
-                ? invocation.argv.findIndex(arg => !arg.startsWith('-')) : -1
-            const launcherPath = (lexical: string) => resolved.cockpitLaunchers.some((item) => [item.executable, ...item.argv]
-                .some((spelled) => spelled.includes('/') && posix.resolve(item.cwd, spelled) === lexical))
-            for (const [position, word] of invocation.argv.entries()) {
-                // An attached short option value, as in `sed -f.env`, is a candidate too.
-                const attached = /^-[^-]/.test(word) && word.length > 2 ? [word.slice(2)] : []
-                // `@file` is how curl and gh name a file whose content they send.
-                for (const candidate of new Set([word, word.slice(word.indexOf('=') + 1), word.slice(word.lastIndexOf(':') + 1), word.slice(word.lastIndexOf('@') + 1), ...attached])) {
-                    if (!candidate || candidate.startsWith('-') || !scalar(candidate)) continue
-                    const lexical = posix.resolve(invocation.cwd, candidate)
-                    const folded = fold(lexical)
-                    if (dotenvSecret(folded)) secretName(dotenvDenial)
-                    if (credential(folded)) hold(credentialDenial)
-                    holdGitConfigRead(lexical)
-                    // In the allow default any command may read what it names, so a path outside the roots
-                    // follows external_reads for every command, not only the reading ones.
-                    if (open && position < nestedFrom && position !== scriptAt && !launcherPath(lexical) && (candidate === word || candidate === word.slice(word.indexOf('=') + 1)) && (posix.isAbsolute(candidate) || candidate.split('/').includes('..'))
-                        && !lexical.startsWith('/dev/') && !resolved.allowedRoots.some(root => within(lexical, root)) && !readableOutside(lexical) && !approvalBarriers.has(invocation)) {
-                        approvalBarriers.set(invocation, ask(`${named(invocation)} names ${shownGuardWord(candidate)}, outside the configured roots. A person can list the location under [guards] read_paths or set [guards] external_reads = "native", then sync; or a person runs it.`))
-                    }
-                    if (folded.split('/').includes('.secrets') || resolved.instances.some((item) => within(folded, fold(item.path)))) secretName(readDenial)
-                    if (inSecretPath(folded)) secretName(secretPathDenial)
-                    if (READING_EXECUTABLES.has(invocation.executable!) && position !== scriptAt && !resolved.allowedRoots.some(root => within(lexical, root)) && !readableOutside(lexical) && !approvalBarriers.has(invocation)) {
-                        approvalBarriers.set(invocation, ask(`${named(invocation)} names ${shownGuardWord(candidate)}, outside the configured roots, with words the read-only profile cannot classify, so a [guards] allow rule does not admit it. Run it as the rule names it, or a person reviews and admits this complete argv.`))
-                    }
+        // Words that spell a forced or protected-branch push, or skipped hooks, through a launcher the guard does not
+        // know are refused as the push itself is; Git's own words meet the exact push rules above.
+        if (!git) {
+            const spelled = [invocation.executable ?? '', ...invocation.argv]
+            const refusal = gitWordsDenial(spelled)
+            const launches = invocations[invocations.indexOf(invocation) + 1]
+            if (refusal) hold(refusal)
+            // A push whose destination Git would resolve asks, unless the launched git is judged with the repository's facts.
+            else if (spelledPush(spelled)?.decision === 'ask' && !(launches?.wrapped && launchedBy(launches, invocation))) {
+                holdBoundary(invocation, ask(`${named(invocation)} spells a push whose destination Git resolves from the repository, which the guard does not read through this program. Name the branch, \`git push origin <branch>:<branch>\`, or run git push itself.`))
+            }
+        }
+        // Any program may read, print or send what it names, whatever it is and wherever the word sits, after a
+        // launcher, in a substitution or fed through a pipe, so naming a secret refuses it. A declared rule admits
+        // a command the profile cannot classify, but never past the secret names or the roots: macOS `cat a .env -x`
+        // prints .env before it rejects -x, and `git show HEAD:.env` prints a committed one. Each argument is judged
+        // whole, after `=` and after `:`. A visible writer's operands already meet the stronger mutation and link
+        // denials above, and a classified read's paths the read checks, so only the roots are judged here for the rest.
+        const unclassified = !access && !writes && !removed?.paths.length
+        // Words of a nested command, after a proven cockpit's `--` or the program a launcher runs, are
+        // judged as that command, so they are not paths this one reads; nor is a proven cockpit launcher.
+        const followed = invocations[invocations.indexOf(invocation) + 1]
+        const nestedFrom = provenCockpit(invocation) ? (invocation.argv.indexOf('--') < 0 ? invocation.argv.length : invocation.argv.indexOf('--'))
+            : followed?.wrapped && launchedBy(followed, invocation) ? invocation.argv.length - followed.argv.length - 1 : invocation.argv.length
+        // A sed or awk script, or a search pattern, is the program's text, not a path it reads: `rg '\.env' docs` runs.
+        const scriptAt = ['sed', 'awk', 'grep', 'rg', 'jq'].includes(executableName) && !invocation.argv.some(arg => /^(?:--expression|--regexp|--file|--from-file)(?:=|$)|^-[a-zA-Z]*[ef]$/.test(arg))
+            ? invocation.argv.findIndex(arg => !arg.startsWith('-')) : -1
+        const launcherPath = (lexical: string) => resolved.cockpitLaunchers.some((item) => [item.executable, ...item.argv]
+            .some((spelled) => spelled.includes('/') && posix.resolve(item.cwd, spelled) === lexical))
+        for (const [position, word] of invocation.argv.entries()) {
+            // `git log -L <range>:<file>` names its file after the colon; the range may start with `/`, a regular expression.
+            const candidates = git && invocation.argv[position - 1] === '-L' ? [word.slice(word.lastIndexOf(':') + 1)] : undefined
+            // An attached short option value, as in `sed -f.env`, is a candidate too.
+            const attached = /^-[^-]/.test(word) && word.length > 2 ? [word.slice(2)] : []
+            const defaults = defaultWords(word)
+            // `@file` is how curl and gh name a file whose content they send.
+            for (const candidate of new Set(candidates ?? [word, word.slice(word.indexOf('=') + 1), word.slice(0, Math.max(word.indexOf(':'), 0)), word.slice(word.lastIndexOf(':') + 1), word.slice(word.lastIndexOf('@') + 1), ...attached, ...defaults])) {
+                if (!candidate || candidate.startsWith('-') || !scalar(candidate)) continue
+                // Git resolves its operands from the directory -C names.
+                const lexical = posix.resolve(git?.cwd ?? invocation.cwd, candidate)
+                const folded = fold(lexical)
+                // A classified Git, search or script read's words, patterns and option values among them, meet the read checks above instead.
+                const secret = position === scriptAt || access && (git || ['sed', 'awk', 'grep', 'rg', 'jq'].includes(executableName)) ? undefined : secretNameDenial(folded)
+                // A writer's own refusal of the same name says more, so it stands.
+                if (secret && !hardDeny) hold(secret)
+                if (!unclassified) continue
+                // Every spelling counts here, `@file` and attached values included, so an allow answer never covers an outside
+                // path. Git resolves its operands from its own directory, which the Git checks above inspect.
+                if (position < nestedFrom && position !== scriptAt && !gitInvocation(invocation) && !URL_OPERAND.test(word) && !launcherPath(lexical) && (posix.isAbsolute(candidate) || candidate.split('/').includes('..')) && !lexical.startsWith('/dev/') && !inRoots(lexical)) outside = true
+                holdGitConfigRead(lexical)
+                // In the allow default any command may read what it names, so a path outside the roots
+                // follows external_reads for every command, not only the reading ones.
+                if (position < nestedFrom && position !== scriptAt && !launcherPath(lexical) && (candidate === word || candidate === word.slice(word.indexOf('=') + 1)) && (posix.isAbsolute(candidate) || candidate.split('/').includes('..'))
+                    && !lexical.startsWith('/dev/') && !resolved.allowedRoots.some(root => within(lexical, root)) && !readableOutside(lexical) && !approvalBarriers.has(invocation)) {
+                    approvalBarriers.set(invocation, ask(`${named(invocation)} names ${shownGuardWord(candidate)}, outside the configured roots. A person can list the location under [guards] read_paths or set [guards] external_reads = "native", then sync; or a person runs it.`))
+                }
+                if (READING_EXECUTABLES.has(invocation.executable!) && position !== scriptAt && !resolved.allowedRoots.some(root => within(lexical, root)) && !readableOutside(lexical) && !approvalBarriers.has(invocation)) {
+                    approvalBarriers.set(invocation, ask(`${named(invocation)} names ${shownGuardWord(candidate)}, outside the configured roots, with words the read-only profile cannot classify, so a [guards] allow rule does not admit it. Run it as the rule names it, or a person reviews and admits this complete argv.`))
                 }
             }
         }
@@ -3330,10 +3153,10 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             return visibleLoops.get(variable)!.map(item => classifyReadOnlyInvocation({ ...literal,
                 argv: invocation.argv.map(arg => /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/.test(arg) ? item : arg),
                 words: invocation.words.map(word => word.dynamic ? { role: word.role, value: item } : word) },
-                { ripgrepConfigActive: resolved.ripgrepConfigActive, wideSearch: open }))
+                { ripgrepConfigActive: resolved.ripgrepConfigActive }))
         })() : undefined
         const globAccess = globRead ? (() => { const { dynamic: _, ...literal } = invocation
-            return classifyReadOnlyInvocation({ ...literal, words: invocation.words.map(({ dynamic: __, ...word }) => word) }, { ripgrepConfigActive: resolved.ripgrepConfigActive, wideSearch: open }) })() : undefined
+            return classifyReadOnlyInvocation({ ...literal, words: invocation.words.map(({ dynamic: __, ...word }) => word) }, { ripgrepConfigActive: resolved.ripgrepConfigActive }) })() : undefined
         if (loopAccesses?.length && loopAccesses.every(item => item !== undefined && inspectReadOnly(item, chainReadOnly))) readOnly.add(invocation)
         else if (globAccess && inspectReadOnly(globAccess, chainReadOnly)) readOnly.add(invocation)
         else if (access && inspectReadOnly(access, chainReadOnly || nativeGit && alone, approvedExternalRead)) readOnly.add(invocation)
@@ -3343,11 +3166,11 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (cockpitCommand(invocation) && !readOnly.has(invocation) && !resolved.cockpitInvocations.some((profile) => profile.executable === invocation.executable
             && profile.cwd === invocation.cwd && profile.argv.length === invocation.argv.length && profile.argv.every((word, at) => word === invocation.argv[at]))) {
             // A word reaching into the installed package without running it reads or copies the guard's own code.
-            const launches = ['cockpit', 'cockpit.mjs', 'node', 'nodejs', 'npx', 'npm', 'pnpm', 'pnpx', 'yarn', 'bun', 'bunx', 'tsx'].includes(executableName)
+            // A package manager reading the registry about the package, as `npm view @b00dea/cockpit versions`, runs nothing.
+            const registryRead = ['npm', 'pnpm', 'yarn', 'bun'].includes(executableName) && /^(?:view|v|info|show|outdated|ls|list|why|explain|search)$/.test(invocation.argv.find(arg => !arg.startsWith('-')) ?? '')
+            const launches = !registryRead && ['cockpit', 'cockpit.mjs', 'node', 'nodejs', 'npx', 'npm', 'pnpm', 'pnpx', 'yarn', 'bun', 'bunx', 'tsx'].includes(executableName)
                 || cockpitShaped({ ...invocation, argv: [] }, [...resolved.cockpitPackageDirectories ?? [], ...resolved.executionDirectories])
-            holdBoundary(invocation, ask(launches
-                ? `${named(invocation)} is a cockpit command an agent does not run unprompted: \`sync\`, \`upgrade\` and the other commands that change what agents may do are a person's. A person runs it in a terminal.`
-                : `${named(invocation)} reads or copies the installed cockpit package, the code the guard runs, and a copy run later is not the installed cockpit. A person runs it.`))
+            if (launches) holdBoundary(invocation, ask(`${named(invocation)} is a cockpit command an agent does not run unprompted: \`sync\`, \`upgrade\` and the other commands that change what agents may do are a person's. A person runs it in a terminal.`))
         }
         if (external && (!approvedExternalRead || !readOnly.has(invocation))) approvalBarriers.set(invocation, searchBlocker
             ?? ask(nativeGit
@@ -3374,23 +3197,6 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (fetcher && invocation.argv.some(arg => /^(?:-K|--config|-i|--input-file)(?:=|$)/.test(arg) || /^-K./.test(arg) || /^-i./.test(arg) && executableName === 'wget')) {
             holdBoundary(invocation, ask(`${named(invocation)} reads its URLs or options from a file or standard input, whose hosts the guard does not read. Name the URL on the command line.`))
         }
-        // A download run later in the same call runs whatever the server sent before anyone read it.
-        const runs = executedFile(invocation)
-        if (runs !== undefined && (fetchedFiles.has(runs) || fetchedDirectories.has(posix.dirname(runs)))) {
-            holdBoundary(invocation, ask(`${named(invocation)} runs a file this call downloads, so what runs is whatever the server sends. Download it, read it, then run it in a later call.`))
-        }
-        if (fetcher) {
-            const outputs = [...optioned?.paths ?? [], ...downloads?.paths ?? [], ...invocation.redirects.filter(redirect => redirect.write).map(redirect => redirect.target)]
-            for (const output of outputs) fetchedFiles.add(posix.resolve(invocation.cwd, output))
-            for (const directory of [...downloads?.directories ?? [], ...optioned?.covered ?? []]) fetchedDirectories.add(posix.resolve(invocation.cwd, directory))
-        }
-        // `go run` of a module path builds and runs code fetched from its host.
-        if (executableName === 'go' && invocation.argv[0] === 'run') {
-            const target = invocation.argv.slice(1).find(arg => !arg.startsWith('-'))
-            if (target !== undefined && (target.includes('@') || /^[a-z0-9-]+(?:\.[a-z0-9-]+)+\//i.test(target))) {
-                holdBoundary(invocation, ask(`${named(invocation)} builds and runs a module fetched from its host, which the guard cannot read. Add it to the project and run it by path.`))
-            }
-        }
         if (!git) continue
         // `git apply` and `git am` write the paths a patch's headers name, below the top of the work tree.
         const patchFiles = ['apply', 'am'].includes(git.verb) ? appliedPatches(git) : undefined
@@ -3416,8 +3222,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const globals = gitGlobalOptions(invocation.argv)
         const programKey = globals.keys.find(key => GIT_PROGRAM_KEY.test(key))
         if (programKey) hold(deny(`Refusing \`git -c ${programKey}\`: that key chooses a program Git runs or where it loads configuration from, such as the hooks. Run the command without it.`))
-        if (open && git.verb && !GIT_VERBS.has(git.verb)) holdBoundary(invocation, ask(`${named(invocation)} runs \`git ${shownGuardWord(git.verb).slice(1, -1)}\`, which is not one of Git's development commands: an alias can run a shell command. Spell the command out, or a person runs it.`))
-        if (git.uncertain && (!open || globals.other)) holdBoundary(invocation, ask('Git execution context is not an exact resolved profile: --git-dir, --work-tree, --namespace and --config-env point Git at state the guard does not inspect. Run Git from the repository, or with -C <directory>.'))
+        if (git.verb && !GIT_VERBS.has(git.verb)) holdBoundary(invocation, ask(`${named(invocation)} runs \`git ${shownGuardWord(git.verb).slice(1, -1)}\`, which is not one of Git's development commands: an alias can run a shell command. Spell the command out, or a person runs it.`))
+        if (git.uncertain && globals.other) holdBoundary(invocation, ask('Git execution context is not an exact resolved profile: --git-dir, --work-tree, --namespace and --config-env point Git at state the guard does not inspect. Run Git from the repository, or with -C <directory>.'))
         // Git accepts any unambiguous abbreviation of a long option.
         if (git.args.some(arg => /^--no-veri(?:f|fy)?$/.test(arg)) || git.verb === 'commit' && git.args.some(arg => /^-[a-zA-Z]+$/.test(arg) && /^[^mFcCtSu]*n/.test(arg.slice(1)))) {
             hold(deny('Refusing `--no-verify`: it skips the repository\'s hooks. Run the command without it, and fix what a hook reports.'))
@@ -3427,7 +3233,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // An earlier command in the call (`git switch main && git push`) can move the branch the facts
         // describe, so a decision that rests on the current branch needs every earlier command to be read-only.
         const index = invocations.indexOf(invocation)
-        const headMayMove = invocations.slice(0, index).some((earlier) => earlier.executable !== null && !accesses.get(earlier))
+        const headMayMove = invocations.slice(0, index).some((earlier) => BRANCH_SWITCHERS.has(gitInvocation(earlier)?.verb ?? ''))
+        // A fetch earlier in the call changes FETCH_HEAD and remote-tracking refs, which the tree checks resolve before it runs.
+        const revisionMayMove = headMayMove || invocations.slice(0, index).some((earlier) => gitInvocation(earlier)?.verb === 'fetch')
         const headMoved = ask('An earlier command in this call can change the current branch, which this command acts on. Run it on its own.')
         if (git.verb === 'push' || git.verb === 'send-pack') {
             const operands = git.args.filter(arg => !arg.startsWith('-'))
@@ -3467,7 +3275,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (rewritesHead || configuredRebase) {
             const facts = branchFacts(git.cwd)
             if ((rewritesHead || facts?.pullRebase) && protectedName(facts?.head ?? undefined)) hold(deny('Refusing to rewrite history on a declared protected branch. Switch to a work branch first.'))
-            else if (open && !facts?.head) holdBoundary(invocation, ask('The guard could not tell which branch this rewrites. Run it on a named work branch.'))
+            else if (!facts?.head) holdBoundary(invocation, ask('The guard could not tell which branch this rewrites. Run it on a named work branch.'))
         }
         const moved = git.verb === 'branch' && git.args.some(arg => /^-[a-zA-Z]*[fDdmMcC]/.test(arg) || ['--force', '--delete', '--move', '--copy'].includes(arg))
             || ['checkout', 'switch'].includes(git.verb) && git.args.some(arg => ['-B', '-C', '--force-create'].includes(arg))
@@ -3491,7 +3299,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             else if (instructions.length) holdBoundary(invocation, ask(`${named(invocation)} writes ${shownGuardWord(posix.relative(git.cwd, instructions[0]!) || instructions[0]!)} from the index or another revision: a skill, command or agent file whose frontmatter can register hooks or MCP servers that run outside the guard. A person runs it.`))
             else if (answers.some(answer => answer === undefined)) holdBoundary(invocation, ask(`${named(invocation)} writes another revision's files into the working tree, and the guard could not tell whether they include a guard control: the revision does not resolve, or Git did not answer. A person runs it.`))
             else if (guarded && tree.unnamed) holdBoundary(invocation, ask(`${named(invocation)} brings content into a working tree that holds guard controls, which the guard cannot inspect before it is fetched. Fetch first, then \`git merge --ff-only <remote>/<branch>\`; or a person runs it.`))
-            else if (guarded && headMayMove) holdBoundary(invocation, ask(`${named(invocation)} writes another revision's files into a working tree that holds guard controls, and an earlier command in this call can change that revision first. Run it on its own.`))
+            else if (guarded && revisionMayMove) holdBoundary(invocation, ask(`${named(invocation)} writes another revision's files into a working tree that holds guard controls, and an earlier command in this call can change that revision first. Run it on its own.`))
         }
         // A glob or magic pathspec matches guard controls its spelling does not name, and `--cacheinfo`
         // stages a path inside one word; both are judged against every control.
@@ -3510,11 +3318,14 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (git.verb === 'checkout-index' && git.args.some(arg => arg.startsWith('--prefix'))) {
             holdBoundary(invocation, ask(`${named(invocation)} writes indexed files below a prefix, where no path the guard reads names them. Check out the files in place.`))
         }
-        if (git.verb === 'config' && !gitConfigReads(git.args) && !(open && gitConfigPlainWrite(git.args))) hold(gitMetadataDenial)
+        if (git.verb === 'config' && !gitConfigReads(git.args) && !gitConfigPlainWrite(git.args)) hold(gitMetadataDenial)
         else if (git.verb === 'config' && gitConfigReads(git.args) && !access) holdAsk(invocation, ask(`${named(invocation)} prints configuration the guard cannot bound: a listing, a pattern, another file or a key outside a few sections can print a remote URL, an http header or a credential helper that holds a credential. Read one key with \`git config --get <key>\` from a section such as user, core or init, or a person runs it.`))
         // Git metadata decides what read-only Git commands show and run, so agents do not write it.
-        if (git.verb === 'fetch' && !open) holdAsk(invocation, ask(`${named(invocation)} requires human approval: fetching writes objects and refs under .git, which agents do not write. To compare with another repository, read it in place with \`git -C <repository> log --oneline <branch>\`, which outside the configured roots needs [guards] external_reads = "native" or a grant; otherwise a person runs the fetch, or admits its complete argv under [guards] allow in ${posix.basename(resolved.configPath)}.`))
-        if (!open && git.verb === 'reset' && git.args.includes('--hard') || git.verb === 'clean' && git.args.some((arg) => /^-[^-]*[fdxX]/.test(arg) || arg === '--force')) holdAsk(invocation, ask('Destructive Git operation requires human approval.'))
+        // `git clean -x` also deletes what Git ignores: environment files, machine-local guard state and installed packages.
+        if (git.verb === 'clean' && !git.args.some(arg => /^-[^-]*n/.test(arg) || arg === '--dry-run')) {
+            if (git.args.some(arg => /^-[^-]*[xX]/.test(arg))) hold(deny('Refusing `git clean -x`: it deletes ignored files too, environment files, machine-local guard state and installed packages among them. Clean named paths, or preview with `git clean -n`.'))
+            else if (git.args.some(arg => /^-[^-]*[fd]/.test(arg) || arg === '--force')) holdAsk(invocation, ask('Destructive Git operation requires human approval.'))
+        }
         // `git stash -u` and `-a` stage untracked, and with `-a` ignored, files into a commit and remove them, as `git add -A` stages them.
         const stashVerb = git.args.find(arg => !arg.startsWith('-'))
         if (git.verb === 'stash' && (stashVerb === undefined || ['push', 'save'].includes(stashVerb))
@@ -3538,11 +3349,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 }
             }
         }
-        // The stash's third parent and a walk of every ref or the reflog print files the index does not list.
-        if ((gitPrintsContent(git) || git.verb === 'stash' && stashVerb === 'show' && git.args.some(arg => /^(?:-u|--include-untracked|--only-untracked)$/.test(arg)))
-            && (git.args.some(arg => /(?:^|[^\w])stash(?:@\{|$|\^|~)|^refs\/stash/.test(arg)) || git.args.some(arg => /^--(?:all|reflog|walk-reflogs)$|^-g$/.test(arg))
-                && (git.verb !== 'log' && git.verb !== 'whatchanged' || git.args.some(arg => /^(?:-p|-u|--patch|--patch-with-stat|--patch-with-raw|--cc|-c|--full-diff)$/.test(arg))))) {
-            holdBoundary(invocation, ask(`${named(invocation)} can print the stash or every ref, whose commits hold untracked and ignored files the guard does not list, environment files included. Name a branch or commit.`))
+        // A path outside the repository turns a diff into a whole-tree comparison of files the guard does not judge.
+        if (gitPrintsContent(git) && gitContentOperands(git.verb, git.args).revisions.some(arg => (posix.isAbsolute(arg) || arg.startsWith('..')) && !inRoots(posix.resolve(git.cwd, arg)))) {
+            holdBoundary(invocation, ask(`${named(invocation)} prints files outside the configured roots, which the guard does not judge. A person runs it.`))
         }
         if (git.verb === 'add') {
             let options = true
@@ -3563,6 +3372,15 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             }
             if (!operands) holdBoundary(invocation, ask('Staging without explicit paths requires human approval.'))
         }
+        // `git commit <paths>` stages what it names before it commits, as `git add` would.
+        if (git.verb === 'commit') {
+            for (const arg of gitOperands(git.args, ['-m', '--message', '-F', '--file', '-C', '--reuse-message', '-c', '--reedit-message', '--author', '--date',
+                '--fixup', '--squash', '-t', '--template', '--trailer', '--cleanup', '--pathspec-from-file'])) {
+                pathCount++
+                if (arg.startsWith(':') || /[*?\[]/.test(arg)) hold(unavailable('Unproven Git staging pathspec grammar.'))
+                else inspectStage(invocation, arg, git.cwd)
+            }
+        }
     }
     linking = false
     moving = false
@@ -3582,31 +3400,27 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (racing) unclassifiedAsk ??= ask('This call runs a background job that loops, writes files or runs a Git write, which can change what the guard judged for a later call before it runs. Run it in the foreground, or a person approves it.')
     }
     if (pathCount > GUARD_INPUT_LIMITS.paths) hold(unavailable('Guard path limit exceeded.'))
+    // Named as a person pastes it after `!`, which Claude Code runs without the hook.
+    if (hardDeny === stagedControlDenial) return deny(`Refusing to stage guard files that differ from what the last cockpit sync recorded. Review them, then a person stages them: ! git add -- ${stagedControls.map(shellWord).join(' ')}`)
     if (hardDeny) return hardDeny
     for (const invocation of invocations) {
         const declared = resolved.declaredDenies.find(rule => ruleMatches(invocation, rule))
         if (declared) return deny(`${declared.reason}${declared.fix ? ` Fix: ${declared.fix}` : ''}`)
     }
     if (authorityUnavailable) return authorityUnavailable
-    if (unclassifiedAsk) return unclassifiedAsk
+    const stands = (decision: GuardDecision | undefined): decision is GuardDecision => decision !== undefined
+    if (stands(unclassifiedAsk)) return unclassifiedAsk
     const declaredReasons: string[] = []
     for (const invocation of invocations) {
         const barrier = approvalBarriers.get(invocation)
-        if (barrier) return barrier
-        // A relative entry resolves against whatever directory the command runs in, so no write
-        // protection covers it: a file the agent wrote as packages/web/git runs as `git` there, and a
-        // path-spelled launcher's `#!/usr/bin/env node` finds a planted `node` the same way.
-        if (resolved.searchPathRelativeEntry !== null && invocation.executable !== null) {
-            return ask(`The command search path the agent runs with holds the relative entry ${JSON.stringify(resolved.searchPathRelativeEntry)}${resolved.searchPathRelativeEntry === '' ? ' (an empty entry is the working directory)' : ''}, so ${invocation.executable}, or a program it starts by name, may run a file the agent wrote instead of the permitted program. Remove relative entries from the PATH the agent harness starts with.`)
-        }
-        // Only a proven read-only command may carry `$?`: as any other argument it could name a path the guard never saw.
-        if (invocation.expandsStatus && !readOnly.has(invocation)) return ask(`${named(invocation)} has an argument holding $?, whose digits the guard cannot see, so it cannot prove which path the argument names. Write the value out, or print it with echo on its own.`)
+        if (stands(barrier)) return barrier
         const declared = !invocation.wrapped && !invocation.words.some((word) => word.role === 'environment-assignment-value')
             ? resolved.declaredAllows.find(rule => ruleMatches(invocation, rule)) : undefined
         // A rule admits a command, never a search the guard found would read a secret, nor a hard boundary's ask.
-        if (declared && searchRefusals.has(invocation)) return searchRefusals.get(invocation)!
+        const refusal = searchRefusals.get(invocation)
+        if (stands(refusal)) return refusal
         const boundary = boundaryAsks.get(invocation)
-        if (boundary) return boundary
+        if (stands(boundary)) return boundary
         if (declared) { declaredReasons.push(declared.reason); continue }
         // The parser follows a launcher (`npx`, `pnpm exec`, `bun run`) with the program it runs. A grant
         // or declared command for the launcher spelling admits that program as it always has.
@@ -3615,72 +3429,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             || resolved.projectCommands.some((profile) => profile.executable === launcher.executable && profile.checkoutRoot === launcher.cwd
                 && profile.argv.length === launcher.argv.length && profile.argv.every((word, at) => word === launcher.argv[at])))) continue
         const pending = askDecisions.get(invocation)
-        if (pending) return pending
-        const assignments = invocation.words.filter((word) => word.role === 'environment-assignment-value') as ReadonlyArray<{ readonly value: string; readonly name?: string }>
-        if (!open && (invocation.wrapped || assignments.length)) return ask('Wrapped or environment-modifying invocation requires human approval.')
-        // Git's location variables point it at state the guard does not inspect, HOME and XDG_CONFIG_HOME
-        // choose the configuration that names hooks, and a relative PATH entry runs a file the agent wrote.
-        const steering = assignments.find(steers)
-        if (steering) return ask(steering.name === undefined ? 'An environment assignment the guard could not name requires human approval.'
-            : `${named(invocation)} sets ${steering.name}, which changes what Git, the shell or the command search path runs. Run it without that assignment.`)
-        if (invocation.executable === null) continue
-        const matches = (profile: { executable: string; argv: readonly string[] }, cwd: string) => profile.executable === invocation.executable
-            && cwd === invocation.cwd && profile.argv.length === invocation.argv.length && profile.argv.every((word, i) => word === invocation.argv[i])
-        if (containerCommands.has(invocation) && !open) {
-            if (resolved.projectCommands.some((profile) => matches(profile, profile.checkoutRoot))) continue
-            return ask(`${named(invocation)} runs inside the product container, whose filesystem the guard cannot see, so no read-only proof about host paths covers it. `
-                + `The guard admits it only as a declared build or test command or under a [guards] allow rule; a person approves it or runs it in a terminal, or admits it for good under [guards] allow in ${posix.basename(resolved.configPath)}.`)
-        }
-        if (!readOnly.has(invocation) && !resolved.cockpitInvocations.some((profile) => matches(profile, profile.cwd))
-            && !resolved.projectCommands.some((profile) => matches(profile, profile.checkoutRoot))) {
-            // Under the allow default only three kinds still need a person: a cockpit command its own
-            // table does not admit (sync and upgrade publish policy), a reading command whose shape the
-            // read-only profile could not prove reads no secret, and Git that prints committed content.
-            const executable = posix.basename(invocation.executable)
-            // A blocked list over a shell is never complete: a program the guard does not know can do what
-            // the list forbids without naming it. So the allow default admits only the development tools
-            // it knows, judged by their own rules, and a program running inline code asks.
-            // `pnpm build`, `yarn lint` and `bun run test` run the package's script of that name when it has
-            // one, and package scripts are the project's own commands; only `exec`, `dlx` and `x` name a program.
-            const runner = invocations[invocations.indexOf(invocation) - 1]
-            // With -r or --filter pnpm runs the script in workspace packages, so one any of them declares counts.
-            const packageScript = (launcher: ParsedInvocation, word: string) => {
-                const selects = launcher.argv.slice(0, launcher.argv.length - invocation.argv.length - 1)
-                    .some(arg => ['-r', '--recursive', 'recursive', 'multi', 'm', '-F', '--filter', '--filter-prod'].includes(arg) || /^--filter(?:-prod)?=/.test(arg))
-                const manifest = manifestFacts('.', launcher.cwd, selects)
-                return manifest !== undefined && (manifest.scripts.includes(word) || manifest.workspace?.includes(word) === true)
-            }
-            // pnpm runs any other word as a program, and `bun run` a file, so a word counts as a script only
-            // where the nearest package.json declares it; any other is judged as the program it is.
-            const script = invocation.wrapped && runner !== undefined && launchedBy(invocation, runner) && ['pnpm', 'yarn', 'bun', 'npm'].includes(posix.basename(runner.executable ?? ''))
-                && !runner.argv.slice(0, runner.argv.length - invocation.argv.length - 1).some(word => ['exec', 'dlx', 'x', '--package', '-p'].includes(word))
-                && (packageScript(runner, invocation.executable)
-                    || posix.basename(runner.executable ?? '') === 'bun' && /\.[cm]?[jt]sx?$/.test(invocation.executable) && inRoots(posix.resolve(invocation.cwd, invocation.executable)))
-            const unknown = open && !script && !knownTool(invocation, resolved.allowedRoots)
-            // Compose starts containers that can mount any host path; cockpit's own commands run the declared stack.
-            if (unknown && ['docker', 'docker-compose'].includes(executable) && (executable === 'docker-compose' || invocation.argv.includes('compose'))) {
-                return ask(`${named(invocation)} runs Docker Compose, whose services can mount any host path, which the guard cannot judge. For the cockpit's own stack, run \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config ${posix.basename(resolved.configPath)}\`, or \`logs <service>\` or \`ps\` the same way; otherwise a person approves it or runs it.`)
-            }
-            if (unknown && !cockpitCommand(invocation)) return ask(`${named(invocation)} is not a development tool the guard knows, or runs inline code it cannot judge. A person approves it or runs it, or admits it under [guards] allow in ${posix.basename(resolved.configPath)}.`)
-            // `cat > file <<'EOF'` writes the heredoc to the file the redirect names, which was judged as a write.
-            const heredocWriter = executable === 'cat' && invocation.argv.length === 0 && invocation.redirects.length > 0 && invocation.redirects.every(redirect => redirect.write)
-                && invocation.words.some(word => word.role === 'heredoc-body')
-            if (open && !containerCommands.has(invocation) && !cockpitCommand(invocation) && (!READING_EXECUTABLES.has(executable) || heredocWriter)
-                && !(executable === 'git' && gitPrintsContent(gitInvocation(invocation))) && !ghPrintsContent(invocation)) continue
-            if (open && cockpitCommand(invocation)) return ask(`${named(invocation)} is a cockpit command that publishes policy or is not one an agent runs: \`sync\`, \`upgrade\` and the other commands that change what agents may do are a person's. A person runs it in a terminal.`)
-            const config = /^[\w./@%+=:,-]+$/.test(resolved.configPath) ? resolved.configPath : `'${resolved.configPath.replaceAll("'", "'\\''")}'`
-            if (invocation.executable === 'node' && invocation.argv[0] === '--test') return ask(`${named(invocation)} requires human approval: Node tests execute code. Keep this Node argv: a person admits it under [guards] allow in ${posix.basename(resolved.configPath)}, `
-                + `or declares it as a [[testing.stages]] command in a gate that agents run with \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run --config ${config} --gate <gate>\`; a gate whose stages use another runner does not run this verifier.`)
-            if (open && ghPrintsContent(invocation)) return searchRefusals.get(invocation) ?? ask(`${named(invocation)} prints committed file content or patches that the guard cannot match against what this checkout's repository holds: `
-                + 'another repository\'s pull request, code search across the host, a `gh api` read of files or patches, or a diff run below the repository\'s top directory. Run `gh pr diff` from the top of this checkout, or a person approves it.')
-            // Under the allow default only a reading command or Git printing content reaches here: one whose form the
-            // read-only profile cannot prove reads no secret.
-            if (open && !containerCommands.has(invocation)) return searchRefusals.get(invocation) ?? ask(`${named(invocation)} reads files in a form the guard cannot prove reads no secret. `
-                + 'Use a form it reads: `rg` or `git grep <pattern> -- <path>` to search, `rg -C3` for context, `sed -n \'N,Mp\' <file>` or `tail -n <count> <file>` for a range, '
-                + '`git show <rev> -- <path>` or `git show <rev>:<path>` for history, and the Write tool or `tee <file> <<\'EOF\'` to write. A person approves it otherwise.')
-            return searchRefusals.get(invocation) ?? ask(`${named(invocation)} requires human approval: the guard admits only the read-only commands it classifies, a declared build or test command run from its checkout, and [guards] allow rules. `
-                + `A person approves it or runs it in a terminal. To run tests, use \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run --config ${config} --gate <gate>\`; a person can admit a command for good under [guards] allow in ${posix.basename(resolved.configPath)}.`)
-        }
+        if (stands(pending)) return pending
     }
+    if (outside) return { decision: 'allow', reason: outsideDeferred }
     return declaredReasons.length === 1 ? { decision: 'allow', reason: declaredReasons[0]! } : allowed
 }

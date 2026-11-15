@@ -136,6 +136,9 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             const projection = application!.surfaceManifest
             const { schema, configuredHarnesses, entries } = projection
             expect(projection.manifestSha256).toBe(createHash('sha256').update(JSON.stringify({ schema, configuredHarnesses, entries })).digest('hex'))
+            // The exact command of cockpit's own Claude Code registration stays the same across releases.
+            const settings = entries.find(entry => entry.path === '.claude/settings.json')
+            expect(settings?.kind === 'file' && JSON.stringify(JSON.parse(settings.bytes).hooks.PreToolUse)).toContain('/.cockpit/guards/check.sh')
             expect(configuredHarnesses).toEqual([...DEFAULT_SURFACE_TOOLS].sort())
             const checked = await checkGeneratedEnvironment({ configPath: fixture.configPath })
             expect(checked.kind).toBe('complete')

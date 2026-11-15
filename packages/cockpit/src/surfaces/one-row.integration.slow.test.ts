@@ -244,7 +244,7 @@ describe('one-row generated surface integration', () => {
             if (reason) expect(JSON.parse(guarded.stdout)).toEqual({ hookSpecificOutput: {
                 hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason,
             } })
-            else expect(guarded.stdout).toBe('')
+            else expect(JSON.parse(guarded.stdout).hookSpecificOutput.permissionDecision).toBe('allow')
             expect(guarded.stdout + guarded.stderr).not.toContain(credentialCanary)
         }
         // The installed guard walks a staged directory for itself, so a nested secrets directory it finds is denied.

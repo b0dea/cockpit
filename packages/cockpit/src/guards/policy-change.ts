@@ -135,8 +135,6 @@ const CHANGE_RULES: Rules = {
     'guards.unresolved': (before: string | undefined, after: string | undefined, at: string) => before === 'deny' && after !== 'deny' ? [at] : [],
     // A write path is a location outside the roots agents may write.
     'guards.write_paths': onlyRemoves,
-    // Allowing by default admits every command outside the blocked list; returning to ask narrows.
-    'guards.default': (before: string | undefined, after: string | undefined, at: string) => after === 'allow' && before !== 'allow' ? [at] : [],
     'guards.hosted_db_hosts': onlyAdds,
     'guards.vendor_endpoint_hosts': onlyAdds,
     'guards.protected_branches': onlyAdds,

@@ -92,7 +92,7 @@ export const READINESS_CATALOGUE: readonly ReadinessEntry[] = [
         needs: 'the guard keeps agents from reading secret files, but a committed one is in every clone already',
         fix: 'stop tracking the file, ignore it, rotate what it held, and commit a .env.example of the variable names' },
     { id: 'harness-path-absolute', level: 'recommended', appliesTo: BOTH, codes: [C.GUARD_SEARCH_PATH_RELATIVE],
-        needs: 'the guard asks a person before every agent command while the PATH the agent harness runs with holds a relative entry, and a tool that cannot ask a person refuses what it asks about',
+        needs: 'a relative entry in the PATH the agent harness runs with lets a file an agent wrote run in place of a command the guard allowed',
         fix: 'remove relative and empty entries from the PATH the agent harness starts with' },
     { id: 'codex-hook-trusted', level: 'recommended', appliesTo: BOTH, codes: [C.CODEX_HOOK_UNTRUSTED, C.CODEX_HOOK_SOURCE_MISMATCH], tools: ['codexcli'],
         needs: 'Codex must discover matching generated hooks in the original checkout, and a person on this machine must trust that source',

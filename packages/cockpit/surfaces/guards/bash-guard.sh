@@ -12,6 +12,11 @@ case "$source_path" in
 esac
 # The hook's check passes the root it verified, which a linked directory cannot move.
 if [ -n "${COCKPIT_GUARD_CHECKED_ROOT:-}" ]; then
+    # One check serves every cockpit on the machine; one from another release may hand this script other values.
+    if [ "${COCKPIT_GUARD_CHECK_PROTOCOL:-}" != 1 ]; then
+        printf 'cockpit guard: the check below ~/.cockpit/guards is from another cockpit release than this guard script, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are refused. A person runs cockpit sync in this cockpit in a terminal.\n' >&2
+        exit 2
+    fi
     root=$COCKPIT_GUARD_CHECKED_ROOT
 elif ! root=$(cd -P -- "$guards/../.." && pwd -P); then
     printf 'cockpit guard: cannot resolve the cockpit checkout above %s, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are refused. ' "$guards" >&2

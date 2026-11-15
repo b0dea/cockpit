@@ -82,12 +82,6 @@ describe('public generated repair', () => {
 })
 
 
-// Switches a fixture's guard to the strict mode, where only exact profiles and grants run unprompted.
-async function strictGuard(configPath: string): Promise<void> {
-    const text = await readFile(configPath, 'utf8')
-    await writeFile(configPath, /^\[guards\]$/m.test(text) ? text.replace(/^\[guards\]$/m, '[guards]\ndefault = "ask"') : `${text}\n[guards]\ndefault = "ask"\n`)
-}
-
 it('prepares canonical currentness with genuine producer facts and no wall-clock field', async () => {
     const { root, configPath } = await composeConsumer('producer-currentness')
     const first = '2026-10-22T12:00:00.000Z'
@@ -413,11 +407,9 @@ it('consumes vendor and exact build/test authority through installed hook regist
     const { root, configPath } = await surfaceConsumer('installed-authority')
     expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
     await writeFile(join(root, 'app/package-lock.json'), '{}')
-    // Exact build and test tuples are what the strict mode admits; the allow default runs any spelling.
-    await strictGuard(configPath)
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
     const registered = async (path: string) => JSON.parse(await readFile(join(root, path), 'utf8')).hooks.PreToolUse
-        .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('bash-guard.sh')).command as string
+        .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('/.cockpit/guards/check.sh')).command as string
     const hook = await registered('.claude/settings.json')
     const invoke = (command: string | { tool_name: string; tool_input: object }, cwd = join(root, 'app'), registration = hook) => {
         const result = spawnSync('/bin/sh', ['-c', registration], {
@@ -427,28 +419,31 @@ it('consumes vendor and exact build/test authority through installed hook regist
         expect(result.stderr).not.toContain('"invocation":')
         return result
     }
+    // A call the guard judged is answered allow, so Claude Code does not prompt for it.
+    const permitted = { status: 0, stderr: '', stdout: expect.stringContaining('permissionDecision":"allow') }
     const codexDenied = invoke('curl https://api.vendor.example.test/messages', root, await registered('.codex/hooks.json'))
     expect(codexDenied).toMatchObject({ status: 0, stderr: '' })
     expect(JSON.parse(codexDenied.stdout))
         .toMatchObject({ hookSpecificOutput: { permissionDecision: 'deny', permissionDecisionReason: 'Refusing executable use of a declared vendor host.' } })
-    expect(invoke('npm run build')).toMatchObject({ status: 0, stdout: '', stderr: '' })
-    expect(invoke('npm test -- unit.test.ts')).toMatchObject({ status: 0, stdout: '', stderr: '' })
-    expect(invoke('npm run build --extra').stdout).toContain('permissionDecision":"ask')
-    expect(invoke('npm run build', root).stdout).toContain('permissionDecision":"ask')
+    expect(invoke('npm run build')).toMatchObject(permitted)
+    expect(invoke('npm test -- unit.test.ts')).toMatchObject(permitted)
+    // Any other spelling runs too: the guard refuses only what a call names.
+    expect(invoke('npm run build --extra')).toMatchObject(permitted)
+    expect(invoke('npm run build', root)).toMatchObject(permitted)
     expect(invoke('curl https://api.vendor.example.test/messages').stdout).toContain('permissionDecision":"deny')
-    expect(invoke('curl https://other.vendor.example.test/messages').stdout).toContain('permissionDecision":"ask')
+    expect(invoke('curl https://other.vendor.example.test/messages')).toMatchObject(permitted)
     expect(invoke('npm run build; curl https://api.vendor.example.test/messages').stdout).toContain('permissionDecision":"deny')
     expect(invoke('git push origin main').stdout).toContain('permissionDecision":"deny')
-    expect(invoke('git reset --hard HEAD').stdout).toContain('permissionDecision":"ask')
+    expect(invoke('git clean -fd').stdout).toContain('permissionDecision":"ask')
     expect(invoke('git add .env').stdout).toContain('permissionDecision":"deny')
     // An undeclared environment file is a secret by default; the conventional schema name is documentation.
     expect(invoke({ tool_name: 'Edit', tool_input: { file_path: join(root, 'app/web/.env.local'), old_string: 'A=1', new_string: 'A=2' } }).stdout)
         .toContain('permissionDecision":"deny","permissionDecisionReason":"Refusing to read or write an environment file')
     expect(invoke('cat web/.env.local').stdout).toContain('permissionDecision":"deny')
     await writeFile(join(root, 'app/.env.schema'), '# @required\nAPI_KEY=\n')
-    expect(invoke('cat .env.schema')).toMatchObject({ status: 0, stdout: '', stderr: '' })
+    expect(invoke('cat .env.schema')).toMatchObject(permitted)
     const launcher = fileURLToPath(new URL('../../bin/cockpit.mjs', import.meta.url))
-    expect(invoke(`${JSON.stringify(launcher)} check --config ${JSON.stringify(configPath)}`, root)).toMatchObject({ status: 0, stdout: '', stderr: '' })
+    expect(invoke(`${JSON.stringify(launcher)} check --config ${JSON.stringify(configPath)}`, root)).toMatchObject(permitted)
     expect(invoke(`${JSON.stringify(launcher)} check --config ${JSON.stringify(configPath)} --unknown`, root).stdout).toContain('permissionDecision":"ask')
     expect(invoke(`${JSON.stringify(launcher)} reset --config ${JSON.stringify(configPath)}`, root).stdout).toContain('permissionDecision":"ask')
     // `git restore` and `sed -i` leave identical bytes in a new file. The guard authenticates the
@@ -456,23 +451,23 @@ it('consumes vendor and exact build/test authority through installed hook regist
     const identical = await readFile(configPath)
     await rm(configPath)
     await writeFile(configPath, identical)
-    expect(invoke('npm run build')).toMatchObject({ status: 0, stdout: '', stderr: '' })
+    expect(invoke('npm run build')).toMatchObject(permitted)
     const original = await readFile(configPath, 'utf8')
     await writeFile(configPath, original.replace('api.vendor.example.test', 'replacement.vendor.example.test')
         .replace('build = [ "npm", "run", "build" ]\n', '').replace('"unit.test.ts" ]', '"other.test.ts" ]'))
     // That edit widens (a vendor host is gone), so it is not applied: calls are judged under the
     // configuration last synced, and a refusal says a person must sync it.
-    expect(invoke('npm run build')).toMatchObject({ status: 0, stdout: '', stderr: '' })
+    expect(invoke('npm run build')).toMatchObject(permitted)
     const pending = invoke('curl https://api.vendor.example.test/messages')
     expect(pending.stdout).toContain('permissionDecision":"deny')
     expect(pending.stdout).toContain('has an unapproved edit that widens what agents may do')
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
-    expect(invoke('npm run build').stdout).toContain('permissionDecision":"ask')
-    expect(invoke('npm test -- unit.test.ts').stdout).toContain('permissionDecision":"ask')
-    expect(invoke('curl https://api.vendor.example.test/messages').stdout).toContain('permissionDecision":"ask')
+    expect(invoke('npm run build')).toMatchObject(permitted)
+    expect(invoke('npm test -- unit.test.ts')).toMatchObject(permitted)
+    expect(invoke('curl https://api.vendor.example.test/messages')).toMatchObject(permitted)
     expect(invoke('curl https://replacement.vendor.example.test/messages').stdout).toContain('permissionDecision":"deny')
     await writeFile(join(root, '.claude/settings.json'), '{}\n')
-    expect(invoke('npm run build')).toMatchObject({ status: 2, stdout: '', stderr: expect.stringContaining('drifted') })
+    expect(invoke('npm run build')).toMatchObject({ status: 0, stderr: '', stdout: expect.stringMatching(/"permissionDecision":"deny".*drifted/) })
 }, 120_000)
 
 it('admits the npx and installed-path launcher spellings only while they run the installed cockpit', async () => {
@@ -487,11 +482,9 @@ gates = [{ id = "quick", tier = "targeted", stages = ["quick"], changes = "Synth
 ` })
     expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
     await writeFile(join(root, 'app/package-lock.json'), '{}')
-    // Which spellings prove the installed cockpit shows in the strict mode, where an unproven one asks.
-    await strictGuard(configPath)
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
     const hook = (JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8')).hooks.PreToolUse
-        .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('bash-guard.sh')).command) as string
+        .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('/.cockpit/guards/check.sh')).command) as string
     const bin = join(root, 'node_modules/.bin/cockpit')
     // npm run puts this repository's own node_modules/.bin, whose cockpit is the same launcher, on
     // PATH; the bare-name cases must see only the search path each one sets up.
@@ -516,11 +509,12 @@ gates = [{ id = "quick", tier = "targeted", stages = ["quick"], changes = "Synth
         // The guard reads the declared gate ids from the configuration it authenticated.
         'npx --no cockpit test-run --config cockpit.toml --gate quick --json', './node_modules/.bin/cockpit work status --config cockpit.toml --json']
     for (const command of proven) expect(decision(command), command).toBe('allow')
-    for (const command of ['npx cockpit doctor --config cockpit.toml', 'npx --no -p other cockpit doctor --config cockpit.toml',
+    const unproven = ['npx cockpit doctor --config cockpit.toml', 'npx --no -p other cockpit doctor --config cockpit.toml',
         'npx --no cockpit session --config cockpit.toml -- npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt',
         'npx --no cockpit --script-shell=/bin/sh doctor --config cockpit.toml', 'npx --no cockpit session --config cockpit.toml -- npx --no cockpit session --config cockpit.toml -- true',
-    ]) expect(decision(command), command).not.toBe('allow')
-    for (const command of ['npx --no cockpit sync --config cockpit.toml',
+    ].map(command => `${command}: ${decision(command)}`)
+    expect(unproven).toEqual(['npx cockpit doctor --config cockpit.toml: ask', 'npx --no -p other cockpit doctor --config cockpit.toml: ask', 'npx --no cockpit session --config cockpit.toml -- npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt: ask', 'npx --no cockpit --script-shell=/bin/sh doctor --config cockpit.toml: ask', 'npx --no cockpit session --config cockpit.toml -- npx --no cockpit session --config cockpit.toml -- true: ask'])
+    const asked = ['npx --no cockpit sync --config cockpit.toml',
         'npx --no cockpit env schema --config cockpit.toml --path app:.env.local',
         'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from .env',
         'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt && git status',
@@ -534,17 +528,17 @@ gates = [{ id = "quick", tier = "targeted", stages = ["quick"], changes = "Synth
         // A session runs only what the agent could run directly.
         'npx --no cockpit session --config cockpit.toml -- rm -rf fixtures',
         // A session inside a session would run a command the guard never judged.
-        './node_modules/.bin/cockpit session --config cockpit.toml -- ./node_modules/.bin/cockpit session --config cockpit.toml -- rm -rf fixtures']) {
-        expect(decision(command), command).toBe('ask')
-    }
+        './node_modules/.bin/cockpit session --config cockpit.toml -- ./node_modules/.bin/cockpit session --config cockpit.toml -- rm -rf fixtures',
+    ].map(command => `${command.replaceAll(root, '<root>')}: ${decision(command)}`)
+    expect(asked).toEqual(['npx --no cockpit sync --config cockpit.toml: ask', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.local: deny', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from .env: deny', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt && git status: ask', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt; git status: ask', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt | cat: ask', 'npx --no cockpit reset --config cockpit.toml: ask', 'npx --no cockpit test-run --config cockpit.toml --gate undeclared: ask', 'npx --no cockpit reset --config cockpit.toml --apply: ask', 'npx --no cockpit setup --config cockpit.toml --write-instruction-files: ask', 'npx --no cockpit setup --config cockpit.toml --write-instruction-pointers: ask', 'npx --no cockpit work accept --config cockpit.toml --work-order WO-001 --interactive: ask', 'node <root>/app/server.mjs doctor --config cockpit.toml: allow', 'npx --no cockpit session --config cockpit.toml -- rm -rf fixtures: allow', './node_modules/.bin/cockpit session --config cockpit.toml -- ./node_modules/.bin/cockpit session --config cockpit.toml -- rm -rf fixtures: ask'])
     expect(decision('npx --no cockpit session --config cockpit.toml -- curl https://api.vendor.example.test/messages')).toBe('deny')
     // Writing the configuration, directly or as a session's command, is the policy pin's hard denial.
     for (const command of [`/usr/bin/sed -i 's/sync = "person"/sync = "agent"/' cockpit.toml`, '/bin/cp app/package-lock.json cockpit.toml',
         "npx --no cockpit session --config cockpit.toml -- sed -i '' 's/person/agent/' cockpit.toml"]) {
         expect(decision(command), command).toBe('deny')
     }
-    // A program that only names it is not the pin's to refuse; the strict mode asks about the program.
-    expect(decision('node /tmp/w.js cockpit.toml')).toBe('ask')
+    // A program that only names it is not the pin's to refuse, and runs as any program the guard cannot read does.
+    expect(decision('node /tmp/w.js cockpit.toml')).toBe('allow')
     // Bare cockpit counts only when the command search path finds the installed package.
     expect(decision('cockpit check --config cockpit.toml')).toBe('ask')
     expect(decision('cockpit check --config cockpit.toml', root, `${dirname(bin)}:${basePath}`)).toBe('allow')
@@ -579,7 +573,7 @@ it('emits path-proven launcher remedies for a pnpm-style install', async () => {
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
     const settings = JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8'))
     const hook = settings.hooks.PreToolUse.flatMap((row: { hooks: { command: string }[] }) => row.hooks)
-        .find((row: { command: string }) => row.command.includes('bash-guard.sh')).command as string
+        .find((row: { command: string }) => row.command.includes('/.cockpit/guards/check.sh')).command as string
     const invoke = (command: string) => {
         const result = spawnSync('/bin/sh', ['-c', hook], {
             cwd: root, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: root },
@@ -620,7 +614,7 @@ it('admits a writing sync, an applied reset and setup\'s sibling instruction wri
     await writeFile(join(root, 'app/package-lock.json'), '{}')
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
     const hook = (JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8')).hooks.PreToolUse
-        .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('bash-guard.sh')).command) as string
+        .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('/.cockpit/guards/check.sh')).command) as string
     await mkdir(join(root, 'node_modules/.bin'), { recursive: true })
     await symlink(fileURLToPath(new URL('../../bin/cockpit.mjs', import.meta.url)), join(root, 'node_modules/.bin/cockpit'))
     // Only the search path this cockpit's own install provides, as in the launcher spellings case.

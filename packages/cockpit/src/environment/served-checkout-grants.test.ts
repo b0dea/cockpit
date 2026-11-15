@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -13,14 +13,15 @@ describe('Claude Code local guard registration', () => {
             const settingsDirectory = join(root, '.claude')
             mkdirSync(settingsDirectory)
             const committed = (command: string) => ({ matcher: 'Bash|Edit|Write', hooks: [{ type: 'command', command, timeout: 30 }] })
-            const guard = 'd=x; H="$r/.cockpit/guards/bash-guard.sh"; /bin/bash "$H" --harness claudecode'
+            const guard = '/bin/bash "$HOME/.cockpit/guards/check.sh" "${CLAUDE_PROJECT_DIR:-$(pwd -P)}" --harness claudecode'
             const write = (file: string, value: unknown) => writeFileSync(join(settingsDirectory, file), typeof value === 'string' ? value : `${JSON.stringify(value)}\n`)
             const local = () => JSON.parse(readFileSync(join(settingsDirectory, 'settings.local.json'), 'utf8'))
             write('settings.json', { hooks: { PreToolUse: [committed(guard)], SessionStart: [{ hooks: [{ type: 'command', command: 'check' }] }] } })
-            // A person's own settings and hooks stay, and an earlier guard registration is replaced, not repeated.
+            // A person's own settings and hooks stay, and an earlier guard registration, in the shape an older release
+            // wrote, is replaced, not repeated.
             const own = { matcher: 'Bash', hooks: [{ type: 'command', command: 'person-hook.sh' }] }
             write('settings.local.json', { permissions: { additionalDirectories: ['/workspace/served'] },
-                hooks: { PreToolUse: [own, committed(`${guard} --old`)], PostToolUse: [own] } })
+                hooks: { PreToolUse: [own, committed('d=x; H="$r/.cockpit/guards/bash-guard.sh"; /bin/bash "$H" --harness claudecode')], PostToolUse: [own] } })
             expect(inspectClaudeLocalGuard(root)).toEqual([expect.objectContaining({ severity: 'warning', code: 'CLAUDE_LOCAL_HOOK_MISSING' })])
             expect(await writeClaudeLocalGuard(root)).toEqual({ kind: 'complete' })
             expect(local()).toEqual({ permissions: { additionalDirectories: ['/workspace/served'] },
@@ -37,6 +38,83 @@ describe('Claude Code local guard registration', () => {
             expect(readFileSync(join(settingsDirectory, 'settings.local.json'), 'utf8')).toBe('{ "hooks": ')
             expect(inspectClaudeLocalGuard(root)).toEqual([expect.objectContaining({ code: 'CLAUDE_LOCAL_HOOK_MISSING' })])
         } finally { rmSync(root, { recursive: true, force: true }) }
+    })
+
+    it('carries the committed Read and Edit deny rules into the local settings a subdirectory session loads, at the root and the repository top', async () => {
+        const top = realpathSync(mkdtempSync(join(tmpdir(), 'claude-local-deny-')))
+        const root = join(top, 'ops/cockpit')
+        try {
+            mkdirSync(join(root, '.claude'), { recursive: true })
+            mkdirSync(join(top, '.git'))
+            const guard = { matcher: 'Bash', hooks: [{ type: 'command', command: 'H="$r/.cockpit/guards/bash-guard.sh"; /bin/bash "$H" --harness claudecode' }] }
+            const committed = ['Read(/var/secret)', 'Read(/var/secret/**)', 'Edit(/.cockpit/guards/bash-guard.sh)', 'Read(//**/.env)', 'Bash(rm -rf:*)']
+            writeFileSync(join(root, '.claude/settings.json'), `${JSON.stringify({ permissions: { deny: committed }, hooks: { PreToolUse: [guard] } })}\n`)
+            // A person's own rule stays first.
+            writeFileSync(join(root, '.claude/settings.local.json'), `${JSON.stringify({ permissions: { deny: ['Read(/notes/private.md)'] } })}\n`)
+            const local = (directory: string) => JSON.parse(readFileSync(join(directory, '.claude/settings.local.json'), 'utf8'))
+            expect(inspectClaudeLocalGuard(root)).toEqual([expect.objectContaining({ code: 'CLAUDE_LOCAL_HOOK_MISSING' }), expect.objectContaining({ code: 'CLAUDE_LOCAL_HOOK_MISSING' })])
+            expect(await writeClaudeLocalGuard(root)).toEqual({ kind: 'complete' })
+            // Claude Code 2.1.325 read a `/path` rule in a local file from the session's own directory, so a session started in a
+            // subdirectory was not denied the root's files (measured 2026-11-14); an absolute `//path` rule binds every session.
+            const absolute = `/${root}`
+            expect(local(root).permissions.deny).toEqual(['Read(/notes/private.md)', `Read(${absolute}/var/secret)`, `Read(${absolute}/var/secret/**)`, `Edit(${absolute}/.cockpit/guards/bash-guard.sh)`, 'Read(//**/.env)'])
+            // The repository top's file binds every session in the repository, so it names only the cockpit's files.
+            expect(local(top).permissions.deny).toEqual([`Read(${absolute}/var/secret)`, `Read(${absolute}/var/secret/**)`, `Edit(${absolute}/.cockpit/guards/bash-guard.sh)`, `Read(${absolute}/**/.env)`])
+            expect(inspectClaudeLocalGuard(root)).toEqual([])
+            // A rule taken out of the local file is missing again.
+            writeFileSync(join(root, '.claude/settings.local.json'), `${JSON.stringify({ ...local(root), permissions: { deny: [`Read(${absolute}/var/secret)`] } })}\n`)
+            expect(inspectClaudeLocalGuard(root)).toEqual([expect.objectContaining({ code: 'CLAUDE_LOCAL_HOOK_MISSING', message: expect.stringContaining('deny rules') })])
+        } finally { rmSync(top, { recursive: true, force: true }) }
+    })
+
+    it('runs the repository top\'s guard registration for a session inside the cockpit however its path is spelled, and only there', async () => {
+        const base = realpathSync(mkdtempSync(join(tmpdir(), 'claude-top-gate-')))
+        const top = join(base, 'repo')
+        const root = join(top, 'ops/cockpit')
+        try {
+            mkdirSync(join(root, '.claude'), { recursive: true })
+            mkdirSync(join(root, 'app'))
+            mkdirSync(join(top, 'other'))
+            mkdirSync(join(top, '.git'))
+            const guard = { matcher: 'Bash', hooks: [{ type: 'command', command: 'echo "guard ran: /.cockpit/guards/ --harness claudecode"' }] }
+            writeFileSync(join(root, '.claude/settings.json'), `${JSON.stringify({ hooks: { PreToolUse: [guard] } })}\n`)
+            expect(await writeClaudeLocalGuard(root)).toEqual({ kind: 'complete' })
+            const command = JSON.parse(readFileSync(join(top, '.claude/settings.local.json'), 'utf8')).hooks.PreToolUse[0].hooks[0].command
+            // A link outside the repository is another spelling of the cockpit, and the session inside it is still inside the cockpit.
+            symlinkSync(root, join(base, 'link'))
+            for (const shell of ['/bin/sh', '/bin/dash']) {
+                const run = (cwd: string, project?: string) => {
+                    const { CLAUDE_PROJECT_DIR: _unset, ...env } = process.env
+                    return spawnSync(shell, ['-c', command], { cwd, encoding: 'utf8', env: project === undefined ? env : { ...env, CLAUDE_PROJECT_DIR: project } }).stdout
+                }
+                for (const project of [join(root, 'app'), join(base, 'link/app')]) expect(run(top, project), `${shell} ${project}`).toContain('guard ran')
+                expect(run(join(base, 'link/app')), shell).toContain('guard ran')
+                // Elsewhere in the repository, and at the cockpit root, whose own settings register the guard, it does nothing.
+                for (const project of [join(top, 'other'), root, join(base, 'link')]) expect(run(top, project), `${shell} ${project}`).toBe('')
+            }
+        } finally { rmSync(base, { recursive: true, force: true }) }
+    })
+
+    it('keeps the repository top\'s local settings, which name the cockpit\'s absolute path, out of Git there', async () => {
+        const top = realpathSync(mkdtempSync(join(tmpdir(), 'claude-top-exclude-')))
+        const root = join(top, 'ops/cockpit')
+        try {
+            mkdirSync(join(root, '.claude'), { recursive: true })
+            expect(spawnSync('git', ['init', '--quiet', top]).status).toBe(0)
+            const guard = { matcher: 'Bash', hooks: [{ type: 'command', command: 'H="$r/.cockpit/guards/bash-guard.sh"; /bin/bash "$H" --harness claudecode' }] }
+            writeFileSync(join(root, '.claude/settings.json'), `${JSON.stringify({ hooks: { PreToolUse: [guard] } })}\n`)
+            const exclude = join(top, '.git/info/exclude')
+            // A person's own lines stay, an unterminated last one included.
+            writeFileSync(exclude, '# kept\n*.tmp')
+            const ignored = () => spawnSync('git', ['-C', top, 'check-ignore', '-q', '.claude/settings.local.json']).status
+            expect(ignored()).toBe(1)
+            expect(await writeClaudeLocalGuard(root)).toEqual({ kind: 'complete' })
+            expect(ignored()).toBe(0)
+            expect(readFileSync(exclude, 'utf8')).toBe('# kept\n*.tmp\n/.claude/settings.local.json\n')
+            // Another sync adds nothing.
+            expect(await writeClaudeLocalGuard(root)).toEqual({ kind: 'complete' })
+            expect(readFileSync(exclude, 'utf8')).toBe('# kept\n*.tmp\n/.claude/settings.local.json\n')
+        } finally { rmSync(top, { recursive: true, force: true }) }
     })
 
     it('flags an agent tool\'s settings below the cockpit root and any settings that switch hooks off', async () => {

@@ -49,11 +49,11 @@ import { parseOwnershipManifest } from '../../surfaces/ownership.js'
 import { installedPackageMetadata } from '../../package-metadata.js'
 import { ANSWER_CONFIRMATION_PATH } from '../../guards/answer-confirmation.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../../guards/local-identity.js'
+import { inspectGuardRecord } from '../../guards/guard-record.js'
 import {
     guardInstalledDirectories,
     guardLauncherEvidence,
     guardSearchDirectories,
-    guardSearchPathRelativeEntry,
     guardSecretFiles,
     guardSensitivePathsBelow,
     guardBranchFacts,
@@ -454,9 +454,9 @@ export async function runGuardEvaluationApplication(
         if (git.state !== 'available') return unavailable('Guard checkout observation requires an authenticated Git executable.')
         const checkout = await adapters.observeCheckout({ source: loaded.result.source, cockpitName: config.cockpit.name,
             observedAt: new Date().toISOString(), env: {}, gitExecutable: git.value })
-        // Under the allow default a word the guard cannot expand is marked, not refused: the evaluator
-        // refuses it only where it decides what is read, written or pushed.
-        const parsed = parseGuardInput(data.payload, { dynamicWords: config.guards.default === 'allow' ? 'mark' : 'refuse', home: homedir() })
+        // A word the guard cannot expand is marked, not refused: the evaluator refuses it only where it
+        // decides what is read, written or pushed.
+        const parsed = parseGuardInput(data.payload, { home: homedir() })
         if (parsed.status !== 'parsed') return unavailable(parsed.reason)
         // The harness reports the agent's working directory and starts the guard in a canonical one; they differ when
         // the agent's shell changed directory through a link or under another spelling.
@@ -825,7 +825,8 @@ export async function runGuardEvaluationApplication(
             ...agentAreas,
             ...policy.writePaths?.length || agentRoots.length ? { externalSearchDirectories: externalSearchDirectories(searchPath, policy.allowedRoots),
                 guardRuntime: [...new Set([identity.node, dirname(dirname(identity.node)), process.execPath])].filter(path => path !== '/') } : {},
-            searchPathRelativeEntry: guardSearchPathRelativeEntry(searchPath),
+            // The guard script on disk is the one the person's sync recorded, so staging it stages what a person ran sync for.
+            ...inspectGuardRecord(identity.root) === 'match' ? { recordedGuardScript: true } : {},
             ripgrepConfigActive: data.ripgrepConfigActive === true }, inspect)
         // A Write or Edit of a skill, command or agent file is judged by the frontmatter it leaves; a file
         // too large to read leaves no text an edit can be proven against.
@@ -1087,7 +1088,7 @@ export async function prepareGuardEvaluationPolicy(
                     argv: [...('prefix' in rule ? rule.prefix : rule.contains)], reason: rule.reason,
                     ...(rule.fix === undefined ? {} : { fix: rule.fix }),
                 })),
-                ripgrepConfigActive: false, externalReads: config.guards.external_reads, defaultDecision: config.guards.default,
+                ripgrepConfigActive: false, externalReads: config.guards.external_reads,
                 unresolved: config.guards.unresolved,
                 homeDirectory: realpathSync(homedir()),
                 // A related checkout is granted only where it already exists under exactly the spelling declared: a
@@ -1112,7 +1113,7 @@ export async function prepareGuardEvaluationPolicy(
                 writePaths: canonicalOutsidePaths(config.guards.write_paths.map(({ path }) => path)).filter(path => !confinedPath(path, realpathSync(homedir()))),
                 readPaths: canonicalOutsidePaths(config.guards.read_paths.map(({ path }) => path)),
                 secretPaths,
-                executionDirectories, cockpitPackageDirectories, searchDirectories: [], searchPathRelativeEntry: null,
+                executionDirectories, cockpitPackageDirectories, searchDirectories: [],
                 secretFileIdentities: secretFiles.identities && [...secretFiles.identities], protectedFilesLinked,
                 cockpitInvocations: [], cockpitLaunchers: [], projectCommands: [],
             }

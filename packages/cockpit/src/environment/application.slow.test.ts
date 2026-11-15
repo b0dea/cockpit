@@ -148,7 +148,8 @@ describe('guard policy construction', () => {
         source.sibling[0].environment_files.push({ template: 'config/template.example', instance: 'config/runtime.env' })
         mkdirSync(join(root, 'app/config'), { recursive: true })
         writeFileSync(join(root, 'app/package-lock.json'), '{}')
-        writeFileSync(configPath, stringify({ ...source, guards: { hosted_db_hosts: ['db.example.test'],
+        // These tests pin exact grants for reads outside the roots, which the native default leaves to the agent tool.
+        writeFileSync(configPath, stringify({ ...source, guards: { hosted_db_hosts: ['db.example.test'], external_reads: 'grant',
             allow: [{ argv: ['make', 'verify'], reason: 'Repository verification is safe.', cwd: '.' }],
             deny: [{ contains: ['--environment', 'shared'], reason: 'Shared environments are human-operated.', fix: 'Use a local environment.' }],
             ...(declared ? { vendor_endpoint_hosts: ['api.vendor.example.test'] } : {}) } }))
@@ -295,11 +296,14 @@ describe('guard policy construction', () => {
         expect(await decide(`ls '${inputs}/album'`)).toMatchObject({ decision: 'allow' })
         // Outside its work tree git diff compares two directories file by file, reading every file below them.
         mkdirSync(join(inputs, 'empty'))
+        const seenA: string[] = []
         for (const command of [`git diff '${inputs}/empty' '${inputs}/album'`, `git diff '${inputs}/empty' '${root}/app'`, `cat '${inputs}/album'`,
             `rg -n synthetic '${inputs}'`, `rg -n synthetic '${inputs}/album'`, `cat '${inputs}/alias.jpg'`,
             `cat '${elsewhere}/notes.md'`, `cp README.md '${inputs}/copy.md'`]) {
-            expect((await decide(command)).decision, command).not.toBe('allow')
+            seenA.push((await decide(command)).decision)
         }
+        // Under exact grants a read outside the roots asks; a read through a link the guard cannot inspect is refused, and a write outside every root is refused as unavailable.
+        expect(seenA).toEqual(['ask', 'ask', 'deny', 'ask', 'ask', 'deny', 'ask', 'unavailable'])
         // Native external reads hand every named read outside the roots to the agent tool's own permission.
         config.guards.read_paths = []
         config.guards.external_reads = 'native'
@@ -332,14 +336,14 @@ describe('guard policy construction', () => {
             payload, searchPath: '/usr/bin:/bin' }, adapters)).decision
         const tool = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
         for (const payload of [shellPayload('cat var/sessions/owner.json', root), shellPayload('cat VAR/Sessions/owner.json', root),
-            shellPayload('cat app/tmp/sessions/state.json', root), shellPayload('echo x > var/sessions/new.json', root),
+            shellPayload('cat app/tmp/sessions/state.json', root), shellPayload('echo x > var/sessions/new.json', root), shellPayload('ls var/sessions', root),
             tool('Write', { file_path: join(root, 'var/sessions/new.json'), content: '{}' }),
             tool('apply_patch', { command: `*** Begin Patch\n*** Add File: ${join(root, 'var/sessions/new.json')}\n+{}\n*** End Patch` })]) {
             expect(await judge(payload), JSON.stringify(payload.tool_input)).toMatchObject({ decision: 'deny', reason: expect.stringContaining('[guards] secret_paths') })
         }
         // A recursive search of the directory holding it would read it.
-        expect((await judge(shellPayload('grep -rn synthetic var', root))).decision).not.toBe('allow')
-        for (const command of ['cat var/notes.md', 'ls var/sessions', 'echo x > var/other.md']) expect(await judge(shellPayload(command, root)), command).toMatchObject({ decision: 'allow' })
+        expect((await judge(shellPayload('grep -rn synthetic var', root))).decision).toBe('deny')
+        for (const command of ['cat var/notes.md', 'ls var', 'echo x > var/other.md']) expect(await judge(shellPayload(command, root)), command).toMatchObject({ decision: 'allow' })
     }, 120_000)
 
     it('reads a related checkout without changing it, and writes outside the roots only below a write path', async () => {
@@ -370,12 +374,15 @@ describe('guard policy construction', () => {
             `cp notes.md '${outside}/copy.md'`, `mv '${outside}/photo.png' photo.png`]) {
             expect(await decide(command), command).toMatchObject({ decision: 'allow' })
         }
+        const seenC: string[] = []
         for (const command of [`echo x > '${upstream}/notes.md'`, `git -C '${upstream}' commit --allow-empty -m x`, `cp notes.md '${outside}/guards-link/bash-guard.sh'`,
             `echo x >> '${homedir()}/.zshrc'`, `cp notes.md '${homedir()}/.claude/settings.json'`]) {
-            expect((await decide(command)).decision, command).not.toBe('allow')
+            seenC.push((await decide(command)).decision)
         }
+        // A write into a related checkout, a guard file through a link, or an agent tool's settings is refused; a shell start-up file outside every root is refused as unavailable.
+        expect(seenC).toEqual(['deny', 'deny', 'deny', 'unavailable', 'deny'])
         // Outside a write path, and through the Data volume's spelling of the cockpit, a write stays refused.
-        expect((await decide(`cp notes.md '${unlisted}/copy.md'`)).decision).not.toBe('allow')
+        expect((await decide(`cp notes.md '${unlisted}/copy.md'`)).decision).toBe('unavailable')
         expect(await decide(`cp notes.md '/System/Volumes/Data${root}/node_modules/copy.md'`)).toMatchObject({ decision: 'deny' })
         expect(await decide(`cp notes.md '${outside}/.toolrc'`)).toMatchObject({ decision: 'deny' })
     }, 120_000)
@@ -432,12 +439,8 @@ describe('guard policy construction', () => {
             return (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'codexcli', cwd: root,
                 payload: shellPayload(command, root), searchPath: '/usr/bin:/bin', ...environment }, adapters)).decision
         }
-        const configure = async (mode: 'allow' | 'ask') => {
-            config.guards.default = mode
-            writeFileSync(configPath, stringify(config))
-            expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
-        }
-        await configure('allow')
+        writeFileSync(configPath, stringify(config))
+        expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
         for (const command of ['git commit -m done', 'npm run build', 'git switch -c topic', 'git commit -m "$(cat <<\'EOF\'\nFix the parser\nEOF\n)"',
             'NODE_ENV=test npm test', 'rg --files app -g package-lock.json']) {
             expect(await decide(command), command).toMatchObject({ decision: 'allow' })
@@ -485,8 +488,6 @@ describe('guard policy construction', () => {
         expect((await decide('git merge main')).decision).not.toBe('allow')
         git('reset', '--soft', 'HEAD@{1}')
         expect(await decide('git merge main')).toMatchObject({ decision: 'allow' })
-        await configure('ask')
-        expect((await decide('git commit -m done')).decision).toBe('ask')
     }, 120_000)
 
     it('asks Git which environment files history holds before a command prints a commit, through the installed guard', async () => {
@@ -509,7 +510,7 @@ describe('guard policy construction', () => {
         const stray = plumbing(['commit-tree', plumbing(['write-tree']), '-m', 'Unreferenced'])
         rmSync(index)
         for (const command of [`git show ${stray}`, `git log -p ${stray}`, `git diff ${stray}~0 HEAD`]) {
-            expect(await decide(command), command).toMatchObject({ decision: 'ask', reason: expect.stringContaining('can print stray/.env.production') })
+            expect(await decide(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('can print stray/.env.production') })
         }
         expect(await decide('git log -p')).toMatchObject({ decision: 'allow' })
         mkdirSync(join(root, 'notes'), { recursive: true })
@@ -521,7 +522,7 @@ describe('guard policy construction', () => {
         rmSync(join(root, 'notes/.env.local'))
         // The index no longer holds it, but the first commit does, and these print that commit.
         for (const command of ['git log -p', 'git show HEAD', 'git diff HEAD~1 HEAD', 'git grep SYNTHETIC HEAD~1', 'git log -p -- notes']) {
-            expect(await decide(command), command).toMatchObject({ decision: 'ask',
+            expect(await decide(command), command).toMatchObject({ decision: 'deny',
                 reason: expect.stringContaining('can print notes/.env.local, an environment file, secrets file or declared instance the repository\'s history holds') })
         }
         for (const command of ['git show HEAD~1:notes/.env.local', 'git log -p HEAD~1 -- notes/.env.local']) expect(await decide(command), command).toMatchObject({ decision: 'deny' })
@@ -617,7 +618,7 @@ describe('guard policy construction', () => {
             for (const command of ['rg -n needle package-docs', 'grep -rn needle package-docs']) expect(await search(command), command).toMatchObject({ decision: 'allow' })
             writeFileSync(join(store, '.env'), 'SYNTHETIC_KEY=synthetic\n')
             for (const command of ['rg -n needle package-docs', 'grep -rn needle package-docs']) {
-                expect(await search(command), command).toMatchObject({ decision: 'ask', reason: expect.stringContaining('.env') })
+                expect(await search(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('.env') })
             }
             symlinkSync(join(store, '.env'), join(store, 'secret-alias.md'))
             expect(await decide('package-docs/secret-alias.md')).toMatchObject({ decision: 'deny' })
@@ -625,7 +626,7 @@ describe('guard policy construction', () => {
             symlinkSync(join(store, '.envrc'), join(store, 'script-alias.md'))
             const scriptRead = await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin',
                 payload: shellPayload('cat package-docs/script-alias.md', root) }, adapters)
-            expect(scriptRead.decision).toMatchObject({ decision: 'ask' })
+            expect(scriptRead.decision).toMatchObject({ decision: 'deny' })
             const outside = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-unapproved-input-')))
             scratch.push(outside)
             writeFileSync(join(outside, 'guide.md'), 'synthetic external guide\n')
@@ -676,7 +677,7 @@ describe('guard policy construction', () => {
         writeFileSync(join(root, 'fixtures/.env.local'), 'SYNTHETIC_KEY=synthetic\n')
         try {
             expect(await runGuardEvaluationApplication({ ...request, payload: search, searchPath: '/usr/bin:/bin' }, adapters))
-                .toMatchObject({ decision: { decision: 'ask', reason: expect.stringContaining('would read fixtures/.env.local') } })
+                .toMatchObject({ decision: { decision: 'deny', reason: expect.stringContaining('would read fixtures/.env.local') } })
         } finally { rmSync(join(root, 'fixtures/.env.local'), { force: true }) }
         const secret = join(root, 'env/.secrets/token')
         mkdirSync(dirname(secret), { recursive: true })
@@ -694,8 +695,8 @@ describe('guard policy construction', () => {
             // A relative entry makes any file the agent wrote a candidate for a bare command name.
             const listing = { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: root, tool_input: { command: 'ls fixtures' } }
             expect(await runGuardEvaluationApplication({ ...request, payload: listing, searchPath: '/usr/bin:/bin' }, adapters)).toMatchObject({ decision: { decision: 'allow' } })
-            expect(await runGuardEvaluationApplication({ ...request, payload: listing, searchPath }, adapters))
-                .toMatchObject({ decision: { decision: 'ask', reason: expect.stringContaining('relative entry "relative/bin"') } })
+            // A relative search path entry is doctor's warning, not a prompt on every command.
+            expect(await runGuardEvaluationApplication({ ...request, payload: listing, searchPath }, adapters)).toMatchObject({ decision: { decision: 'allow' } })
         } finally {
             rmSync(join(root, 'env'), { recursive: true, force: true })
             rmSync(join(root, 'notes.txt'), { force: true })
@@ -804,13 +805,13 @@ describe('guard policy construction', () => {
         try {
             // ripgrep skips the ignored file, so only searches that would read it ask.
             expect(await decide('rg needle fixtures')).toMatchObject({ decision: 'allow' })
-            expect(await decide('grep -rn needle fixtures')).toMatchObject({ decision: 'ask', reason: expect.stringContaining('would read fixtures/.env,') })
-            expect(await decide('rg --no-ignore needle fixtures')).toMatchObject({ decision: 'ask' })
+            expect(await decide('grep -rn needle fixtures')).toMatchObject({ decision: 'deny', reason: expect.stringContaining('would read fixtures/.env,') })
+            expect(await decide('rg --no-ignore needle fixtures')).toMatchObject({ decision: 'deny' })
             writeFileSync(join(root, 'fixtures/.env.local'), 'SYNTHETIC_KEY=synthetic\n')
-            expect(await decide('rg needle fixtures')).toMatchObject({ decision: 'ask', reason: expect.stringContaining('would read fixtures/.env.local,') })
+            expect(await decide('rg needle fixtures')).toMatchObject({ decision: 'deny', reason: expect.stringContaining('would read fixtures/.env.local,') })
             expect(await decide('git diff')).toMatchObject({ decision: 'allow' })
             execFileSync('git', ['-C', root, 'add', '--force', 'fixtures/.env'])
-            expect(await decide('git diff --cached')).toMatchObject({ decision: 'ask', reason: expect.stringContaining('can print fixtures/.env,') })
+            expect(await decide('git diff --cached')).toMatchObject({ decision: 'deny', reason: expect.stringContaining('can print fixtures/.env,') })
             expect(await decide('git log -p -- app')).toMatchObject({ decision: 'allow' })
         } finally {
             execFileSync('git', ['-C', root, 'rm', '--cached', '--quiet', '--ignore-unmatch', 'fixtures/.env'])
@@ -879,7 +880,7 @@ describe('guard policy construction', () => {
             // The system resolves `..` from where a link leads, so `app/link/..` is app/config, not app.
             const read = async (command: string) => (await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin',
                 payload: { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: root, tool_input: { command } } }, adapters)).decision.decision
-            expect(await read('cat app/link/../runtime.env')).toBe('ask')
+            expect(await read('cat app/link/../runtime.env')).toBe('deny')
             expect(await read('cat app/config/sub/../notes.md')).toBe('allow')
             // A word longer than any file name the volume allows names nothing, so probing it is no failure.
             const long = 'x'.repeat(300)
@@ -1302,11 +1303,11 @@ describe('guard policy construction', () => {
             protectedBranches: ['main', 'master'], hostedDatabaseHosts: ['db.example.test'], vendorHosts: ['api.vendor.example.test'],
             declaredAllows: [{ argv: ['make', 'verify'], reason: 'Repository verification is safe.', cwd: root }],
             declaredDenies: [{ match: 'contains', argv: ['--environment', 'shared'], reason: 'Shared environments are human-operated.', fix: 'Use a local environment.' }],
-            ripgrepConfigActive: false, externalReads: 'grant', readPaths: [], defaultDecision: 'allow', homeDirectory: realpathSync(homedir()),
+            ripgrepConfigActive: false, externalReads: 'grant', readPaths: [], homeDirectory: realpathSync(homedir()),
             secretPaths: [], relatedCheckouts: [], relatedReserved: [], writePaths: [], unresolved: 'ask',
             // The running package lives outside this checkout, so no installed directory is in reach; the
             // package itself is carried wherever it is, since a path into it runs cockpit.
-            executionDirectories: [], cockpitPackageDirectories: [realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), '../..'))], searchDirectories: [], searchPathRelativeEntry: null, secretFileIdentities: [], protectedFilesLinked: false,
+            executionDirectories: [], cockpitPackageDirectories: [realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), '../..'))], searchDirectories: [], secretFileIdentities: [], protectedFilesLinked: false,
             cockpitLaunchers: [],
             cockpitInvocations: [], projectCommands: [
                 { executable: 'npm', checkoutRoot: join(root, 'app'), kind: 'build', argv: ['run', 'build'] },
@@ -1387,17 +1388,13 @@ describe('guard policy construction', () => {
             const result = await prepareGuardEvaluationPolicy(input)
             expect(result.kind, JSON.stringify(result)).toBe('complete')
             if (result.kind !== 'complete') throw new Error(JSON.stringify(result))
-            // The strict mode, where only the exact tuple is admitted and every other spelling asks.
-            const policy = { ...result.result.policy, defaultDecision: 'ask' as const }
+            const policy = result.result.policy
             expect(policy.projectCommands.map(command => [command.executable, ...command.argv])).toEqual([tuple, tuple])
             const rendered = renderGuardProjectCommand(tuple)
             if (rendered.kind !== 'complete') throw new Error(JSON.stringify(rendered))
             const inspect = ({ path, cwd }: { path: string; cwd: string }) => ({ status: 'resolved', path: resolve(cwd, path), symlink: false, identity: null, ancestors: [] })
             const decide = (command: string, cwd = join(root, 'app')) => evaluateGuard(parseGuardInput(shellPayload(command, cwd)), policy, inspect)
             expect(decide(rendered.command).decision).toBe('allow')
-            expect(decide(`${rendered.command} extra`).decision).toBe('ask')
-            expect(decide(`'${executable}x' '*' '**' '?' '[' ']' 'file[1]?.txt'`).decision).toBe('ask')
-            expect(decide(rendered.command, root).decision).toBe('ask')
             expect(decide(`${rendered.command}; curl https://api.vendor.example.test`)).toMatchObject({ decision: 'deny', reason: 'Refusing executable use of a declared vendor host.' })
             tuple[1] = 'changed'
             expect(policy.projectCommands[0]?.argv[0]).toBe('*')

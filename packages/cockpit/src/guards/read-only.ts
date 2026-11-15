@@ -178,7 +178,7 @@ function find(argv: readonly string[]): Classified {
     return { reads: [], trees: [], listings }
 }
 
-function search(argv: readonly string[], table: OptionTable, recursiveByDefault: boolean): Classified {
+function search(argv: readonly string[], table: OptionTable, recursiveByDefault: boolean, piped = false): Classified {
     const parsed = parseOptions(argv, table)
     if (!parsed) return undefined
     const listOnly = parsed.present.has('--files')
@@ -186,11 +186,12 @@ function search(argv: readonly string[], table: OptionTable, recursiveByDefault:
     const operands = listOnly || explicitPattern ? parsed.positionals : parsed.positionals.slice(1)
     if (!listOnly && !explicitPattern && parsed.positionals.length === 0) return undefined
     const recursive = recursiveByDefault || ['-r', '-R', '--recursive', '--dereference-recursive'].some(name => parsed.present.has(name))
-    // grep follows symlinks only with -R; that reads through links the inspection never sees.
-    if (parsed.present.has('-R') || parsed.present.has('--dereference-recursive')) return undefined
-    const paths = operands.length ? operands : recursive ? ['.'] : []
+    // grep follows symlinks with -R, so its walk is judged through every link it would follow.
+    const followsLinks = parsed.present.has('-R') || parsed.present.has('--dereference-recursive')
+    // ripgrep given no path searches its standard input when that is a pipe, not the working directory.
+    const paths = operands.length ? operands : recursive && !(recursiveByDefault && piped) ? ['.'] : []
     if (listOnly) return { reads: parsed.files, trees: [], listings: paths }
-    return recursive ? { reads: parsed.files, trees: paths, listings: [] } : { reads: [...parsed.files, ...paths], trees: [], listings: [] }
+    return recursive ? { reads: parsed.files, trees: paths, listings: [], ...followsLinks ? { followsLinks: true as const } : {} } : { reads: [...parsed.files, ...paths], trees: [], listings: [] }
 }
 
 // Only `p` and `d` commands on line-number, last-line or pattern addresses, and `s` substitutions whose
@@ -309,7 +310,7 @@ const GIT_PATCH = /^(?:--patch(?:-with-(?:stat|raw))?|--cc|--dd|--remerge-diff|-
 // revisions. Options that take only an attached value, such as `-U3` or `--relative=dir`, are not listed.
 const GIT_SEPARATE_VALUES = set('--grep', '--author', '--committer', '--since', '--until', '--after', '--before', '--max-count', '--skip', '--date', '--encoding',
     '--diff-filter', '--word-diff-regex', '--stat-width', '--anchored', '--output-indicator-new', '--output-indicator-old', '--output-indicator-context', '--find-object',
-    '-I', '-S', '-G', '-n', '-l')
+    '-I', '-S', '-G', '-n', '-l', '-L')
 // The same for `git grep`, whose `-f` value is a file it reads, so it is not listed.
 const GIT_GREP_SEPARATE_VALUES = set('-e', '--regexp', '-A', '-B', '-C', '--after-context', '--before-context', '--context', '-m', '--max-count', '--max-depth')
 
@@ -407,7 +408,7 @@ function git(argv: readonly string[], cwd: string): ReadOnlyAccess | undefined {
         const rest = modern ? args.slice(1) : args
         const actions: string[] = rest.filter(arg => arg === '--get' || arg === '--get-all')
         const [key, ...more] = rest.filter(arg => !arg.startsWith('-'))
-        return (modern ? actions.length === 0 : actions.length === 1) && key !== undefined && more.length === 0 && /^[a-z][a-z0-9-]*\..*[a-z0-9-]$/i.test(key)
+        return (modern ? actions.length === 0 : actions.length <= 1) && key !== undefined && more.length === 0 && /^[a-z][a-z0-9-]*\..*[a-z0-9-]$/i.test(key)
             && GIT_CONFIG_SECTIONS.has(key.slice(0, key.indexOf('.')).toLowerCase())
             && rest.every(arg => !arg.startsWith('-') || actions.includes(arg) || GIT_CONFIG_READ.has(arg) || modern && arg === '--all')
             ? { cwd: directory, reads: [], trees: [], listings: [], requires } : undefined
@@ -579,7 +580,7 @@ function cockpit(argv: readonly string[]): Classified {
  * The paths an exact read-only invocation touches, or undefined when it is not one. `cockpit` holds
  * the cockpit arguments only when the application proved the invocation starts the installed cockpit.
  */
-export function classifyReadOnlyInvocation(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean; readonly cockpit?: readonly string[]; readonly wideSearch?: boolean } = { ripgrepConfigActive: false }): ReadOnlyAccess | undefined {
+export function classifyReadOnlyInvocation(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean; readonly cockpit?: readonly string[] } = { ripgrepConfigActive: false }): ReadOnlyAccess | undefined {
     if (invocation.executable === null || invocation.wrapped || invocation.redirects.some(redirect => redirect.write)
         || invocation.words.some(word => word.role === 'environment-assignment-value')
         // A word whose expansion the guard cannot see names no path it can inspect; echo and printf name none.
@@ -594,7 +595,7 @@ export function classifyReadOnlyInvocation(invocation: ParsedInvocation, environ
         ? undefined : access
 }
 
-function classify(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean; readonly cockpit?: readonly string[]; readonly wideSearch?: boolean },
+function classify(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean; readonly cockpit?: readonly string[] },
     shape: (classified: Classified) => ReadOnlyAccess | undefined, inputs: readonly string[]): ReadOnlyAccess | undefined {
     const argv = invocation.argv
     if (environment.cockpit) return shape(cockpit(environment.cockpit))
@@ -628,9 +629,9 @@ function classify(invocation: ParsedInvocation, environment: { readonly ripgrepC
         // Every option ripgrep is admitted with keeps its ignore filters, which the trees are then judged by.
         case 'rg': {
             if (environment.ripgrepConfigActive) return undefined
-            const narrow = shape(search(argv, RG, true))
+            const narrow = shape(search(argv, RG, true, invocation.piped === true))
             if (narrow) return { ...narrow, skipsIgnored: true }
-            return environment.wideSearch ? shape(search(argv, RG_WIDE, true)) : undefined
+            return shape(search(argv, RG_WIDE, true, invocation.piped === true))
         }
         case 'fd': {
             const parsed = parseOptions(argv, FD)

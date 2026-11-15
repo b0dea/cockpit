@@ -380,51 +380,37 @@ function shellLiteral(value: string): string {
     return value.replaceAll("'", "'\\''")
 }
 
-// Registrations are committed, so each finds the cockpit checkout at run time through the
-// mechanism its harness documents: Claude Code exports the project directory to hooks, and Codex runs
-// hooks in the session working directory. The Git root can be above a cockpit rooted in a subdirectory.
-// A session can start in a subdirectory of the cockpit, where the guard script would be one an agent may
-// have written, so each hook takes the outermost directory at or above the session's that holds the guard
-// script: the directories above the cockpit lie outside every root, which agents do not write. Claude
-// Code 2.1.323 sets CLAUDE_PROJECT_DIR to the directory a session started in, a subdirectory included
-// (measured 2026-11-13). The walk stops at the nearest directory holding a `.git` entry, the top of the
-// checkout the session is in: a linked worktree that Claude Code keeps below the main checkout holds its
-// own committed guard, and the one above it belongs to another checkout. A second guard script within
-// that bound is ambiguous, whoever wrote it, so the call blocks; with none the guard path is an absolute one that exists nowhere, which no agent can create, and
-// the call blocks too. The walk is plain shell, since a program the hook found on the session's search
-// path could be one an agent planted.
-const MISSING_ROOT = '/no-cockpit-root'
-const walk = (start: string, from: string) => `d=${start} || d=; r=${MISSING_ROOT}; n=0; while [ -n "$d" ]; do [ -f "$d/.cockpit/guards/bash-guard.sh" ] && { r=$d; n=$((n+1)); }; [ -e "$d/.git" ] && break; d=\${d%/*}; done; `
-    + `[ $n -gt 1 ] && { echo "cockpit guard: more than one .cockpit/guards/bash-guard.sh at or above ${from}, so the guard to run is ambiguous; a person removes the one that is not the cockpit's" >&2; exit 2; }; `
-// The hook runs the guard script through the check sync wrote below ~/.cockpit/guards, where no agent
-// writes: it compares the script and the identity file that names the handler with the digests sync
-// recorded for the canonical root, then runs the script with that root (guards/guard-record.ts). With no
-// script the hook names it, as it always did: bash exits 127 for a missing file where dash, Linux's
-// /bin/sh, exits 2, which the hook would pass on as a refusal with dash's own message.
-const CHECKED = (root: string, script: string) => `L="$HOME/${GUARD_CHECK_PATH}"; [ -f "${script}" ] || L=${script}; `
+// Registrations are committed, so each finds the cockpit checkout at run time through the mechanism its
+// harness documents: Claude Code exports the project directory to hooks, and Codex runs hooks in the
+// session working directory. The guard command hands that directory to the check sync wrote below
+// ~/.cockpit/guards, where no agent writes, and which finds the cockpit and checks its guard
+// (guards/guard-record.ts). The command is the same in every release, since Codex asks a person to trust
+// a changed one again and runs without it until then; `session` is what SessionStart passes on.
 const HOOK_ROOT = Object.freeze({
-    claudecode: { expression: '${CLAUDE_PROJECT_DIR:-}', prelude: walk('${CLAUDE_PROJECT_DIR:-$(pwd -P)}', 'the session directory'), guard: '$r' },
-    // Codex trusts a hook by its exact command, so a person trusts it again after this spelling changes.
-    codexcli: { expression: '$(pwd -P 2>/dev/null)', prelude: walk('$(pwd -P)', '$(pwd -P)'), guard: '$r' },
+    claudecode: { session: '${CLAUDE_PROJECT_DIR:-}', start: '${CLAUDE_PROJECT_DIR:-$(pwd -P)}' },
+    codexcli: { session: '$(pwd -P 2>/dev/null)', start: '$(pwd -P)' },
 } as const)
 
 const GUARD_HOOK_TIMEOUT_SECONDS = 30
 
-function hooksBytes(target: keyof typeof HOOK_ROOT, matcher: string, guardPath: string, askIsDeny: boolean, configFile: string): string {
+function hooksBytes(target: keyof typeof HOOK_ROOT, matcher: string, askIsDeny: boolean, configFile: string): string {
     const root = HOOK_ROOT[target]
     // Both hook runners block only on exit 2; any other failure (a handler that cannot load, a killed
-    // process, a missing shell or guard script) would let the tool call run, so it is folded into a
+    // process, a check script sync has not written) would let the tool call run, so it is folded into a
     // blocking exit. Claude Code prints the whole hook command beside every refusal it reports, so the
-    // command stays one short line and the recovery text lives in the guard script it runs.
-    const guard = `${root.prelude}H="${root.guard}/${guardPath}"; ${CHECKED(root.guard, '$H')}${askIsDeny ? 'COCKPIT_ASK_IS_DENY=1 ' : ''}/bin/bash "$L" "${root.guard}" --harness ${target}; s=$?; case $s in 0|2) exit $s;; esac; echo "cockpit guard failed ($s): $H; sync the cockpit" >&2; exit 2`
+    // command stays one short line and the recovery text lives in the scripts it runs.
+    const guard = `${askIsDeny ? 'COCKPIT_ASK_IS_DENY=1 ' : ''}/bin/bash "$HOME/${GUARD_CHECK_PATH}" "${root.start}" --harness ${target}; s=$?; case $s in 0|2) exit $s;; esac; echo "cockpit guard failed ($s); a person runs cockpit sync in a terminal" >&2; exit 2`
     // Claude Code 2.1.317 and Codex 0.166.0 (a trusted hook) each ran a SessionStart command and put its
     // stdout in the agent's context, measured 2026-11-03 beside a misspelled event that never ran. A
     // drift report there tells the agent what to re-sync before it works; the hook never blocks.
-    const sessionStart = `${GUARD_RECOVERY_SHELL}\nR="${root.expression}"; C="$R/"'${shellLiteral(configFile)}'; P="$R/node_modules/@b00dea/cockpit"; if test -n "$R" && test -f "$C" && test -r "$C" && cockpit_package_ready "$P"; then cd "$R" && "$P/bin/cockpit.mjs" check --config "$C" 2>&1 | tail -n 40; else cockpit_guard_recovery "$R" '${shellLiteral(configFile)}' 2>&1; fi; exit 0`
+    const sessionStart = `${GUARD_RECOVERY_SHELL}\nR="${root.session}"; C="$R/"'${shellLiteral(configFile)}'; P="$R/node_modules/@b00dea/cockpit"; if test -n "$R" && test -f "$C" && test -r "$C" && cockpit_package_ready "$P"; then cd "$R" && "$P/bin/cockpit.mjs" check --config "$C" 2>&1 | tail -n 40; else cockpit_guard_recovery "$R" '${shellLiteral(configFile)}' 2>&1; fi; exit 0`
     // Claude Code and Codex both read a hook's `timeout` in seconds (Claude Code's hook reference;
     // Codex 0.167.0's hook configuration, read from its binary). Left unset, Codex reported a guard call
-    // on a loaded machine as timed out after 5 s. What either harness does when it fires is unmeasured.
-    const hooks = { PreToolUse: [{ matcher, hooks: [{ type: 'command', command: guard, timeout: GUARD_HOOK_TIMEOUT_SECONDS }] }],
+    // on a loaded machine as timed out after 5 s. Claude Code 2.1.325 ran the call when its hook timed out,
+    // and blocked it once the hook said `onFailure: "block"` (measured 2026-11-15); the same key on the
+    // matcher did nothing. What Codex does when its timeout fires is unmeasured.
+    const guardHook = { type: 'command', command: guard, timeout: GUARD_HOOK_TIMEOUT_SECONDS, ...target === 'claudecode' ? { onFailure: 'block' } : {} }
+    const hooks = { PreToolUse: [{ matcher, hooks: [guardHook] }],
         SessionStart: [{ hooks: [{ type: 'command', command: sessionStart }] }] }
     const value = target === 'codexcli' ? { description: 'Generated authenticated restriction transport and session-start drift check.', hooks } : { hooks }
     return `${JSON.stringify(value, null, 2)}\n`
@@ -452,7 +438,7 @@ function registration(adapter: NativeRestrictionAdapter, input: RestrictionExpan
         : adapter.registration.matcher
     const bytes = adapter.target === 'opencode'
         ? opencodeBytes(input.guardPath, input.configFile)
-        : hooksBytes(adapter.target, matcher, input.guardPath, adapter.target === 'codexcli', input.configFile)
+        : hooksBytes(adapter.target, matcher, adapter.target === 'codexcli', input.configFile)
     return file(adapter.registration.path, bytes)
 }
 

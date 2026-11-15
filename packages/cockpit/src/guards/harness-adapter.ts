@@ -2,7 +2,7 @@ import { posix } from 'node:path'
 import { exactKeys } from '../exact-keys.js'
 import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 import { GUARD_SURFACE_TARGETS, type GuardSurfaceTarget } from '../surfaces/harness-registry.js'
-import type { GuardDecision } from './evaluator.js'
+import { GUARD_DEFERRED_REASONS, type GuardDecision } from './evaluator.js'
 import { GUARD_INPUT_LIMITS } from './invocation-parser.js'
 
 export const GUARD_HANDLER_ARGV = Object.freeze(['guard-evaluate'] as const)
@@ -29,8 +29,11 @@ function decision(value: unknown): GuardDecision | undefined {
     return captured as unknown as GuardDecision
 }
 
+const answer = (permissionDecision: 'allow' | 'ask' | 'deny', permissionDecisionReason: string) =>
+    JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision, permissionDecisionReason } }) + '\n'
+
 /** Native spelling cannot add grants or change the evaluator's hard boundaries. */
-export function adaptGuardDecision(harness: unknown, input: unknown): NativeGuardOutput {
+export function adaptGuardDecision(harness: unknown, input: unknown, call: Readonly<{ leavesSandbox?: boolean }> = {}): NativeGuardOutput {
     const resolved = decision(input)
     const native = target(harness) ? harness : null
     const selected = resolved && native ? resolved : { decision: 'unavailable' as const, reason: 'Guard adapter received an invalid harness or closed decision.' }
@@ -38,13 +41,20 @@ export function adaptGuardDecision(harness: unknown, input: unknown): NativeGuar
     let stdout = ''
     let stderr = ''
     let exitCode: 0 | 2 = 0
-    if (verdict === 'unavailable' || native === 'opencode' && verdict !== 'allow') {
+    if (verdict === 'allow') {
+        // Claude Code prompts for a call the hook leaves unanswered, so a call the guard judged is answered
+        // allow; Claude Code's own deny rules still refuse it (measured). Codex rejects an allow answer, and
+        // a call the guard leaves to the tool's own permissions gets no answer anywhere. Nor does a call asking
+        // to leave Claude Code's sandbox: an allow rule approves that retry without a prompt, and an allow answer may too.
+        if (native === 'claudecode' && !call.leavesSandbox && !GUARD_DEFERRED_REASONS.includes(selected.reason)) stdout = answer('allow', selected.reason)
+    } else if (native === null || native === 'opencode') {
+        // Claude Code prints the whole hook command before the reason of a refusal that exits 2, so a
+        // refusal goes out as decision JSON wherever the harness reads it. OpenCode's plugin only throws on
+        // a nonzero status, and an unknown harness has no spelling to trust.
         exitCode = 2
         stderr = `cockpit guard: ${selected.reason}\n`
-    } else if (verdict !== 'allow') {
-        stdout = JSON.stringify({ hookSpecificOutput: {
-            hookEventName: 'PreToolUse', permissionDecision: verdict, permissionDecisionReason: selected.reason,
-        } }) + '\n'
+    } else {
+        stdout = answer(verdict === 'ask' ? 'ask' : 'deny', selected.reason)
     }
     return { target: native, capability: 'instructed', decision: verdict, exitCode, stdout, stderr }
 }
