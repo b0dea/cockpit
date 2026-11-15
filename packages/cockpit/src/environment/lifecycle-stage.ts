@@ -8,7 +8,6 @@ import {
     ENVIRONMENT_CODES,
     isCanonicalTimestamp,
     snapshotJson,
-    snapshotEnvironmentObservation,
     type CheckoutId,
     type CockpitId,
     type EnvironmentDiagnostic,
@@ -44,15 +43,12 @@ export const observationDeclarations = Object.freeze([{
         { stage: 'steady', disposition: 'required' },
     ],
     code: ENVIRONMENT_CODES.STATE_UNSEEDED,
-    isIssued: isLifecycleStageObservation,
-    issuedAt: observationIssuedAt,
 }] as const)
 
 const HistoryValue = z.object({ status: z.enum(['started', 'seeded']) }).strict()
 const STACK_ID = /^stack:[a-f0-9]{64}$/
 const HOLDER_ID = /^holder:[a-f0-9]{64}:session$/
 const AUTHORITY_LIFETIME_MS = 30_000
-const issuedObservations = new WeakMap<object, number>()
 const issuedAuthorities = new WeakMap<object, LifecycleAuthorityBinding>()
 const issuedLifecycleStageProjections = new WeakMap<object, LifecycleStageEvidence>()
 
@@ -340,21 +336,6 @@ function sameBinding(left: LifecycleAuthorityBinding, right: LifecycleAuthorityB
         && samePathIdentity(left.lifecycleIdentity, right.lifecycleIdentity)
 }
 
-function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
-    const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== OWNER) throw new RefusalError('lifecycle stage observation is malformed')
-    issuedObservations.set(snapshot, Date.now())
-    return snapshot
-}
-
-function isLifecycleStageObservation(value: unknown): value is EnvironmentObservation {
-    return value !== null && typeof value === 'object' && issuedObservations.has(value)
-}
-
-function observationIssuedAt(value: unknown): number | undefined {
-    return value !== null && typeof value === 'object' ? issuedObservations.get(value) : undefined
-}
-
 async function inspect(input: StableInput): Promise<LifecycleStageResolution> {
     const historyAddress = lifecycleHistoryAddress(input.namespace, input.stackId)
     const lifecycleAddress = input.namespace.paths.lifecycle(input.stackId)
@@ -394,7 +375,7 @@ async function inspect(input: StableInput): Promise<LifecycleStageResolution> {
         validThrough: new Date(issuedAt + AUTHORITY_LIFETIME_MS).toISOString(),
     }
     issuedAuthorities.set(authority, bindingAfter)
-    const observation = issueObservation({
+    const observation: EnvironmentObservation = {
         code: ENVIRONMENT_CODES.STATE_UNSEEDED,
         owner: OWNER,
         stackId: input.stackId,
@@ -404,7 +385,7 @@ async function inspect(input: StableInput): Promise<LifecycleStageResolution> {
         applicability: { state: 'required', posture: 'environment' },
         freshness: { state: 'current' },
         remedy: 'restore or seed lifecycle state without deleting its durable history',
-    })
+    }
     return { kind: 'complete', authority, observation }
 }
 

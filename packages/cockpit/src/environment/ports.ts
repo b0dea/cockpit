@@ -22,7 +22,6 @@ import {
     OBSERVATION_REASON_BYTE_LIMIT,
     REFUSAL_CODES,
     isCanonicalTimestamp,
-    snapshotEnvironmentObservation,
     type EnvironmentCode,
     type EnvironmentDiagnostic,
     type EnvironmentObservation,
@@ -72,12 +71,6 @@ const issuedRetainedPortFamilies = new WeakMap<object, {
 }>()
 const availableRetainedPortFamilies = new WeakSet<object>()
 
-function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
-    const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== OWNER) throw new RefusalError('port observation is malformed')
-    return snapshot
-}
-
 export async function observePortFamily(input: {
     readonly namespace: StateNamespace
     readonly stackId: StackId
@@ -108,7 +101,7 @@ export async function observePortFamily(input: {
         && leaseAuthority?.result.lease.stackId === input.stackId && leaseAuthority.observedAt === input.observedAt
         && record?.lease !== null && record?.lease !== undefined && !record.lease.released
         && sameValues(record.lease.ports, input.leaseEvidence.lease.ports)
-    return issueObservation({
+    return {
         code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION,
         owner: OWNER,
         stackId: input.stackId,
@@ -126,7 +119,7 @@ export async function observePortFamily(input: {
         applicability: { state: 'required', posture: 'environment' },
         freshness: { state: 'current' },
         remedy: 'lease the declared port family before starting the stack',
-    })
+    }
 }
 
 const stackIdentity = /^stack:[a-f0-9]{64}$/

@@ -37,7 +37,7 @@ import type {
     GeneratedStaleRemovalApproval,
     PublicationPlan,
 } from '../../generated-environment/transaction.js'
-import { ENVIRONMENT_CODES, errorCause, type EnvironmentObservation, type ExecutionStep, type CockpitId, hasErrorCode } from '../contract.js'
+import { ENVIRONMENT_CODES, errorCause, type ExecutionStep, type CockpitId, hasErrorCode } from '../contract.js'
 import type { ResolvedExecutable } from '../executable.js'
 import { cockpitId, stackId } from '../identity.js'
 import type { BootstrapStateAddress, BootstrapStateRecord, StateNamespace, StateResult } from '../state.js'
@@ -49,13 +49,12 @@ import { GUARD_HELD_CALLS } from '../../surfaces/harness-registry.js'
 export const OWNER = 'generated-environment-application'
 
 export const surfaceObservationDeclarations = Object.freeze([
-    { id: 'harness-surfaces', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE, isIssued: isGeneratedApplicationSurfaceObservation, issuedAt: generatedApplicationSurfaceObservationIssuedAt },
-    { id: 'directory-grants', owner: OWNER, postures: ['directory-grants'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE, isIssued: isGeneratedApplicationSurfaceObservation, issuedAt: generatedApplicationSurfaceObservationIssuedAt },
-    { id: 'guide-budget', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED, isIssued: isGeneratedApplicationSurfaceObservation, issuedAt: generatedApplicationSurfaceObservationIssuedAt },
-    { id: 'skill-budget', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.SKILL_BUDGET_UNAVAILABLE, isIssued: isGeneratedApplicationSurfaceObservation, issuedAt: generatedApplicationSurfaceObservationIssuedAt },
+    { id: 'harness-surfaces', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE },
+    { id: 'directory-grants', owner: OWNER, postures: ['directory-grants'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE },
+    { id: 'guide-budget', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED },
+    { id: 'skill-budget', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.SKILL_BUDGET_UNAVAILABLE },
 ] as const)
 
-export const issuedSurfaceObservations = new WeakMap<object, number>()
 
 export interface GeneratedEnvironmentCommandInput {
     readonly configPath: string
@@ -639,14 +638,6 @@ export function generatedPathFacts(prepared: PreparedEnvironment, applicability:
             entry: manifest.entries.find(entry => entry.path === file.path)! })),
     ]
     return projectGeneratedPathFacts(manifest, { root: prepared.root, cockpitId: prepared.cockpitId, configPath: prepared.configPath }, declarations)
-}
-
-function isGeneratedApplicationSurfaceObservation(value: unknown): value is EnvironmentObservation {
-    return value !== null && typeof value === 'object' && issuedSurfaceObservations.has(value)
-}
-
-function generatedApplicationSurfaceObservationIssuedAt(value: unknown): number | undefined {
-    return value !== null && typeof value === 'object' ? issuedSurfaceObservations.get(value) : undefined
 }
 
 export function confined(root: string, path: string): string | undefined {

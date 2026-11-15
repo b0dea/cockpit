@@ -12,7 +12,6 @@ import { ENVIRONMENT_CODES, errorCause, snapshotJson, type CockpitId, type Envir
     type JsonSnapshot, type ObservationLifecycleStage, type StackId } from './contract.js'
 import { checkoutId, stackId as deriveStackId, type StackVariant } from './identity.js'
 import { authenticateLifecycleStageAuthority, type LifecycleStageAuthority } from './lifecycle-stage.js'
-import { isStateObservation } from './state.js'
 
 /** The owner of the posture-requirement checks preflight derives from the declared postures. */
 export const POSTURE_REQUIREMENT_OWNER = 'posture-requirements'
@@ -114,8 +113,7 @@ async function issueObservationPostures(
         && 'observed' in configuration && configuration.observed.state === 'available'
         ? Date.parse(configuration.observed.observedAt)
         : Number.NaN
-    if (!isStateObservation(configuration)
-        || configuration.code !== ENVIRONMENT_CODES.CONFIG_STALE
+    if (configuration.code !== ENVIRONMENT_CODES.CONFIG_STALE
         || configuration.observed.state !== 'available'
         || configuration.stackId !== expectedStackId
         || observedAt > issuedAt

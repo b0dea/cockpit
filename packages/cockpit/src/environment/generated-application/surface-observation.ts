@@ -2,7 +2,7 @@ import type { StandingCost } from '../../surfaces/projection.js'
 import { surfaceModelSha256 } from '../../surfaces/render.js'
 import { ENVIRONMENT_CODES, snapshotEnvironmentObservation, type EnvironmentObservation } from '../contract.js'
 import { stackId } from '../identity.js'
-import { type GeneratedApplicationProjection, OWNER, issuedApplicationProjections, issuedSurfaceObservations } from './shared.js'
+import { type GeneratedApplicationProjection, OWNER, issuedApplicationProjections } from './shared.js'
 
 // The rows only this observation answers; when it cannot be made they report missing evidence.
 export const SURFACE_OBSERVATION_CODES: readonly string[] = [ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE,
@@ -65,7 +65,5 @@ export function observeGeneratedApplicationSurfaces(
         }),
     ]
     if (!observations.every((observation): observation is EnvironmentObservation => observation !== undefined)) return undefined
-    const issuedAt = Date.now()
-    for (const observation of observations) issuedSurfaceObservations.set(observation, issuedAt)
     return observations
 }

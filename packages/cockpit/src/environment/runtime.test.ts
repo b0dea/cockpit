@@ -24,7 +24,6 @@ import {
     type RuntimeServiceOutcome,
     type RuntimeTopologyEvidence,
     isRuntimeServiceEvidence,
-    isRuntimeObservation,
     isRuntimeTopologyEvidence,
     issueMachineFloorAuthority,
     observeDockerRuntime,
@@ -1167,7 +1166,6 @@ fi
             expect.objectContaining({ code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, observed: expect.objectContaining({ value: true }) }),
             expect.objectContaining({ code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, observed: expect.objectContaining({ value: true }) }),
         ])
-        expect(admitted.observations.every(isRuntimeObservation)).toBe(true)
         expect(JSON.stringify(admitted)).not.toContain('topology-value-canary')
         expect(JSON.stringify(admitted)).not.toContain(canary)
     })

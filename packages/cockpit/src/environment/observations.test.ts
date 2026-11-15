@@ -7,7 +7,7 @@ import { createServer } from 'node:net'
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
 import { execFileSync, spawn } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ENVIRONMENT_CODES, type CheckoutId, type CockpitId, type EnvironmentObservation, type HolderId, type ObservationDeclaration, type StackId } from './contract.js'
+import { ENVIRONMENT_CODES, type CheckoutId, type CockpitId, type EnvironmentObservation, type HolderId, type StackId } from './contract.js'
 import {
     aggregateObservations,
     allObservationDeclarations,
@@ -111,7 +111,6 @@ async function evaluateFixture(values: readonly EnvironmentObservation[]) {
     })
 }
 
-const neverIssued: ObservationDeclaration['isIssued'] = (_value: unknown): _value is EnvironmentObservation => false
 const everyStage = Object.freeze([
     { stage: 'bootstrap', disposition: 'required' },
     { stage: 'steady', disposition: 'required' },
@@ -398,18 +397,6 @@ describe('observation contract and applicability', () => {
         })).rejects.toThrow('configuration source')
     })
 
-    it('rejects an observation minted by the shared contract for another producer', async () => {
-        const forged = {
-            ...await observation(),
-            code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
-            owner: 'runtime-planning',
-            source: 'forged-runtime',
-        }
-
-        const evaluationContext = await context()
-        expect(() => aggregateObservations([[forged]], evaluationContext)).toThrow('producer-issued')
-    })
-
     it('rejects runtime health derived from a caller-authored plan and outcome', () => {
         expect(() => observeRuntimeExecution({
             plan: { steps: [] }, outcome: {}, stackId, coldStartLimitMillis: 1,
@@ -531,9 +518,7 @@ describe('observation contract and applicability', () => {
         ])
         const evaluationContext = await context()
         const healthItems = items.filter(({ code }) => code !== ENVIRONMENT_CODES.PORT_FAMILY_COLLISION)
-        expect(() => aggregateObservations([healthItems.map((item) => ({ ...item }))], evaluationContext)).toThrow('producer-issued')
-        const acquisitionContext = await context()
-        expect(() => aggregateObservations([[items[1]!]], acquisitionContext)).toThrow('no declared producer authority')
+        expect(() => aggregateObservations([[items[1]!]], evaluationContext)).toThrow('no declared producer authority')
         expect(aggregateObservations([healthItems], await context()).checks.filter(({ code }) => healthItems.some((item) => item.code === code)).map(({ verdict }) => verdict))
             .toEqual(['not-applicable', 'not-applicable'])
     })
@@ -660,8 +645,6 @@ describe('observation contract and applicability', () => {
             ENVIRONMENT_CODES.CONFIG_STALE,
         ])
         expect(observations.every(({ observed }) => observed.state !== 'available')).toBe(true)
-        const evaluationContext = await context()
-        expect(() => aggregateObservations([observations.map((item) => ({ ...item }))], evaluationContext)).toThrow('producer-issued')
         const validPath = join(root, 'valid.toml')
         await writeFile(validPath, validConfigSource)
         let pathReads = 0
@@ -673,19 +656,19 @@ describe('observation contract and applicability', () => {
     })
     it('rejects duplicate mechanism owners and incomplete posture directions', () => {
         expect(validateObservationDeclarations([
-            { id: 'machine-memory', owner: 'host-observation', postures: ['environment'], stages: everyStage, code: ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR, isIssued: neverIssued },
-            { id: 'other-memory', owner: 'other-owner', postures: ['environment'], stages: everyStage, code: ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR, isIssued: neverIssued },
+            { id: 'machine-memory', owner: 'host-observation', postures: ['environment'], stages: everyStage, code: ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR },
+            { id: 'other-memory', owner: 'other-owner', postures: ['environment'], stages: everyStage, code: ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR },
         ])).toEqual({ kind: 'invalid', reason: `duplicate observation code: ${ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR}` })
 
         expect(validateObservationDeclarations([
-            { id: 'mount-state', owner: 'runtime-planning', postures: ['mounted'], stages: everyStage, code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, isIssued: neverIssued },
+            { id: 'mount-state', owner: 'runtime-planning', postures: ['mounted'], stages: everyStage, code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE },
         ], ['mounted', 'host'])).toEqual({ kind: 'invalid', reason: 'mount-state does not declare posture host' })
     })
 
     it('requires one bounded, non-contradictory disposition for both lifecycle stages', () => {
         const declaration = {
             id: 'mount-state', owner: 'runtime-planning', postures: ['environment'], stages: everyStage,
-            code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, isIssued: neverIssued,
+            code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE,
         }
         expect(validateObservationDeclarations([{ ...declaration, stages: everyStage.slice(1) }])).toEqual({
             kind: 'invalid', reason: 'mount-state does not declare lifecycle stage bootstrap',
@@ -709,7 +692,7 @@ describe('observation contract and applicability', () => {
     it('rejects declarations whose identity or postures are not strings', () => {
         const declaration = {
             id: 'mount-state', owner: 'runtime-planning', postures: ['environment'], stages: everyStage,
-            code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, isIssued: neverIssued,
+            code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE,
         }
         expect(validateObservationDeclarations([{ ...declaration, id: Symbol('mount-state') as never }])).toMatchObject({ kind: 'invalid' })
         expect(validateObservationDeclarations([{ ...declaration, postures: [Symbol('environment') as never] }])).toMatchObject({ kind: 'invalid' })
@@ -733,14 +716,13 @@ describe('observation contract and applicability', () => {
         expect(aggregateObservations([[]], await context(stackId, 'profile:web')).checks.find(({ code }) => code === ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE)?.verdict).toBe('unavailable')
     })
 
-    it('requires real surface owners and rejects a fabricated passing surface row', async () => {
+    it('declares every surface row and reports a missing one as unavailable', async () => {
         const codes = [ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE, ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED,
             ENVIRONMENT_CODES.SKILL_BUDGET_UNAVAILABLE, ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE,
             ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE]
         for (const code of codes) {
             const declaration = allObservationDeclarations.find(row => row.code === code)
             expect(declaration, code).toBeDefined()
-            expect(declaration!.isIssued({ code, observed: { state: 'available', value: true } })).toBe(false)
         }
         const result = aggregateObservations([[]], await context())
         expect(result.verdict).toBe('unavailable')
@@ -770,7 +752,7 @@ describe('deterministic preflight and doctor', () => {
         }
     })
 
-    it('does not let future-dated producer evidence age into validity', async () => {
+    it('fails evidence dated after the evaluation instant', async () => {
         const issuedAt = Date.parse('2026-09-08T06:00:00.000Z')
         vi.useFakeTimers()
         vi.setSystemTime(issuedAt)
@@ -779,12 +761,6 @@ describe('deterministic preflight and doctor', () => {
         const evaluationContext = await context(stackId, 'always', validConfigSource, new Date(issuedAt).toISOString())
         expect(aggregateObservations([[evidence]],
             evaluationContext,
-        ).checks.find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)?.verdict).toBe('fail')
-
-        vi.setSystemTime(issuedAt + 2_000)
-        const laterContext = await context(stackId, 'always', validConfigSource, new Date(issuedAt).toISOString())
-        expect(aggregateObservations([[evidence]],
-            laterContext,
         ).checks.find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)?.verdict).toBe('fail')
     })
 
@@ -978,7 +954,6 @@ describe('deterministic preflight and doctor', () => {
         const preflight = aggregateObservations([[mismatch]], await context(stackId, 'always', `${validConfigSource}# changed\n`))
         expect(preflight.verdict).toBe('fail')
         expect(projectDoctor(preflight).checks.find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)).toMatchObject({ verdict: 'fail' })
-        expect(() => projectDoctor({ ...preflight })).toThrow('preflight evaluation is not authentic')
     })
 
     it('orders by code units without consulting the host locale', async () => {

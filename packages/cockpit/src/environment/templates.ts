@@ -17,32 +17,15 @@ import { lstat, open, realpath } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { EnvironmentFile, Sibling, type EnvironmentFile as EnvironmentFileDeclaration } from '../schema.js'
-import { ENVIRONMENT_CODES, OBSERVATION_REASON_BYTE_LIMIT, isCanonicalTimestamp, snapshotEnvironmentObservation, snapshotJson, type EnvironmentObservation, type JsonSnapshot, type StackId, RefusalError, hasErrorCode } from './contract.js'
+import { ENVIRONMENT_CODES, OBSERVATION_REASON_BYTE_LIMIT, isCanonicalTimestamp, snapshotJson, type EnvironmentObservation, type JsonSnapshot, type StackId, RefusalError, hasErrorCode } from './contract.js'
 
 const OWNER = 'environment-template-seeding'
 
 export const observationDeclarations = Object.freeze([
-    { id: 'environment-key-freshness', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.ENVIRONMENT_KEYS_STALE, isIssued: isTemplateObservation, issuedAt: observationIssuedAt },
-    { id: 'secret-file-presence', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.ENVIRONMENT_FILE_NOT_FOUND, isIssued: isTemplateObservation, issuedAt: observationIssuedAt },
-    { id: 'sibling-presence', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.SIBLING_MISSING, isIssued: isTemplateObservation, issuedAt: observationIssuedAt },
+    { id: 'environment-key-freshness', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.ENVIRONMENT_KEYS_STALE },
+    { id: 'secret-file-presence', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.ENVIRONMENT_FILE_NOT_FOUND },
+    { id: 'sibling-presence', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.SIBLING_MISSING },
 ] as const)
-
-const issuedObservations = new WeakMap<object, number>()
-
-function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
-    const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== OWNER) throw new RefusalError('template observation is malformed')
-    issuedObservations.set(snapshot, Date.now())
-    return snapshot
-}
-
-function isTemplateObservation(value: unknown): value is EnvironmentObservation {
-    return value !== null && typeof value === 'object' && issuedObservations.has(value)
-}
-
-function observationIssuedAt(value: unknown): number | undefined {
-    return value !== null && typeof value === 'object' ? issuedObservations.get(value) : undefined
-}
 
 export async function observeSiblingPresence(input: { readonly stackId: StackId; readonly observedAt: string; readonly siblingRoot: string; readonly sibling: unknown }): Promise<EnvironmentObservation> {
     const snapshot = snapshotJson(input)
@@ -63,9 +46,9 @@ export async function observeSiblingPresence(input: { readonly stackId: StackId;
     } catch (error) {
         if (!hasErrorCode(error, 'ENOENT')) throw new RefusalError('sibling presence could not be observed')
     }
-    return issueObservation({ code: ENVIRONMENT_CODES.SIBLING_MISSING, owner: OWNER, stackId: owned.stackId as StackId, source: path,
+    return { code: ENVIRONMENT_CODES.SIBLING_MISSING, owner: OWNER, stackId: owned.stackId as StackId, source: path,
         observed: { state: 'available', value: present, observedAt: owned.observedAt }, expectation: { kind: 'equal', value: true },
-        applicability: { state: 'required', posture: 'environment' }, freshness: { state: 'current' }, remedy: 'restore the declared sibling checkout' })
+        applicability: { state: 'required', posture: 'environment' }, freshness: { state: 'current' }, remedy: 'restore the declared sibling checkout' }
 }
 
 const DEFAULT_MAX_BYTES = 1024 * 1024
@@ -325,19 +308,19 @@ export async function observeEnvironmentKeys(input: {
     const presence = inspection.kind !== 'absent' && !(inspection.kind === 'unreadable' && inspection.file === 'instance')
     const fresh = inspection.kind === 'fresh'
     return [
-        issueObservation({
+        {
             code: ENVIRONMENT_CODES.ENVIRONMENT_KEYS_STALE, owner: OWNER, stackId: owned.stackId as StackId, source,
             observed: inspection.kind === 'unreadable' || inspection.kind === 'malformed'
                 ? { state: 'failed', reason: `${inspection.file} environment file could not be projected`, observedAt: owned.observedAt }
                 : { state: 'available', value: fresh, observedAt: owned.observedAt },
             expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'environment' }, freshness: { state: 'current' },
             remedy: 'synchronize the instance key names with its tracked template',
-        }),
-        issueObservation({
+        },
+        {
             code: ENVIRONMENT_CODES.ENVIRONMENT_FILE_NOT_FOUND, owner: OWNER, stackId: owned.stackId as StackId, source,
             observed: { state: 'available', value: presence, observedAt: owned.observedAt }, expectation: { kind: 'equal', value: true },
             applicability: { state: 'required', posture: 'environment' }, freshness: { state: 'current' }, remedy: 'seed the missing environment instance from its tracked template',
-        }),
+        },
     ]
 }
 
@@ -367,18 +350,18 @@ export async function observeTemplateHealth(input: {
         }
     }
     if (environmentFileCount === 0) {
-        add(issueObservation({
+        add({
             code: ENVIRONMENT_CODES.ENVIRONMENT_KEYS_STALE, owner: OWNER, stackId: input.stackId,
             source: input.siblingRoot, observed: { state: 'available', value: true, observedAt: input.observedAt },
             expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'environment' },
             freshness: { state: 'current' }, remedy: 'synchronize the instance key names with its tracked template',
-        }))
-        add(issueObservation({
+        })
+        add({
             code: ENVIRONMENT_CODES.ENVIRONMENT_FILE_NOT_FOUND, owner: OWNER, stackId: input.stackId,
             source: input.siblingRoot, observed: { state: 'available', value: true, observedAt: input.observedAt },
             expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'environment' },
             freshness: { state: 'current' }, remedy: 'seed the missing environment instance from its tracked template',
-        }))
+        })
     }
     return [...groups.values()].map(group => {
         if (group.length === 1) return group[0]!
@@ -386,13 +369,13 @@ export async function observeTemplateHealth(input: {
         const unreadable = failures.filter(row => row.observed.state !== 'available')
         const bounded = (value: string) => Buffer.byteLength(value) <= OBSERVATION_REASON_BYTE_LIMIT ? value
             : `${Buffer.from(value).subarray(0, OBSERVATION_REASON_BYTE_LIMIT - 3).toString('utf8').replace(/�$/, '')}...`
-        return issueObservation({
+        return {
             ...group[0]!,
             source: bounded((failures.length > 0 ? failures : group).map(row => row.source).join('; ')),
             observed: unreadable.length > 0
                 ? { state: 'failed', reason: bounded(unreadable.map(row => `${row.source}: ${row.observed.state === 'available' ? '' : row.observed.reason}`).join('; ')), observedAt: input.observedAt }
                 : { state: 'available', value: failures.length === 0, observedAt: input.observedAt },
-        })
+        }
     })
 }
 

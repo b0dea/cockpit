@@ -78,7 +78,6 @@ const CONFINED: readonly (readonly [capability: string, pattern: RegExp, allowed
         [`${SRC}guards/evaluator.ts`, `${ENV}application/guard.ts`]],
     ['guard policy is captured where it is evaluated or rendered', /\bcapturePolicy\b/, [`${SRC}guards/evaluator.ts`, `${SRC}surfaces/restrictions.ts`]],
     ['one entrypoint-kind vocabulary', /\b(?:callback_url|advertised_listener|cors_origin|public_base_url)\b/, [`${SRC}entrypoint-kinds.ts`]],
-    ['observations are issued only by their owner', /\bexport\s+(?:async\s+)?function\s+issue\w*Observation\b|\bimport\s*(?:type\s*)?\{[^}]*\bissue\w*Observation\b/, []],
 ]
 
 describe('product architecture', () => {

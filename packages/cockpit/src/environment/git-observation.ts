@@ -9,7 +9,6 @@ import {
     RefusalError,
     ENVIRONMENT_CODES,
     OBSERVATION_REASON_BYTE_LIMIT,
-    snapshotEnvironmentObservation,
     isCanonicalTimestamp,
     snapshotExecutionStep,
     type CheckoutId,
@@ -27,27 +26,10 @@ import { consumeSetupCheckoutProjection, type SetupCheckoutProjection } from './
 const OWNER = 'git-observation'
 
 export const observationDeclarations = Object.freeze([
-    { id: 'git-working-tree', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.GIT_STATE_UNHEALTHY, isIssued: isGitObservation, issuedAt: observationIssuedAt },
-    { id: 'git-adjacency', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.CHECKOUT_ADJACENCY_UNHEALTHY, isIssued: isGitObservation, issuedAt: observationIssuedAt },
-    { id: 'running-checkout', owner: OWNER, postures: ['running-stack'], stages: [{ stage: 'bootstrap', disposition: 'not-applicable', reason: 'no running checkout exists before the first seed' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.RUNNING_CHECKOUT_MISMATCH, isIssued: isGitObservation, issuedAt: observationIssuedAt },
+    { id: 'git-working-tree', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.GIT_STATE_UNHEALTHY },
+    { id: 'git-adjacency', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.CHECKOUT_ADJACENCY_UNHEALTHY },
+    { id: 'running-checkout', owner: OWNER, postures: ['running-stack'], stages: [{ stage: 'bootstrap', disposition: 'not-applicable', reason: 'no running checkout exists before the first seed' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.RUNNING_CHECKOUT_MISMATCH },
 ] as const)
-
-const issuedObservations = new WeakMap<object, number>()
-
-function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
-    const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== OWNER) throw new RefusalError('Git observation is malformed')
-    issuedObservations.set(snapshot, Date.now())
-    return snapshot
-}
-
-function isGitObservation(value: unknown): value is EnvironmentObservation {
-    return value !== null && typeof value === 'object' && issuedObservations.has(value)
-}
-
-function observationIssuedAt(value: unknown): number | undefined {
-    return value !== null && typeof value === 'object' ? issuedObservations.get(value) : undefined
-}
 
 interface GitObservationEvidence {
     // null while HEAD is unborn: the repository was initialised and nothing is committed yet.
@@ -309,7 +291,7 @@ export function observeGit(
     const result = {
         kind: 'complete' as const,
         evidence: decoded.evidence,
-        observations: decoded.observations.map(issueObservation),
+        observations: decoded.observations,
     }
     issuedGitResults.set(result, Object.freeze({ ...binding, evidence: decoded.evidence }))
     return result
@@ -583,7 +565,7 @@ export function observeRunningCheckout(
         expectation: { kind: 'equal', value: expected }, applicability: { state: 'required', posture: 'running-stack' },
         freshness: { state: 'current' }, remedy: 'restart the stack from the current checkout and configuration',
     }
-    return { kind: 'complete', observation: issueObservation(observation) }
+    return { kind: 'complete', observation: observation }
 }
 
 // Git exits 128 both outside any repository and inside one it refuses to read; only its message
