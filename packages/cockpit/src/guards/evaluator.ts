@@ -2145,17 +2145,20 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         : folded.split('/').includes('.secrets') || resolved.instances.some(item => within(folded, fold(item.path))) ? readDenial
         : inSecretPath(folded) ? secretPathDenial : namesCredential(folded) ? credentialDenial : undefined
     // Words that spell Git skipping its hooks or pushing by force, deleting or to a protected branch, whatever runs them.
-    const gitWordsDenial = (words: readonly string[]): GuardDecision | undefined => {
-        const git = words.findIndex(word => posix.basename(word) === 'git')
-        const after = git < 0 ? [] : words.slice(git + 1)
-        if (after.includes('--no-verify')) return deny('Refusing --no-verify: it skips the hooks a commit or push runs.')
+    const gitWords = (words: readonly string[]) => { const git = words.findIndex(word => posix.basename(word) === 'git'); return git < 0 ? [] : words.slice(git + 1) }
+    // Git's own push rules, without the repository facts a spelled push lacks. The push's words end at the next command
+    // separator or shell keyword, so a branch a later command names is not its destination.
+    const spelledPush = (words: readonly string[]): GuardDecision | undefined => {
+        const after = gitWords(words)
         const push = after.indexOf('push')
-        // Git's own push rules, without the repository facts a spelled push lacks: only what they refuse outright counts.
-        // The push's words end at the next command separator or shell keyword, so a branch a later command names is not its destination.
+        if (push < 0) return undefined
         const rest = after.slice(push + 1)
         const end = rest.findIndex(word => PUSH_WORDS_END.has(word))
-        return push >= 0 && pushDecision(end < 0 ? rest : rest.slice(0, end), resolved.protectedBranches, undefined)?.decision === 'deny'
-            ? deny('Refusing a forced push, a remote branch deletion or a push that names a protected branch.') : undefined
+        return pushDecision(end < 0 ? rest : rest.slice(0, end), resolved.protectedBranches, undefined)
+    }
+    const gitWordsDenial = (words: readonly string[]): GuardDecision | undefined => {
+        if (gitWords(words).includes('--no-verify')) return deny('Refusing --no-verify: it skips the hooks a commit or push runs.')
+        return spelledPush(words)?.decision === 'deny' ? deny('Refusing a forced push, a remote branch deletion or a push that names a protected branch.') : undefined
     }
     // Text the guard does not read as commands, an unreadable shell form or inline interpreter code, is judged by the
     // names it spells: a secret, a credential, a declared host, a guard control or agent setting, the installed cockpit,
@@ -3064,7 +3067,16 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         }
         // Words that spell a forced or protected-branch push, or skipped hooks, through a launcher the guard does not
         // know are refused as the push itself is; Git's own words meet the exact push rules above.
-        if (!git) { const refusal = gitWordsDenial([invocation.executable ?? '', ...invocation.argv]); if (refusal) hold(refusal) }
+        if (!git) {
+            const spelled = [invocation.executable ?? '', ...invocation.argv]
+            const refusal = gitWordsDenial(spelled)
+            const launches = invocations[invocations.indexOf(invocation) + 1]
+            if (refusal) hold(refusal)
+            // A push whose destination Git would resolve asks, unless the launched git is judged with the repository's facts.
+            else if (spelledPush(spelled)?.decision === 'ask' && !(launches?.wrapped && launchedBy(launches, invocation))) {
+                holdBoundary(invocation, ask(`${named(invocation)} spells a push whose destination Git resolves from the repository, which the guard does not read through this program. Name the branch, \`git push origin <branch>:<branch>\`, or run git push itself.`))
+            }
+        }
         // Any program may read, print or send what it names, whatever it is and wherever the word sits, after a
         // launcher, in a substitution or fed through a pipe, so naming a secret refuses it. A declared rule admits
         // a command the profile cannot classify, but never past the secret names or the roots: macOS `cat a .env -x`

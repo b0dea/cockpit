@@ -1434,6 +1434,13 @@ describe('allow by default', () => {
         expect(run(command).decision).toBe('deny')
     })
 
+    it('asks before a push spelled through an unknown launcher whose destination Git would have to resolve', () => {
+        for (const command of ['corepack pnpm exec git push', 'corepack pnpm exec git push origin HEAD', 'corepack pnpm exec git push origin @']) {
+            expect(run(command, open(), onBranch('refs/heads/main')).decision, command).toBe('ask')
+        }
+        expect(run('corepack pnpm exec git push origin feat').decision).toBe('allow')
+    })
+
     it('judges shell it does not read whole command by command, declared denies and Git tree writes included, and answers nothing for what stays unread', () => {
         const denied = { ...open(), declaredDenies: [{ match: 'prefix' as const, argv: ['terraform', 'apply'], reason: 'Applying infrastructure is a person\'s.' }] }
         expect(run('if true; then terraform apply; fi', denied)).toEqual({ decision: 'deny', reason: 'Applying infrastructure is a person\'s.' })
