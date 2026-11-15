@@ -5,6 +5,7 @@
 // them through it, can act on. Judgement (which test runner, whether existing tests mean anything)
 // stays with them; a gap here is a fact.
 import { ENVIRONMENT_CODES } from './environment/contract.js'
+import { MINIMUM_COMPOSE_VERSION } from './environment/runtime.js'
 
 /** A cockpit that only publishes agent surfaces, or one that also declares a runtime. */
 export type ReadinessState = 'surfaces-only' | 'runtime'
@@ -60,10 +61,10 @@ export const READINESS_CATALOGUE: readonly ReadinessEntry[] = [
             C.SIBLING_INSTRUCTIONS_MISSING, C.SIBLING_INSTRUCTIONS_TOOL_ONLY],
         needs: 'each agent tool loads only the instruction files it reads in a repository, so an agent started there gets the repository\'s instructions in every listed tool only when they sit in the files those tools read',
         fix: 'follow the fix on each finding; ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> proposes the changes that need no judgement' },
-    { id: 'container-runtime', level: 'required', appliesTo: RUNTIME, codes: [C.RUNTIME_UNAVAILABLE, C.RUNTIME_UNMEASURED],
-        refusedBy: { command: 'up', code: C.RUNTIME_UNMEASURED },
-        needs: 'up runs the stack with Docker Compose, and only on a runtime this machine has measured',
-        fix: 'start Docker, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config <your cockpit.toml> --image <local-image>' },
+    { id: 'container-runtime', level: 'required', appliesTo: RUNTIME, codes: [C.RUNTIME_UNAVAILABLE],
+        refusedBy: { command: 'up', code: C.RUNTIME_UNAVAILABLE },
+        needs: `up runs the stack with Docker Compose ${MINIMUM_COMPOSE_VERSION} or later`,
+        fix: `start Docker, upgrading Docker Compose to ${MINIMUM_COMPOSE_VERSION} or later when doctor names an older one` },
     { id: 'machine-floor', level: 'required', appliesTo: RUNTIME,
         codes: [C.MACHINE_MEMORY_BELOW_FLOOR, C.MACHINE_CPU_BELOW_FLOOR, C.MACHINE_DISK_BELOW_FLOOR],
         refusedBy: { command: 'up', code: C.MACHINE_MEMORY_BELOW_FLOOR },

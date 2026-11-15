@@ -384,11 +384,9 @@ Compose file is a product change: an agent makes it on a branch, as the
 **Data.** `seed` and `resettable_volumes` fill and wipe the stack's data
 ([Demo data, test users and roles](environment.md#demo-data-test-users-and-roles)).
 
-**Docker.** Commands that run the stack need Docker Compose and a local runtime that has passed
-`cockpit runtime measure --image <local-image>`;
-[Measure the container runtime](environment.md#measure-the-container-runtime) lists the supported
-runtimes. Configuration, generation and `check` need no runtime, though validating declared Compose
-files needs Docker Compose.
+**Docker.** Commands that run the stack need a local Docker daemon with Docker Compose 2.35.0 or
+later ([Docker and Compose](environment.md#docker-and-compose)). Configuration, generation and
+`check` need no runtime, though validating declared Compose files needs Docker Compose.
 
 ### Bring the product up
 

@@ -57,7 +57,6 @@ import { inspectInitReadiness, measureInitMachine, proposeInitGrading } from './
 import { createLifecycleCommandAdapters } from './environment/lifecycle-composition.js'
 import { isProcessStart, listenerHost, observeProcessAncestry, observeProcessStart, processHost, type HolderProcess } from './environment/claims.js'
 import { createReadCommandAdapters } from './environment/read-composition.js'
-import { probeInstalledRuntime, runRuntimeMeasure } from './environment/runtime-measurement.js'
 import { initializeLocalGitRepository, runSiblingAdd, runSiblingRemove, type SiblingAddInput, type SiblingRemoveInput } from './environment/sibling-registration.js'
 import { runToolChange, type ToolChangeInput } from './environment/tool-registration.js'
 import { runPull, runUse, type PullCommandInput, type UseCommandInput } from './environment/application/siblings.js'
@@ -168,7 +167,6 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
     }>
     preflight: PreflightCommandInput
     reset: ResetCommandInput
-    runtime: Readonly<{ configPath: string; image: string }>
     sibling: Readonly<{ operation: 'add'; input: Omit<SiblingAddInput, 'env'> }> | Readonly<{ operation: 'remove'; input: Omit<SiblingRemoveInput, 'env'> }>
     tool: ToolChangeInput
     setup: SetupCommandInput
@@ -741,7 +739,6 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
                 inspectMcpStartup: servers => observeMcpStartup(servers, env),
             })
         },
-        runtime: (input) => runRuntimeMeasure({ ...input, env }, { execute: executeProbe, probe: probeInstalledRuntime }),
         stacks: (input) => runStacksInventory({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
         'docs-check': (input) => runDocsCheck({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
         'env-keys': (input) => runEnvKeys({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
@@ -1251,17 +1248,6 @@ async function decodeRequest(
         return { handler, input: { configPath: values.config, answer } }
     }
 
-    if (handler === 'runtime') {
-        const values = parsed.values as { config?: string; image?: string }
-        const [operation, ...extra] = parsed.positionals
-        if (operation !== 'measure' || extra.length > 0) {
-            return usageOutcome('CLI_USAGE_INVALID', 'runtime requires the measure operation: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config <your cockpit.toml> --image <local-image>')
-        }
-        if (!values.config) return missingConfig()
-        if (!values.image) return usageOutcome('CLI_USAGE_INVALID', 'provide --image <local-image>; the probe never pulls', '--image')
-        return { handler, input: { configPath: values.config, image: values.image } }
-    }
-
     if (handler === 'stacks') {
         const values = parsed.values as { config?: string; apply?: boolean; interactive?: boolean }
         const [operation, ...extra] = parsed.positionals
@@ -1442,7 +1428,6 @@ async function dispatchHandler(
     if (request.handler === 'restart') return handlers.restart?.(request.input) ?? unavailable()
     if (request.handler === 'rebuild') return handlers.rebuild?.(request.input) ?? unavailable()
     if (request.handler === 'exec') return handlers.exec?.(request.input) ?? unavailable()
-    if (request.handler === 'runtime') return handlers.runtime?.(request.input) ?? unavailable()
     if (request.handler === 'stacks') {
         if (request.input.operation === 'list') return handlers.stacks?.(request.input) ?? unavailable()
         return runStacksPruneOperatorApplication({ configPath: request.input.configPath }, {

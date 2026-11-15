@@ -22,7 +22,6 @@ This generated index is for users choosing the command that owns their next oper
 
 ## Run the stack
 
-- `cockpit runtime`: Measure the local container runtime (runtime measure) and record the result for this machine.
 - `cockpit up`: Start or resume the declared environment.
 - `cockpit preflight`: Check that the environment is healthy and ready for work.
 - `cockpit session`: Keep the environment available for one command, then release it.

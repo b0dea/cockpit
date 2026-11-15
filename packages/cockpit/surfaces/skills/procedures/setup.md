@@ -326,14 +326,10 @@ guesses. So derive each value from what the repository shows, record it as infer
    refusal names the widened fields, and a person runs that sync with `--interactive` in a terminal
    and confirms the change. Then run
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml --json`. Done when the check exits 0.
-7. Where a runtime is declared, measure it with
-   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config cockpit.toml --image <local-image>`, using an
-   image already on this machine because the probe never pulls; with none, ask the person which to
-   use. It measures the local daemon `up` will use (the context `DOCKER_CONTEXT` names, or else the
-   active one), can run for minutes without output, records the result for this machine only and
-   leaves `cockpit.toml` unchanged, so no `sync` is needed. When Docker is missing or not running,
-   it and `up` refuse with `RUNTIME_UNAVAILABLE`: ask the person to start or install it. Then start
-   the stack with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml`. Report the actual result.
+7. Where a runtime is declared, start the stack with
+   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml`. When Docker is missing
+   or not running, or its Compose is older than cockpit runs, `up` refuses with `RUNTIME_UNAVAILABLE`
+   and says which: ask the person to start, install or upgrade it. Report the actual result.
    Done when the stack reports healthy, or you have named what stopped it.
 
 ## Secret handling

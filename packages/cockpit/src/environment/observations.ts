@@ -153,8 +153,8 @@ const issuedPreflights = new WeakSet<object>()
 const RUNNING_STACK_ROWS = Object.freeze([
     'running-checkout', 'runtime-availability', 'mount-posture', 'runtime-mount-materialization', 'runtime-port-family',
 ])
-// Rows and posture checks that describe a runtime; a cockpit that declares none has nothing for them to measure.
-const RUNTIME_ROWS = Object.freeze(['runtime-measurement', POSTURE_REQUIREMENT_OWNER])
+// Posture checks that describe a runtime; a cockpit that declares none has nothing for them to measure.
+const RUNTIME_ROWS = Object.freeze([POSTURE_REQUIREMENT_OWNER])
 for (const id of [...RUNNING_STACK_ROWS, ...RUNTIME_ROWS]) {
     if (id !== POSTURE_REQUIREMENT_OWNER && !validatedProductionDeclarations.some((declaration) => declaration.id === id)) {
         throw new RefusalError(`stopped-stack applicability names an undeclared observation: ${id}`)

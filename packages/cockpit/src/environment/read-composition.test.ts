@@ -2,7 +2,6 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { createReadCommandAdapters } from './read-composition.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { runLogs } from './application/logs.js'
-import { RefusalError } from './contract.js'
 
 const sha = (value: string) => value.padEnd(64, value[0] ?? 'a').slice(0, 64)
 const stackId = `stack:${sha('a')}`
@@ -279,9 +278,9 @@ describe('production read command composition', () => {
         expect(options.every(option => option?.signal === controller.signal)).toBe(true)
     })
 
-    it('reports the runtime readiness refusal itself, such as an unmeasured runtime, instead of a generic observation failure', async () => {
-        const unmeasured = Object.freeze({ severity: 'error', code: 'RUNTIME_UNMEASURED', target: stackId,
-            message: 'runtime orbstack engine 29.8.2 has no passing measurement on this machine' })
+    it('reports the runtime readiness refusal itself, such as a Compose below the floor, instead of a generic observation failure', async () => {
+        const unmeasured = Object.freeze({ severity: 'error', code: 'RUNTIME_UNAVAILABLE', target: stackId,
+            message: 'Docker Compose 2.34.0 is older than 2.35.0, the oldest Compose cockpit runs' })
         controls.readinessRefusal = [unmeasured]
         const adapters = createReadCommandAdapters({ configPath: source.path, env: { PATH: '/synthetic' },
             sessionId: 'cockpit-cli', timeoutMs: 5_000 }, vi.fn(async () => ({ kind: 'complete' })) as never)
@@ -302,38 +301,6 @@ describe('production read command composition', () => {
             kind: 'cancelled', status: 130, diagnostics: [], result: { json: false, records: [], truncated: false },
         })
         expect(observe).not.toHaveBeenCalled()
-    })
-
-    it('passes opaque controlled-runtime authority only to the lifecycle consumer', async () => {
-        const authority = Object.freeze({ kind: 'runtime-measurement-probe-authority' as const })
-        const execute = vi.fn(async () => ({ kind: 'complete' }))
-        const adapters = createReadCommandAdapters({
-            configPath: source.path,
-            env: { PATH: '/synthetic' },
-            sessionId: 'cockpit-cli',
-            timeoutMs: 5_000,
-            runtimeMeasurementProbeAuthority: authority,
-        }, execute as never)
-
-        await adapters.logs.observe({ configPath: source.path, service: 'api' })
-        expect(createLifecycleCommandAdapters).toHaveBeenLastCalledWith(
-            expect.objectContaining({ runtimeMeasurementProbeAuthority: authority }),
-            expect.any(Function),
-        )
-    })
-
-    it('rejects accessor-backed controlled-runtime authority without invoking it', async () => {
-        const getter = vi.fn(() => Object.freeze({ kind: 'runtime-measurement-probe-authority' as const }))
-        const adapters = createReadCommandAdapters({
-            configPath: source.path,
-            env: { PATH: '/synthetic' },
-            sessionId: 'cockpit-cli',
-            timeoutMs: 5_000,
-            get runtimeMeasurementProbeAuthority() { return getter() },
-        }, vi.fn(async () => ({ kind: 'complete' })) as never)
-
-        await expect(adapters.logs.observe({ configPath: source.path, service: 'api' })).rejects.toBeInstanceOf(RefusalError)
-        expect(getter).not.toHaveBeenCalled()
     })
 
     it('transfers retained port and sibling authority through compose-first logs', async () => {

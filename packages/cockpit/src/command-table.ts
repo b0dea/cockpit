@@ -31,7 +31,6 @@ export type HandlerIdentifier = WorkHandlerIdentifier
     | 'rebuild'
     | 'reset'
     | 'restart'
-    | 'runtime'
     | 'setup'
     | 'sibling'
     | 'tool'
@@ -112,7 +111,6 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     follow: 'Continue collecting logs until cancelled',
     from: 'Path to an existing local repository',
     gate: 'Declared product gate to run',
-    image: 'Local container image the runtime measurement probe runs; it is never pulled',
     'instruction-pointer': 'Offer a marked AGENTS.md link for this separate sibling',
     interactive: 'Ask for explicit approval in a terminal',
     json: 'Emit one machine-readable JSON response',
@@ -159,7 +157,7 @@ export function describePublicOption(name: string): string {
 }
 
 type OrdinaryValueRole = 'confined-path' | 'resolved-config' | 'declared-service' | 'declared-gate' | 'gate-mode' | 'gate-selector'
-    | 'identifier' | 'route' | 'label' | 'schema-reference' | 'schema-draft' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target' | 'local-image' | 'evaluator-tool' | 'compose-profile'
+    | 'identifier' | 'route' | 'label' | 'schema-reference' | 'schema-draft' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target' | 'evaluator-tool' | 'compose-profile'
 interface OrdinaryOption {
     readonly kind: 'flag' | 'value'
     readonly role: 'boolean' | OrdinaryValueRole
@@ -371,20 +369,6 @@ const sources = [
         visibility: 'public',
         ordinary: ordinary('check'),
         flags: configured,
-    },
-    {
-        name: 'runtime',
-        stage: 'run-the-stack',
-        summary: 'Measure the local container runtime (runtime measure) and record the result for this machine',
-        usage: 'measure [options]',
-        handler: 'runtime',
-        visibility: 'public',
-        // The probe runs a disposable stack under its own project, cleans it up, and records the result
-        // only in this machine's ignored state, so an agent can measure before its first `up`.
-        ordinary: ordinary('runtime', {
-            positional: Object.freeze({ min: 1, max: 1, roles: Object.freeze(['operation'] as const), operations: Object.freeze(['measure']) }),
-        }),
-        flags: { config: configFlag, image: str(value('local-image', true)), json: jsonFlag },
     },
     {
         name: 'up',
@@ -639,8 +623,6 @@ interface OrdinaryInvocationAuthority {
 export type OrdinaryGrant = 'browser-preapproval' | 'autonomy-sync' | 'autonomy-reset' | 'autonomy-instruction-files'
 const ORDINARY_GRANTS: readonly OrdinaryGrant[] = ['browser-preapproval', 'autonomy-sync', 'autonomy-reset', 'autonomy-instruction-files']
 
-// An image reference or ID as Docker spells it; the command itself refuses one that is not local.
-const LOCAL_IMAGE = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,255}$/
 // The spelling environment.profiles accepts.
 const COMPOSE_PROFILE = /^[a-z0-9][a-z0-9_.-]{0,63}$/
 // A selected value that starts with `-` would reach the product's tool as an option of its own.
@@ -755,7 +737,6 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
                 || /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?(?:Z|[+-]\d\d:\d\d)$/.test(text) && Number.isFinite(Date.parse(text)))
             : option.role === 'surface-target' ? text.split(',').every(tool => SURFACE_TARGETS.some(target => target === tool))
             : option.role === 'evaluator-tool' ? EVALUATOR_TOOLS.includes(text)
-            : option.role === 'local-image' ? LOCAL_IMAGE.test(text)
             : option.role === 'compose-profile' ? source.profiles.includes(text)
             : option.role === 'sha256' && /^[a-f0-9]{64}$/.test(text)
         if (!valid) return undefined

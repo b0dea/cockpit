@@ -15,8 +15,7 @@ Every diagnostic message names what failed and how to fix it. The sections below
 | `GENERATED_OWNERSHIP_INVALID` | Cockpit has no trustworthy record of which files it owns. | Restore the committed ownership metadata, then rerun `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
 | `GUARD_AUTHORITY_UNAVAILABLE` | The guard cannot read the current policy it needs to decide safely. | Restore `cockpit.toml` and generated guard files, then have a human run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
 | `GUARD_REFUSED` | The command is outside the current guard policy. | Follow the named reason, or ask a human to update `cockpit.toml` and run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
-| `RUNTIME_UNAVAILABLE` | The container runtime cannot be reached or identified. | Start it and verify `docker info`; if the message names a Docker or Compose version with no X.Y.Z core, install a release that prints one. Then retry. |
-| `RUNTIME_UNMEASURED` | This machine has no passing measurement for the current runtime and engine version. | Run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config cockpit.toml --image <local-image>`, which records the result for this machine only, then retry. |
+| `RUNTIME_UNAVAILABLE` | The container runtime cannot be reached, or its Docker Compose is older than cockpit runs. | Start it and verify `docker info`; if the message names an old Compose, or a Docker or Compose version with no X.Y.Z core, upgrade to a release the message names. Then retry. |
 | `CLAIM_CO_TENANT` | Another [holder](concepts.md#holder) is using the stack. | After a failed `up`, run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml` to resume or `./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config cockpit.toml` to release. Otherwise, have every session that holds the stack run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config cockpit.toml`, then retry. |
 | `PORT_FAMILY_COLLISION` | A selected host port is already in use. | Stop the named listener or release the inactive stack, then retry. A host process meant to serve a leased port must be [started by the session](environment.md#host-processes-on-leased-ports) holding the stack. |
 | `PORT_LEASE_EXHAUSTED` | Every declared port family is leased or occupied. | Release an inactive stack or extend `ports.count` after checking host capacity. |
@@ -402,9 +401,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `RESTRICTION_INPUT_INVALID` | [see above](#mcp-and-restrictions) |
 | `RESTRICTION_OUTPUT_LIMIT` | [see above](#mcp-and-restrictions) |
 | `RESTRICTION_TEMPLATE_INVALID` | [see above](#mcp-and-restrictions) |
-| `RUNTIME_IMAGE_UNAVAILABLE` | pull or build it first (docker pull <image>), then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config <your cockpit.toml> --image <image> again |
 | `RUNTIME_UNAVAILABLE` | [see above](#common-refusal-guidance) |
-| `RUNTIME_UNMEASURED` | [see above](#common-refusal-guidance) |
 | `SECRET_FILE_TRACKED` | a person decides with the repository owner: stop tracking each file with git rm --cached <file>, add it to .gitignore, commit, and rotate any credential it held; commit a .env.example with the variable names instead |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
 | `SESSION_STACK_RETAINED` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config <your cockpit.toml> to release this checkout's remaining hold |

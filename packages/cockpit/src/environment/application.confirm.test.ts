@@ -31,7 +31,7 @@ function cockpit(unconfirmed: string, tail = '') {
 
 const row = (code: string, verdict: 'pass' | 'fail' | 'unavailable' | 'not-applicable') => ({ code, verdict, owner: 'synthetic', source: 'synthetic',
     stackId: `stack:${'1'.repeat(64)}`, reason: '', remedy: '', observedAt: '2026-11-04T00:00:00.000Z', expected: { kind: 'present' } }) as never
-const FLOOR = ['MACHINE_MEMORY_BELOW_FLOOR', 'MACHINE_CPU_BELOW_FLOOR', 'MACHINE_DISK_BELOW_FLOOR', 'RUNTIME_UNMEASURED']
+const FLOOR = ['MACHINE_MEMORY_BELOW_FLOOR', 'MACHINE_CPU_BELOW_FLOOR', 'MACHINE_DISK_BELOW_FLOOR']
 
 function adapters(preflight: Partial<{ status: number; codes: Readonly<Record<string, 'pass' | 'fail' | 'unavailable' | 'not-applicable'>> }> = {}, checkStatus = 0) {
     return {
@@ -147,8 +147,8 @@ describe('confirm', () => {
         expect(await refused('ports.bases', adapters({ status: 2, codes: { PORT_FAMILY_COLLISION: 'not-applicable' } }))).toEqual([
             expect.objectContaining({ code: 'CONFIRM_OBSERVATION_FAILED', target: 'ports.bases', message: expect.stringContaining('preflight did not pass') }),
             expect.objectContaining({ code: 'STATE_UNSEEDED' })])
-        expect(await refused('environment.machine', adapters({ codes: { ...Object.fromEntries(FLOOR.map(code => [code, 'pass'])), RUNTIME_UNMEASURED: 'unavailable' } })))
-            .toEqual([expect.objectContaining({ code: 'CONFIRM_OBSERVATION_FAILED', message: expect.stringContaining('preflight did not observe RUNTIME_UNMEASURED passing') })])
+        expect(await refused('environment.machine', adapters({ codes: { ...Object.fromEntries(FLOOR.map(code => [code, 'pass'])), MACHINE_DISK_BELOW_FLOOR: 'unavailable' } })))
+            .toEqual([expect.objectContaining({ code: 'CONFIRM_OBSERVATION_FAILED', message: expect.stringContaining('preflight did not observe MACHINE_DISK_BELOW_FLOOR passing') })])
         expect(await refused('environment.compose_files', adapters({}, 2))).toEqual([
             expect.objectContaining({ code: 'CONFIRM_OBSERVATION_FAILED', message: expect.stringContaining('check did not pass') }),
             expect.objectContaining({ code: 'COMPOSE_TOPOLOGY_UNAVAILABLE' })])

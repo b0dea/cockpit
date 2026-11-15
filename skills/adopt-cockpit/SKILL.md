@@ -107,12 +107,8 @@ runtime is declared `./node_modules/@b00dea/cockpit/bin/cockpit.mjs preflight --
 and every gap in `result.readiness` of `./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml --json`
 has been cleared or reported to the human. Cockpit is usable once `check` passes.
 
-- **Only where a runtime is declared, before the first `up`**, run
-  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config cockpit.toml --image <local-image> --json`.
-  It measures the local daemon `up` will use, can run for minutes with no progress output, records
-  the result for this machine only and leaves `cockpit.toml` unchanged, so go straight on to `up`.
-  A surfaces-only product finishes with `check` and `doctor`; add runtime declarations when runnable code exists.
-  The guide's *Chapter 2* says which runtimes are recognised.
+- A surfaces-only product finishes with `check` and `doctor`; add runtime declarations when
+  runnable code exists.
 - **Daily, with a declared runtime:** `./node_modules/@b00dea/cockpit/bin/cockpit.mjs session --config cockpit.toml -- <agent command>`.
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config cockpit.toml` releases this checkout's hold.
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config cockpit.toml` removes its containers, keeping data
@@ -411,14 +407,10 @@ guesses. So derive each value from what the repository shows, record it as infer
    refusal names the widened fields, and a person runs that sync with `--interactive` in a terminal
    and confirms the change. Then run
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml --json`. Done when the check exits 0.
-7. Where a runtime is declared, measure it with
-   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config cockpit.toml --image <local-image>`, using an
-   image already on this machine because the probe never pulls; with none, ask the person which to
-   use. It measures the local daemon `up` will use (the context `DOCKER_CONTEXT` names, or else the
-   active one), can run for minutes without output, records the result for this machine only and
-   leaves `cockpit.toml` unchanged, so no `sync` is needed. When Docker is missing or not running,
-   it and `up` refuse with `RUNTIME_UNAVAILABLE`: ask the person to start or install it. Then start
-   the stack with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml`. Report the actual result.
+7. Where a runtime is declared, start the stack with
+   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml`. When Docker is missing
+   or not running, or its Compose is older than cockpit runs, `up` refuses with `RUNTIME_UNAVAILABLE`
+   and says which: ask the person to start, install or upgrade it. Report the actual result.
    Done when the stack reports healthy, or you have named what stopped it.
 
 ### Secret handling

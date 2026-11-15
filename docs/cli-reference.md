@@ -201,24 +201,6 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-## cockpit runtime
-
-Measure the local container runtime (runtime measure) and record the result for this machine.
-
-Reads `cockpit.toml` from `--config`.
-
-| Flag | Type | Default |
-| --- | --- | --- |
-| `--config` | string | unset |
-| `--image` | string | unset |
-| `--json` | boolean | `false` |
-
-| Exit | Meaning |
-| --- | --- |
-| 0 | success |
-| 2 | failure |
-| 130 | cancelled |
-
 ## cockpit up
 
 Start or resume the declared environment.

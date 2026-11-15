@@ -12,7 +12,6 @@ import { recordLifecycleStarted } from '../src/environment/lifecycle-stage.js'
 import { composeProjectName } from '../src/environment/identity.js'
 import { syncGeneratedEnvironment } from '../src/generated-environment/command.js'
 import { publishComposeOwnership } from './compose-ownership-fixture.js'
-import { recordSyntheticMeasurement } from './runtime-measurement-fixture.js'
 
 const run = promisify(execFile)
 
@@ -28,7 +27,7 @@ export function createLifecycleCompositionFixtureSupport(
     roots: string[],
     listenerProbeControl: ListenerProbeControl,
 ) {
-async function fixture(portCount = 2, runtimeMeasurement: 'supported' | 'unmeasured' = 'supported') {
+async function fixture(portCount = 2) {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-lifecycle-composition-')))
     roots.push(root)
     const checkout = join(root, 'checkout')
@@ -68,13 +67,11 @@ async function fixture(portCount = 2, runtimeMeasurement: 'supported' | 'unmeasu
         '',
     ].join('\n'))
     await writeFile(composePath, 'services: {}\n')
-    if (runtimeMeasurement === 'supported') await recordSyntheticMeasurement(home)
     const dockerPath = join(root, 'docker')
     await writeFile(dockerPath, [
         '#!/bin/sh',
         'if [ "$1" = "version" ]; then printf "27.1.2\\n"; exit 0; fi',
         'if [ "$1" = "compose" ] && [ "$2" = "version" ]; then printf "2.39.2\\n"; exit 0; fi',
-        'if [ "$1" = "info" ] && [ "$3" = "[{{json .OperatingSystem}},{{json .Name}},{{json .OSType}}]" ]; then printf \'%s\\n\' \'["Docker Desktop","docker-desktop","linux"]\'; exit 0; fi',
         'if [ "$1" = "info" ]; then printf "2147483648|2\\n"; exit 0; fi',
         'if [ "$1" = "compose" ]; then /bin/cat "$PWD/topology.json"; exit 0; fi',
         'exit 64',
@@ -142,13 +139,11 @@ async function stackFixture(options: Readonly<{ seed?: readonly string[]; memory
         '  product-data: {}',
         '',
     ].join('\n'))
-    await recordSyntheticMeasurement(home)
     const dockerPath = join(root, 'docker')
     await writeFile(dockerPath, [
         '#!/bin/sh',
         'if [ "$1" = "version" ]; then printf "27.1.2\\n"; exit 0; fi',
         'if [ "$1" = "compose" ] && [ "$2" = "version" ]; then printf "2.39.2\\n"; exit 0; fi',
-        'if [ "$1" = "info" ] && [ "$3" = "[{{json .OperatingSystem}},{{json .Name}},{{json .OSType}}]" ]; then printf \'%s\\n\' \'["Docker Desktop","docker-desktop","linux"]\'; exit 0; fi',
         'if [ "$1" = "info" ]; then printf "2147483648|2\\n"; exit 0; fi',
         'exit 64',
         '',
@@ -240,12 +235,7 @@ case "$1" in
             *) printf '1 4242\\n' ;;
         esac
         exit 0 ;;
-    info)
-        case "$joined" in
-            *OperatingSystem*) printf '%s\\n' '["Docker Desktop","docker-desktop","linux"]' ;;
-            *) printf '2147483648|2\\n' ;;
-        esac
-        exit 0 ;;
+    info) printf '2147483648|2\\n'; exit 0 ;;
     compose)
         if [ "$2" = version ]; then printf '2.39.2\\n'; exit 0; fi
         # Like Compose v2, stop reports progress on stderr unless it is told to be quiet.

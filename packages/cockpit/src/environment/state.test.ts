@@ -21,7 +21,6 @@ import {
     removeStackState,
     SERIALIZED_RECORD_BYTE_LIMIT,
     selectBootstrapStateRoot,
-    selectMachineStateRoot,
     selectStateRoot,
     snapshotBootstrapStateNamespace,
     takeStateLockReclaims,
@@ -356,7 +355,6 @@ describe('selectStateRoot', () => {
             const selected = await selectStateRoot({ ...input, cockpitId })
             expect(selected).toMatchObject({ kind: 'complete', value: { root } })
             if (selected.kind !== 'complete') throw new Error('expected a writable state root')
-            expect(await selectMachineStateRoot(input)).toEqual({ kind: 'complete', value: root })
             expect(await selectBootstrapStateRoot(bootstrapInput)).toMatchObject({ kind: 'complete', value: { root } })
             const address = selected.value.paths.lifecycle(stackId)
             const record = lifecycleRecord(0, 1)
@@ -367,7 +365,7 @@ describe('selectStateRoot', () => {
             // Granting only ancestors must not authorize writes to the actual state directory.
             sandboxDenied.path = root
             for (const result of await Promise.all([selectStateRoot({ ...input, cockpitId }),
-                selectMachineStateRoot(input), selectBootstrapStateRoot(bootstrapInput)])) {
+                selectBootstrapStateRoot(bootstrapInput)])) {
                 expect(result).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
                     target: root, message: expect.stringContaining(`${root} is not writable by this process`) })
             }
@@ -376,7 +374,7 @@ describe('selectStateRoot', () => {
             await rm(root, { recursive: true })
             sandboxDenied.path = dirname(root)
             for (const result of await Promise.all([selectStateRoot({ ...input, cockpitId }),
-                selectMachineStateRoot(input), selectBootstrapStateRoot(bootstrapInput)])) {
+                selectBootstrapStateRoot(bootstrapInput)])) {
                 expect(result).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
                     target: root, message: expect.stringContaining(`${dirname(root)} is not writable by this process`) })
             }

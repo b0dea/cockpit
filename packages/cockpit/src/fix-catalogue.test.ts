@@ -123,7 +123,7 @@ describe('executable remedy catalogue', () => {
 // install, every configured command refuses without --config, and down and reset refuse until the
 // Docker daemon is named.
 describe('printed cockpit commands', () => {
-    const VERBS = 'sibling add|sibling remove|runtime measure|setup|sync|check|confirm|up|sleep|session|down|reset|preflight|doctor|logs'
+    const VERBS = 'sibling add|sibling remove|setup|sync|check|confirm|up|sleep|session|down|reset|preflight|doctor|logs'
     // Every work, browser and test command reads --config too; they are spelled through their own owners, not cockpitCommand.
     const SCANNED = `${VERBS}|test-run|${commandGroups.map(group => `${group.name} [a-z][a-z-]*`).join('|')}`
     const runnable = new RegExp(`(?:npx --no cockpit|\\./node_modules/(?:\\.bin/cockpit|@b00dea/cockpit/bin/cockpit\\.mjs)) (${SCANNED})(?![\\w-])`, 'g')
@@ -141,7 +141,7 @@ describe('printed cockpit commands', () => {
     // The guard refuses a command substitution, so a printed `VAR="$(…)" npx --no cockpit …` line is
     // one an agent can never run as printed; down and reset once printed their daemon that way. It
     // asks before any wrapped command, such as `env -u NAME …`, and Codex and OpenCode treat an ask
-    // as a denial; runtime measure once printed its daemon that way.
+    // as a denial.
     const unrunnablePrefix = (before: string): string | undefined => {
         const assignments = /(?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*) +)*$/.exec(before)!
         if (/\$\(|`/.test(assignments[0])) return 'a substituted environment prefix'

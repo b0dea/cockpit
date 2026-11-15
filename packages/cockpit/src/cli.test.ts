@@ -130,7 +130,7 @@ describe('closed ordinary invocation metadata', () => {
     const ordinary = (argv: string[], patch = {}) => resolveOrdinaryInvocation({ executable: authority.executable, cwd: authority.canonicalRoot, argv, ...patch }, authority, () => true)
     // The words each available config-bearing row needs besides --config.
     const requiredWords: Readonly<Record<string, readonly string[]>> = {
-        logs: ['--service', 'app'], runtime: ['measure', '--image', 'node:22-alpine'],
+        logs: ['--service', 'app'],
         restart: ['--service', 'app'], rebuild: ['--service', 'app'], exec: ['--service', 'app'], 'env schema': ['--path', 'api:services/web/.env.schema'],
         'test-run': ['--gate', 'quick'], reset: ['--apply'], grade: ['--criteria', 'criteria.md'], use: ['app'], tool: ['add', 'codexcli'], confirm: ['ports.bases'],
         ...Object.fromEntries(['accept', 'check', 'acknowledge', 'grade', 'signoff', 'recover'].map(sub => [`work ${sub}`, ['--work-order', 'WO-1']])),
@@ -168,7 +168,6 @@ describe('closed ordinary invocation metadata', () => {
             ['ps'], ['ps', '--json'], ['restart', '--service', 'app'], ['rebuild', '--service=app', '--json'],
             ['logs', '--service', 'app'], ['logs', '--service', 'app', '--tail', '1', '--since', '15m', '--follow'],
             ['logs', '--service=app', '--tail=10000', '--since=2026-10-22T10:00:00Z', '--json'],
-            ['runtime', 'measure', '--image', 'node:22-alpine'], ['runtime', 'measure', '--image', `sha256:${'c'.repeat(64)}`, '--json'],
             // The inventory and the prune preview change nothing; an applied prune that deletes volumes is gated by the command.
             ['stacks'], ['stacks', '--json'], ['stacks', 'prune'], ['stacks', 'prune', '--apply', '--json'],
             // The documented agent steps of the test, work-order and browser loops.
@@ -233,7 +232,7 @@ describe('closed ordinary invocation metadata', () => {
 
     it('requires the exact resolved config for every available config-bearing row', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
-        expect(rows.map(row => row.name)).toEqual(['setup', 'use', 'pull', 'tool', 'confirm', 'upgrade', 'sync', 'check', 'runtime', 'up', 'preflight', 'logs', 'ps', 'restart', 'rebuild', 'exec',
+        expect(rows.map(row => row.name)).toEqual(['setup', 'use', 'pull', 'tool', 'confirm', 'upgrade', 'sync', 'check', 'up', 'preflight', 'logs', 'ps', 'restart', 'rebuild', 'exec',
             'sleep', 'down', 'reset', 'stacks', 'doctor', 'env keys', 'env schema',
             'test-run', 'work status', 'work accept', 'work check', 'work note', 'work decide', 'work answer', 'work acknowledge', 'work grade', 'work signoff', 'work retry', 'work recover', 'work verify', 'grade',
             'browser drive', 'browser screenshot', 'docs check'])
@@ -268,9 +267,6 @@ describe('closed ordinary invocation metadata', () => {
             ['exec', '--config', authority.configPath, '--', 'psql'],
             ['upgrade', '^1.2.3'], ['upgrade', '1.2.3', '1.2.4'], ['upgrade', '--dry-run', '--dry-run'],
             ['reset'], ['reset', '--interactive'], ['guard-evaluate', '--harness', 'claudecode'],
-            ['runtime', '--image', 'node:22-alpine'], ['runtime', 'other', '--image', 'node:22-alpine'], ['runtime', 'measure'],
-            ['runtime', 'measure', 'extra', '--image', 'node:22-alpine'], ['runtime', 'measure', '--image', 'node 22'],
-            ['runtime', 'measure', '--image', 'node:22-alpine', '--write'],
             ['stacks', 'prune', '--interactive'], ['stacks', 'remove'], ['stacks', 'prune', 'extra'],
             ['check', 'extra'], ['check', '--unknown'], ['check', '--config', '/outside/cockpit.toml'], ['check', '--config', 'other.toml'],
             ['check', '--json=false'], ['check', '--'], ['check', '--config'], ['check', '-c', 'cockpit.toml'],
@@ -396,7 +392,6 @@ describe('CLI help', () => {
     it.each([
         ['session', 'Usage: cockpit session [options] -- <command> [args...]'],
         ['init', 'Usage: cockpit init [<root>] [options]'],
-        ['runtime', 'Usage: cockpit runtime measure [options]'],
         ['sibling', 'Usage: cockpit sibling add|remove <slug> [options]'],
         ['confirm', 'Usage: cockpit confirm <answer> [options]'],
     ])('prints the operands `%s` takes besides its options', async (verb, usage) => {
@@ -535,7 +530,6 @@ describe('CLI help', () => {
             '  sync       Write the Compose ownership override and agent files from cockpit.toml\n' +
             '  check      Report generated files that no longer match cockpit.toml\n\n' +
             'Run the stack:\n' +
-            '  runtime    Measure the local container runtime (runtime measure) and record the result for this machine\n' +
             '  up         Start or resume the declared environment\n' +
             '  preflight  Check that the environment is healthy and ready for work\n' +
             '  session    Keep the environment available for one command, then release it\n' +

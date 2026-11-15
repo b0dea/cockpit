@@ -11,7 +11,6 @@ import * as lifecycleComposition from './lifecycle-composition.js'
 import * as ports from './ports.js'
 import { createDestructiveCommandAdapters } from './destructive-composition.js'
 import { publishComposeOwnership } from '../../test-support/compose-ownership-fixture.js'
-import { recordSyntheticMeasurement } from '../../test-support/runtime-measurement-fixture.js'
 
 const roots: string[] = []
 const run = promisify(execFile)
@@ -23,34 +22,20 @@ afterEach(async () => {
 
 describe('destructive command composition', () => {
     it.each(['unix:///synthetic home/docker.sock'])(
-        'forwards the exact local host %s and controlled-runtime authority to the lifecycle owner', (host) => {
-            const authority = Object.freeze({ kind: 'runtime-measurement-probe-authority' as const })
+        'forwards the exact local host %s and the active profiles to the lifecycle owner', (host) => {
             const profiles = ['runtime_probe']
             const lifecycleFactory = vi.spyOn(lifecycleComposition, 'createLifecycleCommandAdapters')
             createDestructiveCommandAdapters({
                 configPath: '/tmp/cockpit.toml', env: { PATH: '/usr/bin:/bin', HOME: '/tmp', DOCKER_HOST: host },
                 sessionId: 'cockpit-cli', timeoutMs: 5_000, dockerContext: 'default',
-                activeProfiles: profiles, runtimeMeasurementProbeAuthority: authority,
+                activeProfiles: profiles,
             }, vi.fn() as never)
             profiles.push('later_profile')
             expect(lifecycleFactory).toHaveBeenCalledWith(expect.objectContaining({
-                activeProfiles: ['runtime_probe'], runtimeMeasurementProbeAuthority: authority,
+                activeProfiles: ['runtime_probe'],
                 env: { PATH: '/usr/bin:/bin', HOME: '/tmp', DOCKER_HOST: host },
             }), expect.any(Function))
         })
-
-    it('rejects accessor-backed controlled-runtime authority without invoking it', async () => {
-        const getter = vi.fn(() => Object.freeze({ kind: 'runtime-measurement-probe-authority' as const }))
-        const execute = vi.fn()
-        const adapters = createDestructiveCommandAdapters({
-            configPath: '/tmp/cockpit.toml', env: { PATH: '/usr/bin:/bin', HOME: '/tmp' },
-            sessionId: 'cockpit-cli', timeoutMs: 5_000, dockerContext: 'default',
-            get runtimeMeasurementProbeAuthority() { return getter() },
-        }, execute as never)
-        await expect(adapters.load({ configPath: '/tmp/cockpit.toml' })).resolves.toMatchObject({ kind: 'refusal' })
-        expect(getter).not.toHaveBeenCalled()
-        expect(execute).not.toHaveBeenCalled()
-    })
 
     it('exposes only load, observe, observeReclaim, and execute and cannot mint an operator reset session', async () => {
         const adapters = createDestructiveCommandAdapters({
@@ -97,7 +82,6 @@ describe('destructive command composition', () => {
         roots.push(root, stateHome)
         await run('git', ['init', '--quiet', root])
         const configPath = join(root, 'cockpit.toml')
-        await recordSyntheticMeasurement(stateHome)
         await writeFile(configPath, [
             '[cockpit]',
             'name = "synthetic-cockpit"',
@@ -148,7 +132,6 @@ describe('destructive command composition', () => {
             'if [ "$1" = "--host" ]; then shift 2; fi',
             'if [ "$1" = "version" ]; then printf "27.1.2\\n"; exit 0; fi',
             'if [ "$1" = "compose" ] && [ "$2" = "version" ]; then printf "2.39.2\\n"; exit 0; fi',
-            'if [ "$1" = "info" ] && [ "$3" = "[{{json .OperatingSystem}},{{json .Name}},{{json .OSType}}]" ]; then printf \'%s\\n\' \'["Docker Desktop","docker-desktop","linux"]\'; exit 0; fi',
             'if [ "$1" = "info" ]; then printf "2147483648|2\\n"; exit 0; fi',
             'if [ "$1" = "compose" ] && printf "%s\\n" "$*" | /usr/bin/grep -q " config "; then printf x >> "$PWD/topology-reads"; /bin/cat "$PWD/topology.json"; exit 0; fi',
             'if [ "$1" = "compose" ] && printf "%s\\n" "$*" | /usr/bin/grep -q " up "; then /usr/bin/touch "$PWD/runtime-up"; exit 0; fi',

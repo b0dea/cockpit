@@ -17,8 +17,6 @@ import {
     measureMachineFloor,
     createRuntimeAdapter,
     admitRuntimeServiceHealth,
-    admitRuntimeMeasurement,
-    runtimeIdentity,
     observeRuntimeTopology,
     stopRuntime,
     startRuntimeService,
@@ -30,11 +28,10 @@ import {
     isRuntimeTopologyEvidence,
     issueMachineFloorAuthority,
     observeDockerRuntime,
-    observedVersionCore,
+    MINIMUM_COMPOSE_VERSION,
     observeRuntimeServiceColdStart,
     observeRuntimeMountMaterialization,
     observeRuntimePortFamily,
-    observeRuntimeMeasurement,
     projectRuntimeLifecycle,
     projectRuntimeExecutionEnvironment,
     consumeRuntimeServiceFailureForLogs,
@@ -47,11 +44,8 @@ import { resolveExecutablePath, resolveGitExecutable } from './executable.js'
 import { observeSetupCheckout, withSetupCheckoutProjection } from './setup-observation.js'
 import { readState, selectStateRoot, transactState } from './state.js'
 import type { CheckoutId, ExecutionStep, HolderId } from './contract.js'
-import type { LocalRuntimeMeasurements, RuntimeMeasurementRow } from './runtime-measurement-record.js'
 
 const sha = (value: string | Buffer) => createHash('sha256').update(value).digest('hex')
-const measured = (rows: readonly RuntimeMeasurementRow[]): LocalRuntimeMeasurements =>
-    ({ kind: 'read', path: '/synthetic/state/machine/runtime-measurements.json', rows })
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
 
 /** Measures the machine floor, recording each step; `run: false` records the steps without running them. */
@@ -88,21 +82,8 @@ const runtimeInput = {
     timeoutMs: 45_000,
 }
 
-describe('Docker runtime identity observation', () => {
-    it.each([
-        ['Docker Desktop', 'Docker Desktop', 'docker-desktop', 'linux', 'darwin', 'docker-desktop'],
-        ['OrbStack', 'OrbStack', 'orbstack', 'linux', 'darwin', 'orbstack'],
-        ['Colima default profile', 'Ubuntu 24.04.1 LTS', 'colima', 'linux', 'darwin', 'colima'],
-        ['Colima named profile', 'Ubuntu 24.04.1 LTS', 'colima-work', 'linux', 'darwin', 'colima'],
-        ['Rancher Desktop', 'Alpine Linux v3.20', 'lima-rancher-desktop', 'linux', 'darwin', 'rancher-desktop'],
-        ['Linux Docker Engine', 'Ubuntu 24.04 LTS', 'build-host', 'linux', 'linux', 'docker-engine'],
-        ['an unrecognised macOS VM', 'Ubuntu 24.04 LTS', 'build-host', 'linux', 'darwin', null],
-        ['Windows containers on a Linux host', 'Windows Server 2022', 'build-host', 'windows', 'linux', null],
-    ] as const)('identifies %s from one docker info reading', (_name, operatingSystem, name, osType, hostPlatform, expected) => {
-        expect(runtimeIdentity({ operatingSystem, name, osType, hostPlatform })).toBe(expected)
-    })
-
-    function executableWithVersions(server: string, compose: string, identity = '["Docker Desktop","docker-desktop","linux"]\n') {
+describe('Docker runtime version observation', () => {
+    function executableWithVersions(server: string, compose: string) {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-runtime-version-'))
         const path = join(directory, 'docker')
         const source = `#!/bin/sh
@@ -110,8 +91,6 @@ if [ "$#" -eq 3 ] && [ "$1" = version ] && [ "$2" = --format ] && [ "$3" = '{{.S
   printf '%s' ${shellQuote(server)}
 elif [ "$#" -eq 3 ] && [ "$1" = compose ] && [ "$2" = version ] && [ "$3" = --short ]; then
   printf '%s' ${shellQuote(compose)}
-elif [ "$#" -eq 3 ] && [ "$1" = info ] && [ "$2" = --format ] && [ "$3" = '[{{json .OperatingSystem}},{{json .Name}},{{json .OSType}}]' ]; then
-  printf '%s' ${shellQuote(identity)}
 else
   exit 7
 fi
@@ -120,7 +99,7 @@ fi
         return { directory, executable: { canonicalPath: path, invocationPath: path, sha256: sha(source), executionMode: 'verified-path' as const } }
     }
 
-    it('uses authenticated bounded probes to identify the runtime and versions', async () => {
+    it('reads the engine and Compose versions through authenticated bounded probes', async () => {
         const fixture = executableWithVersions('29.4.0\n', '5.1.2\n')
         try {
             const result = await observeDockerRuntime({
@@ -129,100 +108,24 @@ fi
 
             expect(result).toEqual({
                 kind: 'complete', runtime: { name: 'docker', version: '29.4.0', executableSha256: fixture.executable.sha256 },
-                runtimeIdentity: 'docker-desktop',
-                operatingSystem: 'Docker Desktop', name: 'docker-desktop', osType: 'linux', hostPlatform: process.platform,
                 composeVersion: '5.1.2', observedAt: expect.any(String),
             })
         } finally { rmSync(fixture.directory, { recursive: true, force: true }) }
     })
 
-    it('admits only the exact measured runtime with passing controls and a sufficient Compose floor', async () => {
-        const fixture = executableWithVersions('29.4.0\n', '5.1.2\n')
-        try {
-            const observed = await observeDockerRuntime({
-                executable: fixture.executable, cwd: fixture.directory, env: { PATH: process.env.PATH ?? '' }, timeoutMs: 5_000,
-            }, (step) => executeProbe(step))
-            const row = { runtime: 'docker-desktop', daemon: 'docker-desktop', engineVersion: '29.4.0', composeFloor: '5.1.0', measuredOn: '2026-09-26' }
-            const admission = admitRuntimeMeasurement(observed, measured([row]))
-            expect(admission).toEqual({ kind: 'admitted', runtimeIdentity: 'docker-desktop',
-                measurement: 'docker-desktop on "docker-desktop", engine 29.4.0, Compose floor 5.1.0, measured 2026-09-26' })
-            const observation = observeRuntimeMeasurement(admission, stackId({
-                cockpitId: cockpitId({ name: 'fixture', mainCheckoutPath: fixture.directory }),
-                checkoutId: checkoutId({ checkoutPath: fixture.directory }), variant: { kind: 'shared' },
-            }))
-            // doctor reports which measurement admitted the runtime.
-            expect(observation).toEqual(expect.objectContaining({
-                code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
-                source: 'docker-desktop on "docker-desktop", engine 29.4.0, Compose floor 5.1.0, measured 2026-09-26',
-                observed: expect.objectContaining({ state: 'available', value: true }),
-            }))
-
-            for (const [measurements, reason] of [
-                [measured([]), /Runtime docker-desktop on daemon "docker-desktop" has not been measured on this machine/],
-                [measured([{ ...row, runtime: 'colima' }]), /has not been measured on this machine/],
-                [measured([{ ...row, daemon: 'other-daemon' }]), /has not been measured on this machine/],
-                [measured([{ ...row, engineVersion: '29.3.9' }]), /measured with engine 29\.3\.9 and now runs engine 29\.4\.0/],
-                [measured([{ ...row, composeFloor: '5.2.0' }]), /below the measured floor 5\.2\.0/],
-                [{ kind: 'unreadable', path: '/synthetic/state/machine/runtime-measurements.json', reason: 'the file is not UTF-8 JSON' } as const,
-                    /record is unreadable: the file is not UTF-8 JSON; a new measurement replaces it/],
-            ] as const) {
-                const refused = admitRuntimeMeasurement(observed, measurements)
-                expect(refused).toEqual(expect.objectContaining({ kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED }))
-                expect(refused.kind === 'unavailable' ? refused.reason : '').toMatch(reason)
-                expect(refused.kind === 'unavailable' ? refused.reason : '')
-                    .toMatch(/Measure it on this machine with: \.\/node_modules\/@b00dea\/cockpit\/bin\/cockpit\.mjs runtime measure --config <your cockpit\.toml> --image <local-image>$/)
-            }
-        } finally { rmSync(fixture.directory, { recursive: true, force: true }) }
-    })
-
-    it('admits a Docker Desktop Compose version by its numeric core and keeps the suffix as evidence', async () => {
-        const fixture = executableWithVersions('29.4.0\n', '2.29.7-desktop.1\n')
-        try {
-            const observed = await observeDockerRuntime({
-                executable: fixture.executable, cwd: fixture.directory, env: { PATH: process.env.PATH ?? '' }, timeoutMs: 5_000,
-            }, (step) => executeProbe(step))
-            expect(observed).toEqual(expect.objectContaining({ kind: 'complete', composeVersion: '2.29.7-desktop.1' }))
-            const row = { runtime: 'docker-desktop', daemon: 'docker-desktop', engineVersion: '29.4.0', measuredOn: '2026-09-26' } as const
-            expect(admitRuntimeMeasurement(observed, measured([{ ...row, composeFloor: '2.29.7' }])))
-                .toEqual(expect.objectContaining({ kind: 'admitted', runtimeIdentity: 'docker-desktop' }))
-            expect(admitRuntimeMeasurement(observed, measured([{ ...row, composeFloor: '2.30.0' }])))
-                .toEqual(expect.objectContaining({ kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED }))
-            expect(observedVersionCore('2.29.7-desktop.1')).toBe('2.29.7')
-        } finally { rmSync(fixture.directory, { recursive: true, force: true }) }
-    })
-
-    it('keeps an ordinary guest operating system label unmeasured', async () => {
-        const fixture = executableWithVersions('29.4.0\n', '5.1.2\n', '["Ubuntu 24.04 LTS","build-host","linux"]\n')
-        try {
-            const observed = await observeDockerRuntime({
-                executable: fixture.executable, cwd: fixture.directory, env: { PATH: process.env.PATH ?? '' }, timeoutMs: 5_000,
-            }, (step) => executeProbe(step))
-            // The same daemon reading is a host engine on Linux and an unrecognised VM product elsewhere.
-            expect(observed).toEqual(expect.objectContaining({
-                kind: 'complete', operatingSystem: 'Ubuntu 24.04 LTS',
-                runtimeIdentity: process.platform === 'linux' ? 'docker-engine' : null,
-            }))
-            expect(admitRuntimeMeasurement(observed, measured([{
-                runtime: 'ubuntu-24-04-lts', daemon: 'build-host', engineVersion: '29.4.0', composeFloor: '5.1.0', measuredOn: '2026-09-26',
-            }]))).toEqual(expect.objectContaining({ kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED }))
-        } finally { rmSync(fixture.directory, { recursive: true, force: true }) }
-    })
-
-    it('names the raw docker info values of an unrecognised runtime and asks for them to be reported', async () => {
-        const fixture = executableWithVersions('29.4.0\n', '5.1.2\n', '["Windows Server 2022","build-host","windows"]\n')
-        try {
-            const observed = await observeDockerRuntime({
-                executable: fixture.executable, cwd: fixture.directory, env: { PATH: process.env.PATH ?? '' }, timeoutMs: 5_000,
-            }, (step) => executeProbe(step))
-            const admission = admitRuntimeMeasurement(observed, measured([{
-                runtime: 'docker-desktop', daemon: 'docker-desktop', engineVersion: '29.4.0', composeFloor: '5.1.0', measuredOn: '2026-09-26',
-            }]))
-            expect(admission).toEqual(expect.objectContaining({ kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED }))
-            const reason = admission.kind === 'unavailable' ? admission.reason : ''
-            expect(reason).toContain('OperatingSystem "Windows Server 2022", Name "build-host", OSType "windows"')
-            expect(reason).toContain('measured in /synthetic/state/machine/runtime-measurements.json: docker-desktop on "docker-desktop" (engine 29.4.0, Compose floor 5.1.0)')
-            expect(reason).toMatch(/Report these docker info values/)
-        } finally { rmSync(fixture.directory, { recursive: true, force: true }) }
+    it('refuses a Compose below the floor by its numeric core, naming both versions', async () => {
+        for (const [compose, admitted] of [['2.34.9', false], ['2.35.0-desktop.1', true], ['2.35.0', true]] as const) {
+            const fixture = executableWithVersions('29.4.0\n', `${compose}\n`)
+            try {
+                const observed = await observeDockerRuntime({
+                    executable: fixture.executable, cwd: fixture.directory, env: { PATH: process.env.PATH ?? '' }, timeoutMs: 5_000,
+                }, (step) => executeProbe(step))
+                expect(observed, compose).toEqual(admitted ? expect.objectContaining({ kind: 'complete', composeVersion: compose })
+                    : expect.objectContaining({ kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
+                        reason: expect.stringContaining(`Docker Compose ${compose} is older than ${MINIMUM_COMPOSE_VERSION}`),
+                        fix: expect.stringContaining('upgrade') }))
+            } finally { rmSync(fixture.directory, { recursive: true, force: true }) }
+        }
     })
 
     it('refuses malformed versions and a callback that returns unissued evidence', async () => {
@@ -323,7 +226,7 @@ describe('runtime plan construction', () => {
     it.each([
         ['https://synthetic.invalid/compose.yml', ENVIRONMENT_CODES.RUNTIME_COMPOSE_REMOTE],
         ['oci://synthetic.invalid/compose:latest', ENVIRONMENT_CODES.RUNTIME_COMPOSE_REMOTE],
-        ['compose/${PROFILE}.yml', ENVIRONMENT_CODES.RUNTIME_UNMEASURED],
+        ['compose/${PROFILE}.yml', ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE],
         ['../compose.yml', ENVIRONMENT_CODES.RUNTIME_COMPOSE_REMOTE],
     ])('refuses prohibited compose reference %s before returning a plan', (composeFile, code) => {
         const outcome = createRuntimeAdapter({ ...runtimeInput, composeFiles: [artifact(composeFile)] })
@@ -572,7 +475,7 @@ describe('runtime plan construction', () => {
         const outcome = createRuntimeAdapter({ ...runtimeInput, cwd, env, labels })
 
         expect(outcome).toEqual(expect.objectContaining({ kind: 'refusal', result: null }))
-        expect(outcome.diagnostics).toEqual([expect.objectContaining({ code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED })])
+        expect(outcome.diagnostics).toEqual([expect.objectContaining({ code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE })])
     })
 
     it.each([
@@ -586,7 +489,7 @@ describe('runtime plan construction', () => {
         const outcome = createRuntimeAdapter({ ...runtimeInput, executable, timeoutMs })
 
         expect(outcome).toEqual(expect.objectContaining({ kind: 'refusal', result: null }))
-        expect(outcome.diagnostics).toEqual([expect.objectContaining({ code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED })])
+        expect(outcome.diagnostics).toEqual([expect.objectContaining({ code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE })])
         expect('plan' in outcome).toBe(false)
     })
 
@@ -597,7 +500,7 @@ describe('runtime plan construction', () => {
         const outcome = createRuntimeAdapter({ ...runtimeInput, ...override } as typeof runtimeInput)
 
         expect(outcome).toEqual(expect.objectContaining({ kind: 'refusal', result: null }))
-        expect(outcome.diagnostics).toEqual([expect.objectContaining({ code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED })])
+        expect(outcome.diagnostics).toEqual([expect.objectContaining({ code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE })])
     })
 })
 
@@ -708,7 +611,7 @@ describe('runtime measurement classification', () => {
 
         expect(outcome).toMatchObject({
             kind: 'refusal', result: null,
-            diagnostics: [{ code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED }],
+            diagnostics: [{ code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE }],
         })
         expect(reads).toBe(0)
     })

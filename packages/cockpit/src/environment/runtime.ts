@@ -1,18 +1,15 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { platform } from 'node:os'
 import { dirname, isAbsolute, normalize, relative, resolve, sep } from 'node:path'
 import { parseDocument } from 'yaml'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { MAX_COLD_START_SECONDS } from '../schema.js'
 import { consumeMachineFloorConfigProjection, type MachineFloorConfigProjection } from '../config/load.js'
 import {
-    tryParseJson,
     RefusalError,
     DOCKER_CLIENT_ENVIRONMENT,
     ENVIRONMENT_CODES,
     errorCause,
     isCanonicalTimestamp,
-    OBSERVATION_REASON_BYTE_LIMIT,
     snapshotEnvironmentObservation,
     HOST_PROCESS_CONTROL_ENV,
     snapshotExecutionPlan,
@@ -50,9 +47,7 @@ import {
     type PortLeaseProjection,
     type PortListenerBinding,
 } from './ports.js'
-import { cockpitCommand } from '../fix-catalogue.js'
 import type { StateNamespace } from './state.js'
-import type { LocalRuntimeMeasurements } from './runtime-measurement-record.js'
 import { consumeSetupCheckoutProjection, type ConsumedSetupCheckoutObservation, type SetupCheckoutProjection } from './setup-observation.js'
 import { composeProcessEnvironment } from './compose-environment.js'
 import { exactOwnKeys } from '../exact-keys.js'
@@ -61,7 +56,6 @@ const OWNER = 'runtime-planning'
 
 export const observationDeclarations = Object.freeze([
     { id: 'runtime-availability', owner: OWNER, postures: ['mounted', 'host'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
-    { id: 'runtime-measurement', owner: OWNER, postures: ['environment', 'mounted', 'host'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
     { id: 'mount-posture', owner: OWNER, postures: ['mounted', 'host'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
 ] as const)
 
@@ -466,60 +460,10 @@ interface DockerRuntimeObservationInput {
     readonly timeoutMs: number
 }
 
-type RuntimeIdentity = 'docker-desktop' | 'orbstack' | 'colima' | 'rancher-desktop' | 'docker-engine'
-
-interface DockerInfoIdentityInput {
-    readonly operatingSystem: string
-    readonly name: string
-    readonly osType: string
-    readonly hostPlatform: string
-}
-
-/**
- * Name the container runtime product from one `docker info` reading, or null when it is not one we
- * recognise. The identity selects this machine's runtime measurement, so a wrong match would
- * admit a runtime on another product's measurement; anything unrecognised therefore stays null.
- *
- * Provenance of each rule: `orbstack` was observed on a host running OrbStack (OperatingSystem
- * "OrbStack", Name "orbstack", OSType "linux"). The `docker-desktop`, `colima`, `rancher-desktop` and
- * `docker-engine` rules are derived from those vendors' documented `docker info` output and have not
- * been probed on a host here.
- */
-export function runtimeIdentity(input: DockerInfoIdentityInput): RuntimeIdentity | null {
-    if (input.operatingSystem === 'Docker Desktop') return 'docker-desktop'
-    if (input.operatingSystem === 'OrbStack') return 'orbstack'
-    // Colima names its VM after the profile: "colima" or "colima-<profile>".
-    if (input.name.startsWith('colima')) return 'colima'
-    // Rancher Desktop runs its engine in a Lima VM named "lima-rancher-desktop".
-    if (input.name.endsWith('rancher-desktop')) return 'rancher-desktop'
-    // On a Linux host the daemon is the host's own Docker Engine; on macOS an unrecognised
-    // OperatingSystem is some other VM product and must not borrow this identity.
-    if (input.hostPlatform === 'linux' && input.osType === 'linux') return 'docker-engine'
-    return null
-}
-
-const DOCKER_IDENTITY_FORMAT = '[{{json .OperatingSystem}},{{json .Name}},{{json .OSType}}]'
-
-function dockerIdentityFields(text: string): readonly [string, string, string] | undefined {
-    // Unparsable identity output yields no fields; the caller reports the probe as unauthenticated output.
-    const parsed = tryParseJson(text)
-    if (!Array.isArray(parsed) || parsed.length !== 3) return undefined
-    const [operatingSystem, name, osType] = parsed as unknown[]
-    const bounded = (value: unknown, limit: number): value is string => typeof value === 'string'
-        && value.length > 0 && value.length <= limit && !/[\u0000-\u001f\u007f]/.test(value)
-    return bounded(operatingSystem, 128) && bounded(name, 128) && bounded(osType, 16)
-        ? ([operatingSystem, name, osType] as const) : undefined
-}
-
 type DockerRuntimeObservation =
     | Readonly<{
         kind: 'complete'
         runtime: { readonly name: 'docker'; readonly version: string; readonly executableSha256: string }
-        runtimeIdentity: RuntimeIdentity | null
-        operatingSystem: string
-        name: string
-        osType: string
-        hostPlatform: string
         composeVersion: string
         observedAt: string
     }>
@@ -540,125 +484,22 @@ function runtimeVersionUnparseable(tool: string, command: string, printed: strin
     }
 }
 
-const issuedDockerRuntimeObservations = new WeakSet<object>()
-const issuedRuntimeMeasurementAdmissions = new WeakMap<object, Extract<DockerRuntimeObservation, { readonly kind: 'complete' }>>()
-export interface RuntimeMeasurementProbeAuthority { readonly kind: 'runtime-measurement-probe-authority' }
-const issuedRuntimeMeasurementProbeAuthorities = new WeakMap<object, Extract<DockerRuntimeObservation, { readonly kind: 'complete' }>>()
-
-export function issueRuntimeMeasurementProbeAuthority(observation: DockerRuntimeObservation): RuntimeMeasurementProbeAuthority {
-    if (!observation || typeof observation !== 'object' || observation.kind !== 'complete'
-        || !issuedDockerRuntimeObservations.has(observation)) throw new RefusalError('runtime measurement probe evidence is not authentic')
-    const authority = { kind: 'runtime-measurement-probe-authority' as const }
-    issuedRuntimeMeasurementProbeAuthorities.set(authority, observation)
-    return authority
-}
-
-export function runtimeMeasurementProbeObservation(
-    authority: RuntimeMeasurementProbeAuthority,
-    executableSha256: string,
-): Extract<DockerRuntimeObservation, { readonly kind: 'complete' }> | undefined {
-    const issued = authority && typeof authority === 'object' ? issuedRuntimeMeasurementProbeAuthorities.get(authority) : undefined
-    if (authority && typeof authority === 'object') issuedRuntimeMeasurementProbeAuthorities.delete(authority)
-    const age = issued ? Date.now() - Date.parse(issued.observedAt) : Number.NaN
-    return issued && issued.runtime.executableSha256 === executableSha256
-        && age >= 0 && age <= 300_000 ? issued : undefined
-}
-
-type RuntimeMeasurementAdmission =
-    | Readonly<{ kind: 'admitted'; runtimeIdentity: string; measurement: string }>
-    | Readonly<{ kind: 'unavailable'; code: typeof ENVIRONMENT_CODES.RUNTIME_UNMEASURED; reason: string }>
-
-function runtimeUnmeasured(reason: string): RuntimeMeasurementAdmission {
-    return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason }
-}
-
-/** A floor cockpit writes: a bare numeric core. */
-export function isVersionFloor(value: string): boolean {
-    return VERSION.test(value)
-}
+/**
+ * The oldest Compose cockpit runs: the topology read passes `config --no-env-resolution`, which
+ * Compose added in v2.35.0. An older Compose rejects that flag, so `up` would fail on its first read.
+ */
+export const MINIMUM_COMPOSE_VERSION = '2.35.0'
 
 /** Whether a version Docker or Compose printed is at least `floor`; false when either is malformed. */
-export function versionAtLeast(actual: string, floor: string): boolean {
+function versionAtLeast(actual: string, floor: string): boolean {
     const core = observedVersionCore(actual)
-    if (core === undefined || !isVersionFloor(floor)) return false
+    if (core === undefined || !VERSION.test(floor)) return false
     const left = core.split('.').map(Number)
     const right = floor.split('.').map(Number)
     for (let index = 0; index < left.length; index += 1) {
         if (left[index] !== right[index]) return left[index]! > right[index]!
     }
     return true
-}
-
-export function admitRuntimeMeasurement(
-    observation: DockerRuntimeObservation,
-    measurements: LocalRuntimeMeasurements,
-): RuntimeMeasurementAdmission {
-    if (!observation || typeof observation !== 'object' || !issuedDockerRuntimeObservations.has(observation)
-        || observation.kind !== 'complete') return runtimeUnmeasured('Docker runtime evidence is unavailable or unauthenticated')
-    const refuse = (reason: string): RuntimeMeasurementAdmission => {
-        const result = runtimeUnmeasured(reason)
-        issuedRuntimeMeasurementAdmissions.set(result, observation)
-        return result
-    }
-    const identity = observation.runtimeIdentity
-    const dockerInfo = `docker info: OperatingSystem ${JSON.stringify(observation.operatingSystem)}, Name ${JSON.stringify(observation.name)}, `
-        + `OSType ${JSON.stringify(observation.osType)}; engine ${observation.runtime.version}; host ${observation.hostPlatform}`
-    const rows = measurements.kind === 'read' ? measurements.rows : []
-    const listed = rows.map((row) => `${row.runtime} on ${JSON.stringify(row.daemon.slice(0, 40))} (engine ${row.engineVersion.slice(0, 32)}, Compose floor ${row.composeFloor})`)
-    const listedRows = listed.length === 0 ? 'none'
-        : `${listed.slice(0, 4).join(', ')}${listed.length > 4 ? ` and ${listed.length - 4} more` : ''}`
-    // Every refusal names what was detected and what this machine's record holds, so the operator can
-    // act on the message alone; the remedy is always a fresh measurement of this exact runtime. The
-    // reason also travels in an observation, whose text is byte-bounded, so the row list yields first.
-    const detail = (reason: string, action: string) => {
-        const full = `${reason} (${dockerInfo}; measured in ${measurements.path}: ${listedRows}). ${action}`
-        return Buffer.byteLength(full) <= OBSERVATION_REASON_BYTE_LIMIT ? full
-            : `${reason} (${dockerInfo}; measured in ${measurements.path}: ${rows.length}). ${action}`
-    }
-    const remeasure = (reason: string) => refuse(detail(reason,
-        `Measure it on this machine with: ${cockpitCommand('runtime measure', { args: '--image <local-image>' })}`))
-    if (!identity) {
-        return refuse(detail('Docker runtime is not a recognised product, so no measurement can apply',
-            'Report these docker info values to the cockpit maintainers so the runtime can be identified'))
-    }
-    if (measurements.kind === 'unreadable') {
-        return remeasure(`This machine's runtime measurement record is unreadable: ${measurements.reason}; a new measurement replaces it`)
-    }
-    const row = rows.find((candidate) => candidate.runtime === identity && candidate.daemon === observation.name)
-    if (!row) return remeasure(`Runtime ${identity} on daemon ${JSON.stringify(observation.name)} has not been measured on this machine`)
-    // A measurement certifies the engine it ran against; an upgraded or downgraded engine is a
-    // different runtime until it passes the probe too.
-    if (row.engineVersion !== observation.runtime.version) {
-        return remeasure(`Runtime ${identity} was measured with engine ${row.engineVersion} and now runs engine ${observation.runtime.version}`)
-    }
-    if (!VERSION.test(row.composeFloor) || !versionAtLeast(observation.composeVersion, row.composeFloor)) {
-        return remeasure(`Runtime ${identity} runs Docker Compose ${observation.composeVersion}, below the measured floor ${row.composeFloor}`)
-    }
-    const result = { kind: 'admitted' as const, runtimeIdentity: identity,
-        measurement: `${identity} on ${JSON.stringify(observation.name)}, engine ${row.engineVersion}, Compose floor ${row.composeFloor}, measured ${row.measuredOn}` }
-    issuedRuntimeMeasurementAdmissions.set(result, observation)
-    return result
-}
-
-export function observeRuntimeMeasurement(admission: RuntimeMeasurementAdmission, stackId: StackId): EnvironmentObservation {
-    const runtime = admission && typeof admission === 'object' ? issuedRuntimeMeasurementAdmissions.get(admission) : undefined
-    if (!runtime || typeof stackId !== 'string' || !/^stack:[a-f0-9]{64}$/.test(stackId)) {
-        throw new RefusalError('runtime measurement admission is not authentic')
-    }
-    return issueObservation({
-        code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
-        owner: OWNER,
-        stackId,
-        // An admitted runtime names the measurement that admitted it, so doctor says which runtime is measured.
-        source: admission.kind === 'admitted' ? admission.measurement : runtime.operatingSystem,
-        observed: admission.kind === 'admitted'
-            ? { state: 'available', value: true, observedAt: runtime.observedAt }
-            : { state: 'unavailable', reason: admission.reason, observedAt: runtime.observedAt },
-        expectation: { kind: 'equal', value: true },
-        applicability: { state: 'required', posture: 'mounted' },
-        freshness: { state: 'current' },
-        remedy: 'measure this runtime on this machine: a passing candidate and a rejected broken control for its exact engine and Compose floor',
-    })
 }
 
 export async function observeDockerRuntime(
@@ -710,20 +551,16 @@ export async function observeDockerRuntime(
     })
     const versionStep = step('runtime:docker-server-version', ['version', '--format', '{{.Server.Version}}'])
     const composeStep = step('runtime:docker-compose-version', ['compose', 'version', '--short'])
-    // One reading supplies every identity field, so they describe the same daemon. JSON-encoding each
-    // field keeps a hostname or product label containing separators from shifting the others.
-    const identityStep = step('runtime:docker-operating-system',
-        ['info', '--format', DOCKER_IDENTITY_FORMAT], 512)
     // Set only by the probe that threw; every later step returns as soon as a probe fails.
     let probeCause = ''
-    const readText = async (probe: ExecutionStep, limit = 128): Promise<{ value: string; observedAt: string } | undefined> => {
+    const readText = async (probe: ExecutionStep): Promise<{ value: string; observedAt: string } | undefined> => {
         let raw: ExecuteProbeOutcome
         try { raw = await execute(probe) } catch (error) { probeCause = `: ${errorCause(error)}`; return undefined }
         const outcome = authenticatedExecutionOutcome(raw, probe)
         if (!outcome || outcome.kind !== 'complete' || outcome.stderr.byteLength !== 0) return undefined
         try {
             const value = new TextDecoder('utf-8', { fatal: true }).decode(outcome.stdout).trim()
-            return value.length > 0 && value.length <= limit && !value.includes('\0')
+            return value.length > 0 && value.length <= 128 && !value.includes('\0')
                 ? { value, observedAt: outcome.receipt.finishedAt } : undefined
         } catch {
             // Undecodable output yields no reading; the caller reports the probe as unauthenticated output.
@@ -736,24 +573,20 @@ export async function observeDockerRuntime(
     const compose = await readText(composeStep)
     if (!compose) return runtimeVersionUnavailable('Docker Compose version probe failed or returned unauthenticated output' + probeCause)
     if (!OBSERVED_VERSION.test(compose.value)) return runtimeVersionUnparseable('Docker Compose', 'docker compose version --short', compose.value)
-    const identityText = await readText(identityStep, 512)
-    const fields = identityText === undefined ? undefined : dockerIdentityFields(identityText.value)
-    if (!identityText || !fields) return runtimeVersionUnavailable('Docker identity probe (docker info OperatingSystem, Name, OSType) failed or returned unauthenticated output' + probeCause)
-    const [operatingSystem, name, osType] = fields
-    const hostPlatform = platform()
-    const result: DockerRuntimeObservation = {
+    if (!versionAtLeast(compose.value, MINIMUM_COMPOSE_VERSION)) {
+        return {
+            kind: 'unavailable',
+            code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
+            reason: `Docker Compose ${compose.value} is older than ${MINIMUM_COMPOSE_VERSION}, the oldest Compose cockpit runs`,
+            fix: `upgrade Docker Compose (or the Docker Desktop, OrbStack or Colima release that bundles it) to ${MINIMUM_COMPOSE_VERSION} or later, then retry`,
+        }
+    }
+    return {
         kind: 'complete',
         runtime: { name: 'docker', version: server.value, executableSha256: input.executable.sha256 },
-        runtimeIdentity: runtimeIdentity({ operatingSystem, name, osType, hostPlatform }),
-        operatingSystem,
-        name,
-        osType,
-        hostPlatform,
         composeVersion: compose.value,
-        observedAt: [server.observedAt, compose.observedAt, identityText.observedAt].sort().at(-1)!,
+        observedAt: [server.observedAt, compose.observedAt].sort().at(-1)!,
     }
-    issuedDockerRuntimeObservations.add(result)
-    return result
 }
 
 function machineFloorPlanInput(value: unknown): OwnedMachineFloorPlanInput | undefined {
@@ -836,7 +669,7 @@ export async function measureMachineFloor(
 function machineFloorPlan(rawInput: MachineFloorPlanInput): MachineFloorRefusal | { readonly kind: 'preview'; readonly plan: ExecutionPlan; readonly contract: { readonly stackId?: StackId; readonly floor?: MachineFloorThresholds } } {
     const input = machineFloorPlanInput(rawInput)
     if (input === undefined) {
-        return machineFloorRefusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'machine-floor collectors require canonical digest-bound executables and a bounded timeout', 'machine-floor')
+        return machineFloorRefusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, 'machine-floor collectors require canonical digest-bound executables and a bounded timeout', 'machine-floor')
     }
     const { runtimeExecutable, diskExecutable } = input
     const makeStep = (id: string, argv: readonly [string, ...string[]], executable: ResolvedExecutable): ExecutionStep => ({
@@ -852,7 +685,7 @@ function machineFloorPlan(rawInput: MachineFloorPlanInput): MachineFloorRefusal 
         makeStep('runtime:measure:free-disk', [diskExecutable.canonicalPath, '--input-type=module', '-e', DISK_CAPACITY_COLLECTOR, input.cwd], diskExecutable),
     ]
     const plan = snapshotExecutionPlan({ steps })
-    if (plan === undefined) return machineFloorRefusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'machine-floor collectors did not produce a valid execution plan', input.cwd)
+    if (plan === undefined) return machineFloorRefusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, 'machine-floor collectors did not produce a valid execution plan', input.cwd)
     return { kind: 'preview', plan, contract: {
         ...(input.stackId ? { stackId: input.stackId } : {}),
         ...(input.floor ? { floor: input.floor } : {}),
@@ -1020,7 +853,7 @@ export function createRuntimeAdapter(
     authority?: RuntimeAdapterAuthority,
 ): EnvironmentCommandOutcome<RuntimePlanResult> {
     let input = runtimeAdapterInput(snapshotJson(rawInput))
-    if (input === undefined) return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime input must be bounded readable JSON data', 'runtime-input')
+    if (input === undefined) return refusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, 'runtime input must be bounded readable JSON data', 'runtime-input')
     const capturedAuthority = authority === undefined ? undefined
         : captureOwnValues(authority, ['ownComposeFiles', 'cockpitId', 'stackId'])
             ?? captureOwnValues(authority, ['ownComposeFiles', 'cockpitId', 'stackId', 'portLeaseProjection'])
@@ -1031,7 +864,7 @@ export function createRuntimeAdapter(
     const portProjection = suppliedPortProjection === undefined ? undefined : inspectPortLeaseProjection(suppliedPortProjection)
     if ((authority !== undefined && (!capturedAuthority || !ownComposeFiles))
         || (suppliedPortProjection !== undefined && portProjection === undefined)) {
-        return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime artifact authority is malformed', 'runtime-input')
+        return refusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, 'runtime artifact authority is malformed', 'runtime-input')
     }
     let interpolatedNames: readonly string[] = []
     if (portProjection !== undefined) {
@@ -1043,7 +876,7 @@ export function createRuntimeAdapter(
             || entries.length === 0 || entries.some(([name]) => !/^[A-Z][A-Z0-9_]*$/.test(name)
                 || HOST_PROCESS_CONTROL_ENV.test(name) || Object.hasOwn(originalEnv, name))
             || JSON.stringify(projectedPorts) !== JSON.stringify(requestedPorts)) {
-            return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime port authority does not match the stack', input.projectName)
+            return refusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, 'runtime port authority does not match the stack', input.projectName)
         }
         interpolatedNames = entries.map(([name]) => name)
         input = {
@@ -1061,7 +894,7 @@ export function createRuntimeAdapter(
         if (entries === undefined || entries.some(([name, path]) => !/^[A-Z][A-Z0-9_]*$/.test(name)
             || HOST_PROCESS_CONTROL_ENV.test(name) || Object.hasOwn(originalEnv, name)
             || typeof path !== 'string' || !isAbsolute(path) || normalize(path) !== path || path.includes('\0'))) {
-            return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime sibling directory authority is malformed', input.projectName)
+            return refusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, 'runtime sibling directory authority is malformed', input.projectName)
         }
         interpolatedNames = [...interpolatedNames, ...entries.map(([name]) => name)]
         input = { ...input, env: { ...originalEnv, ...Object.fromEntries(entries) as Record<string, string> } }
@@ -1071,7 +904,7 @@ export function createRuntimeAdapter(
         const runtimeCockpitId = capturedAuthority?.cockpitId
         if (typeof runtimeStackId !== 'string' || !/^stack:[a-f0-9]{64}$/.test(runtimeStackId)
             || typeof runtimeCockpitId !== 'string' || !/^cockpit:[a-z0-9][a-z0-9-]*:[a-f0-9]{64}$/.test(runtimeCockpitId)) {
-            return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime identity labels are unavailable', input.projectName)
+            return refusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, 'runtime identity labels are unavailable', input.projectName)
         }
         interpolatedNames = [...interpolatedNames, 'COCKPIT_OWNER_ID', 'COCKPIT_STACK_ID']
         input = { ...input, env: { ...input.env,
@@ -1079,7 +912,7 @@ export function createRuntimeAdapter(
     }
     if (hasUnresolvedInput(input)) {
         return refusal(
-            ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
+            ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
             'runtime plan contains an unresolved placeholder',
             'runtime-input',
         )
@@ -1089,18 +922,18 @@ export function createRuntimeAdapter(
         || Object.keys(input.env).some((name) => name.startsWith('COMPOSE_'))
     ) {
         return refusal(
-            ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
+            ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
             'runtime plan contains an unsafe literal or a compose environment override',
             'runtime-input',
         )
     }
     input = { ...input, env: composeProcessEnvironment(input.env) }
     if (!isAbsolute(input.cwd)) {
-        return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime working directory must be absolute', input.cwd)
+        return refusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, 'runtime working directory must be absolute', input.cwd)
     }
     if (input.runtime.name !== 'docker' || !RUNTIME_OPERATIONS.includes(input.operation)) {
         return refusal(
-            ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
+            ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
             'runtime and operation must be explicitly supported',
             `${input.runtime.name}:${input.operation}`,
         )
@@ -1112,31 +945,31 @@ export function createRuntimeAdapter(
         || !OBSERVED_VERSION.test(input.composeVersion)
         || !PROJECT_NAME.test(input.projectName)
     ) {
-        return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime command or project name is invalid', input.projectName)
+        return refusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, 'runtime command or project name is invalid', input.projectName)
     }
     if (!Number.isInteger(input.timeoutMs) || input.timeoutMs <= 0 || input.timeoutMs > MAX_TIMEOUT_MS) {
-        return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime timeout must be bounded to at most five minutes', String(input.timeoutMs))
+        return refusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, 'runtime timeout must be bounded to at most five minutes', String(input.timeoutMs))
     }
     if (input.ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65_535)
         || new Set(input.ports).size !== input.ports.length) {
-        return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime ports must be unique resolved host ports', input.projectName)
+        return refusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, 'runtime ports must be unique resolved host ports', input.projectName)
     }
     if (input.composeFiles.length === 0) {
-        return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime plan needs at least one local compose file', input.cwd)
+        return refusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, 'runtime plan needs at least one local compose file', input.cwd)
     }
     const unresolvedCompose = input.composeFiles.find((source) => UNRESOLVED_TOKEN.test(source.reference))
     if (unresolvedCompose !== undefined) {
-        return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'compose reference contains an unresolved placeholder', unresolvedCompose.reference)
+        return refusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, 'compose reference contains an unresolved placeholder', unresolvedCompose.reference)
     }
     const files: string[] = []
     for (const source of input.composeFiles) {
         // Only the cockpit's own Compose files, declared as such by readiness, interpolate.
         if ((UNRESOLVED_TOKEN.test(source.source) && !(ownComposeFiles && composeTokensResolved(source.source, interpolatedNames)))
             || source.source.includes('\0')) {
-            return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'compose artifact contains unresolved or unsafe data', source.reference)
+            return refusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, 'compose artifact contains unresolved or unsafe data', source.reference)
         }
         if (createHash('sha256').update(source.source).digest('hex') !== source.sha256) {
-            return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'compose artifact digest does not match its source', source.reference)
+            return refusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, 'compose artifact digest does not match its source', source.reference)
         }
         if (!composeBuildContextsSafe(source.source)) {
             return refusal(ENVIRONMENT_CODES.RUNTIME_COMPOSE_REMOTE, 'compose build contexts must be local, parseable, and structurally supported', source.reference)
@@ -1160,7 +993,7 @@ export function createRuntimeAdapter(
         : []
     const step = composeStep(input, files, projectDirectory, input.operation, compensation)
     const plan = snapshotExecutionPlan({ steps: [step] })
-    if (plan === undefined) return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime input did not produce a valid execution plan', input.projectName)
+    if (plan === undefined) return refusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, 'runtime input did not produce a valid execution plan', input.projectName)
     if (input.stackId && input.coldStartLimitMillis && input.expectedMountSources) {
         issuedRuntimePlans.set(plan, Object.freeze({
             operation: input.operation,

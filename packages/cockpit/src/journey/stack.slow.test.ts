@@ -7,7 +7,6 @@ afterAll(removeScratch)
 function bringUp(product: Product) {
     ok(product, ['sync'])
     ok(product, ['check'])
-    ok(product, ['runtime', 'measure', '--image', 'node:22-alpine'])
 }
 
 const removals = (calls: string[][]) => calls.filter((argv) => argv.includes('rm') || argv.includes('down'))

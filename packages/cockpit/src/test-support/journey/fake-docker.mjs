@@ -330,17 +330,10 @@ const args = invocation[0] === '--host' ? invocation.slice(2) : invocation
 const [command, sub, ...rest] = args
 switch (`${command} ${sub}`) {
     case 'version --format': out(state.serverVersion); break
-    case 'info --format': out(format(rest[0], { OperatingSystem: state.operatingSystem, Name: 'fake-docker', OSType: 'linux', MemTotal: state.memTotal, NCPU: state.cpus })); break
+    case 'info --format': out(format(rest[0], { MemTotal: state.memTotal, NCPU: state.cpus })); break
     case 'context show': out('default'); break
     case 'context inspect': out(format(option(args, '--format'), { Name: rest[0], Endpoints: { docker: { Host: 'unix:///var/run/docker.sock' } } })); break
-    case 'image inspect': {
-        const id = state.images[rest[0]] ?? Object.values(state.images).find((value) => value === rest[0])
-        if (!id) fail(`Error: No such image: ${rest[0]}`)
-        out(format(option(rest, '--format'), { Id: id }))
-        break
-    }
     case 'image ls': case 'builder du': out(''); break
-    case 'ps -aq': case 'ps -a': list('container', [sub, ...rest]); break
     case 'container ls': case 'volume ls': case 'network ls': list(command, rest); break
     case 'container inspect': case 'volume inspect': case 'network inspect': {
         const template = option(rest, '--format')

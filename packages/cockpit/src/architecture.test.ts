@@ -56,9 +56,6 @@ const ENV = `${SRC}environment/`
 // A name is a coarse detector: an alias still spells the imported name, and a computed property
 // would not, which is why computed imports are refused below.
 const CONFINED: readonly (readonly [capability: string, pattern: RegExp, allowed: readonly string[]])[] = [
-    ['runtime measurement authority is issued only to the probe', /\bissueRuntimeMeasurementProbeAuthority\b/, [`${ENV}runtime.ts`, `${ENV}runtime-probe.ts`]],
-    ['runtime measurement observations are read only by lifecycle composition', /\bruntimeMeasurementProbeObservation\b/,
-        [`${ENV}runtime.ts`, `${ENV}lifecycle-composition.ts`]],
     // The port owner implements compensation and the transaction owner compensates its own publication;
     // only the application, and the lifecycle adapter around a fresh acquisition, invoke it.
     ['compensation runs only where it is owned or sequenced', /\bcompensat\w*\s*\(/i,

@@ -8,13 +8,12 @@ import { checkoutId, cockpitId, holderId, stackId } from '../src/environment/ide
 import { recordLifecycleSeeded, recordLifecycleStarted } from '../src/environment/lifecycle-stage.js'
 import { selectStateRoot } from '../src/environment/state.js'
 import { publishComposeOwnership } from './compose-ownership-fixture.js'
-import { recordSyntheticMeasurement } from './runtime-measurement-fixture.js'
 
 const run = promisify(execFile)
 
 /** A synthetic cockpit checkout for the health adapter composition; each root it makes is pushed to `roots` for cleanup. */
 export function createHealthCompositionFixture(roots: string[]) {
-    async function fixture(options: { readonly configuredRuntime?: boolean; readonly machineOnly?: boolean; readonly unmeasured?: boolean; readonly unseeded?: boolean; readonly uncommitted?: boolean } = {}) {
+    async function fixture(options: { readonly configuredRuntime?: boolean; readonly machineOnly?: boolean; readonly unseeded?: boolean; readonly uncommitted?: boolean } = {}) {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-health-composition-')))
         roots.push(root)
         const checkout = join(root, 'checkout')
@@ -60,7 +59,6 @@ export function createHealthCompositionFixture(roots: string[]) {
             ] : []),
         ].join('\n')
         await writeFile(configPath, config)
-        if ((options.configuredRuntime || options.machineOnly) && !options.unmeasured) await recordSyntheticMeasurement(home)
         if (options.configuredRuntime) await writeFile(join(checkout, 'compose.yml'), 'services: {}\n')
         if (!options.uncommitted) {
             await run('git', ['-C', checkout, 'add', 'cockpit.toml'])
@@ -93,7 +91,6 @@ export function createHealthCompositionFixture(roots: string[]) {
                 '#!/bin/sh',
                 'if [ "$1" = "version" ]; then printf "27.1.2\n"; exit 0; fi',
                 'if [ "$1" = "compose" ] && [ "$2" = "version" ]; then printf "2.39.2\n"; exit 0; fi',
-                'if [ "$1" = "info" ] && [ "$3" = "[{{json .OperatingSystem}},{{json .Name}},{{json .OSType}}]" ]; then printf \'%s\\n\' \'["Docker Desktop","docker-desktop","linux"]\'; exit 0; fi',
                 'if [ "$1" = "info" ]; then printf "2147483648|2\n"; exit 0; fi',
                 'if [ "$1" = "compose" ]; then /bin/cat "$PWD/topology.json"; exit 0; fi',
                 'exit 64',

@@ -17,12 +17,10 @@ then run this example in a `git init` copy. `check` validates `compose.yml` thro
 Commit the copy before running `preflight`, which otherwise exits 2 with `GIT_STATE_UNHEALTHY`:
 `git add -A && git commit -m 'Minimal cockpit'`.
 
-With Docker running, measure the runtime with a local image, then bring the stack up, hold it for
-one command, put it to sleep and resume it, and remove it:
+With Docker running, bring the stack up, hold it for one command, put it to sleep and resume it,
+and remove it:
 
 ```sh human-only:runtime
-docker pull node:22-alpine
-./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config cockpit.toml --image node:22-alpine
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs session --config cockpit.toml -- sh -c 'curl -fsS "http://127.0.0.1:$API_HOST_PORT/health"'
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config cockpit.toml && ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml

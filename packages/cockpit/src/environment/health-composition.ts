@@ -41,14 +41,11 @@ import { checkGeneratedEnvironment, prepareGeneratedEnvironmentCurrentness } fro
 import { observeGeneratedApplicationSurfaces } from './generated-application/surface-observation.js'
 import { syncGeneratedEnvironment } from './generated-application/sync.js'
 import {
-    admitRuntimeMeasurement,
     observeDockerRuntime,
-    observeRuntimeMeasurement,
     observeRuntimeMountMaterialization,
     observeRuntimePortFamily,
     type RuntimeServiceEvidence,
 } from './runtime.js'
-import { readLocalRuntimeMeasurements } from './runtime-measurement-record.js'
 import {
     consumeSetupCheckoutProjection,
     observeSetupCheckout,
@@ -148,13 +145,13 @@ async function sleepingStack(
 
 // Before the first `up` doctor still measures the machine, so a missing runtime is named there
 // rather than first at bring-up.
-function runtimeUnavailable(reason: string, target: string): EnvironmentDiagnostic {
+function runtimeUnavailable(reason: string, target: string, fix = 'install or start Docker so that docker info succeeds, then rerun this command'): EnvironmentDiagnostic {
     return {
         severity: 'error' as const,
         code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
         message: `the container runtime that runs this stack is not usable on this machine: ${reason}`,
         target,
-        fix: 'install or start Docker so that docker info succeeds, then rerun this command',
+        fix,
     }
 }
 
@@ -183,11 +180,13 @@ function producers(input: {
     // Only doctor reaches here for a cockpit that declares nothing to run; a mounted sibling there
     // gives Docker nothing to do, so a missing runtime must not be reported as a gap.
     const configuredRuntime = !declaresNothingToRun(input.config.result.config.environment)
-    const runtimeMeasurement = configuredRuntime && !runningStack ? (async () => {
+    // Before the first `up` there are no runtime rows to observe, but an unusable Docker or a Compose
+    // below the floor is still named here rather than first at bring-up.
+    const runtimeCheck = configuredRuntime && !runningStack ? (async () => {
         const docker = await resolveDockerExecutable(input.env)
         if (docker.state !== 'available') {
             if (input.stopped) input.notice([runtimeUnavailable(docker.reason, input.stack)])
-            return undefined
+            return
         }
         const observed = await observeDockerRuntime({
             executable: docker.value,
@@ -198,11 +197,7 @@ function producers(input: {
             )),
             timeoutMs: input.timeoutMs,
         }, input.execute)
-        if (observed.kind !== 'complete') return undefined
-        return observeRuntimeMeasurement(
-            admitRuntimeMeasurement(observed, await readLocalRuntimeMeasurements(input.namespace.root)),
-            input.stack,
-        )
+        if (observed.kind !== 'complete') input.notice([runtimeUnavailable(observed.reason, input.stack, observed.fix)])
     })() : undefined
     const runtimeSession = runningStack ? (async () => {
         const adapters = createLifecycleCommandAdapters({
@@ -366,11 +361,9 @@ function producers(input: {
         runtime: async () => {
             if (!configuredRuntime) return []
             if (!runningStack) {
-                const measured = await runtimeMeasurement
-                // A stopped stack's missing runtime is already a notice; its rows are left unobserved.
-                if (!measured && input.stopped) return []
-                if (!measured) throw new RefusalError('configured runtime measurement needs authenticated runtime identity evidence')
-                return [measured]
+                // An unusable runtime is already a notice; the rows that need a running stack are left unobserved.
+                await runtimeCheck
+                return []
             }
             const [session, services] = await Promise.all([stableSession(), currentServices])
             if (!session || !services) throw new RefusalError('configured runtime health needs current runtime execution evidence')

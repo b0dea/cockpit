@@ -892,21 +892,6 @@ async function selectStateBase(
     return { kind: 'complete', value: { base: input.home, root } }
 }
 
-/**
- * The per-user state root, without a cockpit or checkout: what `runtime measure` needs to record a
- * fact about this machine before any stack exists. It is the same root `selectStateRoot` scopes
- * each cockpit under, so every checkout of every cockpit on this machine reaches the same directory.
- */
-export async function selectMachineStateRoot(input: Readonly<{ platform: 'darwin' | 'linux'; home: string | undefined; xdgStateHome?: string; uid?: number }>): Promise<StateResult<string>> {
-    const uid = input.uid ?? process.getuid?.()
-    if (uid === undefined) return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'this platform reports no user id, so no private state root can be chosen', input.home ?? '')
-    const selected = await selectStateBase({ platform: input.platform, home: input.home, xdgStateHome: input.xdgStateHome }, uid)
-    if (selected.kind !== 'complete') return selected
-    const unusable = await safeDescendant(selected.value.base, selected.value.root, uid)
-    if (unusable) return unusableStateRoot(selected.value.root, unusable)
-    return { kind: 'complete', value: selected.value.root }
-}
-
 // Bootstrap records are keyed by checkout path, so a scratch or deleted checkout leaves its records
 // behind with nothing able to resume them. Selecting the root drops those whose checkout is gone; a
 // record that does not parse, or names a path that still exists, is kept.

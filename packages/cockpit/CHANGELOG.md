@@ -668,10 +668,10 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
   
   - `--follow` is no longer cut off by the ten-second budget of an ordinary read, which made it fail with `EXECUTION_TIMEOUT` and no records. It collects until it is interrupted (exit 130 with the records collected), the container stops, or two hours pass.
   - A read whose output exceeds the 1 MiB limit (64 KiB for stderr) no longer fails with `EXECUTION_STDOUT_LIMIT` and no records. It returns the newest whole records that fit, sets `truncated: true` in the JSON result and warns with `LOGS_TRUNCATED`.
-- 4d97b97: `logs` no longer reports `RUNTIME_UNMEASURED` for failures that have nothing to do with the runtime measurement, and it no longer tells you to run `runtime measure` on a runtime that is already measured.
+- 4d97b97: `logs` no longer reports RUNTIME_UNMEASURED for failures that have nothing to do with the runtime measurement, and it no longer tells you to run `runtime measure` on a runtime that is already measured.
   
   - A failure to read or parse the logs, such as a record that cannot be redacted safely, now reports `EVIDENCE_UNAVAILABLE` and names the cause.
-  - When the runtime itself cannot be used, `logs` now reports the actual refusal, including `RUNTIME_UNMEASURED` when the runtime really is unmeasured, instead of `log observation is unavailable`.
+  - When the runtime itself cannot be used, `logs` now reports the actual refusal, including RUNTIME_UNMEASURED when the runtime really is unmeasured, instead of `log observation is unavailable`.
   
   The `runtime measure` summary names the configuration file you passed instead of always saying `cockpit.toml`.
 - 08cf5b7: An MCP approval now binds the reviewed declaration, not only the server name, and the generated wrapper starts in the right directory under any shell setup.
@@ -735,7 +735,7 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
   
   - A failed `setup` clone reports `SETUP_CLONE_FAILED` with the remote, the target directory, git's own error and the siblings already cloned, plus a fix, instead of a bare `EXECUTION_STEP_FAILED`. Any failed execution step now carries a bounded, redacted tail of its stderr in the refusal evidence.
   - `GENERATED_STALE_APPROVAL_REQUIRED` names `sync --interactive` and the digest to type, and a human `sync --dry-run` prints that digest.
-  - `runtime measure` with an image that is not local reports `RUNTIME_IMAGE_UNAVAILABLE` and says to pull or build it, instead of telling you to start a runtime that is running.
+  - `runtime measure` with an image that is not local reports RUNTIME_IMAGE_UNAVAILABLE and says to pull or build it, instead of telling you to start a runtime that is running.
   - A mistyped `--config` in a cockpit checkout no longer suggests restoring the mistyped path from git; it names the configuration the checkout was synced from.
   - `MACHINE_COLD_START_EXCEEDED` and the machine-floor refusals (`MACHINE_MEMORY_BELOW_FLOOR`, `MACHINE_CPU_BELOW_FLOOR`, `MACHINE_DISK_BELOW_FLOOR`) state the measured value, the declared limit and the field to change.
 - b8ae534: `registry-resolve` now works on a cockpit installed from a tarball packed from source. It validates the registry and adoption file first, records `COCKPIT_SOURCE_REVISION='development'` with an unstamped-revision warning when the package carries no release commit, and refuses only a malformed revision, with a fix. Adoption-file refusals state the expected five-line format, which the adoption guide now documents.

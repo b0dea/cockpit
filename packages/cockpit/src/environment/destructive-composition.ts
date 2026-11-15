@@ -29,7 +29,6 @@ import {
 import { discoverReclaim, type ReclaimDiscovery } from './reclaim.js'
 import { readState } from './state.js'
 import { earlierNameRefusalMessage, findStackUnderEarlierName } from './lifecycle-stage.js'
-import type { RuntimeMeasurementProbeAuthority } from './runtime.js'
 import type { LeasePortFamilyResult } from './ports.js'
 
 export interface DestructiveCompositionInput {
@@ -39,7 +38,6 @@ export interface DestructiveCompositionInput {
     readonly timeoutMs: number
     readonly dockerContext: string
     readonly activeProfiles?: readonly string[]
-    readonly runtimeMeasurementProbeAuthority?: RuntimeMeasurementProbeAuthority | (() => RuntimeMeasurementProbeAuthority)
 }
 
 type Executor = (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
@@ -53,7 +51,7 @@ function captureInput(value: DestructiveCompositionInput): CapturedCompositionIn
         if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
         const descriptors = Object.getOwnPropertyDescriptors(value)
         const keys = ['configPath', 'env', 'sessionId', 'timeoutMs', 'dockerContext']
-        const optionalKeys = ['activeProfiles', 'runtimeMeasurementProbeAuthority'].filter((key) => descriptors[key] !== undefined)
+        const optionalKeys = ['activeProfiles'].filter((key) => descriptors[key] !== undefined)
         if (Reflect.ownKeys(descriptors).length !== keys.length + optionalKeys.length
             || keys.some((key) => !descriptors[key] || !('value' in descriptors[key]!))
             || optionalKeys.some((key) => !('value' in descriptors[key]!))) return undefined
@@ -63,7 +61,6 @@ function captureInput(value: DestructiveCompositionInput): CapturedCompositionIn
         const timeoutMs = descriptors.timeoutMs!.value
         const dockerContext = descriptors.dockerContext!.value
         const activeProfiles = descriptors.activeProfiles?.value
-        const runtimeMeasurementProbeAuthority = descriptors.runtimeMeasurementProbeAuthority?.value
         if (typeof configPath !== 'string' || configPath.length === 0 || configPath.includes('\0')
             || typeof sessionId !== 'string' || sessionId.length === 0 || sessionId.includes('\0')
             || typeof timeoutMs !== 'number' || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000
@@ -92,7 +89,6 @@ function captureInput(value: DestructiveCompositionInput): CapturedCompositionIn
             timeoutMs,
             dockerContext,
             ...(activeProfiles === undefined ? {} : { activeProfiles: [...activeProfiles].sort() }),
-            ...(runtimeMeasurementProbeAuthority === undefined ? {} : { runtimeMeasurementProbeAuthority }),
         }
     } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
         return undefined
@@ -205,7 +201,6 @@ export function createDestructiveCommandAdapters(
         sessionId: input.sessionId,
         timeoutMs: input.timeoutMs,
         ...(input.activeProfiles === undefined ? {} : { activeProfiles: input.activeProfiles }),
-        ...(input.runtimeMeasurementProbeAuthority === undefined ? {} : { runtimeMeasurementProbeAuthority: input.runtimeMeasurementProbeAuthority }),
     }
     const lifecycle = createLifecycleCommandAdapters(lifecycleInput, execute)
     const issued = new WeakMap<DestructiveRunContext, LifecycleRunContext>()
