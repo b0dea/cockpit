@@ -111,7 +111,8 @@ async function input(overrides: Partial<RestrictionExpansionInput> = {}): Promis
     const alias = canonical
     canonical = await realpath(canonical)
     roots = roots.map(path => path === alias ? canonical : path)
-    expect(spawnSync('git', ['init', '--quiet', canonical]).status).toBe(0)
+    // The branch is named so the protected-branch rows do not depend on the machine's init.defaultBranch.
+    expect(spawnSync('git', ['init', '--quiet', '--initial-branch=main', canonical]).status).toBe(0)
     const source = stringify({ cockpit: { name: 'synthetic-restrictions', siblings_root: dirname(canonical) },
         sibling: roots.map((path, index) => {
             const files = instances.filter(row => (row.root ?? canonical) === path).map(row => ({ template: `${row.path}.example`, instance: row.path }))
