@@ -134,16 +134,17 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
         await writeFile(configPath, original)
         expect((await sync(['--json'])).status).toBe(0)
         expect(await generatedFrom()).toBe(await digestOf())
-        // A widening that lands after sync classified the file is judged on the bytes it would publish.
+        // A widening that lands after the person's sync classified the file, and so was never shown, is not published.
         const narrowed = await generatedFrom()
         let stdout = ''
-        const io = { stdout: { write: (text: string) => { stdout += text; return true } }, stderr: { write: () => true } } as CliIo
-        expect(await runCli(['sync', '--config', configPath, '--json'], io, { loadPolicy: async path => {
+        const io = { stdout: { write: (text: string) => { stdout += text; return true } }, stderr: { write: (text: string) => { stdout += text; return true } },
+            confirmWidening: async () => { throw new Error('nothing widened when sync classified the file') } } as CliIo
+        expect(await runCli(['sync', '--config', configPath, '--interactive'], io, { loadPolicy: async path => {
             const classified = await loadOperatorPolicy(path)
             await writeFile(configPath, `${original}\n[[guards.allow]]\nargv = ["cat", "late.md"]\ncwd = "."\nreason = "Read the selected input."\n`)
             return classified
         } }, { env: {} })).toBe(2)
-        expect(JSON.parse(stdout).diagnostics).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED', message: expect.stringContaining('(guards.allow)') })])
+        expect(stdout).toMatch(/GUARD_CONFIG_WIDENED .*\(guards\.allow\); nothing was written/)
         expect(await generatedFrom()).toBe(narrowed)
     })
 

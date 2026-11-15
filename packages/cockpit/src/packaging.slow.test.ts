@@ -856,8 +856,9 @@ it('lists every outstanding headless init question with the values it proposes',
     const listed = JSON.parse(first.stdout).result
     expect(listed.interview.outstanding.map((row: { field: string }) => row.field)).toEqual([
         'cockpit.name', 'sibling', 'ports.bases', 'environment.install_policies', 'environment.test_data',
-        'environment.compose_files', 'environment.machine', 'environment.posture', 'testing', 'guards', 'work.grading', 'configuration.defaults',
+        'environment.compose_files', 'environment.machine', 'environment.posture', 'testing', 'guards', 'work.grading',
     ])
+    // The defaults are written as drafted for the person to review in the diff, so nobody is asked for them.
     expect(listed.interview.outstanding.find((row: { field: string }) => row.field === 'ports.bases').proposals).toEqual([
         expect.objectContaining({ target: 'library.container_ports', value: [4100], provenance: expect.objectContaining({ kind: 'inferred', source: 'library/Dockerfile' }) }),
     ])

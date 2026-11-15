@@ -1180,25 +1180,15 @@ describe('guard policy construction', () => {
         expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'MCP_DECLARATION_INVALID' }] })
 
         const patch = (path: string) => `*** Begin Patch\n*** Update File: ${path}\n@@\n [mcp.allowed_tools]\n-nosuchserver = []\n*** End Patch\n`
-        // Each hands the file back byte for byte, whichever tool spells it, though removing a restriction is otherwise pinned.
+        // Each hands the file back byte for byte, whichever tool spells it.
         for (const restore of [write(recorded), write(recorded, 'cockpit.toml'), call('Edit', { file_path: configPath, old_string: addition, new_string: '' }),
             call('apply_patch', { command: patch('cockpit.toml') })]) {
             expect(await decision(restore)).toMatchObject({ decision: 'allow' })
         }
-        // Calls are judged under the edit, so the pin keeps the restriction it added against every other
-        // change of cockpit.toml, nearly identical or not provably exact.
-        for (const other of [
-            write(`${recorded}\n`), write(''),
-            call('Edit', { file_path: configPath, old_string: 'nosuchserver = []', new_string: '' }),
-            call('Edit', { file_path: configPath, old_string: addition, new_string: addition.replace('[]', '["read"]') }),
-            // Applied more than once, or not at all, the result is not proven.
-            call('Edit', { file_path: configPath, old_string: '\n', new_string: '' }),
-            call('Edit', { file_path: configPath, old_string: 'not in the file', new_string: '' }),
-            // Another spelling of the file restores nothing, and a call doing more than this is more than a restoration.
-            write(recorded, 'app/../cockpit.toml'),
-            call('apply_patch', { command: `${patch('cockpit.toml').replace('*** End Patch\n', '')}*** Add File: app/notes.txt\n+added\n*** End Patch\n` }),
-            { ...request, payload: shellPayload(`git -C ${root} restore -- cockpit.toml`, root) },
-        ]) expect(await decision(other)).toMatchObject({ decision: 'deny' })
+        // Calls are judged under the edit, since it widens nothing, and any other edit of cockpit.toml is an
+        // ordinary write: a widening one would wait for a person's sync; only emptying it is refused, as every later call reads it.
+        expect(await decision(call('Edit', { file_path: configPath, old_string: 'nosuchserver = []', new_string: '' }))).toMatchObject({ decision: 'allow' })
+        expect(await decision(write(''))).toMatchObject({ decision: 'deny' })
         // The same bytes anywhere else are an ordinary write, which the edit leaves as it was.
         expect(await decision(write(recorded, join(root, 'app/cockpit.toml')))).toMatchObject({ decision: 'allow' })
 
