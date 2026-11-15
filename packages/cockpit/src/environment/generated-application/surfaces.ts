@@ -16,8 +16,7 @@ import {
     CORE_SKILL_ASSETS as SKILL_ASSETS,
     coreSurfaceDeclarations,
 } from '../../surfaces/core-declarations.js'
-import { effectivePolicy } from '../../autonomy.js'
-import { collectMcpDeclarations, mcpApprovalDigest, parseMcpDeclarationFile } from '../../surfaces/mcp.js'
+import { collectMcpDeclarations, mcpApprovalDigest, parseMcpDeclarationFile, type McpDeclaration } from '../../surfaces/mcp.js'
 import {
     bindSurfaceOwnershipIdentity,
     type SurfaceDesiredEntry,
@@ -94,6 +93,7 @@ export async function prepareSurfaces(
     prepared: PreparedEnvironment,
     priorOwned: readonly SurfacePriorOwnedEntry[],
     adapters: GeneratedEnvironmentCommandAdapters,
+    approveDeclaredMcp = false,
 ): Promise<PreparedEnvironment | RefusalOutcome> {
     const config = prepared.registry.config
     // Only the listed tools are rendered and drift-checked; an unlisted tool's files become stale.
@@ -160,7 +160,7 @@ export async function prepareSurfaces(
         kind: 'guide' as const, root: siblingRoots.get(row.slug)!, path: row.sourcePath,
         sha256: row.contentSha256, identity: row.contentIdentity,
     }))
-    const declarations = []
+    const declarations: McpDeclaration[] = []
     for (const source of prepared.registry.mcpSources) {
         const root = siblingRoots.get(source.slug)
         if (!root) continue
@@ -176,11 +176,20 @@ export async function prepareSurfaces(
         declarations.push(...parsed.declarations)
         evidence.push({ kind: 'mcp' as const, root, path: source.path, sha256: read.sha256, identity: sourceIdentity(read.identity) })
     }
-    // Under [autonomy] mcp_approve = "agent" every declared server is approved as declared now; under
-    // "person" only the digests a person recorded in [mcp.approved] are, and the guard pins that table.
-    const approved = effectivePolicy(config).autonomy.mcp_approve === 'agent'
-        ? { ...config.mcp.approved, ...Object.fromEntries(declarations.map(row => [row.name, mcpApprovalDigest(row, prepared.root)])) }
-        : config.mcp.approved
+    // Only the digests a person approved at `sync --interactive` are approved. That preview renders
+    // every declared server as approved and lists each with what it starts, so the person sees what a
+    // yes enables, including a server whose approval an unsynced edit of cockpit.toml added.
+    const declaredDigests = Object.fromEntries(declarations.map(row => [row.name, mcpApprovalDigest(row, prepared.root)]))
+    const mcpApprovals = !approveDeclaredMcp ? [] : Object.entries(declaredDigests).map(([name, sha256]) => {
+        const rows = declarations.filter(row => row.name === name)
+        const row = rows[0]!
+        const command = (launch: Readonly<{ command: string; args: readonly string[]; cwd: string }>) =>
+            `${[launch.command, ...launch.args].join(' ')} (in ${relative(prepared.root, launch.cwd) || '.'})`
+        const runs = 'url' in row ? `${row.url}${row.helper ? `, with headers from ${command(row.helper)}` : ''}` : command(row)
+        return { name, sha256, approved: config.mcp.approved[name] === sha256, runs,
+            sources: rows.map(({ source }) => source.kind === 'sibling' ? `${source.slug}:${source.path}` : source.path) }
+    })
+    const approved = approveDeclaredMcp ? { ...config.mcp.approved, ...declaredDigests } : config.mcp.approved
     let mcp = collectMcpDeclarations({ cockpitDirectory: prepared.root, declarations, approved, allowedTools: config.mcp.allowed_tools, targets: tools })
     if (mcp.kind !== 'complete') return refuse(mcp.diagnostic.code, mcp.diagnostic.message, mcp.diagnostic.server)
     const unapprovedMcpServers = mcp.diagnostics.filter(row => row.code === 'MCP_NOT_APPROVED' && row.server !== undefined)
@@ -217,9 +226,9 @@ export async function prepareSurfaces(
                 'declare one playwright server with a command (not a url) in a JSON file with an mcpServers object, listed in a sibling\'s derives.mcp_sources, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>')
         }
         const playwrightDigest = mcpApprovalDigest(playwright[0]!, prepared.root)
-        if (config.mcp.approved.playwright !== playwrightDigest) {
-            return refuse('MCP_DECLARATION_INVALID', `[browser] requires the playwright MCP server to be approved at its current declaration (sha256 ${playwrightDigest})`, 'playwright',
-                'review the playwright declaration, set playwright to the sha256 in this message under [mcp.approved], then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>')
+        if (approved.playwright !== playwrightDigest) {
+            return refuse('MCP_DECLARATION_INVALID', '[browser] requires the playwright MCP server to be approved at its current declaration', 'playwright',
+                'a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal outside the agent, reviews the playwright declaration it shows and answers yes')
         }
         if (process.platform !== 'darwin' && process.platform !== 'linux') {
             return refuse('SURFACE_INPUT_INVALID', 'browser posture state is unavailable on this platform', process.platform)
@@ -603,7 +612,7 @@ export async function prepareSurfaces(
     if (unsafeGrant) return refuse('SURFACE_INPUT_INVALID',
         `the directory of sibling ${unsafeGrant.slug} contains *, ?, a quote, a backslash or a control character, which OpenCode would read as part of its access pattern; move the checkout to a plain path`,
         unsafeGrant.slug)
-    return { ...prepared, guardHandler, openCodeGrantRoots, unapprovedMcpServers, mcpTransportGaps, mcpServers: mcp.result.servers,
+    return { ...prepared, guardHandler, openCodeGrantRoots, unapprovedMcpServers, mcpApprovals, mcpTransportGaps, mcpServers: mcp.result.servers,
         surfaces: surfaceEntries, compactSurfacePaths, configuredHarnesses,
         activeSurfaceOverrides: merge.overrides, changedOverrideOriginals: merge.findings,
         surfaceManifest,

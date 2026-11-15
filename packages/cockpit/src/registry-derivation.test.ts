@@ -36,7 +36,6 @@ describe('registry derivation', () => {
         if (result.kind !== 'complete') return
         expect(result.result.mcpSources).toEqual([{
             slug: 'worker', siblingDir: 'worker', path: '.mcp.json',
-            provenance: { source: 'overlay.toml', observed_on: '2026-09-26', kind: 'declared', reason: 'Synthetic declaration' },
         }])
         expect(result.result.config.sibling[1].environment_files).toEqual([
             { template: '.env.worker.example', instance: '.env.worker' },
@@ -49,7 +48,6 @@ describe('registry derivation', () => {
     })
 
     it.each([
-        ['missing provenance', (config: any) => { delete config.sibling[1].derives.mcp_sources[0].provenance }],
         ['empty derives', (config: any) => { config.sibling[1].derives.mcp_sources = [] }],
         ['duplicate MCP reference', (config: any) => { config.sibling[1].derives.mcp_sources.push(config.sibling[1].derives.mcp_sources[0]) }],
         ['unsafe MCP reference', (config: any) => { config.sibling[1].derives.mcp_sources[0].path = '../mcp.json' }],

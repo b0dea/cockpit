@@ -213,9 +213,9 @@ describe('one-row generated surface integration', () => {
         expect(claudeSettings.disabledMcpjsonServers).toEqual(['row-server'])
         expect(codex.mcp_servers['row-server']?.enabled).toBe(false)
         expect(openCode.mcp['row-server']?.enabled).toBe(false)
-        // The guard refuses an agent's approval, so the fix names who approves.
+        // A harness starts the server outside the guard, so the fix names the person's yes that approves it.
         expect(addedSync.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'MCP_NOT_APPROVED', target: 'row-server',
-            fix: 'a person reviews its declaration, sets its name to the sha256 in this message under [mcp.approved] in cockpit.toml and runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; while [autonomy] mcp_approve is person, the default, the guard refuses an agent enabling or changing approvals or widening tool access. Agents may remove unchanged approvals and add or narrow exact tool allowlists under [mcp.allowed_tools]. To keep it off, nothing is needed' }))
+            fix: 'to enable it, a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal outside the agent, reviews the declaration it shows and answers yes, which records the approval. A sync an agent runs keeps it off; to keep it off at that yes too, which approves every server it lists, remove it from the MCP source the sibling declares' }))
 
         const evidence = [
             JSON.stringify(addedSync),

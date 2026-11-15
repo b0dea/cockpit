@@ -246,40 +246,6 @@ describe('observation application runners', () => {
         } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 
-    it('warns about declarations no person has confirmed until they are removed from unconfirmed', async () => {
-        const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-doctor-unconfirmed-')))
-        try {
-            const doctorFor = async (head: string) => {
-                const configPath = join(directory, 'cockpit.toml')
-                writeFileSync(configPath, [head, '[cockpit]', 'name = "synthetic"', 'siblings_root = "."', '',
-                    '[[sibling]]', 'slug = "app"', 'dir = "."', 'mount = "none"', 'acquire = "none"', 'var = "APP_DIR"',
-                    'purpose = "Synthetic app"', '', '[ports]', 'bases = {}', ''].join('\n'))
-                const result = await runDoctor({ configPath }, { load: async () => undefined, execute: vi.fn() })
-                return result.diagnostics.filter(row => row.code === 'DECLARATION_UNCONFIRMED')
-            }
-            expect(await doctorFor('unconfirmed = ["environment.machine", "guards"]\n')).toEqual([{ severity: 'warning',
-                code: 'DECLARATION_UNCONFIRMED', target: 'unconfirmed',
-                message: 'environment.machine, guards in cockpit.toml were chosen by the setup agent or by no one named, not stated by a person, so they may not describe this product',
-                // The agent confirms what an observation verifies; a trust decision stays a person's.
-                fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs confirm environment.machine --config <your cockpit.toml>, which confirms environment.machine only if the container runtime measured on this machine meets the declared memory, CPU and free-disk floor; '
-                    + 'a person confirms guards with whoever owns the product, corrects cockpit.toml if a value is wrong, deletes its entry from unconfirmed and its # Unconfirmed comment, then runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal outside the agent' }])
-            // A trust answer that waits for a person is held at the stronger default meanwhile, and doctor says so.
-            expect(await doctorFor('unconfirmed = ["work.grading"]\n[work]\ngrading = "off"\n')).toEqual([expect.objectContaining({
-                message: expect.stringMatching(/; awaiting confirmation, work\.grading is held at independent rather than the declared off$/),
-                fix: expect.stringContaining('a person confirms work.grading with whoever owns the product') })])
-            expect(await doctorFor('')).toEqual([])
-            // A policy the last sync recorded stronger than cockpit.toml now declares is reported, not silently weaker.
-            mkdirSync(join(directory, '.cockpit'))
-            const person = { accept: 'person', amend: 'person', answer: 'person', signoff: 'person', acknowledge: 'person' }
-            writeFileSync(join(directory, '.cockpit/policy.json'), JSON.stringify({ format: 'cockpit-policy/v1', policy: {
-                grading: 'independent', gates: person, autonomy: { sync: 'person', stale_delete: 'person', reset: 'person', mcp_approve: 'person' } } }))
-            const weakened = (await runDoctor({ configPath: join(directory, 'cockpit.toml') }, { load: async () => undefined, execute: vi.fn() }))
-                .diagnostics.filter(row => row.code === 'POLICY_WEAKENING_UNCONFIRMED')
-            expect(weakened).toEqual([expect.objectContaining({ severity: 'warning', target: 'autonomy',
-                message: expect.stringContaining('work.gates.accept: person -> agent') })])
-        } finally { rmSync(directory, { recursive: true, force: true }) }
-    })
-
     it('names every other cockpit state folder it cannot read, and every orphaned stack, with the prune that removes them', async () => {
         const cockpits = '/synthetic/state/v1/cockpits'
         const skipped = [{ path: `${cockpits}/one`, reason: 'format is not supported' }, { path: `${cockpits}/two`, reason: 'format is not supported' }]

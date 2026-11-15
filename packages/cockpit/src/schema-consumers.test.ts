@@ -22,10 +22,8 @@ const AUTHORING_MODULES = ['schema.ts', 'schema-json.ts', 'init/']
 const REASSEMBLY_MODULE = 'registry-derivation.ts'
 // Leaves no code reads, each a decision with its reason. A stale entry fails the test.
 const UNREAD_BY_DESIGN: Readonly<Record<string, string>> = {
-    // A provenance tells the person reviewing cockpit.toml where a value came from. The schema is
-    // its check: it refuses an inferred provenance until a person sets confirmed = true.
-    'sibling.[].derives.mcp_sources.[].provenance.kind': 'where the declaration came from, for its reviewer; schema.ts refuses an unconfirmed inferred one',
-    'sibling.[].derives.mcp_sources.[].provenance.confirmed': 'a person\'s confirmation of an inferred source; schema.ts refuses an inferred one without it',
+    // A provenance tells the person reviewing cockpit.toml where a value came from.
+    'sibling.[].derives.mcp_sources.[].provenance.kind': 'how the declaration was established, for its reviewer',
     'sibling.[].derives.mcp_sources.[].provenance.source': 'where the declaration came from, for its reviewer',
     'sibling.[].derives.mcp_sources.[].provenance.reason': 'why the declaration is there, for its reviewer',
     'sibling.[].derives.mcp_sources.[].provenance.observed_on': 'when the declaration was observed, for its reviewer',

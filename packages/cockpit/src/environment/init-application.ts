@@ -656,9 +656,9 @@ async function initStagesFrom(
         }
         if (observed === 'product-repository') rootQuestion = cockpitRootQuestion(input.root)
     }
-    // A single product repository defaults to the cockpit living in it, so --accept-preview and
-    // --accept-defaults take the recommended placement; a directory name that cannot be a sibling
-    // slug leaves no default and refuses.
+    // A single product repository defaults to the cockpit living in it, so an answers file without
+    // cockpit.root takes the recommended placement; a directory name that cannot be a sibling slug
+    // leaves no default and refuses.
     if (rootQuestion && input.accepted) {
         const unavailable = rootQuestion.options.find(option => option.answer === rootQuestion!.recommended)?.unavailable
         if (unavailable !== undefined) return refused('INIT_COCKPIT_ROOT_REQUIRED',
@@ -956,7 +956,7 @@ async function initStagesFrom(
         // that binding, and replaying the same answers cannot rebind it, so a bare rerun refuses again.
         const observed = current.value.stage !== 'draft-prepared'
         const fix = `restore the product files changed since init drafted cockpit.toml, then rerun ${initCommand({ root: input.root, target: input.tools.join(','),
-            args: `--accept-preview ${projection.previewSha256}` })}${observed
+            args: '--answers <your answers file>' })}${observed
             ? `; to keep the change instead, finish without init: run ${cockpitCommand('sync', { config: destination })}, then ${cockpitCommand('check', { config: destination })}` : ''}`
         return ownerRefusal({ ...currentDocument, diagnostics: currentDocument.diagnostics.map(row =>
             row.code === 'DOCUMENT_ESTATE_OBSERVATION_CHANGED' ? { ...row, fix,
@@ -1018,7 +1018,7 @@ async function initStagesFrom(
         return { ...stopped, diagnostics: [...stopped.diagnostics, { severity: 'info', code: 'INIT_VERIFICATION_INCOMPLETE', target: destination,
             message: 'cockpit.toml is written, so its recorded answers can no longer be reset; init stopped while verifying it',
             fix: `correct what the errors above name, changing a cockpit.toml value in cockpit.toml itself, then rerun ${initCommand({ root: input.root,
-                target: input.tools.join(','), args: `--accept-preview ${projection.previewSha256}` })} to finish verifying it` }] } as InitApplicationOutcome
+                target: input.tools.join(','), args: '--answers <your answers file>' })} to finish verifying it` }] } as InitApplicationOutcome
     }
     const validation = await adapters.validateConfig(destination)
     if (validation.status !== 0) return verificationStop(validation)
@@ -1048,9 +1048,9 @@ function resetUnavailableFix(input: InitApplicationInput, current: BootstrapStat
     const resume = (args: string) => initCommand({ root: input.root, target: input.tools.join(','), args })
     switch (current?.value.stage) {
         case 'draft-prepared':
-            return `cockpit.toml is already drafted from the recorded answers: rerun ${resume(`--accept-preview ${current.value.previewSha256}`)} to write it, then change the value in cockpit.toml itself and rerun the same command`
+            return `cockpit.toml is already drafted from the recorded answers: rerun ${resume('--answers <your answers file>')} to write it, then change the value in cockpit.toml itself and rerun the same command`
         case 'draft-observed':
-            return `cockpit.toml is already written from the recorded answers: change the value in cockpit.toml itself, then rerun ${resume(`--accept-preview ${current.value.previewSha256}`)} to finish verifying it`
+            return `cockpit.toml is already written from the recorded answers: change the value in cockpit.toml itself, then rerun ${resume('--answers <your answers file>')} to finish verifying it`
         case 'surfaces-verified':
         case 'environment-verified':
             return `init has finished: change the value in cockpit.toml itself, then run ${cockpitCommand('sync', { config: join(input.root, 'cockpit.toml') })}`

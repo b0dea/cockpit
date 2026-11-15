@@ -12,8 +12,7 @@ import {
     type SourceProvenance,
     snapshotJson,
 } from '../environment/contract.js'
-import { effectivePolicy, readRecordedPolicy, trustInForce, type EffectivePolicy, type HeldAnswer } from '../autonomy.js'
-import { browserDataQualifies, CockpitConfig, EVALUATOR_COMMANDS, runtimeDeclarationSha256, type EvaluatorTool } from '../schema.js'
+import { browserDataQualifies, CockpitConfig, EVALUATOR_COMMANDS, runtimeDeclarationSha256, type EvaluatorTool, type WorkGrading } from '../schema.js'
 
 /** An explicit request_preapproval wins; otherwise preapproval follows the declared data posture. */
 export const browserPreapprovalRequested = (browser: Readonly<{ request_preapproval?: boolean | undefined; data: Parameters<typeof browserDataQualifies>[0] }>): boolean =>
@@ -74,9 +73,7 @@ export interface ConsumedWorkEnvironmentConfig {
     readonly siblingsRoot: string
     readonly source: SourceProvenance
     readonly siblings: readonly Readonly<{ slug: string; dir: string; environmentFiles: readonly Readonly<{ template: string; instance: string }>[] }>[]
-    readonly policy: EffectivePolicy
-    /** The trust answers held at a stronger value until a person confirms them. */
-    readonly held: readonly HeldAnswer[]
+    readonly grading: WorkGrading
     readonly wipCap: number
     readonly attemptCap: number
     readonly verificationTimeoutSeconds: number
@@ -165,8 +162,7 @@ export function projectWorkEnvironmentConfig(
         siblings: Object.freeze(loaded.config.sibling.map(({ slug, dir, environment_files }) => ({ slug, dir,
             environmentFiles: (environment_files ?? []).map(row => ({ template: row.template, instance: row.instance })),
         }))),
-        policy: effectivePolicy(loaded.config),
-        held: Object.freeze([...trustInForce(loaded.config).held]),
+        grading: loaded.config.work.grading,
         wipCap: loaded.config.work.wip_cap,
         attemptCap: loaded.config.work.attempt_cap,
         verificationTimeoutSeconds: loaded.config.work.verification_timeout_seconds,
@@ -332,17 +328,6 @@ async function syncedConfigName(directory: string): Promise<string | undefined> 
     const record = manifest as { format?: unknown; source?: { path?: unknown } } | null
     const name = record?.format === 'cockpit-generated-ownership/v3' ? record.source?.path : undefined
     return typeof name === 'string' && name !== '' && basename(name) === name ? name : undefined
-}
-
-/** The policy cockpit.toml declares now and the one the last sync recorded, for a command that gates a decision. */
-export async function loadAutonomyPolicy(configPath: string): Promise<Readonly<{ root: string; current: EffectivePolicy; recorded?: EffectivePolicy
-    source: Readonly<{ sha256: string; config: CockpitConfig }> }> | Readonly<{ refusal: EnvironmentDiagnostic }>> {
-    const loaded = await loadCockpitConfig(configPath)
-    if (loaded.kind !== 'complete') return { refusal: loaded.diagnostics[0]! }
-    const root = dirname(loaded.result.source.path)
-    const recorded = await readRecordedPolicy(root)
-    return { root, current: effectivePolicy(loaded.result.config), ...recorded ? { recorded } : {},
-        source: { sha256: loaded.result.source.sha256, config: loaded.result.config } }
 }
 
 function parseConfigBytes(bytes: Uint8Array): Readonly<{ parsed: unknown; config: CockpitConfig }> | undefined {

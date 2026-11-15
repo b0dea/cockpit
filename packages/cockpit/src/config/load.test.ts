@@ -52,12 +52,6 @@ attempt_cap = 1
 wip_cap = 2
 grading = "checks"
 
-[work.gates]
-accept = "agent"
-
-[autonomy]
-reset = "ci"
-
 [environment]
 addressing = "port"
 authentication = "bypassed"
@@ -300,9 +294,7 @@ cold_start_seconds = 30
             source: loaded.result.source,
             siblings: [{ slug: 'api', dir: 'api-service', environmentFiles: [{ template: '.env.example', instance: '.env' }] }],
             wipCap: 2, attemptCap: 1,
-            // Unset fields take the owner's defaults; each set one is the file's.
-            policy: { grading: 'checks', gates: { accept: 'agent', amend: 'agent', answer: 'agent', signoff: 'agent' },
-                autonomy: { sync: 'agent', stale_delete: 'agent', reset: 'ci', mcp_approve: 'person' } },
+            grading: 'checks',
             generatedHostPaths: browserArtifactPaths,
             browser: {
                 harnesses: [{ target: 'codexcli', version: '0.149.0' }],

@@ -41,12 +41,10 @@ it('adopts a product without a terminal, then check catches a hand edit that syn
     const preview = init()
     expect(preview.status, explain(preview)).toBe(0)
     expect(exists(shop, 'cockpit.toml')).toBe(false)
-    const digest = preview.json?.result.previewSha256
-    const answered = init('--accept-preview', digest, '--answers', 'answers.toml')
-    expect(answered.json?.result.question, explain(answered)).toMatchObject({ field: 'configuration.defaults', expectedSha256: expect.any(String) })
-    const accepted = init('--accept-preview', digest, '--answers', 'answers.toml', '--accept-defaults', answered.json?.result.question.expectedSha256)
-    expect(accepted.status, explain(accepted)).toBe(0)
-    expect(accepted.json?.result.stage).toBe('surfaces-verified')
+    // init writes inside the cockpit root from the answers alone; the person reviews the diff.
+    const written = init('--answers', 'answers.toml')
+    expect(written.status, explain(written)).toBe(0)
+    expect(written.json?.result.stage).toBe('surfaces-verified')
 
     ok(shop, ['sync'])
     ok(shop, ['check'])

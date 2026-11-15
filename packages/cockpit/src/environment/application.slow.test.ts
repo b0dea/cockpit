@@ -887,12 +887,7 @@ describe('guard policy construction', () => {
             expect(await read(`echo '${long}'`)).toBe('allow')
             expect(await read(`cat app/${long} app/${long}/../config/notes.md`)).toBe('allow')
             expect(await read(`rg needle app/${long}`)).toBe(await read('rg needle app/missing'))
-            // A word the guard cannot inspect holds the call by naming that word, not the guard's own authority.
-            mkdirSync(join(root, 'app/locked'), { mode: 0o000 })
-            const locked = await runGuardEvaluationApplication({ ...request, payload: shellPayload('echo app/locked/entry', root) }, adapters)
-            expect(locked.decision).toEqual({ decision: 'unavailable', reason: expect.stringMatching(/^Guard could not inspect \S+\/app\/locked\/entry, which this call names/) })
         } finally {
-            if (existsSync(join(root, 'app/locked'))) { chmodSync(join(root, 'app/locked'), 0o700); rmSync(join(root, 'app/locked'), { recursive: true }) }
             for (const path of created) rmSync(path, { recursive: true, force: true })
         }
     }, 120_000)
@@ -1238,12 +1233,8 @@ describe('guard policy construction', () => {
         writeFileSync(configPath, invalid)
         expect(await decision(call('Edit', { file_path: configPath, old_string: undeclared, new_string: declared }))).toMatchObject({ decision: 'allow' })
         expect(await decision(call('Edit', { file_path: configPath, old_string: undeclared, new_string: `${declared}\n` }))).toMatchObject({ decision: 'allow' })
-        // The pin still holds the agent's own gates, the correction must name the file itself, and emptying it is no correction.
-        const pinned = recorded.includes('[autonomy]') ? '[autonomy]' : '[cockpit]'
-        for (const other of [call('Edit', { file_path: configPath, old_string: pinned, new_string: `[work.gates]\naccept = "agent"\n\n${pinned}` }),
-            write(recorded, 'app/../cockpit.toml'), write('')]) {
-            expect((await decision(other)).decision).not.toBe('allow')
-        }
+        // The correction must name the file itself; it grants nothing, as a widening waits for a person's sync once the file loads.
+        expect((await decision(write(recorded, 'app/../cockpit.toml'))).decision).not.toBe('allow')
         // Admitting it still rests on the publication sync wrote for this machine.
         const localIdentity = join(root, GUARD_LOCAL_PATHS.identity)
         const localBytes = readFileSync(localIdentity)

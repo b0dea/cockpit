@@ -1,19 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
-import { effectivePolicy, weakeningDigest } from '../autonomy.js'
-import { Autonomy, Work } from '../schema.js'
 import {
     runResetOperatorApplication,
     runStacksPruneOperatorApplication,
     runSyncOperatorApplication,
     type GeneratedEnvironmentSyncHandlerInput,
+    type McpApproval,
+    type OperatorPolicy,
 } from './operator-application.js'
 
-const policyOf = (autonomy: Record<string, string> = {}, work: Record<string, unknown> = {}) => effectivePolicy({ work: Work.parse(work), autonomy: Autonomy.parse(autonomy) })
-// The policy adapter in place of cockpit.toml on disk; `record` stands for writing the recorded policy.
-const policyAdapter = (current = policyOf(), recorded?: ReturnType<typeof policyOf>) => {
-    const record = vi.fn(async () => {})
-    return { record, load: vi.fn(async () => ({ current, ...recorded ? { recorded } : {}, record })) }
-}
+// The policy adapter in place of cockpit.toml on disk and this machine's guard record.
+const policyOf = (policy: Partial<OperatorPolicy> = {}): OperatorPolicy =>
+    ({ configSha256: 'a'.repeat(64), widened: [], seeded: false, approveMcp: vi.fn(async () => 'e'.repeat(64)), ...policy })
+const policyAdapter = (policy = policyOf()) => ({ load: vi.fn(async () => policy) })
 
 const preview = Object.freeze({
     kind: 'preview' as const,
@@ -95,168 +93,133 @@ describe('operator application admission', () => {
         expect(decide).toHaveBeenCalledWith('decline')
     })
 
-    it('binds stale-removal approval to the exact previewed request', async () => {
-        const request = {
-            format: 'cockpit-stale-removal-request/v1' as const,
-            cockpitId: 'synthetic', generation: 'generation-1', sourceSha256: 'a'.repeat(64),
-            entries: [{ path: 'old', operation: 'remove-file' as const, current: {
-                kind: 'file' as const, sha256: 'b'.repeat(64), dev: 1, ino: 2,
-            } }],
-            digest: 'c'.repeat(64),
-        }
-        const changed = { ...request, entries: [{ ...request.entries[0]!, path: 'other' }] }
-        const synchronize = vi.fn(async (input: GeneratedEnvironmentSyncHandlerInput) => {
-            if (input.dryRun) {
-                return { status: 0, diagnostics: [], result: { dryRun: true, staleRemoval: request } }
-            }
-            expect(await input.authorizeStaleRemoval?.(changed)).toBeUndefined()
-            expect(await input.authorizeStaleRemoval?.(request)).toEqual({
-                format: 'cockpit-stale-removal-approval/v1', digest: request.digest,
-            })
-            return { status: 2, diagnostics: [], result: null }
-        })
-
-        await runSyncOperatorApplication(
-            { configPath: 'cockpit.toml' },
-            { interactive: true, json: false, ci: undefined, terminal: true },
-            { synchronize, confirmStaleRemoval: async () => request.digest, policy: policyAdapter(policyOf({ stale_delete: 'person' })).load, confirmPolicyWeakening: vi.fn() },
-        )
-
-        expect(synchronize).toHaveBeenCalledTimes(2)
-    })
-
-    it('applies a reset without a person only where [autonomy] reset allows it', async () => {
+    it('applies a reset without a person only where a seed refills the data and cockpit.toml carries no unsynced widening', async () => {
         const decide = vi.fn(async () => Object.freeze({ kind: 'complete' as const, status: 0 as const, diagnostics: Object.freeze([]), result: null }))
-        const run = (reset: string, ci?: string, recorded?: string) => {
+        const run = (policy: Partial<OperatorPolicy>) => {
             const begin = vi.fn(async () => Object.freeze({ preview, decide }))
             const confirm = vi.fn()
             return { begin, confirm, outcome: runResetOperatorApplication({ configPath: '/synthetic/cockpit.toml' },
-                { interactive: false, apply: true, json: false, ci, terminal: false },
-                { preview: vi.fn(), begin, confirm, policy: policyAdapter(policyOf({ reset }), recorded ? policyOf({ reset: recorded }) : undefined).load }) }
+                { interactive: false, apply: true, json: false, ci: undefined, terminal: false },
+                { preview: vi.fn(), begin, confirm, policy: policyAdapter(policyOf(policy)).load }) }
         }
-        const agent = run('agent')
-        expect((await agent.outcome).status).toBe(0)
+        const seeded = run({ seeded: true })
+        expect((await seeded.outcome).status).toBe(0)
         expect(decide).toHaveBeenCalledExactlyOnceWith('approve')
-        expect(agent.confirm).not.toHaveBeenCalled()
-        // cockpit.toml weakened to agent after sync recorded person: the recorded decider stands until sync accepts it.
-        for (const [reset, ci, code, recorded] of [['person', undefined, 'AUTONOMY_PERSON_REQUIRED', undefined], ['ci', undefined, 'AUTONOMY_CI_ONLY', undefined],
-            ['agent', undefined, 'POLICY_WEAKENING_UNCONFIRMED', 'person']] as const) {
-            const refused = run(reset, ci, recorded)
-            expect((await refused.outcome).diagnostics[0]?.code, reset).toBe(code)
+        expect(seeded.confirm).not.toHaveBeenCalled()
+        // An agent could declare a volume resettable and a seed in the same edit.
+        for (const [policy, code] of [[{ seeded: false }, 'RESET_CONFIRMATION_REQUIRED'],
+            [{ seeded: true, widened: ['environment.resettable_volumes'] }, 'GUARD_CONFIG_WIDENED']] as const) {
+            const refused = run(policy)
+            expect((await refused.outcome).diagnostics[0]?.code, code).toBe(code)
             expect(refused.begin).not.toHaveBeenCalled()
         }
-        decide.mockClear()
-        expect((await run('ci', 'true').outcome).status).toBe(0)
-        expect(decide).toHaveBeenCalledExactlyOnceWith('approve')
     })
 
-    it('prunes orphaned stacks for an agent, and asks the reset gate only when the prune deletes volumes', async () => {
-        const run = (deletesData: boolean, reset: string, admission: Partial<{ interactive: boolean; apply: boolean; typed: string }> = { apply: true }) => {
+    it('prunes orphaned stacks for an agent, and deletes volumes only where an agent may reset or a person answers yes', async () => {
+        const run = (deletesData: boolean, seeded: boolean, admission: Partial<{ interactive: boolean; apply: boolean; yes: boolean }> = { apply: true }) => {
             const apply = vi.fn(async () => Object.freeze({ status: 0, diagnostics: Object.freeze([]), result: { removed: [] } }))
             const begin = vi.fn(async () => Object.freeze({ preview, digest: 'b'.repeat(64), empty: false, deletesData, apply }))
             const outcome = runStacksPruneOperatorApplication({ configPath: '/synthetic/cockpit.toml' },
                 { interactive: admission.interactive ?? false, apply: admission.apply ?? false, json: false, ci: undefined, terminal: true },
-                { begin, confirm: vi.fn(async () => admission.typed), policy: policyAdapter(policyOf({ reset })).load })
+                { begin, confirm: vi.fn(async () => admission.yes === true), policy: policyAdapter(policyOf({ seeded })).load })
             return { apply, begin, outcome }
         }
-        const previewed = run(true, 'person', {})
+        const previewed = run(true, false, {})
         expect(await previewed.outcome).toBe(preview)
         expect(previewed.apply).not.toHaveBeenCalled()
         expect(previewed.begin).toHaveBeenCalledWith({ configPath: '/synthetic/cockpit.toml', scope: 'machine' })
-        const housekeeping = run(false, 'person')
+        const housekeeping = run(false, false)
         expect((await housekeeping.outcome).status).toBe(0)
         expect(housekeeping.apply).toHaveBeenCalledOnce()
-        // Another cockpit's [autonomy] is not this one's, so an agent's apply covers only this cockpit's stacks.
+        // Another cockpit's rule is not this one's, so an agent's apply covers only this cockpit's stacks.
         expect(housekeeping.begin).toHaveBeenCalledWith({ configPath: '/synthetic/cockpit.toml', scope: 'this-cockpit' })
-        const data = run(true, 'person')
-        expect((await data.outcome).diagnostics[0]?.code).toBe('AUTONOMY_PERSON_REQUIRED')
+        const data = run(true, false)
+        expect((await data.outcome).diagnostics[0]?.code).toBe('RESET_CONFIRMATION_REQUIRED')
         expect(data.apply).not.toHaveBeenCalled()
-        expect((await run(true, 'agent').outcome).status).toBe(0)
-        // A person's approval is the typed digest of the exact preview.
-        const mistyped = run(true, 'person', { interactive: true, typed: 'c'.repeat(64) })
-        expect((await mistyped.outcome).diagnostics[0]?.code).toBe('STACKS_PRUNE_UNCONFIRMED')
-        expect(mistyped.apply).not.toHaveBeenCalled()
-        const approved = run(true, 'person', { interactive: true, typed: 'b'.repeat(64) })
+        expect((await run(true, true).outcome).status).toBe(0)
+        const declined = run(true, false, { interactive: true, yes: false })
+        expect((await declined.outcome).diagnostics[0]?.code).toBe('STACKS_PRUNE_UNCONFIRMED')
+        expect(declined.apply).not.toHaveBeenCalled()
+        const approved = run(true, false, { interactive: true, yes: true })
         expect((await approved.outcome).status).toBe(0)
         expect(approved.begin).toHaveBeenCalledWith({ configPath: '/synthetic/cockpit.toml', scope: 'machine' })
     })
 
-    it('removes stale generated files without a person only where [autonomy] stale_delete allows it', async () => {
+    it('removes stale generated files on every sync, as removing them narrows what is written', async () => {
         const request = { format: 'cockpit-stale-removal-request/v1' as const, cockpitId: 'synthetic', generation: 'generation-1', sourceSha256: 'a'.repeat(64),
             entries: [{ path: 'old', operation: 'remove-file' as const, current: { kind: 'file' as const, sha256: 'b'.repeat(64), dev: 1, ino: 2 } }], digest: 'c'.repeat(64) }
         const approvals: unknown[] = []
         const synchronize = vi.fn(async (input: GeneratedEnvironmentSyncHandlerInput) => {
-            approvals.push(await input.authorizeStaleRemoval?.(request))
-            return { status: 0, diagnostics: [], result: null }
+            if (!input.dryRun) approvals.push(await input.authorizeStaleRemoval?.(request))
+            return { status: 0, diagnostics: [], result: { dryRun: input.dryRun === true, sourceSha256: 'a'.repeat(64) } }
         })
-        const admission = { interactive: false, json: false, ci: undefined, terminal: false }
-        await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, admission,
-            { synchronize, confirmStaleRemoval: vi.fn(), policy: policyAdapter(policyOf({ stale_delete: 'agent' })).load, confirmPolicyWeakening: vi.fn() })
-        await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, admission,
-            { synchronize, confirmStaleRemoval: vi.fn(), policy: policyAdapter(policyOf({ stale_delete: 'person' })).load, confirmPolicyWeakening: vi.fn() })
-        expect(approvals).toEqual([{ format: 'cockpit-stale-removal-approval/v1', digest: request.digest }, undefined])
+        await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, { interactive: false, json: false, ci: undefined, terminal: false },
+            { synchronize, policy: policyAdapter().load, confirmWidening: vi.fn() })
+        await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, { interactive: true, json: false, ci: undefined, terminal: true },
+            { synchronize, policy: policyAdapter().load, confirmWidening: vi.fn() })
+        expect(approvals).toEqual([{ format: 'cockpit-stale-removal-approval/v1', digest: request.digest }, { format: 'cockpit-stale-removal-approval/v1', digest: request.digest }])
     })
 
-    it('writes nothing for a policy weakened since the last sync until a person approves its exact digest', async () => {
-        const recorded = policyOf({}, { gates: { accept: 'person' } })
-        const weakened = policyOf({}, { gates: { accept: 'agent' } })
-        const synchronize = vi.fn(async () => ({ status: 0, diagnostics: [], result: null }))
-        const quiet = policyAdapter(weakened, recorded)
-        const refused = await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, { interactive: false, json: false, ci: undefined, terminal: false },
-            { synchronize, confirmStaleRemoval: vi.fn(), policy: quiet.load, confirmPolicyWeakening: vi.fn() })
-        expect(refused).toMatchObject({ status: 2, diagnostics: [{ code: 'POLICY_WEAKENING_UNCONFIRMED' }],
-            result: { weakened: [{ field: 'work.gates.accept', from: 'person', to: 'agent' }], digest: weakeningDigest(recorded, weakened) } })
+    it('applies a widening and enables MCP servers only on one yes, recording the approvals and binding the sync to the bytes that hold them', async () => {
+        const server: McpApproval = { name: 'docs', sha256: 'd'.repeat(64), approved: false, sources: ['web:.mcp.json'], runs: 'node docs-server.mjs (in web)' }
         const interactive = { interactive: true, json: false, ci: undefined, terminal: true }
-        const wrong = policyAdapter(weakened, recorded)
-        expect((await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, interactive,
-            { synchronize, confirmStaleRemoval: vi.fn(), policy: wrong.load, confirmPolicyWeakening: async () => 'd'.repeat(64) })).status).toBe(2)
-        expect(synchronize).not.toHaveBeenCalled()
-        expect([quiet.record, wrong.record].every(record => record.mock.calls.length === 0)).toBe(true)
-        const accepted = policyAdapter(weakened, recorded)
-        expect((await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, interactive,
-            { synchronize, confirmStaleRemoval: vi.fn(), policy: accepted.load, confirmPolicyWeakening: async request => request.digest })).status).toBe(0)
-        expect(accepted.record).toHaveBeenCalledOnce()
-        // A stronger policy needs nobody: it takes effect at the next sync, which records it.
-        const strengthened = policyAdapter(recorded, weakened)
-        expect((await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, { interactive: false, json: false, ci: undefined, terminal: false },
-            { synchronize, confirmStaleRemoval: vi.fn(), policy: strengthened.load, confirmPolicyWeakening: vi.fn() })).status).toBe(0)
-        expect(strengthened.record).toHaveBeenCalledOnce()
-    })
-
-    it.each(['weakening', 'stale removal'])('refuses policy changes made while a %s approval is pending', async pause => {
-        const recorded = policyOf({ sync: 'person' })
-        let current = policyOf({ sync: 'agent', stale_delete: 'person' })
-        const record = vi.fn(async () => {})
-        const staleRemoval = { format: 'cockpit-stale-removal-request/v1', cockpitId: 'synthetic',
-            generation: 'generation-1', sourceSha256: 'a'.repeat(64), digest: 'b'.repeat(64),
-            entries: [{ path: 'old', operation: 'remove-file', current: { kind: 'file', sha256: 'c'.repeat(64), dev: 1, ino: 2 } }] }
-        const synchronize = vi.fn(async (input: GeneratedEnvironmentSyncHandlerInput) => ({ status: 0, diagnostics: [],
-            result: input.dryRun ? { dryRun: true, staleRemoval } : null }))
-        const outcome = await runSyncOperatorApplication({ configPath: 'cockpit.toml' },
-            { interactive: true, json: false, ci: undefined, terminal: true }, {
-                synchronize,
-                confirmStaleRemoval: async request => {
-                    current = policyOf({ sync: 'agent', reset: 'agent', stale_delete: 'person' })
-                    return request.digest
-                },
-                policy: async () => ({ current, recorded, record }),
-                confirmPolicyWeakening: async request => {
-                    if (pause === 'weakening') current = policyOf({ sync: 'agent', reset: 'agent', stale_delete: 'person' })
-                    return request.digest
-                },
+        const run = async (yes: boolean) => {
+            const approveMcp = vi.fn(async () => 'e'.repeat(64))
+            const before = policyOf({ widened: ['guards.allow'], approveMcp })
+            const after = policyOf({ configSha256: 'e'.repeat(64), widened: ['guards.allow', 'mcp.approved.docs'] })
+            const policy = vi.fn().mockResolvedValueOnce(before).mockResolvedValue(after)
+            const writes: GeneratedEnvironmentSyncHandlerInput[] = []
+            const synchronize = vi.fn(async (input: GeneratedEnvironmentSyncHandlerInput) => {
+                if (input.dryRun) return { status: 0, diagnostics: [], result: input.approveDeclaredMcp
+                    ? { dryRun: true, sourceSha256: 'a'.repeat(64), mcpApprovals: [server] } : { dryRun: true, sourceSha256: 'a'.repeat(64) } }
+                writes.push(input)
+                return { status: 0, diagnostics: [], result: null }
             })
-        expect(outcome).toMatchObject({ status: 2, diagnostics: [{ code: 'POLICY_WEAKENING_UNCONFIRMED' }] })
-        expect(synchronize.mock.calls.every(([input]) => input.dryRun === true)).toBe(true)
-        expect(record).not.toHaveBeenCalled()
+            const confirmWidening = vi.fn(async () => yes)
+            const outcome = await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, interactive, { synchronize, policy, confirmWidening })
+            return { outcome, writes, approveMcp, confirmWidening }
+        }
+        const approved = await run(true)
+        expect(approved.outcome.status).toBe(0)
+        expect(approved.confirmWidening).toHaveBeenCalledExactlyOnceWith({ widens: ['guards.allow'], mcpServers: [server] })
+        expect(approved.approveMcp).toHaveBeenCalledExactlyOnceWith([server])
+        expect(approved.writes).toEqual([expect.objectContaining({ guardWidening: { configSha256: 'e'.repeat(64) } })])
+        const declined = await run(false)
+        expect(declined.outcome).toMatchObject({ status: 2, diagnostics: [{ code: 'GUARD_CONFIG_WIDENED' }] })
+        expect(declined.approveMcp).not.toHaveBeenCalled()
+        expect(declined.writes).toEqual([])
+        // A server whose approval an unsynced edit typed into cockpit.toml is shown with what it starts, and needs no second write.
+        const typed = { ...server, name: 'maps', approved: true }
+        const confirmWidening = vi.fn(async () => true)
+        const approveMcp = vi.fn(async () => 'e'.repeat(64))
+        const synchronize = vi.fn(async (input: GeneratedEnvironmentSyncHandlerInput) => ({ status: 0, diagnostics: [],
+            result: input.dryRun ? { dryRun: true, sourceSha256: 'a'.repeat(64), mcpApprovals: [typed] } : null }))
+        expect((await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, interactive, { synchronize, confirmWidening,
+            policy: async () => policyOf({ widened: ['mcp.approved.maps'], approveMcp }) })).status).toBe(0)
+        expect(confirmWidening).toHaveBeenCalledExactlyOnceWith({ widens: ['mcp.approved.maps'], mcpServers: [typed] })
+        expect(approveMcp).not.toHaveBeenCalled()
     })
 
-    it('refuses a writing sync outside CI under [autonomy] sync = "ci" and passes a dry run', async () => {
-        const synchronize = vi.fn(async () => ({ status: 0, diagnostics: [], result: null }))
-        const adapters = { synchronize, confirmStaleRemoval: vi.fn(), policy: policyAdapter(policyOf({ sync: 'ci' })).load, confirmPolicyWeakening: vi.fn() }
-        const local = { interactive: false, json: false, ci: undefined, terminal: false }
-        expect((await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, local, adapters)).diagnostics[0]?.code).toBe('AUTONOMY_CI_ONLY')
-        expect(synchronize).not.toHaveBeenCalled()
-        expect((await runSyncOperatorApplication({ configPath: 'cockpit.toml', dryRun: true }, local, adapters)).status).toBe(0)
-        expect((await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, { ...local, ci: 'true' }, adapters)).status).toBe(0)
+    it('leaves an agent\'s sync to the team sync, which refuses a widening, and asks nothing', async () => {
+        const synchronize = vi.fn(async (_input: GeneratedEnvironmentSyncHandlerInput) => ({ status: 0, diagnostics: [], result: null }))
+        const confirmWidening = vi.fn()
+        const policy = policyAdapter(policyOf({ widened: ['guards.allow'] }))
+        await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, { interactive: false, json: false, ci: undefined, terminal: false },
+            { synchronize, policy: policy.load, confirmWidening })
+        expect(synchronize).toHaveBeenCalledOnce()
+        expect(synchronize.mock.calls[0]![0].guardWidening).toBeUndefined()
+        expect(confirmWidening).not.toHaveBeenCalled()
+    })
+
+    it('refuses when cockpit.toml changes while the person reviews it', async () => {
+        const server: McpApproval = { name: 'docs', sha256: 'd'.repeat(64), approved: false, sources: ['web:.mcp.json'], runs: 'node docs-server.mjs (in web)' }
+        const synchronize = vi.fn(async (input: GeneratedEnvironmentSyncHandlerInput) => ({ status: 0, diagnostics: [],
+            result: input.dryRun ? { dryRun: true, sourceSha256: 'a'.repeat(64), mcpApprovals: [server] } : null }))
+        // The file on disk after the approvals were written is not the one they were written to.
+        const policy = vi.fn().mockResolvedValueOnce(policyOf()).mockResolvedValue(policyOf({ configSha256: 'f'.repeat(64) }))
+        const outcome = await runSyncOperatorApplication({ configPath: 'cockpit.toml' },
+            { interactive: true, json: false, ci: undefined, terminal: true }, { synchronize, policy, confirmWidening: async () => true })
+        expect(outcome).toMatchObject({ status: 2, diagnostics: [{ code: 'CONFIG_CHANGED_DURING_EXECUTION' }] })
+        expect(synchronize.mock.calls.every(([input]) => input.dryRun === true)).toBe(true)
     })
 })

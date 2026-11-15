@@ -147,9 +147,7 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
         }, 180_000)
 
         it('reconciles generated whole files and copied sibling guides and removes exact stale ownership', async () => {
-            // A person approves stale deletions here, so a plain sync refuses one and check names the approving command.
-            const first = await surfaceConsumer('surface-reconcile', { rules: true,
-                custom: `\n[autonomy]\nstale_delete = "person"\n${WITH_CURSOR}` })
+            const first = await surfaceConsumer('surface-reconcile', { rules: true, custom: `\n${WITH_CURSOR}` })
 
             const synced = await syncGeneratedEnvironment({ configPath: first.configPath })
             expect(synced).toMatchObject({ kind: 'complete' })
@@ -204,9 +202,9 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             const withoutSurfaces = withoutCursor(await readFile(first.configPath, 'utf8'))
                 .replace('guides = ["AGENTS.md"]', 'guides = []')
             await writeFile(first.configPath, withoutSurfaces)
-            // Plain sync refuses a stale removal, so check names the command that can approve it.
+            // A stale file stays until sync removes it, so check names sync.
             expect(await checkGeneratedEnvironment({ configPath: first.configPath })).toMatchObject({ kind: 'refusal',
-                diagnostics: [expect.objectContaining({ code: 'GENERATED_ARTIFACT_DRIFT', fix: expect.stringContaining('sync --config <your cockpit.toml> --interactive') })] })
+                diagnostics: [expect.objectContaining({ code: 'GENERATED_ARTIFACT_DRIFT', fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>' })] })
             let staleApprovalRequest: GeneratedStaleRemovalApprovalRequest | undefined
             const removed = await syncGeneratedEnvironment({ configPath: first.configPath }, {
                 authorizeStaleRemoval: async request => {

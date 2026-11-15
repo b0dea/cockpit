@@ -17,7 +17,6 @@ export type WorkHandlerIdentifier =
 
 export type HandlerIdentifier = WorkHandlerIdentifier
     | 'check'
-    | 'confirm'
     | 'docs-check'
     | 'env-keys'
     | 'env-schema'
@@ -92,8 +91,6 @@ export interface CommandDefinition {
 }
 
 const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
-    'accept-defaults': 'Accept the displayed defaults with their exact SHA-256 digest',
-    'accept-preview': 'Accept the displayed init preview with its exact SHA-256 digest',
     'accept-reset': 'Accept the displayed answer reset with its exact SHA-256 digest',
     abandon: 'Close the order as abandoned; --note says why',
     clear: 'Serve the sibling from its declared checkout again',
@@ -175,7 +172,7 @@ type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; reason: s
     configuration: 'resolved' | 'none'
     forbidden: Readonly<{ presence: readonly string[] }>
     // Admitted only where cockpit.toml grants it: browser preapproval, on by default for and allowed
-    // only on isolated data that cannot reach production, or an [autonomy] field set to agent.
+    // only on isolated data that cannot reach production, or the fixed rule (reset only where a seed is declared).
     requires?: OrdinaryGrant
     // These flags, which the command otherwise refuses an agent, are admitted where cockpit.toml grants it.
     flagGrant?: Readonly<{ flags: readonly string[]; grant: OrdinaryGrant }>
@@ -183,11 +180,6 @@ type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; reason: s
 
 // Mirrors EvaluatorTool in schema.ts, which this data table may not import.
 const EVALUATOR_TOOLS: readonly string[] = ['codexcli', 'claudecode', 'opencode']
-// Mirrors UNCONFIRMABLE_ANSWERS in schema.ts. Every answer is admitted, so confirm itself names the
-// person an answer needs instead of the guard refusing it unexplained.
-const UNCONFIRMED_ANSWER_WORDS: readonly string[] = Object.freeze(['cockpit.name', 'sibling', 'estate.runnable', 'ports.bases',
-    'environment.install_policies', 'environment.test_data', 'environment.compose_files', 'environment.machine', 'environment.posture',
-    'testing', 'guards', 'work.grading'])
 // A declared route's name or its path; the command checks it against the declared routes.
 const ROUTE_SELECTOR = /^(?:[a-z0-9][a-z0-9_-]{0,63}|\/(?!\/)[^\s#\x00-\x1f\x7f]{0,511})$/
 const EXACT_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
@@ -251,18 +243,18 @@ const sources = [
     {
         name: 'init',
         stage: 'set-up',
-        summary: 'Preview, then accept, a first cockpit setup for one or more agent tools',
+        summary: 'Preview a first cockpit setup for one or more agent tools, then write it from answers',
         usage: '[<root>] [options]',
         handler: 'init',
         visibility: 'public',
         ordinary: ordinary('init', {
             configuration: 'none',
             positional: Object.freeze({ min: 1, max: 1, roles: Object.freeze(['confined-root'] as const) }),
-            forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'answers', 'accept-preview', 'accept-defaults']) }),
+            forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'answers']) }),
         }),
         flags: { target: str(value('surface-target', true)),
             interactive: bool(), json: jsonFlag,
-            answers: str(), 'accept-preview': str(), 'accept-defaults': str(),
+            answers: str(),
             'reset-answer': str(value('field')), 'accept-reset': str(value('sha256')),
             'scaffold-compose': str(), command: str(), port: str(), with: str() },
     },
@@ -316,25 +308,10 @@ const sources = [
         handler: 'tool',
         visibility: 'public',
         // tool add edits only [surfaces] tools, and an added tool never widens what agents may do, so the
-        // agent syncs it as [autonomy] sync allows. tool remove deletes that tool's guard, so it is a person's.
+        // agent syncs it. tool remove deletes that tool's guard, so it is a person's.
         ordinary: ordinary('tool', { positional: Object.freeze({ min: 2, max: 2, roles: Object.freeze(['operation', 'surface-target'] as const),
             operations: Object.freeze(['add']) }) }),
         flags: { config: configFlag, 'dry-run': bool(flag), json: jsonFlag },
-    },
-    {
-        name: 'confirm',
-        stage: 'set-up',
-        summary: 'Confirm an init answer no person stated by running the observation that verifies it',
-        usage: '<answer> [options]',
-        handler: 'confirm',
-        visibility: 'public',
-        // It removes an entry from unconfirmed only after an observation of this machine and the running
-        // stack passes, or as the agent's decision where [autonomy] confirm_answers delegates it, and
-        // records which where only cockpit writes; the guard then treats the removal as non-widening. It
-        // refuses the answers a person must confirm.
-        ordinary: ordinary('confirm', { positional: Object.freeze({ min: 1, max: 1, roles: Object.freeze(['operation'] as const),
-            operations: UNCONFIRMED_ANSWER_WORDS }) }),
-        flags: configured,
     },
     {
         name: 'upgrade',
@@ -344,7 +321,7 @@ const sources = [
         handler: 'upgrade',
         visibility: 'public',
         // The install is exact and its sync child decides as sync does, so an agent runs the real upgrade
-        // exactly where [autonomy] sync lets it sync; the version is the one positional.
+        // as it runs sync; the version is the one positional.
         ordinary: ordinary('upgrade', {
             positional: Object.freeze({ min: 0, max: 1, roles: Object.freeze(['version'] as const) }), requires: 'autonomy-sync' }),
         flags: { config: configFlag, 'dry-run': bool(flag), json: jsonFlag },
@@ -355,9 +332,8 @@ const sources = [
         summary: 'Write the Compose ownership override and agent files from cockpit.toml',
         handler: 'sync',
         visibility: 'public',
-        // A real sync rewrites the guard's own files from a configuration the guard already pins, and
-        // applies an edit that widens it only once a person confirms it, so it is an agent's only where
-        // [autonomy] sync = "agent".
+        // A real sync applies an edit that widens what agents may do only once a person confirms it with
+        // --interactive, so an agent's sync applies everything else.
         ordinary: ordinary('sync', { forbidden: Object.freeze({ presence: Object.freeze(['interactive']) }), requires: 'autonomy-sync' }),
         flags: { config: configFlag, 'dry-run': bool(flag), interactive: bool(), json: jsonFlag },
     },
@@ -472,10 +448,10 @@ const sources = [
     {
         name: 'reset',
         stage: 'run-the-stack',
-        summary: 'Preview a reset, then approve it interactively or apply it as [autonomy] reset allows (on the active local Docker context)',
+        summary: 'Preview a reset, then approve it interactively, or apply it where a seed is declared (on the active local Docker context)',
         handler: 'reset',
         visibility: 'public',
-        // Reset deletes stack data, so an agent applies one only where [autonomy] reset = "agent".
+        // Reset deletes stack data, so an agent applies one only where a declared seed refills it.
         ordinary: ordinary('reset', { requires: 'autonomy-reset' }),
         flags: { config: configFlag, interactive: bool(), apply: bool(Object.freeze({ ...flag, required: true as const })), json: jsonFlag },
     },
@@ -487,7 +463,7 @@ const sources = [
         handler: 'stacks',
         visibility: 'public',
         // Listing and the prune preview change nothing. --apply removes only stacks whose checkout is
-        // gone; the command itself refuses one that deletes volumes unless [autonomy] reset allows it.
+        // gone; the command itself refuses one that deletes volumes unless an agent may reset.
         ordinary: ordinary('stacks', {
             positional: Object.freeze({ min: 0, max: 1, roles: Object.freeze(['operation'] as const), operations: Object.freeze(['prune']) }),
             ...personFlag,
@@ -521,12 +497,12 @@ const sources = [
     { name: 'test-run', handler: 'test-run', stage: 'test-and-grade', summary: 'Run a declared product test gate and report which tests it selected', visibility: 'public',
         ordinary: ordinary('test-run'),
         flags: { ...configured, gate: str(value('declared-gate', true)), mode: str(value('gate-mode'), 'canonical'), select: str(value('gate-selector')) } },
-    // A gated step passes for the agent only where [work.gates] says agent; under person the command
-    // waits for the digest a person types after --interactive, which no agent invocation carries.
+    // A step that would let the agent lower the bar its own work is held to waits for the digest a
+    // person types after --interactive, which no agent invocation carries.
     { name: 'work status', handler: 'work-status', stage: 'test-and-grade', summary: 'Report each work order, its state and how it closed', visibility: 'public',
         ordinary: ordinary('work-status'),
         flags: { ...configured, 'work-order': str(value('identifier')) } },
-    { name: 'work accept', handler: 'work-accept', stage: 'test-and-grade', summary: 'Accept a work order, or a change to an accepted one, as [work.gates] allows', visibility: 'public',
+    { name: 'work accept', handler: 'work-accept', stage: 'test-and-grade', summary: 'Accept a work order, or a change to an accepted one', visibility: 'public',
         ordinary: ordinary('work-accept', personFlag),
         flags: { ...configured, 'work-order': workOrderFlag, interactive: bool() } },
     { name: 'work check', handler: 'work-check', stage: 'test-and-grade', summary: "Run every criterion's check and the order's gates", visibility: 'public',
@@ -540,10 +516,10 @@ const sources = [
         ordinary: ordinary('work-decide'),
         flags: { ...configured, 'work-order': workOrderFlag, decision: str(value('tail', true)), record: bool(flag), 'record-file': str(value('label')),
             supersedes: str(value('label')), none: bool(flag), reason: str(value('label')) } },
-    { name: 'work answer', handler: 'work-answer', stage: 'test-and-grade', summary: 'Answer an open question on an order, as [work.gates] allows', visibility: 'public',
-        ordinary: ordinary('work-answer', personFlag),
-        flags: { ...configured, 'work-order': workOrderFlag, question: str(value('tail', true)), text: str(value('label', true)), interactive: bool() } },
-    { name: 'work acknowledge', handler: 'work-acknowledge', stage: 'test-and-grade', summary: 'Acknowledge that an order weakened tests, as [work.gates] allows', visibility: 'public',
+    { name: 'work answer', handler: 'work-answer', stage: 'test-and-grade', summary: 'Answer an open question on an order', visibility: 'public',
+        ordinary: ordinary('work-answer'),
+        flags: { ...configured, 'work-order': workOrderFlag, question: str(value('tail', true)), text: str(value('label', true)) } },
+    { name: 'work acknowledge', handler: 'work-acknowledge', stage: 'test-and-grade', summary: 'Acknowledge that an order weakened tests', visibility: 'public',
         ordinary: ordinary('work-acknowledge', personFlag),
         flags: { ...configured, 'work-order': workOrderFlag, note: str(value('label', true)), interactive: bool() } },
     // Grading hands the order to an evaluator running apart from the agent that did the work, unless
@@ -563,7 +539,7 @@ const sources = [
     { name: 'work recover', handler: 'work-recover', stage: 'test-and-grade', summary: "Inspect or remove a crashed command's work-order lock", visibility: 'public',
         ordinary: ordinary('work-recover'),
         flags: { ...configured, 'work-order': workOrderFlag, apply: bool(flag) } },
-    { name: 'work verify', handler: 'work-verify', stage: 'test-and-grade', summary: 'Check every record against its order; in CI, pass the steps gated on ci', visibility: 'public',
+    { name: 'work verify', handler: 'work-verify', stage: 'test-and-grade', summary: 'Check every record against its order', visibility: 'public',
         ordinary: ordinary('work-verify'),
         flags: configured },
     { name: 'grade', handler: 'grade-criteria', stage: 'test-and-grade', summary: 'Independently grade uncommitted work against a criteria file, with no work order', visibility: 'public',
@@ -615,7 +591,7 @@ interface OrdinaryInvocationAuthority {
     readonly services: readonly string[]
     /** Test gate ids the configuration declares. */
     readonly gates: readonly string[]
-    /** What the configuration grants an agent: browser preapproval, and the [autonomy] decisions set to agent. */
+    /** What the configuration grants an agent: browser preapproval, sync, and reset where a seed is declared. */
     readonly grants: readonly OrdinaryGrant[]
     /** Compose profiles an agent may name with --profile; any other starts services no person declared for it. */
     readonly profiles: readonly string[]

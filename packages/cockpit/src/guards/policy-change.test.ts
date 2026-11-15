@@ -9,15 +9,13 @@ import { stringify } from 'smol-toml'
 
 import { CockpitConfig } from '../schema.js'
 import { sha256Hex } from '../sha256.js'
-import { ANSWER_CONFIRMATION_PATH, confirmationConfigurationSha256, encodeAnswerConfirmations } from './answer-confirmation.js'
 import { encodeGuardLocalIdentity, GUARD_LOCAL_PATHS } from './local-identity.js'
-import { guardConfigChange, inspectGuardConfigChange, POLICY_CHANGE_RULE_PATHS, policyChange } from './policy-change.js'
+import { inspectGuardConfigChange, POLICY_CHANGE_RULE_PATHS, policyChange } from './policy-change.js'
 
 // A declaration as cockpit.toml spells it, edited freely and parsed again by each case.
 type Declared = Record<string, any>
 
 const declared: Declared = {
-    unconfirmed: ['guards'],
     cockpit: { name: 'my-app' },
     sibling: [
         { slug: 'web', dir: 'web', remote: 'https://git.example.test/web.git', mount: 'always', acquire: 'auto', var: 'WEB_DIR',
@@ -32,7 +30,7 @@ const declared: Declared = {
         secret_paths: ['var/sessions'], related_checkouts: ['../upstream'], unresolved: 'deny', external_reads: 'grant',
     },
     mcp: { approved: { docs: 'a'.repeat(64) } },
-    work: { attempt_cap: 1, gates: { accept: 'person' } },
+    work: { attempt_cap: 1 },
     testing: {
         stages: [{ id: 'unit', command: ['npm', 'test'], requires_stack: false }],
         gates: [{ id: 'quick', tier: 'targeted', stages: ['unit'], changes: 'any change' }],
@@ -65,8 +63,6 @@ describe('policyChange', () => {
         ['a new related checkout', config => config.guards.related_checkouts.push('~/src/tool'), ['guards.related_checkouts']],
         ['unresolved commands asking again', config => { config.guards.unresolved = 'ask' }, ['guards.unresolved']],
         ['a new write path', config => { config.guards.write_paths = [{ path: '~/Downloads', reason: 'Inputs a person drops in.' }] }, ['guards.write_paths']],
-        ['an autonomy decision moved toward agent', config => { config.autonomy = { reset: 'agent' } }, ['autonomy.reset']],
-        ['a work gate moved toward agent', config => { config.work.gates.accept = 'agent' }, ['work.gates.accept']],
         ['weaker grading', config => { config.work.grading = 'self' }, ['work.grading']],
         ['relayed grading', config => { config.work.grading = 'subagent' }, ['work.grading']],
         ['no grading', config => { config.work.grading = 'off' }, ['work.grading']],
@@ -96,8 +92,6 @@ describe('policyChange', () => {
             config.testing.stages.push({ id: 'e2e', command: ['npx', 'playwright', 'test'], requires_stack: true })
             config.testing.gates.push({ id: 'full', tier: 'full', stages: ['unit', 'e2e'], changes: 'a release' })
         }, ['testing.stages', 'testing.gates']],
-        ['a decision moved toward a person', config => { config.autonomy = { sync: 'person' }; config.work.gates.amend = 'ci' }, ['work.gates.amend', 'autonomy.sync']],
-        ['a removed unconfirmed answer', config => { delete config.unconfirmed }, ['unconfirmed']],
         ['a seed command, which no rule covers', config => { config.environment.seed = { argv: ['make', 'seed'], timeout_seconds: 60 } }, ['environment.seed']],
     ])('widens on %s', (_name, edit, fields) => {
         expect(changed(edit)).toEqual({ kind: 'widening', fields })
@@ -129,7 +123,7 @@ describe('policyChange', () => {
             config.sibling[0].rebuild_inputs = ['migrations']
             config.environment.profiles = []
         }],
-        ['an added tool and unconfirmed answer', config => { config.surfaces.tools.push('opencode'); config.unconfirmed.push('testing') }],
+        ['an added tool', config => { config.surfaces.tools.push('opencode') }],
     ])('does not widen on %s', (_name, edit) => {
         expect(changed(edit)).toEqual({ kind: 'non-widening' })
     })
@@ -143,23 +137,11 @@ describe('policyChange', () => {
         expect(policyChange(CockpitConfig.parse(wide), before)).toEqual({ kind: 'non-widening' })
     })
 
-    it('ignores MCP approvals only while both configurations delegate them to the agent', () => {
-        const declaring = (...edits: readonly ((config: Declared) => void)[]) => {
-            const config = structuredClone(declared)
-            for (const edit of edits) edit(config)
-            return CockpitConfig.parse(config)
-        }
-        const delegate = (config: Declared) => { config.autonomy = { mcp_approve: 'agent' } }
-        const approve = (config: Declared) => { config.mcp.approved = { docs: 'b'.repeat(64), search: 'c'.repeat(64) } }
-        const approvals = ['mcp.approved.docs', 'mcp.approved.search']
-        expect(policyChange(declaring(delegate), declaring(delegate, approve))).toEqual({ kind: 'non-widening' })
-        // Delegating or taking back approval is itself pinned, and neither side vouches for the other's approvals.
-        expect(policyChange(declaring(), declaring(delegate, approve))).toEqual({ kind: 'widening', fields: expect.arrayContaining(['autonomy.mcp_approve', ...approvals]) })
-        expect(policyChange(declaring(delegate), declaring(approve))).toEqual({ kind: 'widening', fields: expect.arrayContaining(['autonomy.mcp_approve', ...approvals]) })
-        expect(policyChange(declaring(), declaring(approve))).toEqual({ kind: 'widening', fields: approvals })
-        // Delegating which servers run does not delegate what their tools may do.
-        const restrict = (config: Declared) => { config.mcp.allowed_tools = { docs: ['read_record'] } }
-        expect(policyChange(declaring(delegate, restrict), declaring(delegate))).toEqual({ kind: 'widening', fields: ['mcp.allowed_tools.docs'] })
+    it('compares MCP tool restrictions, which may narrow but not widen', () => {
+        const restricted = structuredClone(declared)
+        restricted.mcp.allowed_tools = { docs: ['read_record'] }
+        expect(policyChange(CockpitConfig.parse(restricted), before)).toEqual({ kind: 'widening', fields: ['mcp.allowed_tools.docs'] })
+        expect(policyChange(before, CockpitConfig.parse(restricted))).toEqual({ kind: 'non-widening' })
     })
 
     it('treats a field it has no rule for as widening', () => {
@@ -188,38 +170,15 @@ describe('policyChange', () => {
     })
 })
 
-describe('guardConfigChange', () => {
-    // The guards were generated with two answers unconfirmed; the agent's edit removes ports.bases.
-    const generated = Buffer.from(stringify({ ...declared, unconfirmed: ['ports.bases', 'guards'] }))
-    const edited = (edit: (config: Declared) => void = () => {}) => {
-        const after = structuredClone({ ...declared, unconfirmed: ['guards'] })
+describe('inspectGuardConfigChange', () => {
+    const generated = Buffer.from(stringify(declared))
+    const edited = (edit: (config: Declared) => void) => {
+        const after = structuredClone(declared)
         edit(after)
         return CockpitConfig.parse(after)
     }
-    const record = (answer: string, row: Record<string, unknown> = {}, observed: CockpitConfig = edited()) => Buffer.from(encodeAnswerConfirmations({
-        [answer]: { observation: 'preflight', ranAt: '2026-11-04T10:00:00.000Z', result: 'passed', evidenceSha256: 'a'.repeat(64),
-            configurationSha256: confirmationConfigurationSha256(observed), ...row } } as never))
-    const change = (confirmations: Uint8Array | undefined, after = edited()) =>
-        guardConfigChange(sha256Hex(generated), generated, { sha256: 'f'.repeat(64), config: after }, confirmations)
-    const widening = { kind: 'widening', fields: ['unconfirmed'] }
 
-    it('admits removing an unconfirmed answer only with a passed observation recorded for it against exactly the new configuration', () => {
-        expect(change(record('ports.bases'))).toEqual({ kind: 'non-widening' })
-        // Missing, unreadable, or recorded for another answer.
-        expect(change(undefined)).toEqual(widening)
-        expect(change(Buffer.from('{"format":'))).toEqual(widening)
-        expect(change(record('environment.machine', { observation: 'runtime-floor' }))).toEqual(widening)
-        // Stale: observed before another edit, which the removal then rides along with.
-        expect(change(record('ports.bases', {}, edited(config => { config.ports.bases.WEB_PORT = 4000 })))).toEqual(widening)
-        // Forged: not the observation that verifies the answer, or not a pass.
-        expect(change(record('ports.bases', { observation: 'check' }))).toEqual(widening)
-        expect(change(record('ports.bases', { result: 'failed' }))).toEqual(widening)
-        // A trust decision stays a person's whatever the record claims.
-        const trusted = edited(config => { config.unconfirmed = ['ports.bases'] })
-        expect(change(record('guards', {}, trusted), trusted)).toEqual(widening)
-    })
-
-    it('lets check read the record, so a confirmed removal waits only for a sync', async () => {
+    it('reports a widening edit as waiting for a person and any other as waiting only for a sync', async () => {
         const root = mkdtempSync(join(tmpdir(), 'cockpit-policy-change-'))
         try {
             mkdirSync(join(root, GUARD_LOCAL_PATHS.directory), { recursive: true })
@@ -227,12 +186,12 @@ describe('guardConfigChange', () => {
                 'nodeFingerprint', 'module', 'moduleSha256'].map(key => [key, 'synthetic']))
             writeFileSync(join(root, GUARD_LOCAL_PATHS.identity), encodeGuardLocalIdentity({ ...identity, configSha256: sha256Hex(generated) } as never))
             writeFileSync(join(root, GUARD_LOCAL_PATHS.generatedConfig), generated)
-            const reports = async () => inspectGuardConfigChange(root, join(root, 'cockpit.toml'), { sha256: 'f'.repeat(64), config: edited() })
+            const reports = async (config: CockpitConfig) => inspectGuardConfigChange(root, join(root, 'cockpit.toml'), { sha256: 'f'.repeat(64), config })
             // Neither edit holds calls: a widening one is judged under the configuration last synced, any other under itself.
-            expect(await reports()).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED',
-                message: expect.stringMatching(/the guard judges agent calls under the configuration last synced, and refuses an agent's sync or upgrade, until a person syncs$/) })])
-            writeFileSync(join(root, ANSWER_CONFIRMATION_PATH), record('ports.bases'))
-            expect(await reports()).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_UNSYNCED',
+            expect(await reports(edited(config => config.guards.allow.push({ argv: ['make', 'release'], reason: 'Releases are routine.' }))))
+                .toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED',
+                    message: expect.stringMatching(/the guard judges agent calls under the configuration last synced, and refuses an agent's sync or upgrade, until a person syncs$/) })])
+            expect(await reports(edited(config => { config.sibling[0].purpose = 'the storefront' }))).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_UNSYNCED',
                 message: expect.stringMatching(/the guard judges agent calls under it, while the generated files still follow the configuration last synced until it is synced$/),
                 fix: expect.stringContaining(GUARD_LOCAL_PATHS.generatedConfig) })])
         } finally { rmSync(root, { recursive: true, force: true }) }

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { type EvaluatorTool } from '../schema.js'
+import { type EvaluatorTool, type WorkGrading } from '../schema.js'
 import { sha256Hex } from '../sha256.js'
 import {
     closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, realpathSync, readdirSync,
@@ -9,8 +9,8 @@ import { basename, delimiter, dirname, isAbsolute, join, parse as parsePath, rel
 import { isProxy } from 'node:util/types'
 import { readBoundedFile } from '../bounded-read.js'
 import { tmpdir } from 'node:os'
-import type { ConsumedWorkEnvironmentConfig } from '../config/load.js'
-import { readRecordedPolicy, type EffectivePolicy, type HeldAnswer } from '../autonomy.js'
+import { loadCockpitConfig, type ConsumedWorkEnvironmentConfig } from '../config/load.js'
+import { observeGuardConfigChange } from '../guards/policy-change.js'
 import { defaultEvaluatorOrder, evaluate, locateEvaluators, type EvaluatorChain } from '../grading/evaluate.js'
 import { gradingDocument, gradingSchema, readGradingAnswer, type ChangedFile, type GradingSubject, type Verdict } from '../grading/grade.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, INHERITED_TOOL_ENVIRONMENT, type ConsumedFile, type FilesystemCheck, type SourceProvenance, type ExecutionStep, RefusalError } from '../environment/contract.js'
@@ -86,13 +86,12 @@ type GradingResult = Readonly<{ criteria: readonly Verdict[]; evaluator: Readonl
     | Readonly<{ refusal: Readonly<{ code: string; message: string; fix: string }> }>
 
 export interface WorkApplicationComposition {
-    readonly policy: EffectivePolicy
-    /** The trust answers held at a stronger value until a person confirms them. */
-    readonly held: readonly HeldAnswer[]
+    readonly policy: Readonly<{ grading: WorkGrading }>
     readonly caps: Readonly<{ wip: number; attempts: number }>
     readonly env: Readonly<Record<string, string | undefined>>
     readonly store: WorkStore
-    readonly recordedPolicy: () => Promise<EffectivePolicy | undefined>
+    /** The [work] fields cockpit.toml widens since the guards were generated, which wait for a person's sync. */
+    readonly unsyncedWork: () => Promise<readonly string[]>
     readonly orderIds: () => Promise<readonly string[]>
     readonly readOrder: (id: string) => Promise<ParsedFile<WorkOrder>>
     readonly readCriteriaFile: (path: string) => Promise<ReturnType<typeof parseCriteriaFile>>
@@ -160,8 +159,8 @@ const MAX_ARGUMENTS = 128
 const VERIFICATION_TIMEOUT_FIELD = 'work.verification_timeout_seconds'
 const DEFAULT_EXECUTABLE_DIRECTORIES = Object.freeze(['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'])
 // Work-order coordination files change as the work is tracked, not as the product changes: the orders,
-// cockpit's records of them and the recorded policy never make a gate's proof stale.
-const COORDINATION_PATHS: ReadonlySet<string> = new Set(['workorders/', `${WORK_RECORD_DIRECTORY}/`, '.cockpit/policy.json'])
+// and cockpit's records of them never make a gate's proof stale.
+const COORDINATION_PATHS: ReadonlySet<string> = new Set(['workorders/', `${WORK_RECORD_DIRECTORY}/`])
 // Nor is anything cockpit writes below .cockpit/ a change an order made.
 const COCKPIT_WRITTEN: ReadonlySet<string> = new Set([...COORDINATION_PATHS, '.cockpit/'])
 
@@ -979,8 +978,13 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         return { state: 'listed', context: daemon.dockerContext, containers: listed.resources.filter(row => row.kind === 'container').map(({ id, name, running }) => ({ id, name, running })) }
     }
     const composition: WorkApplicationComposition = {
-        policy: config.policy, held: config.held, caps: { wip: config.wipCap, attempts: config.attemptCap }, env: authorities.env,
-        store: createWorkStore(root), recordedPolicy: () => readRecordedPolicy(root), orderIds, readOrder,
+        policy: { grading: config.grading }, caps: { wip: config.wipCap, attempts: config.attemptCap }, env: authorities.env,
+        store: createWorkStore(root), unsyncedWork: async () => {
+            const loaded = await loadCockpitConfig(config.source.path)
+            if (loaded.kind !== 'complete') throw new RefusalError(loaded.diagnostics[0]?.message ?? 'cockpit.toml could not be loaded')
+            const change = await observeGuardConfigChange(root, { sha256: loaded.result.source.sha256, config: loaded.result.config })
+            return change?.kind === 'widening' ? change.fields.filter(field => field.startsWith('work.')) : []
+        }, orderIds, readOrder,
         readCriteriaFile: async (path: string) => parseCriteriaFile(readBounded(root, path, 65_536)),
         sourceDigests: async (order: Pick<WorkOrder, 'criteria'>) => Object.fromEntries(order.criteria.flatMap(row => row.source ? [row.source] : [])
             .map(source => [source, sha256Hex(readSource(source))])),

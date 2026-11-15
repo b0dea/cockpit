@@ -79,7 +79,7 @@ export async function runToolChange(input: ToolChangeInput): Promise<SiblingOutc
     const line = `tools = [${after.map(row => JSON.stringify(row)).join(', ')}]`
     const next = input.operation === 'add'
         ? `The next sync writes ${harnessFact(tool).displayName}'s instructions, skills and settings from the same sources as the other tools; preview them with ${preview}.`
-        : `The next sync offers the files cockpit wrote for ${harnessFact(tool).displayName} for removal: ${preview} lists them, and a person approves their removal with ${cockpitCommand('sync', { config: configPath, args: '--interactive' })}.`
+        : `The next sync removes the files cockpit wrote for ${harnessFact(tool).displayName}; ${preview} lists them.`
     const result = { action: input.dryRun ? 'previewed' : input.operation === 'add' ? 'added' : 'removed', config: configPath, tool, tools: after,
         next: preview }
     if (input.dryRun) return done(`Would set [surfaces] ${line} in ${configPath}; nothing was written.\n${next}\n`, result)

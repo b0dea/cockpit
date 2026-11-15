@@ -1,6 +1,4 @@
-import { AUTONOMY_DEFAULTS, GATE_DEFAULTS } from '../autonomy.js'
-import { unconfirmedFix } from '../guards/answer-confirmation.js'
-import type { CockpitConfig, configurationDefaults, UNCONFIRMABLE_ANSWERS } from '../schema.js'
+import type { CockpitConfig, configurationDefaults } from '../schema.js'
 import { emitGaps, emitToml, toSiblingRows } from '../emit.js'
 import type { DocumentedSibling, Gap } from '../documented-sibling.js'
 
@@ -9,12 +7,16 @@ import type { DocumentedSibling, Gap } from '../documented-sibling.js'
  * choose, no one known (an answers file that does not attribute a value cockpit never proposes, or that
  * supplies a trust decision, which the file cannot show a person made), or
  * the setup agent accepting the value init read from exact sources, which init checks against what
- * it reads. A person's answer is written as stated and a derived one with its source; the others
- * are listed under `unconfirmed`.
+ * it reads. A person's answer is written as stated, a derived one with its source, and the others
+ * with a comment naming who chose them, for the person reviewing the diff.
  */
 export const ANSWER_PROVENANCES = ['operator-confirmed', 'agent-default', 'unattributed', 'derived'] as const
 export type AnswerProvenance = typeof ANSWER_PROVENANCES[number]
-export type UnconfirmableAnswer = typeof UNCONFIRMABLE_ANSWERS[number]
+/** The interview answers a cockpit.toml records. */
+export const INTERVIEW_ANSWERS = ['cockpit.name', 'sibling', 'estate.runnable', 'ports.bases', 'environment.install_policies',
+    'environment.test_data', 'environment.compose_files', 'environment.machine', 'environment.posture',
+    'testing', 'guards', 'work.grading'] as const
+export type UnconfirmableAnswer = typeof INTERVIEW_ANSWERS[number]
 export type UnconfirmedAnswer = Readonly<{ field: UnconfirmableAnswer; provenance: 'agent-default' | 'unattributed' }>
 /** An answer accepted as read: the field and the file, as file:line where one line holds it, it was read from. */
 export type DerivedAnswer = Readonly<{ field: UnconfirmableAnswer; source: string }>
@@ -26,25 +28,11 @@ export function unconfirmedReason(row: UnconfirmedAnswer): string {
 }
 
 function renderUnconfirmed(rows: readonly UnconfirmedAnswer[] = []): string {
-    if (rows.length === 0) return ''
-    return `${rows.map(row => `# Unconfirmed: ${unconfirmedReason(row)}.\n`).join('')}# To confirm: ${unconfirmedFix(rows.map(row => row.field))}; until then doctor warns.\n`
+    return rows.map(row => `# Not stated by a person: ${unconfirmedReason(row)}; review it in this diff.\n`).join('')
 }
 
 function renderDerived(rows: readonly DerivedAnswer[]): string {
     return rows.map(row => `# Derived: ${row.field} was read from ${row.source} and accepted by the setup agent; bring-up proves it.\n`).join('')
-}
-
-/** Every decision with its default, commented out: flip one to "person" to take that decision yourself. */
-function renderDecisionDefaults(): string {
-    const table = (name: string, defaults: Readonly<Record<string, string>>) =>
-        [`# [${name}]`, ...Object.entries(defaults).map(([key, value]) => `# ${key} = "${value}"`)]
-    const person = Object.entries({ ...GATE_DEFAULTS, ...AUTONOMY_DEFAULTS }).filter(([, value]) => value === 'person').map(([key]) => key)
-    return `\n${[
-        `# Who takes each decision. All default to "agent" except ${person.slice(0, -1).join(', ')} and ${person.at(-1)}; set one to "person" to take it yourself.`,
-        '# mcp_approve = "agent" lets an agent start processes outside the guard: sync then enables every server',
-        '# a sibling MCP source declares, and an agent can write that file.',
-        ...table('work.gates', GATE_DEFAULTS), ...table('autonomy', AUTONOMY_DEFAULTS),
-    ].join('\n')}\n`
 }
 
 export interface Attribution {
@@ -83,7 +71,7 @@ function renderAttributions(attributions: readonly Attribution[]): string {
     if (attributions.length === 0) return ''
     const lines = ['# Provenance — every unread value names its source and reason.']
     for (const [by, heading] of [['agent', '# The setup agent accepts these: schema defaults and the cockpit\'s own layout, which bring-up proves.'],
-        ['person', '# A person confirms these, and the defaults digest covers only them: each bounds what an agent may do.']] as const) {
+        ['person', '# A person reviews these in the diff: each bounds what an agent may do.']] as const) {
         const rows = attributions.filter(row => confirmedBy(row) === by)
         if (rows.length === 0) continue
         lines.push(heading, ...rows.map(row => `# [${row.from}] ${row.target} = ${JSON.stringify(row.value)}: ${row.because}`))
@@ -94,10 +82,10 @@ function renderAttributions(attributions: readonly Attribution[]): string {
 function draftConfig(model: DocumentModel): Record<string, unknown> {
     // Written, the guard hosts read as a decision that none exists, even as the schema default [].
     const { hosted_db_hosts: _hosted, vendor_endpoint_hosts: _vendors, ...guards } = model.defaults.guards
-    // No source records the work-order time budgets, grading, gates, evaluator tools or
-    // autonomy, so a draft that wrote the schema's values would present them as this product's
-    // decisions; left out, the loader applies the same defaults.
-    const { autonomy: _autonomy, ...defaults } = model.defaults
+    // No source records the work-order time budgets, grading or evaluator tools, so a draft that
+    // wrote the schema's values would present them as this product's decisions; left out, the
+    // loader applies the same defaults.
+    const defaults = model.defaults
     const work = { attempt_cap: model.defaults.work.attempt_cap, wip_cap: model.defaults.work.wip_cap }
     const bases = model.inferred?.['ports.bases']
     const composeFiles = model.inferred?.['environment.compose_files']
@@ -131,7 +119,6 @@ export function renderIncompleteDocument(
         renderUnconfirmed(model.unconfirmed),
         emitGaps(model.gaps),
         emitToml(config as CockpitConfig),
-        renderDecisionDefaults(),
     ].join('')
 }
 
@@ -140,5 +127,5 @@ export function renderCompleteDocument(
     config: CockpitConfig, schemaDirective: string, decisions: readonly string[] = [], unconfirmed: readonly UnconfirmedAnswer[] = [],
     derived: readonly DerivedAnswer[] = [],
 ): string {
-    return `#:schema ${schemaDirective}\n${decisions.map(decision => `# Decision: ${decision}\n`).join('')}${renderDerived(derived)}${renderUnconfirmed(unconfirmed)}${emitToml(config)}${renderDecisionDefaults()}`
+    return `#:schema ${schemaDirective}\n${decisions.map(decision => `# Decision: ${decision}\n`).join('')}${renderDerived(derived)}${renderUnconfirmed(unconfirmed)}${emitToml(config)}`
 }

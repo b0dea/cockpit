@@ -1,22 +1,20 @@
 // Owns the work-order lifecycle: draft → accepted → graded → done, with blocked and stale
-// derived from the record and the current file, and partial and abandoned as closures. Each command
-// that passes a gate asks the autonomy policy who may pass it; a person gate returns a continuation
-// the CLI completes only with the digest a person types in a terminal. It also routes the browser and
+// derived from the record and the current file, and partial and abandoned as closures. A step that
+// would let the agent lower the bar its own work is held to returns a continuation the CLI completes
+// only with the digest a person types in a terminal. It also routes the browser and
 // test-gate operations that share the work composition. Decisions, grading and closure are owned by the
 // application-* modules beside it, on the shared steps application-context.ts binds.
 import { executeBrowserCommand, type BrowserCommandReceipt, type BrowserCommandResult } from '../browser/commands.js'
 import { evaluateUiGate } from '../browser/ui-gate.js'
-import { policyWeakening } from '../autonomy.js'
-import { personConfirmationFix } from '../guards/answer-confirmation.js'
 import { errorCause, RefusalError } from '../environment/contract.js'
-import { GRADING, isGradeMode, type Decider } from '../schema.js'
+import { GRADING, isGradeMode } from '../schema.js'
 import { describeWeakening, testWeakeningDigest } from '../testing/weakening.js'
-import { checksBindsField, contractAmendment, workOrderDigest } from './contract.js'
+import { checksBindsField, contractAmendment, workOrderDigest, type Decider } from './contract.js'
 import { MAX_RETRIES, MAX_RETRY_FAILURE_TEXT, MAX_RETRY_FAILURES, type WorkRecord } from './store.js'
 import { isWorkApplicationComposition, type WorkApplicationComposition } from './composition.js'
 import { captureWorkApplicationRequest, complete, displayState, now, openQuestions, refusal, TERMINAL, unsatisfied, workContext,
     type WorkApplicationOutcome, type WorkApplicationRequest, type WorkRequest } from './application-context.js'
-import { pendingCi, signoff, verify } from './application-closure.js'
+import { signoff, verify } from './application-closure.js'
 import { decideOrder, DECISIONS_UNDECLARED, relatedDecisions, unresolvedDecisions } from './application-decisions.js'
 import { acknowledgeRule, gradeCriteriaFile, gradeOrder, orderAttribution, testRun } from './application-grading.js'
 
@@ -32,14 +30,14 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
             const kind = captured.operation === 'browser-screenshot' ? 'screenshot' : 'drive'
             return browserOutcome(captured.operation, await executeBrowserCommand(await composition.browser(kind, captured.role, captured.route)), captured.failOnFindings === true)
         }
-        if (captured.operation === 'test-run') return await testRun(captured, composition)
-        // A policy weakened in cockpit.toml since the last sync is not in force until a person accepts it there.
-        const recorded = await composition.recordedPolicy()
-        const weakened = recorded ? policyWeakening(recorded, composition.policy) : []
-        if (weakened.length) {
-            return refusal(operation, `cockpit.toml weakens ${weakened.map(row => `${row.field} from ${row.from} to ${row.to}`).join(', ')} since the last sync; `
-                + 'a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive and accepts the weakening, or the change is reverted')
+        // A [work] edit that widens what agents may do is not in force until a person applies it at sync;
+        // test-run reads the grading too, to judge test weakening.
+        const unsynced = await composition.unsyncedWork()
+        if (unsynced.length) {
+            return refusal(operation, `cockpit.toml changes ${unsynced.join(', ')} since the guards were generated, which widens what agents may do; `
+                + 'a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive and answers yes, or the change is reverted')
         }
+        if (captured.operation === 'test-run') return await testRun(captured, composition)
         return await work(captured as WorkRequest, composition)
     } catch (error) { return refusal(operation, errorCause(error)) }
 }
@@ -71,14 +69,13 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         const rows = await Promise.all(ids.map(observe))
         const closed = new Set(rows.filter(row => row.record?.state === 'done').map(row => row.id))
         return complete(operation, {
-            grading: policy.grading, ...composition.held.length ? { awaitingConfirmation: composition.held.map(row => ({ ...row, confirm: personConfirmationFix([row.field]) })) } : {},
-            gates: policy.gates, wip: { open: await wip(), cap: composition.caps.wip },
+            grading: policy.grading, wip: { open: await wip(), cap: composition.caps.wip },
             orders: await Promise.all(rows.map(async row => ({
                 id: row.id, state: displayState(row, attemptCap),
                 ...row.record?.closure ? { closedAs: row.record.closure.how, closedBy: row.record.closure.by } : {},
                 ...row.record ? { attempts: row.record.attempts, acceptedBy: row.record.accepted.by, openQuestions: openQuestions(row.record),
                     acknowledgements: row.record.acknowledgements.map(({ by, note, findings }) => ({ by, note, findings })),
-                    awaitingCi: pendingCi(row.record), ...row.record.grade ? { grade: { mode: row.record.grade.mode, passed: row.record.grade.passed,
+                    ...row.record.grade ? { grade: { mode: row.record.grade.mode, passed: row.record.grade.passed,
                         criteria: row.record.grade.criteria, outOfScope: row.record.grade.outOfScope,
                         ...row.record.grade.outOfScopeTotal ? { outOfScopeTotal: row.record.grade.outOfScopeTotal } : {}, ...row.record.grade.evaluator ? { evaluator: row.record.grade.evaluator } : {} } } : {} } : {},
                 ...row.order ? { waitingOn: row.order.depends_on.filter(dependency => !closed.has(dependency)) } : {},
@@ -100,11 +97,11 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
             const sources = await composition.sourceDigests(order)
             const base = await composition.heads()
             const digest = workOrderDigest(order, sources, base)
-            return gated('accept', policy.gates.accept, [`Accept ${order.id} (digest ${digest})`, ...shownOrder], 'accept', async by => store.update(order.id, async existing => {
+            return gated('accept', 'agent', [`Accept ${order.id} (digest ${digest})`, ...shownOrder], 'accept', async by => store.update(order.id, async existing => {
                 if (existing) throw new RefusalError(`${order.id} was accepted while this prompt was open; rerun work status`)
                 const record: WorkRecord = { format: 'cockpit-work-order/v1', id: order.id, state: 'accepted',
                     accepted: { at: now(), by, digest, order, sources, base }, amendments: [], acknowledgements: [], attempts: 0, notes: [] }
-                return { record, value: complete(operation, { id: order.id, state: 'accepted', by, digest, ...by === 'ci' ? { awaitingCi: ['accept'] } : {}, ...await relatedDecisions(context, order) }) }
+                return { record, value: complete(operation, { id: order.id, state: 'accepted', by, digest, ...await relatedDecisions(context, order) }) }
             }))
         }
         const record = row.record
@@ -117,7 +114,7 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         // So does the amendment after a grade that found the agent's earlier ones lowered the bar.
         const unjudgeable = policy.grading === 'checks' ? review.filter(row => checksBindsField(row.field)) : []
         const failedReview = record.amendmentsFailedReview
-        const decider: Decider = policy.gates.amend === 'agent' && (weakened.length || unjudgeable.length || failedReview) ? 'person' : policy.gates.amend
+        const decider: Decider = weakened.length || unjudgeable.length || failedReview ? 'person' : 'agent'
         const sources = await composition.sourceDigests(order)
         const digest = workOrderDigest(order, sources, record.accepted.base)
         return gated('amend', decider, [`Amend ${order.id} (digest ${record.accepted.digest} -> ${digest})`,
@@ -163,7 +160,7 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         if (!record || TERMINAL.has(record.state)) return refusal(operation, `${request.workOrderId} has no open record to answer on`)
         const question = record.notes[request.question - 1]
         if (!question || question.kind !== 'question' || !openQuestions(record).includes(request.question)) return refusal(operation, `note ${request.question} on ${request.workOrderId} is not an open question`)
-        return gated('answer', policy.gates.answer, [`Open question ${request.question} on ${request.workOrderId}:`, `  ${question.text}`, 'Answer to record:', `  ${request.text}`], 'answer',
+        return gated('answer', 'agent', [`Open question ${request.question} on ${request.workOrderId}:`, `  ${question.text}`, 'Answer to record:', `  ${request.text}`], 'answer',
             async by => store.update(request.workOrderId, async existing => {
                 if (!existing || !openQuestions(existing).includes(request.question)) throw new RefusalError(`question ${request.question} was answered while this prompt was open`)
                 return { record: { ...existing, notes: [...existing.notes, { at: now(), by, kind: 'answer', text: request.text, answers: request.question }] },

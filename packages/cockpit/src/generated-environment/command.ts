@@ -1,7 +1,7 @@
-import { agentSessionVariable, confirmDigest } from '../operator-confirmation.js'
+import { agentSessionVariable, confirmYes } from '../operator-confirmation.js'
 import { renderHumanValue } from '../diagnostics.js'
 import type { Diagnostic } from '../diagnostics.js'
-import { loadOperatorPolicy, runSyncOperatorApplication } from '../environment/operator-application.js'
+import { loadOperatorPolicy, runSyncOperatorApplication, type WideningPreview } from '../environment/operator-application.js'
 import {
     applySelectedBootstrapSurface as applyBootstrap,
     prepareSelectedBootstrapSurface as prepareBootstrap,
@@ -121,8 +121,7 @@ export interface GeneratedEnvironmentOperatorIo {
     /** The environment the command runs with, which says whether an agent tool started it. */
     readonly env: Readonly<Record<string, string | undefined>>
     readonly stdin?: NodeJS.ReadStream
-    readonly confirmStaleRemoval?: (request: GeneratedStaleRemovalApprovalRequest) => Promise<string | undefined>
-    readonly confirmPolicyWeakening?: (request: Readonly<{ weakened: readonly Readonly<{ field: string; from: string; to: string }>[]; widened: readonly string[]; digest: string }>) => Promise<string | undefined>
+    readonly confirmWidening?: (preview: WideningPreview) => Promise<boolean>
 }
 
 export interface GeneratedEnvironmentOperatorOptions {
@@ -138,16 +137,6 @@ function agentRefusal(io: GeneratedEnvironmentOperatorIo): boolean {
     return variable !== undefined
 }
 
-async function confirmStaleRemoval(
-    io: GeneratedEnvironmentOperatorIo,
-    request: GeneratedStaleRemovalApprovalRequest,
-): Promise<string | undefined> {
-    if (io.confirmStaleRemoval) return io.confirmStaleRemoval(request)
-    if (!io.stdin || agentRefusal(io)) return undefined
-    io.stderr.write(renderHumanValue(request))
-    return confirmDigest(io, request.digest, 'Approve these exact stale-file removals for this sync?')
-}
-
 export async function runSyncOperatorCommand(
     input: GeneratedEnvironmentSyncHandlerInput,
     options: GeneratedEnvironmentOperatorOptions,
@@ -157,17 +146,16 @@ export async function runSyncOperatorCommand(
 ): Promise<GeneratedEnvironmentDispatchOutcome> {
     return runSyncOperatorApplication(input, {
         ...options,
-        terminal: io.confirmStaleRemoval !== undefined || io.confirmPolicyWeakening !== undefined || io.stdin?.isTTY === true,
+        terminal: io.confirmWidening !== undefined || io.stdin?.isTTY === true,
     }, {
         synchronize: handler,
-        confirmStaleRemoval: (request) => confirmStaleRemoval(io, request),
         policy,
-        confirmPolicyWeakening: async (request) => {
-            if (io.confirmPolicyWeakening) return io.confirmPolicyWeakening(request)
-            if (!io.stdin || agentRefusal(io)) return undefined
-            io.stderr.write(renderHumanValue({ ...request.weakened.length ? { weakens: request.weakened.map(row => `${row.field}: ${row.from} -> ${row.to}`) } : {},
-                ...request.widened.length ? { widensGuard: request.widened } : {}, digest: request.digest }))
-            return confirmDigest(io, request.digest, request.widened.length ? 'Accept this exact change to what agents may do?' : 'Accept this exact policy weakening?')
+        confirmWidening: async (preview) => {
+            if (io.confirmWidening) return io.confirmWidening(preview)
+            if (!io.stdin || agentRefusal(io)) return false
+            io.stderr.write(renderHumanValue({ ...preview.widens.length ? { widens: preview.widens } : {},
+                ...preview.mcpServers.length ? { enablesMcpServers: preview.mcpServers.map(({ name, runs, sources }) => ({ name, runs, declaredIn: sources })) } : {} }))
+            return confirmYes(io, 'Apply this change to what agents may do?')
         },
     })
 }

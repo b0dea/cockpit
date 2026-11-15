@@ -18,7 +18,7 @@ import {
 } from '../contract.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolveExecutable, type ExecutableResolution, type ResolvedExecutable } from '../executable.js'
 import { CockpitConfig } from '../../schema.js'
-import { correctsHeldConfiguration, pinnedPolicyDenial, restoresRecordedConfiguration } from '../../guards/policy-pin.js'
+import { correctsHeldConfiguration, restoresRecordedConfiguration } from '../../guards/policy-pin.js'
 import { instructionFrontmatterAsk } from '../../guards/instruction-frontmatter.js'
 import { readBoundedFile } from '../../bounded-read.js'
 import { GUARD_RESTORE_LIMIT, guardConfigChange, guardConfigHeldReason } from '../../guards/policy-change.js'
@@ -42,12 +42,10 @@ import {
     guardExtraction,
 } from '../../guards/evaluator.js'
 import { commandSpelling, ordinarySessionCommand, resolveOrdinaryInvocation, type OrdinaryGrant } from '../../command-table.js'
-import { effectivePolicy, trustInForce } from '../../autonomy.js'
 import { GUARD_INPUT_LIMITS, parseGuardInput } from '../../guards/invocation-parser.js'
 import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../../generated-environment/transaction.js'
 import { parseOwnershipManifest } from '../../surfaces/ownership.js'
 import { installedPackageMetadata } from '../../package-metadata.js'
-import { ANSWER_CONFIRMATION_PATH } from '../../guards/answer-confirmation.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../../guards/local-identity.js'
 import { inspectGuardRecord } from '../../guards/guard-record.js'
 import {
@@ -224,7 +222,7 @@ function forwardedReason(reason: string): string {
 }
 
 const restored: GuardEvaluationApplicationResult = { decision: { decision: 'allow', reason: 'The edit restores the configuration the guards were generated from.' }, diagnostics: [] }
-const correcting: GuardDecision = { decision: 'allow', reason: 'The configuration does not load, and this edit of it changes no pinned table; it takes effect only once it loads, and one that widens waits for a person.' }
+const correcting: GuardDecision = { decision: 'allow', reason: 'The configuration does not load, and this edits it; the edit takes effect only once it loads, and one that widens waits for a person.' }
 const reporting: GuardDecision = { decision: 'allow', reason: 'The configuration does not load, and this command only reports on it.' }
 // How cockpit's own messages spell the installed launcher from the cockpit root.
 const launcherSpelling = './node_modules/@b00dea/cockpit/bin/cockpit.mjs'
@@ -328,7 +326,7 @@ export async function runGuardEvaluationApplication(
         }
         const manifestPath = '.cockpit/generated-environment-ownership.json'
         const registration = { claudecode: '.claude/settings.json', codexcli: '.codex/hooks.json', opencode: '.opencode/plugin/cockpit-guards.js' }[harness]
-        // The configuration rides in the same batch: the policy pin applies an edit to exactly these bytes.
+        // The configuration rides in the same batch: the restoration check applies an edit to exactly these bytes.
         const configName = basename(identity.configPath)
         const publicationRequests = [manifestPath, '.cockpit/guards/bash-guard.sh', registration, GUARD_LOCAL_PATHS.identity, configName].map(path => ({
             path, action: 'read-file' as const, maxBytes: path === manifestPath || path === configName ? 1_048_576 : 65_536,
@@ -400,7 +398,7 @@ export async function runGuardEvaluationApplication(
         if (loaded.kind !== 'complete' || loaded.result.source.path !== identity.configPath) {
             const held = guardHeld(identity, `${identity.configPath} changed since the guards were generated and does not load${loaded.kind === 'complete' ? '' : ` (${forwardedReason(loaded.diagnostics[0]?.message ?? 'no reason given')})`}`,
                 'guard policy comes from it and an edit takes effect only once a human approves it')
-            const hold = unavailable(`${held} Sync refuses a file that does not load, so correct it first: an edit, write or patch of ${identity.configPath} alone that leaves [work], [autonomy] and MCP restrictions as they are is admitted, and so are \`${formatShellCommand([launcherSpelling, 'check', '--config', configName])}\` and \`${formatShellCommand([launcherSpelling, 'sync', '--dry-run', '--config', configName])}\` run alone from the cockpit root, to see what is wrong. Or undo it: one edit or write that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}; ${GUARD_RESTORE_LIMIT}.`)
+            const hold = unavailable(`${held} Sync refuses a file that does not load, so correct it first: an edit, write or patch of ${identity.configPath} alone is admitted, and so are \`${formatShellCommand([launcherSpelling, 'check', '--config', configName])}\` and \`${formatShellCommand([launcherSpelling, 'sync', '--dry-run', '--config', configName])}\` run alone from the cockpit root, to see what is wrong. Or undo it: one edit or write that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}; ${GUARD_RESTORE_LIMIT}.`)
             // Restoring the recorded bytes needs no policy, so a file with none to offer is no reason to
             // refuse it; without this an agent's valid-TOML edit the schema rejects stranded it.
             const parsed = parseGuardInput(data.payload)
@@ -414,11 +412,10 @@ export async function runGuardEvaluationApplication(
             // The agent that broke the file can mend it, and read what check reports about it, without a
             // person; everything else waits for a file that loads. Neither grants anything: a correction
             // that widens what agents may do still waits for a person's sync once it loads.
-            const correction = restoresRecordedConfiguration(parsed, currentText, identity.configPath, identity.configSha256) ? 'admit'
-                : correctsHeldConfiguration(parsed, current.kind === 'complete' ? currentText : undefined, recorded.bytes.toString('utf8'), identity.configPath)
-            const admitted = correction === 'admit' ? correcting : correction ?? (heldConfigurationCheck(parsed, identity, data.searchPath ?? '') ? reporting : undefined)
+            const admitted = restoresRecordedConfiguration(parsed, currentText, identity.configPath, identity.configSha256)
+                || correctsHeldConfiguration(parsed, identity.configPath) ? correcting
+                : heldConfigurationCheck(parsed, identity, data.searchPath ?? '') ? reporting : undefined
             if (!admitted) return hold
-            if (admitted.decision !== 'allow') return refused(admitted)
             const authenticated = await authenticatePublication(settle(readPublication(publicationRequests.filter(request => request.path !== configName))), recordedConfig.cockpit.name)
             return authenticated.held ?? { decision: admitted, diagnostics: [] }
         }
@@ -433,9 +430,9 @@ export async function runGuardEvaluationApplication(
         const unsynced = configSha256 !== identity.configSha256
         let declared: LoadedConfigProjection = loaded.result
         if (unsynced) {
-            const [recorded, confirmations] = await Promise.all([anchored(GUARD_LOCAL_PATHS.generatedConfig), anchored(ANSWER_CONFIRMATION_PATH)])
+            const recorded = await anchored(GUARD_LOCAL_PATHS.generatedConfig)
             const change = guardConfigChange(identity.configSha256, recorded.kind === 'complete' ? recorded.bytes : undefined,
-                { sha256: configSha256, config: loaded.result.config }, confirmations.kind === 'complete' ? confirmations.bytes : undefined)
+                { sha256: configSha256, config: loaded.result.config })
             const approved = change.kind === 'widening' && recorded.kind === 'complete' ? withRecordedDeclarations(loaded.result, recorded.bytes) : undefined
             if (change.kind === 'unrecorded' || change.kind === 'widening' && !approved) return unavailable(guardHeld(identity,
                 `${identity.configPath} changed since the guards were generated and ${guardConfigHeldReason(change)}`,
@@ -462,7 +459,7 @@ export async function runGuardEvaluationApplication(
         // the agent's shell changed directory through a link or under another spelling.
         if (parsed.cwd !== data.cwd) return unavailable(`The call reports the working directory ${JSON.stringify(parsed.cwd)}, but the guard runs in ${JSON.stringify(data.cwd)}: `
             + `paths are judged from one directory only. Change to ${JSON.stringify(data.cwd)} itself, then run the command.`)
-        // The policy pin and the restoration both apply an edit to exactly these bytes, which must be the text the policy is built from.
+        // The restoration applies an edit to exactly these bytes, which must be the text the policy is built from.
         const configRead = publication.get(configName)!
         if (configRead.sha256 !== configSha256) return unavailable('Guard configuration changed during evaluation.')
         const configText = configRead.bytes.toString('utf8')
@@ -806,17 +803,6 @@ export async function runGuardEvaluationApplication(
             }
         }
         if (cockpitInvocations.length + prepared.result.policy.projectCommands.length > GUARD_INPUT_LIMITS.invocations) return unavailable('Guard candidates exceed the invocation bound.')
-        const configStatus = lstatSync(identity.configPath)
-        // A hard link or another spelling of the configuration is the configuration.
-        const isConfig = (path: string) => {
-            if (foldGuardSpelling(path) === foldGuardSpelling(identity.configPath)) return true
-            let status: Stats | undefined
-            try { status = lstatIfPresentSync(path) } catch (error) { throw new CallPathUnreadable(path, error) }
-            return status !== undefined && status.dev === configStatus.dev && status.ino === configStatus.ino
-        }
-        // Restoring removes whatever the edit added, including a restriction the pin would otherwise keep.
-        const pinned = restoring ? undefined : pinnedPolicyDenial(parsed, configText, isConfig)
-        if (pinned) return refused(pinned)
         const decision = evaluateGuard(parsed, { ...prepared.result.policy, cockpitInvocations,
             mcpAllowedTools: config.mcp.allowed_tools,
             cockpitLaunchers: launched.map(({ executable, cwd, argv, prefix }) => ({ executable, cwd, argv: argv.slice(0, prefix) })),
@@ -884,12 +870,11 @@ function externalSearchDirectories(searchPath: string, roots: readonly string[])
 }
 
 // The guard runs against the configuration sync generated it from, or one that does not widen it, so
-// the policy read here grants nothing the last sync did not.
+// the policy read here grants nothing the last sync did not. An agent syncs and writes sibling
+// instruction files; it resets only where a declared seed refills the data a reset deletes.
 function ordinaryGrants(config: CockpitConfig): readonly OrdinaryGrant[] {
-    const policy = effectivePolicy(config)
     return [...config.browser && browserPreapprovalRequested(config.browser) ? ['browser-preapproval' as const] : [],
-        ...policy.autonomy.sync === 'agent' ? ['autonomy-sync' as const] : [], ...policy.autonomy.reset === 'agent' ? ['autonomy-reset' as const] : [],
-        ...policy.autonomy.instruction_files === 'agent' ? ['autonomy-instruction-files' as const] : []]
+        'autonomy-sync', 'autonomy-instruction-files', ...config.environment.seed ? ['autonomy-reset' as const] : []]
 }
 
 // `up --profile` and `session --profile` start that profile's services for one run. Only the default
@@ -1126,7 +1111,7 @@ export async function prepareGuardEvaluationPolicy(
         const boundaries = result.result.policy
         const projectCommands: GuardProjectCommand[] = []
         for (const { index: siblingIndex, sibling, root: checkoutRoot } of checkoutRoots) {
-            const policies = trustInForce(guardConfig).installPolicies
+            const policies = guardConfig.environment.install_policies
             if (!policies.some(policy => policy.toolchain === sibling.toolchain && (policy.build || policy.test))) continue
             const checkoutId = deriveCheckoutId({ checkoutPath: checkoutRoot })
             const evaluatedAt = Date.now()

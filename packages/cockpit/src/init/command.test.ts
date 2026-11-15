@@ -18,7 +18,6 @@ describe('init operator command', () => {
             const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
                 { interactive: false, json: true }, {
                     terminal: false,
-                    confirm: async () => undefined,
                     writeArtifact: async () => undefined,
                 }, async () => { applicationCalls += 1; return pending() })
 
@@ -31,7 +30,6 @@ describe('init operator command', () => {
             const explicit = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli', platform: 'linux' },
                 { interactive: false, json: true }, {
                     terminal: false,
-                    confirm: async () => undefined,
                     writeArtifact: async () => undefined,
                 }, async input => { applicationCalls += 1; expect(input.platform).toBe('linux'); return pending() })
             expect(explicit).toEqual(pending())
@@ -42,11 +40,10 @@ describe('init operator command', () => {
     })
 
     // Interactive JSON returns the preview before the terminal check, so no terminal is not a refusal.
-    it.each([false, true])('returns the pending preview unchanged for JSON (interactive: %s) and never confirms or writes', async interactive => {
+    it.each([false, true])('returns the pending preview unchanged for JSON (interactive: %s) and never writes', async interactive => {
         const calls: string[] = []
         const io: InitCommandIo = {
             terminal: false,
-            confirm: async () => { calls.push('confirm'); return undefined },
             writeArtifact: async () => { calls.push('write') },
         }
 
@@ -57,7 +54,7 @@ describe('init operator command', () => {
         expect(calls).toEqual(['application'])
     })
 
-    it('accepts only the exact preview digest and writes only a persisted application artifact', async () => {
+    it('writes at a terminal without asking to accept the preview, and writes only a persisted application artifact', async () => {
         const calls: string[] = []
         const artifact: InitApplicationOutcome = {
             kind: 'artifact', status: 0, diagnostics: [], artifact: 'name = "synthetic"\n', destination: '/synthetic/cockpit.toml',
@@ -73,7 +70,6 @@ describe('init operator command', () => {
         const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
             { interactive: true, json: false }, {
                 terminal: true,
-                confirm: async () => { calls.push('confirm'); return 'a'.repeat(64) },
                 writeArtifact: async (destination, bytes) => { calls.push(`write:${destination}:${bytes}`) },
             }, async (input) => {
                 calls.push(`application:${input.accepted}:${input.acceptedPreviewSha256 ?? 'none'}`)
@@ -83,20 +79,19 @@ describe('init operator command', () => {
 
         expect(outcome).toEqual(complete)
         expect(calls).toEqual([
-            'application:false:none', 'confirm', `application:true:${'a'.repeat(64)}`,
+            'application:false:none', `application:true:${'a'.repeat(64)}`,
             'write:/synthetic/cockpit.toml:name = "synthetic"\n', `application:true:${'a'.repeat(64)}`,
         ])
     })
 
     it.each(['draft-prepared', 'draft-observed', 'surfaces-verified', 'environment-verified'] as const)(
-        'resumes an authenticated %s preview without asking for the same approval again', async stage => {
+        'resumes an authenticated %s preview', async stage => {
             const offered = { ...pending(), result: { ...pending().result!, stage } }
             const calls: string[] = []
             const complete: InitApplicationOutcome = { ...offered, kind: 'complete', status: 0 }
             const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
                 { interactive: true, json: false }, {
                     terminal: true,
-                    confirm: async () => { calls.push('confirm'); return undefined },
                     writeArtifact: async () => { calls.push('write') },
                 }, async input => {
                     calls.push(`application:${input.accepted}:${input.acceptedPreviewSha256 ?? 'none'}`)
@@ -108,21 +103,6 @@ describe('init operator command', () => {
         },
     )
 
-    it('still asks for acceptance when a published bootstrap presents a refreshed preview', async () => {
-        const offered = { ...pending(), result: { ...pending().result!, stage: 'surface-published' as const,
-            previewSha256: 'c'.repeat(64) } }
-        const calls: string[] = []
-        const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
-            { interactive: true, json: false }, {
-                terminal: true,
-                confirm: async () => { calls.push('confirm'); return 'a'.repeat(64) },
-                writeArtifact: async () => { calls.push('write') },
-            }, async () => { calls.push('application'); return offered })
-
-        expect(outcome).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_PREVIEW_NOT_ACCEPTED' }] })
-        expect(calls).toEqual(['application', 'confirm'])
-    })
-
     it('presents one durable greenfield question and returns its operator-confirmed answer to the application', async () => {
         const question = { ...pending(), result: { ...pending().result!, question: {
             id: `question:${'c'.repeat(64)}`, field: 'api.runnable', source: 'api/package.json', why: 'unknown command',
@@ -131,7 +111,6 @@ describe('init operator command', () => {
         const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
             { interactive: true, json: false }, {
                 terminal: true,
-                confirm: async () => 'a'.repeat(64),
                 answerQuestion: async value => { calls.push(`question:${value.id}`); return 'npm run dev' },
                 writeArtifact: async () => undefined,
             }, async input => {
@@ -145,14 +124,13 @@ describe('init operator command', () => {
         expect(calls).toEqual(['application:false:none', 'application:true:none', `question:question:${'c'.repeat(64)}`, 'application:true:npm run dev'])
     })
 
-    it('resumes a durable question without confirming the accepted preview again', async () => {
+    it('resumes a durable question', async () => {
         const question = { ...pending(), result: { ...pending().result!, question: {
             id: `question:${'d'.repeat(64)}`, field: 'api.runnable', source: 'api/package.json', why: 'unknown command',
         } } }
         const calls: string[] = []
         await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' }, { interactive: true, json: false }, {
             terminal: true,
-            confirm: async () => { calls.push('confirm'); return 'a'.repeat(64) },
             answerQuestion: async () => { calls.push('answer'); return 'npm run dev' },
             writeArtifact: async () => undefined,
         }, async input => {
@@ -169,7 +147,7 @@ describe('init operator command', () => {
         } } }
         const refusal: InitApplicationOutcome = { kind: 'refusal', status: 2, artifact: null, destination: null, result: null,
             diagnostics: [{ severity: 'error', code: 'STATE_RECORD_MALFORMED', message: 'state is malformed' }] }
-        const io: InitCommandIo = { terminal: false, confirm: async () => undefined, writeArtifact: async () => undefined }
+        const io: InitCommandIo = { terminal: false, writeArtifact: async () => undefined }
         for (const outcome of [direct, refusal]) {
             let calls = 0
             const returned = await runInitOperatorCommand({ root: '/work/app', target: 'codexcli', resetAnswer: reset },
@@ -200,7 +178,7 @@ describe('init operator command', () => {
                 field: input.resetAnswer.field, revision: 7, invalidatedFields: [input.resetAnswer.field], previewSha256: resetDigest,
             } } }
         }
-        const io: InitCommandIo = { terminal: false, confirm: async () => undefined, writeArtifact: async () => undefined }
+        const io: InitCommandIo = { terminal: false, writeArtifact: async () => undefined }
 
         const preview = await runInitOperatorCommand({ root: product, target: 'codexcli', resetAnswer: {
             field: 'environment.compose_files',
@@ -242,7 +220,6 @@ describe('init operator command', () => {
         const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
             { interactive: true, json: false }, {
                 terminal: true,
-                confirm: async () => 'a'.repeat(64),
                 answerQuestion: async () => `npm run service-${answerCount++}`,
                 writeArtifact: async destination => { written.push(destination) },
             }, async input => {
@@ -256,11 +233,11 @@ describe('init operator command', () => {
         expect(outcome).toMatchObject({ kind: 'complete', status: 0 })
     })
     describe('without a terminal', () => {
-        const digest = 'a'.repeat(64), defaultsDigest = 'd'.repeat(64)
+        const defaultsDigest = 'd'.repeat(64)
         const asking = (field: string, expectedSha256?: string): InitApplicationOutcome => ({ ...pending(), result: { ...pending().result!,
             question: { id: `question:${field.length.toString().padStart(64, '0')}`, field, source: 'configuration:x', why: 'unknown',
                 ...(expectedSha256 ? { expectedSha256 } : {}) } } })
-        const noTerminal: InitCommandIo = { terminal: false, confirm: async () => { throw new Error('asked a terminal') },
+        const noTerminal: InitCommandIo = { terminal: false, answerQuestion: async () => { throw new Error('asked a terminal') },
             writeArtifact: async () => undefined }
         const machine = { runtime_memory_mb: 2048, runtime_cpus: 2, free_disk_mb: 10240, cold_start_seconds: 120 }
         const guards = { hosted_db_hosts: ['db.staging.example.invalid'], vendor_endpoint_hosts: [] }
@@ -283,10 +260,10 @@ describe('init operator command', () => {
             return { sent, application, given }
         }
 
-        it('completes with the printed digests and answers keyed by field, never opening a terminal', async () => {
+        it('completes with answers keyed by field and writes the drafted defaults, never opening a terminal', async () => {
             const { sent, application } = walk([])
             const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
-                { interactive: false, json: true, unattended: { previewSha256: digest, answers, defaultsSha256: defaultsDigest } },
+                { interactive: false, json: true, unattended: { answers } },
                 noTerminal, application)
             expect(outcome.kind).toBe('complete')
             expect(sent).toEqual([
@@ -305,7 +282,7 @@ describe('init operator command', () => {
             } } }
             const sent: string[] = []
             const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
-                { interactive: false, json: true, unattended: { previewSha256: digest,
+                { interactive: false, json: true, unattended: {
                     answers: { environment: { compose_files: [], machine, posture } } } }, noTerminal, async input => {
                     if (!input.greenfieldAnswer) return preview
                     sent.push(input.greenfieldAnswer.bytes)
@@ -322,7 +299,7 @@ describe('init operator command', () => {
                 const recorded: string[] = []
                 const { application } = walk([])
                 const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
-                    { interactive: false, json: true, unattended: { previewSha256: digest, answers: answersFile, defaultsSha256: defaultsDigest } },
+                    { interactive: false, json: true, unattended: { answers: answersFile } },
                     noTerminal, async input => {
                         if (input.greenfieldAnswer) recorded.push(input.greenfieldAnswer.provenance)
                         return application(input)
@@ -333,7 +310,7 @@ describe('init operator command', () => {
                 environment: { machine: 'human' }, guards: 'agent-default', sibling: 'human', work: { grading: 'human' } } })
             expect(marked.outcome.kind).toBe('complete')
             // An agent can write the file, so its claim that a person chose a trust decision (sibling, install
-            // policies, posture, guards, grading) is not taken: each waits under unconfirmed for a person.
+            // policies, posture, guards, grading) is not taken: cockpit.toml names each as no person's.
             expect(marked.recorded).toEqual(['unattributed', 'operator-confirmed', 'unattributed', 'operator-confirmed',
                 'agent-default', 'operator-confirmed', 'unattributed', 'agent-default', 'unattributed', 'operator-confirmed'])
             // cockpit proposes at most part of a machine floor, so an unmarked one is not attributed to the human.
@@ -350,19 +327,10 @@ describe('init operator command', () => {
             }
         })
 
-        it('refuses a digest that is not the pending one before publishing anything', async () => {
-            const accepted: boolean[] = []
-            const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
-                { interactive: false, json: true, unattended: { previewSha256: 'b'.repeat(64), answers } }, noTerminal,
-                async input => { accepted.push(input.accepted); return pending() })
-            expect(outcome).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_PREVIEW_NOT_ACCEPTED' }] })
-            expect(accepted).toEqual([false])
-        })
-
-        it('stops at the first unanswered field and withholds the defaults until their digest is given', async () => {
+        it('stops at the first unanswered field and lists only what the file leaves out', async () => {
             const { sent, application } = walk([])
             const partial = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
-                { interactive: false, json: true, unattended: { previewSha256: digest, answers: { sibling: [] } } }, noTerminal, application)
+                { interactive: false, json: true, unattended: { answers: { sibling: [] } } }, noTerminal, application)
             expect(partial).toMatchObject({ kind: 'pending', result: { question: { field: 'ports.bases' } } })
             expect(sent).toEqual(['[]'])
 
@@ -376,21 +344,11 @@ describe('init operator command', () => {
                 'environment.posture', 'guards', 'work.grading', 'configuration.defaults']
             const listed = walk([])
             const stopped = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
-                { interactive: false, json: true, unattended: { previewSha256: digest,
-                    answers: { sibling: [], environment: { compose_files: [] }, guards, work: { grading: 'off' } },
-                    defaultsSha256: defaultsDigest } }, noTerminal, async input => listing(fields)(await listed.application(input)))
+                { interactive: false, json: true, unattended: {
+                    answers: { sibling: [], environment: { compose_files: [] }, guards, work: { grading: 'off' } } } }, noTerminal, async input => listing(fields)(await listed.application(input)))
             expect(stopped).toMatchObject({ kind: 'pending', result: { question: { field: 'ports.bases' } } })
             expect(stopped.result!.interview!.outstanding.map(row => row.field)).toEqual(['ports.bases', 'environment.install_policies'])
 
-            const held = walk([])
-            const awaiting = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
-                { interactive: false, json: true, unattended: { previewSha256: digest, answers } }, noTerminal, held.application)
-            expect(awaiting).toMatchObject({ kind: 'pending', result: { question: { field: 'configuration.defaults', expectedSha256: defaultsDigest } } })
-
-            const wrong = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
-                { interactive: false, json: true, unattended: { previewSha256: digest, answers, defaultsSha256: 'e'.repeat(64) } },
-                noTerminal, walk([]).application)
-            expect(wrong).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_DEFAULTS_NOT_ACCEPTED' }] })
         })
 
         it('refuses a value that differs from an answer an earlier run recorded, before publishing', async () => {
@@ -399,13 +357,14 @@ describe('init operator command', () => {
                 interview: { answered: ['ports.bases'], outstanding: [], inferenceSkipped: [] } } })
             const calls: boolean[] = []
             const run = (bases: unknown) => runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
-                { interactive: false, json: true, unattended: { previewSha256: digest, answers: { ports: { bases } } } }, noTerminal,
-                async input => { calls.push(input.accepted); return input.accepted ? asking('configuration.defaults', defaultsDigest) : resumed() })
+                { interactive: false, json: true, unattended: { answers: { ports: { bases } } } }, noTerminal,
+                async input => { calls.push(input.accepted); return !input.accepted ? resumed() : input.greenfieldAnswer
+                    ? { ...pending(), kind: 'complete', status: 0 } : asking('configuration.defaults', defaultsDigest) })
             const conflict = await run({ A: 1, B: 3 })
             expect(conflict).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_CONFLICT', message: expect.stringContaining('ports.bases') }] })
             expect(calls).toEqual([false])
             calls.length = 0
-            expect(await run({ A: 1, B: 2 })).toMatchObject({ kind: 'pending' })
+            expect(await run({ A: 1, B: 2 })).toMatchObject({ kind: 'complete' })
             expect(calls).toContain(true)
         })
 
@@ -415,7 +374,7 @@ describe('init operator command', () => {
                 { answer: 'in-repo' as const, root: '/work/app', creates: [], siblingsRoot: '.', firstSibling: '/work/app', tradeOff: 'carries files' }] }
             const calls: string[] = []
             const outcome = await runInitOperatorCommand({ root: '/work/app', target: 'codexcli' },
-                { interactive: false, json: true, unattended: { previewSha256: digest, answers: { cockpit: { root: answer } } } },
+                { interactive: false, json: true, unattended: { answers: { cockpit: { root: answer } } } },
                 { ...noTerminal, createCockpitRoot: async path => { calls.push(`create:${path}`) } },
                 async input => {
                     calls.push(`application:${input.accepted}:${input.root}:${JSON.stringify(input.cockpitRoot ?? null)}`)
@@ -436,7 +395,7 @@ describe('init operator command', () => {
         it('refuses an unavailable cockpit root option before creating anything', async () => {
             const created: string[] = []
             const outcome = await runInitOperatorCommand({ root: '/work/My_App', target: 'codexcli' },
-                { interactive: false, json: true, unattended: { previewSha256: digest, answers: { cockpit: { root: 'dedicated' } } } },
+                { interactive: false, json: true, unattended: { answers: { cockpit: { root: 'dedicated' } } } },
                 { ...noTerminal, createCockpitRoot: async path => { created.push(path) } },
                 async () => ({ ...pending(), result: { ...pending().result!, cockpitRoot: { field: 'cockpit.root', why: 'product repository',
                     recommended: 'dedicated', options: [{ answer: 'dedicated', root: '/work/My_App-cockpit', creates: ['/work/My_App-cockpit'],
@@ -447,13 +406,13 @@ describe('init operator command', () => {
 
         it('names an answers key that matches no interview field, including an environment table cockpit no longer has', async () => {
             const unknown = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
-                { interactive: false, json: true, unattended: { previewSha256: digest, answers: { sibling: [], ports: { base: {} } } } },
+                { interactive: false, json: true, unattended: { answers: { sibling: [], ports: { base: {} } } } },
                 noTerminal, async () => pending())
             expect(unknown).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_FIELD_UNKNOWN',
                 message: expect.stringContaining('names no interview field: ports.base;') }] })
 
             const removed = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
-                { interactive: false, json: true, unattended: { previewSha256: digest, answers: {
+                { interactive: false, json: true, unattended: { answers: {
                     sibling: [], ports: { bases: {} }, environment: { install_policies: [],
                         test_data: { seeded_data: false, signed_in_users: false }, generated: {}, compose_files: ['compose.yml'] } } } },
                 noTerminal, walk([]).application)

@@ -1733,7 +1733,7 @@ function approvalRefusal(record: PublicationRecord): PublicationRefusal {
             code: 'GENERATED_STALE_APPROVAL_REQUIRED',
             message: `stale generated ownership requires independent approval bound to the exact current entries (stale-removal digest ${record.staleRemoval!.digest})`,
             target: record.staleRemoval!.entries[0]!.path,
-            fix: 'a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and explicitly confirms only if every removal is intended',
+            fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>, which removes the stale entries it lists',
         }],
     }
 }

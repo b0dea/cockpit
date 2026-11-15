@@ -144,25 +144,5 @@ export function renderCockpitSchema(): string {
         { path: 'surfaces.overlays[].replaces.name', rule: 'matches_declaration_name' },
     ]
 
-    // Found by shape, so every table that embeds a provenance carries the rule, wherever it sits.
-    const requireProvenanceEvidence = (node: JsonSchema): void => {
-        const fields = node.properties as Record<string, JsonSchema> | undefined
-        if (fields?.observed_on && fields.kind && fields.source) {
-            node.anyOf = [
-                { not: { required: ['kind'] } },
-                { properties: { kind: { enum: ['declared', 'measured'] } } },
-                { properties: { kind: { enum: ['inferred'] }, confirmed: { enum: [true] } }, required: ['confirmed'] },
-            ]
-        }
-        for (const value of Object.values(node)) {
-            if (Array.isArray(value)) for (const entry of value) {
-                if (entry !== null && typeof entry === 'object') requireProvenanceEvidence(entry as JsonSchema)
-            }
-            else if (value !== null && typeof value === 'object') requireProvenanceEvidence(value as JsonSchema)
-        }
-    }
-
-    requireProvenanceEvidence(schema)
-
     return `${JSON.stringify(schema, null, 2)}\n`
 }

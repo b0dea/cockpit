@@ -1,6 +1,6 @@
-import { confirmDigest } from './operator-confirmation.js'
+import { confirmYes } from './operator-confirmation.js'
 import { randomUUID } from 'node:crypto'
-import { ComposeProfileName, EVALUATOR_COMMANDS, runningEvaluatorTool, UNCONFIRMABLE_ANSWERS, type EvaluatorTool } from './schema.js'
+import { ComposeProfileName, EVALUATOR_COMMANDS, runningEvaluatorTool, type EvaluatorTool } from './schema.js'
 import { installedPackageMetadata } from './package-metadata.js'
 import { validateTeamMetadata, type TeamMetadataResult } from './team-metadata.js'
 import { renderComposeScaffold, SCAFFOLD_BACKING_SERVICES, writeComposeScaffold, type ScaffoldBackingService } from './init/scaffold.js'
@@ -31,8 +31,6 @@ import {
 import { type DoctorCommandInput, runDoctor as runDoctorApplication } from './environment/application/doctor.js'
 import { runGuardCommand } from './cli-guard.js'
 import { type PreflightCommandInput, runPreflight as runPreflightApplication } from './environment/application/health.js'
-import { type ConfirmCommandInput, runConfirm } from './environment/application/confirm.js'
-import { isUnconfirmedAnswerName } from './guards/answer-confirmation.js'
 import {
     runSession as runSessionApplication,
     runSleep as runSleepApplication,
@@ -79,8 +77,7 @@ import {
     type SetupRefusalEvidence,
 } from './environment/contract.js'
 import { refusalOutcome } from './refusal.js'
-import { loadAutonomyPolicy, loadCockpitConfig, observeConfigSource, readBoundedInput } from './config/load.js'
-import { policyWeakening, policyWeakeningDiagnostic } from './autonomy.js'
+import { loadCockpitConfig, observeConfigSource, readBoundedInput } from './config/load.js'
 import { inspectGuardConfigChange } from './guards/policy-change.js'
 import { gitEnvironment, planSetup } from './environment/setup.js'
 import { synchronizeInstructionPointer } from './environment/instruction-pointer.js'
@@ -117,13 +114,11 @@ export interface CliIo {
     stdout: Pick<NodeJS.WriteStream, 'write'>
     stderr: Pick<NodeJS.WriteStream, 'write'>
     stdin?: NodeJS.ReadStream
-    confirmInit?: (preview: InitResult) => Promise<string | undefined>
     answerInitQuestion?: (question: NonNullable<InitResult['question']>) => Promise<string | undefined>
     confirmReset?: (preview: CommandOutcome) => Promise<boolean>
     confirmWorkOrder?: (candidate: Readonly<{ digest: string; prompt: string }>) => Promise<string | undefined>
-    confirmStaleRemoval?: (request: GeneratedStaleRemovalApprovalRequest) => Promise<string | undefined>
-    confirmPolicyWeakening?: GeneratedEnvironmentOperatorIo['confirmPolicyWeakening']
-    confirmStacksPrune?: (preview: CommandOutcome) => Promise<string | undefined>
+    confirmWidening?: GeneratedEnvironmentOperatorIo['confirmWidening']
+    confirmStacksPrune?: (preview: CommandOutcome) => Promise<boolean>
 }
 
 export interface CliRuntime {
@@ -149,7 +144,6 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
     'docs-check': Readonly<{ configPath: string }>
     'env-keys': Readonly<{ configPath: string }>
     'env-schema': Readonly<{ configPath: string; reference: string; replaceFrom?: string }>
-    confirm: ConfirmCommandInput
     init: InitApplicationInput & Readonly<{ unattended?: UnattendedInit }>
     doctor: DoctorCommandInput
     down: DownCommandInput
@@ -202,7 +196,7 @@ export type CliHandlerOverrides = Partial<CommandHandlers> & Readonly<{
     beginOperatorWorkApplication?: (input: WorkCommandInput) => Promise<OperatorWorkBinding | CommandOutcome>
     beginOperatorReset?: (input: ResetCommandInput) => Promise<OperatorResetBinding | CommandOutcome>
     beginStacksPrune?: (input: Readonly<{ configPath: string; scope: StacksPruneScope }>) => Promise<StacksPruneOperatorSession | CommandOutcome>
-    // The autonomy policy sync and reset decide by, read from cockpit.toml and the recorded policy.
+    // What sync, reset and prune decide by under the one fixed rule, read from cockpit.toml.
     loadPolicy?: typeof loadOperatorPolicy
     scaffoldCompose?: (input: ComposeScaffoldRequest) => Promise<CommandOutcome>
 }>
@@ -495,17 +489,17 @@ function weakenedTestsDiagnostic(operation: WorkApplicationRequest['operation'],
     return { severity: 'error', message,
         code: 'WORK_TEST_WEAKENED' satisfies typeof ENVIRONMENT_CODES.WORK_TEST_WEAKENED,
         fix: operation === 'work-grade'
-            ? 'read result.testProtection.findings and the verdict on them: restore each test weakened to make the change pass. Under [work] grading = "independent" the evaluator judged the test changes unjustified in the diff; under "self" or "subagent" your --note names each flagged file and why; under "checks" a person acknowledges a legitimate change at a terminal with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why it is not a weakening> --interactive, or CI where [work.gates] acknowledge = "ci"; never type the digest for them'
-            : 'read result.testProtection: restore each deleted, skipped, suppressed or loosened test. A grade without an order has the evaluator judge the test changes; an order records the base they are compared with, and under [work] grading = "checks" a person acknowledges a legitimate change with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why> --interactive, or CI where [work.gates] acknowledge = "ci"' }
+            ? 'read result.testProtection.findings and the verdict on them: restore each test weakened to make the change pass. Under [work] grading = "independent" the evaluator judged the test changes unjustified in the diff; under "self" or "subagent" your --note names each flagged file and why; under "checks" a person acknowledges a legitimate change at a terminal with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why it is not a weakening> --interactive; never type the digest for them'
+            : 'read result.testProtection: restore each deleted, skipped, suppressed or loosened test. A grade without an order has the evaluator judge the test changes; an order records the base they are compared with, and under [work] grading = "checks" a person acknowledges a legitimate change with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why> --interactive' }
 }
 
-type PersonHandler = 'work-accept' | 'work-answer' | 'work-signoff' | 'work-acknowledge' | 'work-retry'
-const PERSON_HANDLERS: ReadonlySet<string> = new Set<PersonHandler>(['work-accept', 'work-answer', 'work-signoff', 'work-acknowledge', 'work-retry'])
+type PersonHandler = 'work-accept' | 'work-signoff' | 'work-acknowledge' | 'work-retry'
+const PERSON_HANDLERS: ReadonlySet<string> = new Set<PersonHandler>(['work-accept', 'work-signoff', 'work-acknowledge', 'work-retry'])
 const isPersonHandler = (handler: string): handler is PersonHandler => PERSON_HANDLERS.has(handler)
 
 // A person gate binds what the person reads to the digest they type, so it never completes for an agent.
 function personRequired(handler: PersonHandler, prompt: string): CommandOutcome {
-    const rule = handler === 'work-retry' ? 'always a person\'s step' : 'a person\'s step under [work.gates] in cockpit.toml'
+    const rule = handler === 'work-retry' ? 'always a person\'s step' : 'a person\'s step here, as it would let the agent lower the bar its own work is held to'
     return { artifact: null, destination: null, result: { prompt }, status: 2, diagnostics: [{ severity: 'error', message: `${handler.slice('work-'.length)} is ${rule}, and this run has no person at a terminal`,
         code: 'WORK_PERSON_REQUIRED' satisfies typeof ENVIRONMENT_CODES.WORK_PERSON_REQUIRED,
         fix: 'stop and ask a person to run the same command with --interactive in a terminal outside CI, read what it shows, and type the digest; never type it for them' }] }
@@ -674,9 +668,6 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             if (loaded.kind !== 'complete') return loaded
             const metadata = teamMetadataOutcome(await validateTeamMetadata(input.configPath))
             if (metadata) return metadata
-            // A weakening sync would refuse is a failing check, so an agent's edit cannot sit unreported.
-            const policy = await loadAutonomyPolicy(input.configPath)
-            const weakened = 'recorded' in policy && policy.recorded ? policyWeakening(policy.recorded, policy.current) : []
             // An edit the guards were not regenerated for holds the agent; one that widens them waits for a person.
             const guardChange = await inspectGuardConfigChange(dirname(loaded.result.source.path), loaded.result.source.path,
                 { sha256: loaded.result.source.sha256, config: loaded.result.config })
@@ -684,8 +675,8 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             const [outcome, hookTrust] = await Promise.all([checkGeneratedEnvironment(input),
                 loaded.result.config.surfaces.tools.includes('codexcli')
                     ? inspectCodexHookTrust({ root: dirname(resolve(input.configPath)), env, timeoutMs: RUNTIME_STEP_TIMEOUT_MS }, executeProbe) : Promise.resolve([])])
-            if (weakened.length || guardChange.some(row => row.severity === 'error')) return { kind: 'refusal', status: 2, result: null,
-                diagnostics: [...weakened.length ? [policyWeakeningDiagnostic(weakened)] : [], ...guardChange, ...outcome.diagnostics, ...hookTrust] }
+            if (guardChange.some(row => row.severity === 'error')) return { kind: 'refusal', status: 2, result: null,
+                diagnostics: [...guardChange, ...outcome.diagnostics, ...hookTrust] }
             return { ...outcome, diagnostics: [...guardChange, ...outcome.diagnostics, ...hookTrust], result: outcome.report
                 ? outcome.kind === 'complete' ? { ...outcome.result, currentness: outcome.report } : outcome.report
                 : outcome.result }
@@ -743,17 +734,6 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         'docs-check': (input) => runDocsCheck({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
         'env-keys': (input) => runEnvKeys({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
         'env-schema': (input) => runEnvSchema({ configPath: resolve(input.configPath), reference: input.reference, ...input.replaceFrom === undefined ? {} : { replaceFrom: input.replaceFrom }, env }, { execute: executeProbe }),
-        confirm: (input) => {
-            const configPath = resolve(input.configPath)
-            return runConfirm({ configPath, answer: input.answer }, {
-                preflight: ({ configPath }) => runPreflightApplication({ configPath }, healthAdapters(configPath)),
-                check: async ({ configPath }) => {
-                    const metadata = teamMetadataOutcome(await validateTeamMetadata(configPath))
-                    return metadata ?? checkGeneratedEnvironment({ configPath })
-                },
-                now: () => new Date(),
-            })
-        },
         sibling: (request) => request.operation === 'add'
             ? runSiblingAdd({ ...request.input, env }, { execute: executeProbe })
             : runSiblingRemove({ ...request.input, env }),
@@ -900,22 +880,16 @@ async function createDedicatedCockpitRoot(path: string, env: Readonly<Record<str
     if (initialised.kind === 'refusal') throw new RefusalError(initialised.reason)
 }
 
-/** Reads the consent digests and answers file of an unattended init; absent flags mean a terminal run. */
+/** Reads the answers file of an unattended init; without one, init previews or asks at a terminal. */
 async function decodeUnattendedInit(values: {
-    interactive?: boolean; answers?: string; 'accept-preview'?: string; 'accept-defaults'?: string
+    interactive?: boolean; answers?: string
 }): Promise<{ value?: UnattendedInit } | CommandOutcome> {
-    const { answers: answersPath, 'accept-preview': previewSha256, 'accept-defaults': defaultsSha256 } = values
-    if (answersPath === undefined && previewSha256 === undefined && defaultsSha256 === undefined) return {}
+    const { answers: answersPath } = values
+    if (answersPath === undefined) return {}
     if (values.interactive) return usageOutcome('CLI_USAGE_INVALID',
-        'init --interactive asks a person; --answers, --accept-preview and --accept-defaults are for a caller without a terminal', '--interactive')
-    if (previewSha256 === undefined) return usageOutcome('CLI_USAGE_INVALID',
-        '--answers and --accept-defaults require --accept-preview: run init --json first and pass the preview digest it prints', '--accept-preview')
-    for (const [name, digest] of [['--accept-preview', previewSha256], ['--accept-defaults', defaultsSha256]] as const) {
-        if (digest !== undefined && !/^[a-f0-9]{64}$/.test(digest)) return usageOutcome('CLI_USAGE_INVALID',
-            `${name} must be a lowercase sha256 digest printed by a pending init run`, name)
-    }
-    let answers: Record<string, unknown> = {}
-    if (answersPath !== undefined) {
+        'init --interactive asks a person; --answers is for a caller without a terminal', '--interactive')
+    let answers: Record<string, unknown>
+    {
         const path = resolve(answersPath)
         try {
             const read = await readBoundedInput(path)
@@ -934,7 +908,7 @@ async function decodeUnattendedInit(values: {
                 `--answers ${path} could not be read as one bounded regular TOML file (${cause}); replace it with a plain TOML file and retry`, '--answers')
         }
     }
-    return { value: { previewSha256, answers, ...(defaultsSha256 === undefined ? {} : { defaultsSha256 }) } }
+    return { value: { answers } }
 }
 
 // A one-time write of a plain compose.yml the user then owns; it is not part of the init interview.
@@ -1107,8 +1081,7 @@ async function decodeRequest(
                     && (typeof acceptedReset !== 'string' || !/^[a-f0-9]{64}$/.test(acceptedReset))) {
                 return usageOutcome('CLI_USAGE_INVALID', '--reset-answer requires one recorded field; --accept-reset requires its printed sha256 digest')
             }
-            if (parsed.values.interactive || parsed.values.answers !== undefined || parsed.values['accept-preview'] !== undefined
-                || parsed.values['accept-defaults'] !== undefined) {
+            if (parsed.values.interactive || parsed.values.answers !== undefined) {
                 return usageOutcome('CLI_USAGE_INVALID', '--reset-answer is a standalone preview or exact acceptance operation')
             }
             return { handler, input: { root: absoluteRoot, target, tools: chosen,
@@ -1117,8 +1090,7 @@ async function decodeRequest(
                 resetAnswer: { field: resetField, ...(typeof acceptedReset === 'string'
                     ? { acceptedPreviewSha256: acceptedReset } : {}) } } }
         }
-        const unattended = await decodeUnattendedInit(parsed.values as {
-            interactive?: boolean; answers?: string; 'accept-preview'?: string; 'accept-defaults'?: string })
+        const unattended = await decodeUnattendedInit(parsed.values as { interactive?: boolean; answers?: string })
         if ('status' in unattended) return unattended
         return { handler, input: { root: absoluteRoot, target, tools: chosen,
             accepted: false, sessionId: randomUUID(), platform: process.platform, home: runtimeEnv.HOME,
@@ -1236,16 +1208,6 @@ async function decodeRequest(
                 json: values.json === true,
             },
         }
-    }
-
-    if (handler === 'confirm') {
-        const values = parsed.values as { config?: string }
-        const [answer, ...extra] = parsed.positionals
-        if (answer === undefined || extra.length > 0 || !isUnconfirmedAnswerName(answer)) {
-            return usageOutcome('CLI_USAGE_INVALID', `confirm takes one answer listed under unconfirmed, one of ${UNCONFIRMABLE_ANSWERS.join(', ')}: ${cockpitCommand('confirm', { operand: 'ports.bases' })}`)
-        }
-        if (!values.config) return missingConfig()
-        return { handler, input: { configPath: values.config, answer } }
     }
 
     if (handler === 'stacks') {
@@ -1372,14 +1334,8 @@ async function dispatchHandler(
         return handler?.(request.input) ?? unavailable()
     }
     if (request.handler === 'init') return runInitOperatorCommand(request.input, { ...options, unattended: request.input.unattended }, {
-        terminal: io.confirmInit !== undefined || io.answerInitQuestion !== undefined
+        terminal: io.answerInitQuestion !== undefined
             || io.stdin?.isTTY === true && 'isTTY' in io.stdout && io.stdout.isTTY === true,
-        confirm: async preview => {
-            if (io.confirmInit) return io.confirmInit(preview)
-            if (!io.stdin) return undefined
-            io.stderr.write(renderHumanValue(preview))
-            return confirmDigest(io, preview.previewSha256, 'Accept this bootstrap preview?')
-        },
         writeArtifact: (destination, artifact) => writeFile(destination, artifact, { flag: 'wx', mode: 0o600 }),
         createCockpitRoot: path => createDedicatedCockpitRoot(path, options.env),
         chooseCockpitRoot: async question => {
@@ -1392,10 +1348,6 @@ async function dispatchHandler(
             if (io.answerInitQuestion) return io.answerInitQuestion(question)
             if (!io.stdin) return undefined
             io.stderr.write(renderHumanValue(question))
-            if (question.field === 'configuration.defaults' && question.expectedSha256) {
-                const approved = await confirmDigest(io, question.expectedSha256, 'Accept these configuration defaults?')
-                return approved === undefined ? undefined : JSON.stringify({ confirmed: true, sha256: approved })
-            }
             const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
             try { return await prompt.question(`Enter a JSON value for ${question.field} (strings need quotes): `) } finally { prompt.close() }
         },
@@ -1406,7 +1358,6 @@ async function dispatchHandler(
     if (request.handler === 'docs-check') return handlers['docs-check']?.(request.input) ?? unavailable()
     if (request.handler === 'env-keys') return handlers['env-keys']?.(request.input) ?? unavailable()
     if (request.handler === 'env-schema') return handlers['env-schema']?.(request.input) ?? unavailable()
-    if (request.handler === 'confirm') return handlers.confirm?.(request.input) ?? unavailable()
     if (request.handler === 'upgrade') return handlers.upgrade?.(request.input) ?? unavailable()
     if (request.handler === 'up') return handlers.up?.(request.input) ?? unavailable()
     if (request.handler === 'sleep') return handlers.sleep?.(request.input) ?? unavailable()
@@ -1438,10 +1389,9 @@ async function dispatchHandler(
             begin: operators.beginStacksPrune ?? (async () => unavailable()),
             confirm: async (preview) => {
                 if (io.confirmStacksPrune) return io.confirmStacksPrune(preview)
-                if (!io.stdin) return undefined
+                if (!io.stdin) return false
                 io.stderr.write(renderHumanValue(preview.result))
-                const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
-                try { return (await prompt.question('Type the exact prune digest to remove these stacks: ')).trim() } finally { prompt.close() }
+                return confirmYes(io, 'Remove these stacks?')
             },
         })
     }

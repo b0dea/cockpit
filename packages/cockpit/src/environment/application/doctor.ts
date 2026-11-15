@@ -2,7 +2,6 @@ import { dirname, join, resolve } from 'node:path'
 import { inspectAgentSettingsHazards, inspectClaudeLocalGuard } from '../served-checkout-grants.js'
 import { ENVIRONMENT_CODES, errorCause, type EnvironmentDiagnostic, snapshotJson } from '../contract.js'
 import type { CockpitConfig, EvaluatorTool } from '../../schema.js'
-import { effectivePolicy, policyWeakening, policyWeakeningDiagnostic, readRecordedPolicy, trustInForce } from '../../autonomy.js'
 import type { SkippedStateNamespace } from '../state.js'
 import { prepareGeneratedEnvironmentCurrentness } from '../generated-application/check.js'
 import { type GeneratedEnvironmentCurrentness } from '../generated-application/shared.js'
@@ -27,7 +26,6 @@ import {
 } from './health.js'
 import { ownDataValues } from './shared.js'
 import { cockpitCommand } from '../../fix-catalogue.js'
-import { unconfirmedFix } from '../../guards/answer-confirmation.js'
 import { unreadableStateWarning } from './lifecycle-state.js'
 
 export interface DoctorCommandInput {
@@ -161,7 +159,7 @@ async function doctorGuardHostDiagnostics(loading: Promise<LoadedDoctorConfig>):
 
 async function doctorEvaluatorDiagnostics(loading: Promise<LoadedDoctorConfig>, adapters: DoctorCommandAdapters): Promise<readonly EnvironmentDiagnostic[]> {
     const loaded = await loading
-    return loaded.kind === 'complete' && adapters.inspectEvaluator ? adapters.inspectEvaluator({ grading: effectivePolicy(loaded.result.config).grading, stated: loaded.result.gradingStated,
+    return loaded.kind === 'complete' && adapters.inspectEvaluator ? adapters.inspectEvaluator({ grading: loaded.result.config.work.grading, stated: loaded.result.gradingStated,
         evaluators: evaluatorTools(loaded.result.config) }) : []
 }
 
@@ -180,34 +178,6 @@ async function doctorTestingGateDiagnostics(loading: Promise<LoadedDoctorConfig>
         target: 'testing',
         fix: 'declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>',
     }]
-}
-
-// init records answers no person stated under `unconfirmed`. They look exactly like stated values
-// in the file, so doctor keeps naming them until each is confirmed: by the observation that verifies
-// it, or by a person where it is a trust decision or no observation settles it.
-async function doctorUnconfirmedDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {
-    const loaded = await loading
-    if (loaded.kind !== 'complete' || !loaded.result.config.unconfirmed) return []
-    const { held } = trustInForce(loaded.result.config)
-    return [{
-        severity: 'warning' as const,
-        // A literal, so the diagnostic inventory captures the fix beside the code.
-        code: 'DECLARATION_UNCONFIRMED' satisfies typeof ENVIRONMENT_CODES.DECLARATION_UNCONFIRMED,
-        message: `${loaded.result.config.unconfirmed.join(', ')} in cockpit.toml were chosen by the setup agent or by no one named, not stated by a person, so they may not describe this product`
-            + (held.length ? `; awaiting confirmation, ${held.map(row => `${row.field} is held at ${row.inForce} rather than the declared ${row.declared}`).join(', and ')}` : ''),
-        target: 'unconfirmed',
-        fix: unconfirmedFix(loaded.result.config.unconfirmed),
-    }]
-}
-
-// The same weakening `check` fails on: a policy cockpit.toml sets below the one the last sync recorded
-// is not in force, and doctor is where an agent looks first.
-async function doctorPolicyDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {
-    const loaded = await loading
-    if (loaded.kind !== 'complete') return []
-    const recorded = await readRecordedPolicy(dirname(loaded.result.source.path))
-    const weakened = recorded ? policyWeakening(recorded, effectivePolicy(loaded.result.config)) : []
-    return weakened.length ? [{ ...policyWeakeningDiagnostic(weakened), severity: 'warning' as const }] : []
 }
 
 type DoctorCommandResult = Readonly<{
@@ -315,8 +285,8 @@ export async function runDoctor(
     // The machine-wide state reads are independent of the configuration checks, so they run beside them.
     const statePending = adapters.readUnreadableState?.()
     const stacksPending = adapters.inspectStacks?.()
-    const [outcome, guardHosts, unconfirmed, policyWeakened, testingGate, hookTrust, evaluator, readinessWarnings, servedSiblings, mcp] = await Promise.all([doctorHealth(input, adapters, config, currentness),
-        doctorGuardHostDiagnostics(config), doctorUnconfirmedDiagnostics(config), doctorPolicyDiagnostics(config), doctorTestingGateDiagnostics(config), hookTrustFindings(),
+    const [outcome, guardHosts, testingGate, hookTrust, evaluator, readinessWarnings, servedSiblings, mcp] = await Promise.all([doctorHealth(input, adapters, config, currentness),
+        doctorGuardHostDiagnostics(config), doctorTestingGateDiagnostics(config), hookTrustFindings(),
         doctorEvaluatorDiagnostics(config, adapters), adapters.inspectReadiness?.() ?? [], config.then(async loaded => adapters.inspectServedSiblings?.(loaded.kind === 'complete' ? loaded : undefined) ?? []), mcpStartup()])
     const stateInventory = await statePending
     const unreadableState = stateInventory?.kind === 'refusal'
@@ -325,7 +295,7 @@ export async function runDoctor(
             message: `doctor could not read this machine's cockpit state, so it did not check for other cockpits' state this version cannot read: ${diagnostic.message}` }))
         : [unreadableStateWarning(stateInventory?.skipped ?? [])].filter((warning) => warning !== undefined)
     const orphanedStacks = await stacksPending ?? []
-    const warnings = [...unconfirmed, ...policyWeakened, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...readinessWarnings, ...servedSiblings, ...mcp, ...unreadableState, ...orphanedStacks]
+    const warnings = [...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...readinessWarnings, ...servedSiblings, ...mcp, ...unreadableState, ...orphanedStacks]
     const reported = warnings.length === 0 ? outcome
         : { ...outcome, diagnostics: [...outcome.diagnostics, ...warnings] }
     // Doctor reports on a configuration; without one there is nothing to report on, and a zero

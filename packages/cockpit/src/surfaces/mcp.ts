@@ -94,7 +94,7 @@ const Input = z.object({
 type McpSource = z.infer<typeof Source>
 export type McpStdioDeclaration = z.infer<typeof StdioDeclaration>
 export type McpHttpDeclaration = z.infer<typeof HttpDeclaration>
-type McpDeclaration = McpStdioDeclaration | McpHttpDeclaration
+export type McpDeclaration = McpStdioDeclaration | McpHttpDeclaration
 
 export interface McpDiagnostic {
     readonly code: 'MCP_INPUT_INVALID' | 'MCP_DECLARATION_INVALID' | 'MCP_COMMAND_CONFLICT' | 'MCP_NOT_APPROVED' | 'MCP_APPROVAL_UNKNOWN'

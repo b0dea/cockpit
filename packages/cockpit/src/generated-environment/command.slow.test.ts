@@ -471,11 +471,7 @@ it('consumes vendor and exact build/test authority through installed hook regist
 }, 120_000)
 
 it('admits the npx and installed-path launcher spellings only while they run the installed cockpit', async () => {
-    // A person runs a writing sync here, so the guard asks for it rather than allowing it.
     const { root, configPath } = await surfaceConsumer('launcher-spellings', { custom: `
-[autonomy]
-sync = "person"
-
 [testing]
 stages = [{ id = "quick", command = ["sh", "-c", "echo ok"], requires_stack = false }]
 gates = [{ id = "quick", tier = "targeted", stages = ["quick"], changes = "Synthetic gate" }]
@@ -514,30 +510,22 @@ gates = [{ id = "quick", tier = "targeted", stages = ["quick"], changes = "Synth
         'npx --no cockpit --script-shell=/bin/sh doctor --config cockpit.toml', 'npx --no cockpit session --config cockpit.toml -- npx --no cockpit session --config cockpit.toml -- true',
     ].map(command => `${command}: ${decision(command)}`)
     expect(unproven).toEqual(['npx cockpit doctor --config cockpit.toml: ask', 'npx --no -p other cockpit doctor --config cockpit.toml: ask', 'npx --no cockpit session --config cockpit.toml -- npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt: ask', 'npx --no cockpit --script-shell=/bin/sh doctor --config cockpit.toml: ask', 'npx --no cockpit session --config cockpit.toml -- npx --no cockpit session --config cockpit.toml -- true: ask'])
-    const asked = ['npx --no cockpit sync --config cockpit.toml',
-        'npx --no cockpit env schema --config cockpit.toml --path app:.env.local',
+    const asked = ['npx --no cockpit env schema --config cockpit.toml --path app:.env.local',
         'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from .env',
         'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt && git status',
         'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt; git status',
         'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt | cat',
         'npx --no cockpit reset --config cockpit.toml', 'npx --no cockpit test-run --config cockpit.toml --gate undeclared',
-        // [autonomy] reset and instruction_files default to person, so neither runs unprompted here.
-        'npx --no cockpit reset --config cockpit.toml --apply', 'npx --no cockpit setup --config cockpit.toml --write-instruction-files',
-        'npx --no cockpit setup --config cockpit.toml --write-instruction-pointers',
         'npx --no cockpit work accept --config cockpit.toml --work-order WO-001 --interactive', `node ${join(root, 'app/server.mjs')} doctor --config cockpit.toml`,
         // A session runs only what the agent could run directly.
         'npx --no cockpit session --config cockpit.toml -- rm -rf fixtures',
         // A session inside a session would run a command the guard never judged.
         './node_modules/.bin/cockpit session --config cockpit.toml -- ./node_modules/.bin/cockpit session --config cockpit.toml -- rm -rf fixtures',
     ].map(command => `${command.replaceAll(root, '<root>')}: ${decision(command)}`)
-    expect(asked).toEqual(['npx --no cockpit sync --config cockpit.toml: ask', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.local: deny', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from .env: deny', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt && git status: ask', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt; git status: ask', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt | cat: ask', 'npx --no cockpit reset --config cockpit.toml: ask', 'npx --no cockpit test-run --config cockpit.toml --gate undeclared: ask', 'npx --no cockpit reset --config cockpit.toml --apply: ask', 'npx --no cockpit setup --config cockpit.toml --write-instruction-files: ask', 'npx --no cockpit setup --config cockpit.toml --write-instruction-pointers: ask', 'npx --no cockpit work accept --config cockpit.toml --work-order WO-001 --interactive: ask', 'node <root>/app/server.mjs doctor --config cockpit.toml: allow', 'npx --no cockpit session --config cockpit.toml -- rm -rf fixtures: allow', './node_modules/.bin/cockpit session --config cockpit.toml -- ./node_modules/.bin/cockpit session --config cockpit.toml -- rm -rf fixtures: ask'])
+    expect(asked).toEqual(['npx --no cockpit env schema --config cockpit.toml --path app:.env.local: deny', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from .env: deny', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt && git status: ask', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt; git status: ask', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt | cat: ask', 'npx --no cockpit reset --config cockpit.toml: ask', 'npx --no cockpit test-run --config cockpit.toml --gate undeclared: ask', 'npx --no cockpit work accept --config cockpit.toml --work-order WO-001 --interactive: ask', 'node <root>/app/server.mjs doctor --config cockpit.toml: allow', 'npx --no cockpit session --config cockpit.toml -- rm -rf fixtures: allow', './node_modules/.bin/cockpit session --config cockpit.toml -- ./node_modules/.bin/cockpit session --config cockpit.toml -- rm -rf fixtures: ask'])
     expect(decision('npx --no cockpit session --config cockpit.toml -- curl https://api.vendor.example.test/messages')).toBe('deny')
-    // Writing the configuration, directly or as a session's command, is the policy pin's hard denial.
-    for (const command of [`/usr/bin/sed -i 's/sync = "person"/sync = "agent"/' cockpit.toml`, '/bin/cp app/package-lock.json cockpit.toml',
-        "npx --no cockpit session --config cockpit.toml -- sed -i '' 's/person/agent/' cockpit.toml"]) {
-        expect(decision(command), command).toBe('deny')
-    }
-    // A program that only names it is not the pin's to refuse, and runs as any program the guard cannot read does.
+    // A command that writes the configuration runs: a widening edit is held until a person's sync applies it.
+    expect(decision(`/usr/bin/sed -i 's/allow = \\[\\]/allow = ["*"]/' cockpit.toml`)).toBe('allow')
     expect(decision('node /tmp/w.js cockpit.toml')).toBe('allow')
     // Bare cockpit counts only when the command search path finds the installed package.
     expect(decision('cockpit check --config cockpit.toml')).toBe('ask')
@@ -608,8 +596,8 @@ it('emits path-proven launcher remedies for a pnpm-style install', async () => {
     expect(invoke(remedy!).permissionDecision).toBe('ask')
 }, 120_000)
 
-it('admits a writing sync, an applied reset and setup\'s sibling instruction writes unprompted where [autonomy] gives them to the agent', async () => {
-    const { root, configPath } = await surfaceConsumer('autonomy-grants', { custom: '\n[autonomy]\nsync = "agent"\nreset = "agent"\ninstruction_files = "agent"\n' })
+it('admits a writing sync and setup\'s sibling instruction writes unprompted, and asks for an applied reset where no seed refills the data', async () => {
+    const { root, configPath } = await surfaceConsumer('agent-grants')
     expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
     await writeFile(join(root, 'app/package-lock.json'), '{}')
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
@@ -624,15 +612,16 @@ it('admits a writing sync, an applied reset and setup\'s sibling instruction wri
             input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: root, tool_input: { command } }) })
         return result.stdout ? JSON.parse(result.stdout).hookSpecificOutput.permissionDecision as string : result.status === 0 ? 'allow' : result.stderr
     }
-    for (const command of ['npx --no cockpit sync --config cockpit.toml', 'npx --no cockpit reset --config cockpit.toml --apply',
+    for (const command of ['npx --no cockpit sync --config cockpit.toml',
         'npx --no cockpit setup --config cockpit.toml --write-instruction-files', 'npx --no cockpit setup --config cockpit.toml --write-instruction-pointers']) {
         expect(decision(command), command).toBe('allow')
     }
+    expect(decision('npx --no cockpit reset --config cockpit.toml --apply')).toBe('ask')
 }, 120_000)
 
 it('rolls back the whole guard publication when a staged registration cannot be published', async () => {
-    // A person approves each server, so removing the recorded approval changes the published settings.
-    const { root, configPath } = await surfaceConsumer('guard-rollback', { mcp: { command: '/usr/bin/true' }, custom: '\n[autonomy]\nmcp_approve = "person"\n' })
+    // Only a recorded approval enables a server, so removing it changes the published settings.
+    const { root, configPath } = await surfaceConsumer('guard-rollback', { mcp: { command: '/usr/bin/true' } })
     await writeFile(join(root, 'app/.mcp.json'), JSON.stringify({ mcpServers: { 'approved-server': { command: '/usr/bin/true' } } }))
     const initial = await syncGeneratedEnvironment({ configPath })
     if (initial.kind !== 'complete') throw new Error(JSON.stringify(initial))

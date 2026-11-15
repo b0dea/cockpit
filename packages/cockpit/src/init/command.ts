@@ -25,14 +25,12 @@ interface InitCommandInput {
 }
 
 /**
- * Consent and answers supplied as arguments by a caller with no terminal. The digests are the ones a
- * pending run printed, so acceptance stays bound to the exact bytes and no flag accepts blindly.
+ * Answers supplied as a file by a caller with no terminal. init writes inside the cockpit root, and
+ * the person reviews what it wrote in the diff.
  */
 export interface UnattendedInit {
-    readonly previewSha256: string
     /** The parsed answers file, keyed by interview field (nested tables spell the dotted field names). */
     readonly answers: Readonly<Record<string, unknown>>
-    readonly defaultsSha256?: string
 }
 
 interface InitCommandOptions {
@@ -43,7 +41,6 @@ interface InitCommandOptions {
 
 export interface InitCommandIo {
     readonly terminal: boolean
-    readonly confirm: (preview: NonNullable<InitApplicationOutcome['result']>) => Promise<string | undefined>
     readonly writeArtifact: (destination: string, artifact: string) => Promise<void>
     readonly answerQuestion?: (question: NonNullable<NonNullable<InitApplicationOutcome['result']>['question']>) => Promise<string | undefined>
     readonly chooseCockpitRoot?: (question: CockpitRootQuestion) => Promise<string | undefined>
@@ -125,7 +122,7 @@ function answerProvenance(answers: Readonly<Record<string, unknown>>, answered: 
 /**
  * Who chose the answer to one question, as the answers file records it. An agent can write that file,
  * so its word is not evidence a person decided: a trust decision it supplies is never recorded as the
- * operator's, whatever its [provenance] says, and waits under unconfirmed for a person.
+ * operator's, whatever its [provenance] says, and cockpit.toml names it in a comment for the person reviewing the diff.
  */
 function provenanceFor(field: string, marks: ReadonlyMap<string, AnswerProvenance>): AnswerProvenance {
     if (field === 'configuration.defaults') return 'operator-confirmed'
@@ -133,6 +130,14 @@ function provenanceFor(field: string, marks: ReadonlyMap<string, AnswerProvenanc
     // One marked derived is still checked against what init read, and refused where it read nothing.
     if (isTrustDecision(field)) return marked === 'agent-default' || marked === 'derived' ? marked : 'unattributed'
     return marked ?? (UNATTRIBUTED_UNLESS_MARKED.includes(field) ? 'unattributed' : 'operator-confirmed')
+}
+
+/** The defaults are written as drafted, so no caller has them to answer; listing them read as one more question. */
+function writtenAsDrafted(outcome: InitApplicationOutcome): InitApplicationOutcome {
+    const interview = outcome.result?.interview
+    if (!interview?.outstanding.some(row => row.field === 'configuration.defaults')) return outcome
+    return { ...outcome, result: { ...outcome.result!, interview: { ...interview,
+        outstanding: interview.outstanding.filter(row => row.field !== 'configuration.defaults') } } }
 }
 
 /** Future questions can disappear after an answer; only actual questions and recorded answers count as used. */
@@ -150,15 +155,14 @@ function noteInterview(asked: Set<string>, outcome: InitApplicationOutcome): voi
  * so they are not outstanding: listing them read as if init had ignored them.
  */
 function leftOutstanding(outcome: InitApplicationOutcome, supplied: ReadonlyMap<string, unknown>,
-    marks: ReadonlyMap<string, AnswerProvenance>, unattended: UnattendedInit): InitApplicationOutcome {
+    marks: ReadonlyMap<string, AnswerProvenance>): InitApplicationOutcome {
     const interview = outcome.result?.interview
     if (!interview) return outcome
     const stopped = outcome.result?.question?.field
     // The document owner asks for the machine floor and posture only when Compose files are declared.
     const compose = supplied.get('environment.compose_files')
     const runtimeDeferred = Array.isArray(compose) && compose.length === 0
-    const answered = (field: string) => field === 'configuration.defaults' ? unattended.defaultsSha256 !== undefined
-        : supplied.has(field) || marks.get(field) === 'derived'
+    const answered = (field: string) => field === 'configuration.defaults' || supplied.has(field) || marks.get(field) === 'derived'
             || runtimeDeferred && (field === 'environment.machine' || field === 'environment.posture')
     return { ...outcome, result: { ...outcome.result!, interview: { ...interview,
         outstanding: interview.outstanding.filter(row => row.field === stopped || !answered(row.field)) } } }
@@ -180,18 +184,10 @@ function derivedProposal(field: string, pending: InitApplicationOutcome): { valu
 
 function unattendedAnswer(
     field: string,
-    expectedSha256: string | undefined,
     supplied: ReadonlyMap<string, unknown>,
-    unattended: UnattendedInit,
     marks: ReadonlyMap<string, AnswerProvenance>,
     pending: InitApplicationOutcome,
 ): UnattendedAnswer {
-    if (field === 'configuration.defaults') {
-        if (unattended.defaultsSha256 === undefined) return { kind: 'missing' }
-        if (unattended.defaultsSha256 !== expectedSha256) return { kind: 'refusal', outcome: refusal('INIT_DEFAULTS_NOT_ACCEPTED',
-            '--accept-defaults does not equal the digest of the surfaced defaults; rerun without it to read the current digest') }
-        return { kind: 'answer', bytes: JSON.stringify({ confirmed: true, sha256: unattended.defaultsSha256 }) }
-    }
     let value = supplied.get(field)
     if (value === undefined && marks.get(field) === 'derived') {
         const derived = derivedProposal(field, pending)
@@ -217,7 +213,6 @@ function recordedAnswerConflict(
     preview: InitApplicationOutcome,
     supplied: ReadonlyMap<string, unknown>,
     marks: ReadonlyMap<string, AnswerProvenance>,
-    unattended: UnattendedInit,
 ): InitApplicationOutcome | undefined {
     const placement = preview.result?.interview?.cockpitRoot
     const suppliedPlacement = supplied.get('cockpit.root')
@@ -226,9 +221,9 @@ function recordedAnswerConflict(
     const answered = preview.result?.interview?.answered ?? []
     const recorded = preview.result?.estate?.answers ?? []
     for (const [index, field] of answered.entries()) {
-        // The defaults are accepted by digest, not by the answers file, and are bound to the draft they confirmed.
+        // The defaults are written as drafted, not taken from the answers file.
         if (field === 'configuration.defaults') continue
-        const now = unattendedAnswer(field, undefined, supplied, unattended, marks, preview)
+        const now = unattendedAnswer(field, supplied, marks, preview)
         if (now.kind === 'refusal') return now.outcome
         if (now.kind !== 'answer' || recorded[index] === undefined) continue
         let same = false
@@ -250,7 +245,7 @@ export async function runInitOperatorCommand(
     const platform = input.platform ?? process.platform
     if (platform !== 'darwin' && platform !== 'linux') return unsupportedInitPlatformOutcome(platform)
     const asked = new Set<string>()
-    const outcome = await drive({ ...input, platform }, options, io, application, asked)
+    const outcome = writtenAsDrafted(await drive({ ...input, platform }, options, io, application, asked))
     if (!options.unattended || outcome.kind !== 'complete' || asked.size === 0) return outcome
     // A finished run that ignored part of the file would otherwise look like it honoured all of it.
     const ignored = [...answersByField(options.unattended.answers).fields.keys()]
@@ -309,7 +304,7 @@ async function drive(
     if (preview.kind !== 'pending' || preview.status !== 0) return preview
     if (!unattended && (!options.interactive || options.json)) return preview
     if (!unattended && !io.terminal) return refusal('INIT_TERMINAL_REQUIRED',
-        'interactive init requires an attached terminal; an agent without one passes --accept-preview and --answers instead')
+        'interactive init requires an attached terminal; an agent without one passes --answers instead')
     const rootQuestion = preview.result?.cockpitRoot
     if (rootQuestion) {
         asked.add(rootQuestion.field)
@@ -318,10 +313,6 @@ async function drive(
         const option = rootQuestion.options.find(row => row.answer === answer)
         if (answer !== undefined && !option) return refusal('INIT_ANSWER_INVALID',
             `cockpit.root must be one of ${rootQuestion.options.map(row => JSON.stringify(row.answer)).join(' or ')}`)
-        // The preview digest does not depend on the root, so a stale one is refused before the folder is created.
-        if (option && unattended && unattended.previewSha256 !== preview.result!.previewSha256) {
-            return refusal('INIT_PREVIEW_NOT_ACCEPTED', '--accept-preview does not equal the digest of the pending preview; rerun without it to read the current digest')
-        }
         if (option?.unavailable !== undefined) return refusal('INIT_COCKPIT_ROOT_UNAVAILABLE',
             `cockpit.root = ${JSON.stringify(option.answer)} cannot be used here: ${option.unavailable}`)
         if (option?.answer === 'dedicated') {
@@ -340,27 +331,14 @@ async function drive(
             if (preview.kind !== 'pending' || preview.status !== 0) return preview
         }
     }
+    // init writes only inside the cockpit root, and the person reviews what it wrote in the diff, so
+    // asking for the preview runs, or with an answers file or at a terminal, writes it.
     const accepted = { ...shared, accepted: true, acceptedPreviewSha256: preview.result!.previewSha256 } as const
-    let outcome: InitApplicationOutcome
-    if (unattended && unattended.previewSha256 !== preview.result!.previewSha256) {
-        return refusal('INIT_PREVIEW_NOT_ACCEPTED', '--accept-preview does not equal the digest of the pending preview; rerun without it to read the current digest')
-    }
     if (unattended && supplied) {
-        const conflict = recordedAnswerConflict(input, preview, supplied.fields, marks, unattended)
+        const conflict = recordedAnswerConflict(input, preview, supplied.fields, marks)
         if (conflict) return conflict
     }
-    // These stages are returned only after the application authenticates the recorded digest and
-    // sources. surface-published can instead present changed bootstrap bytes for fresh acceptance.
-    const acceptedDraft = preview.result?.stage === 'draft-prepared' || preview.result?.stage === 'draft-observed'
-        || preview.result?.stage === 'surfaces-verified' || preview.result?.stage === 'environment-verified'
-    if (preview.result?.question === undefined && !unattended && !acceptedDraft) {
-        const answer = await io.confirm(preview.result!)
-        if (answer !== preview.result!.previewSha256) {
-            return refusal('INIT_PREVIEW_NOT_ACCEPTED', 'explicitly confirm the displayed preview to accept the selected bootstrap target')
-        }
-        outcome = await application(accepted)
-    } else if (preview.result?.question === undefined) outcome = await application(accepted)
-    else outcome = preview
+    let outcome = preview.result?.question === undefined ? await application(accepted) : preview
     for (let answered = 0; outcome.kind === 'pending' && outcome.result?.question !== undefined; answered += 1) {
         if (answered >= MAX_INTERVIEW_ANSWERS) return refusal('INIT_INTERVIEW_LIMIT_EXCEEDED',
             `the interview still asks questions after ${MAX_INTERVIEW_ANSWERS} answers; rerun ${initCommand({ root: input.root, target: (input.tools ?? [input.target]).join(',') })} with the same options to resume from the persisted answers`)
@@ -368,11 +346,14 @@ async function drive(
         let bytes: string | undefined
         // A person typing at the terminal states their own answer.
         let answerProvenanceValue: AnswerProvenance = 'operator-confirmed'
-        if (unattended && supplied) {
-            const resolved = unattendedAnswer(question.field, question.expectedSha256, supplied.fields, unattended, marks, outcome)
+        if (question.field === 'configuration.defaults') {
+            // The defaults are written into cockpit.toml as drafted; the person reviews them in the diff.
+            bytes = JSON.stringify({ confirmed: true, sha256: question.expectedSha256 })
+        } else if (unattended && supplied) {
+            const resolved = unattendedAnswer(question.field, supplied.fields, marks, outcome)
             if (resolved.kind === 'refusal') return resolved.outcome
             // An unanswered field is not a failure: the pending result lists what is still outstanding.
-            if (resolved.kind === 'missing') return leftOutstanding(outcome, supplied.fields, marks, unattended)
+            if (resolved.kind === 'missing') return leftOutstanding(outcome, supplied.fields, marks)
             bytes = resolved.bytes
             answerProvenanceValue = provenanceFor(question.field, marks)
         } else {

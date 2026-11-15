@@ -14,8 +14,8 @@ import { z } from 'zod'
 import { isProcessGone, observeProcessStart, processHost } from '../environment/claims.js'
 import { hasErrorCode, RefusalError } from '../environment/contract.js'
 import { executeProbe } from '../environment-exec/execute.js'
-import { DECIDERS, GRADE_MODES } from '../schema.js'
-import { WORK_ORDER_ID, WorkOrderFrontMatter } from './contract.js'
+import { GRADE_MODES } from '../schema.js'
+import { DECIDERS, WORK_ORDER_ID, WorkOrderFrontMatter } from './contract.js'
 
 export const WORK_RECORD_DIRECTORY = '.cockpit/work-orders'
 const RECORD_LIMIT_BYTES = 1_048_576
@@ -69,7 +69,7 @@ export const WorkRecord = z.object({
     // against the bar, with its text before and after. An agent's amendment is judged at the next grade.
     amendments: z.array(z.object({ at, by, from: z.string().length(64), to: z.string().length(64), weakened: z.array(z.string()).max(64),
         review: z.array(z.object({ field: z.string().max(64), before: z.string().max(131_072), after: z.string().max(131_072) }).strict()).max(128) }).strict()).max(256),
-    // A person's (or, where [work.gates] allows, an agent's or CI's) acknowledgement that the change weakened tests:
+    // An agent's or, where the order's grading needs one, a person's acknowledgement that the change weakened tests:
     // it covers exactly the findings its digest names, so a later weakening needs its own.
     acknowledgements: z.array(z.object({ at, by, digest: z.string().length(64), findings: z.array(z.string().max(1_100)).max(256), note }).strict()).max(256),
     attempts: z.number().int().min(0),
@@ -85,7 +85,7 @@ export const WorkRecord = z.object({
     evaluatorFailed: z.object({ at }).strict().optional(),
     // A decision is resolved by a later `resolution` note naming it in `resolves`: with `record`, the decision
     // record it is written in; without, `text` says why it made no lasting decision. The latest resolution counts.
-    notes: z.array(z.object({ at, by: z.enum(['agent', 'person', 'ci']), kind: z.enum(['note', 'question', 'answer', 'decision', 'resolution']), text: note,
+    notes: z.array(z.object({ at, by, kind: z.enum(['note', 'question', 'answer', 'decision', 'resolution']), text: note,
         answers: z.number().int().min(1).optional(), resolves: z.number().int().min(1).optional(), record: z.string().max(1_100).optional() }).strict()).max(1_024),
     closure: z.object({ at, by, how: z.enum(['graded', 'subagent-reported', 'checks-passed', 'self-reported', 'ungraded', 'partial', 'abandoned']), note: note.optional() }).strict().optional(),
     // Each time a person granted an order at its attempt cap fresh attempts: how many had failed, why, and in brief what failed last,

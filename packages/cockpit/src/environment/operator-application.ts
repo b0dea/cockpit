@@ -1,9 +1,10 @@
-import { isDeepStrictEqual } from 'node:util'
-import { decide, policyWeakening, policyWeakeningDiagnostic, POLICY_RECORD_PATH, weakeningDigest, writeRecordedPolicy, type EffectivePolicy, type PolicyWeakening } from '../autonomy.js'
-import { loadAutonomyPolicy } from '../config/load.js'
+import { dirname } from 'node:path'
+
+import { loadCockpitConfig, readBoundedInput } from '../config/load.js'
+import { recordMcpApprovals } from '../config/mcp-approved-toml.js'
 import { guardWideningUnconfirmedDiagnostic, observeGuardConfigChange } from '../guards/policy-change.js'
-import type { Decider } from '../schema.js'
-import { ENVIRONMENT_CODES, type Diagnostic } from './contract.js'
+import { sha256Hex } from '../sha256.js'
+import { ENVIRONMENT_CODES } from './contract.js'
 import { EXIT_CODES } from '../invocation.js'
 import { refusalOutcome as refusal } from '../refusal.js'
 import type { ResetCommandInput } from './application/lifecycle-context.js'
@@ -14,23 +15,27 @@ import type {
     GeneratedStaleRemovalApproval,
     GeneratedStaleRemovalApprovalRequest,
 } from './generated-application/shared.js'
+import type { Diagnostic } from './contract.js'
 
 interface OperatorAdmission {
     readonly interactive: boolean
     readonly json: boolean
     readonly ci: string | undefined
     readonly terminal: boolean
-    // `reset --apply`: apply without a person's confirmation, which only [autonomy] reset can allow.
+    // `reset --apply`: apply without a person's confirmation, which only a declared seed allows.
     readonly apply?: boolean
 }
 
+/** A declared MCP server at sync: what it runs, the digest a person's yes records, and whether cockpit.toml approves it. */
+export type McpApproval = Readonly<{ name: string; sha256: string; approved: boolean; sources: readonly string[]; runs: string }>
+
 /**
- * The autonomy policy a gated command reads, or the refusal that it could not be read. `widened` names
- * the fields by which cockpit.toml widens the guards this machine was generated from, and binds the
- * exact configuration bytes a confirmation of them covers.
+ * What the one fixed rule reads from cockpit.toml as it is on disk: the fields by which it widens
+ * the guards this machine was generated from, and whether a seed refills the data a reset deletes.
+ * `approveMcp` records a person's approvals in exactly the bytes read here, and returns their digest.
  */
-type OperatorPolicy = Readonly<{ current: EffectivePolicy; recorded?: EffectivePolicy; record: () => Promise<void>
-    widened?: Readonly<{ fields: readonly string[]; configSha256: string }> }>
+export type OperatorPolicy = Readonly<{ configSha256: string; widened: readonly string[]; seeded: boolean
+    approveMcp: (approvals: readonly McpApproval[]) => Promise<string | OperatorCommandOutcome> }>
 
 interface OperatorCommandOutcome {
     readonly status: number
@@ -56,46 +61,48 @@ export type GeneratedEnvironmentSyncHandlerInput = GeneratedEnvironmentSyncInput
     ) => Promise<GeneratedStaleRemovalApproval | undefined>
 }>
 
+/** What `sync --interactive` shows a person before the one yes: what widens, and the MCP servers it enables. */
+export type WideningPreview = Readonly<{ widens: readonly string[]; mcpServers: readonly McpApproval[] }>
+
 interface SyncOperatorApplicationAdapters {
     readonly synchronize: (input: GeneratedEnvironmentSyncHandlerInput) => Promise<OperatorCommandOutcome>
-    readonly confirmStaleRemoval: (request: GeneratedStaleRemovalApprovalRequest) => Promise<string | undefined>
     readonly policy: (configPath: string) => Promise<OperatorPolicy | OperatorCommandOutcome>
-    readonly confirmPolicyWeakening: (request: Readonly<{ weakened: readonly PolicyWeakening[]; widened: readonly string[]; digest: string }>) => Promise<string | undefined>
+    readonly confirmWidening: (preview: WideningPreview) => Promise<boolean>
 }
 
+const isPolicy = (value: OperatorPolicy | OperatorCommandOutcome): value is OperatorPolicy => 'configSha256' in value
 
-const isPolicy = (value: OperatorPolicy | OperatorCommandOutcome): value is OperatorPolicy => 'current' in value
-
-/** The production policy adapter: cockpit.toml's policy now, the recorded one, and how to record the current one. */
+/** The production policy adapter, read from cockpit.toml and the guard record of this machine. */
 export async function loadOperatorPolicy(configPath: string): Promise<OperatorPolicy | OperatorCommandOutcome> {
-    const loaded = await loadAutonomyPolicy(configPath)
-    if ('refusal' in loaded) return { status: 2, result: null, diagnostics: [loaded.refusal] }
-    const change = await observeGuardConfigChange(loaded.root, loaded.source)
-    return { current: loaded.current, ...loaded.recorded ? { recorded: loaded.recorded } : {}, record: () => writeRecordedPolicy(loaded.root, loaded.current),
-        ...change?.kind === 'widening' ? { widened: { fields: change.fields, configSha256: loaded.source.sha256 } } : {} }
+    const loaded = await loadCockpitConfig(configPath)
+    if (loaded.kind !== 'complete') return { status: 2, result: null, diagnostics: loaded.diagnostics }
+    const { config, source } = loaded.result
+    const change = await observeGuardConfigChange(dirname(source.path), { sha256: source.sha256, config })
+    return { configSha256: source.sha256, widened: change?.kind === 'widening' ? change.fields : [], seeded: config.environment.seed !== undefined,
+        approveMcp: async approvals => {
+            const read = await readBoundedInput(source.path)
+            if (read.kind !== 'complete' || sha256Hex(read.bytes) !== source.sha256) return refusal(ENVIRONMENT_CODES.CONFIG_CHANGED_DURING_EXECUTION,
+                'cockpit.toml changed during review; nothing was written', source.path)
+            const written = await recordMcpApprovals(source.path, read.bytes.toString('utf8'), source.sha256, config,
+                Object.fromEntries(approvals.map(row => [row.name, row.sha256])))
+            return written.kind === 'complete' ? written.sha256 : { status: 2, result: null, diagnostics: [{ severity: 'error' as const,
+                code: written.code as Diagnostic['code'], message: written.message, fix: written.fix, target: source.path } as Diagnostic] }
+        } }
 }
 
-/** Why `decider` does not let this run pass the decision, as the refusal a command returns, or undefined when it does. */
-function autonomyRefusal(field: string, decider: Decider, admission: OperatorAdmission): OperatorCommandOutcome | undefined {
-    const decision = decide(decider, { CI: admission.ci })
-    if (decision === 'proceed') return undefined
-    // Each code is a literal so the diagnostic inventory reads its fix beside it.
-    return decision === 'person'
-        ? { status: 2, result: null, diagnostics: [{ severity: 'error' as const, target: field,
-            code: 'AUTONOMY_PERSON_REQUIRED' as const satisfies typeof ENVIRONMENT_CODES.AUTONOMY_PERSON_REQUIRED,
-            message: `[autonomy] ${field} = "person" in cockpit.toml: this run cannot take the decision without a person`,
-            fix: 'a person runs the same command with --interactive in a terminal outside CI, or a person changes the field in cockpit.toml and accepts the change at sync' }] }
-        : { status: 2, result: null, diagnostics: [{ severity: 'error' as const, target: field,
-            code: 'AUTONOMY_CI_ONLY' as const satisfies typeof ENVIRONMENT_CODES.AUTONOMY_CI_ONLY,
-            message: `[autonomy] ${field} = "ci" in cockpit.toml: this decision is taken only in CI, behind the reviewers of its protected environment`,
-            fix: 'push the change and let the CI job run the command, or have a person change the field in cockpit.toml and accept the change at sync' }] }
-}
-
-// A weakening the last sync did not accept is not in force: the command it would let through
-// refuses, as sync does, until a person accepts it there or the change is reverted.
-function weakeningRefusal(weakened: readonly PolicyWeakening[], unchanged: string, result: unknown = null): OperatorCommandOutcome {
-    const diagnostic = policyWeakeningDiagnostic(weakened)
-    return { status: 2, result, diagnostics: [{ ...diagnostic, message: `${diagnostic.message}; ${unchanged}` }] }
+// A reset deletes stack data. An agent applies one where a declared seed refills it, and only while
+// cockpit.toml carries no edit that widens what agents may do: an agent could declare a volume
+// resettable and a seed in the same edit.
+function resetRefusal(policy: OperatorPolicy, configPath: string, unchanged: string): OperatorCommandOutcome | undefined {
+    if (policy.widened.length) {
+        const diagnostic = guardWideningUnconfirmedDiagnostic(policy.widened, configPath)
+        return { status: 2, result: null, diagnostics: [{ ...diagnostic, message: `${diagnostic.message}; ${unchanged}` }] }
+    }
+    if (policy.seeded) return undefined
+    return { status: 2, result: null, diagnostics: [{ severity: 'error' as const, target: 'environment.seed',
+        code: ENVIRONMENT_CODES.RESET_CONFIRMATION_REQUIRED,
+        message: `cockpit.toml declares no [environment] seed to refill the data a reset deletes, so this run cannot apply it without a person; ${unchanged}`,
+        fix: 'a person runs the same command with --interactive in a terminal outside CI and answers the preview, or the team declares [environment] seed in cockpit.toml' }] }
 }
 
 export async function runResetOperatorApplication(
@@ -106,9 +113,7 @@ export async function runResetOperatorApplication(
     if (!admission.interactive && admission.apply) {
         const policy = await adapters.policy(input.configPath)
         if (!isPolicy(policy)) return policy
-        const weakened = policy.recorded ? policyWeakening(policy.recorded, policy.current).filter(row => row.field === 'autonomy.reset') : []
-        if (weakened.length) return weakeningRefusal(weakened, 'nothing was reset')
-        const refused = autonomyRefusal('reset', policy.current.autonomy.reset, admission)
+        const refused = resetRefusal(policy, input.configPath, 'nothing was reset')
         if (refused) return refused
         const opened = await adapters.begin(input)
         return 'decide' in opened ? opened.decide('approve') : opened
@@ -146,24 +151,24 @@ export interface StacksPruneOperatorSession {
 
 interface StacksPruneOperatorAdapters {
     readonly begin: (input: Readonly<{ configPath: string; scope: StacksPruneScope }>) => Promise<StacksPruneOperatorSession | OperatorCommandOutcome>
-    /** Shows the preview to a person at a terminal and returns the digest they typed. */
-    readonly confirm: (preview: OperatorCommandOutcome) => Promise<string | undefined>
+    /** Shows the preview to a person at a terminal and returns whether they answered yes. */
+    readonly confirm: (preview: OperatorCommandOutcome) => Promise<boolean>
     readonly policy: (configPath: string) => Promise<OperatorPolicy | OperatorCommandOutcome>
 }
 
 function pruneUnconfirmed(message: string): OperatorCommandOutcome {
     return { status: 2, result: null, diagnostics: [{ severity: 'error' as const, target: 'stacks',
         code: 'STACKS_PRUNE_UNCONFIRMED' as const satisfies typeof ENVIRONMENT_CODES.STACKS_PRUNE_UNCONFIRMED,
-        message, fix: 'a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs stacks prune --config <your cockpit.toml> --interactive in a terminal outside CI, reads the preview and types its digest' }] }
+        message, fix: 'a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs stacks prune --config <your cockpit.toml> --interactive in a terminal outside CI, reads the preview and answers yes' }] }
 }
 
 /**
  * `stacks prune`: a preview by default. Removing an orphan whose checkout is gone is housekeeping
  * anyone can undo by bringing the stack up again, so `--apply` passes for an agent; a prune that
- * deletes volumes deletes data, and passes only where `[autonomy] reset` lets this run reset. That
- * policy is this cockpit's, so an agent's `--apply` covers only this cockpit's stacks: another
- * cockpit may require a person for the same removal. `--interactive` is a person's approval of the
- * exact preview by its digest, and covers every stack on the machine.
+ * deletes volumes deletes data, and passes only where this cockpit lets an agent reset. That rule is
+ * this cockpit's, so an agent's `--apply` covers only this cockpit's stacks: another cockpit may
+ * require a person for the same removal. `--interactive` is a person's yes to the exact preview,
+ * and covers every stack on the machine.
  */
 export async function runStacksPruneOperatorApplication(
     input: Readonly<{ configPath: string }>,
@@ -178,130 +183,78 @@ export async function runStacksPruneOperatorApplication(
     if (!('apply' in opened)) return opened
     if (!admission.interactive && !admission.apply || opened.empty) return opened.preview
     if (admission.interactive) {
-        if (await adapters.confirm(opened.preview) !== opened.digest) return pruneUnconfirmed('the typed digest did not match the prune preview; nothing was removed')
+        if (!await adapters.confirm(opened.preview)) return pruneUnconfirmed('the prune preview was not approved; nothing was removed')
         return opened.apply()
     }
     if (opened.deletesData) {
         const policy = await adapters.policy(input.configPath)
         if (!isPolicy(policy)) return policy
-        const weakened = policy.recorded ? policyWeakening(policy.recorded, policy.current).filter(row => row.field === 'autonomy.reset') : []
-        if (weakened.length) return weakeningRefusal(weakened, 'nothing was pruned')
-        const refused = autonomyRefusal('reset', policy.current.autonomy.reset, admission)
+        const refused = resetRefusal(policy, input.configPath, 'nothing was pruned')
         if (refused) return refused
     }
     return opened.apply()
 }
 
-function staleRemovalRefusal(message: string): OperatorCommandOutcome {
-    return refusal('GENERATED_STALE_APPROVAL_REQUIRED', message, 'generated-environment')
+function syncUsage(message: string): OperatorCommandOutcome {
+    return refusal('CLI_USAGE_INVALID', message, 'sync')
 }
 
-function previewedStaleRemoval(outcome: OperatorCommandOutcome):
-    | Readonly<{ state: 'none' }>
-    | Readonly<{ state: 'invalid' }>
-    | Readonly<{ state: 'stale'; request: GeneratedStaleRemovalApprovalRequest }> {
-    if (outcome.status !== 0 || !outcome.result || typeof outcome.result !== 'object') return { state: 'invalid' }
-    const result = outcome.result as Record<string, unknown>
-    if (result.dryRun !== true) return { state: 'invalid' }
-    if (!Object.hasOwn(result, 'staleRemoval')) return { state: 'none' }
-    const candidate = result.staleRemoval
-    if (!candidate || typeof candidate !== 'object') return { state: 'invalid' }
-    const request = candidate as Record<string, unknown>
-    if (request.format !== 'cockpit-stale-removal-request/v1'
-        || typeof request.cockpitId !== 'string' || request.cockpitId.length === 0
-        || typeof request.generation !== 'string' || request.generation.length === 0
-        || typeof request.sourceSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(request.sourceSha256)
-        || typeof request.digest !== 'string' || !/^[a-f0-9]{64}$/.test(request.digest)
-        || !Array.isArray(request.entries) || request.entries.length === 0) return { state: 'invalid' }
-    return { state: 'stale', request: candidate as GeneratedStaleRemovalApprovalRequest }
+// Removing files cockpit generated and no longer generates narrows what is written, so it never waits.
+const approveStaleRemoval = async (request: GeneratedStaleRemovalApprovalRequest) =>
+    ({ format: 'cockpit-stale-removal-approval/v1' as const, digest: request.digest })
+
+/** The MCP servers a dry run that previewed every declared server as approved reports as not yet approved. */
+function previewedApprovals(outcome: OperatorCommandOutcome): readonly McpApproval[] | undefined {
+    const result = outcome.result as { dryRun?: unknown; mcpApprovals?: unknown } | null
+    if (outcome.status !== 0 || result?.dryRun !== true) return undefined
+    const rows = result.mcpApprovals ?? []
+    return Array.isArray(rows) && rows.every(row => typeof row?.name === 'string' && typeof row.sha256 === 'string' && /^[a-f0-9]{64}$/.test(row.sha256)
+        && typeof row.approved === 'boolean' && typeof row.runs === 'string' && Array.isArray(row.sources)) ? rows as McpApproval[] : undefined
 }
 
-// The one place sync's decision lives: who may write, whether a weakened policy or a widened guard was
-// accepted, and whether stale generated files go without a person. A dry run writes nothing and passes
-// untouched. The guard refuses an agent's sync while an edit widens it only where it proves the call
-// starts cockpit; a package script, a package manager's exec or node with flags start it too, so the
-// widening waits for a yes at a terminal here, whatever started sync. That is a bar, not a proof of a
-// person: an agent that allocates a pseudo-terminal can answer the prompt as it can any --interactive one.
+// The one place sync's decision lives. A dry run writes nothing and passes untouched. An agent's sync
+// applies every change that does not widen what agents may do; the team sync refuses one that does.
+// `--interactive` shows a person one preview of what widens and the MCP servers a yes enables, and on
+// yes records the approvals in cockpit.toml and applies exactly the bytes shown. The yes is a bar, not
+// a proof of a person: an agent that allocates a pseudo-terminal can answer it, which is why the
+// prompt also refuses inside a session an agent tool marks.
 export async function runSyncOperatorApplication(
     input: GeneratedEnvironmentCommandInput & Readonly<{ dryRun?: boolean }>,
     admission: OperatorAdmission,
     adapters: SyncOperatorApplicationAdapters,
 ): Promise<OperatorCommandOutcome> {
     if (input.dryRun === true) return adapters.synchronize(input)
-    if (admission.interactive && (admission.json || admission.ci && admission.ci.length > 0)) {
-        return staleRemovalRefusal('interactive sync requires a human terminal outside CI and JSON modes')
-    }
-    if (admission.interactive && !admission.terminal) return staleRemovalRefusal('interactive sync requires terminal input')
+    if (!admission.interactive) return adapters.synchronize({ ...input, authorizeStaleRemoval: approveStaleRemoval })
+    if (admission.json || admission.ci && admission.ci.length > 0) return syncUsage('interactive sync requires a human terminal outside CI and JSON modes')
+    if (!admission.terminal) return syncUsage('interactive sync requires terminal input')
+    const preview = await adapters.synchronize({ ...input, dryRun: true, approveDeclaredMcp: true })
+    if (preview.status !== 0) return preview
+    const declared = previewedApprovals(preview)
+    if (!declared) return refusal('CLI_INTERNAL_ERROR', 'interactive sync received an invalid dry-run result', 'sync')
     const policy = await adapters.policy(input.configPath)
     if (!isPolicy(policy)) return policy
-    // A person's sync is the person's decision; only a sync gated on ci is refused outside CI here, and
-    // the guard keeps an agent's sync from running unless [autonomy] sync is agent.
-    if (policy.current.autonomy.sync === 'ci') {
-        const refused = autonomyRefusal('sync', 'ci', admission)
-        if (refused) return refused
-    }
-    const reviewedPolicy = JSON.stringify([policy.current, policy.recorded, policy.widened])
-    const revalidatePolicy = async (): Promise<OperatorCommandOutcome | undefined> => {
-        const latest = await adapters.policy(input.configPath)
-        if (!isPolicy(latest)) return latest
-        if (JSON.stringify([latest.current, latest.recorded, latest.widened]) !== reviewedPolicy) {
-            return refusal('POLICY_WEAKENING_UNCONFIRMED', 'policy changed during review; nothing was written; review a fresh sync preview', 'autonomy')
+    // The yes records the servers cockpit.toml does not approve yet, and the person also sees each one an
+    // unsynced edit approved: a digest typed into the file by an agent starts the same process.
+    const approvals = declared.filter(row => !row.approved)
+    const mcpServers = declared.filter(row => !row.approved || policy.widened.includes(`mcp.approved.${row.name}`))
+    const changed = () => refusal(ENVIRONMENT_CODES.CONFIG_CHANGED_DURING_EXECUTION, 'cockpit.toml changed during review; nothing was written', input.configPath,
+        'run sync --interactive again and review the fresh preview')
+    if ((preview.result as { sourceSha256?: unknown }).sourceSha256 !== policy.configSha256) return changed()
+    let configSha256 = policy.configSha256
+    if (policy.widened.length || mcpServers.length) {
+        if (!await adapters.confirmWidening({ widens: policy.widened, mcpServers })) {
+            const declined = guardWideningUnconfirmedDiagnostic([...new Set([...policy.widened, ...mcpServers.map(row => `mcp.approved.${row.name}`)])], input.configPath)
+            return { status: 2, result: null, diagnostics: [{ ...declined, message: 'the displayed change was not approved; nothing was written' }] }
         }
-        return undefined
-    }
-    const weakened = policy.recorded ? policyWeakening(policy.recorded, policy.current) : []
-    const widened = policy.widened
-    if (weakened.length || widened) {
-        const digest = weakeningDigest(policy.recorded, policy.current, widened)
-        if (!admission.interactive) {
-            return { status: 2, result: { weakened, ...widened ? { widened: widened.fields } : {}, digest },
-                diagnostics: [...weakened.length ? weakeningRefusal(weakened, 'nothing was written').diagnostics : [],
-                    ...widened ? [guardWideningUnconfirmedDiagnostic(widened.fields, input.configPath)] : []] }
-        }
-        if (await adapters.confirmPolicyWeakening({ weakened, widened: widened?.fields ?? [], digest }) !== digest) {
-            return refusal('POLICY_WEAKENING_UNCONFIRMED', 'the displayed policy change was not approved; nothing was written', 'autonomy')
-        }
-        const changed = await revalidatePolicy()
-        if (changed) return changed
-    }
-    // The team sync publishes a widening only as exactly the bytes the person confirmed.
-    const applied = widened ? { ...input, guardWidening: { configSha256: widened.configSha256 } } : input
-    // Stale removal an agent may take is approved for exactly the entries this sync computes.
-    const staleByPolicy = decide(policy.current.autonomy.stale_delete, { CI: admission.ci }) === 'proceed'
-    const approveAll = async (request: GeneratedStaleRemovalApprovalRequest) => ({ format: 'cockpit-stale-removal-approval/v1' as const, digest: request.digest })
-    let outcome: OperatorCommandOutcome
-    if (!admission.interactive || staleByPolicy) {
-        outcome = await adapters.synchronize({ ...applied, ...staleByPolicy ? { authorizeStaleRemoval: approveAll } : {} })
-    } else {
-        const preview = await adapters.synchronize({ ...input, dryRun: true })
-        if (preview.status !== 0) return preview
-        const inspected = previewedStaleRemoval(preview)
-        if (inspected.state === 'invalid') {
-            return refusal('CLI_INTERNAL_ERROR', 'interactive sync received an invalid dry-run result', 'sync')
-        }
-        if (inspected.state === 'none') outcome = await adapters.synchronize(applied)
-        else {
-            const typedDigest = await adapters.confirmStaleRemoval(inspected.request)
-            if (typedDigest !== inspected.request.digest) {
-                return staleRemovalRefusal('the exact stale-removal preview was not approved')
-            }
-            const changed = await revalidatePolicy()
-            if (changed) return changed
-            const previewBytes = JSON.stringify(inspected.request)
-            outcome = await adapters.synchronize({
-                ...applied,
-                authorizeStaleRemoval: async (request) => request.digest === inspected.request.digest
-                    && JSON.stringify(request) === previewBytes
-                    ? { format: 'cockpit-stale-removal-approval/v1', digest: request.digest }
-                    : undefined,
-            })
+        if (approvals.length) {
+            const written = await policy.approveMcp(approvals)
+            if (typeof written !== 'string') return written
+            configSha256 = written
+            const latest = await adapters.policy(input.configPath)
+            if (!isPolicy(latest)) return latest
+            if (latest.configSha256 !== configSha256) return changed()
         }
     }
-    if (outcome.status !== 0) return outcome
-    await policy.record()
-    // The record is a committed file like the generated ones; left out of the change list, the first
-    // sync after init created it unannounced and the person found an untracked file after committing.
-    const result = outcome.result as { changes?: unknown } | null
-    return policy.recorded && isDeepStrictEqual(policy.recorded, policy.current) || !Array.isArray(result?.changes) ? outcome
-        : { ...outcome, result: { ...result, changes: [...result.changes, { operation: 'write', path: POLICY_RECORD_PATH }] } }
+    // The team sync publishes a widening only as exactly the bytes the person approved.
+    return adapters.synchronize({ ...input, guardWidening: { configSha256 }, authorizeStaleRemoval: approveStaleRemoval })
 }

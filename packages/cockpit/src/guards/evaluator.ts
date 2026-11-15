@@ -195,8 +195,6 @@ const GUARD_CONTROL_FILES = [
     ...SURFACE_EXECUTION_CONTROL_PATHS,
     '.claude/settings.local.json', '.codex/hooks.json', 'opencode.json',
     'cockpit/adopted/.claude/settings.json', 'cockpit/adopted/.codex/hooks.json', 'cockpit/adopted/.codex/config.toml',
-    // The policy the last sync accepted: an agent that rewrote it could present its own weakening as accepted.
-    '.cockpit/policy.json',
 ] as const
 // OpenCode loads every module in its plugin directories at start, and the generated Claude plugin
 // bundle carries its own MCP servers and hook registration, so no file below them is data. Every

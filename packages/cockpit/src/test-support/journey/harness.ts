@@ -74,8 +74,8 @@ function install(root: string, layout: 'npm' | 'pnpm'): void {
 }
 
 // A synthetic product: one app directory bind-mounted into one service, a resettable volume beside
-// one that is not, a unit stage and a stage that needs the running stack, team instructions and a
-// reviewed cockpit.toml that lets an agent apply a reset.
+// one that is not, with a seed that refills it, so an agent may apply a reset, a unit stage and a
+// stage that needs the running stack, and team instructions.
 export const PRODUCT_FILES: Readonly<Record<string, string>> = {
     'compose.yml': `services:
   app:
@@ -111,6 +111,7 @@ addressing = "port"
 authentication = "none"
 posture_requirements = [{ requirement = "leased-localhost-ports", addressing = "port" }]
 resettable_volumes = ["data"]
+seed = { argv = ["node", "seed.mjs"], timeout_seconds = 60 }
 
 [environment.machine]
 runtime_memory_mb = 512
@@ -130,13 +131,11 @@ gates = [
 
 [work]
 grading = "checks"
-
-[autonomy]
-reset = "agent"
 `,
     'package.json': `${JSON.stringify({ name: 'shop', private: true, scripts: { test: 'node test.mjs' } }, null, 2)}\n`,
     'test.mjs': "console.log('1 test passed')\n",
     'smoke.mjs': "console.log('smoke passed')\n",
+    'seed.mjs': "console.log('seeded')\n",
     'AGENTS.md': '# Shop\n\nTeam notes stay outside the regions cockpit writes.\n',
     'app/AGENTS.md': '# App\n',
     'app/CLAUDE.md': '@AGENTS.md\n',
@@ -196,8 +195,11 @@ export interface Product {
     readonly root: string
     readonly env: NodeJS.ProcessEnv
     readonly docker: FakeDocker
-    /** Runs one installed-cockpit command as its own process, with `--config cockpit.toml --json` unless told otherwise. */
-    cockpit(args: readonly string[], options?: { launcher?: readonly string[]; json?: boolean; config?: boolean }): Run
+    /**
+     * Runs one installed-cockpit command as its own process, with `--config cockpit.toml --json` unless told otherwise.
+     * `answer` runs it on a pseudo-terminal, as a person's shell does, and types that line once it asks `[yes/no]`.
+     */
+    cockpit(args: readonly string[], options?: { launcher?: readonly string[]; json?: boolean; config?: boolean; answer?: string }): Run
     write(path: string, text: string): void
     read(path: string): string
     git(...args: string[]): string
@@ -225,6 +227,20 @@ export function cloneProduct(source: Product, name: string, machine: Machine): P
     return productAt(root, machine)
 }
 
+// script(1) gives the command a pseudo-terminal, which BSD and util-linux spell differently. The
+// answer goes in only once the prompt shows, and script's input stays open until the command ends:
+// script turns the end of its input into an end-of-file the prompt would read before the answer.
+const ANSWER_AT_PROMPT = `
+answer=$1; shift
+out=$(mktemp); done="$out.done"
+if [ "$(uname)" = Darwin ]; then set -- script -q /dev/null "$@"
+else command=$(for word in "$@"; do printf "'%s' " "$(printf %s "$word" | sed "s/'/'\\\\\\\\''/g")"; done); set -- script -qec "$command" /dev/null; fi
+(until grep -q '\\[yes/no\\]' "$out" || [ -e "$done" ]; do sleep 0.2; done
+ printf '%s\\n' "$answer"
+ until [ -e "$done" ]; do sleep 0.2; done) | { "$@" > "$out"; echo $? > "$done"; }
+cat "$out"; status=$(cat "$done"); rm -f "$out" "$done"; exit "$status"
+`
+
 function productAt(root: string, machine: Machine): Product {
     // Only what a developer's shell carries: no inherited DOCKER_HOST, CI flag or agent session.
     const env: NodeJS.ProcessEnv = {
@@ -234,11 +250,11 @@ function productAt(root: string, machine: Machine): Product {
     }
     return {
         root, env, docker: machine.docker,
-        cockpit(args, { launcher = ['./node_modules/.bin/cockpit'], json = true, config = true } = {}) {
-            const [program, ...prefix] = launcher
-            const result = spawnSync(program!, [...prefix, ...args, ...config ? ['--config', 'cockpit.toml'] : [], ...json ? ['--json'] : []], {
-                cwd: root, env, encoding: 'utf8', timeout: 120_000,
-            })
+        cockpit(args, { launcher = ['./node_modules/.bin/cockpit'], json = true, config = true, answer } = {}) {
+            const argv = [...launcher, ...args, ...config ? ['--config', 'cockpit.toml'] : [], ...json ? ['--json'] : []]
+            const result = answer === undefined
+                ? spawnSync(argv[0]!, argv.slice(1), { cwd: root, env, encoding: 'utf8', timeout: 120_000 })
+                : spawnSync('sh', ['-c', ANSWER_AT_PROMPT, 'answer', answer, ...argv], { cwd: root, env, encoding: 'utf8', timeout: 120_000 })
             if (result.error) throw result.error
             const parsed = json && result.stdout.trim() !== '' ? JSON.parse(result.stdout) as Run['json'] : undefined
             return {

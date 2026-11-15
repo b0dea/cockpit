@@ -3,8 +3,7 @@ import { cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'no
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
-import { loadAutonomyPolicy, observeConfigSource } from './config/load.js'
-import { writeRecordedPolicy } from './autonomy.js'
+import { observeConfigSource } from './config/load.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, writeGuardLocalIdentity } from './guards/local-identity.js'
 import { executeProbe } from './environment-exec/execute.js'
 import { checkGeneratedEnvironment, prepareGeneratedEnvironmentCurrentness } from './environment/generated-application/check.js'
@@ -12,7 +11,7 @@ import { applyGeneratedEnvironmentRepair, syncGeneratedEnvironment } from './env
 import * as transaction from './generated-environment/transaction.js'
 import { proposeGeneratedEnvironmentRepair } from './repair.js'
 import { runCli, type CliIo } from './cli.js'
-import { loadOperatorPolicy } from './environment/operator-application.js'
+import { loadOperatorPolicy, type WideningPreview } from './environment/operator-application.js'
 import { initializeTeamMetadata } from '../test-support/team-metadata.js'
 import { stubComposeTopology } from '../test-support/compose-topology-docker.js'
 
@@ -78,13 +77,9 @@ async function addService(root: string, name: string) {
 // publication helpers, Git and runtime probes), so its wall time scales with machine load rather
 // than with the work under test. The budget is sized for four concurrent workers on a busy host.
 describe('canonical mechanical repair', { timeout: 180_000 }, () => {
-    it('reports a cockpit.toml policy weaker than the recorded one as unconfirmed, and passes once it is reverted', async () => {
-        const { root, configPath } = await consumer()
+    it('reports a cockpit.toml edit that widens what agents may do as waiting for a person, and passes once it is reverted', async () => {
+        const { configPath } = await consumer()
         expect(await initializeTeamMetadata(configPath)).toMatchObject({ kind: 'complete' })
-        // What an operator sync records; this fixture syncs below the operator, which does not.
-        const loaded = await loadAutonomyPolicy(configPath)
-        if (!('current' in loaded)) throw new Error('Synthetic policy fixture failed to load')
-        await writeRecordedPolicy(root, loaded.current)
         const original = await readFile(configPath, 'utf8')
         const check = async () => {
             let stdout = ''
@@ -92,17 +87,16 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
             const status = await runCli(['check', '--config', configPath, '--json'], io, {}, { env: { CI: '1' } })
             return { status, diagnostics: JSON.parse(stdout).diagnostics as { code: string }[] }
         }
-        await writeFile(configPath, `${original}\n[autonomy]\nreset = "agent"\n`)
-        const weakened = await check()
-        expect(weakened.status).toBe(2)
-        expect(weakened.diagnostics[0]).toMatchObject({ code: 'POLICY_WEAKENING_UNCONFIRMED', message: expect.stringContaining('autonomy.reset: person -> agent') })
+        await writeFile(configPath, `${original}\n[work]\ngrading = "off"\n`)
+        const widened = await check()
+        expect(widened.status).toBe(2)
         // The guards generated from the original hold the agent; check says the edit widens them, and where.
-        expect(weakened.diagnostics[1]).toMatchObject({ code: 'GUARD_CONFIG_WIDENED', message: expect.stringContaining('(autonomy.reset)') })
+        expect(widened.diagnostics[0]).toMatchObject({ code: 'GUARD_CONFIG_WIDENED', message: expect.stringContaining('(work.grading)') })
         await writeFile(configPath, `${original}\n# reworded\n`)
         expect((await check()).diagnostics.map(row => row.code)).toEqual(expect.arrayContaining(['GUARD_CONFIG_UNSYNCED']))
         await writeFile(configPath, original)
         const reverted = (await check()).diagnostics.map(row => row.code)
-        expect(reverted).not.toContain('POLICY_WEAKENING_UNCONFIRMED')
+        expect(reverted).not.toContain('GUARD_CONFIG_WIDENED')
         expect(reverted).not.toContain('GUARD_CONFIG_UNSYNCED')
     })
 
@@ -115,10 +109,10 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
         const original = await readFile(configPath, 'utf8')
         const generatedFrom = async () => parseGuardLocalIdentity(await readFile(join(root, GUARD_LOCAL_PATHS.identity), 'utf8'))!.configSha256
         const digestOf = async () => createHash('sha256').update(await readFile(configPath)).digest('hex')
-        const sync = async (args: readonly string[], confirm?: (request: { digest: string }) => Promise<string | undefined>) => {
+        const sync = async (args: readonly string[], confirm?: (preview: WideningPreview) => Promise<boolean>) => {
             let stdout = ''
             const io = { stdout: { write: (text: string) => { stdout += text; return true } }, stderr: { write: () => true },
-                ...confirm ? { confirmPolicyWeakening: confirm } : {} } as CliIo
+                ...confirm ? { confirmWidening: confirm } : {} } as CliIo
             const status = await runCli(['sync', '--config', configPath, ...args], io, {}, { env: {} })
             return { status, stdout }
         }
@@ -130,12 +124,12 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
         expect(envelope.diagnostics).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED', message: expect.stringContaining('(guards.allow)') })])
         expect(envelope.guidance).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED', text: expect.stringContaining('--interactive') })])
         expect(await generatedFrom()).toBe(synced)
-        // A wrong digest is no confirmation; the displayed one applies exactly this edit.
-        expect((await sync(['--interactive'], async () => 'd'.repeat(64))).status).toBe(2)
+        // A no applies nothing; a yes to the preview applies exactly this edit.
+        expect((await sync(['--interactive'], async () => false)).status).toBe(2)
         expect(await generatedFrom()).toBe(synced)
-        const shown: string[] = []
-        expect((await sync(['--interactive'], async request => { shown.push(request.digest); return request.digest })).status).toBe(0)
-        expect(shown).toHaveLength(1)
+        const shown: WideningPreview[] = []
+        expect((await sync(['--interactive'], async preview => { shown.push(preview); return true })).status).toBe(0)
+        expect(shown).toEqual([{ widens: ['guards.allow'], mcpServers: [] }])
         expect(await generatedFrom()).toBe(await digestOf())
         await writeFile(configPath, original)
         expect((await sync(['--json'])).status).toBe(0)
