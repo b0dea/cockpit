@@ -1,10 +1,10 @@
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { GUARD_CHECK_PATH, writeGuardRecord } from './guard-record.js'
+import { GUARD_CHECK_PATH, GUARD_CHECK_PROTOCOL, writeGuardRecord } from './guard-record.js'
 
 const scratch: string[] = []
 afterEach(() => { for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }) })
@@ -52,5 +52,24 @@ describe('guard record', () => {
         // An identity that is no regular file, such as a FIFO a read would wait on until the hook times out, is refused unread.
         execFileSync('mkfifo', [join(root, '.cockpit/local/guard-identity')])
         expect(check()).toMatchObject({ status: 2, stderr: expect.stringContaining('not a regular file') })
+    })
+
+    it('replaces the check in one rename, so a hook starting during sync runs a whole file', async () => {
+        const base = realpathSync(mkdtempSync(join(tmpdir(), 'guard-record-')))
+        scratch.push(base)
+        const home = join(base, 'home')
+        const root = join(base, 'cockpit')
+        mkdirSync(join(root, '.cockpit/guards'), { recursive: true })
+        mkdirSync(join(root, '.cockpit/local'), { recursive: true })
+        writeFileSync(join(root, '.cockpit/guards/bash-guard.sh'), 'printf "%s" "$COCKPIT_GUARD_CHECK_PROTOCOL"\n')
+        writeFileSync(join(root, '.cockpit/local/guard-identity'), 'identity\n')
+        expect(await writeGuardRecord(root, home)).toEqual({ kind: 'complete' })
+        expect(spawnSync('/bin/sh', [join(home, GUARD_CHECK_PATH), root], { encoding: 'utf8', env: { HOME: home, PATH: '/usr/bin:/bin' } }).stdout).toBe(GUARD_CHECK_PROTOCOL)
+        // A second name for the old file keeps its bytes: the new check is a new file, never the old one rewritten in place.
+        writeFileSync(join(home, GUARD_CHECK_PATH), 'previous check\n')
+        linkSync(join(home, GUARD_CHECK_PATH), join(base, 'previous'))
+        expect(await writeGuardRecord(root, home)).toEqual({ kind: 'complete' })
+        expect(readFileSync(join(base, 'previous'), 'utf8')).toBe('previous check\n')
+        expect(readFileSync(join(home, GUARD_CHECK_PATH), 'utf8')).toContain('cockpit sync')
     })
 })

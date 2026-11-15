@@ -5,7 +5,7 @@
 // guard refuses to every agent write. The handler's installed modules are not covered: it imports many
 // files, which no per-call hash of a small file reaches.
 import { createHash } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { readBoundedFile } from '../bounded-read.js'
@@ -41,6 +41,10 @@ const GUARD_RECORD_INPUT_BYTES = 1_048_576
 // /bin/bash, naming every program by absolute path, since one found on the session's search path could
 // be one an agent planted.
 export const GUARD_CHECK_PATH = '.cockpit/guards/check.sh'
+// One check serves every cockpit on the machine, written by whichever sync ran last, possibly another release's.
+// The guard script refuses a check whose protocol is not the one it was written for; raise it when what the check
+// hands the script changes.
+export const GUARD_CHECK_PROTOCOL = '1'
 export const GUARD_CHECK_SCRIPT = `# Written by cockpit sync: finds the cockpit at or above a session's directory and runs its guard script once it and the identity match the digests sync recorded.
 refuse() {
     echo "cockpit guard: $1; a person reviews what changed it and runs cockpit sync in a terminal" >&2
@@ -90,7 +94,7 @@ if [ -f "$i" ]; then
 fi
 h1=$(digest "$script")
 { [ -n "$k1" ] && [ "\${h1%% *}" = "$k1" ]; } || refuse "guard script changed or unrecorded in $c"
-COCKPIT_GUARD_CHECKED_ROOT=$c COCKPIT_GUARD_CHECKED_IDENTITY=$identity exec /bin/bash -c "$script" "$s" "$@"
+COCKPIT_GUARD_CHECK_PROTOCOL=${GUARD_CHECK_PROTOCOL} COCKPIT_GUARD_CHECKED_ROOT=$c COCKPIT_GUARD_CHECKED_IDENTITY=$identity exec /bin/bash -c "$script" "$s" "$@"
 `
 
 /** Where sync records the digest for the cockpit at canonical `root`: the root's own path below the record directory. */
@@ -118,9 +122,21 @@ export async function writeGuardRecord(root: string, home = homedir()): Promise<
     if (digest === undefined) return { kind: 'refusal', message: `${GUARD_SCRIPT_PATH} or ${GUARD_LOCAL_PATHS.identity} is missing or too large to record` }
     const path = guardRecordPath(root, home)
     await mkdir(join(path, '..'), { recursive: true, mode: 0o700 })
-    await writeFile(path, `${digest}\n`, { mode: 0o600 })
-    await writeFile(join(home, GUARD_CHECK_PATH), GUARD_CHECK_SCRIPT, { mode: 0o600 })
+    await replaceFile(path, `${digest}\n`)
+    await replaceFile(join(home, GUARD_CHECK_PATH), GUARD_CHECK_SCRIPT)
     return { kind: 'complete' }
+}
+
+// A hook starting while sync writes would read a cut-off file, and a check cut off after a line falls off its end
+// with exit 0, so each file is written beside its place and renamed over it.
+async function replaceFile(path: string, text: string): Promise<void> {
+    const temporary = `${path}.${process.pid}.tmp`
+    try {
+        await writeFile(temporary, text, { mode: 0o600, flag: 'wx' })
+        await rename(temporary, path)
+    } finally {
+        await rm(temporary, { force: true })
+    }
 }
 
 /** Whether the recorded digest matches the guard the cockpit at `root` holds now. */

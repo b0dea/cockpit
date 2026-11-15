@@ -13,6 +13,7 @@ import { encodeGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/l
 import { fileFingerprint } from '../environment-exec/verified-digest.js'
 import { GUARD_RECOVERY_SHELL } from './guard-recovery.js'
 import { recordTestGuard } from '../test-support/guard-record.js'
+import { GUARD_CHECK_PROTOCOL } from '../guards/guard-record.js'
 
 import { afterAll, describe, expect, it } from 'vitest'
 
@@ -749,6 +750,17 @@ while (Date.now() < end) {
             .toContain('permissionDecision":"deny')
         expect(runGuard(result, bash('git add env/service.env.example'))).toMatchObject(permitted)
         expect(result.sharedGuard.bytes).not.toContain('reports-instance')
+    })
+
+    it('refuses a run through a check from another release, naming sync', async () => {
+        const result = complete(expandRestrictions(await input({ instances: [] })))
+        const root = renderedContexts.get(result)!.root
+        const checked = { COCKPIT_GUARD_CHECKED_ROOT: root, COCKPIT_GUARD_CHECKED_IDENTITY: readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8') }
+        expect(runGuard(result, bash('git status'), { ...checked, COCKPIT_GUARD_CHECK_PROTOCOL: GUARD_CHECK_PROTOCOL })).toMatchObject(permitted)
+        // The machine's one check is written by the latest sync, which may be another cockpit's release.
+        for (const protocol of [{}, { COCKPIT_GUARD_CHECK_PROTOCOL: String(Number(GUARD_CHECK_PROTOCOL) + 1) }] as Record<string, string>[]) {
+            expect(runGuard(result, bash('git status'), { ...checked, ...protocol })).toMatchObject({ status: 2, stderr: expect.stringContaining('another cockpit release') })
+        }
     })
 
     it('keeps destructive policy active when the instance set is empty and denies asks without a prompt tier', async () => {
