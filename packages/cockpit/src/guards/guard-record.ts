@@ -4,7 +4,7 @@
 // runs them only when the digest matches the one sync recorded below `~/.cockpit/guards`, a path the
 // guard refuses to every agent write. The handler's installed modules are not covered: it imports many
 // files, which no per-call hash of a small file reaches.
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -130,7 +130,8 @@ export async function writeGuardRecord(root: string, home = homedir()): Promise<
 // A hook starting while sync writes would read a cut-off file, and a check cut off after a line falls off its end
 // with exit 0, so each file is written beside its place and renamed over it.
 async function replaceFile(path: string, text: string): Promise<void> {
-    const temporary = `${path}.${process.pid}.tmp`
+    // A name no other writer can predict, so none can plant a file there first or collide with it.
+    const temporary = `${path}.${randomBytes(8).toString('hex')}.tmp`
     try {
         await writeFile(temporary, text, { mode: 0o600, flag: 'wx' })
         await rename(temporary, path)
