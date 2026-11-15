@@ -29,7 +29,6 @@ export type HandlerIdentifier = WorkHandlerIdentifier
     | 'preflight'
     | 'ps'
     | 'rebuild'
-    | 'registry-resolve'
     | 'reset'
     | 'restart'
     | 'runtime'
@@ -100,7 +99,6 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     'accept-reset': 'Accept the displayed answer reset with its exact SHA-256 digest',
     abandon: 'Close the order as abandoned; --note says why',
     clear: 'Serve the sibling from its declared checkout again',
-    adoption: 'Path to the legacy adoption shell data',
     answers: 'Path to the init answers file',
     ask: 'Record the note as an open question, which blocks the order until it is answered',
     apply: 'Apply the displayed reversible operation',
@@ -129,7 +127,6 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     'probe-specifications': 'Path to the harness probe specifications; with --write-probe-specifications, the earlier file whose filled rows for unchanged cells carry forward',
     purpose: 'Short purpose of the sibling repository',
     question: 'Number of the open question to answer, as work status lists it',
-    registry: 'Path to the legacy registry input',
     reason: 'With --none: why the decision is not a lasting one',
     record: 'Write a new decision record under [docs] decisions for the decision',
     'record-file': 'An existing decision record under [docs] decisions that cites the order',
@@ -146,7 +143,6 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     'scaffold-compose': 'Write a starting compose.yml for the app in this directory, relative to the root, once; it refuses when a Compose file exists',
     select: 'Optional subset of the gate to run',
     service: 'Declared Compose service the command acts on',
-    'siblings-root': 'Root directory containing sibling checkouts',
     since: 'Collect logs no older than this duration',
     tail: 'Maximum number of log records to collect',
     target: 'Agent tool to set up; comma-separate several (claudecode,opencode)',
@@ -270,7 +266,7 @@ const sources = [
             positional: Object.freeze({ min: 1, max: 1, roles: Object.freeze(['confined-root'] as const) }),
             forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'answers', 'accept-preview', 'accept-defaults']) }),
         }),
-        flags: { target: str(value('surface-target', true)), registry: str(value('confined-path')),
+        flags: { target: str(value('surface-target', true)),
             interactive: bool(), json: jsonFlag,
             answers: str(), 'accept-preview': str(), 'accept-defaults': str(),
             'reset-answer': str(value('field')), 'accept-reset': str(value('sha256')),
@@ -345,15 +341,6 @@ const sources = [
         ordinary: ordinary('confirm', { positional: Object.freeze({ min: 1, max: 1, roles: Object.freeze(['operation'] as const),
             operations: UNCONFIRMED_ANSWER_WORDS }) }),
         flags: configured,
-    },
-    {
-        name: 'registry-resolve',
-        stage: 'set-up',
-        summary: 'Turn a validated shell registry into data shell scripts can source',
-        handler: 'registry-resolve',
-        visibility: 'public',
-        ordinary: ordinary('registry-resolve', { configuration: 'none' }),
-        flags: { registry: str(value('confined-path', true)), 'siblings-root': str(value('confined-path', true)), adoption: str(value('confined-path', true)), json: jsonFlag },
     },
     {
         name: 'upgrade',

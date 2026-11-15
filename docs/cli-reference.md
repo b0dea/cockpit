@@ -15,7 +15,6 @@ Does not read `cockpit.toml`.
 | Flag | Type | Default |
 | --- | --- | --- |
 | `--target` | string | unset |
-| `--registry` | string | unset |
 | `--interactive` | boolean | `false` |
 | `--json` | boolean | `false` |
 | `--answers` | string | unset |
@@ -140,25 +139,6 @@ Reads `cockpit.toml` from `--config`.
 | Flag | Type | Default |
 | --- | --- | --- |
 | `--config` | string | unset |
-| `--json` | boolean | `false` |
-
-| Exit | Meaning |
-| --- | --- |
-| 0 | success |
-| 2 | failure |
-| 130 | cancelled |
-
-## cockpit registry-resolve
-
-Turn a validated shell registry into data shell scripts can source.
-
-Does not read `cockpit.toml`.
-
-| Flag | Type | Default |
-| --- | --- | --- |
-| `--registry` | string | unset |
-| `--siblings-root` | string | unset |
-| `--adoption` | string | unset |
 | `--json` | boolean | `false` |
 
 | Exit | Meaning |

@@ -5,14 +5,14 @@ import { basename, isAbsolute, relative, resolve, sep } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { initCommand } from '../fix-catalogue.js'
 import { canonicalJson } from '../canonical-json.js'
-import { readBoundedInput, schemaIssueSummary, STRUCTURED_INPUT_BYTE_LIMIT } from '../config/load.js'
+import { schemaIssueSummary } from '../config/load.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { errorCause, snapshotJson, RefusalError, tryParseJson, hasErrorCode } from '../environment/contract.js'
 import { judgePostureDeclaration } from '../environment/posture-observation.js'
 import { isSensitiveField, redactSensitiveText } from '../environment/sensitive.js'
 import { CockpitConfig, Guards, InstallPolicy, MachineFloor, Testing, Work, WORK_GRADING, configurationDefaults } from '../schema.js'
 import { toSiblingRows } from '../emit.js'
-import { gaps, parseRegistry, type DocumentedSibling, type Gap } from '../registry-resolve/registry.js'
+import type { DocumentedSibling, Gap } from '../documented-sibling.js'
 import {
     ANSWER_PROVENANCES, confirmedBy, renderCompleteDocument, renderIncompleteDocument, unconfirmedReason,
     type AnswerProvenance, type Attribution, type DerivedAnswer, type DocumentModel, type UnconfirmableAnswer, type UnconfirmedAnswer,
@@ -97,6 +97,7 @@ export type DocumentOutcome =
 
 export interface DocumentCommandInput {
     root: string
+    /** Not read: the shell-registry input is gone; init-application still threads the field. */
     registry?: string
     /** Where init will write cockpit.toml; it is reported back as the outcome's destination. */
     output?: string
@@ -141,11 +142,8 @@ interface DocumentConfigurationInput {
     readonly tools?: readonly string[]
 }
 
-/** Where an unrecorded value was looked for: a shell registry, or the repositories init observed. */
-type DefaultSource = 'registry' | 'estate'
-const defaultReason = (field: string, source: DefaultSource) => source === 'registry'
-    ? `the registry dialect does not record ${field}; materialised from the CockpitConfig schema default`
-    : `no observed repository file declares ${field}; materialised from the CockpitConfig schema default`
+const defaultReason = (field: string) =>
+    `no observed repository file declares ${field}; materialised from the CockpitConfig schema default`
 
 // cockpit.toml is committed beside the cockpit's own install, so the directive names that install.
 // A path to the package that ran this command would point into one machine's temporary or product tree.
@@ -609,9 +607,8 @@ export async function classifyEstateObservation(
 }
 
 function buildAttributions(
-    model: Pick<DocumentModel, 'name' | 'siblings' | 'defaults'>,
+    model: Pick<DocumentModel, 'name' | 'defaults'>,
     root: string | undefined,
-    source: DefaultSource,
 ): Attribution[] {
     const attributions: Attribution[] = []
     const defaults = model.defaults
@@ -637,37 +634,7 @@ function buildAttributions(
         ['work.attempt_cap', defaults.work.attempt_cap, 'the work-order attempt cap'],
         ['work.wip_cap', defaults.work.wip_cap, 'the work-order WIP cap'],
     ] as const) {
-        attributions.push({ target, value, from: 'default', because: defaultReason(field, source) })
-    }
-    for (const sibling of model.siblings) {
-        if (sibling.mount.from === 'inferred') {
-            attributions.push({
-                target: `sibling.${sibling.slug}.mount`,
-                value: sibling.mount.value,
-                from: 'inferred',
-                because: sibling.mount.because ?? 'the registry dialect does not record mount directly',
-            })
-        }
-        if (sibling.acquire.from === 'inferred') {
-            attributions.push({
-                target: `sibling.${sibling.slug}.acquire`,
-                value: sibling.acquire.value,
-                from: 'inferred',
-                because: sibling.acquire.because ?? 'the registry dialect does not record acquisition directly',
-            })
-        }
-        attributions.push({
-            target: `sibling.${sibling.slug}.toolchain`,
-            value: defaults.sibling.toolchain,
-            from: 'default',
-            because: defaultReason('a sibling toolchain', source),
-        })
-        attributions.push({
-            target: `sibling.${sibling.slug}.guides`,
-            value: defaults.sibling.guides,
-            from: 'default',
-            because: defaultReason('guide filenames', source),
-        })
+        attributions.push({ target, value, from: 'default', because: defaultReason(field) })
     }
     return attributions
 }
@@ -698,28 +665,8 @@ function cockpitName(root?: string): string | undefined {
 const inferredValue = (inference: InferenceResult | undefined, target: string) =>
     inference?.facts.find(fact => fact.target === target)
 
-function unresolvedGaps(siblings: DocumentedSibling[], name: string | undefined): Gap[] {
-    return [
-        ...(!name
-            ? [{
-                slug: 'cockpit',
-                field: 'name',
-                why: 'the positional cockpit root basename is not a valid cockpit name',
-                blocking: true,
-                fix: 'rename the cockpit root to lowercase letters, digits, and hyphens, or supply the name in the draft',
-            }]
-            : []),
-        { slug: 'ports', field: 'bases', why: 'no registry dialect records the product port map', blocking: true },
-        ...(['hosted_db_hosts', 'vendor_endpoint_hosts'] as const).map(field => ({ slug: 'guards', field, blocking: false,
-            why: 'the registry dialect does not record the non-local hosts the guard denies, so the key is left unwritten and doctor warns GUARD_HOSTS_UNDECLARED',
-            fix: 'list the database and live vendor API hosts of every non-local environment under [guards], or write both hosted_db_hosts = [] and vendor_endpoint_hosts = [] to record that none exists' })),
-        ...gaps(siblings),
-    ]
-}
-
 type ConfigurationContext = Readonly<{
     root: string | undefined
-    registrySha256: string | null
     sourceObservationSha256: string
     classification: EstateClassification | null
 }>
@@ -759,7 +706,6 @@ const QUESTION_WHY = {
     name: 'the source does not establish a schema-valid cockpit name',
     nameProposed: 'name the cockpit: the name scopes its Compose projects, state and generated files, and renaming it after the first sync means bringing the stack down and syncing again; the cockpit root directory name is proposed',
     siblingEstate: 'the source does not establish schema-shaped sibling declarations',
-    siblingRegistry: 'the registry leaves required sibling configuration unresolved',
     ports: 'no source establishes the host-published base port map; an explicit empty map means none',
     policies: 'declare one row per toolchain and lockfile with any build or test command the guard should allow; asked only when a sibling declares a toolchain other than "none"',
     testData: 'answer with exactly { seeded_data: boolean, signed_in_users: boolean } to state whether this local setup needs seeded data and signed-in users; each false field records a precise not-declared decision, while true keeps the product-owned declaration work visible without claiming that data or authentication exists',
@@ -905,15 +851,8 @@ function pendingConfiguration(
     }
 }
 
-function sameDetectedSibling(answered: Record<string, unknown>, detected: Record<string, unknown>): boolean {
-    return Object.entries(detected).every(([key, value]) => JSON.stringify(answered[key]) === JSON.stringify(value))
-}
-
-/** undefined for a registry source; otherwise the observed repository directory, relative to the cockpit root. */
-type GreenfieldSiblingsRoot = string | undefined
-
-function inferGreenfieldSiblingRoot(attributions: Attribution[], siblingsRoot: GreenfieldSiblingsRoot): Attribution[] {
-    if (siblingsRoot === undefined) return attributions
+/** The observed repository directory, relative to the cockpit root. */
+function inferGreenfieldSiblingRoot(attributions: Attribution[], siblingsRoot: string): Attribution[] {
     const index = attributions.findIndex(row => row.target === 'cockpit.siblings_root')
     if (index >= 0) attributions.splice(index, 1)
     attributions.push({ target: 'cockpit.siblings_root', value: siblingsRoot, from: 'inferred',
@@ -934,31 +873,28 @@ function estateToolchainReason(slug: string, directory: string, inference: Infer
 function defaultAttributions(
     defaults: ReturnType<typeof configurationDefaults>,
     siblings: readonly Record<string, unknown>[],
-    detected: readonly DocumentedSibling[],
     root: string | undefined,
-    source: DefaultSource,
-    siblingsRoot: GreenfieldSiblingsRoot = undefined,
+    siblingsRoot: string,
     inference?: InferenceResult,
     tools?: readonly string[],
 ): Attribution[] {
     // The name is always an answer, so it is never surfaced as an inferred value to confirm.
-    const attributions = buildAttributions({ siblings: detected, defaults }, root, source)
-        .filter(row => !row.target.startsWith('sibling.') || row.from !== 'default')
+    const attributions = buildAttributions({ defaults }, root)
     for (const [field, value] of Object.entries(defaults.environment)) {
         if (field !== 'install_policies') attributions.push({ target: `environment.${field}`, value, from: 'default',
-            because: defaultReason(`the environment ${field} declaration`, source) })
+            because: defaultReason(`the environment ${field} declaration`) })
     }
     // The tools are the person's --target choice; listing the schema's default tools here contradicted the table below.
     attributions.push(tools === undefined
-        ? { target: 'surfaces', value: defaults.surfaces, from: 'default', because: defaultReason('the surfaces declaration', source) }
+        ? { target: 'surfaces', value: defaults.surfaces, from: 'default', because: defaultReason('the surfaces declaration') }
         : { target: 'surfaces', value: { ...defaults.surfaces, tools }, from: 'default',
-            because: `tools are the ones init ran with (--target); ${defaultReason('the rest of the surfaces declaration', source)}` })
+            because: `tools are the ones init ran with (--target); ${defaultReason('the rest of the surfaces declaration')}` })
     for (const sibling of siblings) {
         for (const field of ['toolchain', 'guides'] as const) if (!(field in sibling)) {
             attributions.push({ target: `sibling.${String(sibling.slug)}.${field}`,
-                value: defaults.sibling[field], from: 'default', because: field === 'toolchain' && source === 'estate' && root
-                    ? estateToolchainReason(String(sibling.slug), relative(root, resolve(root, siblingsRoot ?? '.', String(sibling.dir))) || '.', inference)
-                    : defaultReason(`a sibling ${field}`, source) })
+                value: defaults.sibling[field], from: 'default', because: field === 'toolchain' && root
+                    ? estateToolchainReason(String(sibling.slug), relative(root, resolve(root, siblingsRoot, String(sibling.dir))) || '.', inference)
+                    : defaultReason(`a sibling ${field}`) })
         }
     }
     return inferGreenfieldSiblingRoot(attributions, siblingsRoot)
@@ -978,8 +914,6 @@ function documentedRows(rows: CockpitConfig['sibling']): DocumentedSibling[] {
 async function completeConfigurationDocument(
     input: DocumentCommandInput,
     root: string,
-    registrySha256: string | null,
-    detected: readonly DocumentedSibling[],
     estateGaps: EstateClassificationResult['gaps'] = [],
     estateRunnable: EstateClassificationResult['runnable'] = [],
 ): Promise<DocumentOutcome> {
@@ -994,13 +928,11 @@ async function completeConfigurationDocument(
         'resolve every named repository runnable gap before scaffolding a cockpit configuration',
     )
 
-    const context: ConfigurationContext = { root, registrySha256,
+    const context: ConfigurationContext = { root,
         sourceObservationSha256: configuration.sourceObservationSha256,
         classification: configuration.classification ?? null }
     const defaults = configurationDefaults()
-    const defaultSource: DefaultSource = registrySha256 !== null ? 'registry' : 'estate'
-    const siblingsRoot: GreenfieldSiblingsRoot = registrySha256 !== null ? undefined
-        : input.estate && root ? relative(root, input.estate.root) || '.' : '.'
+    const siblingsRoot = input.estate && root ? relative(root, input.estate.root) || '.' : '.'
     const destination = input.output ? resolve(input.output) : null
     let answerIndex = 0
     let inference: InferenceResult | undefined
@@ -1026,9 +958,9 @@ async function completeConfigurationDocument(
     const nameQuestion = configurationQuestion(context, 'cockpit.name', proposedName ? QUESTION_WHY.nameProposed : QUESTION_WHY.name)
     const nameRead = readConfigurationAnswer(configuration.answers, answerIndex, nameQuestion,
         proposedName === undefined ? undefined : { value: proposedName, source: 'the cockpit root directory name' })
-    if (nameRead.kind === 'pending') return pendingConfiguration({ name: proposedName, defaults, siblings: detected,
+    if (nameRead.kind === 'pending') return pendingConfiguration({ name: proposedName, defaults, siblings: [],
         attributions: inferGreenfieldSiblingRoot(
-            buildAttributions({ name: proposedName, defaults, siblings: detected }, root, defaultSource), siblingsRoot), gaps: [] }, destination, nameQuestion)
+            buildAttributions({ name: proposedName, defaults }, root), siblingsRoot), gaps: [] }, destination, nameQuestion)
     if (nameRead.kind === 'refusal') return nameRead.outcome
     const parsedName = CockpitConfig.shape.cockpit.safeParse({ ...defaults.cockpit, name: nameRead.value })
     if (!parsedName.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
@@ -1037,42 +969,26 @@ async function completeConfigurationDocument(
     record('cockpit.name', nameRead)
     answerIndex += 1
 
-    const detectedRows = toSiblingRows(detected)
-    const needsSiblingAnswer = detected.length === 0 || gaps([...detected]).some(gap => gap.blocking)
-    if (needsSiblingAnswer) {
-        const question = configurationQuestion(context, 'sibling', detected.length === 0
-            ? QUESTION_WHY.siblingEstate : QUESTION_WHY.siblingRegistry)
-        const read = readConfigurationAnswer(configuration.answers, answerIndex, question)
-        if (read.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: detected,
-            attributions: inferGreenfieldSiblingRoot(
-                buildAttributions({ defaults, siblings: detected }, root, defaultSource), siblingsRoot), gaps: [] }, destination, question)
-        if (read.kind === 'refusal') return read.outcome
-        if (!Array.isArray(read.value) || read.value.some(row => !row || typeof row !== 'object' || Array.isArray(row))) {
-            return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-                'the operator-confirmed sibling answer must be an array of schema-shaped declarations', question.field)
-        }
-        siblingAnswerRows = read.value as Record<string, unknown>[]
-        const parsed = CockpitConfig.shape.sibling.safeParse(read.value)
-        if (!parsed.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-            `the operator-confirmed sibling declarations do not match the schema: ${issueSummary(parsed.error)}`, question.field)
-        if (detectedRows.some((row, index) => !siblingAnswerRows[index]
-            || !sameDetectedSibling(siblingAnswerRows[index]!, row)) || detectedRows.length > siblingAnswerRows.length) {
-            return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-                'the operator-confirmed sibling declarations are invalid or change detected registry facts', question.field)
-        }
-        siblingRows = parsed.data
-        record('sibling', read)
-        answerIndex += 1
-    } else {
-        const parsed = CockpitConfig.shape.sibling.safeParse(detectedRows)
-        if (!parsed.success) return refusal('DOCUMENT_CONFIGURATION_INVALID',
-            `detected registry sibling facts do not satisfy the configuration schema: ${issueSummary(parsed.error)}`, 'sibling')
-        siblingRows = parsed.data
-        siblingAnswerRows = detectedRows
+    const sibling = configurationQuestion(context, 'sibling', QUESTION_WHY.siblingEstate)
+    const siblingRead = readConfigurationAnswer(configuration.answers, answerIndex, sibling)
+    if (siblingRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: [],
+        attributions: inferGreenfieldSiblingRoot(
+            buildAttributions({ defaults }, root), siblingsRoot), gaps: [] }, destination, sibling)
+    if (siblingRead.kind === 'refusal') return siblingRead.outcome
+    if (!Array.isArray(siblingRead.value) || siblingRead.value.some(row => !row || typeof row !== 'object' || Array.isArray(row))) {
+        return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+            'the operator-confirmed sibling answer must be an array of schema-shaped declarations', sibling.field)
     }
+    siblingAnswerRows = siblingRead.value as Record<string, unknown>[]
+    const parsedSiblings = CockpitConfig.shape.sibling.safeParse(siblingRead.value)
+    if (!parsedSiblings.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+        `the operator-confirmed sibling declarations do not match the schema: ${issueSummary(parsedSiblings.error)}`, sibling.field)
+    siblingRows = parsedSiblings.data
+    record('sibling', siblingRead)
+    answerIndex += 1
 
     // Read with the same inference init proposed from, so a defaulted toolchain names the lockfile it overrode.
-    inference = defaultSource === 'estate' && root ? await deriveInferredFacts({ root: resolve(root, siblingsRoot ?? '.'),
+    inference = root ? await deriveInferredFacts({ root: resolve(root, siblingsRoot),
         configurationRoot: root, repositories: siblingRows.map(row => ({ slug: row.slug, path: row.dir })) }) : undefined
 
     if (estateRunnable.length > 0) {
@@ -1106,7 +1022,7 @@ async function completeConfigurationDocument(
         const question = configurationQuestion(context, 'estate.runnable', runnableWhy(estateGaps))
         const read = readConfigurationAnswer(configuration.answers, answerIndex, question)
         if (read.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: documentedRows(siblingRows),
-            attributions: defaultAttributions(defaults, siblingAnswerRows, detected, root, defaultSource, siblingsRoot, inference, configuration.tools), gaps: [] },
+            attributions: defaultAttributions(defaults, siblingAnswerRows, root, siblingsRoot, inference, configuration.tools), gaps: [] },
             input.output ? resolve(input.output) : null, question)
         if (read.kind === 'refusal') return read.outcome
         if (!read.value || typeof read.value !== 'object' || Array.isArray(read.value)
@@ -1139,7 +1055,7 @@ async function completeConfigurationDocument(
     const portQuestion = configurationQuestion(context, 'ports.bases', QUESTION_WHY.ports)
     const portRead = readConfigurationAnswer(configuration.answers, answerIndex, portQuestion, derivedFact('ports.bases'))
     const previewRows = documentedRows(siblingRows)
-    const attributions = defaultAttributions(defaults, siblingAnswerRows, detected, root, defaultSource, siblingsRoot, inference, configuration.tools)
+    const attributions = defaultAttributions(defaults, siblingAnswerRows, root, siblingsRoot, inference, configuration.tools)
     if (portRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
         attributions, gaps: [] }, destination, portQuestion)
     if (portRead.kind === 'refusal') return portRead.outcome
@@ -1171,26 +1087,24 @@ async function completeConfigurationDocument(
             answerIndex += 1
         }
 
-        if (registrySha256 === null) {
-            const testDataQuestion = configurationQuestion(context, 'environment.test_data', QUESTION_WHY.testData)
-            const testDataRead = readConfigurationAnswer(configuration.answers, answerIndex, testDataQuestion)
-            if (testDataRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
-                attributions, gaps: [] }, destination, testDataQuestion)
-            if (testDataRead.kind === 'refusal') return testDataRead.outcome
-            const value = testDataRead.value
-            if (!value || typeof value !== 'object' || Array.isArray(value)
-                || Object.keys(value).sort().join(',') !== 'seeded_data,signed_in_users'
-                || typeof (value as Record<string, unknown>).seeded_data !== 'boolean'
-                || typeof (value as Record<string, unknown>).signed_in_users !== 'boolean') return refusal(
-                'DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-                'the local test-data answer must be exactly { seeded_data: boolean, signed_in_users: boolean }',
-                testDataQuestion.field,
-            )
-            testData = { seeded_data: (value as { seeded_data: boolean }).seeded_data,
-                signed_in_users: (value as { signed_in_users: boolean }).signed_in_users, provenance: testDataRead.provenance }
-            record('environment.test_data', testDataRead)
-            answerIndex += 1
-        }
+        const testDataQuestion = configurationQuestion(context, 'environment.test_data', QUESTION_WHY.testData)
+        const testDataRead = readConfigurationAnswer(configuration.answers, answerIndex, testDataQuestion)
+        if (testDataRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
+            attributions, gaps: [] }, destination, testDataQuestion)
+        if (testDataRead.kind === 'refusal') return testDataRead.outcome
+        const value = testDataRead.value
+        if (!value || typeof value !== 'object' || Array.isArray(value)
+            || Object.keys(value).sort().join(',') !== 'seeded_data,signed_in_users'
+            || typeof (value as Record<string, unknown>).seeded_data !== 'boolean'
+            || typeof (value as Record<string, unknown>).signed_in_users !== 'boolean') return refusal(
+            'DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+            'the local test-data answer must be exactly { seeded_data: boolean, signed_in_users: boolean }',
+            testDataQuestion.field,
+        )
+        testData = { seeded_data: (value as { seeded_data: boolean }).seeded_data,
+            signed_in_users: (value as { signed_in_users: boolean }).signed_in_users, provenance: testDataRead.provenance }
+        record('environment.test_data', testDataRead)
+        answerIndex += 1
 
         const composeQuestion = configurationQuestion(context, 'environment.compose_files', QUESTION_WHY.composeFiles)
         const composeRead = readConfigurationAnswer(configuration.answers, answerIndex, composeQuestion, derivedFact('environment.compose_files'))
@@ -1300,7 +1214,7 @@ async function completeConfigurationDocument(
 
     const candidate = CockpitConfig.safeParse({ ...(unconfirmed.length === 0 ? {} : { unconfirmed: unconfirmed.map(row => row.field) }),
         ...defaults, cockpit: { ...defaults.cockpit, name,
-        ...(siblingsRoot === undefined ? {} : { siblings_root: siblingsRoot }) },
+        siblings_root: siblingsRoot },
         sibling: siblingRows, ports: parsedPorts.data, guards: parsedGuards.data, environment, ...(testing ? { testing } : {}),
         work: { ...defaults.work, grading: parsedGrading.data },
         ...(configuration.tools === undefined ? {} : { surfaces: { ...defaults.surfaces, tools: configuration.tools } }) })
@@ -1361,79 +1275,16 @@ async function completeConfigurationDocument(
         status: 0, question: null }
 }
 
-export async function draftFromRegistry(
+/** Walks the interview for a root with no classified estate, such as a repository with nothing observed to run. */
+export async function draftConfiguration(
     input: DocumentCommandInput,
     estateGaps: EstateClassificationResult['gaps'] = [],
     estateRunnable: EstateClassificationResult['runnable'] = [],
 ): Promise<DocumentOutcome> {
-    const root = resolve(input.root)
-    const registry = input.registry ? resolve(input.registry) : resolve(root, 'env/lib/instance.sh')
-
-    let bytes: Buffer
-    try {
-        const read = await readBoundedInput(registry)
-        if (read.kind === 'too-large') return refusal('REGISTRY_TOO_LARGE',
-            `the registry file exceeds the ${STRUCTURED_INPUT_BYTE_LIMIT}-byte input limit`, registry)
-        bytes = read.bytes
-    } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code
-        if (code === 'ENOENT' && input.registry === undefined) {
-            return completeConfigurationDocument(input, root, null, [], estateGaps, estateRunnable)
-        }
-        if (code === 'ENOENT') {
-            return refusal('REGISTRY_NOT_FOUND',
-                'the registry file does not exist; --registry names an existing shell-registry cockpit (env/lib/instance.sh)',
-                registry, `for a new product run: ${initCommand()}; otherwise check the registry path`)
-        }
-        return refusal('REGISTRY_UNREADABLE', `the registry file could not be read (${code ?? 'unknown I/O error'})`, registry)
-    }
-
-    let source: string
-    try {
-        source = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-    } catch { // Fatal decoding throws only for invalid UTF-8, which the reason names.
-        return refusal('REGISTRY_ENCODING_INVALID', 'the registry file is not valid UTF-8', registry)
-    }
-
-    if (source.trim() === '') return refusal('REGISTRY_EMPTY', 'the registry file is empty', registry)
-
-    const parsed = parseRegistry(source)
-    if (parsed.skipped.length > 0) {
-        const knownGaps = diagnosticsFor([], unresolvedGaps(parsed.siblings, cockpitName(root)))
-        return {
-            kind: 'skipped-scope',
-            artifact: null,
-            destination: null,
-            diagnostics: [
-                ...parsed.skipped.map((row): Diagnostic => ({
-                    severity: 'error',
-                    code: row.code ?? 'REGISTRY_ROW_SKIPPED',
-                    message: row.reason,
-                    target: `registry line ${row.sourceLine}`,
-                    fix: 'repair every skipped row before documenting repository scope',
-                })),
-                ...knownGaps,
-            ],
-            result: null,
-            status: 2,
-        }
-    }
-    if (!parsed.dialect || parsed.siblings.length === 0) {
-        return refusal(
-            parsed.found ? 'REGISTRY_EMPTY' : 'REGISTRY_NOT_FOUND',
-            parsed.found ? 'the registry contains no usable rows'
-                : 'the file contains no sibling registry; --registry names an existing shell-registry cockpit',
-            registry,
-            parsed.found ? undefined : `for a new product run: ${initCommand()}`,
-        )
-    }
-
-    return completeConfigurationDocument(input, root,
-        createHash('sha256').update(bytes).digest('hex'), parsed.siblings, estateGaps, estateRunnable)
+    return completeConfigurationDocument(input, resolve(input.root), estateGaps, estateRunnable)
 }
 
 export async function draftFromEstate(input: DocumentCommandInput): Promise<DocumentOutcome> {
-    if (input.registry !== undefined) return draftFromRegistry(input)
     const classified = await classifyEstateObservation(input.estate ?? { root: resolve(input.root) }, { observe: observePublicEstate })
     if (classified.kind !== 'complete') return {
         kind: 'refusal', status: 2, artifact: null, destination: null, result: null,
@@ -1444,5 +1295,5 @@ export async function draftFromEstate(input: DocumentCommandInput): Promise<Docu
         return refusal('DOCUMENT_ESTATE_OBSERVATION_CHANGED',
             'the configuration answers are not bound to the current public estate observation', input.root)
     }
-    return draftFromRegistry(input, classified.result.gaps, classified.result.runnable)
+    return draftConfiguration(input, classified.result.gaps, classified.result.runnable)
 }

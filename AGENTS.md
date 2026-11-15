@@ -47,7 +47,7 @@ Only these root surfaces are tracked; the harness settings directories are not p
 | `packages/cockpit` | the CLI: config, registry, codegen, drift, `init` |
 | `packages/cockpit/surfaces` | shipped templates rendered into a consumer's cockpit |
 | `.agents/skills` | skills for working on cockpit itself |
-| `fixtures/registries` | synthetic registries, the round-trip corpus |
+| `fixtures/registries` | synthetic `cockpit.toml` fixtures that many tests load |
 | `docs` | user and contributor documentation |
 
 ## Environment code map

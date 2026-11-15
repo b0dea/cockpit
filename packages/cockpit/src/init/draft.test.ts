@@ -5,14 +5,12 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parse as parseToml } from 'smol-toml'
-import { classifyEstateObservation, draftFromEstate, draftFromRegistry, observeCockpitRoot, observePublicEstate,
+import { classifyEstateObservation, draftConfiguration, draftFromEstate, observeCockpitRoot, observePublicEstate,
     type DocumentConfigurationAnswer } from './draft.js'
 import { CockpitConfig } from '../schema.js'
 import { loadCockpitConfig } from '../config/load.js'
 
 const root = resolve(import.meta.dirname, '../../../..')
-const laneFixture = readFileSync(join(root, 'fixtures/registries/lane-dialect.sh'), 'utf8')
-const tierFixture = readFileSync(join(root, 'fixtures/registries/tier-dialect.sh'), 'utf8')
 const generatedConfig = parseToml(readFileSync(join(root, 'fixtures/registries/generated-environment.toml'), 'utf8')) as {
     sibling: unknown[]; environment: { install_policies: unknown }
 }
@@ -26,13 +24,6 @@ function temporaryPath(name: string) {
     const directory = mkdtempSync(join(tmpdir(), 'cockpit-command-'))
     scratch.push(directory)
     return join(directory, name)
-}
-
-function sourceInput(source: string) {
-    const cockpitRoot = temporaryPath('synthetic-cockpit')
-    mkdirSync(join(cockpitRoot, 'env/lib'), { recursive: true })
-    writeFileSync(join(cockpitRoot, 'env/lib/instance.sh'), source)
-    return { input: { root: cockpitRoot } }
 }
 
 afterEach(() => {
@@ -433,260 +424,75 @@ describe('public estate observation', () => {
     })
 })
 
-// A draft from a registry before any answer: the registry is read before the first question.
 const pendingAnswers = { sourceObservationSha256: 'a'.repeat(64), answers: [] }
-const draftFrom = (input: { root?: string; registry?: string }) =>
-    draftFromRegistry({ root: input.root ?? temporaryPath('synthetic-cockpit'), ...input, configuration: pendingAnswers })
 
 describe('document source classification', () => {
-    it('refuses invalid UTF-8 instead of changing registry content in the draft', async () => {
-        const registry = temporaryPath('invalid-encoding.sh')
-        writeFileSync(registry, Buffer.concat([
-            Buffer.from('X_SIBLINGS=(\n  "api|api|api|app|API_DIR|'),
-            Buffer.from([0xff]),
-            Buffer.from('"\n)\n'),
-        ]))
-
-        const outcome = await draftFrom({ registry })
-
-        expect(outcome.kind).toBe('refusal')
-        expect(outcome.status).toBe(2)
-        expect(outcome.artifact).toBeNull()
-        expect(outcome.destination).toBeNull()
-        expect(outcome.diagnostics).toEqual([
-            expect.objectContaining({ code: 'REGISTRY_ENCODING_INVALID' }),
-        ])
-    })
-
     it('attributes a root-derived name without publishing the machine-local root', async () => {
-        const { input } = sourceInput(laneFixture)
-        const outcome = await draftFrom(input)
-        const absoluteRoot = input.root as string
+        const input = { root: temporaryPath('synthetic-cockpit') }
+        mkdirSync(input.root)
+        const outcome = await draftConfiguration({ ...input, configuration: pendingAnswers })
 
-        expect(outcome.artifact).not.toContain(absoluteRoot)
-        expect(JSON.stringify(outcome.diagnostics)).not.toContain(absoluteRoot)
+        expect(outcome.artifact).not.toContain(input.root)
+        expect(JSON.stringify(outcome.diagnostics)).not.toContain(input.root)
         expect(outcome.artifact).toContain('the positional cockpit root basename')
-    })
-
-    it('distinguishes missing, unreadable, empty, absent, and ambiguous registries', async () => {
-        const missing = await draftFrom({ registry: temporaryPath('missing.sh') })
-
-        const directory = temporaryPath('directory')
-        mkdirSync(directory)
-        const unreadable = await draftFrom({ registry: directory })
-
-        const emptyPath = temporaryPath('empty.sh')
-        writeFileSync(emptyPath, '')
-        const empty = await draftFrom({ registry: emptyPath })
-
-        const absentPath = temporaryPath('absent.sh')
-        writeFileSync(absentPath, 'export EXAMPLE=value\n')
-        const absent = await draftFrom({ registry: absentPath })
-
-        const ambiguousPath = temporaryPath('ambiguous.sh')
-        writeFileSync(
-            ambiguousPath,
-            'X_SIBLINGS=(\n  "a|a|a|app|A_DIR|purpose"\n  "b|b|b|main|auto|B_DIR|purpose"\n)\n',
-        )
-        const ambiguous = await draftFrom({ registry: ambiguousPath })
-
-        expect(missing.diagnostics.map((item) => item.code)).toEqual(['REGISTRY_NOT_FOUND'])
-        expect(missing.diagnostics[0]).toMatchObject({
-            message: expect.stringContaining('--registry names an existing shell-registry cockpit'),
-            fix: expect.stringContaining(`for a new product run: ${initCommand()}`),
-        })
-        expect(unreadable.diagnostics.map((item) => item.code)).toEqual(['REGISTRY_UNREADABLE'])
-        expect(empty.diagnostics.map((item) => item.code)).toEqual(['REGISTRY_EMPTY'])
-        expect(absent.diagnostics.map((item) => item.code)).toEqual(['REGISTRY_NOT_FOUND'])
-        const ambiguityDiagnostics = ambiguous.diagnostics.filter((item) => item.code.startsWith('REGISTRY_'))
-        expect(ambiguityDiagnostics.length).toBeGreaterThan(0)
-        expect(ambiguityDiagnostics.every((item) => item.code === 'REGISTRY_AMBIGUOUS')).toBe(true)
-        expect(ambiguous.diagnostics.some((item) => item.code === 'DOCUMENT_GAP')).toBe(true)
-        for (const outcome of [missing, unreadable, empty, absent, ambiguous]) {
-            expect(outcome.artifact).toBeNull()
-        }
-    })
-
-    it('refuses an oversized registry before parsing it', async () => {
-        const registry = temporaryPath('oversized.sh')
-        writeFileSync(registry, Buffer.alloc(1_048_577, 0x20))
-
-        const outcome = await draftFrom({ registry })
-
-        expect(outcome).toMatchObject({
-            kind: 'refusal', artifact: null, result: null,
-            diagnostics: [expect.objectContaining({ code: 'REGISTRY_TOO_LARGE' })],
-        })
-    })
-
-    it('classifies duplicate sibling arrays as structured registry ambiguity', async () => {
-        const registry = temporaryPath('duplicate-arrays.sh')
-        writeFileSync(registry, [
-            'FIRST_SIBLINGS=(',
-            '  "first|first|first|app|FIRST_DIR|purpose"',
-            ')',
-            'SECOND_SIBLINGS=(',
-            '  "second|second|second|app|SECOND_DIR|purpose"',
-            ')',
-        ].join('\n'))
-
-        const outcome = await draftFrom({ registry })
-        const registryDiagnostics = outcome.diagnostics.filter((item) => item.code.startsWith('REGISTRY_'))
-
-        expect(registryDiagnostics).toEqual([
-            expect.objectContaining({ code: 'REGISTRY_AMBIGUOUS', target: 'registry line 4' }),
-        ])
-        expect(registryDiagnostics).not.toEqual([
-            expect.objectContaining({ code: 'REGISTRY_ROW_SKIPPED' }),
-        ])
-    })
-
-    it('refuses a multi-profile assignment without emitting a partial draft', async () => {
-        const registry = temporaryPath('multi-profile.sh')
-        writeFileSync(
-            registry,
-            'X_SIBLINGS=(\n  "app|app|app|main|auto|APP_DIR|EXTRA_PROFILES=web,api make run"\n)\n',
-        )
-
-        const outcome = await draftFrom({ registry })
-
-        expect(outcome.kind).toBe('skipped-scope')
-        expect(outcome.artifact).toBeNull()
-        expect(outcome.diagnostics).toContainEqual(
-            expect.objectContaining({
-                severity: 'error',
-                code: 'REGISTRY_AMBIGUOUS',
-                target: 'registry line 2',
-            }),
-        )
-    })
-
-    it('keeps equal adjacent inferences separately attributed and in registry order', async () => {
-        const registry = temporaryPath('equal-inferences.sh')
-        writeFileSync(
-            registry,
-            [
-                'X_SIBLINGS=(',
-                '  "first|first|first|main|auto|FIRST_DIR|ordinary repository"',
-                '  "second|second|second|main|auto|SECOND_DIR|ordinary repository"',
-                ')',
-                '',
-            ].join('\n'),
-        )
-
-        const outcome = await draftFrom({ registry })
-        const artifact = outcome.artifact ?? ''
-
-        expect(artifact.match(/no profile and no make target in purpose/g)).toHaveLength(2)
-        expect(artifact.indexOf('sibling.first.mount')).toBeLessThan(artifact.indexOf('sibling.second.mount'))
-        expect(artifact.indexOf('slug = "first"')).toBeLessThan(artifact.indexOf('slug = "second"'))
         // Every decision shows its default as a comment. A person keeps reset, which deletes stack data,
         // and MCP approval, whose agent setting the block warns starts processes outside the guard.
-        expect(artifact).toContain('# [work.gates]\n# accept = "agent"')
-        expect(artifact).toContain('# reset = "person"')
-        expect(artifact).toContain('# mcp_approve = "person"')
-        expect(artifact).toContain('# mcp_approve = "agent" lets an agent start processes outside the guard')
-    })
-
-    it('never exposes a skipped source row or lets the command module write files', async () => {
-        const registry = temporaryPath('skipped.sh')
-        const rawRow = 'private-row-token|too|few'
-        writeFileSync(registry, `X_SIBLINGS=(\n  "ok|ok|ok|app|OK_DIR|purpose"\n  "${rawRow}"\n)\n`)
-
-        const outcome = await draftFrom({ registry })
-        const commandSource = readFileSync(join(root, 'packages/cockpit/src/init/draft.ts'), 'utf8')
-        const cliSource = readFileSync(join(root, 'packages/cockpit/src/cli.ts'), 'utf8')
-        const commandTableSource = readFileSync(join(root, 'packages/cockpit/src/command-table.ts'), 'utf8')
-
-        expect(outcome.kind).toBe('skipped-scope')
-        expect(outcome.artifact).toBeNull()
-        expect(outcome.diagnostics.find((item) => item.code === 'REGISTRY_ROW_SKIPPED')?.target).toBe('registry line 3')
-        expect(JSON.stringify(outcome.diagnostics)).not.toContain(rawRow)
-        expect(commandSource).not.toMatch(/\bwriteFile\b/)
-        expect(commandSource).not.toMatch(/command-table|\.\.\/cli/)
-        expect(cliSource).not.toMatch(/\bparseRegistry\b|\bgaps\s*\(/)
-        expect(commandTableSource).not.toMatch(/init\/draft|\.\/cli/)
-        expect(commandSource).not.toMatch(/_SIBLINGS.*test\(source\)/)
-    })
-
-    it('preserves every inferred reason from a real tier registry', async () => {
-        const registry = temporaryPath('tier.sh')
-        writeFileSync(registry, tierFixture)
-
-        const outcome = await draftFrom({ registry })
-        const inferred = outcome.diagnostics.filter((item) => item.code === 'DOCUMENT_INFERRED' && item.target?.startsWith('sibling.'))
-
-        expect(inferred).toHaveLength(9)
-        expect(inferred.every((item) => item.message.length > 0)).toBe(true)
+        expect(outcome.artifact).toContain('# [work.gates]\n# accept = "agent"')
+        expect(outcome.artifact).toContain('# reset = "person"')
+        expect(outcome.artifact).toContain('# mcp_approve = "person"')
+        expect(outcome.artifact).toContain('# mcp_approve = "agent" lets an agent start processes outside the guard')
     })
 })
 
 describe('operator-confirmed document completion', () => {
     const sourceObservationSha256 = 'a'.repeat(64)
-    const answer = (question: NonNullable<Awaited<ReturnType<typeof draftFromRegistry>>['question']>, value: unknown) => {
+    const answer = (question: NonNullable<Awaited<ReturnType<typeof draftConfiguration>>['question']>, value: unknown) => {
         const bytes = JSON.stringify(value)
         return { questionId: question.id, bytes,
             sha256: createHash('sha256').update(bytes).digest('hex'), provenance: 'operator-confirmed' as const }
     }
-    const confirmDefaults = (question: NonNullable<Awaited<ReturnType<typeof draftFromRegistry>>['question']>) =>
+    const confirmDefaults = (question: NonNullable<Awaited<ReturnType<typeof draftConfiguration>>['question']>) =>
         answer(question, { confirmed: true, sha256: question.expectedSha256 })
-    // The cockpit name is always asked first; these cases are about the answers after it.
-    const answerName = async (input: { root: string }) => answer((await draftFromRegistry({ ...input,
-        configuration: { sourceObservationSha256, answers: [] } })).question!, 'app-cockpit')
+    // A sibling with no toolchain, so no install policy is asked.
+    const appSibling = [{ slug: 'app', dir: 'app', mount: 'always', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic application' }]
+    const noTestData = { seeded_data: false, signed_in_users: false }
+    const draft = (input: { root: string }, answers: readonly DocumentConfigurationAnswer[]) =>
+        draftConfiguration({ ...input, configuration: { sourceObservationSha256, answers } })
+    const emptyRoot = () => {
+        const input = { root: temporaryPath('app-cockpit') }
+        mkdirSync(input.root)
+        return input
+    }
+    // Answers each question in turn with the next value and returns the draft after the last one.
+    const walk = async (input: { root: string }, values: readonly unknown[]) => {
+        const answers: DocumentConfigurationAnswer[] = []
+        let pending = await draft(input, answers)
+        for (const value of values) {
+            answers.push(answer(pending.question!, value))
+            pending = await draft(input, answers)
+        }
+        return { answers, pending }
+    }
+    const throughMachine = ['app-cockpit', appSibling, { APP_HOST_PORT: 4100 }, noTestData, ['compose.yml'], machineFloor]
 
-    it('advances a real registry draft through explicit ports and defaults to a loadable document', async () => {
-        const { input } = sourceInput('X_SIBLINGS=(\n  "app|app|app|app|APP_DIR|Synthetic application"\n)\n')
-        const nameAnswer = await answerName(input)
-        const configuration = { sourceObservationSha256, answers: [nameAnswer] }
-        const ports = await draftFromRegistry({ ...input, configuration })
-
+    it('advances a draft through explicit ports and defaults to a loadable document', async () => {
+        const input = emptyRoot()
+        const { answers: named, pending: ports } = await walk(input, ['app-cockpit', appSibling])
         expect(ports).toMatchObject({ kind: 'gap-draft', question: { field: 'ports.bases' } })
-        const rejected = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, answer(ports.question!, { APP_HOST_PORT: 'not-a-port' })],
-        } })
+        const rejected = await draft(input, [...named, answer(ports.question!, { APP_HOST_PORT: 'not-a-port' })])
         expect(rejected.diagnostics).toMatchObject([{
             code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID',
             message: expect.stringContaining('bases.APP_HOST_PORT: Invalid input: expected number, received string'),
         }])
-        const portAnswer = answer(ports.question!, { APP_HOST_PORT: 4100 })
-        // The registry records no sibling toolchain, and an install policy names one, so none is asked.
-        const generated = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer],
-        } })
-        expect(generated).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.compose_files' } })
-        const generatedAnswer = answer(generated.question!, ['compose.yml'])
-        const machine = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, generatedAnswer],
-        } })
+        const { pending: machine } = await walk(input, throughMachine.slice(0, 5))
         // Free disk and the cold start time have no source, so the question says who supplies them.
         expect(machine.question).toMatchObject({ field: 'environment.machine', why: expect.stringContaining('nothing records free disk or the cold start time, so a person states those') })
-        const machineAnswer = answer(machine.question!, machineFloor)
-        const posture = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer],
-        } })
-        const postureAnswer = answer(posture.question!, localPosture)
-        const testingDraft = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer],
-        } })
-        const testingAnswer = answer(testingDraft.question!, 'none')
-        const guards = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer],
-        } })
-        const guardAnswer = answer(guards.question!, guardHosts)
-        const gradingDraft = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer],
-        } })
-        const gradingAnswer = answer(gradingDraft.question!, 'independent')
-        const defaults = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer],
-        } })
+        const { answers, pending: defaults } = await walk(input, [...throughMachine, localPosture, 'none', guardHosts, 'independent'])
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: {
             field: 'configuration.defaults', expectedSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         } })
         expect(defaults.diagnostics.some(item => item.code === 'DOCUMENT_DEFAULT')).toBe(true)
-        const complete = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer, confirmDefaults(defaults.question!)],
-        } })
+        const complete = await draft(input, [...answers, confirmDefaults(defaults.question!)])
 
         expect(complete).toMatchObject({ kind: 'complete', status: 0, question: null })
         expect(parseToml(defaults.artifact!)).toEqual(parseToml(complete.artifact!))
@@ -697,99 +503,71 @@ describe('operator-confirmed document completion', () => {
     })
 
     it('completes compose-first from a Compose file the checkout already has', async () => {
-        const { input } = sourceInput('X_SIBLINGS=(\n  "app|app|app|app|APP_DIR|Synthetic application"\n)\n')
-        const nameAnswer = await answerName(input)
-        const configuration = { sourceObservationSha256, answers: [nameAnswer] }
-        const portAnswer = answer((await draftFromRegistry({ ...input, configuration }))!.question!, {})
-        // The registry records no sibling toolchain, and an install policy names one, so none is asked.
-        const generated = await draftFromRegistry({ ...input, configuration: { ...configuration, answers: [nameAnswer, portAnswer] } })
+        const input = emptyRoot()
+        const { answers: toCompose, pending: generated } = await walk(input, ['app-cockpit', appSibling, {}, noTestData])
         // A product with no Compose file is pointed at the one-time scaffold rather than left stuck.
         expect(generated.question!.why).toContain('./node_modules/@b00dea/cockpit/bin/cockpit.mjs init <cockpit root> --scaffold-compose <app dir> --port <port>')
-        const composeAnswer = answer(generated.question!, ['compose.yml'])
+        expect(await draft(input, [...toCompose, answer(generated.question!, 'compose.yml')]))
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID' }] })
         // Runtime commands refuse a declared runtime without a machine floor, and the floor is a
         // product requirement: it is asked, never defaulted.
-        const machine = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, composeAnswer] } })
+        const { answers: toMachine, pending: machine } = await walk(input, ['app-cockpit', appSibling, {}, noTestData, ['compose.yml']])
         expect(machine).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.machine' } })
-        expect(await draftFromRegistry({ ...input, configuration: { ...configuration, answers: [nameAnswer, portAnswer,
-            composeAnswer, answer(machine.question!, { runtime_memory_mb: 2048 })] } })).toMatchObject({ kind: 'refusal',
+        expect(await draft(input, [...toMachine, answer(machine.question!, { runtime_memory_mb: 2048 })])).toMatchObject({ kind: 'refusal',
             diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID', message: expect.stringContaining('machine floor') }] })
-        const machineAnswer = answer(machine.question!, machineFloor)
         // Preflight refuses a runtime whose posture is undeclared, so it is asked with a plain-localhost example.
-        const posture = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, composeAnswer, machineAnswer] } })
+        const { answers: toPosture, pending: posture } = await walk(input, ['app-cockpit', appSibling, {}, noTestData, ['compose.yml'], machineFloor])
         expect(posture).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.posture',
             why: expect.stringContaining(JSON.stringify(localPosture)) } })
-        expect(await draftFromRegistry({ ...input, configuration: { ...configuration, answers: [nameAnswer, portAnswer,
-            composeAnswer, machineAnswer, answer(posture.question!, { ...localPosture, authentication: 'real' })] } })).toMatchObject({
+        expect(await draft(input, [...toPosture, answer(posture.question!, { ...localPosture, authentication: 'real' })])).toMatchObject({
             kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID',
                 message: expect.stringContaining('authentication posture real is not named by a requirement') }] })
-        const postureAnswer = answer(posture.question!, localPosture)
-        const testingDraft = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, composeAnswer, machineAnswer, postureAnswer] } })
-        const testingAnswer = answer(testingDraft.question!, 'none')
-        const guards = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, composeAnswer, machineAnswer, postureAnswer, testingAnswer] } })
-        const guardAnswer = answer(guards.question!, guardHosts)
-        const gradingDraft = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, composeAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer] } })
-        const gradingAnswer = answer(gradingDraft.question!, 'independent')
-        const defaults = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, composeAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer] } })
-        expect(defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
-        expect(defaults.artifact).not.toContain('# [default] environment.compose_files')
-        expect(defaults.artifact).toContain('# [default] environment.resettable_volumes = []')
-        const complete = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, composeAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer, confirmDefaults(defaults.question!)] } })
-        expect(complete).toMatchObject({ kind: 'complete', status: 0 })
-        const document = parseToml(complete.artifact!) as { environment: { compose_files: string[]; machine?: unknown } }
+        const { pending: testingDraft } = await walk(input, ['app-cockpit', appSibling, {}, noTestData, ['compose.yml'], machineFloor, localPosture])
+        expect(testingDraft).toMatchObject({ kind: 'gap-draft', question: { field: 'testing' } })
+        const finish = async (testing: unknown) => {
+            const { answers, pending } = await walk(input,
+                ['app-cockpit', appSibling, {}, noTestData, ['compose.yml'], machineFloor, localPosture, testing, guardHosts, 'independent'])
+            return { defaults: pending, complete: await draft(input, [...answers, confirmDefaults(pending.question!)]) }
+        }
+        const none = await finish('none')
+        expect(none.defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
+        expect(none.defaults.artifact).not.toContain('# [default] environment.compose_files')
+        expect(none.defaults.artifact).toContain('# [default] environment.resettable_volumes = []')
+        expect(none.complete).toMatchObject({ kind: 'complete', status: 0 })
+        const document = parseToml(none.complete.artifact!) as { environment: { compose_files: string[]; machine?: unknown } }
         expect(document.environment.compose_files).toEqual(['compose.yml'])
         expect(document.environment.machine).toEqual(machineFloor)
         expect(document.environment).toMatchObject(localPosture)
         // "none" is a recorded decision, not a missing answer: no gate, and the file says why.
         expect(document).not.toHaveProperty('testing')
-        expect(complete.artifact).toContain('# Decision: testing: no test gate is declared because the operator stated that the product has no tests to run yet')
+        expect(none.complete.artifact).toContain('# Decision: testing: no test gate is declared because the operator stated that the product has no tests to run yet')
 
-        expect(testingDraft).toMatchObject({ kind: 'gap-draft', question: { field: 'testing' } })
         const declaredTesting = { stages: [{ id: 'app-test', command: ['make', 'test'], requires_stack: false }],
             gates: [{ id: 'app-full', tier: 'full', stages: ['app-test'], changes: 'Any behavior' }] }
-        const throughTesting = (value: unknown) => [nameAnswer, portAnswer, composeAnswer, machineAnswer, postureAnswer,
-            answer(testingDraft.question!, value), guardAnswer, gradingAnswer]
-        expect(await draftFromRegistry({ ...input, configuration: { ...configuration, answers: throughTesting({ stages: [] }) } })).toMatchObject({
+        const { answers: toTesting } = await walk(input, ['app-cockpit', appSibling, {}, noTestData, ['compose.yml'], machineFloor, localPosture])
+        expect(await draft(input, [...toTesting, answer(testingDraft.question!, { stages: [] })])).toMatchObject({
             kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID', message: expect.stringContaining('"none" or a [testing] table') }] })
-        const testedDefaults = await draftFromRegistry({ ...input, configuration: { ...configuration, answers: throughTesting(declaredTesting) } })
-        const tested = await draftFromRegistry({ ...input, configuration: { ...configuration,
-            answers: [...throughTesting(declaredTesting), confirmDefaults(testedDefaults.question!)] } })
-        expect(parseToml(tested.artifact!)).toMatchObject({ testing: declaredTesting })
-
-        const invalid = await draftFromRegistry({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, answer(generated.question!, 'compose.yml')] } })
-        expect(invalid).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID' }] })
+        const tested = await finish(declaredTesting)
+        expect(parseToml(tested.complete.artifact!)).toMatchObject({ testing: declaredTesting })
     })
 
     it.each(['operator-confirmed', 'agent-default'] as const)('retains %s provenance when a runnable product defers its runtime', async provenance => {
-        const { input } = sourceInput('X_SIBLINGS=(\n  "app|app|app|app|APP_DIR|Synthetic application"\n)\n')
-        const configuration = { sourceObservationSha256, answers: [] as DocumentConfigurationAnswer[] }
-        let pending = await draftFromRegistry({ ...input, configuration })
-        // The registry records no sibling toolchain, so no install policy is asked or recorded.
-        for (const value of ['app-cockpit', {}]) {
-            configuration.answers.push(answer(pending.question!, value))
-            pending = await draftFromRegistry({ ...input, configuration })
-        }
+        const input = emptyRoot()
+        const { answers, pending } = await walk(input, ['app-cockpit', appSibling, {}, noTestData])
         expect(pending.question).toMatchObject({ field: 'environment.compose_files' })
-        configuration.answers.push({ ...answer(pending.question!, []), provenance })
-        pending = await draftFromRegistry({ ...input, configuration })
-        expect(pending).toMatchObject({ kind: 'gap-draft', question: { field: 'testing' } })
-        configuration.answers.push(answer(pending.question!, 'none'))
-        pending = await draftFromRegistry({ ...input, configuration })
-        expect(pending.question).toMatchObject({ field: 'guards' })
-        configuration.answers.push(answer(pending.question!, guardHosts))
-        pending = await draftFromRegistry({ ...input, configuration })
-        expect(pending.question).toMatchObject({ field: 'work.grading' })
-        configuration.answers.push(answer(pending.question!, 'independent'))
-        pending = await draftFromRegistry({ ...input, configuration })
-        configuration.answers.push(confirmDefaults(pending.question!))
-        const complete = await draftFromRegistry({ ...input, configuration })
+        const deferred = [...answers, { ...answer(pending.question!, []), provenance }]
+        const { pending: testing, answers: more } = await (async () => {
+            const all = [...deferred]
+            let next = await draft(input, all)
+            expect(next).toMatchObject({ kind: 'gap-draft', question: { field: 'testing' } })
+            for (const [field, value] of [['testing', 'none'], ['guards', guardHosts], ['work.grading', 'independent']] as const) {
+                expect(next.question).toMatchObject({ field })
+                all.push(answer(next.question!, value))
+                next = await draft(input, all)
+            }
+            return { pending: next, answers: all }
+        })()
+        const complete = await draft(input, [...more, confirmDefaults(testing.question!)])
         expect(complete).toMatchObject({ kind: 'complete', status: 0 })
         const config = CockpitConfig.parse(parseToml(complete.artifact!))
         expect(config.environment.compose_files).toEqual([])
@@ -807,74 +585,99 @@ describe('operator-confirmed document completion', () => {
             .not.toContain('no runnable product was observed')
     })
 
-    it('asks only missing logical groups without a registry and accepts explicit empty ports', async () => {
+    it('refuses wrong, extra, malformed, sensitive and stale answers', async () => {
+        const input = emptyRoot()
+        const { answers: named, pending: ports } = await walk(input, ['app-cockpit', appSibling])
+        const valid = answer(ports.question!, { APP_HOST_PORT: 4100 })
+        const { answers: all, pending: defaults } = await walk(input, [...throughMachine, localPosture, 'none', guardHosts, 'independent'])
+        const cases = [
+            [...named, { ...valid, questionId: `question:${'b'.repeat(64)}` }],
+            [...named, { ...valid, bytes: '{', sha256: createHash('sha256').update('{').digest('hex') }],
+            [...named, answer(ports.question!, { api_token: 'raw-secret-value' })],
+        ]
+        for (const answers of cases) expect(await draft(input, answers)).toMatchObject({ kind: 'refusal', status: 2 })
+        expect(await draft(input, [...all, confirmDefaults(defaults.question!), valid]))
+            .toMatchObject({ kind: 'refusal', status: 2,
+                diagnostics: [expect.objectContaining({ code: 'DOCUMENT_CONFIGURATION_ANSWER_EXTRA' })] })
+        // Answers are bound to the observation they were asked against.
+        expect(await draftConfiguration({ ...input, configuration: { sourceObservationSha256: 'b'.repeat(64), answers: named } }))
+            .toMatchObject({ kind: 'refusal', status: 2 })
+    })
+
+    it('rejects missing or changed explicit confirmation of the surfaced defaults', async () => {
+        const input = emptyRoot()
+        const { answers, pending: defaults } = await walk(input, [...throughMachine, localPosture, 'none', guardHosts, 'independent'])
+        expect(defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
+        const changed = answer(defaults.question!, { confirmed: true, sha256: 'f'.repeat(64) })
+        expect(await draft(input, [...answers, changed])).toMatchObject({ kind: 'refusal', status: 2 })
+    })
+
+    it('asks only the missing logical groups and accepts explicit empty ports', async () => {
         const estateRoot = temporaryPath('Invalid_Name')
         mkdirSync(estateRoot)
         const base = { root: estateRoot, configuration: {
             sourceObservationSha256, classification: 'one-sibling' as const, answers: [],
         } }
-        const name = await draftFromRegistry(base)
+        const name = await draftConfiguration(base)
         expect(name).toMatchObject({ kind: 'gap-draft', question: { field: 'cockpit.name' } })
         const nameAnswer = answer(name.question!, 'single-product')
-        const sibling = await draftFromRegistry({ ...base, configuration: {
+        const sibling = await draftConfiguration({ ...base, configuration: {
             ...base.configuration, answers: [nameAnswer],
         } })
         expect(sibling).toMatchObject({ kind: 'gap-draft', question: { field: 'sibling' } })
         const siblingAnswer = answer(sibling.question!, generatedConfig.sibling)
-        const ports = await draftFromRegistry({ ...base, configuration: {
+        const ports = await draftConfiguration({ ...base, configuration: {
             ...base.configuration, answers: [nameAnswer, siblingAnswer],
         } })
         expect(ports).toMatchObject({ kind: 'gap-draft', question: { field: 'ports.bases' } })
         const portAnswer = answer(ports.question!, {})
-        const policies = await draftFromRegistry({ ...base, configuration: {
+        const policies = await draftConfiguration({ ...base, configuration: {
             ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer],
         } })
         expect(policies).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.install_policies' } })
         const policyAnswer = answer(policies.question!, generatedConfig.environment.install_policies)
-        const testData = await draftFromRegistry({ ...base, configuration: {
+        const testData = await draftConfiguration({ ...base, configuration: {
             ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer],
         } })
         expect(testData).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.test_data',
             why: expect.stringContaining('seeded data and signed-in users') } })
         expect(testData.question?.why).toContain('{ seeded_data: boolean, signed_in_users: boolean }')
-        expect(await draftFromRegistry({ ...base, configuration: { ...base.configuration,
+        expect(await draftConfiguration({ ...base, configuration: { ...base.configuration,
             answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer,
                 answer(testData.question!, { seeded_data: false })] } })).toMatchObject({ kind: 'refusal',
             diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID', target: 'environment.test_data' }] })
         const testDataAnswer = answer(testData.question!, { seeded_data: false, signed_in_users: false })
-        const generated = await draftFromRegistry({ ...base, configuration: {
+        const generated = await draftConfiguration({ ...base, configuration: {
             ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer],
         } })
         expect(generated).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.compose_files' } })
         const generatedAnswer = answer(generated.question!, ['compose.yml'])
-        const machine = await draftFromRegistry({ ...base, configuration: {
+        const machine = await draftConfiguration({ ...base, configuration: {
             ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer],
         } })
         const machineAnswer = answer(machine.question!, machineFloor)
-        const posture = await draftFromRegistry({ ...base, configuration: {
+        const posture = await draftConfiguration({ ...base, configuration: {
             ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer],
         } })
         const postureAnswer = answer(posture.question!, localPosture)
-        const testingDraft = await draftFromRegistry({ ...base, configuration: {
+        const testingDraft = await draftConfiguration({ ...base, configuration: {
             ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer, postureAnswer],
         } })
         const testingAnswer = answer(testingDraft.question!, 'none')
-        const guards = await draftFromRegistry({ ...base, configuration: {
+        const guards = await draftConfiguration({ ...base, configuration: {
             ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer],
         } })
         const guardAnswer = answer(guards.question!, guardHosts)
-        const gradingDraft = await draftFromRegistry({ ...base, configuration: {
+        const gradingDraft = await draftConfiguration({ ...base, configuration: {
             ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer],
         } })
         const gradingAnswer = answer(gradingDraft.question!, 'independent')
-        const defaults = await draftFromRegistry({ ...base, configuration: {
+        const defaults = await draftConfiguration({ ...base, configuration: {
             ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer],
         } })
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
-        // There is no registry here, so no default may be explained by one.
         expect(defaults.diagnostics.filter(item => item.code === 'DOCUMENT_DEFAULT').length).toBeGreaterThan(0)
-        expect(defaults.artifact).not.toMatch(/registry dialect|source registry/)
-        const complete = await draftFromRegistry({ ...base, configuration: {
+        const complete = await draftConfiguration({ ...base, configuration: {
             ...base.configuration,
             answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer,
                 confirmDefaults(defaults.question!)],
@@ -885,14 +688,14 @@ describe('operator-confirmed document completion', () => {
         expect(complete.artifact).toContain('# Decision: signed-in users: not declared')
         const requiredTestData = answer(testData.question!, { seeded_data: true, signed_in_users: true })
         const composeAnswer = answer(generated.question!, ['compose.yml'])
-        const unresolvedDefaults = await draftFromRegistry({ ...base, configuration: {
+        const unresolvedDefaults = await draftConfiguration({ ...base, configuration: {
             ...base.configuration,
             answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, requiredTestData, composeAnswer, machineAnswer, postureAnswer, testingAnswer,
                 guardAnswer, gradingAnswer],
         } })
         expect(unresolvedDefaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
         expect(unresolvedDefaults.artifact).not.toContain('# [default] environment.compose_files')
-        const unresolved = await draftFromRegistry({ ...base, configuration: {
+        const unresolved = await draftConfiguration({ ...base, configuration: {
             ...base.configuration,
             answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, requiredTestData, composeAnswer, machineAnswer, postureAnswer, testingAnswer,
                 guardAnswer, gradingAnswer, confirmDefaults(unresolvedDefaults.question!)],
@@ -911,128 +714,17 @@ describe('operator-confirmed document completion', () => {
         }))
     })
 
-    it('fills only registry sibling gaps and refuses changes to detected facts', async () => {
-        const { input } = sourceInput(
-            'X_SIBLINGS=(\n  "runner|runner|runner|host|RUNNER_DIR|production hardware runner"\n)\n',
-        )
-        const nameAnswer = await answerName(input)
-        const pending = await draftFromRegistry({ ...input, configuration: { sourceObservationSha256, answers: [nameAnswer] } })
-        expect(pending).toMatchObject({ kind: 'gap-draft', question: { field: 'sibling' } })
-        const sibling = {
-            slug: 'runner', dir: 'runner', remote: 'runner', mount: 'host', acquire: 'auto',
-            var: 'RUNNER_DIR', purpose: 'production hardware runner', toolchain: 'node',
-            host_reason: 'requires a local display device', gate: 'operator',
-        }
-        expect(await draftFromRegistry({ ...input, configuration: { sourceObservationSha256,
-            answers: [nameAnswer, answer(pending.question!, [{ ...sibling, dir: 'changed' }])] } }))
-            .toMatchObject({ kind: 'refusal', status: 2 })
-        expect(await draftFromRegistry({ ...input, configuration: { sourceObservationSha256,
-            answers: [nameAnswer, answer(pending.question!, [sibling])] } }))
-            .toMatchObject({ kind: 'gap-draft', question: { field: 'ports.bases' } })
-    })
-
-    it('refuses wrong, extra, malformed, sensitive and stale answers', async () => {
-        const { input } = sourceInput('X_SIBLINGS=(\n  "app|app|app|app|APP_DIR|Synthetic application"\n)\n')
-        const nameAnswer = await answerName(input)
-        const pending = await draftFromRegistry({ ...input, configuration: { sourceObservationSha256, answers: [nameAnswer] } })
-        const valid = answer(pending.question!, { APP_HOST_PORT: 4100 })
-        const generated = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, valid],
-        } })
-        const generatedAnswer = answer(generated.question!, ['compose.yml'])
-        const machine = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, valid, generatedAnswer],
-        } })
-        const machineAnswer = answer(machine.question!, machineFloor)
-        const posture = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, valid, generatedAnswer, machineAnswer],
-        } })
-        const postureAnswer = answer(posture.question!, localPosture)
-        const testingDraft = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, valid, generatedAnswer, machineAnswer, postureAnswer],
-        } })
-        const testingAnswer = answer(testingDraft.question!, 'none')
-        const guards = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, valid, generatedAnswer, machineAnswer, postureAnswer, testingAnswer],
-        } })
-        const guardAnswer = answer(guards.question!, guardHosts)
-        const gradingDraft = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, valid, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer],
-        } })
-        const gradingAnswer = answer(gradingDraft.question!, 'independent')
-        const defaults = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, valid, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer],
-        } })
-        const cases = [
-            [nameAnswer, { ...valid, questionId: `question:${'b'.repeat(64)}` }],
-            [nameAnswer, { ...valid, bytes: '{', sha256: createHash('sha256').update('{').digest('hex') }],
-            [nameAnswer, answer(pending.question!, { api_token: 'raw-secret-value' })],
-        ]
-        for (const answers of cases) {
-            expect(await draftFromRegistry({ ...input, configuration: { sourceObservationSha256, answers } }))
-                .toMatchObject({ kind: 'refusal', status: 2 })
-        }
-        expect(await draftFromRegistry({ ...input, configuration: { sourceObservationSha256,
-            answers: [nameAnswer, valid, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer, confirmDefaults(defaults.question!), valid] } }))
-            .toMatchObject({ kind: 'refusal', status: 2,
-                diagnostics: [expect.objectContaining({ code: 'DOCUMENT_CONFIGURATION_ANSWER_EXTRA' })] })
-
-        writeFileSync(join(input.root, 'env/lib/instance.sh'),
-            'X_SIBLINGS=(\n  "api|api|api|app|API_DIR|Changed purpose"\n)\n')
-        expect(await draftFromRegistry({ ...input, configuration: { sourceObservationSha256, answers: [nameAnswer, valid] } }))
-            .toMatchObject({ kind: 'refusal', status: 2 })
-    })
-
-    it('rejects missing or changed explicit confirmation of the surfaced defaults', async () => {
-        const { input } = sourceInput('X_SIBLINGS=(\n  "app|app|app|app|APP_DIR|Synthetic application"\n)\n')
-        const nameAnswer = await answerName(input)
-        const ports = await draftFromRegistry({ ...input, configuration: { sourceObservationSha256, answers: [nameAnswer] } })
-        const portAnswer = answer(ports.question!, { APP_HOST_PORT: 4100 })
-        const generated = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, portAnswer],
-        } })
-        const generatedAnswer = answer(generated.question!, ['compose.yml'])
-        const machine = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, portAnswer, generatedAnswer],
-        } })
-        const machineAnswer = answer(machine.question!, machineFloor)
-        const posture = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer],
-        } })
-        const postureAnswer = answer(posture.question!, localPosture)
-        const testingDraft = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer],
-        } })
-        const testingAnswer = answer(testingDraft.question!, 'none')
-        const guards = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer],
-        } })
-        const guardAnswer = answer(guards.question!, guardHosts)
-        const gradingDraft = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer],
-        } })
-        const gradingAnswer = answer(gradingDraft.question!, 'independent')
-        const defaults = await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer],
-        } })
-        expect(defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
-        const changed = answer(defaults.question!, { confirmed: true, sha256: 'f'.repeat(64) })
-        expect(await draftFromRegistry({ ...input, configuration: {
-            sourceObservationSha256, answers: [nameAnswer, portAnswer, generatedAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, gradingAnswer, changed],
-        } })).toMatchObject({ kind: 'refusal', status: 2 })
-    })
-
     it('confirms the same values for a one-repository estate as for any other estate', async () => {
         const estateRoot = temporaryPath('single-product')
         mkdirSync(estateRoot)
         const reachConfirmation = async (classification: 'one-sibling' | undefined) => {
             const configuration = { sourceObservationSha256, ...(classification ? { classification } : {}), answers: [] as ReturnType<typeof answer>[] }
-            let pending = await draftFromRegistry({ root: estateRoot, configuration })
+            let pending = await draftConfiguration({ root: estateRoot, configuration })
             for (const value of ['single-product', generatedConfig.sibling, { APP_HOST_PORT: 4100 },
                 generatedConfig.environment.install_policies, { seeded_data: false, signed_in_users: false },
                 ['compose.yml'], machineFloor, localPosture, 'none', guardHosts, 'independent']) {
                 configuration.answers.push(answer(pending.question!, value))
-                pending = await draftFromRegistry({ root: estateRoot, configuration })
+                pending = await draftConfiguration({ root: estateRoot, configuration })
             }
             expect(pending).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
             return { configuration, pending }
@@ -1041,7 +733,7 @@ describe('operator-confirmed document completion', () => {
         const single = await reachConfirmation('one-sibling')
         // No value is inferred from the repository count, so one repository gets the same guards, settings and instructions.
         expect(single.pending.question!.expectedSha256).toBe(estate.pending.question!.expectedSha256)
-        expect(await draftFromRegistry({ root: estateRoot, configuration: { ...single.configuration, answers: [
+        expect(await draftConfiguration({ root: estateRoot, configuration: { ...single.configuration, answers: [
             ...single.configuration.answers,
             answer(single.pending.question!, { confirmed: true, sha256: estate.pending.question!.expectedSha256 }),
         ] } })).toMatchObject({ kind: 'complete', status: 0 })
@@ -1148,21 +840,21 @@ describe('operator-confirmed document completion', () => {
         mkdirSync(estateRoot)
         const configuration = { sourceObservationSha256, classification: 'no-runnable-product' as const, answers: [] as ReturnType<typeof answer>[],
             tools: ['claudecode'] }
-        let pending = await draftFromRegistry({ root: estateRoot, configuration })
+        let pending = await draftConfiguration({ root: estateRoot, configuration })
         for (const value of ['empty-product', generatedConfig.sibling, {}]) {
             configuration.answers.push(answer(pending.question!, value))
-            pending = await draftFromRegistry({ root: estateRoot, configuration })
+            pending = await draftConfiguration({ root: estateRoot, configuration })
         }
         // The guard governs the agent's commands whether or not anything runs, so the hosts are asked
         // here too; an explicit empty answer is kept as a recorded decision, not a silent default.
         expect(pending).toMatchObject({ kind: 'gap-draft', question: { field: 'guards', why: expect.stringContaining('production, staging, shared') } })
-        expect(await draftFromRegistry({ root: estateRoot, configuration: { ...configuration, answers: [...configuration.answers,
+        expect(await draftConfiguration({ root: estateRoot, configuration: { ...configuration, answers: [...configuration.answers,
             answer(pending.question!, { hosted_db_hosts: [] })] } })).toMatchObject({ kind: 'refusal',
             diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID' }] })
         configuration.answers.push(answer(pending.question!, { hosted_db_hosts: [], vendor_endpoint_hosts: [] }))
-        pending = await draftFromRegistry({ root: estateRoot, configuration })
+        pending = await draftConfiguration({ root: estateRoot, configuration })
         configuration.answers.push(answer(pending.question!, 'independent'))
-        pending = await draftFromRegistry({ root: estateRoot, configuration })
+        pending = await draftConfiguration({ root: estateRoot, configuration })
         expect(pending).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
         expect(pending.diagnostics.map(row => row.target)).not.toContain('guards.hosted_db_hosts')
         // The reviewed draft describes the surfaces it writes: the chosen tools, not the schema's default list.
@@ -1170,7 +862,7 @@ describe('operator-confirmed document completion', () => {
         expect(surfacesNote).toEqual([expect.stringContaining('"tools":["claudecode"]')])
         expect(parseToml(pending.artifact!)).toMatchObject({ surfaces: { tools: ['claudecode'] } })
         configuration.answers.push(confirmDefaults(pending.question!))
-        const completed = await draftFromRegistry({ root: estateRoot, configuration })
+        const completed = await draftConfiguration({ root: estateRoot, configuration })
         expect(completed).toMatchObject({ kind: 'complete', status: 0 })
         expect(parseToml(pending.artifact!)).toEqual(parseToml(completed.artifact!))
         expect(completed.diagnostics).toContainEqual(expect.objectContaining({ severity: 'info', code: 'DOCUMENT_RUNTIME_NOT_DECLARED' }))

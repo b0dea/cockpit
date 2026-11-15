@@ -11,13 +11,10 @@ code, and unknown flags are refused.
 
 ## Input limits
 
-cockpit checks the size of configuration, registry and adoption files before parsing them, against
+cockpit checks the size of configuration files before parsing them, against
 the limit in [`config/load.ts`](../packages/cockpit/src/config/load.ts). A file that cannot be read,
 is not a regular file, is too large, or changes while cockpit reads it is refused. Make the file
 smaller; raising an output or subprocess limit does not change this one.
-
-A skipped registry row produces no `init --registry` draft, because cockpit may no longer know which
-repository it applies to.
 
 ## Environment modes
 
