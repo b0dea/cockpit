@@ -84,9 +84,7 @@ export interface HealthObservationSourceInput {
     readonly notices: () => readonly EnvironmentDiagnostic[]
 }
 
-export interface HealthObservationSource {
-    readonly kind: 'health-observation-source'
-}
+export type HealthObservationSource = PreparedHealthObservation
 
 export interface ObservationCommandAdapters {
     readonly load: (
@@ -177,8 +175,6 @@ interface PreparedHealthObservation {
     readonly unobservable: ReadonlyMap<string, string>
 }
 
-const issuedHealthObservationSources = new WeakMap<object, PreparedHealthObservation>()
-
 const healthProducerNames = Object.freeze([
     'claims', 'git', 'host', 'lifecycle', 'ports', 'runtime', 'state', 'templates', 'envSchema', 'siblings', 'surfaces',
 ] as const)
@@ -206,76 +202,17 @@ function combinedVerdict(
 }
 
 function stageMatches(context: PreflightContext, expected: 'steady' | 'bootstrap'): boolean {
-    try {
-        return Array.isArray(context.stages) && context.stages.every((authority) => authority.stage === expected)
-    } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        return false
-    }
+    return context.stages.every((authority) => authority.stage === expected)
 }
 
-function exactHealthProducers(value: unknown): HealthObservationProducers | undefined {
-    try {
-        if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(value)
-        if (Reflect.ownKeys(descriptors).length !== healthProducerNames.length) return undefined
-        const producers: Partial<Record<typeof healthProducerNames[number], () => Promise<readonly EnvironmentObservation[]>>> = {}
-        for (const name of healthProducerNames) {
-            const descriptor = descriptors[name]
-            if (!descriptor || !('value' in descriptor) || typeof descriptor.value !== 'function') return undefined
-            producers[name] = descriptor.value as () => Promise<readonly EnvironmentObservation[]>
-        }
-        return producers as HealthObservationProducers
-    } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        return undefined
-    }
-}
-
-function singleDataElement(value: unknown): unknown {
-    try {
-        if (!Array.isArray(value)) return undefined
-        const keys = Reflect.ownKeys(value)
-        const element = Object.getOwnPropertyDescriptor(value, '0')
-        const length = Object.getOwnPropertyDescriptor(value, 'length')
-        if (keys.length !== 2 || !keys.includes('0') || !keys.includes('length')
-            || !element || !('value' in element) || !length || !('value' in length) || length.value !== 1) return undefined
-        return element.value
-    } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        return undefined
-    }
-}
-
-function exactDataObject(value: unknown, keys: readonly string[]): Readonly<Record<string, unknown>> | undefined {
-    try {
-        if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(value)
-        if (Reflect.ownKeys(descriptors).length !== keys.length) return undefined
-        const captured: Record<string, unknown> = {}
-        for (const key of keys) {
-            const descriptor = descriptors[key]
-            if (!descriptor || !('value' in descriptor)) return undefined
-            captured[key] = descriptor.value
-        }
-        return captured
-    } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        return undefined
-    }
-}
-
+// The preflight context of one stack must still describe the configuration and stage the health
+// observation was prepared for, with its windows in order.
 function boundPreflightContext(
-    value: unknown,
+    context: PreflightContext | undefined,
     expected: { readonly stackId: StackId; readonly source: string; readonly revision: string; readonly stage: 'bootstrap' | 'steady' },
 ): PreflightContext | undefined {
-    const context = exactDataObject(value, ['authorities', 'stages'])
-    const authority = exactDataObject(singleDataElement(context?.authorities), [
-        'stackId', 'evaluatedAt', 'validThrough', 'revision', 'source', 'postures', 'environmentPostures', 'postureRequirements',
-    ])
-    const stage = exactDataObject(singleDataElement(context?.stages), [
-        'stackId', 'stage', 'observedAt', 'validThrough',
-    ])
+    const authority = context?.authorities.length === 1 ? context.authorities[0] : undefined
+    const stage = context?.stages.length === 1 ? context.stages[0] : undefined
     if (!context || !authority || !stage
         || authority.stackId !== expected.stackId || stage.stackId !== expected.stackId
         || authority.source !== expected.source || authority.revision !== expected.revision
@@ -288,36 +225,22 @@ function boundPreflightContext(
         || Date.parse(stage.observedAt) < Date.parse(authority.evaluatedAt)
         || Date.parse(stage.observedAt) > Date.parse(authority.validThrough)
         || Date.parse(authority.evaluatedAt) > Date.parse(stage.validThrough)) return undefined
-    return value as PreflightContext
+    return context
 }
 
 export function issueHealthObservationSource(
     rawSource: HealthObservationSourceInput,
 ): HealthObservationSource | undefined {
     try {
-        if (!rawSource || typeof rawSource !== 'object' || Array.isArray(rawSource)) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(rawSource)
-        const keys = ['checkout', 'configuration', 'preflight', 'env', 'gitExecutable', 'timeoutMs', 'producers', 'refreshPreflight',
-            'stopped', 'notices'] as const
-        if (Reflect.ownKeys(descriptors).length !== keys.length
-            || keys.some((key) => !descriptors[key] || !('value' in descriptors[key]!))) return undefined
-        const checkout = consumeSetupCheckoutProjection(descriptors.checkout!.value as SetupCheckoutProjection)
-        const loaded = consumeEffectiveConfiguration(descriptors.configuration!.value as LoadedConfigProjection)
-        const rawPreflight = descriptors.preflight!.value
-        const env = exactEnvironment(descriptors.env!.value)
-        const executable = resolvedGitExecutable(descriptors.gitExecutable!.value as ResolvedExecutable)
-        const timeoutMs = descriptors.timeoutMs!.value
-        const producers = exactHealthProducers(descriptors.producers!.value)
-        const refreshPreflight = descriptors.refreshPreflight!.value
-        const stopped = descriptors.stopped!.value as EnvironmentDiagnostic | null
-        const notices = descriptors.notices!.value
-        if (!checkout || loaded.kind !== 'complete' || !env || !executable || !producers
-            || typeof refreshPreflight !== 'function' || typeof notices !== 'function'
-            || stopped !== null && (typeof stopped !== 'object' || typeof stopped.code !== 'string' || typeof stopped.message !== 'string')
+        const { preflight: rawPreflight, producers, refreshPreflight, stopped, notices, timeoutMs } = rawSource
+        const checkout = consumeSetupCheckoutProjection(rawSource.checkout)
+        const loaded = consumeEffectiveConfiguration(rawSource.configuration)
+        const env = exactEnvironment(rawSource.env)
+        const executable = resolvedGitExecutable(rawSource.gitExecutable)
+        if (!checkout || loaded.kind !== 'complete' || !env || !executable
             || !sameSource(checkout.source, loaded.source) || checkout.cockpitName !== loaded.config.cockpit.name
             || typeof timeoutMs !== 'number' || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000
         ) return undefined
-        const resolvedTimeoutMs = timeoutMs as number
         const stack = deriveStackId({
             cockpitId: checkout.cockpitId,
             checkoutId: checkout.checkoutId,
@@ -325,7 +248,7 @@ export function issueHealthObservationSource(
         })
         // Only a stack that has run and still runs is observed in the steady stage; otherwise the
         // rows that need no running stack are, and the reason none runs travels with them.
-        const stage = stopped === null || stageMatches(rawPreflight as PreflightContext, 'steady') ? 'steady' as const : 'bootstrap' as const
+        const stage = stopped === null || stageMatches(rawPreflight, 'steady') ? 'steady' as const : 'bootstrap' as const
         const runtimeDeclared = !declaresNothingToRun(loaded.config.environment)
         const expectedPreflight = { stackId: stack, source: loaded.source.path, revision: loaded.source.sha256, stage }
         const preflight = boundPreflightContext(rawPreflight, expectedPreflight)
@@ -342,7 +265,7 @@ export function issueHealthObservationSource(
                 executable,
                 checkoutRoot,
                 env,
-                timeoutMs: resolvedTimeoutMs,
+                timeoutMs,
                 stackId: stack,
                 checkoutId: deriveCheckoutId({ checkoutPath: checkoutRoot }),
                 source: `${loaded.source.path}:${sibling.slug}`,
@@ -351,20 +274,17 @@ export function issueHealthObservationSource(
                 ...(declared === undefined ? {} : { declaredRemote: declared.remote }),
             }
         })
-        const prepared = {
+        return {
             configPath: loaded.source.path,
             preflight,
             comparisons,
             producers,
-            refreshPreflight: refreshPreflight as (previous: PreflightContext) => Promise<PreflightContext | undefined>,
+            refreshPreflight,
             expectedPreflight,
             stopped: stopped === null ? null : { ...stopped },
-            notices: notices as () => readonly EnvironmentDiagnostic[],
+            notices,
             unobservable: stopped === null ? new Map<string, string>() : stoppedStackApplicability({ runtimeDeclared }),
         }
-        const source = { kind: 'health-observation-source' as const }
-        issuedHealthObservationSources.set(source, prepared)
-        return source
     } catch (error) {
         throw new RefusalError(
             `health observation source could not be issued: ${errorCause(error)}`,
@@ -377,18 +297,9 @@ export function prepareHealthObservation(
     input: { readonly configPath: string },
     source: HealthObservationSource,
 ): PreparedHealthObservation | undefined {
-    try {
-        if (!source || typeof source !== 'object') return undefined
-        const prepared = issuedHealthObservationSources.get(source)
-        issuedHealthObservationSources.delete(source)
-        return prepared && typeof input.configPath === 'string' && resolve(input.configPath) === prepared.configPath
-            && stageMatches(prepared.preflight, prepared.expectedPreflight.stage)
-            ? prepared
-            : undefined
-    } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        return undefined
-    }
+    return resolve(input.configPath) === source.configPath && stageMatches(source.preflight, source.expectedPreflight.stage)
+        ? source
+        : undefined
 }
 
 async function executeObservationStep(

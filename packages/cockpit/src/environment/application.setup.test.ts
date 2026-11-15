@@ -305,29 +305,6 @@ describe('setup application choreography', () => {
         expect(outcome.diagnostics[0]!.message.split(originalTarget)).toHaveLength(2)
     })
 
-    it('refuses a caller-constructed run context before invoking an owner', async () => {
-        const { configPath, context, adapters } = await sequenceFixture()
-        const observeGit = vi.fn(adapters.observeGit)
-        adapters.load = async () => ({ kind: 'complete', status: 0, diagnostics: [], result: { ...context } })
-        adapters.observeGit = observeGit
-
-        const outcome = await runSetupSequence({ configPath }, adapters)
-
-        expect(outcome).toMatchObject({ kind: 'refusal', result: null })
-        expect(observeGit).not.toHaveBeenCalled()
-    })
-
-    it('consumes an issued run context exactly once', async () => {
-        const { configPath, adapters } = await sequenceFixture()
-        const observeGit = vi.fn(adapters.observeGit)
-        adapters.observeGit = observeGit
-
-        expect((await runSetupSequence({ configPath }, adapters)).kind).toBe('complete')
-        observeGit.mockClear()
-        expect(await runSetupSequence({ configPath }, adapters)).toMatchObject({ kind: 'refusal', result: null })
-        expect(observeGit).not.toHaveBeenCalled()
-    })
-
     it.each([
         ['current checkout', (input: SetupRunContextInput) => ({ ...input, currentCheckoutPath: `${input.currentCheckoutPath}-other` })],
         ['main checkout', (input: SetupRunContextInput) => ({ ...input, mainCheckoutPath: `${input.mainCheckoutPath}-other` })],

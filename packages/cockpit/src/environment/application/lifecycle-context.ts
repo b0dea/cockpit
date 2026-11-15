@@ -1,4 +1,4 @@
-import { dirname, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import type { ExecuteProbeOutcome, ForegroundProcessInput, ForegroundProcessOutcome } from '../../environment-exec/execute.js'
 import {
     ENVIRONMENT_CODES,
@@ -53,6 +53,10 @@ export interface LifecycleRunContext {
     readonly holderId: HolderId
     readonly ports: PortFamilyConfig
     readonly entrypointDerivatives: readonly EntrypointDerivative[]
+    // Warnings an owner raised while a run held this context, such as an interrupted restore released
+    // with its data possibly half applied. The command's result carries them whatever its outcome:
+    // dropping one left a person working on partial data with nobody told.
+    readonly notices: EnvironmentDiagnostic[]
 }
 
 export interface LifecycleRunContextInput {
@@ -134,6 +138,8 @@ export interface ResetCommandInput {
 
 export interface DestructiveRunContext extends LifecycleRunContext {
     readonly instance: SelectDestructiveInstanceInput
+    /** The holder claim the load took on a stack no session held; cleared once settled or handed to a drain. */
+    provisionalClaim?: LeasePortFamilyResult
 }
 
 export interface DestructiveObservation {
@@ -222,16 +228,8 @@ export type SessionCommandResult =
     }> }>
     | Readonly<{ kind: 'refusal'; status: number; diagnostics: readonly EnvironmentDiagnostic[]; result: null }>
 
-export const issuedLifecycleRuns = new WeakSet<object>()
-// Warnings an owner raised while a run held its context, such as an interrupted restore released
-// with its data possibly half applied. The command's result carries them whatever its outcome:
-// dropping one left a person working on partial data with nobody told.
-const lifecycleRunNotices = new WeakMap<object, EnvironmentDiagnostic[]>()
-
 export function noticeLifecycleRun(context: LifecycleRunContext, diagnostic: EnvironmentDiagnostic): void {
-    const notices = lifecycleRunNotices.get(context) ?? []
-    notices.push({ ...diagnostic })
-    lifecycleRunNotices.set(context, notices)
+    context.notices.push({ ...diagnostic })
 }
 
 // A lock taken over from a killed command is said once: what that command was doing may be half done.
@@ -249,13 +247,9 @@ export function withLifecycleRunNotices<Result extends { readonly diagnostics: r
     context: LifecycleRunContext,
     result: Result,
 ): Result {
-    const notices = [...lifecycleRunNotices.get(context) ?? [], ...takeStateLockReclaims(context.namespace).map(stateLockReclaimed)]
-    lifecycleRunNotices.delete(context)
+    const notices = [...context.notices.splice(0), ...takeStateLockReclaims(context.namespace).map(stateLockReclaimed)]
     return notices.length > 0 ? { ...result, diagnostics: [...result.diagnostics, ...notices] } : result
 }
-const lifecycleConfigurationSources = new WeakMap<object, Readonly<{ source: SourceProvenance; siblingsRoot: string }>>()
-export const issuedDestructiveRuns = new WeakSet<object>()
-export const provisionalClaims = new WeakMap<DestructiveRunContext, LeasePortFamilyResult>()
 
 type EffectiveConfigurationResult =
     | Readonly<{ kind: 'complete'; source: SourceProvenance; runtimeSha256: string; config: CockpitConfig }>
@@ -277,23 +271,14 @@ export function registryRefusalMessage(result: Extract<EffectiveConfigurationRes
 
 export function issueDestructiveRunContext(input: DestructiveRunContextInput): EnvironmentCommandOutcome<DestructiveRunContext> {
     try {
-        if (!input || typeof input !== 'object' || Array.isArray(input)) return lifecycleContextRefusal()
-        const descriptors = Object.getOwnPropertyDescriptors(input)
-        if (Reflect.ownKeys(descriptors).length !== (descriptors.claim ? 3 : 2)
-            || !('value' in descriptors.lifecycle!) || !('value' in descriptors.instance!)
-            || descriptors.claim && !('value' in descriptors.claim)) return lifecycleContextRefusal()
-        const lifecycle = descriptors.lifecycle!.value as LifecycleRunContext
-        const instance = descriptors.instance!.value as SelectDestructiveInstanceInput
-        const claim = descriptors.claim?.value as LeasePortFamilyResult | undefined
-        const namespace = authenticateStateNamespace(lifecycle?.namespace)
+        const { lifecycle, instance, claim } = input
+        const namespace = authenticateStateNamespace(lifecycle.namespace)
         const selected = selectDestructiveInstance(instance)
         if (!namespace || selected.kind !== 'selected' || selected.stackId !== lifecycle.stackId
             || selected.checkoutId !== lifecycle.checkoutId || lifecycle.configPath !== resolve(lifecycle.configPath)) {
             return lifecycleContextRefusal()
         }
-        const context = { ...lifecycle, namespace, instance }
-        issuedDestructiveRuns.add(context)
-        if (claim) provisionalClaims.set(context, claim)
+        const context: DestructiveRunContext = { ...lifecycle, namespace, instance, ...claim ? { provisionalClaim: claim } : {} }
         return { kind: 'complete', status: 0, diagnostics: [], result: context }
     } catch (error) {
         return lifecycleContextRefusal(`destructive run authority could not be read: ${errorCause(error)}`)
@@ -302,18 +287,10 @@ export function issueDestructiveRunContext(input: DestructiveRunContextInput): E
 
 export function issueLifecycleRunContext(input: LifecycleRunContextInput): EnvironmentCommandOutcome<LifecycleRunContext> {
     try {
-        if (!input || typeof input !== 'object' || Array.isArray(input)) return lifecycleContextRefusal()
-        const descriptors = Object.getOwnPropertyDescriptors(input)
-        const keys = ['checkout', 'configPath', 'configuration', 'namespace', 'stackId', 'holderId', 'sessionId']
-        if (Reflect.ownKeys(descriptors).length !== keys.length
-            || keys.some((key) => !descriptors[key] || !('value' in descriptors[key]!))) return lifecycleContextRefusal()
-        const checkout = consumeSetupCheckoutProjection(descriptors.checkout!.value as SetupCheckoutProjection)
-        const requestedConfigPath = descriptors.configPath!.value
-        const loaded = consumeEffectiveConfiguration(descriptors.configuration!.value as LoadedConfigProjection)
-        const namespace = authenticateStateNamespace(descriptors.namespace!.value)
-        const stackId = descriptors.stackId!.value
-        const holderId = descriptors.holderId!.value
-        const sessionId = descriptors.sessionId!.value
+        const { configPath: requestedConfigPath, stackId, holderId, sessionId } = input
+        const checkout = consumeSetupCheckoutProjection(input.checkout)
+        const loaded = consumeEffectiveConfiguration(input.configuration)
+        const namespace = authenticateStateNamespace(input.namespace)
         if (loaded.kind === 'refusal') return lifecycleContextRefusal(registryRefusalMessage(loaded))
         if (!checkout || loaded.kind !== 'complete' || !namespace || typeof requestedConfigPath !== 'string' || requestedConfigPath.length === 0
             || requestedConfigPath.includes('\0') || resolve(requestedConfigPath) !== loaded.source.path
@@ -334,7 +311,7 @@ export function issueLifecycleRunContext(input: LifecycleRunContextInput): Envir
             || namespace.paths.lifecycle(expectedStackId).cockpitId !== checkout.cockpitId) {
             return lifecycleContextRefusal()
         }
-        const context = {
+        const context: LifecycleRunContext = {
             configPath: resolve(requestedConfigPath),
             source: { ...loaded.source },
             runtimeSha256: loaded.runtimeSha256,
@@ -349,10 +326,8 @@ export function issueLifecycleRunContext(input: LifecycleRunContextInput): Envir
                 bases: { ...loaded.config.ports.bases },
             },
             entrypointDerivatives: loaded.config.environment.entrypoint_derivatives.map((value) => ({ ...value })),
+            notices: [],
         }
-        issuedLifecycleRuns.add(context)
-        lifecycleConfigurationSources.set(context, Object.freeze({ source: context.source,
-            siblingsRoot: resolve(dirname(loaded.source.path), loaded.config.cockpit.siblings_root) }))
         return { kind: 'complete', status: 0, diagnostics: [], result: context }
     } catch (error) {
         return lifecycleContextRefusal(`lifecycle run authority could not be read: ${errorCause(error)}`)
@@ -363,12 +338,9 @@ export async function withLifecycleConfiguration<T>(
     context: LifecycleRunContext,
     use: (configuration: LoadedConfigProjection) => Promise<T>,
 ): Promise<T | undefined> {
-    if (!context || typeof context !== 'object') return undefined
-    const expected = lifecycleConfigurationSources.get(context)
-    if (!expected) return undefined
-    // Each leaf consumes its own loader-issued handle; a copied parsed config has no authority.
-    const loaded = await loadCockpitConfig(expected.source.path)
-    if (loaded.kind !== 'complete' || !sameSource(expected.source, loaded.result.source)) return undefined
+    // The configuration is re-read so a run never acts on a file that changed since it loaded.
+    const loaded = await loadCockpitConfig(context.source.path)
+    if (loaded.kind !== 'complete' || !sameSource(context.source, loaded.result.source)) return undefined
     try { return await use(loaded.result) }
     finally { consumeLoadedConfigProjection(loaded.result) }
 }

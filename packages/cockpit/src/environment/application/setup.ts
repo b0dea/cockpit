@@ -86,8 +86,6 @@ export interface SetupRunContextInput {
     readonly writeInstructionFiles?: boolean
 }
 
-const issuedSetupRuns = new WeakSet<object>()
-
 function contextRefusal(
     target = 'setup',
     message = 'setup run authority is unavailable or does not match the loaded configuration',
@@ -154,7 +152,6 @@ export function issueSetupRunContext(input: SetupRunContextInput): EnvironmentCo
             writeInstructionPointers: input.writeInstructionPointers === true,
             writeInstructionFiles: input.writeInstructionFiles === true,
         }
-        issuedSetupRuns.add(context)
         return { kind: 'complete', status: 0, diagnostics: [], result: context }
     } catch (error) {
         return contextRefusal('setup', `setup run authority could not be read: ${errorCause(error)}`)
@@ -638,8 +635,6 @@ export async function runSetup(
         }
     }
     const context = loaded.result
-    if (!issuedSetupRuns.has(context)) return contextRefusal()
-    issuedSetupRuns.delete(context)
     const diagnostics: EnvironmentDiagnostic[] = [...loaded.diagnostics]
     const siblings: SetupResult[] = []
     const environmentFiles: Extract<EnvironmentSeedResult, { kind: 'created' | 'unchanged' }>[] = []

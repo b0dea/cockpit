@@ -78,7 +78,6 @@ import {
     type UpCommandAdapters,
     type UpCommandInput,
     type UpCommandResult,
-    issuedLifecycleRuns,
     lifecycleContextRefusal,
     withLifecycleConfiguration,
     withLifecycleRunNotices,
@@ -640,10 +639,10 @@ export async function runUp(
         'lifecycle run context was not fully resolved',
         input.configPath,
     )
-    if (loaded.result.configPath !== configPath || !issuedLifecycleRuns.delete(loaded.result)) {
+    if (loaded.result.configPath !== configPath) {
         return lifecycleRefusal(
             ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
-            'lifecycle run authority is unavailable',
+            'lifecycle run context names another configuration',
             configPath,
         )
     }
@@ -869,10 +868,10 @@ export async function runSleep(
         'lifecycle run context was not fully resolved',
         input.configPath,
     )
-    if (loaded.result.configPath !== configPath || !issuedLifecycleRuns.delete(loaded.result)) {
+    if (loaded.result.configPath !== configPath) {
         return lifecycleRefusal(
             ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
-            'lifecycle run authority is unavailable',
+            'lifecycle run context names another configuration',
             configPath,
         )
     }

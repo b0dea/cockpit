@@ -391,7 +391,6 @@ export function createLifecycleCommandAdapters(
 ): LifecycleCommandAdapterComposition {
     const input = captureInput(rawInput)
     const bindings = new WeakMap<LifecycleRunContext, CompositionBinding>()
-    const issuedRuntimeReadiness = new WeakSet<object>()
 
     const load: LifecycleCommandAdapterComposition['load'] = async (command) => {
         if (!input || typeof execute !== 'function' || command.configPath !== input.configPath) {
@@ -711,7 +710,6 @@ export function createLifecycleCommandAdapters(
             inputs,
             activeProfiles,
         }
-        issuedRuntimeReadiness.add(readiness)
         return use(readiness)
     }
 
