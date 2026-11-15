@@ -169,7 +169,8 @@ Limits, stated plainly:
   worktree carries its own committed guard, but a session started in a subdirectory of a worktree kept
   below the root is guarded only once `sync` has run in that worktree; `doctor` there reports
   `CLAUDE_LOCAL_HOOK_MISSING` until it has.
-- What a harness does when its hook timeout fires is not measured. The guard keeps its own 25-second
+- Claude Code refuses a call whose guard hook times out, through `onFailure: "block"` (measured
+  2026-11-15); what Codex does then is not measured. The guard keeps its own 25-second
   deadline and refuses at it ([Native adapter behavior](#native-adapter-behavior)).
 
 `[[guards.deny]]` adds commands to the blocked list. `[[guards.allow]]` is the exception mechanism: it
@@ -1251,11 +1252,12 @@ runs its own guard; it blocks the call when more than one directory within that 
 it cannot tell which is the cockpit's; a script that is missing or exits with any status but 0 or 2 blocks
 the call with `cockpit guard failed (<status>); a person runs cockpit sync in a terminal`. The generated Claude Code and Codex registrations give the guard hook a
 `timeout` of 30 seconds; a guard call spawns several Node and Git processes and was seen to exceed
-Codex's 5-second default on a loaded machine. What either harness does with the call when that
-timeout fires, run it or refuse it, is not measured. So the guard keeps its own deadline of 25
-seconds: a call still undecided then is refused (`GUARD_TIMED_OUT`), the guard stops every
-process it started, and it starts nothing after. A synchronous stall inside the guard's own process
-can still reach the harness timeout, which may then fail open;
+Codex's 5-second default on a loaded machine. Claude Code 2.1.325 ran the call when a hook timed out,
+and refused it once the hook set `onFailure: "block"` (measured 2026-11-15), so the Claude Code
+registration sets it; what Codex does when its timeout fires is not measured. The guard keeps its own
+deadline of 25 seconds: a call still undecided then is refused (`GUARD_TIMED_OUT`), the guard stops
+every process it started, and it starts nothing after. A synchronous stall inside the guard's own
+process can still reach the Codex timeout, which may then fail open;
 copied plans, failed transport, signals, oversized output, nonzero handler status and invalid JSON
 become `unavailable`, refused as above. Lexical path normalization in this adapter does not itself verify
 filesystem identity.

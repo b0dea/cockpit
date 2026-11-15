@@ -492,6 +492,8 @@ describe('restriction expansion', () => {
             expect(command, name).toBe(STABLE_GUARD_COMMANDS[name])
             // Both harnesses read the hook's timeout in seconds; cockpit states it rather than inheriting each default.
             expect(hook.timeout, name).toBe(30)
+            // Claude Code runs the call when a hook times out unless the hook says onFailure "block"; Codex has no such key.
+            expect((hook as { onFailure?: unknown }).onFailure, name).toBe(name === 'claudecode' ? 'block' : undefined)
             // A guard that cannot load its handler exits 1; a killed one 137. Exit 2 keeps its own reason.
             for (const [exit, status, stderr] of [[1, 2, 'cockpit guard failed (1); a person runs cockpit sync in a terminal\n'], [137, 2, 'cockpit guard failed (137); a person runs cockpit sync in a terminal\n'],
                 [2, 2, 'refused\n'], [0, 0, '']] as const) {

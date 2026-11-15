@@ -406,8 +406,11 @@ function hooksBytes(target: keyof typeof HOOK_ROOT, matcher: string, askIsDeny: 
     const sessionStart = `${GUARD_RECOVERY_SHELL}\nR="${root.session}"; C="$R/"'${shellLiteral(configFile)}'; P="$R/node_modules/@b00dea/cockpit"; if test -n "$R" && test -f "$C" && test -r "$C" && cockpit_package_ready "$P"; then cd "$R" && "$P/bin/cockpit.mjs" check --config "$C" 2>&1 | tail -n 40; else cockpit_guard_recovery "$R" '${shellLiteral(configFile)}' 2>&1; fi; exit 0`
     // Claude Code and Codex both read a hook's `timeout` in seconds (Claude Code's hook reference;
     // Codex 0.167.0's hook configuration, read from its binary). Left unset, Codex reported a guard call
-    // on a loaded machine as timed out after 5 s. What either harness does when it fires is unmeasured.
-    const hooks = { PreToolUse: [{ matcher, hooks: [{ type: 'command', command: guard, timeout: GUARD_HOOK_TIMEOUT_SECONDS }] }],
+    // on a loaded machine as timed out after 5 s. Claude Code 2.1.325 ran the call when its hook timed out,
+    // and blocked it once the hook said `onFailure: "block"` (measured 2026-11-15); the same key on the
+    // matcher did nothing. What Codex does when its timeout fires is unmeasured.
+    const guardHook = { type: 'command', command: guard, timeout: GUARD_HOOK_TIMEOUT_SECONDS, ...target === 'claudecode' ? { onFailure: 'block' } : {} }
+    const hooks = { PreToolUse: [{ matcher, hooks: [guardHook] }],
         SessionStart: [{ hooks: [{ type: 'command', command: sessionStart }] }] }
     const value = target === 'codexcli' ? { description: 'Generated authenticated restriction transport and session-start drift check.', hooks } : { hooks }
     return `${JSON.stringify(value, null, 2)}\n`
