@@ -1241,13 +1241,10 @@ shared guard file may still be generated. What each harness is confirmed to enfo
 ## Evidence
 
 Static configuration, source inspection, synthetic fixtures, model self-report and silence do not
-prove native enforcement. The
-[native evidence validator](../packages/cockpit/libexec/validate-harness-evidence.mjs) binds exact
-current executable and wiring identities, generated-manifest and candidate digests, version, bounded
-transcripts and validation results, and each record carries candidate and deliberately
-broken-control evidence.
+prove native enforcement. Each cell of the [capability matrix](capability-matrix.md) is measured by
+driving the agent tool with a deliberately broken control file beside the real one, and is dated.
 
-Missing evidence keeps a cell `instructed` or `unavailable`, with `human_needed` judgments still
-pending. It never relaxes a hard denial or grants a permission. Switching defaults, deleting
+Missing evidence keeps a cell `instructed` or `unavailable`. It never relaxes a hard denial or
+grants a permission. Switching defaults, deleting
 fallbacks and publishing stay human decisions; a green source check or a generated reference does
 not make them.

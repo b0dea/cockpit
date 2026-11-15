@@ -7,7 +7,7 @@ import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
 import { GUARD_SURFACE_TARGETS as INSTRUCTION_TARGETS, HARNESS_REGISTRY, type HarnessRegistryRow } from './harness-registry.js'
 import { INSTRUCTION_POINTER_MARKERS } from '../environment/instruction-pointer.js'
 import { exactKeys } from '../exact-keys.js'
-import { claudeImportPaths, mapClaudeImports } from '../../libexec/native-selftest-input.mjs'
+import { claudeImportPaths, mapClaudeImports } from './claude-imports.js'
 import { foldGuardSpelling } from '../guards/evaluator.js'
 
 const GUIDE_BYTE_LIMIT = 65_536
