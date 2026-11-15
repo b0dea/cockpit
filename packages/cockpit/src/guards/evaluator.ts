@@ -33,10 +33,6 @@ export interface GuardInvocationProfile {
     readonly executable: string
     readonly cwd: string
     readonly argv: readonly string[]
-    /** Files the admitted command reads and may echo back, checked like a read-only command's reads. */
-    readonly reads?: readonly string[]
-    /** Admitted only as the whole call: its reads are proved now, and a chain could change them first. */
-    readonly alone?: true
 }
 export interface GuardProjectCommand {
     readonly executable: string
@@ -88,13 +84,8 @@ export interface GuardEvaluationPolicy {
     readonly secretFileIdentities: readonly string[] | null
     /** Some instance or secrets file has another hard link, which a recursive search can read under an unprotected name. */
     readonly protectedFilesLinked: boolean
+    /** Cockpit invocations an agent may run unprompted: every one but those that change what agents may do. */
     readonly cockpitInvocations: readonly GuardInvocationProfile[]
-    /**
-     * Launcher spellings the application proved start the guard's own installed cockpit when run in
-     * `cwd`: the executable and the launcher words after it, such as `npx` with `--no cockpit`. A
-     * matching invocation is evaluated as cockpit with the remaining words; no other one is.
-     */
-    readonly cockpitLaunchers: readonly GuardInvocationProfile[]
     readonly projectCommands: readonly GuardProjectCommand[]
     readonly mcpAllowedTools?: Readonly<Record<string, readonly string[]>>
     /** `native` leaves a named read outside the roots to the agent tool's own permission. */
@@ -260,11 +251,6 @@ const ask = (reason: string): GuardDecision => ({ decision: 'ask', reason })
 // The guard asks only where a person's judgment is the point, or where it cannot tell whether a command crosses a
 // refused boundary (a protected branch, a guard control); any other form it cannot prove safe runs, as a project
 // script it cannot read runs.
-const UNPROVEN_LAUNCHER = 'This cockpit command requires human approval: the guard could not prove it starts the installed cockpit. '
-    + 'npx --no cockpit counts only from the cockpit root with no root .npmrc and no bin in the root package.json, and bare cockpit only when '
-    + 'the command search path finds the installed package. From the cockpit root, use the installed package entrypoint, for example '
-    + '`./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml`; it counts only when it resolves to the installed package. '
-    + 'pnpm writes node_modules/.bin/cockpit as a shell shim, which the guard cannot prove.'
 const deny = (reason: string): GuardDecision => ({ decision: 'deny', reason })
 // A refusal names the command it judged, so an agent can tell which part of a chain was refused.
 const named = (invocation: ParsedInvocation) => {
@@ -330,7 +316,7 @@ function agentAreas(p: JsonSnapshotObject): boolean {
 }
 function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     const p = snapshotJson(value)
-    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands', ...p.mcpAllowedTools === undefined ? [] : ['mcpAllowedTools'], ...p.externalReads === undefined ? [] : ['externalReads'], ...p.readPaths === undefined ? [] : ['readPaths'], ...p.homeDirectory === undefined ? [] : ['homeDirectory'], ...p.cockpitPackageDirectories === undefined ? [] : ['cockpitPackageDirectories'],
+    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'projectCommands', ...p.mcpAllowedTools === undefined ? [] : ['mcpAllowedTools'], ...p.externalReads === undefined ? [] : ['externalReads'], ...p.readPaths === undefined ? [] : ['readPaths'], ...p.homeDirectory === undefined ? [] : ['homeDirectory'], ...p.cockpitPackageDirectories === undefined ? [] : ['cockpitPackageDirectories'],
         ...['secretPaths', 'relatedCheckouts', 'unresolved', 'writePaths', 'relatedReserved', 'externalSearchDirectories', 'guardRuntime',
             'agentHomes', 'agentMemoryKeys', 'agentType', 'agentWorkspaces', 'agentReadAreas', 'recordedGuardScript'].filter(key => p[key] !== undefined)])
         || p.recordedGuardScript !== undefined && p.recordedGuardScript !== true
@@ -352,7 +338,7 @@ function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
         || !canonical(p.canonicalRoot) || !canonical(p.configPath) || posix.dirname(p.configPath) !== p.canonicalRoot || !strings(p.allowedRoots) || !p.allowedRoots.includes(p.canonicalRoot) || !p.allowedRoots.every(canonical)
         || !strings(p.protectedBranches) || !strings(p.hostedDatabaseHosts) || !strings(p.vendorHosts)
         || !Array.isArray(p.instances) || !strings(p.templates) || p.templates.length > GUARD_LOCATION_LIMITS.templates || !Array.isArray(p.protectedIdentities) || !Array.isArray(p.declaredAllows) || !Array.isArray(p.declaredDenies)
-        || typeof p.ripgrepConfigActive !== 'boolean' || typeof p.protectedFilesLinked !== 'boolean' || !Array.isArray(p.cockpitInvocations) || !Array.isArray(p.cockpitLaunchers) || !Array.isArray(p.projectCommands)
+        || typeof p.ripgrepConfigActive !== 'boolean' || typeof p.protectedFilesLinked !== 'boolean' || !Array.isArray(p.cockpitInvocations) || !Array.isArray(p.projectCommands)
         || !strings(p.executionDirectories) || p.executionDirectories.length > GUARD_LOCATION_LIMITS.packageDirectories
         || !strings(p.searchDirectories) || p.searchDirectories.length > GUARD_LOCATION_LIMITS.searchPathDirectories
         || p.secretFileIdentities !== null && (!Array.isArray(p.secretFileIdentities) || p.secretFileIdentities.length > GUARD_SECRET_FILE_LIMIT || !p.secretFileIdentities.every(identity))) return undefined
@@ -374,12 +360,8 @@ function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
             || !keys(item, item.fix === undefined ? ['match', 'argv', 'reason'] : ['match', 'argv', 'reason', 'fix'])
             || !['prefix', 'contains'].includes(String(item.match)) || !ruleArgv(item.argv) || !scalar(item.reason)
             || item.fix !== undefined && !scalar(item.fix))
-        || p.cockpitInvocations.some((item) => !record(item) || !keys(item, ['executable', 'cwd', 'argv', ...item.reads === undefined ? [] : ['reads'], ...item.alone === undefined ? [] : ['alone']])
-            || item.alone !== undefined && item.alone !== true
-            || !scalar(item.executable) || item.executable.includes('*') || !confined(item.cwd) || !argv(item.argv)
-            || item.reads !== undefined && (!strings(item.reads) || item.reads.length > GUARD_INPUT_LIMITS.paths))
-        || p.cockpitLaunchers.length > GUARD_INPUT_LIMITS.invocations || p.cockpitLaunchers.some((item) => !record(item) || !keys(item, ['executable', 'cwd', 'argv'])
-            || !scalar(item.executable) || !argv(item.argv) || cockpitLauncherPrefix(item.executable, [...item.argv, 'check']) !== item.argv.length || !confined(item.cwd))
+        || p.cockpitInvocations.some((item) => !record(item) || !keys(item, ['executable', 'cwd', 'argv'])
+            || !scalar(item.executable) || item.executable.includes('*') || !confined(item.cwd) || !argv(item.argv))
         || p.projectCommands.some((item) => !record(item) || !keys(item, ['executable', 'checkoutRoot', 'kind', 'argv']) || !confined(item.checkoutRoot) || !['build', 'test'].includes(String(item.kind)) || !projectTuple(item))
         || p.protectedIdentities.some((item) => !record(item) || !keys(item, ['path', 'identity', 'ancestors']) || !confined(item.path)
             || item.identity !== null && !identity(item.identity) || !Array.isArray(item.ancestors) || !item.ancestors.every(identity))) return undefined
@@ -1687,6 +1669,18 @@ function gitGlobalOptions(argv: readonly string[]): { readonly keys: readonly st
 }
 
 /**
+ * How many leading words launch cockpit when the invocation names it as the program it runs: `cockpit`,
+ * a path to `cockpit` or `cockpit.mjs`, `node` given such a path, or `npx --no cockpit`; undefined for
+ * any other invocation. The spelling is enough: whatever it starts runs as any program the guard
+ * cannot read does, so it decides only which words are cockpit's own.
+ */
+export function cockpitLaunch(invocation: Pick<ParsedInvocation, 'executable' | 'argv'>): number | undefined {
+    const prefix = invocation.executable === null ? undefined : cockpitLauncherPrefix(invocation.executable, invocation.argv)
+    if (prefix === undefined) return undefined
+    return ['cockpit', 'cockpit.mjs'].includes(posix.basename(prefix === 0 ? invocation.executable! : invocation.argv[prefix - 1]!)) ? prefix : undefined
+}
+
+/**
  * Whether an invocation names the cockpit CLI, however it is launched: by name, or by any path that
  * leads into one of `packages`, the installed package's directories, however it is spelled.
  */
@@ -2684,28 +2678,17 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const feedsXargs = input.invocations.some(invocation => invocation.words.some(word => word.value === XARGS_INPUT))
     const readOnly = new Set<ParsedInvocation>()
     const searchRefusals = new Map<ParsedInvocation, GuardDecision>()
-    // Launcher words name a package or the launcher, never an operand. Only a proven spelling runs
-    // the installed cockpit, so only it is evaluated as cockpit; any other may run other code.
-    const launcherPrefix = (invocation: ParsedInvocation) => invocation.executable === null ? undefined : cockpitLauncherPrefix(invocation.executable, invocation.argv)
-    const provenCockpit = (invocation: ParsedInvocation): readonly string[] | undefined => {
-        const prefix = launcherPrefix(invocation)
-        return prefix !== undefined && resolved.cockpitLaunchers.some((item) => item.executable === invocation.executable && item.cwd === invocation.cwd
-            && item.argv.length === prefix && item.argv.every((word, index) => word === invocation.argv[index])) ? invocation.argv.slice(prefix) : undefined
-    }
-    const launchedCockpit = (invocation: ParsedInvocation): { readonly cockpit?: readonly string[]; readonly operands: readonly string[] } => {
-        const cockpit = provenCockpit(invocation)
-        if (cockpit) return { cockpit, operands: cockpit }
-        const prefix = launcherPrefix(invocation)
-        if (prefix === undefined || !['npx', 'cockpit'].includes(invocation.executable!)) return { operands: invocation.argv }
-        holdBoundary(invocation, ask(UNPROVEN_LAUNCHER))
-        return { operands: invocation.argv.slice(prefix) }
+    // Launcher words name a package or the launcher, never an operand.
+    const cockpitArgs = (invocation: ParsedInvocation): readonly string[] | undefined => {
+        const prefix = cockpitLaunch(invocation)
+        return prefix === undefined ? undefined : invocation.argv.slice(prefix)
     }
     // A session runs the words after `--` as a command, with no shell, in its own directory, and exec
     // runs them in a product container that mounts the checkouts and may hold their credentials, so
     // that command is judged as one more invocation: neither admits more than the guard would. The
     // name-based denials apply to exec's command as to any other.
     const invocations = input.invocations.flatMap((invocation): ParsedInvocation[] => {
-        const cockpit = provenCockpit(invocation)
+        const cockpit = cockpitArgs(invocation)
         const command = cockpit && innerCommand(cockpit)
         if (!command) return [invocation]
         const inner: ParsedInvocation = { executable: command.words[0]!, argv: command.words.slice(1), cwd: invocation.cwd, wrapped: false, redirects: [],
@@ -2713,7 +2696,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         return [invocation, inner]
     })
     const accesses = new Map(invocations.map((invocation) => {
-        const cockpit = provenCockpit(invocation)
+        const cockpit = cockpitArgs(invocation)
         return [invocation, classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive, ...(cockpit ? { cockpit } : {}) })]
     }))
     // A definition or a `cd` runs nothing, so it cannot create a path before a search reads it; a bare redirect writes one.
@@ -2862,7 +2845,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         for (const path of removed?.paths ?? []) {
             if (inspectRemoval(path, removed!.cwd)) hold(deny(`Refusing to remove ${shownGuardWord(path)}: it is outside the configured roots and no [guards] write_paths entry covers it. A person removes it.`))
         }
-        const { operands } = launchedCockpit(invocation)
+        const operands = cockpitArgs(invocation) ?? invocation.argv
         const access = accesses.get(invocation)
         // An input redirect reads its file into the command whatever the command is: `sort < .env` prints it
         // as surely as `cat .env`, and `$(< .env)` with no command at all. The read-only profile inspects a
@@ -3086,16 +3069,17 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // whole, after `=` and after `:`. A visible writer's operands already meet the stronger mutation and link
         // denials above, and a classified read's paths the read checks, so only the roots are judged here for the rest.
         const unclassified = !access && !writes && !removed?.paths.length
-        // Words of a nested command, after a proven cockpit's `--` or the program a launcher runs, are
-        // judged as that command, so they are not paths this one reads; nor is a proven cockpit launcher.
+        // Words of a nested command, after cockpit's `--` or the program a launcher runs, are judged as
+        // that command, so they are not paths this one reads; nor is the cockpit launcher.
         const followed = invocations[invocations.indexOf(invocation) + 1]
-        const nestedFrom = provenCockpit(invocation) ? (invocation.argv.indexOf('--') < 0 ? invocation.argv.length : invocation.argv.indexOf('--'))
+        const nestedFrom = cockpitArgs(invocation) ? (invocation.argv.indexOf('--') < 0 ? invocation.argv.length : invocation.argv.indexOf('--'))
             : followed?.wrapped && launchedBy(followed, invocation) ? invocation.argv.length - followed.argv.length - 1 : invocation.argv.length
         // A sed or awk script, or a search pattern, is the program's text, not a path it reads: `rg '\.env' docs` runs.
         const scriptAt = ['sed', 'awk', 'grep', 'rg', 'jq'].includes(executableName) && !invocation.argv.some(arg => /^(?:--expression|--regexp|--file|--from-file)(?:=|$)|^-[a-zA-Z]*[ef]$/.test(arg))
             ? invocation.argv.findIndex(arg => !arg.startsWith('-')) : -1
-        const launcherPath = (lexical: string) => resolved.cockpitLaunchers.some((item) => [item.executable, ...item.argv]
-            .some((spelled) => spelled.includes('/') && posix.resolve(item.cwd, spelled) === lexical))
+        const launch = cockpitLaunch(invocation)
+        const launcherPath = (lexical: string) => launch !== undefined && [invocation.executable!, ...invocation.argv.slice(0, launch)]
+            .some((spelled) => spelled.includes('/') && posix.resolve(invocation.cwd, spelled) === lexical)
         for (const [position, word] of invocation.argv.entries()) {
             // `git log -L <range>:<file>` names its file after the colon; the range may start with `/`, a regular expression.
             const candidates = git && invocation.argv[position - 1] === '-L' ? [word.slice(word.lastIndexOf(':') + 1)] : undefined
@@ -3180,19 +3164,6 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                     : invocation.executable === 'git'
                         ? `${named(invocation)} is admitted in another checkout only as the whole command, since its repository can configure helpers that run; Git commands that print file content there, such as diff or show, stay refused.`
                         : `${named(invocation)} matches a [guards] allow rule, but the guard cannot prove this read now: it must run without writes or other commands, name existing regular files rather than directories or links, and run without ambient search configuration such as RIPGREP_CONFIG_PATH.`))
-        // A cockpit command that parses a named file can quote it in a refusal, so the file is read
-        // into the agent context as surely as `cat` would read it.
-        for (const profile of resolved.cockpitInvocations) {
-            if (!profile.reads?.length || profile.executable !== invocation.executable || profile.cwd !== invocation.cwd
-                || profile.argv.length !== invocation.argv.length || profile.argv.some((word, i) => word !== invocation.argv[i])) continue
-            if (!inspectReadOnly({ cwd: profile.cwd, reads: profile.reads, trees: [], listings: [] })) {
-                holdAsk(invocation, ask('This cockpit command reads a file the guard cannot prove safe to read: a symlink, an undeclared .env file or one outside the configured roots.'))
-            }
-            // A command a session runs is not the call itself, whatever the call holds.
-            if (profile.alone && (input.invocations.length !== 1 || !input.invocations.includes(invocation) || invocation.redirects.length > 0)) {
-                holdAsk(invocation, ask('env schema --replace-from runs without a prompt only as the whole command: another command in this call could change the draft after the guard proved it safe. Run it on its own.'))
-            }
-        }
         // A config file or URL list names hosts the guard does not read.
         if (fetcher && invocation.argv.some(arg => /^(?:-K|--config|-i|--input-file)(?:=|$)/.test(arg) || /^-K./.test(arg) || /^-i./.test(arg) && executableName === 'wget')) {
             holdBoundary(invocation, ask(`${named(invocation)} reads its URLs or options from a file or standard input, whose hosts the guard does not read. Name the URL on the command line.`))

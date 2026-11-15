@@ -491,13 +491,12 @@ function git(argv: readonly string[], cwd: string): ReadOnlyAccess | undefined {
 /**
  * How many leading words of `argv` belong to the launcher when `executable` may start cockpit, or
  * undefined when it cannot: the bare `cockpit` name, a path, `node <path>` with `node` bare or a path
- * named `node`, and `npx --no [--] cockpit`. Every spelling is a candidate only; the application
- * proves which one starts the guard's own installed cockpit, so all of them are judged by that one identity.
+ * named `node`, and `npx --no [--] cockpit`. Every spelling is a candidate only; the evaluator counts one
+ * as cockpit when its launcher word names it.
  */
 export function cockpitLauncherPrefix(executable: string, argv: readonly string[]): number | undefined {
     // `node --require … launcher` would run other code first, so the script must come first. Node named
-    // by its absolute path takes its script the same way: that is how cockpit is run under the Node the
-    // agents run, which the guard identity binds.
+    // by its absolute path takes its script the same way.
     if (executable === 'node' || executable.includes('/') && posix.basename(executable) === 'node') {
         return argv[0]?.includes('/') && !argv[0].startsWith('-') ? 1 : undefined
     }

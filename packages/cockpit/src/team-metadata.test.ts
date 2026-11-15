@@ -7,7 +7,6 @@ import { installedPackageMetadata } from './package-metadata.js'
 import { initializeTeamMetadata } from '../test-support/team-metadata.js'
 import { prepareTeamMetadata, applyTeamMetadata, validateTeamMetadata, inspectTeamReadiness } from './team-metadata.js'
 import { encodeGuardLocalIdentity, writeCockpitLocalFiles } from './guards/local-identity.js'
-import { guardLauncherEvidence } from './guards/protected-locations.js'
 
 const COCKPIT_SCRIPTS = Object.fromEntries(['setup', 'sync', 'check'].map(command =>
     [`cockpit:${command}`, `./node_modules/@b00dea/cockpit/bin/cockpit.mjs ${command} --config cockpit.toml`]))
@@ -177,28 +176,10 @@ purpose = "Synthetic local repository"
         expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({ code: 'COCKPIT_NOT_INSTALLED',
             target: '.cockpit/local/guard-identity', message: expect.stringContaining('/synthetic/bootstrap/') })])
         expect(await bind(join(installed, 'dist/cli.js'))).toEqual({ kind: 'complete' })
-        // Without npm's bin link neither printed spelling starts the installed cockpit.
-        expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({ code: 'COCKPIT_LAUNCHER_UNPROVEN',
-            message: expect.stringContaining('is not npm\'s link to the installed package either') })])
-        await mkdir(join(installed, 'bin'))
-        await writeFile(join(installed, 'bin/cockpit.mjs'), '#!/usr/bin/env node\n', { mode: 0o755 })
-        await mkdir(join(root, 'node_modules/.bin'))
-        // pnpm writes .bin/cockpit as a shell shim no one can turn into a provable link, and everything
-        // cockpit prints runs the package's own script, so a gap here was one the person could never close.
-        await writeFile(join(root, 'node_modules/.bin/cockpit'), '#!/bin/sh\nexec node "$0"\n', { mode: 0o755 })
         expect(await inspectTeamReadiness(configPath)).toEqual([])
         // A Node version manager can give this shell another Node than the one sync recorded; the guard runs either.
         expect(await bind(join(installed, 'dist/cli.js'), '/synthetic/other-node/bin/node')).toEqual({ kind: 'complete' })
         expect(await inspectTeamReadiness(configPath)).toEqual([])
-        expect(await bind(join(installed, 'dist/cli.js'))).toEqual({ kind: 'complete' })
-        await rm(join(root, 'node_modules/.bin/cockpit'))
-        await symlink('../@b00dea/cockpit/bin/cockpit.mjs'.replace('@b00dea/cockpit', installedPackageMetadata.name), join(root, 'node_modules/.bin/cockpit'))
-        expect(await inspectTeamReadiness(configPath)).toEqual([])
-        // npm applies a root .npmrc to npx, so only the path spelling stays provable.
-        await writeFile(join(root, '.npmrc'), 'script-shell=/bin/sh\n')
-        expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({ code: 'COCKPIT_LAUNCHER_UNPROVEN', target: 'npx --no cockpit',
-            message: expect.stringContaining('./node_modules/.bin/cockpit <command> --config cockpit.toml is proven by its path') })])
-        await rm(join(root, '.npmrc'))
 
         // The same acquire = "none" row is local data while app is a plain directory, and a repository once it is one.
         expect(spawnSync('git', ['-C', join(root, 'app'), 'init', '--quiet']).status).toBe(0)
@@ -206,7 +187,7 @@ purpose = "Synthetic local repository"
             target: 'sibling:app', fix: expect.stringContaining('sibling add app --remote <url>') })])
     })
 
-    it('recognizes the exact linked installation without granting an unproven launcher or an unrelated package target', async () => {
+    it('recognizes the exact linked installation, not an unrelated package target', async () => {
         const root = await fixture('.')
         const configPath = join(root, 'cockpit.toml')
         await mkdir(join(root, 'app'))
@@ -214,17 +195,8 @@ purpose = "Synthetic local repository"
         const installed = join(root, 'node_modules', ...installedPackageMetadata.name.split('/'))
         await mkdir(resolve(installed, '..'), { recursive: true })
         await symlink(resolve('packages/cockpit'), installed)
-        await mkdir(join(root, 'node_modules/.bin'))
-        const launcher = join(root, 'node_modules/.bin/cockpit')
-        await writeFile(launcher, '#!/bin/sh\nexit 0\n', { mode: 0o755 })
-        const entrypoint = await realpath(join(installed, 'bin/cockpit.mjs'))
-        // The linked copy is the installed one; a shim beside it still proves nothing to the guard.
+        // The linked copy is the installed one.
         expect(await inspectTeamReadiness(configPath)).toEqual([])
-        expect(guardLauncherEvidence('npx', ['--no', 'cockpit'], root, root, entrypoint, '')).toBeUndefined()
-        await rm(launcher)
-        await symlink(join(installed, 'bin/cockpit.mjs'), launcher)
-        expect(await inspectTeamReadiness(configPath)).toEqual([])
-        expect(guardLauncherEvidence('npx', ['--no', 'cockpit'], root, root, entrypoint, '')).toBeDefined()
 
         const unrelated = join(root, 'unrelated')
         await mkdir(unrelated)

@@ -10,7 +10,6 @@ import type { CockpitConfig } from './schema.js'
 import { installedPackageMetadata } from './package-metadata.js'
 import { cockpitCommand } from './fix-catalogue.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from './guards/local-identity.js'
-import { guardLauncherEvidence } from './guards/protected-locations.js'
 import { EXACT_DEV_INSTALL, NODE_EXEC, nodeLockfile } from './init/derive.js'
 
 const PACKAGE = installedPackageMetadata.name
@@ -561,33 +560,6 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
             target: GUARD_LOCAL_PATHS.identity,
             fix: `in a terminal in ${root}, run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>, which binds the guard hook to the installed copy`,
         })
-        // The guard's own proof, run as it runs it from the cockpit root once it runs the installed copy.
-        // A root .npmrc, a bin the root package.json declares, or a link that is not npm's leaves every
-        // printed npx form asking a person.
-        const launcher = join(own, 'bin/cockpit.mjs')
-        // pnpm writes .bin/cockpit as a shell shim, which no path check can follow to the installed
-        // launcher, so only the package's own script is a route the guard can prove there. Everything
-        // cockpit prints, package scripts included, runs that script, and nothing the person can do
-        // makes the shim provable, so that case is no gap: the guard says so if npx is typed anyway.
-        const packageScript = `./node_modules/${PACKAGE}/bin/cockpit.mjs`
-        const npmLink = './node_modules/.bin/cockpit'
-        const proven = (path: string) => guardLauncherEvidence(path, [], root, root, launcher, '') !== undefined
-        const linked = proven(npmLink)
-        if (!findings.length && guardLauncherEvidence('npx', ['--no', 'cockpit'], root, root, launcher, '') === undefined
-            && (linked || !proven(packageScript))) {
-            findings.push({
-                severity: 'warning' as const,
-                // A literal, so the diagnostic inventory captures the fix beside the code.
-                code: 'COCKPIT_LAUNCHER_UNPROVEN' satisfies typeof ENVIRONMENT_CODES.COCKPIT_LAUNCHER_UNPROVEN,
-                message: `the guard cannot prove that npx --no cockpit run in ${root} starts the cockpit installed there, so it asks a person before every such command and Codex and OpenCode refuse it; `
-                    + (linked ? `${npmLink} <command> --config cockpit.toml is proven by its path and runs without asking`
-                        : 'node_modules/.bin/cockpit is not npm\'s link to the installed package either, and the package has no bin/cockpit.mjs'),
-                target: 'npx --no cockpit',
-                // Computed in every branch, so the diagnostic index does not present one route as the only remedy.
-                fix: linked ? `run cockpit as ${npmLink} <command> --config <your cockpit.toml> from the cockpit root, or remove what stops npx from proving it: a .npmrc in ${root}, or a bin or directories.bin in its package.json`
-                    : `reinstall cockpit with ${(await rootPackageManager(root)).manager} install in ${root}, then rerun doctor`,
-            })
-        }
     }
     const loaded = await loadCockpitConfig(configPath)
     if (loaded.kind !== 'complete') return findings
