@@ -77,7 +77,7 @@ scope changes, not at hand-back.
    a service, such as a migration or a query, runs through
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs exec --config cockpit.toml --service service-id -- <command>`; the
    guard asks unless a `[guards] allow` rule or a declared build or test command admits it. When the
-   stack will not start (no Docker, another holder, an unmeasured runtime), report the code `up`
+   stack will not start (no Docker, an old Compose, another holder), report the code `up`
    gives and its fix rather than proving the fix some other way. Done when a test goes red on
    exactly the observed behavior.
 5. **Then change the repository that owns the defect**, and nothing else. Leave uncommitted changes

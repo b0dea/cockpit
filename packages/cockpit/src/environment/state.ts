@@ -167,7 +167,6 @@ const GreenfieldAnswerSchema = z.object({
     provenance: z.enum(ANSWER_PROVENANCES),
 }).strict()
 const GreenfieldStateSchema = z.object({
-    mode: z.enum(['estate', 'registry']).optional(),
     stage: z.enum(['question-pending', 'answers-recorded', 'resolved']),
     classification: z.enum(['one-sibling', 'incomplete-multi-repository', 'no-runnable-product', 'ready-multi-repository']).optional(),
     sourceObservationSha256: z.string().regex(digest),
@@ -187,11 +186,8 @@ const GreenfieldStateSchema = z.object({
         || (value.stage === 'resolved' && (value.questions.length !== 0 || value.answers.length !== 0))) {
         context.addIssue({ code: 'custom', message: 'greenfield answers do not match the interview stage' })
     }
-    if ((value.mode ?? 'estate') === 'estate' && (!value.classification || !value.notice)) {
+    if (!value.classification || !value.notice) {
         context.addIssue({ code: 'custom', message: 'estate interview provenance is incomplete' })
-    }
-    if (value.mode === 'registry' && (value.classification || value.notice)) {
-        context.addIssue({ code: 'custom', message: 'registry interview cannot claim estate classification provenance' })
     }
     if (value.stage === 'resolved' && value.classification === 'incomplete-multi-repository') {
         context.addIssue({ code: 'custom', message: 'an incomplete estate cannot be resolved without recorded answers' })
@@ -892,21 +888,6 @@ async function selectStateBase(
     return { kind: 'complete', value: { base: input.home, root } }
 }
 
-/**
- * The per-user state root, without a cockpit or checkout: what `runtime measure` needs to record a
- * fact about this machine before any stack exists. It is the same root `selectStateRoot` scopes
- * each cockpit under, so every checkout of every cockpit on this machine reaches the same directory.
- */
-export async function selectMachineStateRoot(input: Readonly<{ platform: 'darwin' | 'linux'; home: string | undefined; xdgStateHome?: string; uid?: number }>): Promise<StateResult<string>> {
-    const uid = input.uid ?? process.getuid?.()
-    if (uid === undefined) return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'this platform reports no user id, so no private state root can be chosen', input.home ?? '')
-    const selected = await selectStateBase({ platform: input.platform, home: input.home, xdgStateHome: input.xdgStateHome }, uid)
-    if (selected.kind !== 'complete') return selected
-    const unusable = await safeDescendant(selected.value.base, selected.value.root, uid)
-    if (unusable) return unusableStateRoot(selected.value.root, unusable)
-    return { kind: 'complete', value: selected.value.root }
-}
-
 // Bootstrap records are keyed by checkout path, so a scratch or deleted checkout leaves its records
 // behind with nothing able to resume them. Selecting the root drops those whose checkout is gone; a
 // record that does not parse, or names a path that still exists, is kept.
@@ -1293,7 +1274,6 @@ function validateRecordForAddress(
             ? nextGreenfield === undefined || nextGreenfield.answers.length === 0
                 && (nextGreenfield.stage === 'question-pending' || nextGreenfield.stage === 'resolved')
             : nextGreenfield !== undefined
-                && nextGreenfield.mode === currentGreenfield.mode
                 && nextGreenfield.classification === currentGreenfield.classification
                 && nextGreenfield.sourceObservationSha256 === currentGreenfield.sourceObservationSha256
                 && nextGreenfield.notice === currentGreenfield.notice
@@ -1453,7 +1433,6 @@ export async function refreshBootstrapObservation(
         if (!parsed.success || !Number.isInteger(input.expectedRevision) || input.expectedRevision < 0
             || !digest.test(input.expectedSourceObservationSha256)
             || !isCanonicalTimestamp(input.updatedAt) || parsed.data.answers.length !== 0
-            || (parsed.data.mode ?? 'estate') !== 'estate'
             || parsed.data.sourceObservationSha256 === input.expectedSourceObservationSha256) {
             return observationRefreshRefusal('invalid', 'fresh estate observation replacement is malformed')
         }
@@ -1467,7 +1446,6 @@ export async function refreshBootstrapObservation(
         const greenfield = current?.value.greenfield
         if (current === null || current.revision !== stableInput.expectedRevision
             || current.value.stage !== 'surface-published' || !greenfield
-            || (greenfield.mode ?? 'estate') !== 'estate'
             || greenfield.sourceObservationSha256 !== stableInput.expectedSourceObservationSha256) {
             return abortStateTransaction(observationRefreshRefusal('stale',
                 'bootstrap estate observation no longer matches the exact persisted interview'))

@@ -465,8 +465,8 @@ function ownedLogPlan(value: unknown): Extract<LogPlan, { kind: 'planned' }> | u
     return plan
 }
 
-// Collection failures are about the log read itself, never the runtime measurement, so they name what
-// failed instead of sending the reader to measure a runtime that is already measured.
+// Collection failures are about the log read itself, never the runtime, so they name what failed
+// instead of sending the reader to fix a runtime that works.
 function unreadable(reason: string) {
     return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason, records: [] }
 }

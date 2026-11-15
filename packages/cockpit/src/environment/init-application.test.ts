@@ -10,26 +10,11 @@ import { runInitOperatorCommand, type InitCommandIo } from '../init/command.js'
 import { initCommand } from '../fix-catalogue.js'
 import { classifyEstateObservation, draftFromEstate, observePublicEstate, type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult } from '../init/draft.js'
 import { readState, selectBootstrapStateRoot } from './state.js'
-import { digest, fixture, removeInitApplicationFixtures } from '../../test-support/init-application-fixture.js'
+import { digest, estate, fixture, removeInitApplicationFixtures } from '../../test-support/init-application-fixture.js'
 import { loadCockpitConfig } from '../config/load.js'
 import { createHealthCommandAdapters } from './health-composition.js'
 import { runPreflight } from './application/health.js'
 
-function estate(root: string, classification: 'one-sibling' | 'incomplete-multi-repository' | 'no-runnable-product'): EstateClassificationOutcome {
-    const multi = classification === 'incomplete-multi-repository'
-    const noRunnable = classification === 'no-runnable-product'
-    return { kind: 'complete', status: 0, diagnostics: [], result: {
-        sourceObservationSha256: createHash('sha256').update(`estate:${classification}:${root}`).digest('hex'),
-        classification,
-        notice: `${classification} at ${root}`,
-        gaps: multi ? [{ field: 'api.runnable', source: 'api/package.json', why: 'runnable command is unknown' }]
-            : noRunnable ? [{ field: 'runnable-product', source: 'assets/package.json', why: 'no runnable product exists' }] : [],
-        runnable: multi ? [{ slug: 'web', path: 'web', disposition: 'confirmed' },
-            { slug: 'api', path: 'api', disposition: 'unknown' }]
-            : noRunnable ? [{ slug: 'assets', path: 'assets', disposition: 'absent' }]
-                : [{ slug: 'app', path: 'app', disposition: 'confirmed' }],
-    } as EstateClassificationResult & { readonly sourceObservationSha256: string } }
-}
 
 function interviewDocument(destination: string, fields: readonly string[] = ['sibling']): (input: DocumentCommandInput) => Promise<DocumentOutcome> {
     return async input => {
@@ -151,7 +136,7 @@ describe('init application', () => {
         const adapters: InitApplicationAdapters = { ...f.adapters, observeRoot: async () => 'product-repository',
             classifyEstate: async input => { observed.push(input); return estate(input.root, 'one-sibling') },
             document: interviewDocument(f.destination) }
-        const greenfield = { ...f.input, registry: undefined }
+        const greenfield = f.input
         const dedicated = resolve(f.root, '..', 'checkout-cockpit')
         const placement = await runInitApplication(greenfield, adapters)
         expect(placement).toMatchObject({ kind: 'pending', result: {
@@ -202,7 +187,7 @@ describe('init application', () => {
         // Accepting without an answer takes the recommended in-repo placement.
         observed.length = 0
         const g = fixture()
-        const defaulted = await runInitApplication({ ...g.input, registry: undefined, accepted: true, acceptedPreviewSha256: digest('3') },
+        const defaulted = await runInitApplication({ ...g.input, accepted: true, acceptedPreviewSha256: digest('3') },
             { ...g.adapters, observeRoot: async () => 'product-repository',
                 classifyEstate: async input => { observed.push(input); return estate(input.root, 'one-sibling') },
                 document: interviewDocument(g.destination) })
@@ -229,7 +214,7 @@ describe('init application', () => {
             document: interviewDocument(join(dedicated, 'cockpit.toml'), ['sibling', 'configuration.defaults']),
         }
         const application = (input: InitApplicationInput) => runInitApplication(input, adapters)
-        const accepted = { ...f.input, root: dedicated, registry: undefined,
+        const accepted = { ...f.input, root: dedicated,
             cockpitRoot: { kind: 'dedicated' as const, firstSibling: f.root }, accepted: true,
             acceptedPreviewSha256: digest('3') }
         const question = await application(accepted)
@@ -298,7 +283,7 @@ describe('init application', () => {
         }
         // The remedies init prints rerun it against the cockpit root with no placement; the accepted
         // placement is restored from the recorded command, for a dedicated root as for an in-repo one.
-        expect(await runInitApplication({ ...f.input, root, registry: undefined, accepted: true, acceptedPreviewSha256: digest('3') },
+        expect(await runInitApplication({ ...f.input, root, accepted: true, acceptedPreviewSha256: digest('3') },
             adapters)).toMatchObject({ kind: 'complete', result: { root, stage: 'environment-verified' } })
         // An applied answer stays in force, so the file cannot quietly change it after the fact.
         expect(await run({ ...answers, sibling: [{ slug: 'checkout' }] })).toMatchObject({ kind: 'refusal',
@@ -315,7 +300,7 @@ describe('init application', () => {
             observeRoot: async () => rootKind,
             classifyEstate: async ({ root }) => estate(root, 'no-runnable-product'),
         }
-        const accepted = { ...f.input, registry: undefined, accepted: true, acceptedPreviewSha256: digest('3') }
+        const accepted = { ...f.input, accepted: true, acceptedPreviewSha256: digest('3') }
         const artifact = await runInitApplication(accepted, adapters)
         expect(artifact).toMatchObject({ kind: 'artifact', result: { stage: 'draft-prepared' } })
         f.setDestination({ kind: 'available', sha256: '010fb9b6053c7bfa4b9936cf8c372cc028feddd5bf4b848f65de048f198c1a3e' })
@@ -346,7 +331,7 @@ describe('init application', () => {
                 return f.adapters.applyBootstrap(authority)
             },
         }
-        const accepted = { ...f.input, registry: undefined, accepted: true, acceptedPreviewSha256: digest('3') }
+        const accepted = { ...f.input, accepted: true, acceptedPreviewSha256: digest('3') }
         expect(await runInitApplication(accepted, adapters)).toMatchObject({
             kind: 'refusal', result: { stage: 'surface-previewed' },
             diagnostics: [{ code: 'PUBLICATION_INTERRUPTED' }],
@@ -383,7 +368,7 @@ describe('init application', () => {
             },
         }
 
-        const outcome = await runInitApplication({ ...f.input, root: dedicated, registry: undefined,
+        const outcome = await runInitApplication({ ...f.input, root: dedicated,
             cockpitRoot: { kind: 'dedicated', firstSibling: f.root } }, adapters)
 
         expect(outcome, JSON.stringify(outcome.diagnostics)).toMatchObject({ kind: 'pending', result: { interview: {
@@ -429,7 +414,7 @@ describe('init application', () => {
             document: draftFromEstate,
             infer: deriveInferredFacts,
         }
-        const input = { ...f.input, registry: undefined }
+        const input = f.input
         const preview = await runInitApplication(input, adapters)
 
         const outcome = await runInitApplication({ ...input, accepted: true,
@@ -491,7 +476,7 @@ describe('init application', () => {
 
         expect(await run({ ...answers, environment: { ...answers.environment, compose_files: ['app/compose.yml'] } }))
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_CONFLICT' }] })
-        const resetInput = { ...f.input, registry: undefined, resetAnswer: { field: 'environment.compose_files' } }
+        const resetInput = { ...f.input, resetAnswer: { field: 'environment.compose_files' } }
         const preview = await runInitApplication(resetInput, adapters)
         expect(preview).toMatchObject({ kind: 'pending', result: { resetAnswer: {
             invalidatedFields: ['environment.compose_files', 'testing'] } } })
@@ -540,7 +525,7 @@ describe('init application', () => {
             const run = (answers: Record<string, unknown>, defaultsSha256?: string) => runInitOperatorCommand({ root: f.root, target: 'codexcli',
                 sessionId: 'synthetic-session', platform: 'linux', home: f.input.home, xdgStateHome: f.input.xdgStateHome },
             { interactive: false, json: true, unattended: { previewSha256: digest('3'), answers, ...(defaultsSha256 ? { defaultsSha256 } : {}) } }, io, input => runInitApplication(input, adapters))
-            return { run, seen, preview: () => runInitApplication({ ...f.input, registry: undefined }, adapters) }
+            return { run, seen, preview: () => runInitApplication(f.input, adapters) }
         }
         const answers = { cockpit: { name: 'synthetic' }, sibling: [{ slug: 'app', dir: 'app', mount: 'none', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic application' }],
             ports: { bases: {} }, guards: { hosted_db_hosts: [], vendor_endpoint_hosts: [] } }
@@ -593,7 +578,7 @@ describe('init application', () => {
         { interactive: false, json: true, unattended: { previewSha256: digest('3'), answers, ...(defaultsSha256 ? { defaultsSha256 } : {}) } }, io,
         input => runInitApplication(input, adapters))
 
-        const preview = await runInitApplication({ ...f.input, registry: undefined }, adapters)
+        const preview = await runInitApplication(f.input, adapters)
         const outstanding = preview.result!.interview!.outstanding
         expect(Object.fromEntries(outstanding.map(row => [row.field, row.confirmedBy]))).toEqual({ 'cockpit.name': 'agent', sibling: 'person',
             'ports.bases': 'agent', 'environment.install_policies': 'person', 'environment.test_data': 'person',
@@ -654,14 +639,14 @@ describe('init application', () => {
     it('names the deferred greenfield dependency without fabricating a configuration', async () => {
         const f = fixture()
         const adapters: InitApplicationAdapters = { ...f.adapters, document: async () => ({
-            kind: 'refusal', status: 2, diagnostics: [{ severity: 'error', code: 'REGISTRY_NOT_FOUND', message: 'missing' }],
+            kind: 'refusal', status: 2, diagnostics: [{ severity: 'error', code: 'SYNTHETIC_DOCUMENT_REFUSED', message: 'missing' }],
             result: null, artifact: null, destination: null,
         }) }
 
         const outcome = await runInitApplication({ ...f.input, accepted: true, acceptedPreviewSha256: digest('3') }, adapters)
 
         expect(outcome).toEqual(expect.objectContaining({ kind: 'refusal', status: 2 }))
-        expect(outcome.diagnostics).toEqual([expect.objectContaining({ code: 'REGISTRY_NOT_FOUND' })])
+        expect(outcome.diagnostics).toEqual([expect.objectContaining({ code: 'SYNTHETIC_DOCUMENT_REFUSED' })])
     })
 
     it('persists one provenance-bound unresolved answer and resumes without re-asking it', async () => {
@@ -669,7 +654,7 @@ describe('init application', () => {
         const adapters: InitApplicationAdapters = { ...f.adapters,
             classifyEstate: async ({ root }) => estate(root, 'incomplete-multi-repository'),
             document: interviewDocument(f.destination) }
-        const accepted = { ...f.input, registry: undefined, accepted: true, acceptedPreviewSha256: digest('3') }
+        const accepted = { ...f.input, accepted: true, acceptedPreviewSha256: digest('3') }
         const question = await runInitApplication(accepted, adapters)
         expect(question, JSON.stringify(question)).toMatchObject({ kind: 'pending', result: { question: { field: 'sibling' } } })
         const answered = await runInitApplication({ ...accepted, greenfieldAnswer: {
@@ -694,7 +679,7 @@ describe('init application', () => {
         let observed = estate(f.root, 'incomplete-multi-repository')
         const adapters: InitApplicationAdapters = { ...f.adapters, classifyEstate: async () => observed,
             document: interviewDocument(f.destination) }
-        const accepted = { ...f.input, registry: undefined, accepted: true, acceptedPreviewSha256: digest('3') }
+        const accepted = { ...f.input, accepted: true, acceptedPreviewSha256: digest('3') }
         const question = await runInitApplication(accepted, adapters)
         const id = question.result!.question!.id
         for (const greenfieldAnswer of [
@@ -782,7 +767,7 @@ describe('init application', () => {
         } as EstateClassificationResult & { readonly sourceObservationSha256: string } }
         const adapters: InitApplicationAdapters = { ...f.adapters, classifyEstate: async () => classified,
             document: interviewDocument(f.destination, gaps.map(row => row.field)) }
-        const accepted = { ...f.input, registry: undefined, accepted: true, acceptedPreviewSha256: digest('3') }
+        const accepted = { ...f.input, accepted: true, acceptedPreviewSha256: digest('3') }
         let outcome = await runInitApplication(accepted, adapters)
         for (let index = 0; index < gaps.length; index += 1) {
             expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: 'pending', result: { question: { field: gaps[index]!.field } } })
@@ -816,7 +801,7 @@ describe('init application', () => {
         const baseAdapters: InitApplicationAdapters = { ...f.adapters,
             classifyEstate: async () => estate(f.root, 'one-sibling'),
             document: interviewDocument(f.destination) }
-        const input = { ...f.input, registry: undefined }
+        const input = f.input
         const firstPreview = await runInitApplication(input, baseAdapters)
         if (firstPreview.kind !== 'pending' || !firstPreview.result) throw new Error('initial bootstrap preview was unavailable')
         const accepted = { ...input, accepted: true, acceptedPreviewSha256: firstPreview.result.previewSha256 }
@@ -883,7 +868,7 @@ describe('init application', () => {
         } as EstateClassificationResult & { readonly sourceObservationSha256: string } }
         const adapters: InitApplicationAdapters = { ...f.adapters, classifyEstate: async () => classified,
             document: interviewDocument(f.destination, fields) }
-        const accepted = { ...f.input, registry: undefined, accepted: true, acceptedPreviewSha256: digest('3') }
+        const accepted = { ...f.input, accepted: true, acceptedPreviewSha256: digest('3') }
         let outcome = await runInitApplication(accepted, adapters)
         for (const value of ['synthetic', 'first', 'second']) {
             outcome = await runInitApplication({ ...accepted, greenfieldAnswer: {
@@ -898,7 +883,7 @@ describe('init application', () => {
         if (selected.kind !== 'complete') throw new Error('expected selected bootstrap namespace')
         const address = selected.value.paths.bootstrap('codexcli')
         const before = await readFile(address.path)
-        const preview = await runInitApplication({ ...f.input, registry: undefined, resetAnswer: {
+        const preview = await runInitApplication({ ...f.input, resetAnswer: {
             field: 'estate.runnable',
         } }, adapters)
         expect(preview).toMatchObject({ kind: 'pending', result: { resetAnswer: { field: 'estate.runnable',
@@ -907,19 +892,19 @@ describe('init application', () => {
         expect(await readFile(address.path)).toEqual(before)
 
         const reset = preview.result!.resetAnswer!
-        const applied = await runInitApplication({ ...f.input, registry: undefined, resetAnswer: {
+        const applied = await runInitApplication({ ...f.input, resetAnswer: {
             field: reset.field, acceptedPreviewSha256: reset.previewSha256,
         } }, adapters)
         expect(applied).toMatchObject({ kind: 'pending', result: { question: { field: 'estate.runnable' },
             interview: { answered: ['cockpit.name', 'sibling'] }, resetAnswer: { previewSha256: reset.previewSha256 } } })
-        expect(await runInitApplication({ ...f.input, registry: undefined, resetAnswer: {
+        expect(await runInitApplication({ ...f.input, resetAnswer: {
             field: reset.field, acceptedPreviewSha256: reset.previewSha256,
         } }, adapters)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_RESET_STALE' }] })
 
         // Once the published files are gone the recorded answers are about to be discarded, so a
         // reset of one of them is refused instead of rewriting the discarded record.
         f.setPublished({ kind: 'absent' })
-        expect(await runInitApplication({ ...f.input, registry: undefined, resetAnswer: { field: 'sibling' } }, adapters)).toMatchObject({
+        expect(await runInitApplication({ ...f.input, resetAnswer: { field: 'sibling' } }, adapters)).toMatchObject({
             kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_RESET_UNAVAILABLE', fix: expect.stringContaining('without --reset-answer') }] })
     })
 
@@ -930,7 +915,7 @@ describe('init application', () => {
         const f = fixture()
         const adapters: InitApplicationAdapters = { ...f.adapters, classifyEstate: async ({ root }) => estate(root, classification),
             document: interviewDocument(f.destination) }
-        const accepted = { ...f.input, registry: undefined, accepted: true, acceptedPreviewSha256: digest('3') }
+        const accepted = { ...f.input, accepted: true, acceptedPreviewSha256: digest('3') }
         const first = await runInitApplication(accepted, adapters)
         const outcome = first.result?.question ? await runInitApplication({ ...accepted, greenfieldAnswer: {
             questionId: first.result.question.id, bytes: '[]', provenance: 'operator-confirmed',
@@ -949,7 +934,7 @@ describe('init application', () => {
         })
         const adapters: InitApplicationAdapters = { ...f.adapters, infer, classifyEstate: async ({ root }) => estate(root, 'one-sibling'),
             document: interviewDocument(f.destination, ['cockpit.name', 'sibling', 'ports.bases']) }
-        const input = { ...f.input, registry: undefined }
+        const input = f.input
         const preview = await runInitApplication(input, adapters)
         expect(preview).toMatchObject({ kind: 'pending', result: { stage: 'surface-previewed', interview: {
             answered: [], inferenceSkipped: [{ source: 'app/.github/workflows/ci.yml' }] } } })

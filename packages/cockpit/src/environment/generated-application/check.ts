@@ -111,7 +111,7 @@ export async function checkCanonicalGeneratedEnvironment(
         'restore trusted ownership metadata or run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>',
     )
     const priorSurfaces = ownership.manifest.entries.filter((row): row is SurfacePriorOwnedEntry => 'harnesses' in row)
-    const prepared = seed?.surfaceSelftest ? seed : await prepareSurfaces(base, priorSurfaces, adapters)
+    const prepared = seed?.surfaceManifest ? seed : await prepareSurfaces(base, priorSurfaces, adapters)
     if ('status' in prepared) return prepared
     if (prepared.changedOverrideOriginals[0]) return overrideChangedRefusal(prepared.changedOverrideOriginals[0])
     const ownedInput = await ownedInputOverlap(prepared, ownership.manifest.entries)

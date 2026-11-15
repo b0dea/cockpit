@@ -132,7 +132,7 @@ switches on when you declare Compose files (Docker), and agent-run grading when 
 | **[Test gates that cannot fake a pass](docs/work-and-browser.md#choose-the-proving-test-tier)** | `test-run` runs your own gate (Vitest, Jest, pytest, Bazel and others) and reports PASS only for a complete, stable run whose checks all passed. A change that deletes, skips or loosens tests is flagged. |
 | **[Judged, not just gated](docs/work-and-browser.md#how-an-order-earns-done)** | Optional work orders hold a change to an objective, a scope and criteria. The grader is optional: another agent tool (the default), the same tool in a separate run, a subagent of the working agent, the checks alone, the agent's own report, or none ([how grading can run](docs/work-and-browser.md#how-grading-can-run)). The record always says which. |
 | **[Proof in a real browser](docs/work-and-browser.md#browser-evidence)** | `browser drive` and `browser screenshot` visit every declared route through your own [Playwright](https://playwright.dev) project, signed in as a declared role if you ask, and record each screenshot's digest and each route's console errors. |
-| **[Skills for driving it](docs/harness-surfaces.md#skills-and-selftest-evidence)** | Each listed tool gets cockpit's skills for fixing a bug with proof, running a work order, explaining a refusal and, once a browser is declared, checking the app in it. They call cockpit's own commands, so the stack, tests and grading work the same way in every tool. |
+| **[Skills for driving it](docs/harness-surfaces.md#skills)** | Each listed tool gets cockpit's skills for fixing a bug with proof, running a work order, explaining a refusal and, once a browser is declared, checking the app in it. They call cockpit's own commands, so the stack, tests and grading work the same way in every tool. |
 | **[Agents that unblock themselves](docs/safety-and-autonomy.md#who-decides)** | An agent runs what only reads, fast-forwards or repairs cockpit's own state without asking. Widening access, lowering the grading bar and, by default, deleting data stay a person's. |
 | **[MCP servers you approve](docs/harness-surfaces.md#mcp-servers-and-restrictions)** | A server reaches an agent only after a person approves its exact SHA-256; a changed declaration needs approval again. `[mcp.allowed_tools]` limits it to exact tools in Claude Code and Codex; a tool that cannot enforce that does not get the server. |
 | **[Decisions and docs kept true](docs/docs-check.md)** | A work order cannot sign off while a recorded decision is unresolved, and `docs check` reports documents citing removed paths. |
@@ -264,8 +264,6 @@ settings, and the FAQ says [when not to use cockpit](docs/faq.md#when-should-i-n
   warns until then.
 - **Measured, per tool.** The [capability matrix](docs/capability-matrix.md) says what each tool
   enforces, measured on which date and version. Cursor and Grok Build get files but no guard.
-  Cockpit is usable once `check` passes; to gather the same native evidence for the tools on your
-  machine, a person can optionally run `npx --no cockpit selftest --config cockpit.toml --interactive`.
 - Enabling an MCP server and `reset` (it wipes data) need a person by default. Process gates can be
   handed to the agent; guardrails cannot
   ([Fully agentic setup](docs/safety-and-autonomy.md#fully-agentic-setup)).

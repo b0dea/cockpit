@@ -696,7 +696,7 @@ gates = [{ id = "focused", tier = "targeted", stages = ["unit"], changes = "Isol
                 process.env.XDG_STATE_HOME = join(stateHome, 'state')
                 const application = generatedApplicationProjection(synchronized.result.application)
                 if (!application) throw new Error('generated application projection was not issued')
-                const installedSkills = application.surfaceSelftest.entries.filter(entry => entry.kind === 'file'
+                const installedSkills = application.surfaceManifest.entries.filter(entry => entry.kind === 'file'
                     && entry.path.startsWith('.claude/skills/') && entry.path.endsWith('/SKILL.md'))
                 let installedFrontmatterBytes = 0
                 for (const entry of installedSkills) {
@@ -706,7 +706,7 @@ gates = [{ id = "focused", tier = "targeted", stages = ["unit"], changes = "Isol
                     expect(end).toBeGreaterThan(4)
                     installedFrontmatterBytes += Buffer.byteLength(published.slice(4, end))
                 }
-                const installedInventory = application.surfaceSelftest.entries.filter(entry => entry.kind === 'file'
+                const installedInventory = application.surfaceManifest.entries.filter(entry => entry.kind === 'file'
                     && entry.path.endsWith('/SKILL.md')).flatMap(entry => entry.harnesses.map(target => ({
                         target, path: entry.path, sha256: entry.kind === 'file' ? entry.sha256 : '',
                     }))).sort((left, right) => {

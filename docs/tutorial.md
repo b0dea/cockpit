@@ -138,12 +138,10 @@ data, add `resettable_volumes` and `seed` as
 
 ## Bring the stack up
 
-With Docker running, measure the runtime once with a local image, then start the stack, list its
-services, run one command against it, and remove it:
+With Docker running, start the stack, list its services, run one command against it, and remove
+it:
 
 ```sh
-docker pull node:22-alpine
-./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config cockpit.toml --image node:22-alpine
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs ps --config cockpit.toml
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs session --config cockpit.toml -- sh -c 'curl -fsS "http://127.0.0.1:$API_HOST_PORT/health"'

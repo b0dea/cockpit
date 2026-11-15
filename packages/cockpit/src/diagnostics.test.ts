@@ -7,7 +7,7 @@ describe('diagnostic envelope', () => {
         const codes = [
             'INIT_CANONICAL_OWNERSHIP_MISSING', 'SURFACE_SOURCE_UNAVAILABLE', 'SURFACE_OWNERSHIP_INVALID',
             'SURFACE_STATE_CONFLICT', 'GENERATED_ARTIFACT_DRIFT', 'GENERATED_OWNERSHIP_INVALID',
-            'GUARD_AUTHORITY_UNAVAILABLE', 'GUARD_REFUSED', 'RUNTIME_UNAVAILABLE', 'RUNTIME_UNMEASURED',
+            'GUARD_AUTHORITY_UNAVAILABLE', 'GUARD_REFUSED', 'RUNTIME_UNAVAILABLE',
             'CLAIM_CO_TENANT', 'PORT_FAMILY_COLLISION', 'PORT_LEASE_EXHAUSTED', 'SETUP_MANUAL_MISSING',
             'SETUP_REMOTE_MISMATCH',
         ] as const
@@ -31,12 +31,6 @@ describe('diagnostic envelope', () => {
         // The scan must still see a recursive delete written beside its code, whether or not one ships today.
         expect(deletions("fix: 'stop the stack, then rm -rf /synthetic/state'")).toHaveLength(1)
         for (const fix of sources.flatMap(deletions)) expect(fix).toMatch(/\bask the person\b/)
-    })
-
-    it('prints the runtime measure remedy bare, since a wrapped command prompts and some agents treat a prompt as a denial', () => {
-        expect(renderHumanDiagnostics([{ severity: 'error', code: 'RUNTIME_UNMEASURED', message: 'synthetic failure' }],
-            undefined, { resolvedConfigPath: '/synthetic/cockpit.toml', generatedTargets: [] }))
-            .toContain('Fix: run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config /synthetic/cockpit.toml --image <local-image>, which records the result for this machine only, then retry\n')
     })
 
     it('summarises a successful lifecycle command and preflight in one readable line', () => {
@@ -108,7 +102,7 @@ describe('diagnostic envelope', () => {
         const rendered = renderHumanDiagnostics([diagnostic])
         expect(rendered.slice(0, -1)).not.toMatch(unsafe)
         expect(rendered).toContain('CODE\\u001b\\n\\r\\u0000\\u0085\\u202e\\u2028\\u2066')
-        for (const command of ['doctor', 'selftest', 'sync', 'init']) {
+        for (const command of ['doctor', 'sync', 'init']) {
             const review = renderHumanDiagnostics([], { command, outcome: { status: 0,
                 result: { path: hostile, dryRun: true, changes: [{ operation: 'write', path: hostile }] } } })
             expect(review).toContain('\\u202e')

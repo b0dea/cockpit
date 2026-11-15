@@ -70,11 +70,7 @@ still missing and why. If anyone uses Codex, a person must trust its guard hook 
 `doctor` says so until then. Add `npx --no cockpit check --config cockpit.toml` to CI, or use the
 [`cockpit-check` action](harness-surfaces.md#publish-and-verify).
 
-Cockpit is usable once `check` passes. `selftest` is an optional extra: it gathers native evidence
-of what the tools on this machine load and enforce, and a person runs it, when they want that
-evidence, with `npx --no cockpit selftest --config ./cockpit.toml --interactive`
-([Skills and selftest evidence](harness-surfaces.md#skills-and-selftest-evidence)). It is not an
-adoption step, so an agent never waits for it.
+Cockpit is usable once `check` passes.
 
 Run every command from the cockpit directory with a path that fails when the dependency is missing
 and never downloads a package: `./node_modules/@b00dea/cockpit/bin/cockpit.mjs`,
@@ -388,11 +384,9 @@ Compose file is a product change: an agent makes it on a branch, as the
 **Data.** `seed` and `resettable_volumes` fill and wipe the stack's data
 ([Demo data, test users and roles](environment.md#demo-data-test-users-and-roles)).
 
-**Docker.** Commands that run the stack need Docker Compose and a local runtime that has passed
-`cockpit runtime measure --image <local-image>`;
-[Measure the container runtime](environment.md#measure-the-container-runtime) lists the supported
-runtimes. Configuration, generation and `check` need no runtime, though validating declared Compose
-files needs Docker Compose.
+**Docker.** Commands that run the stack need a local Docker daemon with Docker Compose 2.35.0 or
+later ([Docker and Compose](environment.md#docker-and-compose)). Configuration, generation and
+`check` need no runtime, though validating declared Compose files needs Docker Compose.
 
 ### Bring the product up
 

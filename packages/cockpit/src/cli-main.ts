@@ -1,17 +1,16 @@
 import { confirmDigest } from './operator-confirmation.js'
 import { randomUUID } from 'node:crypto'
-import { fileURLToPath } from 'node:url'
 import { ComposeProfileName, EVALUATOR_COMMANDS, runningEvaluatorTool, UNCONFIRMABLE_ANSWERS, type EvaluatorTool } from './schema.js'
 import { installedPackageMetadata } from './package-metadata.js'
 import { validateTeamMetadata, type TeamMetadataResult } from './team-metadata.js'
 import { renderComposeScaffold, SCAFFOLD_BACKING_SERVICES, writeComposeScaffold, type ScaffoldBackingService } from './init/scaffold.js'
 import { discoverReleaseFreshness, type ReleaseMetadataTransport } from './freshness.js'
 import { observeMcpStartup } from './environment/mcp-observation.js'
-import { lstat, mkdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises'
 import { parse as parseToml, TomlError } from 'smol-toml'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { createInterface } from 'node:readline/promises'
-import { parseArgs, types as utilTypes } from 'node:util'
+import { parseArgs } from 'node:util'
 import { createInvocationRecord, EXIT_CODES } from './invocation.js'
 import { commandGroups, commandSpelling, commandStages, commands, describePublicOption, internalCommands, isWorkHandler, isRecordedAnswerField, resolveOrdinaryInvocation, schemaFileReference, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
@@ -51,14 +50,13 @@ import { runLogs as runLogsApplication } from './environment/application/logs.js
 import { runDocsCheck } from './docs/check.js'
 import { runEnvKeys, runEnvSchema } from './environment/env-sources.js'
 import { runServiceExec, runServicePs, runServiceRestart } from './environment/application/services.js'
-import { executeForegroundProcess, executePlan, executeProbe, foregroundTerminal, type ForegroundProcessOutcome } from './environment-exec/execute.js'
+import { executeForegroundProcess, executePlan, executeProbe, foregroundTerminal } from './environment-exec/execute.js'
 import { createDestructiveCommandAdapters, selectDestructiveDaemon } from './environment/destructive-composition.js'
 import { createHealthCommandAdapters } from './environment/health-composition.js'
 import { inspectInitReadiness, measureInitMachine, proposeInitGrading } from './environment/readiness-composition.js'
 import { createLifecycleCommandAdapters } from './environment/lifecycle-composition.js'
 import { isProcessStart, listenerHost, observeProcessAncestry, observeProcessStart, processHost, type HolderProcess } from './environment/claims.js'
 import { createReadCommandAdapters } from './environment/read-composition.js'
-import { probeInstalledRuntime, runRuntimeMeasure } from './environment/runtime-measurement.js'
 import { initializeLocalGitRepository, runSiblingAdd, runSiblingRemove, type SiblingAddInput, type SiblingRemoveInput } from './environment/sibling-registration.js'
 import { runToolChange, type ToolChangeInput } from './environment/tool-registration.js'
 import { runPull, runUse, type PullCommandInput, type UseCommandInput } from './environment/application/siblings.js'
@@ -75,7 +73,6 @@ import {
     ENVIRONMENT_CODES,
     errorCause,
     hasErrorCode,
-    INHERITED_TOOL_ENVIRONMENT,
     isCanonicalTimestamp,
     type EnvironmentCommandOutcome,
     type EnvironmentDiagnostic,
@@ -88,7 +85,7 @@ import { inspectGuardConfigChange } from './guards/policy-change.js'
 import { gitEnvironment, planSetup } from './environment/setup.js'
 import { synchronizeInstructionPointer } from './environment/instruction-pointer.js'
 import { synchronizeSiblingInstructionFiles } from './environment/sibling-instructions.js'
-import { resolvedGitExecutable, resolveExecutable, resolveGitExecutable, type ResolvedExecutable } from './environment/executable.js'
+import { resolvedGitExecutable, resolveExecutable, resolveGitExecutable } from './environment/executable.js'
 import { checkoutId, holderId, stackId } from './environment/identity.js'
 import { selectStateRoot } from './environment/state.js'
 import { recordLifecycleStarted } from './environment/lifecycle-stage.js'
@@ -110,14 +107,6 @@ import {
 import type { GeneratedStaleRemovalApproval, GeneratedStaleRemovalApprovalRequest } from './environment/generated-application/shared.js'
 import { runUpgrade } from './environment/upgrade-application.js'
 import { inspectCodexHookTrust } from './environment/codex-hook-trust.js'
-import {
-    runConfiguredSurfaceSelftestOutcome,
-    runSelftestOperatorCommand,
-    type SurfaceSelftestDraftInput,
-    type SurfaceSelftestExecutableCandidate,
-    type SurfaceSelftestHandlerInput,
-    type SurfaceSelftestProbeSpecificationsCandidate,
-} from './environment/selftest-application.js'
 import { loadOperatorPolicy, runResetOperatorApplication, runStacksPruneOperatorApplication, type StacksPruneOperatorSession } from './environment/operator-application.js'
 import { beginStacksPrune, type StacksPruneScope } from './environment/stack-inventory-prune.js'
 import { runStacksInventory } from './environment/stack-inventory-report.js'
@@ -132,10 +121,6 @@ export interface CliIo {
     answerInitQuestion?: (question: NonNullable<InitResult['question']>) => Promise<string | undefined>
     confirmReset?: (preview: CommandOutcome) => Promise<boolean>
     confirmWorkOrder?: (candidate: Readonly<{ digest: string; prompt: string }>) => Promise<string | undefined>
-    confirmSelftestExecutable?: (candidate: SurfaceSelftestExecutableCandidate) => Promise<string | undefined>
-    confirmSelftestProbeSpecifications?: (
-        candidate: SurfaceSelftestProbeSpecificationsCandidate,
-    ) => Promise<string | undefined>
     confirmStaleRemoval?: (request: GeneratedStaleRemovalApprovalRequest) => Promise<string | undefined>
     confirmPolicyWeakening?: GeneratedEnvironmentOperatorIo['confirmPolicyWeakening']
     confirmStacksPrune?: (preview: CommandOutcome) => Promise<string | undefined>
@@ -150,8 +135,6 @@ export interface CliRuntime {
 export interface CommandOutcome {
     artifact?: string | null
     destination?: string | null
-    /** Write `artifact` over an existing `destination`, which the person asked for explicitly. */
-    replace?: boolean
     diagnostics: readonly Diagnostic[]
     evidence?: SetupRefusalEvidence
     result: unknown
@@ -184,11 +167,9 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
     }>
     preflight: PreflightCommandInput
     reset: ResetCommandInput
-    runtime: Readonly<{ configPath: string; image: string }>
     sibling: Readonly<{ operation: 'add'; input: Omit<SiblingAddInput, 'env'> }> | Readonly<{ operation: 'remove'; input: Omit<SiblingRemoveInput, 'env'> }>
     tool: ToolChangeInput
     setup: SetupCommandInput
-    selftest: SurfaceSelftestHandlerInput | SurfaceSelftestDraftInput
     session: Readonly<{ configPath: string; argv: readonly [string, ...string[]]; sessionId: string; profiles: readonly string[] }>
     sleep: SleepCommandInput
     stacks: Readonly<{ configPath: string; operation: 'list' | 'prune' }>
@@ -709,7 +690,6 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
                 ? outcome.kind === 'complete' ? { ...outcome.result, currentness: outcome.report } : outcome.report
                 : outcome.result }
         },
-        selftest: runConfiguredSurfaceSelftestOutcome,
         upgrade: input => runUpgrade({ ...input, env: concreteEnvironment(env) }, { execute: executeProbe, executeForeground: executeForegroundProcess }),
         up: withSession(async (input, configPath, sessionId) => {
             const wrapper = await sessionChildHolderProcess(env)
@@ -759,7 +739,6 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
                 inspectMcpStartup: servers => observeMcpStartup(servers, env),
             })
         },
-        runtime: (input) => runRuntimeMeasure({ ...input, env }, { execute: executeProbe, probe: probeInstalledRuntime }),
         stacks: (input) => runStacksInventory({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
         'docs-check': (input) => runDocsCheck({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
         'env-keys': (input) => runEnvKeys({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
@@ -868,20 +847,10 @@ function usageOutcome(code: string, message: string, target?: string): CommandOu
     }
 }
 
-// Renamed into place, so a symlink at the destination is replaced rather than written through.
-async function writeOver(destination: string, artifact: string): Promise<void> {
-    const temporary = join(dirname(destination), `.${basename(destination)}.${randomUUID()}.tmp`)
-    try {
-        await writeFile(temporary, artifact, { encoding: 'utf8', flag: 'wx' })
-        await rename(temporary, destination)
-    } finally { await rm(temporary, { force: true }) }
-}
-
 async function executeOutcome(outcome: CommandOutcome): Promise<CommandOutcome> {
     if (!outcome.artifact || !outcome.destination) return outcome
     try {
-        if (outcome.replace) await writeOver(outcome.destination, outcome.artifact)
-        else await writeFile(outcome.destination, outcome.artifact, { encoding: 'utf8', flag: 'wx' })
+        await writeFile(outcome.destination, outcome.artifact, { encoding: 'utf8', flag: 'wx' })
         return outcome
     } catch (error) {
         const code = (error as NodeJS.ErrnoException).code
@@ -891,7 +860,7 @@ async function executeOutcome(outcome: CommandOutcome): Promise<CommandOutcome> 
                 code: 'OUTPUT_EXISTS',
                 message: 'the output path already exists and was not changed',
                 target: outcome.destination,
-                fix: 'choose a new path, or write over your own file with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --write-probe-specifications <file> --replace',
+                fix: 'choose a new path, or move the existing file aside, then retry',
             }
             : {
                 severity: 'error',
@@ -1185,48 +1154,6 @@ async function decodeRequest(
             ...(parsed.positionals[0] === undefined ? {} : { version: parsed.positionals[0] }) } }
     }
 
-    if (handler === 'selftest') {
-        const values = parsed.values as { config?: string; 'probe-specifications'?: string; 'write-probe-specifications'?: string; replace?: boolean; interactive?: boolean; json?: boolean }
-        if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'selftest accepts named inputs only')
-        if (!values.config) return missingConfig()
-        const draftPath = values['write-probe-specifications']
-        if (values.replace && draftPath === undefined) return usageOutcome('CLI_USAGE_INVALID', '--replace only applies with --write-probe-specifications, to write over that file', '--replace')
-        if (draftPath !== undefined) {
-            if (draftPath.length === 0) return usageOutcome('CLI_USAGE_INVALID', '--write-probe-specifications requires a non-empty path', '--write-probe-specifications')
-            // Writing the file runs nothing, so there is nothing to approve interactively.
-            if (values.interactive) return usageOutcome('CLI_USAGE_INVALID', '--write-probe-specifications only writes the file; drop --interactive', '--interactive')
-            const previous = values['probe-specifications']
-            if (previous !== undefined && previous.length === 0) {
-                return usageOutcome('CLI_USAGE_INVALID', '--probe-specifications requires a non-empty path', '--probe-specifications')
-            }
-            return { handler, input: { configPath: values.config, writeProbeSpecificationsPath: draftPath,
-                ...(previous === undefined ? {} : { previousProbeSpecificationsPath: previous }), ...values.replace ? { replace: true } : {} } }
-        }
-        // With --interactive and no file, selftest writes fresh specifications for the person to approve.
-        const probeSpecificationsPath = values['probe-specifications']
-        if (probeSpecificationsPath === '' || probeSpecificationsPath === undefined && !values.interactive) return usageOutcome('CLI_USAGE_INVALID',
-            'run selftest with --interactive at a terminal, which writes fresh probe specifications itself, or provide --probe-specifications <file>; write one with --write-probe-specifications <new file> first', '--probe-specifications')
-        const invalidEnvironment = () => usageOutcome('CLI_USAGE_INVALID',
-            `selftest probe environment inputs must be bounded own string or undefined values; supply ${['PATH', ...INHERITED_TOOL_ENVIRONMENT].join(', ')} without accessors and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --help to retry`)
-        const env: Record<string, string | undefined> = {}
-        try {
-            if (runtimeEnv === null || typeof runtimeEnv !== 'object' || Array.isArray(runtimeEnv)
-                || utilTypes.isProxy(runtimeEnv)) return invalidEnvironment()
-            const keys = Reflect.ownKeys(runtimeEnv)
-            if (keys.length > 4_096) return invalidEnvironment()
-            const inherited = new Set<string>(['PATH', ...INHERITED_TOOL_ENVIRONMENT])
-            for (const key of keys) {
-                if (typeof key !== 'string' || !inherited.has(key)) continue
-                const descriptor = Object.getOwnPropertyDescriptor(runtimeEnv, key)
-                if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')
-                    || descriptor.value !== undefined && (typeof descriptor.value !== 'string'
-                        || Buffer.byteLength(descriptor.value) > 65_536)) return invalidEnvironment()
-                env[key] = descriptor.value
-            }
-        } catch { return invalidEnvironment() } // A throwing accessor or proxy trap makes the environment invalid data.
-        return { handler, input: { configPath: values.config, ...probeSpecificationsPath === undefined ? {} : { probeSpecificationsPath }, env } }
-    }
-
     if (handler === 'session') {
         const values = parsed.values as { config?: string; profile?: string[] }
         const [command, ...argv] = parsed.positionals
@@ -1321,17 +1248,6 @@ async function decodeRequest(
         return { handler, input: { configPath: values.config, answer } }
     }
 
-    if (handler === 'runtime') {
-        const values = parsed.values as { config?: string; image?: string }
-        const [operation, ...extra] = parsed.positionals
-        if (operation !== 'measure' || extra.length > 0) {
-            return usageOutcome('CLI_USAGE_INVALID', 'runtime requires the measure operation: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config <your cockpit.toml> --image <local-image>')
-        }
-        if (!values.config) return missingConfig()
-        if (!values.image) return usageOutcome('CLI_USAGE_INVALID', 'provide --image <local-image>; the probe never pulls', '--image')
-        return { handler, input: { configPath: values.config, image: values.image } }
-    }
-
     if (handler === 'stacks') {
         const values = parsed.values as { config?: string; apply?: boolean; interactive?: boolean }
         const [operation, ...extra] = parsed.positionals
@@ -1399,30 +1315,6 @@ async function decodeRequest(
 
 type InvocationOptions = { readonly interactive: boolean; readonly apply?: boolean; readonly json: boolean; readonly ci: string | undefined;
     readonly env: Readonly<Record<string, string | undefined>>; readonly argv: readonly string[] }
-
-// Set in the environment of a selftest rerun under the guard's Node, so a rerun that still meets a
-// mismatch refuses instead of rerunning again.
-const SELFTEST_RERUN_MARKER = 'COCKPIT_SELFTEST_RERUN'
-const COCKPIT_ENTRYPOINT = fileURLToPath(new URL('../bin/cockpit.mjs', import.meta.url))
-
-// The guard hook runs the Node sync recorded, and selftest can measure only the guard its own Node
-// would install, so a person's selftest started under another Node (a version manager's shell, say)
-// continues under the recorded one: same arguments, same terminal for the approvals.
-async function rerunSelftest(node: ResolvedExecutable, options: InvocationOptions, io: CliIo): Promise<ForegroundProcessOutcome> {
-    io.stderr.write(`the guard runs the Node at ${node.canonicalPath}; rerunning selftest under it\n`)
-    // The rerun leads its own session, so an interrupt, a closed terminal or a kill reaches only this
-    // process; each stops the rerun, and a repeat cannot end this process before the rerun is gone.
-    const controller = new AbortController()
-    const abort = () => controller.abort()
-    const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const
-    for (const signal of signals) process.on(signal, abort)
-    try {
-        return await executeForegroundProcess({ executable: node, argv: [COCKPIT_ENTRYPOINT, ...options.argv], cwd: process.cwd(),
-            env: { ...concreteEnvironment(options.env), [SELFTEST_RERUN_MARKER]: '1' } }, { signal: controller.signal })
-    } finally {
-        for (const signal of signals) process.removeListener(signal, abort)
-    }
-}
 
 // `sibling` nests its arguments under the operation it runs; every other configured command carries
 // configPath at the top of its input.
@@ -1515,18 +1407,6 @@ async function dispatchHandler(
     if (request.handler === 'env-keys') return handlers['env-keys']?.(request.input) ?? unavailable()
     if (request.handler === 'env-schema') return handlers['env-schema']?.(request.input) ?? unavailable()
     if (request.handler === 'confirm') return handlers.confirm?.(request.input) ?? unavailable()
-    if (request.handler === 'selftest') {
-        const selftest = handlers.selftest ?? (async () => unavailable())
-        // --json skips the generic artifact write, but this command exists to write its file: write it
-        // here so the envelope reports a file that exists.
-        if ('writeProbeSpecificationsPath' in request.input) {
-            const drafted = await selftest(request.input)
-            return options.json ? executeOutcome(drafted) : drafted
-        }
-        const rerun = options.interactive && options.env[SELFTEST_RERUN_MARKER] === undefined
-        return runSelftestOperatorCommand(request.input, { ...options,
-            ...rerun ? { rerunUnderNode: (node: ResolvedExecutable) => rerunSelftest(node, options, io) } : {} }, io, selftest)
-    }
     if (request.handler === 'upgrade') return handlers.upgrade?.(request.input) ?? unavailable()
     if (request.handler === 'up') return handlers.up?.(request.input) ?? unavailable()
     if (request.handler === 'sleep') return handlers.sleep?.(request.input) ?? unavailable()
@@ -1548,7 +1428,6 @@ async function dispatchHandler(
     if (request.handler === 'restart') return handlers.restart?.(request.input) ?? unavailable()
     if (request.handler === 'rebuild') return handlers.rebuild?.(request.input) ?? unavailable()
     if (request.handler === 'exec') return handlers.exec?.(request.input) ?? unavailable()
-    if (request.handler === 'runtime') return handlers.runtime?.(request.input) ?? unavailable()
     if (request.handler === 'stacks') {
         if (request.input.operation === 'list') return handlers.stacks?.(request.input) ?? unavailable()
         return runStacksPruneOperatorApplication({ configPath: request.input.configPath }, {

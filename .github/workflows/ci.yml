@@ -287,7 +287,7 @@ jobs:
         run: npm test -- ${SHARD:+--shard=$SHARD}
       - if: matrix.gate == 'compatibility'
         timeout-minutes: 15
-        run: npm test -- packages/cockpit/src/launcher.test.ts packages/cockpit/src/package-metadata.test.ts packages/cockpit/src/environment/runtime-probe.slow.test.ts
+        run: npm test -- packages/cockpit/src/launcher.test.ts packages/cockpit/src/package-metadata.test.ts packages/cockpit/src/environment/runtime.test.ts
       - name: tests leave the committed schema unchanged
         run: git diff --exit-code -- packages/cockpit/cockpit.schema.json
       # Platform-independent checks run once, on the cell that already holds an install and a

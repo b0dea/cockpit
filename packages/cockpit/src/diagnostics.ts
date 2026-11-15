@@ -41,10 +41,6 @@ const COMMON_REFUSAL_GUIDANCE: Readonly<Record<string, Readonly<{ why: string; f
         why: 'cockpit cannot start or inspect the declared environment without a container runtime it can reach and identify',
         fix: 'start the configured container runtime and verify docker info succeeds, then retry',
     }),
-    RUNTIME_UNMEASURED: Object.freeze({
-        why: 'this machine has no passing measurement for the current runtime, so cockpit cannot vouch for its mounts, labels, health and teardown',
-        fix: `run ${cockpitCommand('runtime measure', { args: '--image <local-image>' })}, which records the result for this machine only, then retry`,
-    }),
     CLAIM_CO_TENANT: Object.freeze({
         why: 'another holder still owns or is using the same stack',
         fix: `for a failed up attempt, run ${cockpitCommand('up')} to resume or ${cockpitCommand('down')} to release; otherwise end each cockpit session the message names (let its command finish, or stop the named process), then retry; a session whose process is gone is released by the next up, sleep, down or reset`,
@@ -317,21 +313,6 @@ export function renderHumanDiagnostics(
         // gate, grade, step or unreadable source returns one with a failing status: the person needs that
         // evidence either way.
         if (command !== undefined && /^(?:(?:work|browser|env) |test-run$|grade$)/.test(command)) return renderHumanValue(outcome.result)
-        // A selftest whose cell failed exits non-zero with every other cell's measurement, which the person still needs.
-        if (command === 'selftest' && 'summary' in outcome.result) {
-            const result = outcome.result as { summary: { measurementComplete: boolean; measuredCells: number; pendingCells: number;
-                pendingSkillReviews: number; unavailableCells?: number; failedCells?: readonly { cell: string; failure: string }[] }; reportPath?: string }
-            const { summary } = result
-            const failed = summary.failedCells ?? []
-            const lines = [
-                ...failed.map(row => `FAILED ${row.cell}: ${row.failure}`),
-                `Selftest ${summary.measurementComplete ? 'measured every cell it can' : 'incomplete'}: ${summary.measuredCells} measured, ${failed.length > 0 ? `${failed.length} failed, ` : ''}${summary.pendingCells} pending.`,
-                `Unavailable capabilities measured: ${summary.unavailableCells ?? 0}.`,
-            ]
-            if (summary.pendingSkillReviews > 0) lines.push(`Skill reviews: ${summary.pendingSkillReviews} need a person's judgement of each skill's trigger, silence, body loading, tools and non-goals. Native measurement does not approve a skill, and cockpit cannot perform or record these reviews, so they are listed on every run.`)
-            if (result.reportPath) lines.push(`Full structured report: ${result.reportPath}`)
-            return `${lines.map(escapeForTerminal).join('\n')}\n`
-        }
         if (outcome.status !== 0) return ''
         if (command === 'sync' && 'dryRun' in outcome.result && outcome.result.dryRun === true
             && 'changes' in outcome.result && Array.isArray(outcome.result.changes)) {
@@ -372,7 +353,7 @@ export function renderHumanDiagnostics(
         if (command === 'doctor') {
             return doctorSummary(outcome.result as Readonly<Record<string, unknown>>, outcome.diagnostics ?? [], fixContext)
         }
-        if (command === 'selftest' || command === 'upgrade' || command === 'init' || command === 'stacks') {
+        if (command === 'upgrade' || command === 'init' || command === 'stacks') {
             return renderHumanValue(outcome.result)
         }
         return command === undefined ? '' : lifecycleSummary(command, outcome.result as Readonly<Record<string, unknown>>)

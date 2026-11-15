@@ -103,17 +103,10 @@ Look at the directory before asking. Several cases can apply; bootstrap first.
 Done when `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml --json` exits 0, where a
 runtime is declared `./node_modules/@b00dea/cockpit/bin/cockpit.mjs preflight --config cockpit.toml --json` passes,
 and every gap in `result.readiness` of `./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml --json`
-has been cleared or reported to the human. Cockpit is usable once `check` passes; `selftest` is not
-an adoption step. It is optional native evidence a person runs with one command at their own
-terminal, `./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config cockpit.toml --interactive`, so never
-wait for it, and do not ask the person to run it unless they ask for native evidence.
+has been cleared or reported to the human. Cockpit is usable once `check` passes.
 
-- **Only where a runtime is declared, before the first `up`**, run
-  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config cockpit.toml --image <local-image> --json`.
-  It measures the local daemon `up` will use, can run for minutes with no progress output, records
-  the result for this machine only and leaves `cockpit.toml` unchanged, so go straight on to `up`.
-  A surfaces-only product finishes with `check` and `doctor`; add runtime declarations when runnable code exists.
-  The guide's *Chapter 2* says which runtimes are recognised.
+- A surfaces-only product finishes with `check` and `doctor`; add runtime declarations when
+  runnable code exists.
 - **Daily, with a declared runtime:** `./node_modules/@b00dea/cockpit/bin/cockpit.mjs session --config cockpit.toml -- <agent command>`.
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config cockpit.toml` releases this checkout's hold.
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config cockpit.toml` removes its containers, keeping data

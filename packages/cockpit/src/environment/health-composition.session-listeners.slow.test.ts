@@ -136,7 +136,7 @@ const labels = { 'dev.b0dea.cockpit.stack-id': '${candidate.stack}', 'dev.b0dea.
 const id = '${'a'.repeat(64)}'
 const output = value => process.stdout.write(typeof value === 'string' ? value : JSON.stringify(value))
 if (args[0] === 'version') output('27.1.2')
-else if (args[0] === 'info') output(args.join(' ').includes('OperatingSystem') ? ['Docker Desktop', 'docker-desktop', 'linux'] : '2147483648|2')
+else if (args[0] === 'info') output('2147483648|2')
 else if (args[0] === 'compose' && args[1] === 'version') output('2.39.2')
 else if (args[0] === 'compose' && args.includes('config')) output({ services: { api: { image: '${image}', healthcheck: { test: ['CMD', 'true'] }, labels,
     ports: [{ target: 3000, published: args.includes('--no-interpolate') ? '$' + '{APP_PORT}' : port, host_ip: '127.0.0.1', protocol: 'tcp' }] } } })

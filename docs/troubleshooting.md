@@ -15,8 +15,7 @@ Every diagnostic message names what failed and how to fix it. The sections below
 | `GENERATED_OWNERSHIP_INVALID` | Cockpit has no trustworthy record of which files it owns. | Restore the committed ownership metadata, then rerun `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
 | `GUARD_AUTHORITY_UNAVAILABLE` | The guard cannot read the current policy it needs to decide safely. | Restore `cockpit.toml` and generated guard files, then have a human run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
 | `GUARD_REFUSED` | The command is outside the current guard policy. | Follow the named reason, or ask a human to update `cockpit.toml` and run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
-| `RUNTIME_UNAVAILABLE` | The container runtime cannot be reached or identified. | Start it and verify `docker info`; if the message names a Docker or Compose version with no X.Y.Z core, install a release that prints one. Then retry. |
-| `RUNTIME_UNMEASURED` | This machine has no passing measurement for the current runtime and engine version. | Run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config cockpit.toml --image <local-image>`, which records the result for this machine only, then retry. |
+| `RUNTIME_UNAVAILABLE` | The container runtime cannot be reached, or its Docker Compose is older than cockpit runs. | Start it and verify `docker info`; if the message names an old Compose, or a Docker or Compose version with no X.Y.Z core, upgrade to a release the message names. Then retry. |
 | `CLAIM_CO_TENANT` | Another [holder](concepts.md#holder) is using the stack. | After a failed `up`, run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml` to resume or `./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config cockpit.toml` to release. Otherwise, have every session that holds the stack run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config cockpit.toml`, then retry. |
 | `PORT_FAMILY_COLLISION` | A selected host port is already in use. | Stop the named listener or release the inactive stack, then retry. A host process meant to serve a leased port must be [started by the session](environment.md#host-processes-on-leased-ports) holding the stack. |
 | `PORT_LEASE_EXHAUSTED` | Every declared port family is leased or occupied. | Release an inactive stack or extend `ports.count` after checking host capacity. |
@@ -112,8 +111,7 @@ owned path, preserve them until the declaration and ownership transition are und
 3. Correct the named declaration or source, and repeat the preview.
 4. Apply `sync`, then confirm the installed state with `check`.
 
-Never edit the ownership manifest, a generated shared region or the selftest results to make a
-diagnostic disappear.
+Never edit the ownership manifest or a generated shared region to make a diagnostic disappear.
 
 `REGISTRY_INPUT_INVALID` means a declared sibling row cannot produce one valid registry. Correct
 the named row or its derived MCP source, then retry the preview.
@@ -243,50 +241,12 @@ files do not match the skill contract. `SKILL_STANDING_COST_EXCEEDED` means the 
 skill entry points are too large. Shrink them; moving decision logic into another always-loaded
 file is not a repair.
 
-### Selftest and override inspection
+### Guard Node and override inspection
 
-`SELFTEST_SOURCE_INVALID` means the generated check, resolved probe-specification path, source
-digest, generated-manifest digest or specification shape failed its check. Run
-`./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <path> --interactive`, which writes
-fresh specifications for that run itself. To keep a file under review instead, write one with
-`--write-probe-specifications <file>` (add `--replace` to write over your own file). New files
-contain supported native protocols and explicit pending rows; they need no invented markers. For a
-stale file, add `--probe-specifications <stale file>` to preserve unchanged filled legacy rows. Do
-not edit stored digests. Legacy rows still containing `null` must be completed with
-a demonstrably compatible native diagnostic contract or replaced with a fresh file.
-[Skills and selftest evidence](harness-surfaces.md#skills-and-selftest-evidence) describes the
-supported native scope and remaining operator work.
-
-`SELFTEST_EXECUTION_INVALID` has three causes:
-
-- An unapproved or mismatched probe file, refused before any command in it runs. Inspect its
-  displayed whole-file digest and exact command vectors.
-- One cell's candidate, deliberately broken control or version/help event did not give the expected
-  result. That cell is recorded `probe_failed`, the summary leads with it and what to do, and the
-  other cells are still measured. Inspect the named harness and the retained output.
-- A reviewed input changed while the run used it, the probe directory was unusable, or the final
-  result bundle failed validation. The whole run stops; rerun selftest once the named cause is fixed.
-  A changed input is named with its path: the approved executable, a probe control, the guard
-  identity, the configuration copy recorded for the guard, `cockpit.toml`, the Node executable or
-  cockpit module the guard runs, or the generated Bash guard. A step that could not start before its
-  dispatch window closed says so.
-
-`SELFTEST_GUARD_IDENTITY_MISMATCH` means the guard identity `sync` wrote under
-`.cockpit/local/guard-identity` differs from the one this selftest would write, so the Claude Code
-guard probe cannot run; selftest refuses before asking for any approval. Most often `sync` ran under
-another Node than this shell's. An interactive selftest then reruns itself under the Node `sync`
-recorded, once it has checked that Node's SHA-256 against the record, so this refusal names both
-Nodes only when that Node is gone or changed, or the run was not interactive. Run `sync` under the
-current Node and then selftest, or, when the recorded Node is still there, rerun selftest with
-`--interactive` at a terminal. When the
-Node at the recorded path was upgraded in place, no Node runs what `sync` recorded and the guard holds
-its calls until `sync` runs again, so run `sync`, then selftest. For any other difference, run `sync`
-with this cockpit, then selftest. `doctor` reports `GUARD_NODE_DIFFERS` for both Node cases.
-
-A missing executable, a sign-in requirement, missing process isolation or a pending enforcement
-probe or unsupported native adapter stays `human_needed` until the manual action in the record is done. Run
-`selftest --interactive` at a terminal outside CI; approve the full file digest and commands
-first, then each executable path and SHA-256. Approval lasts only for that run.
+`GUARD_NODE_DIFFERS` means the Node running this command is not the one `sync` recorded for the
+guard hook. When the Node at the recorded path was upgraded in place, no Node runs what `sync`
+recorded and the guard holds its calls until `sync` runs again, so run `sync`. When another Node
+runs this command (a version manager's shell, say), the guard is unaffected and nothing is needed.
 
 `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE`, `SURFACE_OVERRIDE_INSPECTION_REFUSED`,
 `SURFACE_OVERRIDE_INSPECTION_INVALID`, and `SURFACE_OVERRIDE_INSPECTION_PATH_MISMATCH` mean
@@ -408,7 +368,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `GUARD_AUTHORITY_UNAVAILABLE` | [see above](#common-refusal-guidance) |
 | `GUARD_CONFIG_WIDENED` | [see above](#guard-refusals) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_NODE_DIFFERS` | [see above](#selftest-and-override-inspection) |
+| `GUARD_NODE_DIFFERS` | [see above](#guard-node-and-override-inspection) |
 | `GUARD_RECORD_MISMATCH` | review what changed the guard script, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal; [see above](#codex-hooks-in-linked-worktrees) |
 | `GUARD_REFUSED` | [see above](#common-refusal-guidance) |
 | `GUARD_SEARCH_PATH_RELATIVE` | check PATH in the shell or launcher that starts the agent harness; if it contains relative or empty entries, remove them there and restart the harness |
@@ -422,7 +382,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `MCP_INPUT_INVALID` | [see above](#mcp-and-restrictions) |
 | `MCP_NOT_APPROVED` | [see above](#mcp-and-restrictions) |
 | `MCP_TRANSPORT_UNAVAILABLE` | [see above](#mcp-and-restrictions) |
-| `OUTPUT_EXISTS` | choose a new path, or write over your own file with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config <your cockpit.toml> --write-probe-specifications <file> --replace |
+| `OUTPUT_EXISTS` | choose a new path, or move the existing file aside, then retry |
 | `PORT_FAMILY_COLLISION` | [see above](#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [see above](#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [see above](#sibling-projection-and-skills) |
@@ -441,13 +401,8 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `RESTRICTION_INPUT_INVALID` | [see above](#mcp-and-restrictions) |
 | `RESTRICTION_OUTPUT_LIMIT` | [see above](#mcp-and-restrictions) |
 | `RESTRICTION_TEMPLATE_INVALID` | [see above](#mcp-and-restrictions) |
-| `RUNTIME_IMAGE_UNAVAILABLE` | pull or build it first (docker pull <image>), then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config <your cockpit.toml> --image <image> again |
 | `RUNTIME_UNAVAILABLE` | [see above](#common-refusal-guidance) |
-| `RUNTIME_UNMEASURED` | [see above](#common-refusal-guidance) |
 | `SECRET_FILE_TRACKED` | a person decides with the repository owner: stop tracking each file with git rm --cached <file>, add it to .gitignore, commit, and rotate any credential it held; commit a .env.example with the variable names instead |
-| `SELFTEST_EXECUTION_INVALID` | [see above](#selftest-and-override-inspection) |
-| `SELFTEST_GUARD_IDENTITY_MISMATCH` | [see above](#selftest-and-override-inspection) |
-| `SELFTEST_SOURCE_INVALID` | [see above](#selftest-and-override-inspection) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
 | `SESSION_STACK_RETAINED` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `SETUP_CLONE_FAILED` | check that this machine can reach the remote (git ls-remote <remote>) and that the sibling remote in cockpit.toml is right, or clone it into the named directory yourself; then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> again |
@@ -488,10 +443,10 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SURFACE_NAME_DUPLICATE` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_NODE_UNAVAILABLE` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_OUTPUT_COVERAGE` | [see above](#merge-ownership-and-generation) |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [see above](#selftest-and-override-inspection) |
-| `SURFACE_OVERRIDE_INSPECTION_PATH_MISMATCH` | [see above](#selftest-and-override-inspection) |
-| `SURFACE_OVERRIDE_INSPECTION_REFUSED` | [see above](#selftest-and-override-inspection) |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [see above](#selftest-and-override-inspection) |
+| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [see above](#guard-node-and-override-inspection) |
+| `SURFACE_OVERRIDE_INSPECTION_PATH_MISMATCH` | [see above](#guard-node-and-override-inspection) |
+| `SURFACE_OVERRIDE_INSPECTION_REFUSED` | [see above](#guard-node-and-override-inspection) |
+| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [see above](#guard-node-and-override-inspection) |
 | `SURFACE_OVERRIDE_INVALID` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_OWNERSHIP_INVALID` | [see above](#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [see above](#merge-ownership-and-generation) |

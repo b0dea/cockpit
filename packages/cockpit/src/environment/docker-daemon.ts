@@ -1,6 +1,6 @@
 /**
  * Names the one local Docker daemon a command addresses, before the command does any work, so
- * `down`, `reset` and `runtime measure` choose a daemon by one rule. It observes Docker's own
+ * `down`, `reset` and `stacks` choose a daemon by one rule. It observes Docker's own
  * context configuration through the supplied `execute`; it never spawns a process itself.
  */
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
@@ -16,7 +16,7 @@ export type LocalDockerDaemon =
     | Readonly<{ kind: 'refusal'; diagnostic: Diagnostic }>
 
 export interface DaemonUse {
-    // The command, as the subject of a sentence: "down and reset", "runtime measure".
+    // The command, as the subject of a sentence: "down and reset".
     readonly command: string
     // Why that command refuses a remote daemon, as a clause.
     readonly localOnly: string

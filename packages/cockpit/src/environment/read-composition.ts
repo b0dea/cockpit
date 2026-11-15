@@ -23,7 +23,6 @@ import {
     type ComposeArtifact,
     type RuntimeServiceEvidence,
     type RuntimeTopologyEvidence,
-    type RuntimeMeasurementProbeAuthority,
     type RuntimeAdapterAuthority,
 } from './runtime.js'
 import { resolveDockerExecutable } from './executable.js'
@@ -48,7 +47,6 @@ interface ReadCommandCompositionInput {
     readonly timeoutMs: number
     readonly outputLimitBytes?: number
     readonly signal?: AbortSignal
-    readonly runtimeMeasurementProbeAuthority?: RuntimeMeasurementProbeAuthority
 }
 
 interface ReadCommandAdapterComposition {
@@ -69,7 +67,6 @@ interface CapturedInput {
     readonly timeoutMs: number
     readonly outputLimitBytes: number
     readonly signal?: AbortSignal
-    readonly runtimeMeasurementProbeAuthority?: RuntimeMeasurementProbeAuthority
 }
 
 interface StableReadContext {
@@ -100,7 +97,7 @@ function captureInput(value: ReadCommandCompositionInput): CapturedInput | undef
         if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
         const descriptors = Object.getOwnPropertyDescriptors(value)
         const required = ['configPath', 'env', 'sessionId', 'timeoutMs']
-        const optional = ['outputLimitBytes', 'signal', 'runtimeMeasurementProbeAuthority']
+        const optional = ['outputLimitBytes', 'signal']
         const keys = Reflect.ownKeys(descriptors)
         if (keys.some((key) => typeof key !== 'string' || !required.includes(key) && !optional.includes(key))
             || required.some((key) => !descriptors[key] || !('value' in descriptors[key]!))
@@ -111,7 +108,6 @@ function captureInput(value: ReadCommandCompositionInput): CapturedInput | undef
         const timeoutMs = descriptors.timeoutMs!.value
         const outputLimitBytes = descriptors.outputLimitBytes?.value ?? DEFAULT_OUTPUT_LIMIT
         const signal = descriptors.signal?.value
-        const runtimeMeasurementProbeAuthority = descriptors.runtimeMeasurementProbeAuthority?.value
         if (typeof configPath !== 'string' || configPath.length === 0 || configPath.includes('\0')
             || typeof sessionId !== 'string' || sessionId.length === 0 || sessionId.includes('\0')
             || typeof timeoutMs !== 'number' || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000
@@ -131,7 +127,6 @@ function captureInput(value: ReadCommandCompositionInput): CapturedInput | undef
             timeoutMs,
             outputLimitBytes,
             ...(signal ? { signal } : {}),
-            ...(runtimeMeasurementProbeAuthority === undefined ? {} : { runtimeMeasurementProbeAuthority }),
         }
     } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
         return undefined
@@ -213,7 +208,7 @@ export function createReadCommandAdapters(
 ): ReadCommandAdapterComposition {
     const input = captureInput(rawInput)
 
-    // `refuse` receives the lifecycle's own refusal, such as an unmeasured runtime, so a caller can
+    // `refuse` receives the lifecycle's own refusal, such as a Compose below the floor, so a caller can
     // report it instead of a generic unavailable context.
     // A service verb may act on a stack whose start stopped part-way: rebuilding the service that
     // failed is how its fixed code gets running. Every other reader needs a started service.
@@ -224,9 +219,6 @@ export function createReadCommandAdapters(
             env: input.env,
             sessionId: input.sessionId,
             timeoutMs: input.timeoutMs,
-            ...(input.runtimeMeasurementProbeAuthority === undefined ? {} : {
-                runtimeMeasurementProbeAuthority: input.runtimeMeasurementProbeAuthority,
-            }),
         }, (step) => execute(step, signal ? { signal } : undefined))
         const loaded = await lifecycle.load({ configPath: input.configPath })
         if (loaded.kind === 'refusal' && loaded.diagnostics.some(({ code }) => code === ENVIRONMENT_CODES.ENVIRONMENT_NOT_DECLARED)) {

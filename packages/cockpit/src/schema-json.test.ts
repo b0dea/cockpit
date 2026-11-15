@@ -367,7 +367,7 @@ describe('the published cockpit schema', () => {
                 swap_mb: 1024,
             },
         }],
-        // A runtime measurement is a fact about one machine and lives in its ignored local state.
+        // A runtime measurement is a fact about one machine, not team configuration.
         ['a runtime measurement, which is not team configuration', {
             runtime_measurements: [{
                 runtime: 'docker-desktop',

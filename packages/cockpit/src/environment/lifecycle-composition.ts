@@ -47,24 +47,19 @@ import {
     type PortListenerEvidenceInput,
 } from './ports.js'
 import {
-    admitRuntimeMeasurement,
     measureMachineFloor,
     createRuntimeAdapter,
     observeRuntimeTopology,
     issueMachineFloorAuthority,
     OBSERVATION_WINDOW_HEADROOM_MS,
     observeDockerRuntime,
-    observeRuntimeMeasurement,
     projectRuntimeLifecycle,
-    runtimeMeasurementProbeObservation,
     type ComposeArtifact,
-    type RuntimeMeasurementProbeAuthority,
     type MachineFloorAuthority,
     type RuntimeLifecycleProjection,
     type RuntimeMountMismatch,
     type RuntimeTopologyEvidence,
 } from './runtime.js'
-import { readLocalRuntimeMeasurements } from './runtime-measurement-record.js'
 import {
     consumeSetupCheckoutProjection,
     observeSetupCheckout,
@@ -170,7 +165,6 @@ interface LifecycleCommandCompositionInput {
     readonly sessionId: string
     readonly timeoutMs: number
     readonly activeProfiles?: readonly string[]
-    readonly runtimeMeasurementProbeAuthority?: RuntimeMeasurementProbeAuthority | (() => RuntimeMeasurementProbeAuthority)
     // The `cockpit session` wrapper's own process, recorded with its hold so that the hold is
     // released once that process is gone.
     readonly holderProcess?: HolderProcess
@@ -236,7 +230,7 @@ function captureInput(value: LifecycleCommandCompositionInput): LifecycleCommand
         const descriptors = Object.getOwnPropertyDescriptors(value)
         const keys = ['configPath', 'env', 'sessionId', 'timeoutMs']
         const actualKeys = Reflect.ownKeys(descriptors)
-        const optionalKeys = ['activeProfiles', 'runtimeMeasurementProbeAuthority', 'holderProcess'].filter((key) => descriptors[key] !== undefined)
+        const optionalKeys = ['activeProfiles', 'holderProcess'].filter((key) => descriptors[key] !== undefined)
         if (actualKeys.length !== keys.length + optionalKeys.length
             || keys.some((key) => !descriptors[key] || !('value' in descriptors[key]!))
             || optionalKeys.some((key) => !('value' in descriptors[key]!))) return undefined
@@ -245,7 +239,6 @@ function captureInput(value: LifecycleCommandCompositionInput): LifecycleCommand
         const sessionId = descriptors.sessionId!.value
         const timeoutMs = descriptors.timeoutMs!.value
         const activeProfiles = descriptors.activeProfiles?.value
-        const runtimeMeasurementProbeAuthority = descriptors.runtimeMeasurementProbeAuthority?.value
         const holderProcess = descriptors.holderProcess?.value as HolderProcess | undefined
         if (typeof configPath !== 'string' || configPath.length === 0 || configPath.includes('\0')
             || typeof sessionId !== 'string' || sessionId.length === 0 || sessionId.includes('\0')
@@ -265,7 +258,6 @@ function captureInput(value: LifecycleCommandCompositionInput): LifecycleCommand
         }
         return { configPath: resolve(configPath), env, sessionId, timeoutMs,
             ...(activeProfiles === undefined ? {} : { activeProfiles: [...activeProfiles].sort() }),
-            ...(runtimeMeasurementProbeAuthority === undefined ? {} : { runtimeMeasurementProbeAuthority }),
             ...(holderProcess === undefined ? {} : { holderProcess: { pid: holderProcess.pid,
                 ...(holderProcess.processStart === undefined ? {} : { processStart: holderProcess.processStart }) } }) }
     } catch {
@@ -594,30 +586,14 @@ export function createLifecycleCommandAdapters(
         const env = runtimeEnvironment(input.env)
         const docker = await resolveDockerExecutable(input.env)
         if (docker.state !== 'available') return refuse?.(runtimeUnavailable(docker.reason, context.stackId))
-        let probeAuthority: RuntimeMeasurementProbeAuthority | undefined
-        if (input.runtimeMeasurementProbeAuthority !== undefined) {
-            try {
-                probeAuthority = typeof input.runtimeMeasurementProbeAuthority === 'function'
-                    ? input.runtimeMeasurementProbeAuthority() : input.runtimeMeasurementProbeAuthority
-            } catch (error) {
-                throw new RefusalError('runtime measurement probe authority supplier failed', { cause: error })
-            }
-        }
-        const observed = input.runtimeMeasurementProbeAuthority === undefined
-            ? await observeDockerRuntime({
-                executable: docker.value,
-                cwd: binding.checkoutRoot,
-                env,
-                timeoutMs: input.timeoutMs,
-            }, execute)
-            : (probeAuthority === undefined ? undefined : runtimeMeasurementProbeObservation(probeAuthority, docker.value.sha256))
-                ?? { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason: 'runtime measurement probe authority is unavailable or expired' }
+        // Docker answering with a Compose at or above the floor is all a runtime has to show.
+        const observed = await observeDockerRuntime({
+            executable: docker.value,
+            cwd: binding.checkoutRoot,
+            env,
+            timeoutMs: input.timeoutMs,
+        }, execute)
         if (observed.kind !== 'complete') return refuse?.(ownerDiagnostics(observed.code, observed.reason, context.stackId, 'fix' in observed ? observed.fix : undefined))
-        const measured = admitRuntimeMeasurement(observed, await readLocalRuntimeMeasurements(context.namespace.root))
-        const certifiedProbe = input.runtimeMeasurementProbeAuthority !== undefined
-        if (measured.kind !== 'admitted' && !certifiedProbe) return refuse?.(ownerDiagnostics(measured.code, measured.reason, context.stackId))
-        const measurementObservation = measured.kind === 'admitted'
-            ? observeRuntimeMeasurement(measured, context.stackId) : undefined
         let artifacts: readonly ComposeArtifact[] | undefined
         let inputs: Readonly<Record<string, string>> = { [basename(context.source.path)]: context.runtimeSha256 }
         // A running stack keeps the profiles it started with, so every later command, down
@@ -731,8 +707,7 @@ export function createLifecycleCommandAdapters(
             topology: topology.topology,
             lifecycle,
             hostObservations,
-            runtimeObservations: measurementObservation
-                ? [measurementObservation, ...topology.observations] : [...topology.observations],
+            runtimeObservations: [...topology.observations],
             inputs,
             activeProfiles,
         }

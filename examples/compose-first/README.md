@@ -12,11 +12,9 @@ before running the example.
 ```
 
 `sync` also publishes `compose.cockpit.yml`, which labels the services so runtime commands own them.
-Measure the runtime with a local image, then run the stack:
+Then run the stack:
 
 ```sh human-only:runtime
-docker pull node:22-alpine
-./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config cockpit.toml --image node:22-alpine
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs session --config cockpit.toml -- sh -c 'curl -fsS "http://127.0.0.1:$API_HOST_PORT/health"'
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config cockpit.toml

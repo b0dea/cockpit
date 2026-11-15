@@ -26,7 +26,7 @@ smaller; raising an output or subprocess limit does not change this one.
 | `environment.compose_files` | compose first | the surfaces, plus `check` reads the Compose topology | run the declared Compose files |
 
 The runtime commands are `up`, `sleep`, `session`, `down`, `reset`, `preflight`, `logs`, `ps`,
-`restart`, `rebuild`, `exec` and `runtime measure`. Every mode writes the harness
+`restart`, `rebuild` and `exec`. Every mode writes the harness
 [surfaces](concepts.md#surface) and checks them for [drift](concepts.md#drift).
 [`examples/docs-only`](../examples/docs-only/README.md) and
 [`examples/compose-first`](../examples/compose-first/README.md) show the two modes.
@@ -536,20 +536,18 @@ it.
 ## Choose the Docker daemon
 
 Every command uses the daemon Docker itself would select: `DOCKER_HOST` when set, otherwise the
-context `DOCKER_CONTEXT` names, otherwise the active context. Four commands fix that daemon once,
+context `DOCKER_CONTEXT` names, otherwise the active context. Three commands fix that daemon once,
 before their first step, and address only it:
 
 | Command | Why it fixes the daemon |
 |---|---|
 | `down`, `reset` | they delete; reading the context per step could list one daemon and delete from another if `docker context use` ran mid-command |
 | `stacks` | `stacks prune` deletes, for the same reason |
-| `runtime measure` | the measurement must describe the daemon `up` will use, not one selected while the probe ran |
 
 None of them needs a prefix, so they run as printed:
 
 ```sh
 npx --no cockpit down --config cockpit.toml
-npx --no cockpit runtime measure --config cockpit.toml --image node:22-alpine
 ```
 
 The daemon's endpoint must be an absolute `unix://` socket path. TCP, SSH and other transports are
@@ -570,54 +568,14 @@ your own file's `name:` is overridden. To look at the stack with Docker directly
 with `docker compose ls`: `docker compose --project-name shop-cockpit-3f2b3aead733 ps`. Renaming
 addresses a different stack, so [run `down` first](getting-started.md#rename-a-cockpit).
 
-## Measure the container runtime
+## Docker and Compose
 
-`up`, `session`, `down` and `reset` refuse with `RUNTIME_UNMEASURED` unless the runtime Docker
-selects has been measured on this machine. `sleep` and `logs` fail while a running stack's runtime
-no longer matches a measurement, for example after an engine upgrade. `preflight` and `doctor` only
-report an unmeasured runtime, as an unavailable check. A measurement is a fact about one machine, so
-it is never written to `cockpit.toml`.
-
-cockpit identifies the runtime from one `docker info` reading of `OperatingSystem`, `Name` and
-`OSType`:
-
-| Runtime identity | Recognised by | Provenance |
-|---|---|---|
-| `docker-desktop` | `OperatingSystem` is `Docker Desktop` | vendor `docker info` output, not probed |
-| `orbstack` | `OperatingSystem` is `OrbStack` | observed on an OrbStack host |
-| `colima` | `Name` starts with `colima` | vendor `docker info` output, not probed |
-| `rancher-desktop` | `Name` ends with `rancher-desktop` | vendor `docker info` output, not probed |
-| `docker-engine` | a Linux host whose daemon reports `OSType` `linux` | vendor `docker info` output, not probed |
-
-Any other reading, including an unrecognised VM on macOS, is never accepted; the refusal lists the
-raw values so you can report them.
-
-```sh
-docker pull node:22-alpine
-./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config ./cockpit.toml --image node:22-alpine
-```
-
-The probe runs in a throwaway directory: a candidate stack exercising profiles, bind mounts in both
-directions, labels, health, logs, recovery and teardown, next to a deliberately broken Compose file
-the runtime must reject. It uses only the local image you name and never pulls, runs only from an
-installed `@b00dea/cockpit` package, and only against a [local daemon](#choose-the-docker-daemon).
-
-Its project is `<cockpit.name>-probe-<id>`, and it removes what it creates before returning. If a
-measure was killed first, the next one removes that cockpit's leftover probe resources and temporary
-directory and lists them. Each probe resource carries a `dev.b0dea.cockpit.probe-owner` label naming
-its process, so only resources whose process is gone are removed; anything that may belong to a
-running measure is left and named. It refuses to probe when a leftover cannot be removed.
-
-A pass records the measurement in `machine/runtime-measurements.json` under cockpit's per-user state
-root, so every checkout on this machine measures once. The record is keyed by runtime identity and
-daemon name and holds the engine version and the Compose version, which becomes the Compose floor.
-Switching between two runtimes needs one measurement each. A failed measurement records nothing.
-
-`up` admits the runtime only when the record has a row for the same runtime and daemon, with the
-same engine version and a Compose version at or above the floor, so an engine upgrade needs a new
-measurement. Recording changes no committed file, so an agent can run it before its first `up`
-without waiting for a human `sync`. `doctor` names the measurement that admitted the runtime in the
-`RUNTIME_UNMEASURED` check's source.
+Every command that runs the stack, `up` and `session` included, first checks that Docker answers
+and that its Compose is 2.35.0 or later, the first release with `config --no-env-resolution`, which
+cockpit reads the topology with. Either failing refuses with one `RUNTIME_UNAVAILABLE` naming the
+cause and the fix. `doctor` and
+`preflight` report the same before the first `up`. Any runtime that provides the Docker CLI and
+Compose works, such as Docker Desktop, OrbStack, Colima or Docker Engine on Linux.
 
 ## Secret sources and environment schemas
 

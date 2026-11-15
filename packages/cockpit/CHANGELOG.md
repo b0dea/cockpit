@@ -200,7 +200,7 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
   
   `--write-probe-specifications <file> --replace` writes over an existing file, and the `OUTPUT_EXISTS` refusal names it, so you no longer invent new file names after every upgrade.
   
-  When the guard was installed by `sync` under another Node than the one running an interactive `selftest` (a Node version manager in one shell and another Node in the next), `selftest` now says it is rerunning under the guard's Node and runs again under it, with the same arguments and the same terminal for the approvals. It does so only when that Node is still at the recorded path with the SHA-256 `sync` recorded; otherwise, or when the run is not interactive, it refuses with `SELFTEST_GUARD_IDENTITY_MISMATCH` as before. `doctor`'s `GUARD_NODE_DIFFERS` note says so too.
+  When the guard was installed by `sync` under another Node than the one running an interactive `selftest` (a Node version manager in one shell and another Node in the next), `selftest` now says it is rerunning under the guard's Node and runs again under it, with the same arguments and the same terminal for the approvals. It does so only when that Node is still at the recorded path with the SHA-256 `sync` recorded; otherwise, or when the run is not interactive, it refuses with SELFTEST_GUARD_IDENTITY_MISMATCH as before. `doctor`'s `GUARD_NODE_DIFFERS` note says so too.
   
   The docs and the setup skills now say plainly that cockpit is usable once `check` passes and that `selftest` is optional native evidence a person runs when they want it; agents no longer treat it as an adoption step.
 - 37c0989: The guard asks less often for harmless Git reads:
@@ -219,7 +219,7 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 ### Patch Changes
 
-- d0254e9: `selftest` no longer asks you to approve a run whose Claude Code guard probe cannot run. `sync` records the Node it ran under and the guard hook keeps running that Node, so when `selftest` ran under a different `node` (a Node version manager in another shell, say), the probe was refused only after every approval, as an unnamed changed input. `selftest` now compares the installed guard identity first and refuses with `SELFTEST_GUARD_IDENTITY_MISMATCH`, naming both Nodes and the two ways forward: run selftest with the recorded Node, or run `sync` under the current one and then selftest. When the Node at the recorded path was upgraded in place, it says so and gives the one remedy that works: run `sync`.
+- d0254e9: `selftest` no longer asks you to approve a run whose Claude Code guard probe cannot run. `sync` records the Node it ran under and the guard hook keeps running that Node, so when `selftest` ran under a different `node` (a Node version manager in another shell, say), the probe was refused only after every approval, as an unnamed changed input. `selftest` now compares the installed guard identity first and refuses with SELFTEST_GUARD_IDENTITY_MISMATCH, naming both Nodes and the two ways forward: run selftest with the recorded Node, or run `sync` under the current one and then selftest. When the Node at the recorded path was upgraded in place, it says so and gives the one remedy that works: run `sync`.
   
   When a reviewed input does change during a run, the message now names it and its path: the approved executable, a probe control, the guard identity, the configuration recorded for the guard, `cockpit.toml`, the Node or cockpit module the guard runs, or the generated Bash guard, or says the step's dispatch window closed.
 - d0254e9: `selftest` reports what it measured more truthfully:
@@ -248,7 +248,7 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
   Before you approve a run that includes the Claude Code guard probe, `selftest --interactive` now lists every hook registration in the generated `.claude/settings.json` that cockpit did not generate, with its event, matcher and command. Claude Code can run each of them during the probe.
 - ce2d303: `selftest` now measures Claude Code guard firing when the team's own hooks sit beside cockpit's guard in `.claude/settings.json`. It previously stopped with `SELFTEST_EXECUTION_INVALID: probe execution could not establish guard-firing for Claude Code` and no reason. The broken control now replaces only cockpit's guard command, found by the exact command `sync` generated, so the team's hooks run unchanged under both controls. If one of them refuses a probe command, the failure names the registration and the hook's reason and asks for the probe's two commands to be let through, keeping the hook in place.
   
-  Every other `SELFTEST_EXECUTION_INVALID` from a probe now says what failed and what to do, such as an unrecognised `--version` output, a step that could not start, or a missing generated `CLAUDE.md` import. The cockpit-setup skill now tells agents that a person approves by answering yes at the terminal prompt that shows the digest, rather than by entering a digest.
+  Every other SELFTEST_EXECUTION_INVALID from a probe now says what failed and what to do, such as an unrecognised `--version` output, a step that could not start, or a missing generated `CLAUDE.md` import. The cockpit-setup skill now tells agents that a person approves by answering yes at the terminal prompt that shows the digest, rather than by entering a digest.
 
 ## 0.1.7
 
@@ -668,10 +668,10 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
   
   - `--follow` is no longer cut off by the ten-second budget of an ordinary read, which made it fail with `EXECUTION_TIMEOUT` and no records. It collects until it is interrupted (exit 130 with the records collected), the container stops, or two hours pass.
   - A read whose output exceeds the 1 MiB limit (64 KiB for stderr) no longer fails with `EXECUTION_STDOUT_LIMIT` and no records. It returns the newest whole records that fit, sets `truncated: true` in the JSON result and warns with `LOGS_TRUNCATED`.
-- 4d97b97: `logs` no longer reports `RUNTIME_UNMEASURED` for failures that have nothing to do with the runtime measurement, and it no longer tells you to run `runtime measure` on a runtime that is already measured.
+- 4d97b97: `logs` no longer reports RUNTIME_UNMEASURED for failures that have nothing to do with the runtime measurement, and it no longer tells you to run `runtime measure` on a runtime that is already measured.
   
   - A failure to read or parse the logs, such as a record that cannot be redacted safely, now reports `EVIDENCE_UNAVAILABLE` and names the cause.
-  - When the runtime itself cannot be used, `logs` now reports the actual refusal, including `RUNTIME_UNMEASURED` when the runtime really is unmeasured, instead of `log observation is unavailable`.
+  - When the runtime itself cannot be used, `logs` now reports the actual refusal, including RUNTIME_UNMEASURED when the runtime really is unmeasured, instead of `log observation is unavailable`.
   
   The `runtime measure` summary names the configuration file you passed instead of always saying `cockpit.toml`.
 - 08cf5b7: An MCP approval now binds the reviewed declaration, not only the server name, and the generated wrapper starts in the right directory under any shell setup.
@@ -735,7 +735,7 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
   
   - A failed `setup` clone reports `SETUP_CLONE_FAILED` with the remote, the target directory, git's own error and the siblings already cloned, plus a fix, instead of a bare `EXECUTION_STEP_FAILED`. Any failed execution step now carries a bounded, redacted tail of its stderr in the refusal evidence.
   - `GENERATED_STALE_APPROVAL_REQUIRED` names `sync --interactive` and the digest to type, and a human `sync --dry-run` prints that digest.
-  - `runtime measure` with an image that is not local reports `RUNTIME_IMAGE_UNAVAILABLE` and says to pull or build it, instead of telling you to start a runtime that is running.
+  - `runtime measure` with an image that is not local reports RUNTIME_IMAGE_UNAVAILABLE and says to pull or build it, instead of telling you to start a runtime that is running.
   - A mistyped `--config` in a cockpit checkout no longer suggests restoring the mistyped path from git; it names the configuration the checkout was synced from.
   - `MACHINE_COLD_START_EXCEEDED` and the machine-floor refusals (`MACHINE_MEMORY_BELOW_FLOOR`, `MACHINE_CPU_BELOW_FLOOR`, `MACHINE_DISK_BELOW_FLOOR`) state the measured value, the declared limit and the field to change.
 - b8ae534: `registry-resolve` now works on a cockpit installed from a tarball packed from source. It validates the registry and adoption file first, records `COCKPIT_SOURCE_REVISION='development'` with an unstamped-revision warning when the package carries no release commit, and refuses only a malformed revision, with a fix. Adoption-file refusals state the expected five-line format, which the adoption guide now documents.

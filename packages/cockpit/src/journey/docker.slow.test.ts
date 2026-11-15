@@ -6,8 +6,8 @@ afterAll(removeScratch)
 
 // Keeps the fake docker honest: the same journey against a real daemon. Opt in with
 // COCKPIT_JOURNEY_DOCKER=1 and a running daemon; COCKPIT_JOURNEY_IMAGE names a local image with a
-// shell (default alpine:3.20), because measuring the runtime neither pulls nor builds. It never
-// starts a daemon. Set DOCKER_HOST when the daemon is not on the default socket: each command runs
+// shell (default alpine:3.20), which must already be local so the journey needs no registry. It
+// never starts a daemon. Set DOCKER_HOST when the daemon is not on the default socket: each command runs
 // with an isolated home, so the Docker CLI does not see the current user's contexts.
 it.skipIf(process.env.COCKPIT_JOURNEY_DOCKER !== '1')('brings a tiny stack up and down against the real Docker daemon', () => {
     const image = process.env.COCKPIT_JOURNEY_IMAGE ?? 'alpine:3.20'
@@ -19,7 +19,6 @@ it.skipIf(process.env.COCKPIT_JOURNEY_DOCKER !== '1')('brings a tiny stack up an
     for (const name of ['DOCKER_HOST', 'DOCKER_CONTEXT'] as const) if (process.env[name]) shop.env[name] = process.env[name]
     ok(shop, ['sync'])
     ok(shop, ['check'])
-    ok(shop, ['runtime', 'measure', '--image', image])
     let stackId: string | undefined
     try {
         stackId = ok(shop, ['up']).json?.result.stackId

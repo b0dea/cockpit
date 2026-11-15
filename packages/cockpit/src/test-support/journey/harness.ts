@@ -174,8 +174,8 @@ export function createMachine(name: string, options: { realDocker?: string } = {
     for (const directory of [home, tmp, bin, state]) mkdirSync(directory, { recursive: true, mode: 0o700 })
     writeFileSync(join(state, 'calls.jsonl'), '')
     writeFileSync(join(state, 'state.json'), JSON.stringify({
-        serverVersion: '29.0.0', composeVersion: '2.40.0', operatingSystem: 'Docker Desktop', memTotal: 8 * 1024 ** 3, cpus: 4, sequence: 1,
-        images: { 'node:22-alpine': `sha256:${'a'.repeat(64)}` }, containers: [], volumes: [], networks: [],
+        serverVersion: '29.0.0', composeVersion: '2.40.0', memTotal: 8 * 1024 ** 3, cpus: 4, sequence: 1,
+        containers: [], volumes: [], networks: [],
     }))
     if (options.realDocker) symlinkSync(options.realDocker, join(bin, 'docker'))
     else writeFileSync(join(bin, 'docker'), `#!/bin/sh\nexec ${[process.execPath, fakeDocker, state, yamlParser].map((arg) => JSON.stringify(arg)).join(' ')} "$@"\n`, { mode: 0o755 })

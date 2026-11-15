@@ -13,7 +13,6 @@ import { resolveLifecycleStage } from '../environment/lifecycle-stage.js'
 import { observeConfiguration } from '../environment/state.js'
 import { resolveBrowserRuntime } from './runtime.js'
 import { publishComposeOwnership } from '../../test-support/compose-ownership-fixture.js'
-import { recordSyntheticMeasurement } from '../../test-support/runtime-measurement-fixture.js'
 
 const roots: string[] = []
 const run = promisify(execFile)
@@ -29,7 +28,6 @@ it('wipes produced browser artifacts through operator reset and preserves an und
     const artifacts = { mcp: '.playwright-mcp', cli: '.playwright-cli', auth: '.browser/auth' }
     const declarations = Object.values(artifacts)
     const configPath = join(root, 'cockpit.toml')
-    await recordSyntheticMeasurement(stateHome)
     await writeFile(configPath, [
         '[cockpit]', 'name = "synthetic-browser"', 'siblings_root = "siblings"',
         '[[sibling]]', 'slug = "web"', 'dir = "web"', 'mount = "always"', 'acquire = "none"', 'var = "WEB_DIR"', 'toolchain = "none"', 'purpose = "Synthetic web"',
@@ -51,7 +49,6 @@ it('wipes produced browser artifacts through operator reset and preserves an und
         '#!/bin/sh',
         'if [ "$1" = "version" ]; then printf "27.1.2\\n"; exit 0; fi',
         'if [ "$1" = "compose" ] && [ "$2" = "version" ]; then printf "2.39.2\\n"; exit 0; fi',
-        'if [ "$1" = "info" ] && [ "$3" = "[{{json .OperatingSystem}},{{json .Name}},{{json .OSType}}]" ]; then printf \'%s\\n\' \'["Docker Desktop","docker-desktop","linux"]\'; exit 0; fi',
         'if [ "$1" = "info" ]; then printf "2147483648|2\\n"; exit 0; fi',
         'if [ "$1" = "compose" ]; then',
         '  case " $*" in',

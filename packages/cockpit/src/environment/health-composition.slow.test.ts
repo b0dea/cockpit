@@ -93,7 +93,7 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         expect(report.result.checks).toEqual(expect.arrayContaining([
             expect.objectContaining({ code: 'HARNESS_SURFACE_UNAVAILABLE', verdict: 'pass' }),
             expect.objectContaining({ code: 'STATE_UNSEEDED', verdict: 'not-applicable' }),
-            expect.objectContaining({ code: 'RUNTIME_UNMEASURED', verdict: 'not-applicable' }),
+            expect.objectContaining({ code: 'RUNTIME_UNAVAILABLE', verdict: 'not-applicable' }),
             expect.objectContaining({ code: 'RUNNING_CHECKOUT_MISMATCH', verdict: 'not-applicable' }),
         ]))
         expect(report.result.verdict).not.toBe('pass')
@@ -138,7 +138,7 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         expect(execute.mock.calls.some(([step]) => step.argv.includes('up') || step.argv.includes('stop'))).toBe(false)
         const guide = join(candidate.checkout, 'AGENTS.md')
         if (published.kind !== 'complete') throw new Error('published surface projection is unavailable')
-        const entry = published.result.application.surfaceSelftest.entries.find(row => row.path === 'AGENTS.md')
+        const entry = published.result.application.surfaceManifest.entries.find(row => row.path === 'AGENTS.md')
         if (!entry || entry.kind !== 'shared-region' || entry.region.format !== 'markdown-delimited') throw new Error('published guide region is unavailable')
         const guideBytes = await readFile(guide, 'utf8')
         expect(guideBytes).toContain(entry.region.bytes)
@@ -294,7 +294,7 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         expect(doctor.diagnostics[0]).toMatchObject({ code: 'ENVIRONMENT_NOT_DECLARED' })
         expect(doctor.result.checks).toEqual(expect.arrayContaining([
             expect.objectContaining({ code: 'GIT_STATE_UNHEALTHY', verdict: 'fail' }),
-            expect.objectContaining({ code: 'RUNTIME_UNMEASURED', verdict: 'not-applicable', reason: expect.stringContaining('declares no runtime') }),
+            expect.objectContaining({ code: 'RUNTIME_UNAVAILABLE', verdict: 'not-applicable', reason: expect.stringContaining('declares no runtime') }),
         ]))
         expect(doctor.diagnostics.map(({ code }) => code)).not.toContain('RUNTIME_UNAVAILABLE')
         expect((await runPreflight({ configPath: surfacesOnly.configPath }, surfacesAdapters)).diagnostics.map(({ code }) => code))
@@ -769,44 +769,6 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
             expect.objectContaining({ owner: 'host-observation', code: 'MACHINE_DISK_BELOW_FLOOR' }),
             expect.objectContaining({ owner: 'runtime-planning', code: 'RUNTIME_UNAVAILABLE' }),
             expect.objectContaining({ owner: 'runtime-planning', code: 'MOUNT_POSTURE_UNAVAILABLE' }),
-        ]))
-    })
-
-    it('keeps machine-only runtime measurement applicable and reports an exact unmeasured reason', async () => {
-        const candidate = await fixture({ machineOnly: true, unmeasured: true })
-        const execute = vi.fn(executeProbe)
-        const adapters = createHealthCommandAdapters({
-            configPath: candidate.configPath,
-            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
-            timeoutMs: 5_000,
-        }, execute)
-
-        const result = await runDoctor({ configPath: candidate.configPath }, adapters)
-        const executionOutcomes = await Promise.all(execute.mock.results.map(({ value }) => value))
-
-        expect(execute.mock.calls.map(([step]) => step)).toEqual(expect.arrayContaining([
-            expect.objectContaining({
-                id: 'runtime:measure:free-disk',
-                argv0: process.execPath,
-                consumedFiles: [expect.objectContaining({
-                    path: await realpath(process.execPath), executable: true,
-                })],
-            }),
-        ]))
-        const stepIds = execute.mock.calls.map(([step]) => step.id)
-        expect(stepIds.indexOf('runtime:measure:free-disk')).toBeLessThan(stepIds.indexOf('git-health'))
-        expect(result.diagnostics, JSON.stringify(executionOutcomes)).not.toEqual(expect.arrayContaining([expect.objectContaining({ target: 'host' })]))
-        expect(result.result.checks).toEqual(expect.arrayContaining([
-            expect.objectContaining({ owner: 'host-observation', code: 'MACHINE_MEMORY_BELOW_FLOOR' }),
-            expect.objectContaining({
-                owner: 'runtime-planning',
-                code: 'RUNTIME_UNMEASURED',
-                verdict: 'unavailable',
-                reason: 'Runtime docker-desktop on daemon "docker-desktop" has not been measured on this machine (docker info: OperatingSystem "Docker Desktop", '
-                    + `Name "docker-desktop", OSType "linux"; engine 27.1.2; host ${process.platform}; `
-                    + `measured in ${join(candidate.namespace.root, 'machine', 'runtime-measurements.json')}: none). `
-                    + 'Measure it on this machine with: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs runtime measure --config <your cockpit.toml> --image <local-image>',
-            }),
         ]))
     })
 

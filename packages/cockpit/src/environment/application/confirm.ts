@@ -47,9 +47,9 @@ export interface ConfirmCommandOutcome {
     readonly diagnostics: readonly Diagnostic[]
 }
 
-// The rows of preflight that say the runtime measured on this machine meets the declared floor.
+// The rows of preflight that say the container runtime on this machine meets the declared floor.
 const RUNTIME_FLOOR_CODES: readonly string[] = [ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR, ENVIRONMENT_CODES.MACHINE_CPU_BELOW_FLOOR,
-    ENVIRONMENT_CODES.MACHINE_DISK_BELOW_FLOOR, ENVIRONMENT_CODES.RUNTIME_UNMEASURED]
+    ENVIRONMENT_CODES.MACHINE_DISK_BELOW_FLOOR]
 // Preflight passes only with the stack up; this row says the port family it holds is leased on the
 // declared bases with current listener evidence.
 const PORT_FAMILY_CODES: readonly string[] = [ENVIRONMENT_CODES.PORT_FAMILY_COLLISION]

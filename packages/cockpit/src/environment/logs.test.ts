@@ -466,7 +466,7 @@ describe('runtime logs', () => {
         expect(reads).toBe(0)
     })
 
-    it.each([' {', ''])('refuses a partial sensitive container with header %j, saying why rather than blaming the runtime measurement', async header => {
+    it.each([' {', ''])('refuses a partial sensitive container with header %j, saying why rather than blaming the runtime', async header => {
         const { since, tail, follow: _follow, ...request } = input
         const result = await runLogs({ configPath: '/synthetic/cockpit.toml', service: input.service,
             since, tail, follow: false, json: true }, {

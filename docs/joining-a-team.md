@@ -34,12 +34,8 @@ With pnpm or yarn, run the same scripts with `pnpm run` or `yarn run`.
   the generated files. Committed files do not depend on where you cloned.
 - `check` confirms the generated files match `cockpit.toml`.
 
-Two things stay per machine:
-
-- **Codex hook trust.** See [Trust the Codex hook](harness-surfaces.md#trust-the-codex-hook).
-- **Runtime measurements.** Each machine
-  [measures its container runtime](environment.md#measure-the-container-runtime) once before its
-  first `up`.
+One thing stays per machine: **Codex hook trust**. See
+[Trust the Codex hook](harness-surfaces.md#trust-the-codex-hook).
 
 ### The `cockpit:ignore` region
 

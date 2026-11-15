@@ -28,8 +28,6 @@ import { syncGeneratedEnvironment } from './generated-application/sync.js'
 import { checkoutId, composeProjectName, holderId } from './identity.js'
 import { leasePortFamily } from './ports.js'
 import {
-    issueRuntimeMeasurementProbeAuthority,
-    observeDockerRuntime,
     resolveRuntimeServiceOrder,
     type RuntimeTopologyEvidence,
 } from './runtime.js'
@@ -107,15 +105,10 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         await rename(candidate.composePath, composePath)
         await writeFile(configPath, (await readFile(candidate.configPath, 'utf8'))
             .replace('siblings_root = "siblings"', 'siblings_root = "../repositories"'))
-        let operatingSystemOutput = ''
         let runtimeCwd: string | undefined
         const execute = async (step: ExecutionStep) => {
             if (step.id.startsWith('runtime:docker-compose:topology:')) runtimeCwd = step.cwd
-            const outcome = await executeProbe(step)
-            if (step.id === 'runtime:docker-operating-system' && outcome.kind === 'complete') {
-                operatingSystemOutput = new TextDecoder().decode(outcome.stdout)
-            }
-            return outcome
+            return executeProbe(step)
         }
         const adapters = createLifecycleCommandAdapters({
             configPath,
@@ -164,7 +157,6 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
             await once(listener, 'close')
         }
 
-        expect(operatingSystemOutput).toBe('["Docker Desktop","docker-desktop","linux"]\n')
         expect(runtimeCwd).toBe(cockpitRoot)
         expect(readiness).toEqual(expect.objectContaining({ topology: expect.objectContaining({
             stackId: loaded.result.stackId,
@@ -178,7 +170,6 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
             expect.objectContaining({ owner: 'host-observation', code: 'MACHINE_DISK_BELOW_FLOOR' }),
         ],
         runtimeObservations: [
-            expect.objectContaining({ owner: 'runtime-planning', code: 'RUNTIME_UNMEASURED' }),
             expect.objectContaining({ owner: 'runtime-planning', code: 'RUNTIME_UNAVAILABLE' }),
             expect.objectContaining({ owner: 'runtime-planning', code: 'MOUNT_POSTURE_UNAVAILABLE' }),
         ],
@@ -362,8 +353,10 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(await readFile(candidate.dockerPath, 'utf8')).toContain('not-a-version')
     })
 
-    it('refuses an unmeasured runtime before executing the topology plan', async () => {
-        const candidate = await fixture(2, 'unmeasured')
+    it('refuses a Compose below the floor before executing the topology plan', async () => {
+        const candidate = await fixture(2)
+        const docker = await readFile(candidate.dockerPath, 'utf8')
+        await writeFile(candidate.dockerPath, docker.replace('printf "2.39.2\\n"', 'printf "2.34.0\\n"'), { mode: 0o700 })
         const execute = vi.fn(executeProbe)
         const adapters = createLifecycleCommandAdapters({
             configPath: candidate.configPath,
@@ -391,13 +384,8 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(execute.mock.calls.some(([step]) => step.id.includes('topology'))).toBe(false)
 
         const up = await runUp({ configPath: candidate.configPath }, adapters)
-        expect(up).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'RUNTIME_UNMEASURED' }] })
-        const message = up.diagnostics[0]?.message ?? ''
-        expect(message).toContain('Runtime docker-desktop on daemon "docker-desktop" has not been measured on this machine')
-        expect(message).toContain('OperatingSystem "Docker Desktop", Name "docker-desktop", OSType "linux"; engine 27.1.2')
-        expect(message).toMatch(new RegExp(`measured in ${candidate.home.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/.+/v1/machine/runtime-measurements\\.json: none`))
-        // The remedy runs as printed: runtime measure selects the daemon up uses, with no prefix.
-        expect(message).toMatch(/Measure it on this machine with: \.\/node_modules\/@b00dea\/cockpit\/bin\/cockpit\.mjs runtime measure --config <your cockpit\.toml> --image <local-image>$/)
+        expect(up).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'RUNTIME_UNAVAILABLE',
+            message: expect.stringContaining('Docker Compose 2.34.0 is older than 2.35.0'), fix: expect.stringContaining('upgrade Docker Compose') }] })
         expect(execute.mock.calls.some(([step]) => step.id.includes('topology'))).toBe(false)
     })
 
@@ -564,52 +552,6 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(recovered, JSON.stringify(recovered)).toMatchObject({ kind: 'complete', result: { change: 'resumed' } })
         const stopped = await runSleep({ configPath: candidate.configPath }, recoveryAdapters)
         expect(stopped, JSON.stringify(stopped)).toMatchObject({ kind: 'complete', result: { change: 'stopped' } })
-    })
-
-    it.each(['single', 'fresh', 'replayed'] as const)('lets an authenticated controlled probe measure an unmeasured runtime without claiming global support with a %s supplier', async (mode) => {
-        const candidate = await fixture(2, 'unmeasured')
-        const execute = vi.fn(executeProbe)
-        const resolved = await (await import('./executable.js')).resolveDockerExecutable({ PATH: `${candidate.root}:/usr/bin:/bin` })
-        expect(resolved.state).toBe('available')
-        if (resolved.state !== 'available') return
-        const observed = await observeDockerRuntime({
-            executable: resolved.value,
-            cwd: candidate.checkout,
-            env: { PATH: `${candidate.root}:/usr/bin:/bin` },
-            timeoutMs: 5_000,
-        }, execute)
-        expect(observed.kind).toBe('complete')
-        if (observed.kind !== 'complete') return
-        const firstAuthority = issueRuntimeMeasurementProbeAuthority(observed)
-        const secondAuthority = issueRuntimeMeasurementProbeAuthority(observed)
-        const authorities = [firstAuthority, secondAuthority]
-        const adapters = createLifecycleCommandAdapters({
-            configPath: candidate.configPath,
-            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
-            sessionId: 'controlled-probe',
-            timeoutMs: 5_000,
-            runtimeMeasurementProbeAuthority: mode === 'single' ? firstAuthority
-                : mode === 'fresh' ? () => authorities.shift() ?? secondAuthority : () => firstAuthority,
-        }, execute)
-        const loaded = await adapters.load({ configPath: candidate.configPath })
-        expect(loaded.kind).toBe('complete')
-        if (loaded.kind !== 'complete') return
-        await publishComposeOwnership(candidate.checkout, loaded.result)
-        await writeFile(join(candidate.checkout, 'topology.json'), JSON.stringify({ services: { api: { labels: {
-            'dev.b0dea.cockpit.stack-id': loaded.result.stackId,
-            'dev.b0dea.cockpit.config-sha256': loaded.result.runtimeSha256,
-        }, volumes: [{ type: 'bind', source: join(candidate.checkout, 'siblings', 'api'), target: '/api' }] } } }))
-
-        const readiness = await adapters.withRuntimeReadiness(loaded.result, async (value) => value)
-
-        expect(readiness).toBeDefined()
-        expect(execute.mock.calls.filter(([step]) => step.id === 'runtime:docker-operating-system')).toHaveLength(1)
-        expect((readiness as { runtimeObservations: readonly { code: string }[] }).runtimeObservations
-            .some(({ code }) => code === 'RUNTIME_UNMEASURED')).toBe(false)
-        const repeated = await adapters.withRuntimeReadiness(loaded.result, async (value) => value)
-        if (mode === 'fresh') expect(repeated).toBeDefined()
-        else expect(repeated).toBeUndefined()
-        await expect(adapters.withRuntimeReadiness(loaded.result, async (value) => value)).resolves.toBeUndefined()
     })
 
     it('measures a machine-only floor from the nested configuration directory', async () => {

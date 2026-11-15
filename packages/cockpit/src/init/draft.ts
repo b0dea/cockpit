@@ -97,8 +97,6 @@ export type DocumentOutcome =
 
 export interface DocumentCommandInput {
     root: string
-    /** Not read: the shell-registry input is gone; init-application still threads the field. */
-    registry?: string
     /** Where init will write cockpit.toml; it is reported back as the outcome's destination. */
     output?: string
     configuration: DocumentConfigurationInput
