@@ -15,13 +15,17 @@ whole blocked list: a secret, a credential store, a declared host, a guard file 
 installed cockpit, and a forced or protected-branch push. A word that names a secret or a credential
 store is refused whatever program it belongs to and wherever it sits: in a command substitution, fed
 through a pipe to `xargs`, given to `echo`, `ls` or `test`, or after a launcher the guard does not know,
-and so is a forced or protected-branch push those words spell (`corepack pnpm exec git push -f`). A
+and so is a forced or protected-branch push those words spell (`corepack pnpm exec git push -f`); such
+a push that names no destination, or `HEAD`, asks, since only Git knows where it goes. A
 name inside a longer word, such as a commit message, a search pattern or a `sed`, `awk` or `jq` script,
 and the option values of a Git read are text, not names, so `git commit -m "Load .env first"` and
-`rg '\.env' docs` run. A shell form the guard does not read, such as
-`$((…))`, `if`, `case`, `eval` or `source`, is judged the same way, by the names its text spells, and
-otherwise runs; only privilege escalation, downloaded code piped into an interpreter and a bare `env`
-are refused for their form. A program the guard does not know, a word it cannot expand, a variable, a
+`rg '\.env' docs` run. Shell the guard does not read whole, such as `if`, `case`, `[[ … ]]` or a loop,
+is cut into its simple commands at separators and shell keywords, and each is judged as it would be on
+its own, so every rule here and every `[[guards.deny]]` entry applies inside it. Arithmetic of names and
+numbers, `${NAME:-word}`, here-strings and `source FILE` are read. A command that still cannot be read,
+such as `eval` or `watch`, gets the name checks over the whole call's text and then no answer from the
+guard: the agent tool's own permissions decide it. Privilege escalation, downloaded code piped into an
+interpreter and a bare `env` are refused for their form wherever they appear. A program the guard does not know, a word it cannot expand, a variable, a
 glob that cannot match a secret name, and a read whose form it cannot prove all run. It does not stop a program that finds a secret by itself, or a value it
 builds at run time.
 
@@ -212,8 +216,8 @@ and OpenCode turn into a denial.
 ## Hard controls and prompts
 
 Evaluation runs in this order: built-in hard denials, declared denials, checks cockpit could not
-complete, declared allows, the built-in read-only profile, then `ask`. A declared allow therefore
-cannot bypass any boundary below.
+complete, the asks below, declared allows, then allow. A declared allow therefore cannot bypass any
+boundary below.
 
 ### Instances, secrets and hosted endpoints
 
@@ -249,9 +253,8 @@ a secret path narrows what agents may do and takes effect at the next call; remo
 waits for a person's sync. A path that is a link, or lies below one, holds every guarded call until it
 is declared by its real location.
 
-Run a trusted process instead of reading values: an agent uses a declared project command or script
-that wraps Varlock, because the guard asks about a bare `varlock run` and Codex and OpenCode refuse
-what it asks about. A person in a terminal runs that same command, or
+Run a trusted process instead of reading values: an agent runs `varlock run -- <cmd>`, or a declared
+project command or script that wraps Varlock. A person in a terminal runs that same command, or
 `VARLOCK_TELEMETRY_DISABLED=true varlock run -- <cmd>`, without `--redact-stdout`. Redaction is an
 output safeguard, not confinement of the child process.
 
@@ -557,7 +560,8 @@ or a URL; `gh api` is left out, because its `GET` returns any file the repositor
   substitution `<(…)` are judged by the commands inside them, so each is allowed when every command
   inside is. A `cd` inside a subshell moves only the subshell; one inside a loop, or inside a group
   that feeds a pipeline, is refused. Redirects after a loop or subshell are judged as writes or reads
-  of their own. `<(…)` must be a word of its own, and `>(…)` and `((` arithmetic are refused. A
+  of their own. `<(…)` must be a word of its own; `>(…)`, and a cd the shell would run inside a loop or a
+piped group, leave the call unread, so it gets no answer from the guard. A
   shell or interpreter given any word that names `<(…)`, `/dev/stdin` or another descriptor, as its
   script, a module it preloads or an option's value (`bash <(…)`, `node -r ./x.js /dev/fd/63`), and
   `make`, `awk` or `sed` reading its program file from one, run code the guard never read, so they
@@ -574,16 +578,16 @@ or a URL; `gh api` is left out, because its `GET` returns any file the repositor
   hidden and ignored files included, and refuses the search if it finds an environment file or
   secrets directory there.
 - Under the allow default a word whose value the guard cannot see, such as `$TARGET`, a glob or a
-  command substitution, is allowed in an argument the program decides about, as in
-  `node build.js "$TARGET"`. It is refused where the guard decides what is read, written, removed or
-  pushed (`cat "$FILE"`, `rm "$DIR"`, `git push origin "$BRANCH"`) and as the program name, and it
-  asks when it is an unexpanded glob that can match a secret or credential name (`nl .en?`). An
-  assignment value or loop item that names one asks too, since the word that uses it is not visible
+  command substitution, runs, a reader given one included (`node build.js "$TARGET"`,
+  `cat "$FILE"`). Where it decides which file is removed, what Git writes or which branch is pushed
+  (`rm "$DIR"`, `git push origin "$BRANCH"`) it asks, and as the program name it leaves the command
+  unread. An unexpanded glob that can match a secret or credential name (`nl .en?`) is refused, and so
+  is an assignment value or loop item that names one, since the word that uses it is not visible
   (`f=.env; nl "$f"`). `~` and `$HOME` are expanded unless the call changes HOME.
   `git commit -m "$(cat <<'EOF' … EOF)"` is read as the literal message it is. Printing the
   environment or a variable named as a secret (`echo "$API_TOKEN"`) is refused.
 - A push or history rewrite that rests on the current branch asks when an earlier command in the
-  same call is not read-only, since it could move the branch.
+  same call could move the branch, such as a checkout, switch, rebase or pull.
 - A pipeline or chain is permitted only when every segment is. Redirecting output to `/dev/null`,
   `/dev/stdout` or `/dev/stderr`, or input from `/dev/null`, does not change the decision.
 
@@ -599,16 +603,16 @@ how that guard treats a named file outside the managed roots:
 
 | Setting | A named read outside the roots | Use it when |
 | --- | --- | --- |
-| default | asks, unless a `[guards] allow` rule names the complete command | external reads are rare and each is reviewed |
+| `external_reads = "native"`, the default | left to the agent tool's own permission, as is a read-only Git command run alone in another repository | the person already manages outside access in each tool's settings |
+| `external_reads = "grant"` | asks, unless a `[guards] allow` rule names the complete command or `read_paths` covers it | external reads are rare and each is reviewed by cockpit |
 | `read_paths` | allowed below each listed file or directory | a few known folders, such as `~/Downloads` or a memory directory, held by cockpit itself |
-| `external_reads = "native"` | left to the agent tool's own permission, as is a read-only Git command run alone in another repository | the person already manages outside access in each tool's settings |
 | `related_checkouts` | allowed in each listed checkout, as are recursive searches and read-only Git there | an agent inspects another checkout it must not change, such as the upstream of a tool this cockpit installs |
 
 ```toml
 [guards]
 read_paths = [{ path = "~/Downloads", reason = "Inputs the person drops in." }]
-# or hand every named external read to the tools' own permissions:
-# external_reads = "native"
+# or keep every other named external read behind an exact grant:
+# external_reads = "grant"
 related_checkouts = ["../../tools/cockpit"]
 ```
 
@@ -688,7 +692,7 @@ A `[guards] allow` rule admits a command the read-only profile cannot classify, 
 secret names: each argument is checked whole, after `=`, after `:` and after an attached short
 option, so `cat README.md .env -x` (`cat` prints `.env` before it rejects `-x`) and
 `git show HEAD:.env` are denied under any rule. Another command that names one, such as
-`docker compose --env-file .env up`, may only pass the name on, so it asks instead. A rule for a
+`docker compose --env-file .env up`, is refused too, since passing the name on hands the file over. A rule for a
 reading command such as `cat`, `head` or `rg` asks for an argument outside the roots that no read
 path or native external reads covers, and no rule admits a search the guard found would read an
 environment file.
@@ -946,8 +950,8 @@ These reads fall back to a prompt instead of being allowed:
   anywhere;
 - a search whose tree contains an existing instance, a `.secrets` directory at any depth, or a
   `.env*` file that is neither a declared template nor a documentation name. The guard walks each
-  searched tree without following links, and a tree too large for its bounded walk is not searched
-  either. The reason names the path, so the agent can search a narrower one;
+  searched tree without following links, except for `grep -R`, which it walks through the links that
+  search follows, and a tree too large for its bounded walk is not searched either. The reason names the path, so the agent can search a narrower one;
 - an `rg` search that would read one. ripgrep skips what Git ignores, so the guard asks Git which
   files the enclosing repository does not ignore, and a gitignored `.env` or `node_modules` does not
   block it. Hidden files count, because a type such as `rg -t sh` reads a `.env`. Where Git's list
@@ -964,7 +968,7 @@ These reads fall back to a prompt instead of being allowed:
   `[guards] secret_paths` entry, unless the command names no revision and is limited with
   `-- <path>` to paths that hold none (`git log` may name revisions, but not `--full-diff` or
   `--follow`). A command that can print a commit (`log`, `show`, a `diff` or `grep` naming a
-  revision, `diff --cached`, `cat-file -p` and `gh pr diff`) also asks whenever a commit reachable
+  revision, `diff --cached`, `cat-file -p` and `gh pr diff`) is also refused whenever a commit reachable
   from a ref, a reflog or a revision the command names (such as `FETCH_HEAD` or a dropped stash's
   commit) holds such a file within those paths: a file committed once and since removed from the
   index is still in history, and `git log -p` prints it. A blob named by its object id, as in
@@ -1245,7 +1249,7 @@ guard script, starting for Claude Code from `CLAUDE_PROJECT_DIR`, else the worki
 stopping at the nearest directory with a `.git` entry, so a linked worktree kept below its main checkout
 runs its own guard; it blocks the call when more than one directory within that bound holds one, since
 it cannot tell which is the cockpit's; a script that is missing or exits with any status but 0 or 2 blocks
-the call with `cockpit guard failed (<status>): <script>; sync the cockpit`. The generated Claude Code and Codex registrations give the guard hook a
+the call with `cockpit guard failed (<status>); a person runs cockpit sync in a terminal`. The generated Claude Code and Codex registrations give the guard hook a
 `timeout` of 30 seconds; a guard call spawns several Node and Git processes and was seen to exceed
 Codex's 5-second default on a loaded machine. What either harness does with the call when that
 timeout fires, run it or refuse it, is not measured. So the guard keeps its own deadline of 25

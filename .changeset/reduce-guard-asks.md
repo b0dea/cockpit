@@ -2,7 +2,7 @@
 "@b00dea/cockpit": patch
 ---
 
-The guard asks far less. A command now runs unless it names something on the blocked list: a secret or `.env` file, a credential store or key file, a declared host, a guard file or agent setting, the installed cockpit, or a forced or protected-branch push. Unknown programs, inline code, containers, variables, globs, shell forms the guard does not parse, and reads it cannot prove all run, as a project script does.
+The guard asks far less. A command now runs unless it names something on the blocked list: a secret or `.env` file, a credential store or key file, a declared host, a guard file or agent setting, the installed cockpit, or a forced or protected-branch push. Unknown programs, inline code, containers, variables, globs and reads it cannot prove all run, as a project script does. Shell the guard does not read whole, such as `if`, `case` or a loop, is judged command by command; a command it still cannot read, such as `eval`, gets no answer from the guard, so the agent tool's own permissions decide.
 
 The blocked list is checked in every word of a call, wherever the word sits: `cat $(echo .env)`, `echo .env | xargs cat`, `ls .env` and `corepack pnpm exec git push -f` are refused. A name inside a commit message, a search pattern such as `rg '\.env' docs`, and documentation names such as `.env.example` still run. Inline code and unparsed shell text meet the whole blocked list. Hook-skipping variables such as `HUSKY=0`, `git clean -x`, removals outside the cockpit, a search that would read an existing secret, and `docker inspect` of a container's environment are refused too.
 
