@@ -259,7 +259,7 @@ describe('clean-checkout controls', () => {
         expect(supportedJob).toContain("if: matrix.gate == 'full'")
         expect(supportedJob).toContain('SHARD: ${{ matrix.shard }}\n        run: npm test -- ${SHARD:+--shard=$SHARD}\n')
         expect(supportedJob).toContain("if: matrix.gate == 'compatibility'")
-        expect(supportedJob).toContain('run: npm test -- packages/cockpit/src/launcher.test.ts packages/cockpit/src/package-metadata.test.ts packages/cockpit/src/environment/runtime-probe.slow.test.ts')
+        expect(supportedJob).toContain('run: npm test -- packages/cockpit/src/launcher.test.ts packages/cockpit/src/package-metadata.test.ts packages/cockpit/src/environment/runtime.test.ts')
         expect(supportedJob).not.toMatch(/\bnpx\s+vitest\b|--(?:maxWorkers|minWorkers|pool|fileParallelism)\b/)
         // Documentation lint runs once in the hygiene job, which docs-only changes also reach.
         expect(hygieneJob).toContain('npm run lint:docs')
