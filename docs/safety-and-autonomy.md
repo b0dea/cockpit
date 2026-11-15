@@ -19,13 +19,17 @@ and so is a forced or protected-branch push those words spell (`corepack pnpm ex
 a push that names no destination, or `HEAD`, asks, since only Git knows where it goes. A
 name inside a longer word, such as a commit message, a search pattern or a `sed`, `awk` or `jq` script,
 and the option values of a Git read are text, not names, so `git commit -m "Load .env first"` and
-`rg '\.env' docs` run. Shell the guard does not read whole, such as `if`, `case`, `[[ … ]]` or a loop,
-is cut into its simple commands at separators and shell keywords, and each is judged as it would be on
-its own, so every rule here and every `[[guards.deny]]` entry applies inside it. Arithmetic of names and
-numbers, `${NAME:-word}`, here-strings and `source FILE` are read. A command that still cannot be read,
-such as `eval` or `watch`, gets the name checks over the whole call's text and then no answer from the
-guard: the agent tool's own permissions decide it. Privilege escalation, downloaded code piped into an
-interpreter and a bare `env` are refused for their form wherever they appear. A program the guard does not know, a word it cannot expand, a variable, a
+`rg '\.env' docs` run. The guard reads `if`/`elif`/`else`, `for`, `while` and `until`, subshells and
+brace groups, judging every command inside as it would on its own. It also reads here-strings,
+`source FILE`, `${NAME:-word}` (its default word is name-checked like any argument) and arithmetic over
+numbers and names the same call sets to an integer. Shell it does not read, such as `case`, `[[ … ]]`,
+`eval`, `watch`, `xargs -I`, other arithmetic or an expanding heredoc, asks: what runs inside it is not
+known, and bash runs code from places such as a case pattern, a `[[` operand or a name's value in
+arithmetic. Its text is still checked first, and a secret, credential or guard-file name, a declared
+host, a forbidden push or a `[[guards.deny]]` command it spells is refused. Write it as plain commands
+joined with `&&`, use `[ … ] &&` or `if`, or put it in a script file. Codex and OpenCode refuse what
+asks. Privilege escalation, downloaded code piped into an interpreter and a bare `env` are refused for
+their form wherever they appear. A program the guard does not know, a word it cannot expand, a variable, a
 glob that cannot match a secret name, and a read whose form it cannot prove all run. It does not stop a program that finds a secret by itself, or a value it
 builds at run time.
 
@@ -557,12 +561,11 @@ or a URL; `gh api` is left out, because its `GET` returns any file the repositor
   may run in: in `pwd || cd ./dir && cat x` the `cat` is judged from both. A newline after `&&`,
   `||` or `|` continues the list. A `cd` in a pipeline is refused, and a list ending in `&` runs in
   a subshell, so its `cd` moves no later command.
-- A subshell `( … )`, a brace group `{ …; }`, a `for`, `while` or `until` loop and a process
+- A subshell `( … )`, a brace group `{ …; }`, an `if`, a `for`, `while` or `until` loop and a process
   substitution `<(…)` are judged by the commands inside them, so each is allowed when every command
-  inside is. A `cd` inside a subshell moves only the subshell; one inside a loop, or inside a group
-  that feeds a pipeline, is refused. Redirects after a loop or subshell are judged as writes or reads
-  of their own. `<(…)` must be a word of its own; `>(…)`, and a cd the shell would run inside a loop or a
-piped group, leave the call unread, so it gets no answer from the guard. A
+  inside is. A `cd` inside a subshell moves only the subshell; one inside a loop or an `if`, or inside a
+  group that feeds a pipeline, leaves the call unread, so it asks. Redirects after a loop, `if` or
+  subshell are judged as writes or reads of their own. `<(…)` must be a word of its own; `>(…)` asks. A
   shell or interpreter given any word that names `<(…)`, `/dev/stdin` or another descriptor, as its
   script, a module it preloads or an option's value (`bash <(…)`, `node -r ./x.js /dev/fd/63`), and
   `make`, `awk` or `sed` reading its program file from one, run code the guard never read, so they
@@ -581,8 +584,7 @@ piped group, leave the call unread, so it gets no answer from the guard. A
 - Under the allow default a word whose value the guard cannot see, such as `$TARGET`, a glob or a
   command substitution, runs, a reader given one included (`node build.js "$TARGET"`,
   `cat "$FILE"`). Where it decides which file is removed, what Git writes or which branch is pushed
-  (`rm "$DIR"`, `git push origin "$BRANCH"`) it asks, and as the program name it leaves the command
-  unread. An unexpanded glob that can match a secret or credential name (`nl .en?`) is refused, and so
+  (`rm "$DIR"`, `git push origin "$BRANCH"`) it asks, and as the program name the call asks. An unexpanded glob that can match a secret or credential name (`nl .en?`) is refused, and so
   is an assignment value or loop item that names one, since the word that uses it is not visible
   (`f=.env; nl "$f"`). `~` and `$HOME` are expanded unless the call changes HOME.
   `git commit -m "$(cat <<'EOF' … EOF)"` is read as the literal message it is. Printing the
