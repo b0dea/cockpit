@@ -6,6 +6,8 @@ The guard asks far less. A command now runs unless it names something on the blo
 
 The blocked list is checked in every word of a call, wherever the word sits: `cat $(echo .env)`, `echo .env | xargs cat`, `ls .env` and `corepack pnpm exec git push -f` are refused. A name inside a commit message, a search pattern such as `rg '\.env' docs`, and documentation names such as `.env.example` still run. Inline code and unparsed shell text meet the whole blocked list. Hook-skipping variables such as `HUSKY=0`, `git clean -x`, removals outside the cockpit, a search that would read an existing secret, and `docker inspect` of a container's environment are refused too.
 
+Git commands chained in one call, such as `git stash && git rebase main && git stash pop`, run. Removing `node_modules` stays refused, since it holds the code the guard runs, and the refusal now says to reinstall with the package manager's clean install instead.
+
 A person is still asked before merges, releases and other `gh` changes, `git clean -f`, a push or Git write the guard cannot resolve, Git location variables, and cockpit commands that change what agents may do.
 
 In Claude Code the guard now answers allow for a call it judged, so those calls run without a prompt; your own deny rules still win. Refusals reach Claude Code and Codex as a reason only, without the hook command printed before it.

@@ -2721,7 +2721,7 @@ describe('cockpit structure protection', () => {
 
 describe('installed code, search path and secret links', () => {
     const installed = `${root}/node_modules/@b00dea/cockpit`
-    const execution = 'Refusing to change the installed cockpit, a node_modules/.bin directory or a command search path directory: code there runs as the guard or in place of a permitted command.'
+    const execution = 'Refusing to change the installed cockpit, a node_modules/.bin directory or a command search path directory: code there runs as the guard or in place of a permitted command. To refresh dependencies, reinstall with your package manager\'s clean install instead of removing node_modules.'
     const link = 'Refusing to link to a secrets directory, a declared environment instance, a guard control or the installed cockpit: the link would reach it under a name the guard does not protect.'
     const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
     const configured = () => {

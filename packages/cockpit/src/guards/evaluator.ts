@@ -2090,7 +2090,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const manifestPath = absolute(GUARD_CONTROL_FILES[1])
     const structural = [resolved.configPath, manifestPath]
     const structuralDenial = deny(`Refusing to delete, rename, truncate, relink or make unreadable ${posix.basename(resolved.configPath)} or ${GUARD_CONTROL_FILES[1]}: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit ${posix.basename(resolved.configPath)} in place instead.`)
-    const executionDenial = deny('Refusing to change the installed cockpit, a node_modules/.bin directory or a command search path directory: code there runs as the guard or in place of a permitted command.')
+    const executionDenial = deny('Refusing to change the installed cockpit, a node_modules/.bin directory or a command search path directory: code there runs as the guard or in place of a permitted command. To refresh dependencies, reinstall with your package manager\'s clean install instead of removing node_modules.')
     const linkDenial = deny('Refusing to link to a secrets directory, a declared environment instance, a guard control or the installed cockpit: the link would reach it under a name the guard does not protect.')
     // The guard admits `npx --no cockpit` only from a root without an .npmrc, but checks that before
     // the command runs: `printf … > .npmrc && npx --no cockpit …` planted one in between.
