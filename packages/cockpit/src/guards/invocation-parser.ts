@@ -17,8 +17,6 @@ export interface InvocationWord {
     readonly name?: string
 }
 export interface GuardParseOptions {
-    /** Names the call assigns only integer literals, which arithmetic may read. Set by the parser itself. */
-    readonly integers?: ReadonlySet<string>
     /** HOME of the process that runs the command: a leading `~` or `~/`, `$HOME` and `${HOME}` expand to it. */
     readonly home?: string
     /** CDPATH of that process; when empty, `cd name` resolves from the working directory. */
@@ -124,7 +122,7 @@ const NESTING_LIMIT = 8
 const BRACE_RANGE_LIMIT = 256
 const FETCHERS = new Set(['curl', 'wget', 'fetch', 'http', 'aria2c'])
 // awk runs what it reads through system(), and each of the others runs a script read from standard input.
-const INTERPRETERS = /^(?:sh|bash|zsh|dash|ksh|fish|csh|tcsh|python[\d.]*|node|nodejs|bun|deno|perl|ruby|php|osascript|[gmn]?awk|tclsh[\d.]*|lua[\d.]*|Rscript)$/
+const INTERPRETERS = /^(?:sh|bash|zsh|dash|ksh|fish|csh|tcsh|source|python[\d.]*|node|nodejs|bun|deno|perl|ruby|php|osascript|[gmn]?awk|tclsh[\d.]*|lua[\d.]*|Rscript)$/
 const FETCHED_CODE = 'Refusing to run downloaded text as code: a download feeds a shell or interpreter, so what runs is whatever the server sends. '
     + 'Download the file into the cockpit, read it, then run it by path.'
 // A URL, or a package spelled as a Git source, runs code no registry name or path the guard can read stands for.
@@ -328,11 +326,10 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
                 if (command[index + 2] === '(') {
                     const close = command.indexOf('))', index + 3)
                     const body = close < 0 ? '' : command.slice(index + 3, close)
-                    // Bash evaluates a name's value as arithmetic too, which can run a command in a subscript, so a name is read
-                    // only when this call assigns it an integer literal and nothing else.
-                    const names = body.match(/[A-Za-z_]\w*/g) ?? []
-                    if (close < 0 || !/^[\w\s+\-*/%<>=!&|^~?:,()$]*$/.test(body) || names.some(name => !options.integers?.has(name))) {
-                        refuse('Arithmetic expansion $((…)) is read only over numbers and names this call sets to an integer. Compute the number and write it out.')
+                    // Bash evaluates a name's value as arithmetic too, which can run a command in a subscript, so only numbers
+                    // and operators are read.
+                    if (close < 0 || !/^[\d\s+\-*/%<>=!&|^~?:,()]*$/.test(body)) {
+                        refuse('Arithmetic expansion $((…)) is read only over numbers and operators: bash evaluates a name\'s value as code. Compute the number and write it out.')
                     }
                     dynamic = true
                     value += `$((${body}))`
@@ -534,7 +531,8 @@ function evaluationRefusal(token: Token): never {
 const word = (role: InvocationRole, token: Token): InvocationWord => token.dynamic ? { role, value: token.value, dynamic: true } : { role, value: token.value }
 const fetches = (item: ParsedInvocation) => item.executable !== null && (FETCHERS.has(posix.basename(item.executable))
     || posix.basename(item.executable) === 'gh' && item.argv.find((value) => !value.startsWith('-')) === 'api')
-const interprets = (item: ParsedInvocation) => item.executable !== null && INTERPRETERS.test(posix.basename(item.executable))
+// `.` sources what a pipe feeds it as `source` does; as any other word, such as jq's filter, it is only a word.
+const interprets = (item: ParsedInvocation) => item.executable !== null && (INTERPRETERS.test(posix.basename(item.executable)) || item.executable === '.')
 
 /**
  * Where the program a launcher at `at` runs starts, or undefined when the words there launch nothing the guard unwraps. A
@@ -971,6 +969,8 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
     // A group just closed, so a separator may follow it; `piped` holds its commands when it feeds a pipeline.
     let closed: { piped?: readonly ParsedInvocation[] } | undefined
     let needsCommand = false
+    // The current command follows `!`.
+    let negated = false
     // The commands of each function the list defines.
     const functions: Token[][] = []
     // Every directory the shell may be in, each with whether the last command there may have
@@ -1024,6 +1024,9 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
         if (gate === '|' && fetched && words.some((token) => token.kind === 'word' && INTERPRETERS.test(posix.basename(token.value)))) forbid(FETCHED_CODE)
         const target = current.length ? changedDirectory(current, context) : undefined
         if (target !== undefined && !cdAllowed) refuse(`${CD_REFUSAL} A cd inside a loop or an if is not.`)
+        // Every directory state assumes a cd's own status, which `!` flips.
+        if (target !== undefined && negated) refuse(`${CD_REFUSAL} A cd after ! is not.`)
+        negated = false
         // A pipeline or background job runs `cd` in a subshell in bash, and the last stage of a pipeline in the current shell in zsh.
         if (target !== undefined && (gate === '|' || separator === '|' || separator === '&')) refuse(`${CD_REFUSAL} A cd in a pipeline or background job is not.`)
         // Appended as produced, so the invocation limit bounds the work.
@@ -1086,7 +1089,7 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
             continue
         }
         // `!` inverts a pipeline's status and runs it as it is.
-        if (!current.length && !compound && token.kind === 'word' && !token.quoted && token.value === '!') continue
+        if (!current.length && !compound && token.kind === 'word' && !token.quoted && token.value === '!') { negated = true; continue }
         if (!current.length && !compound && token.kind === 'word' && !token.quoted && token.value === 'if') {
             ({ compound, end: i } = readIf(tokens, i))
             needsCommand = false
@@ -1257,10 +1260,7 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
         const seen: Seen = { background: false, loop: false }
         let unreadable: { text: string; reason: string } | undefined
         const shell = (command: string): ParsedInvocation[] => {
-            // Every assignment the text spells, quoted or not: a name counts as an integer only if each one is a bare integer.
-            const assigned = [...command.matchAll(/(?<![\w$-])([A-Za-z_]\w*)=([^\s;&|)]*)/g)]
-            const integers = new Set(assigned.filter(([, name]) => assigned.every(([, other, value]) => other !== name || /^\d+$/.test(value!))).map(([, name]) => name!))
-            try { return parseShell(command, cwd, { options: { ...options, integers }, definitions: new Set(), depth: 0, seen }) }
+            try { return parseShell(command, cwd, { options, definitions: new Set(), depth: 0, seen }) }
             catch (error) {
                 if (!(error instanceof RefusalError) || error instanceof ForbiddenConstruct) throw error
                 unreadable = { text: command, reason: error.message }

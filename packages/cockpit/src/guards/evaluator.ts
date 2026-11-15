@@ -2142,6 +2142,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const secretNameDenial = (folded: string): GuardDecision | undefined => dotenvSecret(folded) ? dotenvDenial
         : folded.split('/').includes('.secrets') || resolved.instances.some(item => within(folded, fold(item.path))) ? readDenial
         : inSecretPath(folded) ? secretPathDenial : namesCredential(folded) ? credentialDenial : undefined
+    // `${NAME:-word}` and its kin stand for their default word when NAME is unset, so it names what the command may use.
+    const defaultWords = (word: string) => [...word.matchAll(/\$\{[A-Za-z_]\w*:?[-=]([^}]*)\}/g)]
+        .map(([, value]) => value!.startsWith('~/') && resolved.homeDirectory !== undefined ? resolved.homeDirectory + value!.slice(1) : value!)
     // Words that spell Git skipping its hooks or pushing by force, deleting or to a protected branch, whatever runs them.
     const gitWords = (words: readonly string[]) => { const git = words.findIndex(word => posix.basename(word) === 'git'); return git < 0 ? [] : words.slice(git + 1) }
     // Git's own push rules, without the repository facts a spelled push lacks.
@@ -2176,7 +2179,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (installedCode(folded, false)) return executionDenial
         }
         if (tokens.some(token => /^(?:sudo|doas|pkexec)$/.test(token))) return deny('Refusing privilege escalation: it is a person\'s action. Ask them to run it in their own terminal.')
-        if (/\b(?:curl|wget)\b[^|;&]*\|\s*(?:\S*\/)?(?:sh|bash|zsh|dash|python[\d.]*|node|perl|ruby)\b/.test(text)) return deny('Refusing to run downloaded text as code. Download the file into the cockpit, read it, then run it by path.')
+        if (/\b(?:curl|wget)\b[^|;&]*\|\s*(?:\S*\/)?(?:sh|bash|zsh|dash|source|\.|python[\d.]*|node|perl|ruby)(?![\w.-])/.test(text)) return deny('Refusing to run downloaded text as code. Download the file into the cockpit, read it, then run it by path.')
         // Words keep `:` and `-`, so `HEAD:main`, `:topic` and `-uf` reach Git's push rules; an assignment's value, `cmd=git`, is a word.
         return gitWordsDenial(text.split(/[\s'"`(),[\]=;&|]+/).filter(Boolean))
     }
@@ -3052,7 +3055,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const held = invocation.words.filter((word) => word.role === 'environment-assignment-value' || invocation.executable === null && word.role === 'argument')
         // An unexpanded glob in a command's own words names whatever it matches.
         const globs = !access ? invocation.words.filter((word) => word.dynamic && word.role === 'argument' && /[*?[]/.test(word.value) && !word.value.includes('$')) : []
-        for (const word of [...held, ...globs]) {
+        for (const word of [...held, ...held.flatMap(item => defaultWords(item.value).map(value => ({ role: item.role, value }))), ...globs]) {
             const lexical = posix.resolve(invocation.cwd, word.value)
             const folded = fold(lexical)
             const glob = (globs.includes(word) || held.includes(word) && plainGlob(word)) && new RegExp(`^${posix.basename(folded).split(/(\*+|\?|\[[^\]]*\])/).map((part, at) => at % 2
@@ -3098,8 +3101,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const candidates = git && invocation.argv[position - 1] === '-L' ? [word.slice(word.lastIndexOf(':') + 1)] : undefined
             // An attached short option value, as in `sed -f.env`, is a candidate too.
             const attached = /^-[^-]/.test(word) && word.length > 2 ? [word.slice(2)] : []
-            // `${NAME:-word}` and its kin stand for their default word when NAME is unset.
-            const defaults = [...word.matchAll(/\$\{[A-Za-z_]\w*:?[-=]([^}]*)\}/g)].map(([, value]) => value!.startsWith('~/') && resolved.homeDirectory !== undefined ? resolved.homeDirectory + value!.slice(1) : value!)
+            const defaults = defaultWords(word)
             // `@file` is how curl and gh name a file whose content they send.
             for (const candidate of new Set(candidates ?? [word, word.slice(word.indexOf('=') + 1), word.slice(0, Math.max(word.indexOf(':'), 0)), word.slice(word.lastIndexOf(':') + 1), word.slice(word.lastIndexOf('@') + 1), ...attached, ...defaults])) {
                 if (!candidate || candidate.startsWith('-') || !scalar(candidate)) continue
