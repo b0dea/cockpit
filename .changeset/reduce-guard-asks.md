@@ -10,7 +10,7 @@ Git commands chained in one call, such as `git stash && git rebase main && git s
 
 A person is still asked before merges, releases and other `gh` changes, `git clean -f`, a push or Git write the guard cannot resolve, Git location variables, and cockpit commands that change what agents may do.
 
-In Claude Code the guard now answers allow for a call it judged, so those calls run without a prompt; your own deny rules still win. Refusals reach Claude Code and Codex as a reason only, without the hook command printed before it.
+In Claude Code the guard now answers allow for a call it judged, so those calls run without a prompt; your own deny rules still win. A guard hook that times out in Claude Code now refuses its call instead of letting it run, and a guard script refuses a check left by a sync from another cockpit release until this cockpit is synced. Refusals reach Claude Code and Codex as a reason only, without the hook command printed before it.
 
 Sessions started in a cockpit subdirectory now get the Read and Edit deny rules too, and a session in a cockpit below its repository's top is guarded under a linked spelling of its path. The registered hook command no longer changes between releases, so Codex keeps trusting it after an upgrade. Agents can stage the guard script exactly as the last sync recorded it, so an upgrade can be committed.
 
