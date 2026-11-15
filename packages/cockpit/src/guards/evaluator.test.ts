@@ -1383,6 +1383,8 @@ describe('allow by default', () => {
         `git commit -m "$(cat <<'EOF'\nFix the parser\n\nCo-Authored-By: Agent <agent@example.test>\nEOF\n)"`,
         // A refused name or push inside a message, a search pattern or documentation is text, not a path or a push.
         'git commit -m "Load .env before the server starts"', 'git commit -m "never git push -f to main"', "rg '\\.env' docs", 'echo "see .env.example"',
+        // A search pattern stays text after an option value or behind -e.
+        'rg -C 3 .env docs', 'grep -m 1 .env README.md', 'grep -e .env README.md', "sed -e 's/.env.local/.env/' docs/setup.md",
     ]
     it.each(friction)('allows the everyday call %s', (command) => {
         expect(run(command).decision).toBe('allow')
@@ -1408,6 +1410,9 @@ describe('allow by default', () => {
         `docker run -v ${home}/.ssh:/mnt/keys alpine true`, 'cat .envrc',
         // A refused name or push is refused wherever its word sits: in a substitution, fed through a pipe, or after a launcher.
         'cat $(echo .env)', 'echo .env | xargs cat', 'corepack pnpm exec git push -f origin topic',
+        // Every spelling of a forced, deleting or protected-branch push Git's own rules refuse, and a jq program read from a file.
+        'corepack pnpm exec git push -uf origin topic', 'corepack pnpm exec git push --forc origin topic', 'corepack pnpm exec git push origin :topic',
+        'corepack pnpm exec git push origin HEAD:main', `node -e "require('child_process').execSync('git push -uf origin topic')"`, 'jq -nf .env', 'jq -n --from-file .env',
         // Credential stores, removals outside the roots and the installed cockpit, spelled from the home directory or the root.
         'cat ~/.aws/credentials', 'rm -rf ~/Documents', 'rm -rf node_modules/@b00dea/cockpit', 'echo x > node_modules/@b00dea/cockpit/dist/cli.js',
     ]

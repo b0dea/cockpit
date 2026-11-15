@@ -2148,11 +2148,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const after = git < 0 ? [] : words.slice(git + 1)
         if (after.includes('--no-verify')) return deny('Refusing --no-verify: it skips the hooks a commit or push runs.')
         const push = after.indexOf('push')
-        if (push >= 0 && after.slice(push + 1).some(word => /^(?:-f|--force(?:-with-lease|-if-includes)?|-d|--delete|--mirror|--prune)$/.test(word) || word.startsWith('+')
-            || resolved.protectedBranches.some(branch => [branch, `heads/${branch}`, `refs/heads/${branch}`].includes(word)))) {
-            return deny('Refusing a forced push, a remote branch deletion or a push that names a protected branch.')
-        }
-        return undefined
+        // Git's own push rules, without the repository facts a spelled push lacks: only what they refuse outright counts.
+        return push >= 0 && pushDecision(after.slice(push + 1), resolved.protectedBranches, undefined)?.decision === 'deny'
+            ? deny('Refusing a forced push, a remote branch deletion or a push that names a protected branch.') : undefined
     }
     // Text the guard does not read as commands, an unreadable shell form or inline interpreter code, is judged by the
     // names it spells: a secret, a credential, a declared host, a guard control or agent setting, the installed cockpit,
@@ -2177,7 +2175,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         }
         if (tokens.some(token => /^(?:sudo|doas|pkexec)$/.test(token))) return deny('Refusing privilege escalation: it is a person\'s action. Ask them to run it in their own terminal.')
         if (/\b(?:curl|wget)\b[^|;&]*\|\s*(?:\S*\/)?(?:sh|bash|zsh|dash|python[\d.]*|node|perl|ruby)\b/.test(text)) return deny('Refusing to run downloaded text as code. Download the file into the cockpit, read it, then run it by path.')
-        return gitWordsDenial(tokens)
+        // Words keep `:` and `-`, so `HEAD:main`, `:topic` and `-uf` reach Git's push rules; an assignment's value, `cmd=git`, is a word.
+        return gitWordsDenial(text.split(/[\s'"`(),[\]=;&|]+/).filter(Boolean))
     }
     if (input.unreadable) return textDenial(input.unreadable.text, input.cwd) ?? { decision: 'allow', reason: outside ? outsideDeferred
         : `The guard does not read this shell form (${input.unreadable.reason}), and its text names nothing the guard refuses, so it runs.` }
@@ -3069,7 +3068,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const nestedFrom = provenCockpit(invocation) ? (invocation.argv.indexOf('--') < 0 ? invocation.argv.length : invocation.argv.indexOf('--'))
             : followed?.wrapped && launchedBy(followed, invocation) ? invocation.argv.length - followed.argv.length - 1 : invocation.argv.length
         // A sed or awk script, or a search pattern, is the program's text, not a path it reads: `rg '\.env' docs` runs.
-        const scriptAt = ['sed', 'awk', 'grep', 'rg', 'jq'].includes(executableName) && !invocation.argv.some(arg => /^(?:-e|-f|--expression|--regexp|--file)(?:=|$)/.test(arg))
+        const scriptAt = ['sed', 'awk', 'grep', 'rg', 'jq'].includes(executableName) && !invocation.argv.some(arg => /^(?:--expression|--regexp|--file|--from-file)(?:=|$)|^-[a-zA-Z]*[ef]$/.test(arg))
             ? invocation.argv.findIndex(arg => !arg.startsWith('-')) : -1
         const launcherPath = (lexical: string) => resolved.cockpitLaunchers.some((item) => [item.executable, ...item.argv]
             .some((spelled) => spelled.includes('/') && posix.resolve(item.cwd, spelled) === lexical))
@@ -3084,8 +3083,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 // Git resolves its operands from the directory -C names.
                 const lexical = posix.resolve(git?.cwd ?? invocation.cwd, candidate)
                 const folded = fold(lexical)
-                // A classified Git read's words, revisions, pathspecs and option values, meet the Git read checks above instead.
-                const secret = position === scriptAt || access && git ? undefined : secretNameDenial(folded)
+                // A classified Git, search or script read's words, patterns and option values among them, meet the read checks above instead.
+                const secret = position === scriptAt || access && (git || ['sed', 'awk', 'grep', 'rg', 'jq'].includes(executableName)) ? undefined : secretNameDenial(folded)
                 // A writer's own refusal of the same name says more, so it stands.
                 if (secret && !hardDeny) hold(secret)
                 if (!unclassified) continue
