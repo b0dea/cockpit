@@ -411,8 +411,8 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         } as const
 
         const help = execFileSync(process.execPath, [launcher, '--help'], options)
-        expect(help).toContain('sync              Write the Compose ownership override and agent files from cockpit.toml')
-        expect(help).toContain('check             Report generated files that no longer match cockpit.toml')
+        expect(help).toContain('sync       Write the Compose ownership override and agent files from cockpit.toml')
+        expect(help).toContain('check      Report generated files that no longer match cockpit.toml')
         expect(help).toContain('selftest')
         const metadata = JSON.parse(readFileSync(join(packedPackageRoot(), 'package.json'), 'utf8'))
         expect(execFileSync(process.execPath, [launcher, '--version'], options)).toBe(
