@@ -36,7 +36,8 @@ function policy() {
         declaredAllows: [] as Array<{ argv: string[]; reason: string; cwd?: string }>,
         declaredDenies: [] as Array<{ match: 'prefix' | 'contains'; argv: string[]; reason: string; fix?: string }>,
         ripgrepConfigActive: false,
-        executionDirectories: [] as string[],
+        // The installed package, as the application lists it from the running cockpit.
+        executionDirectories: [`${root}/node_modules/@b00dea/cockpit`],
         searchDirectories: [] as string[],
         secretFileIdentities: [] as string[] | null,
         protectedFilesLinked: false,
@@ -53,8 +54,9 @@ function policy() {
         ],
     }
 }
-function decide(command: string, configured = policy(), cwd = root) {
-    return evaluateGuard(parseGuardInput(shellPayload(command, cwd)), configured, inspect)
+// The application parses a call with the HOME its policy names, so `~` reaches the same directory in both.
+function decide(command: string, configured: ReturnType<typeof policy> & { homeDirectory?: string } = policy(), cwd = root) {
+    return evaluateGuard(parseGuardInput(shellPayload(command, cwd), configured.homeDirectory === undefined ? {} : { home: configured.homeDirectory }), configured, inspect)
 }
 
 describe('resolved guard evaluation', () => {
@@ -1232,8 +1234,8 @@ describe('built-in read-only profile', () => {
                 shellPayload(`printf KEY=x > ${file}`)]) expect(judge(input), JSON.stringify(input)).toEqual(refusal)
         }
         for (const command of ['cat ../other/.env', 'git diff -- .env.local']) expect(judge(shellPayload(command)), command).toEqual(refusal)
-        // A listing reports names only, and `.envrc` is not one of the `.env` family, so it still asks rather than being denied.
-        expect(judge(shellPayload('ls .env')).decision).toBe('allow')
+        // Naming one is refused whatever the program, a listing included, since its output can feed a reader; `.envrc` is refused as agent run configuration.
+        expect(judge(shellPayload('ls .env')).decision).toBe('deny')
         expect(judge(shellPayload('cat .envrc')).decision).toBe('deny')
         // The conventional documentation names, and a declared template, are read and written like any file.
         for (const file of ['.env.example', '.ENV.EXAMPLE', '.env.schema', 'apps/web/.env.sample', '.env.template']) {
@@ -1336,7 +1338,7 @@ describe('allow by default', () => {
             return facts.sourceSecret && 'sensitive' in evidence ? { ...evidence, sensitive: [`${path}/.env.local`, `${path}/env/.secrets`] } : evidence
         }
     const run = (command: string, configured: object = open(), evidence: PathInspection = onBranch('refs/heads/topic')) =>
-        evaluateGuard(parseGuardInput(shellPayload(command)), configured, evidence)
+        evaluateGuard(parseGuardInput(shellPayload(command), { home }), configured, evidence)
 
     // The guard's contract, part one: everyday calls an agent makes run without a prompt. Each row is a synthetic
     // shape of a call agents were seen making; a row that stops being allowed is friction the guard added.
@@ -1379,6 +1381,8 @@ describe('allow by default', () => {
         'python3 -c "print(1)"', "node -e 'console.log(1)'", "ruby -e 'puts 1'", 'deno eval "1"', 'find src -exec touch {} ;', "awk '{system($0)}' notes.md",
         "sed -e '1e date' notes.md", 'npx some-unknown-tool src', "python3 - <<'EOF'\nprint(1)\nEOF", 'docker run alpine true', 'docker exec web sh',
         `git commit -m "$(cat <<'EOF'\nFix the parser\n\nCo-Authored-By: Agent <agent@example.test>\nEOF\n)"`,
+        // A refused name or push inside a message, a search pattern or documentation is text, not a path or a push.
+        'git commit -m "Load .env before the server starts"', 'git commit -m "never git push -f to main"', "rg '\\.env' docs", 'echo "see .env.example"',
     ]
     it.each(friction)('allows the everyday call %s', (command) => {
         expect(run(command).decision).toBe('allow')
@@ -1402,6 +1406,10 @@ describe('allow by default', () => {
         // Skipping hooks, deleting ignored files, removing outside the roots, dumping a container's environment.
         'HUSKY=0 git commit -m done', 'SKIP=lint git commit -m done', 'git clean -fdx', 'rm -rf /tmp/scratch', 'docker inspect web',
         `docker run -v ${home}/.ssh:/mnt/keys alpine true`, 'cat .envrc',
+        // A refused name or push is refused wherever its word sits: in a substitution, fed through a pipe, or after a launcher.
+        'cat $(echo .env)', 'echo .env | xargs cat', 'corepack pnpm exec git push -f origin topic',
+        // Credential stores, removals outside the roots and the installed cockpit, spelled from the home directory or the root.
+        'cat ~/.aws/credentials', 'rm -rf ~/Documents', 'rm -rf node_modules/@b00dea/cockpit', 'echo x > node_modules/@b00dea/cockpit/dist/cli.js',
     ]
     it.each(refused)('refuses %s', (command) => {
         expect(run(command).decision).toBe('deny')
@@ -1594,8 +1602,9 @@ describe('allow by default', () => {
             const covering = { ...configured, protectedIdentities: configured.protectedIdentities.map(item => item.path === `${root}/var/sessions` ? { ...item, identity: '7:7' } : item) }
             expect(evaluateGuard(parseGuardInput(payload('Bash', { command }), { home }), covering, present).decision, command).toBe('deny')
         }
-        // Listing names, and everything beside the secret paths, stay open.
-        for (const command of ['ls var/sessions', 'cat var/notes.md', 'echo x > var/notes.md', 'rg KEY src']) {
+        // Naming one is refused even to list it, as its output can feed a reader; everything beside the secret paths stays open.
+        expect(judge(payload('Bash', { command: 'ls var/sessions' })).decision).toBe('deny')
+        for (const command of ['ls var', 'cat var/notes.md', 'echo x > var/notes.md', 'rg KEY src']) {
             expect(judge(payload('Bash', { command })), command).toMatchObject({ decision: 'allow' })
         }
         expect(judge(payload('Write', { file_path: `${root}/var/notes.md`, content: 'x' }))).toMatchObject({ decision: 'allow' })
@@ -2036,7 +2045,8 @@ describe('allow by default', () => {
         ['patch target', 'git apply build/p.diff', undefined, { facts: { patchTargets: ['src/../../.cockpit/guards/bash-guard.sh'] } }],
         ['archive target', 'unzip -o build/a.zip'], ['archive target', 'unzip -o build/a.zip -d .cockpit'],
         ['git help.autocorrect', 'git -c help.autocorrect=immediate psuh --force origin main'], ['unknown git verb', 'git psuh -f origin main'],
-        ['corepack launcher', 'corepack pnpm exec git push -f origin main'],
+        // A launcher the guard does not know still spells a forced push to a protected branch.
+        ['corepack launcher', 'corepack pnpm exec git push -f origin main', undefined, { decision: 'deny' }],
         ['push steering config', 'git config push.default matching'], ['push steering config', 'git config branch.topic.merge refs/heads/main'],
         ['matching push', 'git push', undefined, { facts: { pushDefault: 'matching' } }], ['matching push', 'git push origin', undefined, { facts: { pushDefault: 'matching' } }],
         ['configured push refspec', 'git push origin', undefined, { facts: { pushRefspecs: true } }],
@@ -2517,7 +2527,8 @@ describe('cockpit structure protection', () => {
     })
 
     it('does not let command grants authorize visible control operands or extraction destinations', () => {
-        const configured = policy()
+        // Without an installed package below the root, an extraction there meets the control's own refusal.
+        const configured = { ...policy(), executionDirectories: [] }
         configured.declaredAllows.push({ argv: ['custom-mutator'], reason: 'The custom mutator is declared safe.' })
         expect(evaluateGuard(parseGuardInput(shellPayload('custom-mutator .cursor/cli.json')), configured, inspect)).toEqual({
             decision: 'unavailable', reason: expect.stringContaining('names a guard control, and the guard does not know whether it writes there'),

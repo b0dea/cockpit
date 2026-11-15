@@ -333,14 +333,14 @@ describe('guard policy construction', () => {
             payload, searchPath: '/usr/bin:/bin' }, adapters)).decision
         const tool = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
         for (const payload of [shellPayload('cat var/sessions/owner.json', root), shellPayload('cat VAR/Sessions/owner.json', root),
-            shellPayload('cat app/tmp/sessions/state.json', root), shellPayload('echo x > var/sessions/new.json', root),
+            shellPayload('cat app/tmp/sessions/state.json', root), shellPayload('echo x > var/sessions/new.json', root), shellPayload('ls var/sessions', root),
             tool('Write', { file_path: join(root, 'var/sessions/new.json'), content: '{}' }),
             tool('apply_patch', { command: `*** Begin Patch\n*** Add File: ${join(root, 'var/sessions/new.json')}\n+{}\n*** End Patch` })]) {
             expect(await judge(payload), JSON.stringify(payload.tool_input)).toMatchObject({ decision: 'deny', reason: expect.stringContaining('[guards] secret_paths') })
         }
         // A recursive search of the directory holding it would read it.
         expect((await judge(shellPayload('grep -rn synthetic var', root))).decision).not.toBe('allow')
-        for (const command of ['cat var/notes.md', 'ls var/sessions', 'echo x > var/other.md']) expect(await judge(shellPayload(command, root)), command).toMatchObject({ decision: 'allow' })
+        for (const command of ['cat var/notes.md', 'ls var', 'echo x > var/other.md']) expect(await judge(shellPayload(command, root)), command).toMatchObject({ decision: 'allow' })
     }, 120_000)
 
     it('reads a related checkout without changing it, and writes outside the roots only below a write path', async () => {

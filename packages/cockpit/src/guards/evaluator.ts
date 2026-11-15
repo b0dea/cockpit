@@ -1851,11 +1851,6 @@ function gitProgramOption(git: GitInvocation): boolean {
     return git.args.some(arg => /^--(?:upload-pack|receive-pack|exec)(?:=|$)/.test(arg) || ['clone', 'ls-remote'].includes(git.verb) && arg === '-u')
 }
 
-// Git's location and configuration variables point it at state or programs the guard does not inspect,
-// HOME and XDG_CONFIG_HOME choose the configuration that names hooks, hook managers' switches skip the
-// hooks, a relative PATH entry runs a file the agent wrote, Docker's choose the daemon (any host, or
-// one reached over ssh) and the client configuration a known docker read uses, and the agent tools'
-// session markers are how a person's terminal confirmation tells itself apart from an agent's.
 /**
  * What an assignment does to the commands after it. Git's location variables point it at state the guard does not
  * inspect, HOME and XDG_CONFIG_HOME choose the configuration that names its hooks, BASH_ENV and ENV run a file as a
@@ -2142,6 +2137,23 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     // A directory at or above the home directory, such as `/` in a regular expression or a URL path, names no store itself.
     const home = resolved.homeDirectory === undefined ? undefined : fold(resolved.homeDirectory)
     const namesCredential = (folded: string) => !(home !== undefined && within(home, folded)) && credential(folded)
+    // A name no agent reads, whichever program names it: an environment file, a secrets directory or declared
+    // instance, a declared secret path, or a credential store or key file.
+    const secretNameDenial = (folded: string): GuardDecision | undefined => dotenvSecret(folded) ? dotenvDenial
+        : folded.split('/').includes('.secrets') || resolved.instances.some(item => within(folded, fold(item.path))) ? readDenial
+        : inSecretPath(folded) ? secretPathDenial : namesCredential(folded) ? credentialDenial : undefined
+    // Words that spell Git skipping its hooks or pushing by force, deleting or to a protected branch, whatever runs them.
+    const gitWordsDenial = (words: readonly string[]): GuardDecision | undefined => {
+        const git = words.findIndex(word => posix.basename(word) === 'git')
+        const after = git < 0 ? [] : words.slice(git + 1)
+        if (after.includes('--no-verify')) return deny('Refusing --no-verify: it skips the hooks a commit or push runs.')
+        const push = after.indexOf('push')
+        if (push >= 0 && after.slice(push + 1).some(word => /^(?:-f|--force(?:-with-lease|-if-includes)?|-d|--delete|--mirror|--prune)$/.test(word) || word.startsWith('+')
+            || resolved.protectedBranches.some(branch => [branch, `heads/${branch}`, `refs/heads/${branch}`].includes(word)))) {
+            return deny('Refusing a forced push, a remote branch deletion or a push that names a protected branch.')
+        }
+        return undefined
+    }
     // Text the guard does not read as commands, an unreadable shell form or inline interpreter code, is judged by the
     // names it spells: a secret, a credential, a declared host, a guard control or agent setting, the installed cockpit,
     // a forced or protected-branch push, skipped hooks, privilege, and downloaded code piped into an interpreter.
@@ -2155,26 +2167,17 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const folded = fold(lexical)
             // A path the text reaches outside the roots is the agent tool's to permit, so the call gets no allow answer.
             if (token.includes('/') && !inRoots(lexical)) outside = true
-            if (dotenvSecret(folded)) return dotenvDenial
-            if (folded.split('/').includes('.secrets') || resolved.instances.some(item => within(folded, fold(item.path)))) return readDenial
-            if (inSecretPath(folded)) return secretPathDenial
+            const secret = secretNameDenial(folded)
+            if (secret) return secret
             // A bare name may be reached from the home directory, as `cd .aws && cat credentials` reaches it through CDPATH.
-            if (namesCredential(folded) || home !== undefined && !/^[/~.]\./.test(token) && !token.startsWith('/') && namesCredential(fold(posix.join(home, token)))) return credentialDenial
+            if (home !== undefined && !/^[/~.]\./.test(token) && !token.startsWith('/') && namesCredential(fold(posix.join(home, token)))) return credentialDenial
             if (controlFiles.some(path => folded === fold(path)) || controlDirectories.some(path => within(folded, fold(path))) || guardScriptLocation(folded)) return controlDenial
             if (nestedAgentConfiguration(folded, false)) return nestedConfigurationDenial
             if (installedCode(folded, false)) return executionDenial
         }
         if (tokens.some(token => /^(?:sudo|doas|pkexec)$/.test(token))) return deny('Refusing privilege escalation: it is a person\'s action. Ask them to run it in their own terminal.')
         if (/\b(?:curl|wget)\b[^|;&]*\|\s*(?:\S*\/)?(?:sh|bash|zsh|dash|python[\d.]*|node|perl|ruby)\b/.test(text)) return deny('Refusing to run downloaded text as code. Download the file into the cockpit, read it, then run it by path.')
-        const git = tokens.indexOf('git')
-        const after = git < 0 ? [] : tokens.slice(git + 1)
-        if (after.includes('--no-verify')) return deny('Refusing --no-verify: it skips the hooks a commit or push runs.')
-        const push = after.indexOf('push')
-        if (push >= 0 && after.slice(push + 1).some(token => /^(?:-f|--force(?:-with-lease|-if-includes)?|-d|--delete|--mirror|--prune)$/.test(token) || token.startsWith('+')
-            || resolved.protectedBranches.some(branch => [branch, `heads/${branch}`, `refs/heads/${branch}`].includes(token)))) {
-            return deny('Refusing a forced push, a remote branch deletion or a push that names a protected branch.')
-        }
-        return undefined
+        return gitWordsDenial(tokens)
     }
     if (input.unreadable) return textDenial(input.unreadable.text, input.cwd) ?? { decision: 'allow', reason: outside ? outsideDeferred
         : `The guard does not read this shell form (${input.unreadable.reason}), and its text names nothing the guard refuses, so it runs.` }
@@ -3047,54 +3050,57 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             // matches inside the roots is the project's, and a credential store is judged by its directory.
             const secret = glob ? posix.basename(folded).startsWith('.') && SECRET_SAMPLES.some((name) => name.startsWith('.') && glob.test(name)) || credential(posix.dirname(folded))
                 || plainGlob(word) && globReachesProtected(word.value, invocation.cwd) || globNamesProtected(word.value, invocation.cwd)
-                : dotenvSecret(folded) || folded.split('/').includes('.secrets') || resolved.instances.some((item) => within(folded, fold(item.path))) || inSecretPath(folded) || namesCredential(folded)
+                : secretNameDenial(folded) !== undefined
             if (secret) hold(deny(`Refusing ${invocation.executable === null ? 'this command' : named(invocation)}: it holds ${shownGuardWord(word.value)}, which names or can match an environment file, secrets directory, declared instance or credential store. Name the files it needs.`))
         }
-        // A declared rule admits a command the profile cannot classify, but never past the secret names
-        // or the roots: macOS `cat a .env -x` prints .env before it rejects -x, and `git show HEAD:.env`
-        // prints a committed one. Each argument is judged whole, after `=` and after `:`.
-        // A visible writer's operands already meet the stronger mutation and link denials above.
-        if (!access && !writes && !removed?.paths.length) {
-            // Any program may read, print or send what it names, so naming a secret refuses it.
-            const secretName = hold
-            // Words of a nested command, after a proven cockpit's `--` or the program a launcher runs, are
-            // judged as that command, so they are not paths this one reads; nor is a proven cockpit launcher.
-            const followed = invocations[invocations.indexOf(invocation) + 1]
-            const nestedFrom = provenCockpit(invocation) ? (invocation.argv.indexOf('--') < 0 ? invocation.argv.length : invocation.argv.indexOf('--'))
-                : followed?.wrapped && launchedBy(followed, invocation) ? invocation.argv.length - followed.argv.length - 1 : invocation.argv.length
-            // A sed or awk script, or a search pattern, is the program's text, not a path it reads.
-            const scriptAt = ['sed', 'awk', 'grep', 'rg', 'jq'].includes(executableName) && !invocation.argv.some(arg => /^(?:-e|-f|--expression|--regexp|--file)(?:=|$)/.test(arg))
-                ? invocation.argv.findIndex(arg => !arg.startsWith('-')) : -1
-            const launcherPath = (lexical: string) => resolved.cockpitLaunchers.some((item) => [item.executable, ...item.argv]
-                .some((spelled) => spelled.includes('/') && posix.resolve(item.cwd, spelled) === lexical))
-            for (const [position, word] of invocation.argv.entries()) {
-                // `git log -L <range>:<file>` names its file after the colon; the range may start with `/`, a regular expression.
-                const candidates = git && invocation.argv[position - 1] === '-L' ? [word.slice(word.lastIndexOf(':') + 1)] : undefined
-                // An attached short option value, as in `sed -f.env`, is a candidate too.
-                const attached = /^-[^-]/.test(word) && word.length > 2 ? [word.slice(2)] : []
-                // `@file` is how curl and gh name a file whose content they send.
-                for (const candidate of new Set(candidates ?? [word, word.slice(word.indexOf('=') + 1), word.slice(0, Math.max(word.indexOf(':'), 0)), word.slice(word.lastIndexOf(':') + 1), word.slice(word.lastIndexOf('@') + 1), ...attached])) {
-                    if (!candidate || candidate.startsWith('-') || !scalar(candidate)) continue
-                    // Git resolves its operands from the directory -C names.
-                    const lexical = posix.resolve(git?.cwd ?? invocation.cwd, candidate)
-                    const folded = fold(lexical)
-                    // Every spelling counts here, `@file` and attached values included, so an allow answer never covers an outside
-                    // path. Git resolves its operands from its own directory, which the Git checks above inspect.
-                    if (position < nestedFrom && position !== scriptAt && !gitInvocation(invocation) && !URL_OPERAND.test(word) && !launcherPath(lexical) && (posix.isAbsolute(candidate) || candidate.split('/').includes('..')) && !lexical.startsWith('/dev/') && !inRoots(lexical)) outside = true
-                    if (dotenvSecret(folded)) secretName(dotenvDenial)
-                    if (namesCredential(folded)) hold(credentialDenial)
-                    holdGitConfigRead(lexical)
-                    // In the allow default any command may read what it names, so a path outside the roots
-                    // follows external_reads for every command, not only the reading ones.
-                    if (position < nestedFrom && position !== scriptAt && !launcherPath(lexical) && (candidate === word || candidate === word.slice(word.indexOf('=') + 1)) && (posix.isAbsolute(candidate) || candidate.split('/').includes('..'))
-                        && !lexical.startsWith('/dev/') && !resolved.allowedRoots.some(root => within(lexical, root)) && !readableOutside(lexical) && !approvalBarriers.has(invocation)) {
-                        approvalBarriers.set(invocation, ask(`${named(invocation)} names ${shownGuardWord(candidate)}, outside the configured roots. A person can list the location under [guards] read_paths or set [guards] external_reads = "native", then sync; or a person runs it.`))
-                    }
-                    if (folded.split('/').includes('.secrets') || resolved.instances.some((item) => within(folded, fold(item.path)))) secretName(readDenial)
-                    if (inSecretPath(folded)) secretName(secretPathDenial)
-                    if (READING_EXECUTABLES.has(invocation.executable!) && position !== scriptAt && !resolved.allowedRoots.some(root => within(lexical, root)) && !readableOutside(lexical) && !approvalBarriers.has(invocation)) {
-                        approvalBarriers.set(invocation, ask(`${named(invocation)} names ${shownGuardWord(candidate)}, outside the configured roots, with words the read-only profile cannot classify, so a [guards] allow rule does not admit it. Run it as the rule names it, or a person reviews and admits this complete argv.`))
-                    }
+        // Words that spell a forced or protected-branch push, or skipped hooks, through a launcher the guard does not
+        // know are refused as the push itself is; Git's own words meet the exact push rules above.
+        if (!git) { const refusal = gitWordsDenial([invocation.executable ?? '', ...invocation.argv]); if (refusal) hold(refusal) }
+        // Any program may read, print or send what it names, whatever it is and wherever the word sits, after a
+        // launcher, in a substitution or fed through a pipe, so naming a secret refuses it. A declared rule admits
+        // a command the profile cannot classify, but never past the secret names or the roots: macOS `cat a .env -x`
+        // prints .env before it rejects -x, and `git show HEAD:.env` prints a committed one. Each argument is judged
+        // whole, after `=` and after `:`. A visible writer's operands already meet the stronger mutation and link
+        // denials above, and a classified read's paths the read checks, so only the roots are judged here for the rest.
+        const unclassified = !access && !writes && !removed?.paths.length
+        // Words of a nested command, after a proven cockpit's `--` or the program a launcher runs, are
+        // judged as that command, so they are not paths this one reads; nor is a proven cockpit launcher.
+        const followed = invocations[invocations.indexOf(invocation) + 1]
+        const nestedFrom = provenCockpit(invocation) ? (invocation.argv.indexOf('--') < 0 ? invocation.argv.length : invocation.argv.indexOf('--'))
+            : followed?.wrapped && launchedBy(followed, invocation) ? invocation.argv.length - followed.argv.length - 1 : invocation.argv.length
+        // A sed or awk script, or a search pattern, is the program's text, not a path it reads: `rg '\.env' docs` runs.
+        const scriptAt = ['sed', 'awk', 'grep', 'rg', 'jq'].includes(executableName) && !invocation.argv.some(arg => /^(?:-e|-f|--expression|--regexp|--file)(?:=|$)/.test(arg))
+            ? invocation.argv.findIndex(arg => !arg.startsWith('-')) : -1
+        const launcherPath = (lexical: string) => resolved.cockpitLaunchers.some((item) => [item.executable, ...item.argv]
+            .some((spelled) => spelled.includes('/') && posix.resolve(item.cwd, spelled) === lexical))
+        for (const [position, word] of invocation.argv.entries()) {
+            // `git log -L <range>:<file>` names its file after the colon; the range may start with `/`, a regular expression.
+            const candidates = git && invocation.argv[position - 1] === '-L' ? [word.slice(word.lastIndexOf(':') + 1)] : undefined
+            // An attached short option value, as in `sed -f.env`, is a candidate too.
+            const attached = /^-[^-]/.test(word) && word.length > 2 ? [word.slice(2)] : []
+            // `@file` is how curl and gh name a file whose content they send.
+            for (const candidate of new Set(candidates ?? [word, word.slice(word.indexOf('=') + 1), word.slice(0, Math.max(word.indexOf(':'), 0)), word.slice(word.lastIndexOf(':') + 1), word.slice(word.lastIndexOf('@') + 1), ...attached])) {
+                if (!candidate || candidate.startsWith('-') || !scalar(candidate)) continue
+                // Git resolves its operands from the directory -C names.
+                const lexical = posix.resolve(git?.cwd ?? invocation.cwd, candidate)
+                const folded = fold(lexical)
+                // A classified Git read's words, revisions, pathspecs and option values, meet the Git read checks above instead.
+                const secret = position === scriptAt || access && git ? undefined : secretNameDenial(folded)
+                // A writer's own refusal of the same name says more, so it stands.
+                if (secret && !hardDeny) hold(secret)
+                if (!unclassified) continue
+                // Every spelling counts here, `@file` and attached values included, so an allow answer never covers an outside
+                // path. Git resolves its operands from its own directory, which the Git checks above inspect.
+                if (position < nestedFrom && position !== scriptAt && !gitInvocation(invocation) && !URL_OPERAND.test(word) && !launcherPath(lexical) && (posix.isAbsolute(candidate) || candidate.split('/').includes('..')) && !lexical.startsWith('/dev/') && !inRoots(lexical)) outside = true
+                holdGitConfigRead(lexical)
+                // In the allow default any command may read what it names, so a path outside the roots
+                // follows external_reads for every command, not only the reading ones.
+                if (position < nestedFrom && position !== scriptAt && !launcherPath(lexical) && (candidate === word || candidate === word.slice(word.indexOf('=') + 1)) && (posix.isAbsolute(candidate) || candidate.split('/').includes('..'))
+                    && !lexical.startsWith('/dev/') && !resolved.allowedRoots.some(root => within(lexical, root)) && !readableOutside(lexical) && !approvalBarriers.has(invocation)) {
+                    approvalBarriers.set(invocation, ask(`${named(invocation)} names ${shownGuardWord(candidate)}, outside the configured roots. A person can list the location under [guards] read_paths or set [guards] external_reads = "native", then sync; or a person runs it.`))
+                }
+                if (READING_EXECUTABLES.has(invocation.executable!) && position !== scriptAt && !resolved.allowedRoots.some(root => within(lexical, root)) && !readableOutside(lexical) && !approvalBarriers.has(invocation)) {
+                    approvalBarriers.set(invocation, ask(`${named(invocation)} names ${shownGuardWord(candidate)}, outside the configured roots, with words the read-only profile cannot classify, so a [guards] allow rule does not admit it. Run it as the rule names it, or a person reviews and admits this complete argv.`))
                 }
             }
         }
