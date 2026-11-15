@@ -1274,6 +1274,7 @@ function removedOperands(invocation: ParsedInvocation, git: GitInvocation | unde
 interface BranchFacts { readonly head: string | null; readonly push: string | null; readonly pushDefault: string | null; readonly pushRefspecs: boolean; readonly pullRebase: boolean }
 
 const PUSH_FORCE = /^(?:-f|--force|--force-with-lease(?:=.*)?|--force-if-includes)$/
+const PUSH_WORDS_END: ReadonlySet<string> = new Set([';', 'then', 'do', 'done', 'fi', 'else', 'elif', 'esac'])
 const PUSH_DELETE = /^(?:-d|--delete|--prune|--mirror)$/
 // Git accepts any unambiguous prefix of a long option: `--for` and `--forc` can only be a force option.
 const forceAbbreviation = (value: string) => value.length >= 5 && ['--force', '--force-with-lease', '--force-if-includes'].some(option => option.startsWith(value.split('=')[0]!))
@@ -2149,7 +2150,10 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (after.includes('--no-verify')) return deny('Refusing --no-verify: it skips the hooks a commit or push runs.')
         const push = after.indexOf('push')
         // Git's own push rules, without the repository facts a spelled push lacks: only what they refuse outright counts.
-        return push >= 0 && pushDecision(after.slice(push + 1), resolved.protectedBranches, undefined)?.decision === 'deny'
+        // The push's words end at the next command separator or shell keyword, so a branch a later command names is not its destination.
+        const rest = after.slice(push + 1)
+        const end = rest.findIndex(word => PUSH_WORDS_END.has(word))
+        return push >= 0 && pushDecision(end < 0 ? rest : rest.slice(0, end), resolved.protectedBranches, undefined)?.decision === 'deny'
             ? deny('Refusing a forced push, a remote branch deletion or a push that names a protected branch.') : undefined
     }
     // Text the guard does not read as commands, an unreadable shell form or inline interpreter code, is judged by the
@@ -2175,8 +2179,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         }
         if (tokens.some(token => /^(?:sudo|doas|pkexec)$/.test(token))) return deny('Refusing privilege escalation: it is a person\'s action. Ask them to run it in their own terminal.')
         if (/\b(?:curl|wget)\b[^|;&]*\|\s*(?:\S*\/)?(?:sh|bash|zsh|dash|python[\d.]*|node|perl|ruby)\b/.test(text)) return deny('Refusing to run downloaded text as code. Download the file into the cockpit, read it, then run it by path.')
-        // Words keep `:` and `-`, so `HEAD:main`, `:topic` and `-uf` reach Git's push rules; an assignment's value, `cmd=git`, is a word.
-        return gitWordsDenial(text.split(/[\s'"`(),[\]=;&|]+/).filter(Boolean))
+        // Words keep `:` and `-`, so `HEAD:main`, `:topic` and `-uf` reach Git's push rules; an assignment's value, `cmd=git`, is a word,
+        // and each command separator becomes `;`.
+        return gitWordsDenial(text.replace(/;;|&&|\|\||[;&|\n)]/g, ' ; ').split(/[\s'"`(,[\]=]+/).filter(Boolean))
     }
     if (input.unreadable) return textDenial(input.unreadable.text, input.cwd) ?? { decision: 'allow', reason: outside ? outsideDeferred
         : `The guard does not read this shell form (${input.unreadable.reason}), and its text names nothing the guard refuses, so it runs.` }
