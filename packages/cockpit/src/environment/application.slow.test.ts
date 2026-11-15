@@ -296,11 +296,14 @@ describe('guard policy construction', () => {
         expect(await decide(`ls '${inputs}/album'`)).toMatchObject({ decision: 'allow' })
         // Outside its work tree git diff compares two directories file by file, reading every file below them.
         mkdirSync(join(inputs, 'empty'))
+        const seenA: string[] = []
         for (const command of [`git diff '${inputs}/empty' '${inputs}/album'`, `git diff '${inputs}/empty' '${root}/app'`, `cat '${inputs}/album'`,
             `rg -n synthetic '${inputs}'`, `rg -n synthetic '${inputs}/album'`, `cat '${inputs}/alias.jpg'`,
             `cat '${elsewhere}/notes.md'`, `cp README.md '${inputs}/copy.md'`]) {
-            expect((await decide(command)).decision, command).not.toBe('allow')
+            seenA.push((await decide(command)).decision)
         }
+        // Under exact grants a read outside the roots asks; a read through a link the guard cannot inspect is refused, and a write outside every root is refused as unavailable.
+        expect(seenA).toEqual(['ask', 'ask', 'deny', 'ask', 'ask', 'deny', 'ask', 'unavailable'])
         // Native external reads hand every named read outside the roots to the agent tool's own permission.
         config.guards.read_paths = []
         config.guards.external_reads = 'native'
@@ -339,7 +342,7 @@ describe('guard policy construction', () => {
             expect(await judge(payload), JSON.stringify(payload.tool_input)).toMatchObject({ decision: 'deny', reason: expect.stringContaining('[guards] secret_paths') })
         }
         // A recursive search of the directory holding it would read it.
-        expect((await judge(shellPayload('grep -rn synthetic var', root))).decision).not.toBe('allow')
+        expect((await judge(shellPayload('grep -rn synthetic var', root))).decision).toBe('deny')
         for (const command of ['cat var/notes.md', 'ls var', 'echo x > var/other.md']) expect(await judge(shellPayload(command, root)), command).toMatchObject({ decision: 'allow' })
     }, 120_000)
 
@@ -371,12 +374,15 @@ describe('guard policy construction', () => {
             `cp notes.md '${outside}/copy.md'`, `mv '${outside}/photo.png' photo.png`]) {
             expect(await decide(command), command).toMatchObject({ decision: 'allow' })
         }
+        const seenC: string[] = []
         for (const command of [`echo x > '${upstream}/notes.md'`, `git -C '${upstream}' commit --allow-empty -m x`, `cp notes.md '${outside}/guards-link/bash-guard.sh'`,
             `echo x >> '${homedir()}/.zshrc'`, `cp notes.md '${homedir()}/.claude/settings.json'`]) {
-            expect((await decide(command)).decision, command).not.toBe('allow')
+            seenC.push((await decide(command)).decision)
         }
+        // A write into a related checkout, a guard file through a link, or an agent tool's settings is refused; a shell start-up file outside every root is refused as unavailable.
+        expect(seenC).toEqual(['deny', 'deny', 'deny', 'unavailable', 'deny'])
         // Outside a write path, and through the Data volume's spelling of the cockpit, a write stays refused.
-        expect((await decide(`cp notes.md '${unlisted}/copy.md'`)).decision).not.toBe('allow')
+        expect((await decide(`cp notes.md '${unlisted}/copy.md'`)).decision).toBe('unavailable')
         expect(await decide(`cp notes.md '/System/Volumes/Data${root}/node_modules/copy.md'`)).toMatchObject({ decision: 'deny' })
         expect(await decide(`cp notes.md '${outside}/.toolrc'`)).toMatchObject({ decision: 'deny' })
     }, 120_000)
