@@ -283,7 +283,8 @@ const allowed: GuardDecision = Object.freeze({ decision: 'allow', reason: 'Every
 // outside the configured roots. The adapter answers them with nothing, so the tool's own prompt still applies.
 const mcpDeferred = 'MCP tool satisfies the declared tool restrictions.'
 const outsideDeferred = 'Nothing the guard checks refuses this call; what it reaches outside the configured roots is left to the agent tool\'s own permissions.'
-export const GUARD_DEFERRED_REASONS = Object.freeze([mcpDeferred, outsideDeferred])
+const unreadDeferred = 'Part of this call is shell the guard does not read, and nothing it spells is refused; whether it runs is left to the agent tool\'s own permissions.'
+export const GUARD_DEFERRED_REASONS = Object.freeze([mcpDeferred, outsideDeferred, unreadDeferred])
 function record(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
@@ -2183,8 +2184,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // and each command separator becomes `;`.
         return gitWordsDenial(text.replace(/;;|&&|\|\||[;&|\n)]/g, ' ; ').split(/[\s'"`(,[\]=]+/).filter(Boolean))
     }
-    if (input.unreadable) return textDenial(input.unreadable.text, input.cwd) ?? { decision: 'allow', reason: outside ? outsideDeferred
-        : `The guard does not read this shell form (${input.unreadable.reason}), and its text names nothing the guard refuses, so it runs.` }
+    // A simple command the parser cannot read is judged by the names its text spells; the rest of the call meets every rule.
+    if (input.unreadable) { const refusal = textDenial(input.unreadable.text, input.cwd); if (refusal) hold(refusal) }
     // The current branch and where a bare push goes, for the repository at `cwd`, as Git reports them.
     const branchFacts = (cwd: string): BranchFacts | undefined => {
         let evidence: JsonSnapshot | undefined
@@ -3415,6 +3416,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const pending = askDecisions.get(invocation)
         if (stands(pending)) return pending
     }
+    if (input.unreadable) return { decision: 'allow', reason: unreadDeferred }
     if (outside) return { decision: 'allow', reason: outsideDeferred }
     return declaredReasons.length === 1 ? { decision: 'allow', reason: declaredReasons[0]! } : allowed
 }

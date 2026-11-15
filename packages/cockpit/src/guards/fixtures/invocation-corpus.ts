@@ -48,7 +48,8 @@ const captures: Record<typeof rows[number]['name'], CapturePair> = {
     'heredoc data': { candidate: [here('safe\n'), git('push', 'origin', 'main')], control: [here('git push origin main; db.example.test\n')] },
     'brace boundaries': { candidate: [git('push', 'origin', 'feature'), git('push', 'origin', 'main')], control: [git('push', 'origin', 'feature'), printf('main')] },
     'option decoy': { candidate: [git('push', '--push-option=feature', 'origin', 'main')], control: [git('push', '--push-option=main', 'origin', 'feature')] },
-    'function definition': { candidate: defined, control: [printf('ship() { git push origin main; }')] },
+    // Cut into its commands, a definition's body is judged where it stands.
+    'function definition': { candidate: [expected('ship'), git('push', 'origin', 'main'), expected('ship')], control: [printf('ship() { git push origin main; }')] },
     'alias definition': { candidate: defined, control: [definition('alias', 'ship=git push origin main'), printf('ok')] },
     'assignment host': { candidate: [expected('printf', ['ok'], [{ role: 'environment-assignment-value', value: 'https://db.example.test', name: 'DB_URL' }])], control: [printf('NOTE=git push origin main')] },
     'command variable': { candidate: program('$cmd'), control: [printf('$cmd push origin main')] },
@@ -65,7 +66,8 @@ const pathspec = 'Unproven Git staging pathspec grammar.'
 export const invocationCorpus = [
     ...rows.map((row) => {
         const capture = captures[row.name]
-        const witness = typeof capture.candidate === 'string' ? git('push', 'origin', 'main') : capture.candidate.at(-1)
+        // The witness is the last command the execution proof records: git, curl, printf or cat.
+        const witness = typeof capture.candidate === 'string' ? git('push', 'origin', 'main') : capture.candidate.findLast(item => ['git', 'curl', 'printf', 'cat'].includes(item.executable ?? ''))
         if (!witness) throw new Error(`Missing executable corpus witness: ${row.name}`)
         return { ...row, capture, witness,
             cause: typeof capture.candidate === 'string' ? unreadPush : row.decision === 'ask' ? destructive : ['redirect data', 'assignment host'].includes(row.name) ? hosted : protectedPush,

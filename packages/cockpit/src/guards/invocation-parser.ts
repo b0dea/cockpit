@@ -75,7 +75,7 @@ export function isParsedGuardInput(value: unknown): value is Extract<GuardParseR
 const shown = (word: string) => shownGuardWord(word)
 function refuse(reason: string): never { throw new RefusalError(reason) }
 // A construct that is itself the danger, not one the parser merely cannot read: privilege escalation, downloaded
-// code run as code, and a dump of the environment. It refuses the call even where unreadable text would run.
+// code run as code, and a dump of the environment; or input past the parser's bounds. It refuses the whole call.
 class ForbiddenConstruct extends RefusalError {}
 function forbid(reason: string): never { throw new ForbiddenConstruct(reason) }
 /** A word as a refusal quotes it: JSON-escaped, with the controls a harness rejects in a reason escaped too, and bounded. */
@@ -193,7 +193,7 @@ function literalHeredoc(tokens: readonly Token[]): string | undefined {
 }
 
 function lex(command: string, options: GuardParseOptions, start = 0, depth = 0): { tokens: Token[]; end: number } {
-    if (depth > NESTING_LIMIT) refuse(`Commands nested more than ${NESTING_LIMIT} levels deep are unsupported.`)
+    if (depth > NESTING_LIMIT) forbid(`Commands nested more than ${NESTING_LIMIT} levels deep are unsupported.`)
     // A substitution is a slice of the command already checked.
     if (!depth && /[\x00-\x08\x0b-\x1f\x7f]/.test(command)) refuse('Unsupported shell control character.')
     const nested = depth > 0
@@ -254,7 +254,7 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
                 || inner.end < command.length && !/[ \t\n;&|<>)]/.test(command[inner.end]!)) {
                 refuse('Process substitution is read only as a whole word `<(…)`, which a command reads as a file. Write the output to a file inside the cockpit first, or pipe it.')
             }
-            if (++words > GUARD_INPUT_LIMITS.words) refuse('Guard word limit exceeded.')
+            if (++words > GUARD_INPUT_LIMITS.words) forbid('Guard word limit exceeded.')
             tokens.push({ kind: 'word', value: PROCESS_SUBSTITUTION, quoted: false, dynamic: false, status: false, substitutions: [command.slice(index + 2, inner.end - 1)] })
             index = inner.end
             continue
@@ -263,8 +263,13 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
         // unless it forms a brace expansion, which the word loop expands.
         const operator = /^(?:&&|\|\||<<-|<<|>>|>&|<&|<>|>\||[;&|<>()]|[{}](?=[ \t\n;&|<>()]|$))/.exec(command.slice(index))?.[0]
         if (operator) {
-            if (command.startsWith('<<<', index)) refuse('Here-strings (<<<) are unsupported. Pipe the text instead: `printf \'%s\\n\' "<text>" | <command>`.')
             if (awaitingDocument !== undefined) refuse('Missing heredoc delimiter.')
+            // A here-string's word is the command's input text, as a heredoc body is.
+            if (command.startsWith('<<<', index)) {
+                index += 3
+                tokens.push({ kind: 'op', value: '<<<' })
+                continue
+            }
             index += operator.length
             if (nested && operator === ')' && !parens--) {
                 if (documents.length) refuse('Unterminated heredoc.')
@@ -318,7 +323,16 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
             // bash drops a backslash-newline before it reads `$(`, so `$\` and a newline still opens a substitution.
             if (quote !== "'" && c === '$' && command.startsWith('\\\n', index + 1)) refuse('A line continuation inside an expansion is unsupported. Write the expansion on one line.')
             if (quote !== "'" && c === '$' && command[index + 1] === '(') {
-                if (command[index + 2] === '(') refuse('Arithmetic expansion $((…)) is unsupported. Compute the number and write it out.')
+                if (command[index + 2] === '(') {
+                    const close = command.indexOf('))', index + 3)
+                    const body = close < 0 ? '' : command.slice(index + 3, close)
+                    // Names, numbers and operators compute a number; a subscript or substitution in it could run a command.
+                    if (close < 0 || !/^[\w\s+\-*/%<>=!&|^~?:,()]*$/.test(body.replace(/\$\{?[A-Za-z_]\w*\}?/g, 'x'))) refuse('Arithmetic expansion $((…)) is read only with names, numbers and operators. Compute the number and write it out.')
+                    dynamic = true
+                    value += `$((${body}))`
+                    index = close + 2
+                    continue
+                }
                 const inner = lex(command, options, index + 2, depth + 1)
                 const text = command.slice(index + 2, inner.end - 1)
                 // A heredoc opened before the substitution would take its body from inside it.
@@ -356,7 +370,7 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
                 if (!name || /[{$`'"\\\s]/.test(name)) refuse(`Unsupported parameter expansion in ${shown(command.slice(index, close < 0 ? undefined : close + 1))}. Write the value out.`)
                 // Anything but a plain reference can evaluate: `${x:y}`, `${a[i]}` and `${!y}` do arithmetic, `${x@P}` and zsh `${(e)x}` substitute commands.
                 // A literal index or `@`, as in `${PIPESTATUS[0]}`, is no arithmetic that can run anything.
-                if (!/^(?:[A-Za-z_][A-Za-z0-9_]*(?:\[(?:\d+|[@*])\])?|\d+|[@*#?$!-])$/.test(name)) evaluates = true
+                if (!/^(?:[A-Za-z_][A-Za-z0-9_]*(?:\[(?:\d+|[@*])\])?|\d+|[@*#?$!-]|[A-Za-z_][A-Za-z0-9_]*:?[-=+?][^[\]]*)$/.test(name)) evaluates = true
                 if (name === 'HOME' && home !== undefined && (quote || plainHome)) value += home
                 else {
                     dynamic = true
@@ -415,7 +429,7 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
             // zsh reads `$~x` and `$=x` as glob and split flags, `$[…]` is arithmetic, and `$x[…]` a subscript evaluated as arithmetic.
             if (quote !== "'" && c === '$' && evaluatingReference(command, index + 1)) evaluates = true
             // A tilde expands only where a word starts, or after `=` or `:` in an assignment; `HEAD~1` stays literal.
-            if (quote !== "'" && (c === '$' || !quote && (/[*?\[]/.test(c) || c === '~' && (value === '' && !quoted || /[=:]$/.test(value))))) dynamic = true
+            if (quote !== "'" && (c === '$' || !quote && (/[*?]/.test(c) || c === '[' && /^[^\s;&|<>()]*\]/.test(command.slice(index + 1)) || c === '~' && (value === '' && !quoted || /[=:]$/.test(value))))) dynamic = true
             value += c
             index++
         }
@@ -427,7 +441,7 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
         // Bash drops a word an expansion leaves empty, and a quoted one it keeps.
         if (expansion && values.some((item) => !item)) refuse(`Unsupported brace expansion in ${shown(value)}: it leaves an empty word. Write each word out.`)
         for (const [i, item] of values.entries()) {
-            if (++words > GUARD_INPUT_LIMITS.words || Buffer.byteLength(item) > GUARD_INPUT_LIMITS.wordBytes) refuse('Guard word limit exceeded.')
+            if (++words > GUARD_INPUT_LIMITS.words || Buffer.byteLength(item) > GUARD_INPUT_LIMITS.wordBytes) forbid('Guard word limit exceeded.')
             tokens.push({ kind: 'word', value: item, quoted, dynamic, status, ...evaluates ? { evaluates } : {},
                 ...substitutions.length && !i ? { substitutions } : {}, ...expansion ? { braced: true } : {} })
         }
@@ -449,7 +463,7 @@ const redirects = new Set(['<', '>', '>>', '<<', '<<-', '>&', '<&', '<>', '>|'])
 const wrappers = new Set(['timeout', 'nice', 'nohup', 'setsid', 'env', 'command', 'exec', 'time', 'caffeinate', 'stdbuf', 'ionice', 'noglob', 'nocorrect', '-', 'xargs'])
 // Each runs a command or code from its arguments that the guard does not follow: an evaluating builtin, a shell it does
 // not read, or a program that runs the rest of its command line in a form the guard does not read as a wrapper.
-const dynamicExecutables = new Set(['eval', 'source', '.', 'dash', 'ksh', 'fish', 'csh', 'tcsh', 'mksh', 'yash', 'busybox', 'pwsh', 'builtin',
+const dynamicExecutables = new Set(['eval', 'dash', 'ksh', 'fish', 'csh', 'tcsh', 'mksh', 'yash', 'busybox', 'pwsh', 'builtin',
     'trap', 'let', 'chrt', 'taskset', 'unbuffer', 'watch', 'script', 'flock', 'parallel', 'entr'])
 /**
  * Package and environment managers that run a program named on their line, by their words before it. Only the options
@@ -623,6 +637,10 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
         const token = tokens[i]
         if (token.kind === 'comment' || token.kind === 'body') {
             words.push({ role: token.kind === 'body' ? 'heredoc-body' : 'comment', value: token.value })
+        } else if (token.kind === 'op' && token.value === '<<<') {
+            const text = tokens[++i]
+            if (text?.kind !== 'word') refuse('Missing here-string text.')
+            words.push(word('heredoc-body', text))
         } else if (token.kind === 'descriptor') {
             if (tokens[i + 1]?.kind !== 'op' || !redirects.has(tokens[i + 1].value)) refuse('Descriptor lacks a redirect.')
         } else if (token.kind === 'op' && redirects.has(token.value)) {
@@ -907,9 +925,87 @@ function parseShell(command: string, cwd: string, context: Context): ParsedInvoc
     return parseTokens(lex(command, options).tokens, cwd, { ...context, options }, true)
 }
 
+const LEADING_KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'while', 'until', 'do', '!', '{'])
+const CLOSING_KEYWORDS = new Set(['fi', 'done', 'esac', '}'])
+/**
+ * Shell text the parser does not read whole, cut into the simple commands it runs: at command separators, grouping and
+ * shell keywords, outside quotes, expansions and heredoc bodies. A `case`, `for` or `select` header and a case pattern
+ * name no command, and `[[ … ]]` is read as `test` with its words.
+ */
+function simpleCommands(command: string): { readonly pieces: readonly string[]; readonly background: boolean; readonly loop: boolean } {
+    const pieces: string[] = []
+    let background = false
+    let loop = false
+    let current = ''
+    let pattern = false
+    const flush = (endsPattern = false) => {
+        let words = current.trim()
+        current = ''
+        let first: string | undefined
+        while ((first = /^\S+/.exec(words)?.[0]) !== undefined && LEADING_KEYWORDS.has(first)) {
+            if (first === 'while' || first === 'until') loop = true
+            words = words.slice(first.length).trimStart()
+        }
+        if (first === 'for' || first === 'select') loop = true
+        const dropped = !words || CLOSING_KEYWORDS.has(words) || endsPattern && pattern
+        if (first === 'case') pattern = true
+        if (endsPattern) pattern = false
+        // A `case`, `for` or `select` header runs nothing, but its words still expand, so they are read as `:`'s arguments.
+        const header = first === 'case' || first === 'for' || first === 'select' ? `: ${words.slice(first.length).replace(/^\s*[A-Za-z_]\w*\s+in(?=\s|$)/, '').replace(/\s+in\s*$/, '')}` : undefined
+        if (!dropped) pieces.push(header ?? (/^\[\[\s/.test(words) ? `test ${words.slice(2).replace(/\s*\]\]$/, '').replace(/&&|\|\||[()]/g, ' ')}` : words))
+    }
+    for (let index = 0; index < command.length; index++) {
+        const c = command[index]!
+        const rest = command.slice(index)
+        if (c === "'" || c === '"') {
+            let end = index + 1
+            while (end < command.length && command[end] !== c) end += c === '"' && command[end] === '\\' ? 2 : 1
+            current += command.slice(index, end + 1)
+            index = end
+        } else if (c === '\\') {
+            current += command.slice(index, index + 2)
+            index++
+        } else if (/^(?:\$\(|\$\{|[<>]\(|`)/.test(rest)) {
+            // An expansion or process substitution is one word, however many separators it holds.
+            const close = c === '`' ? '`' : rest[1] === '{' ? '}' : ')'
+            const open = c === '`' ? '' : rest[1]
+            let depth = 0
+            let end = index + (c === '`' ? 1 : 2)
+            for (; end < command.length; end++) {
+                if (command[end] === '\\') { end++; continue }
+                if (open && command[end] === open) depth++
+                else if (command[end] === close && !depth--) break
+            }
+            current += command.slice(index, end + 1)
+            index = end
+        } else if (/^\[\[\s/.test(rest) && !current.trim()) {
+            const end = command.indexOf(']]', index)
+            current += command.slice(index, end < 0 ? undefined : end + 2)
+            index = end < 0 ? command.length : end + 1
+        } else if (/^<<-?\s*['"]?[\w.-]+['"]?/.test(rest) && !rest.startsWith('<<<')) {
+            // A heredoc's body is the command's input, never commands of its own.
+            const delimiter = /^<<-?\s*['"]?([\w.-]+)/.exec(rest)![1]!
+            const lineEnd = command.indexOf('\n', index)
+            const body = lineEnd < 0 ? -1 : command.slice(lineEnd + 1).split('\n').findIndex(line => line.replace(/^\t+/, '') === delimiter)
+            const end = body < 0 ? command.length : lineEnd + 1 + command.slice(lineEnd + 1).split('\n').slice(0, body + 1).join('\n').length
+            current += command.slice(index, end)
+            index = end - 1
+        } else {
+            const separator = /^(?:;;|&&|\|\||[;|&\n()])/.exec(rest)?.[0] ?? (/^[{}](?=\s|$)/.test(rest) && /(?:^|\s)$/.test(current) ? c : undefined)
+            if (separator === undefined) { current += c; continue }
+            if (separator === '&') background = true
+            flush(separator === ')')
+            if (separator === ';;') pattern = true
+            index += separator.length - 1
+        }
+    }
+    flush()
+    return { pieces, background, loop }
+}
+
 function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cdAllowed: boolean): ParsedInvocation[] {
     const { definitions, options } = context
-    if (context.depth > NESTING_LIMIT) refuse(`Commands nested more than ${NESTING_LIMIT} levels deep are unsupported.`)
+    if (context.depth > NESTING_LIMIT) forbid(`Commands nested more than ${NESTING_LIMIT} levels deep are unsupported.`)
     const deeper = { ...context, depth: context.depth + 1 }
     const result: ParsedInvocation[] = []
     let current: Token[] = []
@@ -940,7 +1036,7 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
     // An earlier stage of the current pipeline downloads.
     let fetched = false
     const append = (item: ParsedInvocation) => {
-        if (result.length === GUARD_INPUT_LIMITS.invocations) refuse('Guard invocation limit exceeded.')
+        if (result.length === GUARD_INPUT_LIMITS.invocations) forbid('Guard invocation limit exceeded.')
         result.push(item)
     }
     // A substitution runs before its command, in the same directory, and a fetched one is code from the network.
@@ -1199,8 +1295,28 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
             try { return parseShell(command, cwd, { options, definitions: new Set(), depth: 0, seen }) }
             catch (error) {
                 if (!(error instanceof RefusalError) || error instanceof ForbiddenConstruct) throw error
-                unreadable = { text: command, reason: error.message }
-                return []
+                // Each simple command is judged as it would be on its own; while one stays unread, the whole text is
+                // judged by the names it spells and the call gets no allow answer.
+                const split = simpleCommands(command)
+                const unread: string[] = []
+                // A function or alias one piece defines is still defined in the pieces after it.
+                const definitions = new Set<string>()
+                const parsed = split.pieces.flatMap(piece => {
+                    // A directory change moves the pieces after it to a directory the split does not follow.
+                    if (directoryChangers.has(/^\S+/.exec(piece)?.[0] ?? '')) { unread.push(piece); return [] }
+                    try { return parseShell(piece, cwd, { options, definitions, depth: 0, seen }) }
+                    catch (pieceError) {
+                        if (!(pieceError instanceof RefusalError) || pieceError instanceof ForbiddenConstruct) throw pieceError
+                        unread.push(piece)
+                        return []
+                    }
+                })
+                if (parsed.length > GUARD_INPUT_LIMITS.invocations) forbid('Guard invocation limit exceeded.')
+                if (parsed.reduce((sum, item) => sum + item.words.length, 0) > GUARD_INPUT_LIMITS.words) forbid('Guard word limit exceeded.')
+                if (split.loop) seen.loop = true
+                if (split.background) seen.background = true
+                if (unread.length) unreadable = { text: command, reason: error.message }
+                return split.background ? parsed.map(item => ({ ...item, background: true as const })) : parsed
             }
         }
         if (tool === 'Monitor') {
