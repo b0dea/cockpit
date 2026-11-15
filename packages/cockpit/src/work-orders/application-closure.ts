@@ -4,7 +4,7 @@ import { runningInCi } from '../autonomy.js'
 import { RefusalError } from '../environment/contract.js'
 import { GRADING, isGradeMode, type GradeMode, type WorkGrading } from '../schema.js'
 import type { WorkRecord } from './store.js'
-import { checkIds, complete, now, refusal, TERMINAL, unsatisfied, type WorkApplicationOutcome, type WorkContext, type WorkRequest } from './application-context.js'
+import { complete, now, refusal, TERMINAL, unsatisfied, type WorkApplicationOutcome, type WorkContext, type WorkRequest } from './application-context.js'
 import { decisions, recordProblem, unresolvedDecisions } from './application-decisions.js'
 
 export const pendingCi = (record: WorkRecord) => [
@@ -12,14 +12,6 @@ export const pendingCi = (record: WorkRecord) => [
     ...record.accepted.by === 'ci' ? ['accept'] : [], ...record.amendments.filter(row => row.by === 'ci').map(() => 'amend'),
     ...record.notes.filter(row => row.kind === 'answer' && row.by === 'ci').map(() => 'answer'), ...record.closure?.by === 'ci' ? ['signoff'] : [],
 ]
-
-// Off means nothing blocks on grading, not that facts are hidden: what the checks last showed stays in view.
-export function checkFacts(record: WorkRecord) {
-    const results = record.checks?.digest === record.accepted.digest ? record.checks.results : []
-    const declared = checkIds(record.accepted.order)
-    return { checksFailed: results.filter(row => !row.passed).map(row => `${row.criterion}: ${row.outcome}`),
-        checksNotRun: declared.filter(id => !results.some(row => row.criterion === id)) }
-}
 
 const weakerThanPolicy = (mode: GradeMode, grading: WorkGrading) => GRADING[mode].rank < GRADING[grading].rank
 
@@ -62,10 +54,8 @@ export async function signoff(request: Extract<WorkRequest, { operation: 'work-s
         return paths ? [`${row.id} closed done on a grade that left ${paths.join(', ')} to ${request.workOrderId}; closing it as ${request.close} leaves them ungraded`] : []
     })
     const decider = (failedReview || leftHere.length) && policy.gates.signoff === 'agent' ? 'person' : policy.gates.signoff
-    const facts = how === 'ungraded' ? checkFacts(record) : undefined
     return gated('signoff', decider, [`Close ${request.workOrderId} as ${request.close} (${how})`, ...request.note ? [`Note: ${request.note}`] : [],
         ...failedReview ? [`A grade found the agent's amendments lower the bar: ${failedReview.note}`] : [], ...leftHere,
-        ...facts?.checksFailed.map(row => `Check failed: ${row}`) ?? [], ...facts?.checksNotRun.map(row => `Check not run: ${row}`) ?? [],
         ...record.grade ? record.grade.criteria.map(row => `${row.id}: ${row.verdict} — ${row.note}`) : [],
         ...decisions(record).map(row => `Decision ${row.decision} (${row.title}): ${row.resolution!.record ? `recorded in ${row.resolution!.record}` : `no lasting decision — ${row.resolution!.text}`}`)],
     'signoff', async by => store.update(request.workOrderId, async existing => {
@@ -74,7 +64,7 @@ export async function signoff(request: Extract<WorkRequest, { operation: 'work-s
         }
         const state: WorkRecord['state'] = request.close
         return { record: { ...existing, state, closure: { at: now(), by, how, ...request.note ? { note: request.note } : {} } },
-            value: complete(operation, { id: request.workOrderId, state, closedAs: how, by, ...facts }) }
+            value: complete(operation, { id: request.workOrderId, state, closedAs: how, by }) }
     }))
 }
 

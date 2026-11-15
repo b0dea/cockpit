@@ -1,4 +1,4 @@
-import { access, link, lstat, mkdir, open, opendir, readdir, readlink, realpath, rename, rm, rmdir, unlink } from 'node:fs/promises'
+import { access, link, lstat, mkdir, open, opendir, readdir, readFile, readlink, realpath, rename, rm, rmdir, unlink } from 'node:fs/promises'
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, renameSync, type BigIntStats } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -907,6 +907,40 @@ export async function selectMachineStateRoot(input: Readonly<{ platform: 'darwin
     return { kind: 'complete', value: selected.value.root }
 }
 
+// Bootstrap records are keyed by checkout path, so a scratch or deleted checkout leaves its records
+// behind with nothing able to resume them. Selecting the root drops those whose checkout is gone; a
+// record that does not parse, or names a path that still exists, is kept.
+async function pruneVanishedCheckouts(root: string): Promise<void> {
+    const checkouts = join(root, 'checkouts')
+    let entries: string[]
+    try { entries = await readdir(checkouts) } catch (error) {
+        if (hasErrorCode(error, 'ENOENT')) return
+        throw error
+    }
+    for (const entry of entries) {
+        const records = join(checkouts, entry, 'records', 'bootstrap')
+        let names: string[]
+        try { names = await readdir(records) } catch (error) {
+            if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) continue
+            throw error
+        }
+        const roots = new Set<string>()
+        for (const name of names) {
+            let value: unknown
+            try { value = JSON.parse(await readFile(join(records, name), 'utf8')) } catch { /* unparseable: its checkout cannot be judged, so it is kept. */ value = undefined }
+            const parsed = BootstrapStateRecordSchema.safeParse(value)
+            if (!parsed.success || identitySegment(deriveCheckoutId({ checkoutPath: parsed.data.value.checkoutRoot })) !== entry) { roots.clear(); break }
+            roots.add(parsed.data.value.checkoutRoot)
+        }
+        if (roots.size === 0) continue
+        const vanished = await Promise.all([...roots].map(path => lstat(path).then(() => false, (error: unknown) => {
+            if (hasErrorCode(error, 'ENOENT')) return true
+            throw error
+        })))
+        if (vanished.every(Boolean)) await rm(join(checkouts, entry), { recursive: true, force: true })
+    }
+}
+
 export async function selectBootstrapStateRoot(input: SelectBootstrapStateRootInput): Promise<StateResult<BootstrapStateNamespace>> {
     let stableInput: SelectBootstrapStateRootInput
     try {
@@ -934,6 +968,7 @@ export async function selectBootstrapStateRoot(input: SelectBootstrapStateRootIn
         if (!canonicalCheckout.isDirectory() || canonicalCheckout.isSymbolicLink()
             || await realpath(stableInput.checkoutRoot) !== stableInput.checkoutRoot) throw new RefusalError('unsafe checkout')
         const id = deriveCheckoutId({ checkoutPath: stableInput.checkoutRoot })
+        await pruneVanishedCheckouts(root)
         return { kind: 'complete', value: bootstrapNamespace(root, stableInput.checkoutRoot, id, stableInput.target) }
     } catch (error) {
         return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, `checkout identity cannot scope the bootstrap state root safely: ${errorCause(error)}`, stableInput.checkoutRoot)

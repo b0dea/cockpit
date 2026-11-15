@@ -88,8 +88,6 @@ export function createGeneratedCommandFixture() {
         return { ...result, services }
     }
 
-    const surfaceFeatures = ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const
-
     function rulesSurface() {
         return `
     [[surfaces.overlays]]
@@ -115,43 +113,10 @@ export function createGeneratedCommandFixture() {
     `).join('')
     }
 
-    function customHarness(module: string, exportName = 'renderRules', spelling = 'custom/rules.md') {
-        const capabilities = surfaceFeatures.map((feature) => feature === 'rules'
-            ? `{ feature = "rules", state = "instructed", measured_on = "2026-09-26", spelling = ${JSON.stringify(spelling)}, control = "controls/rules.json", mechanism = { module = ${JSON.stringify(module)}, export = ${JSON.stringify(exportName)} } }`
-            : `{ feature = ${JSON.stringify(feature)}, state = "unavailable", measured_on = "2026-09-26", reason = "No synthetic ${feature} mechanism" }`)
-        return `
-    [[surfaces.harnesses]]
-    name = "synthetic-harness"
-    capabilities = [${capabilities.join(', ')}]
-    `
-    }
-
-    function enforcedCustomHarness(module: string, evidenceSha256: string, evidenceReference = 'evidence/rules.json') {
-        const capabilities = surfaceFeatures.map((feature) => feature === 'rules'
-            ? `{ feature = "rules", state = "enforced", measured_on = "2026-09-26", spelling = "custom/rules.md", control = "controls/rules.json", mechanism = { module = ${JSON.stringify(module)}, export = "renderRules" }, evidence = { reference = ${JSON.stringify(evidenceReference)}, sha256 = ${JSON.stringify(evidenceSha256)} } }`
-            : `{ feature = ${JSON.stringify(feature)}, state = "unavailable", measured_on = "2026-09-26", reason = "No synthetic ${feature} mechanism" }`)
-        return `
-    [[surfaces.harnesses]]
-    name = "synthetic-harness"
-    capabilities = [${capabilities.join(', ')}]
-    `
-    }
-
-    function unavailableCustomHarness() {
-        const capabilities = surfaceFeatures.map((feature) =>
-            `{ feature = ${JSON.stringify(feature)}, state = "unavailable", measured_on = "2026-09-26", reason = "No synthetic ${feature} mechanism" }`)
-        return `
-    [[surfaces.harnesses]]
-    name = "synthetic-harness"
-    capabilities = [${capabilities.join(', ')}]
-    `
-    }
-
     async function surfaceConsumer(name: string, options: {
         readonly rules?: boolean
         /** The declaration of `approved-server` in the sibling's `.mcp.json`, which the configuration approves. */
         readonly mcp?: { readonly command: string; readonly envNames?: readonly string[] }
-        readonly bundles?: boolean
         readonly custom?: string
         readonly siblingDirectory?: string
         readonly parentDirectory?: string
@@ -184,7 +149,6 @@ export function createGeneratedCommandFixture() {
     `
         }
         if (options.rules) declaration += rulesSurface()
-        if (options.bundles) declaration += '\n[surfaces]\nbundles = ["claudecode-plugin"]\n'
         if (options.custom) declaration += options.custom
         await writeFile(result.configPath, declaration)
         return { ...result, siblingDirectory }
@@ -220,20 +184,6 @@ export function createGeneratedCommandFixture() {
         }
     }
 
-    async function writeCustomModule(root: string, files: readonly { path: string; bytes: string; scope?: 'always' | 'scoped' }[], exportName = 'renderRules') {
-        const relativePath = 'adapters/synthetic.mjs'
-        await mkdir(join(root, 'adapters'), { recursive: true })
-        const output = files.map(({ path, bytes: contents, scope = 'always' }) => ({
-            path, bytes: contents, sha256: digest(contents), scope,
-        }))
-        await writeFile(join(root, relativePath), `export async function ${exportName}(input) {
-      if (input.harness !== "synthetic-harness" || input.feature !== "rules" || !Array.isArray(input.sources)) throw new Error("invalid custom input")
-      return { kind: "complete", files: ${JSON.stringify(output)} }
-    }
-    `)
-        return relativePath
-    }
-
     async function ownership(root: string) {
         return JSON.parse(await readFile(join(root, '.cockpit/generated-environment-ownership.json'), 'utf8')) as Record<string, unknown>
     }
@@ -251,5 +201,5 @@ export function createGeneratedCommandFixture() {
         return Object.fromEntries(await Promise.all(paths.map(async (path) => [path, await readFile(join(root, path), 'utf8')])))
     }
 
-    return { roots, cleanup, canonicalOutputRead, publicationGroups, consumer, composeConsumer, skillSurfaces, customHarness, enforcedCustomHarness, unavailableCustomHarness, surfaceConsumer, digest, staleRemovalAuthority, writeCustomModule, ownership, runGeneratedGuard, bytes }
+    return { roots, cleanup, canonicalOutputRead, publicationGroups, consumer, composeConsumer, skillSurfaces, surfaceConsumer, digest, staleRemovalAuthority, ownership, runGeneratedGuard, bytes }
 }

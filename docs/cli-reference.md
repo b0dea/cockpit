@@ -195,7 +195,6 @@ Reads `cockpit.toml` from `--config`.
 | --- | --- | --- |
 | `--config` | string | unset |
 | `--dry-run` | boolean | `false` |
-| `--adopt` | string | unset |
 | `--interactive` | boolean | `false` |
 | `--json` | boolean | `false` |
 

@@ -3,6 +3,7 @@ import { constants } from 'node:fs'
 import { lstat, open } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { SURFACE_PUBLICATION_ANCHORS } from '../../surfaces/harness-registry.js'
+import { ADOPTED_SURFACE_ROOT } from '../../surfaces/contract.js'
 import {
     classifyGeneratedPaths,
     encodeOwnershipManifest,
@@ -119,13 +120,10 @@ export async function inputSourcesCurrent(
         }
         const reads = await readAnchoredBatches(prepared.root, [
             { path: prepared.configSource.path, maxBytes: MAX_GENERATED_BYTES, action: 'read-file' as const },
-            ...prepared.customSources.map(source => ({ path: source.path, maxBytes: source.maxBytes, action: 'read-file' as const })),
-            ...(prepared.nativeHookPolicySource ? [{ path: prepared.nativeHookPolicySource.path,
-                maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const }] : []),
             ...prepared.adoptedSources.map(source => ({ path: source.path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const })),
             ...prepared.composeSources.map(source => ({ path: source.path, maxBytes: COMPOSE_SOURCE_BYTES, action: 'read-file' as const })),
         ], prepared.node, adapters, deadline)
-        const adoptedOffset = prepared.customSources.length + 1 + (prepared.nativeHookPolicySource ? 1 : 0)
+        const adoptedOffset = 1
         const composeOffset = adoptedOffset + prepared.adoptedSources.length
         if ((deadline !== undefined && Date.now() >= deadline) || !reads || reads.kind !== 'complete'
             || reads.results.length !== composeOffset + prepared.composeSources.length) return false
@@ -136,16 +134,6 @@ export async function inputSourcesCurrent(
             && source.identity.file.dev === expected.file.dev && source.identity.file.ino === expected.file.ino
             && source.identity.chain.length === expected.chain.length
             && source.identity.chain.every((entry, index) => entry.dev === expected.chain[index]?.dev && entry.ino === expected.chain[index]?.ino)
-            && prepared.customSources.every((custom, index) => {
-                const read = reads.results[index + 1]!
-                return read.kind === 'complete' && read.sha256 === custom.sha256
-                    && sourceIdentity(read.identity) === sourceIdentity(custom.identity)
-            })
-            && (!prepared.nativeHookPolicySource || (() => {
-                const read = reads.results[prepared.customSources.length + 1]!
-                return read.kind === 'complete' && read.sha256 === prepared.nativeHookPolicySource.sha256
-                    && sourceIdentity(read.identity) === sourceIdentity(prepared.nativeHookPolicySource.identity)
-            })())
             && prepared.adoptedSources.every((adopted, index) => {
                 const read = reads.results[adoptedOffset + index]!
                 return read.kind === 'complete' && read.sha256 === adopted.sha256
@@ -186,8 +174,6 @@ export async function ownedInputOverlap(
         ...prepared.guideSources.observations.flatMap(observation => [observation.sourcePath, observation.contentPath]),
         ...prepared.sourceEvidence.filter((row): row is Extract<SurfaceInputEvidence, { kind: 'mcp' }> => row.kind === 'mcp')
             .map(evidence => resolve(evidence.root, evidence.path)),
-        ...prepared.customSources.map(source => resolve(prepared.root, source.path)),
-        ...(prepared.nativeHookPolicySource ? [resolve(prepared.root, prepared.nativeHookPolicySource.path)] : []),
         ...prepared.adoptedSources.map(source => resolve(prepared.root, source.path)),
     ]
     const requiredPresentPaths = new Set(presentInputPaths)
@@ -392,7 +378,7 @@ export function planObservedSurfaces(
 /** A hand edit to a merged adopted file belongs in its adopted copy; say so where the conflict is reported. */
 export function surfacePlanRefusal(prepared: PreparedEnvironment, diagnostic: SurfaceDiagnostic, unfinishedInit?: UnfinishedInit): RefusalOutcome {
     const adopted = diagnostic.code === 'SURFACE_STATE_CONFLICT'
-        ? prepared.registry.config.surfaces.adopted.find(row => row.path === diagnostic.target) : undefined
+        ? prepared.adoptedSources.find(source => source.path === `${ADOPTED_SURFACE_ROOT}/${diagnostic.target}`) : undefined
     // Plain sync met a setup file an unfinished init published and can no longer vouch for; the
     // person needs to hear about that init, not only that the file is unrecorded.
     if (diagnostic.code === 'SURFACE_STATE_CONFLICT' && unfinishedInit && !unfinishedInit.surfaces
@@ -401,8 +387,8 @@ export function surfacePlanRefusal(prepared: PreparedEnvironment, diagnostic: Su
             diagnostic.target, `resume that init with ${initCommand({ root: unfinishedInit.root, target: unfinishedInit.target })} and the options you started it with, which shows its current preview; or ask the person who ran init before you remove cockpit.toml and the files it published so init starts again`)
     }
     return adopted
-        ? refuse(diagnostic.code, `${diagnostic.message}; ${adopted.path} is merged from ${adopted.source}`, diagnostic.target,
-            `make the change in ${adopted.source}, then ask the person who owns the cockpit before you delete ${adopted.path}, and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>`)
+        ? refuse(diagnostic.code, `${diagnostic.message}; ${diagnostic.target} is merged from ${adopted.path}`, diagnostic.target,
+            `make the change in ${adopted.path}, then ask the person who owns the cockpit before you delete ${adopted.path}, and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>`)
         : refuse(diagnostic.code, diagnostic.message, diagnostic.target, diagnostic.fix)
 }
 
@@ -525,7 +511,7 @@ export async function preparePublication(
     const priorEntries = ownership.kind === 'complete' ? ownership.manifest.entries : []
     const priorSurfaces = [...priorEntries.filter((row): row is SurfacePriorOwnedEntry => 'harnesses' in row), ...(adoptedBootstrap ?? [])]
         .sort((left, right) => compareCodeUnits(left.path, right.path))
-    const prepared = await prepareSurfaces(base, priorSurfaces, adapters, ownership.kind === 'complete' ? ownership.manifest : undefined)
+    const prepared = await prepareSurfaces(base, priorSurfaces, adapters)
     if ('status' in prepared) return prepared
     const ownedInput = await ownedInputOverlap(prepared, priorEntries)
     if (ownedInput.kind === 'invalid') return refuse(

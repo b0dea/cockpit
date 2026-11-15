@@ -1259,7 +1259,7 @@ async function completeConfigurationDocument(
         else {
             const answer = testingRead.value
             const parsedTesting = answer && typeof answer === 'object' && !Array.isArray(answer)
-                ? Testing.safeParse({ native_hooks: { install: 'inspect' }, ...answer }) : undefined
+                ? Testing.safeParse(answer) : undefined
             if (!parsedTesting?.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
                 `the testing answer must be "none" or a [testing] table of stages and gates${parsedTesting
                     ? `: ${issueSummary(parsedTesting.error)}` : ''}`, testingQuestion.field)

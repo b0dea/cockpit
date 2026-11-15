@@ -168,5 +168,4 @@ The reference also lists the [defaults](configuration-reference.md#defaults) and
 | Guard rules | [`[[guards.allow]]`](configuration-reference.md#guardsallow), the `deny` row of [`[guards]`](configuration-reference.md#guards) | [Safety and autonomy](safety-and-autonomy.md) |
 | MCP approvals and tool restrictions | [`[mcp]`](configuration-reference.md#mcp) | [MCP servers and restrictions](harness-surfaces.md#mcp-servers-and-restrictions) |
 | Surface overlays | [`[[surfaces.overlays]]`](configuration-reference.md#surfacesoverlays) | [Ownership and extension](harness-surfaces.md#ownership-and-extension) |
-| Custom harnesses | [`[[surfaces.harnesses]]`](configuration-reference.md#surfacesharnesses) | [Custom harnesses](harness-surfaces.md#custom-harnesses) |
 | Living documents and decision records | [`[docs]`](configuration-reference.md#docs) | [Check living documents and decision records](docs-check.md) |

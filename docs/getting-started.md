@@ -95,8 +95,8 @@ A clean-looking configuration with invented values in it is the failure cockpit 
 The agent follows these rules for the whole setup:
 
 1. **Ask the human first, and wait for a yes,** before creating a Git remote or hosted repository,
-   running a destructive command (`reset`, `sync --interactive` removals, deleting files), running
-   `cockpit sync --adopt`, accepting an `init` digest, or changing a product repository in any way
+   running a destructive command (`reset`, `sync --interactive` removals, deleting files), moving a
+   team's settings file under `cockpit/adopted/`, accepting an `init` digest, or changing a product repository in any way
    the next sentences do not allow (adopting a test framework or a dependency, for example). A
    person approves or runs staging and the commit of the cockpit: the agent hands them the command.
    A Dockerfile, Compose file or `.env.schema` the product needs goes on a new branch in that
@@ -496,19 +496,17 @@ validation.
 ### Adopt existing agent settings
 
 cockpit writes `.claude/settings.json`, `.codex/config.toml` and `.codex/hooks.json` whole, so where
-a repository already commits one, a plain `sync` refuses with `SURFACE_STATE_CONFLICT` and names the
-command that keeps the team's settings:
+a repository already commits one, a plain `sync` refuses with `SURFACE_STATE_CONFLICT`. To keep the
+team's settings, a person moves the file under `cockpit/adopted/` at the same path and syncs:
 
 ```sh
+mkdir -p cockpit/adopted/.claude
+git mv .claude/settings.json cockpit/adopted/.claude/settings.json
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml
-./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --adopt .claude/settings.json
-./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml
 ```
 
-`--adopt <path>` can be repeated, once per file. It moves the file to `cockpit/adopted/<path>`,
-records a <!-- cockpit:ref schema=surfaces.adopted --> `surfaces.adopted` row in cockpit.toml (path,
-source, SHA-256 of the moved bytes, date, provenance), and syncs. The file at `<path>` becomes
-cockpit's merge of the adopted copy and its own version:
+Every `sync` and `check` merges whatever `cockpit/adopted/<path>` holds. The file at `<path>`
+becomes cockpit's merge of the adopted copy and its own version:
 
 - **Hooks:** the team's hooks are kept beside cockpit's guard hook. `PreToolUse` entries are
   combined; any other hook event both sides define must be identical.
@@ -521,8 +519,8 @@ cockpit's merge of the adopted copy and its own version:
 
 Commit `cockpit/adopted/` with cockpit.toml. To change the settings, edit the adopted copy, delete
 the merged file and run `sync`; `check` reports a hand-edited merged file, or an adopted copy
-changed since the last merge, and `sync` refuses the former. The recorded SHA-256 says which bytes
-were moved; it is not a lock.
+changed since the last merge, and `sync` refuses the former. The guard treats the adopted copies as
+its own files, so a person makes these edits.
 
 Adoption is refused with `SURFACE_ADOPTION_REFUSED`, naming the key, when the file would switch off
 or route around the guard, or carries a setting cockpit declares elsewhere:
@@ -533,12 +531,9 @@ or route around the guard, or carries a setting cockpit declares elsewhere:
   MCP server instead);
 - in `.codex/config.toml`, `mcp_servers` and `features.codex_hooks = false`.
 
-Adoption reads and moves only regular files inside the cockpit root, so it also refuses redirected
-ancestors, links, special files and files that change while being read. A refusal is rolled back,
-leaving the file in place and cockpit.toml unchanged. If a concurrent replacement prevents a safe
-rollback, the refusal names every private recovery path that may still hold the original bytes, with
-their SHA-256; keep those paths until the source is restored. Adoption has no dry run or
-`--interactive` form, and an agent's guard never treats it as an ordinary command.
+Sync reads an adopted copy only as a regular file inside the cockpit root, so it also refuses
+links, special files and copies that change while being read, and a copy for a tool `[surfaces]
+tools` does not list.
 
 `opencode.jsonc` needs no adoption: cockpit writes only its `$schema`, `instructions`, `mcp` and
 `permission` keys and keeps the team's others.

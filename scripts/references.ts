@@ -158,7 +158,7 @@ async function capabilityCells(sources: ReferenceSources) {
     const shipped = shippedSkillSources(assets, SURFACE_TARGETS)
     if (!shipped) throw new Error('shipped skill sources are incomplete')
     const skillSources = shipped.flatMap(skill => skill.sources)
-    const skills = await inspectSkillSet({ sources: skillSources, tools: SURFACE_TARGETS, collection, procedures })
+    const skills = await inspectSkillSet({ sources: skillSources, collection, procedures })
     if (skills.kind !== 'complete') throw new Error(`shipped skills: ${skills.diagnostics.map(row => row.message).join('; ')}`)
     const cells: CapabilityCell[] = []
     for (const row of restrictions.targets) {
@@ -556,7 +556,6 @@ export async function renderReferences(sources: ReferenceSources): Promise<reado
                 `| ${code(`--${flag}`)} | ${option.type} | ${'default' in option ? code(JSON.stringify(option.default)) : 'unset'} |\n`).join('')
             + '\n| Exit | Meaning |\n| --- | --- |\n' + exits).join('\n')
     const caps = SURFACE_TARGETS.map(target => `| ${target} | ${collection.metric} | ${collection.caps[target]} | each skill's procedure |\n`).join('')
-    const entrypoints = collection.entrypoints.map(entry => `| ${code(sourcePathOf(entry.path))} | ${entry.metric} | ${entry.cap} | ${code(sourcePathOf(entry.displacement))} |\n`).join('')
     const configuration = documentHeading('Configuration reference')
         + 'This generated reference is for users authoring or reviewing `cockpit.toml`. It is generated from the schema cockpit validates against, so it matches this version. '
         + 'For the handful of tables a typical cockpit sets, start with [Configuration essentials](configuration-essentials.md).\n\n'
@@ -565,10 +564,9 @@ export async function renderReferences(sources: ReferenceSources): Promise<reado
         + '## Defaults\n\nThe values cockpit uses for a key the configuration leaves out.\n\n```json\n' + JSON.stringify(defaults, null, 2) + '\n```\n\n'
         + renderConfigurationTables(JSON.parse(renderCockpitSchema()) as SchemaNode) + '\n'
         + '## Skill size limits\n\n'
-        + 'Agent tools load every skill\'s frontmatter into each session and its entry point whenever the skill is used, so cockpit caps both and keeps the detail in a procedure file the agent reads only when it needs it. '
+        + 'Agent tools load every skill\'s frontmatter into each session, so cockpit caps its total size per tool; the shipped skills keep their detail in a procedure file the agent reads only when it needs it. '
         + `The limits come from ${code(sourcePathOf(collection.source.path))}, SHA-256 ${code(collection.source.sha256)}.\n\n`
         + '| Target | Measured as | Limit | Detail moved to |\n| --- | --- | --- | --- |\n' + caps + '\n'
-        + '| Skill entry point | Measured as | Limit | Detail moved to |\n| --- | --- | --- | --- |\n' + entrypoints + '\n'
         + `Each procedure is read on demand and has no size limit: ${listed(collection.procedures.map(row => `${code(sourcePathOf(row.path))} (SHA-256 ${code(row.sha256)})`))}.\n\n`
         + `<!-- cockpit:ref schema=cockpit.guide_cap --> ${code('cockpit.guide_cap')} limits always-loaded guidance to ${defaults.cockpit.guide_cap} lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.\n`
     const list = documentHeading('Command list')

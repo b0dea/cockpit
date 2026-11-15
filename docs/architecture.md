@@ -90,4 +90,4 @@ generated file does not show that its harness loaded it. The owner of each step 
 | A public command | Add it to `packages/cockpit/src/command-table.ts`, bind it in `packages/cockpit/src/cli.ts`, and order environment work through `packages/cockpit/src/environment/application/`. |
 | A schema field | Only together with the code that consumes it. |
 | A diagnostic | With one actionable remedy in [Troubleshooting](troubleshooting.md). |
-| A harness capability claim | Probe the exact version beside a deliberately broken control; until then it stays `instructed` or `unavailable`. See [Custom harnesses](harness-surfaces.md#custom-harnesses). |
+| A harness capability claim | Probe the exact version beside a deliberately broken control; until then it stays `instructed` or `unavailable`. See [Capability states](harness-surfaces.md#capability-states). |

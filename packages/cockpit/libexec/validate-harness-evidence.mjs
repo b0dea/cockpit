@@ -558,7 +558,7 @@ export function validateEvidenceManifest(manifest, root = process.cwd(), options
 
 const SELFTEST_CAPABILITIES = ['instruction-loading', 'guard-firing', 'skill-parity']
 const SELFTEST_VERDICTS = ['enforced', 'instructed', 'unavailable']
-const SELFTEST_HUMAN_REASONS = ['executable_missing', 'authentication_required', 'isolation_unavailable', 'enforcement_probe_required', 'native_protocol_unsupported', 'guard_host_undeclared', 'probe_failed']
+const SELFTEST_HUMAN_REASONS = ['executable_missing', 'authentication_required', 'isolation_unavailable', 'native_protocol_unsupported', 'guard_host_undeclared', 'probe_failed']
 const SELFTEST_SAMPLE_FEATURES = ['name', 'trigger', 'body-load', 'tools', 'non-goals']
 const SELFTEST_EVENT_RESULTS = ['completed', 'rejected', 'accepted', 'refused', 'allowed', 'unavailable']
 const SELFTEST_ZERO_EXIT_RESULTS = ['completed', 'accepted', 'allowed']
@@ -577,8 +577,6 @@ const SELFTEST_MAX_STREAM_BYTES = 65_536
 export const NATIVE_SELFTEST_STREAM_BYTES = 1_048_576
 const SELFTEST_MAX_TEXT_BYTES = 4_096
 const SELFTEST_DIGEST = /^[a-f0-9]{64}$/
-const SELFTEST_CUSTOM_ID = /^(?!(?:claudecode|codexcli|opencode)$)[a-z0-9][a-z0-9-]{0,127}$/
-const SELFTEST_EXPORT = /^[A-Za-z_$][A-Za-z0-9_$]{0,127}$/
 const SELFTEST_CODE = /^[A-Z][A-Z0-9_]*$/
 const SELFTEST_SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,127}$/
 
@@ -797,26 +795,6 @@ function validateSelftestHarness(value, name, errors) {
             return null
         }
         return `builtin:${value.target}`
-    }
-    if (value.kind === 'custom') {
-        if (!exactKeys(value, ['kind', 'id', 'declarationSha256', 'module', 'sourceSha256', 'export'])) {
-            errors.push(`${name} has unknown custom harness fields`)
-        }
-        if (!isText(value.id) || !SELFTEST_CUSTOM_ID.test(value.id)) errors.push(`${name}.id is invalid`)
-        for (const field of ['declarationSha256', 'sourceSha256']) {
-            if (!isText(value[field]) || !SELFTEST_DIGEST.test(value[field])) errors.push(`${name}.${field} must be a lowercase SHA-256 digest`)
-        }
-        // Mirrors reservedPathSegment in surfaces/contract.ts; this standalone module cannot import it.
-        const moduleSegments = isText(value.module) ? value.module.split('/') : []
-        if (!isText(value.module) || Buffer.byteLength(value.module) > 4_096 || isAbsolute(value.module)
-            || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value.module) || value.module.includes('\\')
-            || /[\x00-\x1f\x7f]/.test(value.module)
-            || moduleSegments.some(segment => segment === '' || segment === '.' || segment === '..'
-                || ['.GIT', 'NODE_MODULES'].includes(segment.normalize('NFC').toUpperCase()))) {
-            errors.push(`${name}.module must be a confined relative path`)
-        }
-        if (!isText(value.export) || !SELFTEST_EXPORT.test(value.export)) errors.push(`${name}.export is invalid`)
-        return isText(value.id) ? `custom:${value.id}` : null
     }
     errors.push(`${name}.kind is unknown`)
     return null
@@ -1061,15 +1039,6 @@ function validateSelftestEvidence(record, expectedHarness, root, options, errors
         if (canonical && (!isText(authority?.executable) || !isAbsolute(authority.executable)
             || !existsSync(authority.executable) || realpathSync(authority.executable) !== canonical)) {
             errors.push('built-in authority executable does not match invocation')
-        }
-    } else if (expectedHarness?.kind === 'custom') {
-        const authority = record.authority
-        if (!exactKeys(authority, ['kind', 'harnessId', 'module', 'sourceSha256', 'export', 'stepId', 'startedAt', 'finishedAt'])
-            || authority.kind !== 'custom-module' || authority.harnessId !== expectedHarness.id
-            || authority.module !== expectedHarness.module || authority.sourceSha256 !== expectedHarness.sourceSha256
-            || authority.export !== expectedHarness.export || !boundedText(authority.stepId, 128)
-            || authority.startedAt !== record.startedAt || authority.finishedAt !== record.finishedAt) {
-            errors.push('custom authority does not match expected harness identity')
         }
     }
 

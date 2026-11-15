@@ -67,7 +67,6 @@ function bootstrapSkillInput(assets: ReadonlyMap<string, AuthenticatedAsset>, to
     sources: readonly SurfaceSourceFile[]
     collection: AuthenticatedAsset
     procedures: readonly AuthenticatedAsset[]
-    tools: readonly SurfaceTarget[]
 }> | undefined {
     const skills = shippedSkillSources(assets, tools)
     const collection = assets.get('skills/collection.json')
@@ -75,7 +74,7 @@ function bootstrapSkillInput(assets: ReadonlyMap<string, AuthenticatedAsset>, to
     if (!skills || !collection || procedures.some(row => row === undefined)) return undefined
     const pick = ({ path, bytes, sha256: digest }: AuthenticatedAsset) => ({ path, bytes, sha256: digest })
     return { sources: skills.flatMap(skill => skill.sources), collection: pick(collection),
-        procedures: (procedures as AuthenticatedAsset[]).map(pick), tools }
+        procedures: (procedures as AuthenticatedAsset[]).map(pick) }
 }
 
 async function selectedBootstrapAssets(

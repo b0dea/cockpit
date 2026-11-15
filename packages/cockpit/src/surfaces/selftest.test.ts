@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 
 import type { GeneratedSurfaceSelftestProjection } from '../environment/generated-application/shared.js'
-import { snapshotGeneratedJson } from '../environment/contract.js'
 import { classifySurfaceOwnership, type SurfaceDesiredEntry } from './ownership.js'
 import {
     planSurfaceSelftest,
@@ -36,41 +35,14 @@ function projection(): GeneratedSurfaceSelftestProjection {
     const ownership = classifySurfaceOwnership({ configuredHarnesses, entries })
     if (ownership.kind !== 'complete') throw new Error(ownership.diagnostic.message)
     const payload = {
-        schema: 'cockpit-generated-surface-selftest/v1' as const, configuredHarnesses,
-        declarations: Object.freeze([]), entries: ownership.entries, custom: Object.freeze([]),
+        schema: 'cockpit-generated-surface-selftest/v1' as const, configuredHarnesses, entries: ownership.entries,
     }
     return Object.freeze({ ...payload, manifestSha256: sha256(JSON.stringify(payload)) })
 }
 
-function overlappingCustomGuards(duplicate = true): GeneratedSurfaceSelftestProjection {
-    const source = projection()
-    const features = ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const
-    const mechanism = { module: 'adapters/synthetic.mjs', export: 'render' }
-    const capabilities = features.map((feature) => feature === 'hooks' || duplicate && feature === 'permissions'
-        ? { feature, state: 'instructed' as const, measured_on: '2026-09-26', spelling: `app/${feature}.json`, control: `controls/${feature}.json`, mechanism }
-        : { feature, state: 'unavailable' as const, measured_on: '2026-09-26', reason: 'No synthetic mechanism' })
-    const payload: Omit<GeneratedSurfaceSelftestProjection, 'manifestSha256'> = {
-        schema: source.schema,
-        configuredHarnesses: [...source.configuredHarnesses, 'synthetic'],
-        declarations: [{ name: 'synthetic', capabilities }],
-        entries: source.entries,
-        custom: (duplicate ? ['hooks', 'permissions'] : ['hooks']).map((feature) => ({
-            harness: 'synthetic', feature: feature as 'hooks' | 'permissions', state: 'instructed' as const,
-            measuredOn: '2026-09-26', module: mechanism.module, export: mechanism.export,
-            sourceSha256: 'a'.repeat(64), resultSha256: sha256(feature), sources: [{ path: `${feature}.jsonc`, bytes: '{}' }],
-        })),
-    }
-    const captured = snapshotGeneratedJson(payload) as Omit<GeneratedSurfaceSelftestProjection, 'manifestSha256'> | undefined
-    if (!captured) throw new Error('custom selftest projection could not be captured')
-    return { ...payload, manifestSha256: sha256(JSON.stringify({
-        schema: captured.schema, configuredHarnesses: captured.configuredHarnesses,
-        declarations: captured.declarations, entries: captured.entries, custom: captured.custom,
-    })) }
-}
-
 function specifications(source: GeneratedSurfaceSelftestProjection): readonly SelftestProbeSpecification[] {
     const expectation = surfaceSelftestExpectation(source)!
-    return expectation.cells.flatMap((cell) => cell.harness.kind !== 'builtin' ? [] : [{
+    return expectation.cells.map((cell) => ({
         harness: cell.harness,
         capability: cell.capability,
         invocation: ['{executable}', '--probe', cell.capability, '{control}'],
@@ -83,7 +55,7 @@ function specifications(source: GeneratedSurfaceSelftestProjection): readonly Se
         sample: cell.capability === 'skill-parity'
             ? { skill: cell.skill, features: ['name', 'trigger', 'body-load', 'tools', 'non-goals'] }
             : null,
-    }])
+    }))
 }
 
 describe('surface selftest planning', () => {
@@ -91,13 +63,11 @@ describe('surface selftest planning', () => {
         const source = projection()
         const payload = { ...source, configuredHarnesses: [...source.configuredHarnesses, 'cursor', 'grokcli'].sort() }
         const complete = { ...payload, manifestSha256: sha256(JSON.stringify({
-            schema: payload.schema, configuredHarnesses: payload.configuredHarnesses,
-            declarations: payload.declarations, entries: payload.entries, custom: payload.custom,
+            schema: payload.schema, configuredHarnesses: payload.configuredHarnesses, entries: payload.entries,
         })) }
         const expectation = surfaceSelftestExpectation(complete)
         expect(expectation).toBeDefined()
-        expect(expectation?.cells.some(cell => cell.harness.kind === 'builtin'
-            && ['cursor', 'grokcli'].includes(cell.harness.target))).toBe(false)
+        expect(expectation?.cells.some(cell => ['cursor', 'grokcli'].includes(cell.harness.target))).toBe(false)
     })
 
     it('derives the closed built-in matrix and refuses altered source authority', () => {
@@ -131,12 +101,5 @@ describe('surface selftest planning', () => {
             '2026-09-27T10:00:00.000Z', 'Authenticate the harness and rerun the probe',
         )).toEqual(expect.objectContaining({ kind: 'human_needed', reason: 'authentication_required' }))
         expect(surfaceSelftestReviews(planned.expectation, [])).toHaveLength(6)
-    })
-
-    it('refuses overlapping custom guard features that cannot each have an exact cell', () => {
-        expect(surfaceSelftestExpectation(overlappingCustomGuards(false))).toBeDefined()
-        const source = overlappingCustomGuards()
-        expect(classifySurfaceOwnership({ configuredHarnesses: source.configuredHarnesses, entries: source.entries }).kind).toBe('complete')
-        expect(surfaceSelftestExpectation(source)).toBeUndefined()
     })
 })

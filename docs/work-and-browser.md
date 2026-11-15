@@ -68,12 +68,13 @@ npx --no cockpit work signoff --config cockpit.toml --work-order WO-1
 npx --no cockpit work status --config cockpit.toml
 ```
 
-An order moves draft → accepted → checked → graded → done. `work status` also shows three states it
+An order moves draft → accepted → graded → done. `work status` also shows three states it
 derives: **stale** when the file or a source changed since acceptance, **blocked** while an open
 question waits or the attempt cap is reached, and **draft** before acceptance. `partial` and
 `abandoned` are closures. The work-in-progress cap, `work.wip_cap`, counts accepted orders that are
-not closed, and `work accept` refuses a new one past it. A failed check or grade counts an attempt;
-at `work.attempt_cap` the order is blocked until it is closed, by whoever
+not closed, and `work accept` refuses a new one past it. A grade whose verdict is `unmet` counts an
+attempt; a failed check does not, since its cause may be cockpit's. Under `checks` and `off` nothing
+judges, so there is no cap. At `work.attempt_cap` the order is blocked until it is closed, by whoever
 [`[work.gates]`](#who-passes-each-gate) names for `signoff`, or given fresh attempts; the refusal
 names who. An amendment a person or CI accepts resets the count. One the agent accepts keeps it, or
 reordering a list in its own contract would undo the cap. When the contract is right and the
@@ -86,7 +87,7 @@ contract and base. The record keeps the failed count, the cause and, in brief, w
 - **accept** records the contract. Run it again after editing an accepted order to accept the change
   (an [amendment](#amendments)). The check base stays the commits recorded at first acceptance.
 - **check** runs every criterion's check and the order's gates, in the order the contract lists
-  them.
+  them. It records nothing: it is feedback before a grade.
 - **grade** grades the order the way [`[work] grading`](#how-an-order-earns-done) says, and reports
   every changed file outside `scope` since the base commits under `outOfScope` (the order's record
   keeps the first 512 and, past them, the count as `outOfScopeTotal`). Where a model
@@ -225,9 +226,8 @@ refusing a nested run show only when a grade runs; whether an agent can spawn a 
 observed ahead of time (`SUBAGENT_AVAILABILITY_UNOBSERVED` says so). Under `checks`, `self` or `off`
 it says nothing about evaluators, though `cockpit grade --criteria` runs one in every mode.
 
-`subagent` needs the generated evaluator definition: `check` and `sync` refuse it for a declared
-harness without one. Every shipped tool has one, and the [capability matrix](capability-matrix.md)
-records which tools were shown to offer it. Cursor and Grok Build have no guard, cannot be listed in
+`subagent` needs the generated evaluator definition. Every shipped tool has one, and the
+[capability matrix](capability-matrix.md) records which tools were shown to offer it. Cursor and Grok Build have no guard, cannot be listed in
 `work.evaluators` and are only ever listed beside a guarded tool. From them, `independent` runs a
 listed Claude Code, Codex or OpenCode on `PATH`; `subagent` writes the definition, which no run has
 shown either tool offering; `checks`, `self` and `off` need no tool.
@@ -523,8 +523,8 @@ with 2xx.
 - **Artifact roots.** The three `browser.artifacts` paths, listed as
   `environment.generated_host_paths`. The screenshot command creates the `cli` root when it is
   missing.
-- **A measured harness row.** The commands drive through a `browser.harnesses` row whose version
-  cockpit has measured; the rendered skill reports other versions as unavailable.
+- **A harness row.** The commands drive through a `browser.harnesses` row, at any version of that
+  agent tool.
 
 cockpit does not run a browser service or a browser debugger. To let an agent drive a browser
 through its own Playwright MCP tools, run a browser service in your own Compose file and name its
@@ -606,9 +606,3 @@ selection to the product's own tool and never substitutes a made-up pass. Every 
 same result, with each stage's observation; any verdict but PASS also exits non-zero with
 `TEST_GATE_UNSATISFIED`.
 
-<!-- cockpit:ref schema=testing.native_hooks.install --> Native hooks are inspect-only by default.
-Writing native hook output needs a policy tied to cockpit's ownership record and a measurement of
-its cost. Rendering a hook and describing how to activate it does not switch on the Git hook path. A
-person must install it and check separately that it works. Leave `native_hooks` out to keep that
-default; declare `native_hooks = { install = "explicit-native" }` only together with
-`native_hook_policy`.

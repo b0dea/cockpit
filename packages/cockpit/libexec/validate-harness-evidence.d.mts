@@ -49,15 +49,7 @@ export type BuiltinHarnessRef =
     | { kind: 'builtin'; target: 'claudecode'; name: 'Claude Code' }
     | { kind: 'builtin'; target: 'codexcli'; name: 'Codex' }
     | { kind: 'builtin'; target: 'opencode'; name: 'OpenCode' }
-export interface CustomHarnessRef {
-    kind: 'custom'
-    id: string
-    declarationSha256: string
-    module: string
-    sourceSha256: string
-    export: string
-}
-export type SelftestHarnessRef = BuiltinHarnessRef | CustomHarnessRef
+export type SelftestHarnessRef = BuiltinHarnessRef
 export type SelftestCellKey =
     | { harness: SelftestHarnessRef; capability: 'instruction-loading' | 'guard-firing' }
     | { harness: SelftestHarnessRef; capability: 'skill-parity'; skill: string }
@@ -92,17 +84,7 @@ export interface BuiltinExecutionAuthority {
     name: 'Claude Code' | 'Codex' | 'OpenCode'
     executable: string
 }
-export interface CustomExecutionAuthority {
-    kind: 'custom-module'
-    harnessId: string
-    module: string
-    sourceSha256: string
-    export: string
-    stepId: string
-    startedAt: string
-    finishedAt: string
-}
-export type SelftestExecutionAuthority = BuiltinExecutionAuthority | CustomExecutionAuthority
+export type SelftestExecutionAuthority = BuiltinExecutionAuthority
 export interface SelftestSample { skill: string; features: readonly string[] }
 export interface SelftestEvidenceRecord {
     protocol?: 'codex-prompt-input/v1' | 'claude-model-input/v1' | 'codex-skill-input/v1' | 'claude-guard-loopback/v1'
@@ -140,7 +122,7 @@ export type SelftestHumanNeededRecord = {
     harness: SelftestHarnessRef
     generatedManifestSha256: string
     observedAt: string
-    reason: 'executable_missing' | 'authentication_required' | 'isolation_unavailable' | 'enforcement_probe_required' | 'native_protocol_unsupported' | 'guard_host_undeclared' | 'probe_failed'
+    reason: 'executable_missing' | 'authentication_required' | 'isolation_unavailable' | 'native_protocol_unsupported' | 'guard_host_undeclared' | 'probe_failed'
     operatorAction: string
 } & (
     | { capability: 'instruction-loading' | 'guard-firing' }

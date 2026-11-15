@@ -79,7 +79,6 @@ artifacts = { mcp = ".browser/mcp", cli = ".browser/cli", auth = ".browser/auth"
 [testing]
 stages = [{ id = "unit", command = ["npm", "test"], requires_stack = false }]
 gates = [{ id = "focused", tier = "targeted", stages = ["unit"], changes = "Isolated behavior" }]
-native_hooks = { install = "inspect" }
 `
 
 function fixture(bytes: string | Buffer = validConfig): string {
@@ -313,7 +312,7 @@ cold_start_seconds = 30
                 data: { mode: 'empty', isolated: true, reachesProduction: false },
                 artifacts: { mcp: '.browser/mcp', cli: '.browser/cli', auth: '.browser/auth' },
             },
-            testing: { nativeHookInstall: 'inspect', declarations: { stages: [{ id: 'unit', command: ['npm', 'test'], requiresStack: false }] } },
+            testing: { declarations: { stages: [{ id: 'unit', command: ['npm', 'test'], requiresStack: false }] } },
         })
 
         expect(consumed).not.toHaveProperty('staleParkDays')

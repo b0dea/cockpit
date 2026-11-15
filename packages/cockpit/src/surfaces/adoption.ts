@@ -2,9 +2,8 @@
  * Owns the merge of a team's adopted harness settings file with cockpit's rendering of the same
  * path, and the refusals that stop an adopted file from switching off or bypassing the guard.
  *
- * It is pure: callers read the adopted copy and supply cockpit's rendered bytes. It does not
- * decide which files are adopted (cockpit.toml's `[[surfaces.adopted]]` rows do), and it never
- * writes; the generated application publishes the merged bytes as an ordinary whole-file surface.
+ * It is pure: callers read the adopted copy and supply cockpit's rendered bytes. A file is adopted
+ * when it exists under cockpit/adopted/ at its harness path, and this module never writes; the generated application publishes the merged bytes as an ordinary whole-file surface.
  */
 import { parse as parseToml, stringify as stringifyToml, TomlError } from 'smol-toml'
 
@@ -82,7 +81,7 @@ function guardHookReference(value: Record<string, unknown>, file: string): Extra
  * - `mcp_servers`: written from the approved MCP servers.
  * - `features.codex_hooks = false`: the generator treats it as Codex's hook feature switch.
  */
-export function inspectAdoptedSettings(path: AdoptableSurfacePath, bytes: string, file: string = adoptedCopyPath(path)): AdoptedSettingsInspection {
+function inspectAdoptedSettings(path: AdoptableSurfacePath, bytes: string, file: string = adoptedCopyPath(path)): AdoptedSettingsInspection {
     const parsed = parse(path, bytes, file)
     if (parsed.kind !== 'complete') return parsed
     const value = parsed.value

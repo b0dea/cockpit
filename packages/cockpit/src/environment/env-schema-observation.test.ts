@@ -50,6 +50,13 @@ async function trackedSchemas(repository: string, ...relative: string[]) {
     git(repository, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '--quiet', '-m', 'fixture')
 }
 
+// An invalid or uncheckable schema warns rather than failing the row: the row passes and carries
+// what is wrong and its fix.
+function unhealthy(observation: { observed: { state: string; value?: unknown } }): { reason: string; remedy: string } | undefined {
+    expect(observation.observed.state).toBe('available')
+    return (observation.observed.value as { state?: string; reason: string; remedy: string }[]).find(entry => entry.state === 'unhealthy')
+}
+
 async function observe(space: Awaited<ReturnType<typeof workspace>>, env: Record<string, string> = {}, cockpitRoot = space.cockpit) {
     const resolved = await resolveGitExecutable(process.env)
     if (resolved.state !== 'available') throw new Error('git is unavailable')
@@ -159,11 +166,11 @@ describe('env schema discovery and load paths', () => {
 
         const linked = await observe(space)
         expect(linked.varlock).toEqual([])
-        expect(linked.observation.observed).toMatchObject({ state: 'unavailable', reason: expect.stringContaining(`${space.central} is a symbolic link`) })
+        expect(unhealthy(linked.observation)).toMatchObject({ reason: expect.stringContaining(`${space.central} is a symbolic link`) })
 
         await rm(space.central)
         await writeFile(space.central, 'not a directory\n')
-        expect((await observe(space)).observation.observed).toMatchObject({ state: 'unavailable', reason: expect.stringContaining(`${space.central} is not a directory`) })
+        expect(unhealthy((await observe(space)).observation)).toMatchObject({ reason: expect.stringContaining(`${space.central} is not a directory`) })
 
         await rm(space.central)
         const store = join(space.central, '..')
@@ -171,7 +178,7 @@ describe('env schema discovery and load paths', () => {
         try {
             const denied = await observe(space)
             expect(denied.varlock).toEqual([])
-            expect(denied.observation.observed).toMatchObject({ state: 'unavailable', reason: expect.stringContaining(`${space.central} could not be inspected`) })
+            expect(unhealthy(denied.observation)).toMatchObject({ reason: expect.stringContaining(`${space.central} could not be inspected`) })
         } finally {
             await chmod(store, 0o700)
         }
@@ -189,16 +196,16 @@ describe('env schema discovery and load paths', () => {
         await writeFile(join(space.api, '.git', 'index'), 'not an index')
         const refused = await observe(space)
         expect(refused.varlock).toEqual([])
-        expect(refused.observation.observed).toMatchObject({ state: 'unavailable', reason: expect.stringMatching(/api \(\.\): tracked schemas could not be listed: Git failed: fatal: .*index/) })
+        expect(unhealthy(refused.observation)).toMatchObject({ reason: expect.stringMatching(/api \(\.\): tracked schemas could not be listed: Git failed: fatal: .*index/) })
 
         await rm(join(space.api, '.git'), { recursive: true })
         await trackedSchemas(space.api, ...Array.from({ length: 64 }, (_, index) => `services/s${index}`))
-        expect((await observe(space)).observation.observed).toMatchObject({ state: 'unavailable', reason: expect.stringContaining('tracks more than 64 schemas') })
+        expect(unhealthy((await observe(space)).observation)).toMatchObject({ reason: expect.stringContaining('tracks more than 64 schemas') })
 
         // A name that cannot be shown could hide a schema, so it is no clean listing.
         await rm(join(space.api, '.git'), { recursive: true })
         await trackedSchemas(space.api, 'services/line\nbreak')
-        expect((await observe(space)).observation.observed).toMatchObject({ state: 'unavailable', reason: expect.stringContaining('control or undecodable characters') })
+        expect(unhealthy((await observe(space)).observation)).toMatchObject({ reason: expect.stringContaining('control or undecodable characters') })
     })
 
     it('leaves a missing sibling to the row that reports it', async () => {
@@ -268,7 +275,7 @@ describe('env schema commit gate', () => {
         await trackedSchemas(space.cockpit, '')
         await writeFile(join(space.cockpit, '.git', 'index'), 'not an index')
         const failed = await observe(space)
-        expect(failed.observation.observed).toMatchObject({ state: 'unavailable', reason: expect.stringMatching(/cockpit root \(\.\): Git failed/) })
+        expect(unhealthy(failed.observation)).toMatchObject({ reason: expect.stringMatching(/cockpit root \(\.\): Git failed/) })
         expect(await ran()).toBe(false)
     })
 })
@@ -282,14 +289,14 @@ describe('env schema report categories', () => {
         return observation
     }
 
-    it('reports a provider it cannot resolve through as unavailable, naming keys only and how to recover', async () => {
+    it('reports a provider it cannot resolve through as uncheckable, naming keys only and how to recover', async () => {
         // A provider can say "required" too; only the exact empty-value message proves a key is missing.
         for (const message of [`exec(): command failed (exit code 3): ${SECRET}`, 'Unable to coerce string to number', `credential ${SECRET} is required`]) {
             const observation = await classified({ configItems: { API_KEY: message } })
-            expect(observation.observed).toMatchObject({ state: 'unavailable', reason: 'env schema could not be checked: api (.): could not validate or resolve API_KEY' })
-            expect(observation.remedy).toContain('a secret provider may be signed out or unreachable: sign in to it, then rerun')
-            expect(observation.remedy).toContain('VARLOCK_TELEMETRY_DISABLED=true varlock load --path <schema directory> --path <cockpit root>/env/.secrets/synthetic/<slug>[/<relative dir>]')
-            expect(observation.remedy).toContain('cockpit doctor on a cockpit that declares no runtime')
+            expect(unhealthy(observation)).toMatchObject({ reason: 'env schema could not be checked: api (.): could not validate or resolve API_KEY' })
+            expect(unhealthy(observation)!.remedy).toContain('a secret provider may be signed out or unreachable: sign in to it, then rerun')
+            expect(unhealthy(observation)!.remedy).toContain('VARLOCK_TELEMETRY_DISABLED=true varlock load --path <schema directory> --path <cockpit root>/env/.secrets/synthetic/<slug>[/<relative dir>]')
+            expect(unhealthy(observation)!.remedy).toContain('cockpit doctor on a cockpit that declares no runtime')
         }
     })
 
@@ -301,28 +308,27 @@ describe('env schema report categories', () => {
         const space = await workspace(`echo 'exec(): command failed: ${SECRET}' >&2\ncat <<'JSON'\n${body}\nJSON\nexit 1`)
         await trackedSchemas(space.api, '')
         const { observation } = await observe(space)
-        expect(observation.observed).toMatchObject({ state: 'failed' })
+        expect(unhealthy(observation)).toBeDefined()
         expect(JSON.stringify(observation)).not.toContain(SECRET)
     })
 
-    it('fails the row only for a key that is actually missing or a schema that does not load', async () => {
+    it('calls a schema invalid only for a key that is actually missing or a schema that does not load', async () => {
         const mixed = await classified({ configItems: { API_KEY: REQUIRED_EMPTY, REGION: `exec(): command failed (exit code 3): ${SECRET}` } })
-        expect(mixed.observed).toMatchObject({ state: 'failed', reason: 'env schema is invalid in api (.): missing required API_KEY; could not validate or resolve REGION' })
-        expect(mixed.remedy).toContain('signed out')
+        expect(unhealthy(mixed)).toMatchObject({ reason: 'env schema is invalid in api (.): missing required API_KEY; could not validate or resolve REGION' })
+        expect(unhealthy(mixed)!.remedy).toContain('signed out')
 
         const missing = await classified({ configItems: { API_KEY: REQUIRED_EMPTY } })
-        expect(missing.observed).toMatchObject({ state: 'failed', reason: 'env schema is invalid in api (.): missing required API_KEY' })
-        expect(missing.remedy).not.toContain('signed out')
+        expect(unhealthy(missing)).toMatchObject({ reason: 'env schema is invalid in api (.): missing required API_KEY' })
+        expect(unhealthy(missing)!.remedy).not.toContain('signed out')
 
-        expect((await classified({ root: [`plugin ${SECRET} failed`] })).observed)
-            .toMatchObject({ state: 'failed', reason: 'env schema is invalid in api (.): schema could not be loaded' })
+        expect(unhealthy(await classified({ root: [`plugin ${SECRET} failed`] })))
+            .toMatchObject({ reason: 'env schema is invalid in api (.): schema could not be loaded' })
     })
 
-    it('carries an unavailable schema into a failing row beside the invalid one', async () => {
+    it('reports an uncheckable schema beside the invalid one', async () => {
         const space = await workspace(`case "$*" in *services/web*) ${report({ configItems: { REGION: 'exec(): command failed' } })} ;; *) ${report({ configItems: { API_KEY: REQUIRED_EMPTY } })} ;; esac`)
         await trackedSchemas(space.api, 'services/web', '')
-        expect((await observe(space)).observation.observed).toMatchObject({ state: 'failed',
-            reason: 'env schema is invalid in api (.): missing required API_KEY; could not be checked: api (services/web): could not validate or resolve REGION' })
+        expect(unhealthy((await observe(space)).observation)).toMatchObject({ reason: 'env schema is invalid in api (.): missing required API_KEY; could not be checked: api (services/web): could not validate or resolve REGION' })
     })
 })
 
@@ -348,7 +354,7 @@ describe('env schema caller environment', () => {
         const space = await workspace(report(undefined, { overrideKeys: [`${SECRET}=value`] }))
         await trackedSchemas(space.api, '')
         const { observation } = await observe(space)
-        expect(observation.observed).toMatchObject({ state: 'unavailable', reason: expect.stringContaining('unrecognised shape') })
+        expect(unhealthy(observation)).toMatchObject({ reason: expect.stringContaining('unrecognised shape') })
         expect(JSON.stringify(observation)).not.toContain(SECRET)
     })
 })

@@ -6,10 +6,9 @@ import { fileURLToPath } from 'node:url'
 import { renderBrowserSurfaces } from '../../browser/surfaces.js'
 import { resolveBrowserRuntime } from '../../browser/runtime.js'
 import { resolveObservationPostures } from '../posture-observation.js'
-import { SURFACE_FEATURES, SURFACE_TARGETS, type RenderedSurfaceFile, type SurfaceSourceFile, type SurfaceTarget } from '../../surfaces/contract.js'
-import { subagentGradingProblem } from '../../grading/evaluate.js'
+import { ADOPTABLE_SURFACE_PATHS, SURFACE_FEATURES, SURFACE_TARGETS, type RenderedSurfaceFile, type SurfaceSourceFile, type SurfaceTarget } from '../../surfaces/contract.js'
 import { GUARD_SURFACE_TARGETS, harnessFact, isGuardSurfaceTarget, listedSurfaceTargets } from '../../surfaces/harness-registry.js'
-import { mergeAdoptedSurface } from '../../surfaces/adoption.js'
+import { adoptedCopyPath, mergeAdoptedSurface } from '../../surfaces/adoption.js'
 import { generateSurfaceEstate } from '../../surfaces/generator-adapter.js'
 import { mergeSurfaceDeclarations } from '../../surfaces/merge.js'
 import {
@@ -23,7 +22,6 @@ import { collectMcpDeclarations, mcpApprovalDigest, parseMcpDeclarationFile } fr
 import {
     bindSurfaceOwnershipIdentity,
     renderSharedPostimage,
-    type OwnershipManifest,
     type SurfaceDesiredEntry,
     type SurfacePriorOwnedEntry,
 } from '../../surfaces/ownership.js'
@@ -34,7 +32,7 @@ import {
     type ProjectionPlannerInput,
     type StandingCost,
 } from '../../surfaces/projection.js'
-import { renderSurfaceSet, type CustomSurfaceReceipt, type SurfaceInputEvidence } from '../../surfaces/render.js'
+import { renderSurfaceSet, type SurfaceInputEvidence } from '../../surfaces/render.js'
 import { stripDevelopmentMarkers } from '../../surfaces/development-markers.js'
 import { renderConsumerInstructions } from '../../surfaces/consumer-instructions.js'
 import { expandRestrictions } from '../../surfaces/restrictions.js'
@@ -48,14 +46,11 @@ import { checkoutId, cockpitId, stackId } from '../identity.js'
 import { resolveLifecycleStage } from '../lifecycle-stage.js'
 import { observeConfiguration, selectStateRoot } from '../state.js'
 import { TESTING_GUIDE_REGISTRY, createGateRegistry, renderTierGuide } from '../../testing/gates.js'
-import { projectNativeHooks } from '../../testing/hooks.js'
 import { refusalOutcome as refuse } from '../../refusal.js'
 import {
     type AdoptedSourceIdentity,
     CODEX_PROJECT_DOC_BYTES,
     type ConsumedWorkApplicationAuthorities,
-    type CustomSourceIdentity,
-    type GeneratedCustomSurfaceSelftestInput,
     type GeneratedEnvironmentCommandAdapters,
     type GeneratedSurfaceHealthEvidence,
     type GeneratedSurfaceSelftestProjection,
@@ -87,9 +82,7 @@ import {
     GUIDE_LOAD_CHARACTERIZATIONS,
     alwaysLoadedRule,
     bindNativeGrantsToMcp,
-    claudePluginManifest,
     emptyGeneration,
-    expectedClaudePluginOutputs,
     expectedSurfaceOutputs,
     nativeFragmentSet,
     nativeGrantFragmentSet,
@@ -98,21 +91,16 @@ import {
     nativeSources,
     openCodeReadDenials,
 } from './surface-outputs.js'
-import { executeCustomCapability, projectExplicitNativeHooks } from './custom-surface.js'
 
 export async function prepareSurfaces(
     prepared: PreparedEnvironment,
     priorOwned: readonly SurfacePriorOwnedEntry[],
     adapters: GeneratedEnvironmentCommandAdapters,
-    manifest?: OwnershipManifest,
 ): Promise<PreparedEnvironment | RefusalOutcome> {
     const config = prepared.registry.config
     // Only the listed tools are rendered and drift-checked; an unlisted tool's files become stale.
     const tools = listedSurfaceTargets(config.surfaces.tools)
     const guardedTools = GUARD_SURFACE_TARGETS.filter(target => tools.includes(target))
-    // Accepted, this would tell an agent to spawn a definition that was never written.
-    const noDefinition = config.work.grading === 'subagent' ? subagentGradingProblem(config.surfaces.harnesses) : undefined
-    if (noDefinition) return refuse(noDefinition.code, noDefinition.message, 'work.grading', noDefinition.fix)
     // Generated files are one per checkout, so they follow the declared default profile set; a
     // profile one run adds with `up --profile` reaches the stack, not the agents' instructions.
     const selected = mounted(config, config.environment.profiles)
@@ -197,9 +185,6 @@ export async function prepareSurfaces(
         : config.mcp.approved
     let mcp = collectMcpDeclarations({ cockpitDirectory: prepared.root, declarations, approved, allowedTools: config.mcp.allowed_tools, targets: tools })
     if (mcp.kind !== 'complete') return refuse(mcp.diagnostic.code, mcp.diagnostic.message, mcp.diagnostic.server)
-    if (config.surfaces.bundles.includes('claudecode-plugin') && mcp.result.servers.some(server => server.allowedTools !== undefined)) {
-        return refuse('MCP_DECLARATION_INVALID', 'Restricted MCP servers cannot be bundled as a Claude plugin: plugin-scoped tool names have no measured restriction transport; remove the bundle or use the project MCP configuration', 'claudecode-plugin')
-    }
     const unapprovedMcpServers = mcp.diagnostics.filter(row => row.code === 'MCP_NOT_APPROVED' && row.server !== undefined)
         .map(row => ({ name: row.server!, sha256: row.sha256!, sources: (row.sources ?? []).map(source =>
             source.kind === 'sibling' ? `${source.slug}:${source.path}` : source.path) }))
@@ -318,24 +303,7 @@ export async function prepareSurfaces(
     const testingRegistry = prepared.workEnvironment.testing
         ? createGateRegistry(prepared.workEnvironment.testing.declarations)
         : TESTING_GUIDE_REGISTRY
-    const configuredHarnesses = [...tools, ...config.surfaces.harnesses.map(row => row.name)].sort()
-    const testingConfiguration = prepared.workEnvironment.testing
-    const explicitNativeHooks = testingConfiguration?.nativeHookInstall === 'explicit-native'
-        ? testingConfiguration.nativeHookPolicy
-            ? await projectExplicitNativeHooks(prepared, manifest, adapters, testingConfiguration.nativeHookPolicy, configuredHarnesses)
-            : undefined
-        : undefined
-    const nativeHooks = testingConfiguration?.nativeHookInstall === 'explicit-native'
-        ? explicitNativeHooks?.projection
-        : await projectNativeHooks({
-            cockpitId: prepared.cockpitId,
-            harnesses: configuredHarnesses,
-            install: 'inspect',
-        })
-    if (!nativeHooks) return refuse('SURFACE_INPUT_INVALID', 'explicit native hook policy or measurement is unavailable', '.githooks/pre-push')
-    if (testingConfiguration?.nativeHookInstall === 'explicit-native' && nativeHooks.kind !== 'complete') {
-        return refuse('SURFACE_INPUT_INVALID', nativeHooks.reason, '.githooks/pre-push')
-    }
+    const configuredHarnesses = [...tools].sort()
     const coreAssets = new Map(assets.map(row => [row.path, row] as const))
     // The browser server as Claude Code gets it, so the evaluator's tool list admits exactly its tools.
     const claudeBrowser = browser ? mcp.result.harnesses.find(row => row.target === 'claudecode')?.servers.find(server => server.name === 'playwright') : undefined
@@ -363,23 +331,9 @@ export async function prepareSurfaces(
     const features = SURFACE_FEATURES.filter(feature => generatedSources.some(source => source.path === `${feature}.jsonc`
         || source.path.startsWith(`${feature}/`) || feature === 'rules' && source.path.startsWith('rules/')
         || feature === 'subagents' && source.path.startsWith('subagents/') || feature === 'skills' && source.path.startsWith('skills/')))
-    const bundleEntries: SurfaceDesiredEntry[] = []
     const expected = expectedSurfaceOutputs(tools, features, generatedSources)
-    const bundleRequest = config.surfaces.bundles.includes('claudecode-plugin') ? (() => {
-        const bundleFeatures = features.filter(feature => feature === 'mcp' || feature === 'subagents'
-            || feature === 'skills' || feature === 'hooks')
-        const bundleSources = generatedSources.filter(source => source.path === 'mcp.jsonc' || source.path === 'hooks.jsonc'
-            || source.path.startsWith('subagents/') || source.path.startsWith('skills/'))
-        return {
-            format: 'claudecode-plugin' as const,
-            features: bundleFeatures,
-            sources: bundleSources,
-            expectedOutputs: expectedClaudePluginOutputs(bundleFeatures, bundleSources),
-        }
-    })() : undefined
     const estate = generatedSources.length === 0 ? undefined : await generateSurfaceEstate({
         batch: { targets: tools, features, sources: generatedSources, expectedOutputs: expected },
-        ...(bundleRequest ? { bundle: bundleRequest } : {}),
     })
     if (estate && estate.kind !== 'complete') {
         // The generator prints its warnings before the error that stopped it, then a stack; lead with
@@ -392,36 +346,7 @@ export async function prepareSurfaces(
             ...said.length > 1 ? [`generator output: ${said.slice(0, -1).join(' ')}`] : []]
             .filter((part): part is string => part !== undefined).join('; '), failure?.target)
     }
-    const generated = estate?.kind === 'complete' && estate.batch ? estate.batch : emptyGeneration()
-
-    if (config.surfaces.bundles.includes('claudecode-plugin')) {
-        const bundle = estate?.kind === 'complete' ? estate.bundle : undefined
-        if (!bundle) return refuse('SURFACE_GENERATION_FAILED', 'Claude plugin bundle generation was refused', 'claudecode-plugin')
-        const manifest = claudePluginManifest()
-        // A bundled skill must carry the references its SKILL.md tells the agent to read.
-        const references = bundle.files.some(file => file.path === `skills/${SHIPPED_SETUP_SKILL}/SKILL.md`)
-            ? REFERENCE_ASSETS.map(path => {
-                const bytes = stripDevelopmentMarkers(asset(path).bytes)
-                return { path: `skills/${SHIPPED_SETUP_SKILL}/${path}`, bytes, sha256: sha256(bytes) }
-            }) : []
-        const files = [
-            { path: '.claude-plugin/plugin.json', ...manifest },
-            ...bundle.files,
-            ...references,
-        ]
-        for (const file of files) bundleEntries.push({
-            kind: 'file' as const,
-            ownership: 'whole-file' as const,
-            path: `.cockpit/bundles/claudecode-plugin/${file.path}`,
-            bytes: file.bytes,
-            sha256: file.sha256,
-            harnesses: ['claudecode'] as readonly ['claudecode'],
-            scope: 'always' as const,
-            capability: 'instructed' as const,
-            writer: 'cockpit' as const,
-            schemaVersion: 1 as const,
-        })
-    }
+    const generated = estate?.kind === 'complete' ? estate.batch : emptyGeneration()
 
     const skillSources = generatedSources.filter(source => source.path.startsWith('skills/'))
     const skillAsset = (path: SurfaceAssetPath) => {
@@ -493,21 +418,6 @@ export async function prepareSurfaces(
     const listedRestrictions = { ...restrictions,
         targets: restrictions.targets.filter(row => tools.includes(row.target)) }
 
-    const customReceipts: CustomSurfaceReceipt[] = []
-    const customSources: CustomSourceIdentity[] = []
-    const customSelftest: GeneratedCustomSurfaceSelftestInput[] = []
-    for (const harness of config.surfaces.harnesses) for (const capability of harness.capabilities) {
-        if (capability.state === 'unavailable') continue
-        const sources = merge.surfaces.filter(surface => surface.feature === capability.feature).flatMap(surface => surface.sources)
-            .map(source => ({ path: source.path, bytes: source.bytes })).sort((left, right) => compareCodeUnits(left.path, right.path))
-        const result = await executeCustomCapability(prepared, adapters, harness.name, capability, sources)
-        if (!result) return refuse('SURFACE_CUSTOM_REFUSED', 'a custom harness capability did not return an authenticated complete file set', `${harness.name}:${capability.feature}`)
-        customReceipts.push(result.receipt)
-        customSources.push(...result.sources)
-        const { harness: name, feature, state, measuredOn, module, export: exportName, sourceSha256, resultSha256 } = result.receipt
-        customSelftest.push({ harness: name, feature, state, measuredOn, module, export: exportName, sourceSha256, resultSha256, sources,
-            ...(result.evidence ? { evidence: result.evidence } : {}) })
-    }
     const mcpTargets = mcp.result.harnesses.filter(row => row.servers.length > 0).map(row => row.target)
     // OpenCode's permission block carries its read and guard-file denials as well as directory grants,
     // so it is written for a listed OpenCode whether or not any sibling is granted.
@@ -556,8 +466,7 @@ export async function prepareSurfaces(
     const rendered = renderSurfaceSet({ configuredHarnesses, merge, generated, projection, mcp, restrictions: listedRestrictions, instructions,
         nativeMcp, nativeGrants, browser, browserReference: browser ? asset('references/browser.md').bytes : null,
         skillReferences: REFERENCE_ASSETS.map(path => ({ skill: SHIPPED_SETUP_SKILL, path, bytes: asset(path).bytes })),
-        testing: { tierGuide, nativeHooks },
-        customHarnesses: config.surfaces.harnesses, customReceipts, sourceEvidence: evidence })
+        testing: { tierGuide }, sourceEvidence: evidence })
     if (rendered.kind !== 'complete') return refuse(rendered.diagnostic.code, rendered.diagnostic.message, rendered.diagnostic.target)
     const adopted = await mergeAdoptedSurfaces(prepared, rendered.entries, configuredHarnesses, adapters)
     if ('status' in adopted) return adopted
@@ -594,7 +503,7 @@ export async function prepareSurfaces(
     }
     const bound = bindSurfaceOwnershipIdentity(adoptedEntries, prepared.cockpitId)
     if (bound.kind !== 'complete') return refuse(bound.diagnostic.code, bound.diagnostic.message, bound.diagnostic.target)
-    const surfaceEntries = [...bound.entries, ...bundleEntries]
+    const surfaceEntries = [...bound.entries]
         .sort((left, right) => compareCodeUnits(left.path, right.path))
     const browserSkillFiles: RenderedSurfaceFile[] = []
     const renderedBrowserSkills = browser?.files.filter(file => file.path.endsWith('/skills/cockpit-browser/SKILL.md')) ?? []
@@ -645,12 +554,8 @@ export async function prepareSurfaces(
     if (rootGuideBytes > CODEX_PROJECT_DOC_BYTES) return guideBytesExceeded(rootGuideBytes)
     const overCap = actualGuideCosts.filter(cost => cost.status === 'exceeded').sort((left, right) => right.value - left.value)[0]
     if (overCap) return guideCapExceeded(overCap)
-    if (explicitNativeHooks && !surfaceEntries.some(entry => entry.kind === 'file'
-        && entry.path === explicitNativeHooks.source.path && entry.sha256 === explicitNativeHooks.source.sha256)) {
-        return refuse('SURFACE_INPUT_INVALID', 'native hook policy must remain an exact desired owned surface', explicitNativeHooks.source.path)
-    }
     if (new Set(surfaceEntries.map(entry => entry.path)).size !== surfaceEntries.length) {
-        return refuse('SURFACE_PATH_CONFLICT', 'generated surface and bundle paths collide', 'surfaces')
+        return refuse('SURFACE_PATH_CONFLICT', 'generated surface paths collide', 'surfaces')
     }
     if (new Set([...prepared.owned, ...surfaceEntries].map(entry => entry.path)).size !== prepared.owned.length + surfaceEntries.length) {
         return refuse('SURFACE_PATH_CONFLICT', 'generated environment and surface paths collide', 'surfaces')
@@ -672,9 +577,7 @@ export async function prepareSurfaces(
     const selftestPayload = {
         schema: 'cockpit-generated-surface-selftest/v1' as const,
         configuredHarnesses,
-        declarations: config.surfaces.harnesses,
         entries: surfaceEntries,
-        custom: customSelftest.sort((left, right) => compareCodeUnits(`${left.harness}\0${left.feature}`, `${right.harness}\0${right.feature}`)),
         ...(guardProbeHost ? { guardProbeHost } : {}),
         ...(typeof guardHookCommand === 'string' ? { guardHookCommand } : {}),
         ...(cockpitHookCommands.length > 0 ? { cockpitHookCommands } : {}),
@@ -684,7 +587,7 @@ export async function prepareSurfaces(
     const captured = snapshotGeneratedJson(selftestPayload) as unknown as Omit<GeneratedSurfaceSelftestProjection, 'manifestSha256'> | undefined
     if (!captured) return refuse('SURFACE_BOUNDS', 'authenticated selftest inputs exceed the captured bounds', 'surfaces')
     const payload = { schema: captured.schema, configuredHarnesses: selftestPayload.configuredHarnesses,
-        declarations: captured.declarations, entries: surfaceEntries, custom: captured.custom,
+        entries: surfaceEntries,
         ...(captured.guardProbeHost ? { guardProbeHost: captured.guardProbeHost } : {}),
         ...(captured.guardHookCommand ? { guardHookCommand: captured.guardHookCommand } : {}),
         ...(captured.cockpitHookCommands ? { cockpitHookCommands: captured.cockpitHookCommands } : {}),
@@ -714,8 +617,7 @@ export async function prepareSurfaces(
         skills: installedSkillInspection.skills,
         skillCollectionSha256: skillInspection.collection.source.sha256,
     }
-    const customSurfacePaths = new Set(customReceipts.flatMap(receipt => receipt.files.map(file => file.path)))
-    const compactSurfacePaths = new Set(generated.files.map(file => file.path).filter(path => !customSurfacePaths.has(path)))
+    const compactSurfacePaths = new Set(generated.files.map(file => file.path))
     const evaluator = asset(EVALUATOR_ASSET)
     const workApplication: WorkApplicationAuthorityRecord = {
         workEnvironment: prepared.workEnvironment,
@@ -750,9 +652,8 @@ export async function prepareSurfaces(
                 .sort((left, right) => compareCodeUnits(left.sourcePath, right.sourcePath)),
             missing: [...observedGuides.missing].sort(compareCodeUnits),
         },
-        sourceEvidence: evidence, sourceRoots, customSources,
+        sourceEvidence: evidence, sourceRoots,
         adoptedSources: adopted.sources,
-        ...(explicitNativeHooks ? { nativeHookPolicySource: explicitNativeHooks.source } : {}),
         surfaceAssets: assets.map(({ path, sha256: digest, identity }) => ({ path, sha256: digest, identity })),
         workApplication,
         warnings: [...rendered.warnings] }
@@ -761,9 +662,9 @@ export async function prepareSurfaces(
 const ADOPTED_HARNESS = Object.freeze({ '.claude/settings.json': 'claudecode', '.codex/config.toml': 'codexcli', '.codex/hooks.json': 'codexcli' } as const)
 
 /**
- * Replace each adopted harness settings file in the rendered set with the merge of the team's
- * adopted copy and cockpit's rendering. The copy is read through the same anchored reader as every
- * other input and recorded, so publication refuses if it changes before the write.
+ * Replace each harness settings file the team keeps under cockpit/adopted/ with the merge of that
+ * copy and cockpit's rendering. The copy is read through the same anchored reader as every other
+ * input and recorded, so publication refuses if it changes before the write.
  */
 async function mergeAdoptedSurfaces(
     prepared: PreparedEnvironment,
@@ -771,14 +672,19 @@ async function mergeAdoptedSurfaces(
     configuredHarnesses: readonly string[],
     adapters: GeneratedEnvironmentCommandAdapters,
 ): Promise<Readonly<{ entries: readonly SurfaceDesiredEntry[]; sources: readonly AdoptedSourceIdentity[] }> | RefusalOutcome> {
-    const rows = prepared.registry.config.surfaces.adopted
-    if (rows.length === 0) return { entries, sources: [] }
     const merged = [...entries]
     const sources: AdoptedSourceIdentity[] = []
-    for (const row of rows) {
+    for (const path of ADOPTABLE_SURFACE_PATHS) {
+        const row = { path, source: adoptedCopyPath(path) }
+        // Most cockpits adopt nothing; a plain lstat spares each absent copy an anchored helper read.
+        try { await lstat(join(prepared.root, row.source)) } catch (error) {
+            if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) continue
+            return refuse('SURFACE_ADOPTION_REFUSED', `the adopted copy ${row.source} could not be inspected: ${errorCause(error)}`, row.source)
+        }
         const read = await readAnchoredFile(prepared.root, row.source, MAX_SURFACE_FILE_BYTES, prepared.node, adapters)
+        if (read.kind === 'missing') continue
         if (read.kind !== 'complete') return refuse('SURFACE_ADOPTION_REFUSED',
-            `the adopted copy of ${row.path} is ${read.kind === 'missing' ? 'missing' : 'not a bounded regular file'}; restore ${row.source} or remove its [[surfaces.adopted]] row`, row.source)
+            `the adopted copy ${row.source} is not a bounded regular file; replace it with the plain settings file or remove it`, row.source)
         let bytes: string
         try { bytes = new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) } catch {
             // undecodable bytes are malformed input the caller refuses.
@@ -790,7 +696,7 @@ async function mergeAdoptedSurfaces(
         const result = mergeAdoptedSurface(row.path, bytes, current?.bytes)
         if (result.kind !== 'complete') return refuse(result.diagnostic.code, result.diagnostic.message, result.diagnostic.target)
         const harness = ADOPTED_HARNESS[row.path]
-        if (!configuredHarnesses.includes(harness)) return refuse('SURFACE_ADOPTION_REFUSED', `${row.path} belongs to ${harness}, which this cockpit does not configure`, row.path)
+        if (!configuredHarnesses.includes(harness)) return refuse('SURFACE_ADOPTION_REFUSED', `${row.source} belongs to ${harness}, which this cockpit does not configure; list ${harness} in [surfaces] tools or remove the file`, row.source)
         const entry: SurfaceDesiredEntry = current
             ? { ...current, bytes: result.bytes, sha256: sha256(result.bytes) }
             : { kind: 'file', path: row.path, harnesses: [harness] as [string], scope: 'always', capability: 'instructed', writer: 'cockpit',

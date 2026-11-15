@@ -9,10 +9,7 @@ cockpit:
     codexcli: [shell]
     opencode: [bash]
   commands: [doctor, check, preflight, ps, stacks]
-  changes: [nothing]
-  non-goals: [editing configuration, starting services, repairing drift]
   procedure: procedures/explain.md
-  review: { mechanical: cockpit-skill-contract, judgment: pending }
   entry-point-lines: 7
 claudecode:
   allowed-tools: [Bash]

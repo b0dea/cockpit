@@ -31,7 +31,6 @@ export function renderCockpitSchema(): string {
     const environmentProperties = environment.properties as Record<string, JsonSchema>
     const browser = properties.browser as JsonSchema
     const browserProperties = browser.properties as Record<string, JsonSchema>
-    const testing = properties.testing as JsonSchema
     const mcpProperties = properties.mcp.properties as Record<string, JsonSchema>
     const toolLists = mcpProperties.allowed_tools
     toolLists.maxProperties = 256
@@ -51,10 +50,6 @@ export function renderCockpitSchema(): string {
         { properties: { data: { required: ['mode', 'isolated', 'reaches_production'], properties: {
             mode: { enum: ['empty', 'seeded'] }, isolated: { enum: [true] }, reaches_production: { enum: [false] },
         } } } },
-    ]
-    testing.oneOf = [
-        { properties: { native_hooks: { properties: { install: { enum: ['inspect'] } } } }, not: { required: ['native_hook_policy'] } },
-        { properties: { native_hooks: { properties: { install: { enum: ['explicit-native'] } }, required: ['install'] } }, required: ['native_hooks', 'native_hook_policy'] },
     ]
 
     sibling.allOf = [
@@ -128,12 +123,6 @@ export function renderCockpitSchema(): string {
         { path: 'surfaces.overlays[].sources', rule: 'feature_namespace_and_complete_skill_definitions' },
         { path: 'surfaces.overlays[].sources[].bytes', rule: 'utf8_byte_length_at_most_65536' },
         { path: 'surfaces.overlays[].replaces.name', rule: 'matches_declaration_name' },
-        { path: 'surfaces.harnesses[].name', rule: 'unique' },
-        { path: 'surfaces.harnesses[].capabilities', rule: 'one_row_per_surface_feature' },
-        { path: 'surfaces.harnesses[].capabilities[].spelling', rule: 'unique_when_emitted' },
-        { path: 'surfaces.adopted[].path', rule: 'unique' },
-        { path: 'surfaces.adopted[].source', rule: 'equals_cockpit/adopted/<path>' },
-        { path: 'surfaces.adopted[].provenance.kind', rule: 'declared' },
     ]
     schema['x-cockpit-editor-limitations'] = [
         { path: 'sibling[].environment_files[].instance', rule: 'unique' },
@@ -153,12 +142,6 @@ export function renderCockpitSchema(): string {
         { path: 'surfaces.overlays[].sources', rule: 'feature_namespace_and_complete_skill_definitions' },
         { path: 'surfaces.overlays[].sources[].bytes', rule: 'utf8_byte_length_at_most_65536' },
         { path: 'surfaces.overlays[].replaces.name', rule: 'matches_declaration_name' },
-        { path: 'surfaces.harnesses[].name', rule: 'unique' },
-        { path: 'surfaces.harnesses[].capabilities', rule: 'one_row_per_surface_feature' },
-        { path: 'surfaces.harnesses[].capabilities[].spelling', rule: 'unique_when_emitted' },
-        { path: 'surfaces.adopted[].path', rule: 'unique' },
-        { path: 'surfaces.adopted[].source', rule: 'equals_cockpit/adopted/<path>' },
-        { path: 'surfaces.adopted[].provenance.kind', rule: 'declared' },
     ]
 
     // Found by shape, so every table that embeds a provenance carries the rule, wherever it sits.
@@ -166,9 +149,9 @@ export function renderCockpitSchema(): string {
         const fields = node.properties as Record<string, JsonSchema> | undefined
         if (fields?.observed_on && fields.kind && fields.source) {
             node.anyOf = [
-                { properties: { kind: { enum: ['declared'] } } },
-                { properties: { kind: { enum: ['measured'] } }, required: ['observed_on'] },
-                { properties: { kind: { enum: ['inferred'] }, confirmed: { enum: [true] } }, required: ['confirmed', 'observed_on'] },
+                { not: { required: ['kind'] } },
+                { properties: { kind: { enum: ['declared', 'measured'] } } },
+                { properties: { kind: { enum: ['inferred'] }, confirmed: { enum: [true] } }, required: ['confirmed'] },
             ]
         }
         for (const value of Object.values(node)) {

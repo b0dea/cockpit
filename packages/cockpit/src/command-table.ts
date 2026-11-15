@@ -100,7 +100,6 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     'accept-reset': 'Accept the displayed answer reset with its exact SHA-256 digest',
     abandon: 'Close the order as abandoned; --note says why',
     clear: 'Serve the sibling from its declared checkout again',
-    adopt: 'Move one existing harness settings path under cockpit ownership',
     adoption: 'Path to the legacy adoption shell data',
     answers: 'Path to the init answers file',
     ask: 'Record the note as an open question, which blocks the order until it is answered',
@@ -375,12 +374,11 @@ const sources = [
         summary: 'Write the Compose ownership override and agent files from cockpit.toml',
         handler: 'sync',
         visibility: 'public',
-        // Adoption rewrites cockpit.toml and moves a team's harness settings, so it stays a person's. A
-        // real sync rewrites the guard's own files from a configuration the guard already pins, and
+        // A real sync rewrites the guard's own files from a configuration the guard already pins, and
         // applies an edit that widens it only once a person confirms it, so it is an agent's only where
         // [autonomy] sync = "agent".
-        ordinary: ordinary('sync', { forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'adopt']) }), requires: 'autonomy-sync' }),
-        flags: { config: configFlag, 'dry-run': bool(flag), adopt: { type: 'string', multiple: true }, interactive: bool(), json: jsonFlag },
+        ordinary: ordinary('sync', { forbidden: Object.freeze({ presence: Object.freeze(['interactive']) }), requires: 'autonomy-sync' }),
+        flags: { config: configFlag, 'dry-run': bool(flag), interactive: bool(), json: jsonFlag },
     },
     {
         name: 'check',

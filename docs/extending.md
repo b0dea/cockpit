@@ -17,7 +17,6 @@ manages only the generated files in its ownership manifest.
 | External tool server | `[mcp]` and `sibling[].derives.mcp_sources` | Point a sibling at its MCP declaration file (a JSON `mcpServers` object) and approve the server by the digest `sync` reports; keep credentials outside tracked files. |
 | Extra guard policy | `[[guards.allow]]` and `[[guards.deny]]` | Match an exact command, starting with its executable, and state the reason. Prefer a deny with a safe fix when a known alternative exists. Neither weakens cockpit's hard boundaries. |
 | Your own automation | files beside `cockpit.toml` | Put scripts and task-runner files outside generated paths, then refer to them from declarations and overlays. |
-| Additional harness | `[[surfaces.harnesses]]` | Declare every feature with its spelling or the reason it is unavailable; verify each claimed control beside a broken control. |
 
 ## Build beside cockpit
 
@@ -25,8 +24,8 @@ Keep the product's `Makefile`, task runner or scripts your own, so people and CI
 without cockpit:
 
 1. Expose a narrow target, such as `make verify`.
-2. Add a skill overlay that tells agents when to use it. Put the procedure in its own file with
-   `loading: pull` and `budget: uncapped` frontmatter, so agents load it only when needed.
+2. Add a skill overlay with a `name` and a `description` that tells agents when to use it. Put the
+   procedure in its own file beside it, so agents load it only when needed.
 3. Add an exact guard allow for the target, with a reason.
 
 The [extended example](../examples/extended/README.md) shows this pattern.

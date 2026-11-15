@@ -321,7 +321,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
                 'libexec/fenced-group-runner.cjs',
                 'libexec/fenced-supervisor.cjs',
                 'libexec/generated-filesystem.cjs',
-                'libexec/install-filesystem.cjs',
                 'libexec/native-selftest-guard.d.mts',
                 'libexec/native-selftest-guard.mjs',
                 'libexec/native-selftest-input.d.mts',
@@ -355,7 +354,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
             'libexec/fenced-group-runner.cjs',
             'libexec/fenced-supervisor.cjs',
             'libexec/generated-filesystem.cjs',
-            'libexec/install-filesystem.cjs',
             'libexec/native-selftest-guard.d.mts',
             'libexec/native-selftest-guard.mjs',
             'libexec/native-selftest-input.d.mts',
@@ -390,9 +388,9 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
     })
 
     it('ships the filesystem helper as non-executable data for the resolved Node executable', () => {
-        const helper = join(packedPackageRoot(), 'libexec/install-filesystem.cjs')
+        const helper = join(packedPackageRoot(), 'libexec/generated-filesystem.cjs')
         const archiveRoot = join(packScratch, 'archive-mode')
-        const archiveEntry = 'package/libexec/install-filesystem.cjs'
+        const archiveEntry = 'package/libexec/generated-filesystem.cjs'
         mkdirSync(archiveRoot)
         execFileSync('/usr/bin/tar', [
             '-xzpf', join(packScratch, 'artifact', packedArtifact().filename),
@@ -405,39 +403,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         const direct = spawnSync(helper, [], { cwd: tmpdir(), encoding: 'utf8' })
         expect(direct.status).not.toBe(0)
         expect((direct.error as NodeJS.ErrnoException | undefined)?.code).toBe('EACCES')
-    })
-
-    it('runs the installed helper outside the checkout with a malformed control beside it', () => {
-        const installed = packedPackageRoot()
-        const helper = join(installed, 'libexec/install-filesystem.cjs')
-        const root = join(packScratch, 'installed-helper-root')
-        const hostileBin = join(packScratch, 'hostile-helper-bin')
-        const marker = join(packScratch, 'hostile-node-ran')
-        mkdirSync(root)
-        mkdirSync(hostileBin)
-        writeFileSync(join(hostileBin, 'node'), `#!/bin/sh\nprintf ran > ${JSON.stringify(marker)}\nexit 91\n`, { mode: 0o700 })
-        const requestId = '11111111-1111-4111-8111-111111111111'
-        const request = JSON.stringify({ version: 1, requestId, operation: 'ensure-directory', root, segments: ['cache'] })
-        const options = { cwd: tmpdir(), encoding: 'utf8' as const, env: { ...process.env, PATH: hostileBin } }
-
-        const valid = spawnSync(process.execPath, [helper, request], options)
-        const broken = spawnSync(process.execPath, [helper, '{"version":1}'], options)
-        const extraArgument = spawnSync(process.execPath, [helper, request, 'unexpected'], options)
-
-        expect(valid.status).toBe(0)
-        expect(valid.stderr).toBe('')
-        expect(JSON.parse(valid.stdout)).toEqual({
-            version: 1, requestId, kind: 'complete', path: join(root, 'cache'),
-            dev: expect.any(Number), ino: expect.any(Number),
-        })
-        expect(valid.stdout).toBe(`${JSON.stringify(JSON.parse(valid.stdout))}\n`)
-        expect(broken.status).toBe(2)
-        expect(broken.stdout).toBe('')
-        expect(broken.stderr).toContain('install-filesystem: invalid request envelope')
-        expect(extraArgument.status).toBe(2)
-        expect(extraArgument.stdout).toBe('')
-        expect(extraArgument.stderr).toContain('install-filesystem:')
-        expect(existsSync(marker)).toBe(false)
     })
 
     it('runs the packed CLI route without the maintainer checkout', () => {

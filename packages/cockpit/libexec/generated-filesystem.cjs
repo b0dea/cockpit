@@ -1,7 +1,7 @@
 'use strict'
 
 // Anchored filesystem operations for packages/cockpit/src/generated-environment/transaction.ts:
-// authenticated reads, adoption relocation, and the staged publication transaction (prepare,
+// authenticated reads and the staged publication transaction (prepare,
 // validate, publish, verify, commit, rollback). Runs from a staged snapshot, so it must stay
 // self-contained.
 //
@@ -369,166 +369,6 @@ const readBatch = () => {
     respond({ kind: 'complete', receiptBytes: receipt.length, receiptSha256: digest(receipt) })
 }
 
-const relocate = () => {
-    const base = process.cwd()
-    const destinationChain = []
-    const sourceCapture = name('.cockpit-adopt-source-' + request.nonce)
-    const destinationCapture = name('.cockpit-adopt-destination-' + request.nonce)
-    const destinationPolicy = request.action === 'restore-file' ? anchoredName : name
-    let sourceCapturePath
-    let sourceMode
-    let sourceCaptured = false
-    let sourceRestored = false
-    let originalRetired = false
-    let destinationCreated = false
-    let destinationQuarantined = false
-    let destinationIdentity
-    const restoreSource = () => {
-        process.chdir(base)
-        const chain = walkExpected(request.source.chain, anchoredName)
-        const sourceName = anchoredName(request.source.name)
-        if (state(sourceName).kind !== 'missing') throw new Error('source-recovery-occupied')
-        fs.linkSync(sourceCapture, sourceName)
-        const restored = fs.lstatSync(sourceName)
-        const captured = fs.lstatSync(sourceCapture)
-        if (!restored.isFile() || restored.isSymbolicLink() || restored.dev !== captured.dev || restored.ino !== captured.ino) throw new Error('source-recovery-identity')
-        sourceRestored = true
-        syncDirectory()
-        verifySourceChain(chain)
-    }
-    const retireSourceCapture = (requireRestored, retired = () => {}) => {
-        process.chdir(base)
-        const chain = walkExpected(request.source.chain, anchoredName)
-        const sourceName = anchoredName(request.source.name)
-        const captured = fs.lstatSync(sourceCapture)
-        if (!captured.isFile() || captured.isSymbolicLink() || captured.dev !== request.source.file.dev || captured.ino !== request.source.file.ino) throw new Error('source-retirement-identity')
-        if (requireRestored) {
-            const restored = fs.lstatSync(sourceName)
-            if (!restored.isFile() || restored.isSymbolicLink() || restored.dev !== captured.dev || restored.ino !== captured.ino) throw new Error('source-retirement-public-identity')
-        }
-        fs.unlinkSync(sourceCapture)
-        sourceCaptured = false
-        retired()
-        syncDirectory()
-        verifySourceChain(chain)
-    }
-    const removeDestination = () => {
-        process.chdir(base)
-        const chain = walkExpected(destinationChain, destinationPolicy)
-        const destinationName = destinationPolicy(request.destination.name)
-        if (state(destinationCapture).kind !== 'missing') throw new Error('destination-recovery-capture')
-        fs.renameSync(destinationName, destinationCapture)
-        destinationQuarantined = true
-        const captured = fs.lstatSync(destinationCapture)
-        if (!captured.isFile() || captured.isSymbolicLink() || captured.dev !== destinationIdentity.dev || captured.ino !== destinationIdentity.ino) {
-            fs.linkSync(destinationCapture, destinationName)
-            fs.unlinkSync(destinationCapture)
-            destinationQuarantined = false
-            syncDirectory()
-            throw new Error('destination-recovery-identity')
-        }
-        fs.unlinkSync(destinationCapture)
-        destinationQuarantined = false
-        destinationCreated = false
-        syncDirectory()
-        verifySourceChain(chain)
-    }
-    const regularWithIdentity = (status, expected) => status.isFile() && !status.isSymbolicLink() && status.dev === expected.dev && status.ino === expected.ino
-    try {
-        const sourceChain = walkExpected(request.source.chain, anchoredName)
-        const sourceName = anchoredName(request.source.name)
-        if (!regularWithIdentity(fs.lstatSync(sourceName), request.source.file)) throw new Error('source-identity')
-        if (state(sourceCapture).kind !== 'missing') throw new Error('source-capture')
-        sourceCapturePath = path.join(process.cwd(), sourceCapture)
-        fs.renameSync(sourceName, sourceCapture)
-        sourceCaptured = true
-        syncDirectory()
-        const captured = fs.lstatSync(sourceCapture)
-        if (!regularWithIdentity(captured, request.source.file)) throw new Error('source-captured-identity')
-        const source = read(sourceCapture, request.source.maxBytes, request.source.file)
-        if (source.status.dev !== captured.dev || source.status.ino !== captured.ino || digest(source.bytes) !== request.source.sha256) throw new Error('source-digest')
-        sourceMode = source.status.mode & 511
-        verifySourceChain(sourceChain)
-
-        process.chdir(base)
-        walk(safeSegments(request.destination.segments, destinationPolicy), destinationChain, destinationPolicy)
-        const destinationName = destinationPolicy(request.destination.name)
-        if (state(destinationName).kind !== 'missing') throw new Error('destination-state')
-        process.chdir(base)
-        const linkSourceChain = walkExpected(request.source.chain, anchoredName)
-        const currentCapture = read(sourceCapturePath, request.source.maxBytes, request.source.file)
-        if (currentCapture.status.dev !== request.source.file.dev || currentCapture.status.ino !== request.source.file.ino
-            || digest(currentCapture.bytes) !== request.source.sha256 || (currentCapture.status.mode & 511) !== sourceMode) throw new Error('source-capture-changed')
-        verifySourceChain(linkSourceChain)
-        process.chdir(base)
-        walkExpected(destinationChain, destinationPolicy)
-        fs.linkSync(sourceCapturePath, destinationName)
-        destinationCreated = true
-        destinationIdentity = { ...request.source.file }
-        const destination = fs.lstatSync(destinationName)
-        if (!regularWithIdentity(destination, destinationIdentity)) throw new Error('destination-linked-identity')
-        process.chdir(base)
-        const linkedSourceChain = walkExpected(request.source.chain, anchoredName)
-        if (!regularWithIdentity(fs.lstatSync(sourceCapture), destinationIdentity)) throw new Error('source-linked-identity')
-        verifySourceChain(linkedSourceChain)
-        process.chdir(base)
-        walkExpected(destinationChain, destinationPolicy)
-        if (hash(destinationName, destinationPolicy) !== request.source.sha256 || (destination.mode & 511) !== sourceMode) throw new Error('destination-postimage')
-        syncDirectory()
-        verifySourceChain(destinationChain)
-
-        process.chdir(base)
-        const currentSourceChain = walkExpected(request.source.chain, anchoredName)
-        if (state(sourceName).kind !== 'missing') throw new Error('source-postimage')
-        if (!regularWithIdentity(fs.lstatSync(sourceCapture), destinationIdentity)) throw new Error('source-capture-identity')
-        verifySourceChain(currentSourceChain)
-
-        process.chdir(base)
-        const currentDestinationChain = walkExpected(destinationChain, destinationPolicy)
-        const currentDestination = fs.lstatSync(destinationName)
-        if (!regularWithIdentity(currentDestination, destinationIdentity) || hash(destinationName, destinationPolicy) !== request.source.sha256
-            || (currentDestination.mode & 511) !== sourceMode) throw new Error('destination-changed')
-        verifySourceChain(currentDestinationChain)
-        process.chdir(base)
-        identity()
-        retireSourceCapture(false, () => { originalRetired = true })
-    } catch (error) {
-        const describe = value => value instanceof Error ? value.message : String(value)
-        const failure = describe(error)
-        const recoveryFailures = []
-        if (sourceCaptured) {
-            try { restoreSource() } catch (recoveryError) { recoveryFailures.push('source:' + describe(recoveryError)) }
-        }
-        if (destinationCreated && !originalRetired) {
-            try { removeDestination() } catch (recoveryError) { recoveryFailures.push('destination:' + describe(recoveryError)) }
-        }
-        if (sourceCaptured && sourceRestored && !destinationCreated) {
-            try { retireSourceCapture(true) } catch (recoveryError) { recoveryFailures.push('source-retirement:' + describe(recoveryError)) }
-        }
-        if (originalRetired) recoveryFailures.push('source:original-retired')
-        if (destinationChain.length > 0) {
-            try {
-                process.chdir(base)
-                walkExpected(destinationChain, destinationPolicy)
-                removeCreatedChain(destinationChain, request.identity, destinationPolicy)
-            } catch (recoveryError) { recoveryFailures.push('directories:' + describe(recoveryError)) }
-        }
-        try {
-            process.chdir(base)
-            identity()
-        } catch (recoveryError) { recoveryFailures.push('root:' + describe(recoveryError)) }
-        if (recoveryFailures.length > 0) {
-            const retained = []
-            if (sourceCaptured) retained.push([...request.source.chain.map(entry => entry.name), sourceCapture].join('/'))
-            if (destinationQuarantined) retained.push([...request.destination.segments, destinationCapture].join('/'))
-            else if (destinationCreated) retained.push([...request.destination.segments, request.destination.name].join('/'))
-            refuse({ reason: 'relocate-recovery-failed', failure, recoveryFailures, retained })
-        }
-        refuse({ reason: 'relocate-failed', failure })
-    }
-    respond({ kind: 'complete', sha256: request.source.sha256 })
-}
-
 // Stages one group: creates its missing parents, copies each staged input beside its target, and
 // copies each prior file to a backup. Targets are never changed here, so an interrupted prepare
 // leaves only stage and backup files. On failure it removes what this group created.
@@ -720,7 +560,6 @@ try {
     identity()
     if (request.action === 'read-batch') readBatch()
     else if (request.action === 'read-file' || request.action === 'read-entry') respond(readSource(request))
-    else if (request.action === 'relocate-file' || request.action === 'restore-file') relocate()
     else if (request.action === 'prepare-batch') prepareBatch()
     else if (['validate-batch', 'publish-batch', 'verify-batch', 'commit-batch'].includes(request.action)) publicationBatch()
     else if (request.action === 'rollback') rollback()

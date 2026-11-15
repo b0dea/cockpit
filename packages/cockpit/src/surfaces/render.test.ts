@@ -39,7 +39,7 @@ function input() {
         skillReferences: [],
         testing: null,
         instructions: null,
-        customHarnesses: [], customReceipts: [], sourceEvidence: [],
+        sourceEvidence: [],
     }
 }
 
@@ -231,43 +231,6 @@ describe('surface rendering', () => {
         expect(result.entries.filter(entry => entry.path.startsWith('custom/')).map(entry => entry.path)).toEqual(['custom/Z.md', 'custom/a.md'])
     })
 
-    it('preserves custom output scope and validates its declared module and result digest', () => {
-        const value = input()
-        value.configuredHarnesses.push('review-shell')
-        value.configuredHarnesses.sort()
-        const unavailable = ['mcp', 'subagents', 'skills', 'hooks', 'permissions'].map(feature => ({
-            feature, state: 'unavailable', measured_on: '2026-09-26', reason: `No ${feature} mechanism is available`,
-        }))
-        value.customHarnesses.push({
-            name: 'review-shell',
-            capabilities: [{ feature: 'rules', state: 'instructed', measured_on: '2026-09-26', spelling: 'review.txt', control: 'controls/review.json', mechanism: { module: 'adapters/review.mjs', export: 'renderRules' } }, ...unavailable],
-        } as never)
-        const files = [{ path: 'review.txt', bytes: 'review\n', sha256: digest('review\n'), scope: 'scoped' }]
-        value.customReceipts.push({ harness: 'review-shell', feature: 'rules', state: 'instructed', measuredOn: '2026-09-26',
-            module: 'adapters/review.mjs', export: 'renderRules', sourceSha256: 'a'.repeat(64), resultSha256: surfaceModelSha256(files)!, files } as never)
-        const result = renderSurfaceSet(value)
-        expect(result).toMatchObject({ kind: 'complete', inputs: [expect.objectContaining({ kind: 'custom-harness', harness: 'review-shell' })] })
-        if (result.kind === 'complete') {
-            expect(result.entries.find(entry => entry.path === 'review.txt')).toMatchObject({ scope: 'scoped' })
-        }
-
-        const conflictingFiles = [
-            { path: 'review.txt', bytes: 'review\n', sha256: digest('review\n'), scope: 'scoped' },
-            { path: 'review.txt', bytes: 'review\n', sha256: digest('review\n'), scope: 'always' },
-        ]
-        value.customReceipts[0] = { ...(value.customReceipts[0] as unknown as Record<string, unknown>),
-            files: conflictingFiles, resultSha256: surfaceModelSha256(conflictingFiles)! } as never
-        expect(renderSurfaceSet(value)).toMatchObject({ kind: 'refusal', diagnostic: { code: 'SURFACE_PATH_CONFLICT', target: 'review.txt' } })
-
-        value.customReceipts[0] = { ...(value.customReceipts[0] as unknown as Record<string, unknown>),
-            export: 'missingExport', files, resultSha256: surfaceModelSha256(files)! } as never
-        expect(renderSurfaceSet(value)).toMatchObject({ kind: 'refusal' })
-
-        value.customReceipts[0] = { ...(value.customReceipts[0] as unknown as Record<string, unknown>), export: 'renderRules',
-            files: [], resultSha256: surfaceModelSha256([])! } as never
-        expect(renderSurfaceSet(value)).toMatchObject({ kind: 'refusal' })
-    })
-
     it('retains an exact Codex tool allowlist when replacing the browser launch transport', () => {
         const value = input()
         const path = '.codex/config.toml'
@@ -311,7 +274,6 @@ describe('surface rendering', () => {
         const reference = '# Browser reference\n'
         const tierGuide = '# Testing tiers\n'
         const browserMcp = '{"mcpServers":{"playwright":{"command":"docker","args":["run"]}}}\n'
-        const hookBytes = '#!/bin/sh\nexit 0\n'
         const browser = {
             files: [file('claudecode', '.mcp.json', browserMcp), file('claudecode', '.claude/skills/cockpit-browser/SKILL.md', skill)],
             rows: [], clients: [], graderBrowserAccess: 'retained',
@@ -322,11 +284,6 @@ describe('surface rendering', () => {
             scopeSemantics: target === 'claudecode' ? 'conditional' : 'full' }))
         const testing = {
             tierGuide: { kind: 'complete', bytes: tierGuide, lines: 1, costs },
-            nativeHooks: { kind: 'complete', entries: [{ path: '.githooks/pre-push', kind: 'file', ownership: 'whole-file',
-                harnesses: ['claudecode'], writer: 'cockpit', schemaVersion: 1, scope: 'scoped', capability: 'instructed',
-                bytes: hookBytes, sha256: digest(hookBytes) }], cost: { kind: 'within-budget', scope: 'supplied-execution-environment',
-                executionSha256: 'a'.repeat(64), limitMs: 100, measuredMs: 1 },
-                activation: { kind: 'explicit-native-install', hooksPath: '.githooks', mode: 493 } },
         }
         const rendering = { ...value, browser, browserReference: reference, testing }
 
@@ -347,22 +304,6 @@ describe('surface rendering', () => {
         expect(result.entries.find(entry => entry.path === 'CLAUDE.md')).toMatchObject({
             kind: 'shared-region', region: { bytes: '@AGENTS.md\n' },
         })
-        expect(result.entries.find(entry => entry.path === '.githooks/pre-push')).toMatchObject({ bytes: hookBytes })
-
-        const inspectOnly = structuredClone(rendering)
-        inspectOnly.testing.nativeHooks = { kind: 'not-installed', reason: 'native hooks require explicit installation' } as never
-        const inspected = renderSurfaceSet(inspectOnly)
-        expect(inspected).toMatchObject({ kind: 'complete' })
-        if (inspected.kind !== 'complete') return
-        expect(inspected.entries.some(entry => entry.path === '.githooks/pre-push')).toBe(false)
-
-        const overBudget = structuredClone(rendering)
-        overBudget.testing.nativeHooks = { kind: 'ci-required', reason: 'native hook exceeds its measured budget; move this check to CI' } as never
-        expect(renderSurfaceSet(overBudget)).toMatchObject({ kind: 'refusal', diagnostic: {
-            code: 'SURFACE_INPUT_INVALID',
-            message: 'native hook exceeds its measured budget; move this check to CI',
-            target: '.githooks/pre-push',
-        } })
 
         const collision = structuredClone(rendering)
         collision.browser.files[0] = file('claudecode', '.mcp.json', '{"mcpServers":{"playwright":{"command":"docker","args":["run"]},"existing":{"command":"other","args":[]}}}\n')

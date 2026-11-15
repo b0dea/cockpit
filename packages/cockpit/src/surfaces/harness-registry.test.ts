@@ -10,7 +10,6 @@ import {
     type GuardSurfaceTarget,
     type SurfaceTarget,
 } from './harness-registry.js'
-import { subagentGradingProblem } from '../grading/evaluate.js'
 
 describe('shipped harness registry', () => {
     it('owns immutable target, display, generator, output, and native evidence facts', () => {
@@ -47,11 +46,7 @@ describe('shipped harness registry', () => {
             && Object.isFrozen(row.guard) && Object.isFrozen(row.native))).toBe(true)
     })
 
-    it('offers subagent grading only where a custom harness takes the evaluator definition, naming each harness without one', () => {
-        const harness = (name: string, state: 'instructed' | 'unavailable') => ({ name, capabilities: [{ feature: 'subagents' as const, state }] })
-        expect(subagentGradingProblem([harness('team-tool', 'instructed')])).toBeUndefined()
-        expect(subagentGradingProblem([harness('team-tool', 'unavailable'), harness('other-tool', 'instructed')]))
-            .toMatchObject({ code: 'EVALUATOR_UNAVAILABLE', message: expect.stringMatching(/generates none for team-tool$/) })
+    it('records how far each shipped tool takes the generated evaluator definition', () => {
         // A definition the tool was shown to offer is measured, and enforced only where a spawned evaluator was refused writes; one only written is not called more than that.
         expect(HARNESS_REGISTRY.map(row => [row.target, row.subagentGrader.state, row.subagentGrader.measuredVersion])).toEqual([
             ['claudecode', 'enforced', '2.1.318'], ['codexcli', 'instructed', '0.166.0'], ['opencode', 'instructed', '1.19.5'], ['cursor', 'generated', null], ['grokcli', 'generated', null]])

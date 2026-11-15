@@ -68,7 +68,7 @@ it does not get a second process runner or an independent health verdict.
 
 ```sh
 npm ci --ignore-scripts
-npm run test:changed -- <base-commit>  # tests that import or read what changed, both tiers
+npm run test:changed -- <base-commit>  # fast tests beside what changed; :all adds importers, both tiers
 npm run test:fast                      # fast project only
 npm run test:journey                   # adopter journeys from the packed tarball; npm run build first
 npm test -- <test file>                # targeted run; bare `npm test` is both projects
@@ -81,7 +81,7 @@ npm run references                     # regenerate generated docs (see Keep doc
 
 Run adjacent owner tests, review non-adjacent dependents, and typecheck before reporting a
 behaviour change. Locally, run targeted tests and let CI confirm the full suite, which includes the
-slow tier; run it locally only when a shared seam changes.
+slow tier; run `test:changed:all` or the full suite locally only when a shared seam changes.
 
 ## Conventions
 

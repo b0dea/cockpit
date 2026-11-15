@@ -420,39 +420,38 @@ export async function observeEnvSchemas(
     const diagnosis = `have a person run \`VARLOCK_TELEMETRY_DISABLED=true varlock load --path <schema directory> --path <cockpit root>/${store.join('/')}/<slug>[/<relative dir>]\` for each named schema, leaving out the second path where that directory does not exist and using ${store.join('/')} itself for the cockpit root's own schema, and fix the reported keys; agents use cockpit preflight, or cockpit doctor on a cockpit that declares no runtime, for key-only status, and list every declared name with \`${cockpitCommand('env keys')}\`, which marks those a schema writes no value for`
     const unresolved = unavailable.length > 0 || invalid.some(([, status]) => status.failures.some(({ problem }) => problem !== 'missing-required'))
     const remedy = unresolved ? `a secret provider may be signed out or unreachable: sign in to it, then rerun this command. Otherwise ${diagnosis}` : diagnosis
-    if (invalid.length > 0) {
-        const summaries = invalid.map(([schema, status]) => `${reasonName(schema)}: ${invalidSummary(status)}`).join('; ')
-        return [issueObservation({
-            ...common,
-            observed: { state: 'failed', reason: bounded(`env schema is invalid in ${summaries}${uncheckable === '' ? '' : `; could not be checked: ${uncheckable}`}`), observedAt },
-            expectation: { kind: 'equal', value: true },
-            remedy,
-        })]
-    }
-    if (unavailable.length > 0) {
-        return [issueObservation({
-            ...common,
-            observed: { state: 'unavailable', reason: bounded(`env schema could not be checked: ${uncheckable}`), observedAt },
-            expectation: { kind: 'equal', value: true },
-            remedy,
-        })]
-    }
-    // An absent varlock binary is advisory because varlock is optional, and a schema left unrun has not
-    // failed; applicationDiagnostics turns each into a warning instead of a failing row, and overridden
-    // keys likewise.
+    // The product's env schema is the product's to fix, so an invalid or uncheckable schema warns
+    // instead of failing preflight. An absent varlock binary is advisory because varlock is optional,
+    // and a schema left unrun has not failed; healthDiagnostics turns each into a warning instead of a
+    // failing row, and overridden keys likewise.
+    const unhealthy = invalid.length > 0
+        ? `env schema is invalid in ${invalid.map(([schema, status]) => `${reasonName(schema)}: ${invalidSummary(status)}`).join('; ')}${uncheckable === '' ? '' : `; could not be checked: ${uncheckable}`}`
+        : unavailable.length > 0 ? `env schema could not be checked: ${uncheckable}` : undefined
     const entries: { sibling: string; state: string; keys?: number; overrides?: string[]; load?: string }[] = statuses
-        .map(([schema, status]) => status.state === 'valid'
-            ? { sibling: entryName(schema), state: 'valid', keys: status.keys, ...status.overrides.length > 0 ? { overrides: [...status.overrides] } : {} }
-            : status.state === 'not-run' ? { sibling: entryName(schema), state: 'not-run', load: status.load }
-            : { sibling: entryName(schema), state: 'tool-missing' })
+        .flatMap(([schema, status]) => status.state === 'valid'
+            ? [{ sibling: entryName(schema), state: 'valid', keys: status.keys, ...status.overrides.length > 0 ? { overrides: [...status.overrides] } : {} }]
+            : status.state === 'not-run' ? [{ sibling: entryName(schema), state: 'not-run', load: status.load }]
+            : status.state === 'tool-missing' ? [{ sibling: entryName(schema), state: 'tool-missing' }] : [])
         .sort((a, b) => a.sibling < b.sibling ? -1 : 1)
-    const measured: JsonSnapshot = entries
+    const measured: JsonSnapshot = unhealthy === undefined ? entries
+        : [...entries, { state: 'unhealthy', reason: bounded(unhealthy), remedy }]
     return [issueObservation({
         ...common,
         observed: { state: 'available', value: measured, observedAt },
         expectation: { kind: 'equal', value: measured },
         remedy: `install Varlock (${VARLOCK_INSTALL_URL}) to validate the env schema`,
     })]
+}
+
+/** Why the schemas could not be validated, and what fixes it, from a passing row. */
+export function envSchemaUnhealthy(check: {
+    readonly owner: string
+    readonly verdict: string
+    readonly measured?: JsonSnapshot
+}): readonly Readonly<{ reason: string; remedy: string }>[] {
+    if (check.owner !== OWNER || check.verdict !== 'pass' || !Array.isArray(check.measured)) return []
+    return check.measured.flatMap((entry) => isRecord(entry) && entry.state === 'unhealthy' && typeof entry.reason === 'string' && typeof entry.remedy === 'string'
+        ? [{ reason: entry.reason, remedy: entry.remedy }] : [])
 }
 
 /** Schemas skipped because varlock is not installed, from a passing row. */

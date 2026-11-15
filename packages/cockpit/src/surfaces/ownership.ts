@@ -174,10 +174,11 @@ function captureEntry(value: JsonSnapshot, configured: ReadonlySet<string>): Sur
     return value as unknown as SurfaceDesiredEntry
 }
 
+const SHIPPED_TARGETS: ReadonlySet<string> = new Set(SURFACE_TARGETS)
+
 export function classifySurfaceOwnership(input: unknown): SurfaceOwnershipResult {
     const captured = snapshotGeneratedJson(input)
-    if (!object(captured) || !exactKeys(captured, ['configuredHarnesses', 'entries']) || !sortedUniqueStrings(captured.configuredHarnesses)
-        || captured.configuredHarnesses.length > SURFACE_TARGETS.length + 64
+    if (!object(captured) || !exactKeys(captured, ['configuredHarnesses', 'entries']) || !sortedUniqueStrings(captured.configuredHarnesses, SHIPPED_TARGETS)
         || !Array.isArray(captured.entries) || captured.entries.length > MAX_ENTRIES) {
         return refusal('SURFACE_INPUT_INVALID', 'surface ownership input must be bounded canonical data')
     }

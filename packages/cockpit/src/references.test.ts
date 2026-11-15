@@ -260,7 +260,7 @@ describe('reference pages', () => {
             for (const flag of Object.keys(command.options)) expect(cli).toContain(`| \`--${flag}\` |`)
         }
         const section = (name: string, next: string) => cli.slice(cli.indexOf(`## cockpit ${name}\n`), cli.indexOf(`## cockpit ${next}\n`))
-        expect(section('sync', 'check')).toContain('| `--adopt` | string | unset |')
+        expect(section('sync', 'check')).toContain('| `--dry-run` | boolean | `false` |')
         expect(section('sync', 'check')).toContain('Reads `cockpit.toml` from `--config`.')
         expect(section('init', 'setup')).toContain('Does not read `cockpit.toml`.')
         expect(cli).toContain('| 0 | success |\n| 2 | failure |\n| 130 | cancelled |')
@@ -317,7 +317,6 @@ describe('reference pages', () => {
         // Skill size limits name the files a maintainer edits, not the paths skills install to.
         expect(configuration).toContain('The limits come from `packages/cockpit/surfaces/skills/collection.json`')
         expect(configuration).toContain('Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md`')
-        expect(configuration).toMatch(/^\| `packages\/cockpit\/surfaces\/skills\/cockpit-setup\.skill\.md` \| lines \| \d+ \| `packages\/cockpit\/surfaces\/skills\/procedures\/setup\.md` \|$/m)
         expect(configuration).not.toMatch(/`skills\/(?:collection\.json|procedures\/[a-z-]+\.md|[a-z-]+\/SKILL\.md)`/)
     })
 

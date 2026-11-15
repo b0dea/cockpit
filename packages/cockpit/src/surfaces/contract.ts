@@ -7,7 +7,6 @@ import { exactKeys } from '../exact-keys.js'
 export { SURFACE_TARGETS, type SurfaceTarget } from './harness-registry.js'
 
 export const SURFACE_FEATURES = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const)
-export const SURFACE_BUNDLE_FORMATS = Object.freeze(['claudecode-plugin'] as const)
 export const SURFACE_FILE_MAX_BYTES = 65_536
 // The harness settings files cockpit renders whole and a team may already keep its own copy of.
 // Adoption moves the team's bytes under ADOPTED_SURFACE_ROOT and renders a merge of both; every
@@ -18,7 +17,6 @@ export const ADOPTED_SURFACE_ROOT = 'cockpit/adopted'
 export const SURFACE_OUTPUT_MAX_BYTES = 4_194_304
 export const SURFACE_OUTPUT_MAX_FILES = 256
 export type SurfaceFeature = typeof SURFACE_FEATURES[number]
-export type SurfaceBundleFormat = typeof SURFACE_BUNDLE_FORMATS[number]
 
 /**
  * Where sync writes these tools' surfaces, at the top of the cockpit root: a file, or a directory
@@ -43,13 +41,6 @@ export interface SurfaceBatch {
     readonly expectedOutputs: Readonly<Partial<Record<SurfaceTarget, readonly string[]>>>
 }
 
-export interface SurfaceBundleBatch {
-    readonly format: SurfaceBundleFormat
-    readonly features: readonly SurfaceFeature[]
-    readonly sources: readonly SurfaceSourceFile[]
-    readonly expectedOutputs: readonly string[]
-}
-
 export interface RenderedSurfaceFile {
     readonly target: SurfaceTarget
     readonly path: string
@@ -59,7 +50,6 @@ export interface RenderedSurfaceFile {
 
 const TARGETS = new Set<SurfaceTarget>(SURFACE_TARGETS)
 const FEATURES = new Set<SurfaceFeature>(SURFACE_FEATURES)
-const CLAUDE_PLUGIN_FEATURES = new Set<SurfaceFeature>(['mcp', 'subagents', 'skills', 'hooks'])
 const SHA256 = /^[a-f0-9]{64}$/
 const RULE_PATH = /^rules\/[^/]+\.md$/
 const SUBAGENT_PATH = /^subagents\/[^/]+\.md$/
@@ -163,19 +153,6 @@ export function captureSurfaceBatch(input: unknown): SurfaceBatch | undefined {
     if (!validSourceFiles(snapshot.sources, new Set(admittedFeatures))
         || !validExpectedOutputs(snapshot.expectedOutputs, admittedTargets)) return undefined
     return snapshot as unknown as SurfaceBatch
-}
-
-export function captureSurfaceBundleBatch(input: unknown): SurfaceBundleBatch | undefined {
-    const snapshot = snapshotJson(input)
-    if (!isObject(snapshot) || !exactKeys(snapshot, ['format', 'features', 'sources', 'expectedOutputs'])
-        || snapshot.format !== 'claudecode-plugin') return undefined
-    const features = stringArray(snapshot.features)
-    const expectedOutputs = stringArray(snapshot.expectedOutputs)
-    if (!features || !uniqueValues(features)
-        || !features.every(feature => CLAUDE_PLUGIN_FEATURES.has(feature as SurfaceFeature))
-        || !expectedOutputs || !uniqueValues(expectedOutputs) || expectedOutputs.some(path => !safeSurfacePath(path))
-        || !validSourceFiles(snapshot.sources, new Set(features as readonly SurfaceFeature[]))) return undefined
-    return snapshot as unknown as SurfaceBundleBatch
 }
 
 function renderedFile(value: JsonSnapshot): RenderedSurfaceFile | undefined {

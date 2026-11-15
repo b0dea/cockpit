@@ -142,11 +142,7 @@ function projectTestingConfig(declaredTesting: NonNullable<CockpitConfig['testin
                 changes: gate.changes,
             })),
         },
-        nativeHookInstall: declaredTesting.native_hooks.install,
         ...(declaredTesting.test_files === undefined ? {} : { testFiles: [...declaredTesting.test_files] }),
-        ...(declaredTesting.native_hook_policy === undefined ? {} : {
-            nativeHookPolicy: { ...declaredTesting.native_hook_policy },
-        }),
     }
 }
 
@@ -310,20 +306,6 @@ export function schemaIssueSummary(
     return `${shown.join('; ')}${more > 0 ? `; and ${more} more` : ''}`
 }
 
-// The schema lets a declared provenance omit observed_on only when the configuration file is
-// its own source; only the loader knows that file's name, so it closes the rule here.
-function undatedForeignProvenance(value: unknown, configName: string, path: readonly string[] = []): string | undefined {
-    if (value === null || typeof value !== 'object') return undefined
-    for (const [key, item] of Object.entries(value)) {
-        const itemPath = [...path, key]
-        if (key === 'provenance' && item !== null && typeof item === 'object' && !Array.isArray(item)
-            && !Object.hasOwn(item, 'observed_on') && (item as { source?: unknown }).source !== configName) return itemPath.join('.')
-        const nested = undatedForeignProvenance(item, configName, itemPath)
-        if (nested !== undefined) return nested
-    }
-    return undefined
-}
-
 function refusal(code: RefusalCode, message: string, target: string, fix?: string): EnvironmentCommandOutcome<LoadedCockpitConfig> {
     const diagnostic: EnvironmentDiagnostic = { severity: 'error', code, message, target, ...(fix ? { fix } : {}) }
     return { kind: 'refusal', status: 2, diagnostics: [diagnostic], result: null }
@@ -468,13 +450,6 @@ export async function loadCockpitConfig(
         return refusal(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID,
             `cockpit configuration does not match the schema: ${schemaIssueSummary(validated.error.issues)}`, path,
             'correct each named key to the shape and values ./node_modules/@b00dea/cockpit/docs/configuration-reference.md gives for it, then retry')
-    }
-
-    const undated = undatedForeignProvenance(validated.data, basename(path))
-    if (undated !== undefined) {
-        return refusal(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID,
-            `cockpit configuration does not match the schema: ${undated}: provenance without observed_on must name this configuration file (${basename(path)}) as its source`, path,
-            'add observed_on with the date the source was read, or name this configuration file as the source, then retry')
     }
 
     const result = issueLoadedConfig(parsed, validated.data, provenance)

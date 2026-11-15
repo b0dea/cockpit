@@ -5,7 +5,7 @@ import { parseDocument } from 'yaml'
 import { browserProxyAuthorityMatches } from './browser/proxy.js'
 import { ENTRYPOINT_KINDS } from './entrypoint-kinds.js'
 import { GUARD_HOST_LIMITS, GUARD_HOST_PATTERN, normalizeGuardHost } from './guards/host.js'
-import { ADOPTABLE_SURFACE_PATHS, ADOPTED_SURFACE_ROOT, SURFACE_BUNDLE_FORMATS, SURFACE_FEATURES, SURFACE_TARGETS, surfaceSourcesMatchFeature } from './surfaces/contract.js'
+import { SURFACE_FEATURES, SURFACE_TARGETS, surfaceSourcesMatchFeature } from './surfaces/contract.js'
 import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS } from './surfaces/harness-registry.js'
 import { RefusalError, errorCause } from './environment/contract.js'
 import { REPOSITORY_FILE, REPOSITORY_PATH, splitRepositoryPath } from './repository-path.js'
@@ -174,14 +174,12 @@ const EnvironmentName = z.string().regex(/^[A-Z][A-Z0-9_]*$/).max(128)
 // schema cannot see the file name.
 export const Provenance = z.object({
     source: SafeRelativePath.max(4096).describe('File or place the value came from, relative to the repository.'),
-    observed_on: z.string().date().optional().describe('Date the source was looked at; required unless kind is declared.'),
-    kind: z.enum(['declared', 'measured', 'inferred']).describe('How the value was established: declared by this file, measured, or inferred.'),
+    observed_on: z.string().date().optional().describe('Date the source was looked at, for the reviewer.'),
+    kind: z.enum(['declared', 'measured', 'inferred']).optional().describe('How the value was established: declared by this file, measured, or inferred.'),
     reason: DeclarationReason.describe('Why the value is what it is.'),
     confirmed: z.boolean().optional().describe('Set to true once a person has confirmed an inferred value; inferred values require it.'),
 }).strict().refine((value) => value.kind !== 'inferred' || value.confirmed === true, {
     path: ['confirmed'], message: 'inferred declarations require explicit confirmation',
-}).refine((value) => value.kind === 'declared' || value.observed_on !== undefined, {
-    path: ['observed_on'], message: 'measured and inferred provenance require observed_on',
 })
 
 
@@ -547,7 +545,7 @@ export const Work = z
             .refine(tools => new Set(tools).size === tools.length, 'list each evaluator once').optional()
             .describe('Agent tools that run the independent grader for work grade and cockpit grade, tried in order: codexcli, claudecode, opencode. Defaults to the tools surfaces.tools lists that can evaluate, in that order, with the tool running the command moved last when it is detected (Claude Code or Codex), so another tool grades first. A list given here is used exactly as written.'),
         // Consumers may lower these framework maxima, but cannot raise them.
-        attempt_cap: z.number().int().min(1).max(2).default(2).describe('Failed checks or grades before an order is blocked; may be lowered but not raised.'),
+        attempt_cap: z.number().int().min(1).max(2).default(2).describe('Grades with an unmet verdict before an order is blocked; failed checks do not count, and grading modes that judge nothing have no cap. May be lowered but not raised.'),
         wip_cap: z.number().int().min(1).max(3).default(3).describe('Accepted orders that may be unfinished at once; may be lowered but not raised.'),
         verification_timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(TESTING_STAGE_TIMEOUT_DEFAULT_SECONDS)
             .describe("Seconds one criterion's check command may run before it is stopped and reported as not run."),
@@ -729,13 +727,6 @@ export const Testing = z.object({
         stages: z.array(TestingName).min(1).max(128).describe('Stages the gate runs, by id.'),
         changes: z.string().min(1).max(4096).refine((value) => !/[\x00-\x1f\x7f]/.test(value)).describe('Kind of change that calls for this gate.'),
     }).strict()).min(1).max(128).describe('Named gates that run stages before handing back changes.'),
-    native_hooks: z.object({
-        install: z.enum(['inspect', 'explicit-native']).default('inspect').describe('Inspect the repository\'s hooks, or install them as the policy file declares.'),
-    }).strict().default({ install: 'inspect' }).describe('How the repository\'s own git hooks are handled.'),
-    native_hook_policy: z.object({
-        path: SafeRelativePath.max(4096).describe('Policy file, relative to the cockpit.'),
-        sha256: z.string().regex(/^[a-f0-9]{64}$/).describe('SHA-256 of the policy file.'),
-    }).strict().optional().describe('Policy file for installing the repository\'s hooks; required for explicit-native.'),
 }).strict().superRefine((testing, ctx) => {
     const stageIds = testing.stages.map((stage) => stage.id)
     const gateIds = testing.gates.map((gate) => gate.id)
@@ -745,10 +736,6 @@ export const Testing = z.object({
         if (hasDuplicate(gate.stages) || gate.stages.some((stage) => !stageIds.includes(stage))) {
             ctx.addIssue({ code: 'custom', path: ['gates', index, 'stages'], message: 'testing gates require unique declared stages' })
         }
-    }
-    if (testing.native_hooks.install === 'explicit-native' && !testing.native_hook_policy
-        || testing.native_hooks.install === 'inspect' && testing.native_hook_policy) {
-        ctx.addIssue({ code: 'custom', path: ['native_hook_policy'], message: 'native hook policy is required only for explicit native installation' })
     }
 })
 
@@ -824,72 +811,6 @@ export const SurfaceOverlay = SurfaceDeclaration.safeExtend({
     feature: z.enum(['rules', 'subagents', 'skills', 'hooks']).describe('Kind of surface the overlay provides.'),
 })
 
-// A team's own harness settings file that cockpit moved under cockpit/adopted/ and merges with its
-// rendering. `sha256` records the bytes that were moved; it is a record for review, not a lock:
-// the adopted copy is consumer-owned, and the next sync re-merges whatever it holds.
-export const SurfaceAdoption = z.object({
-    path: z.enum(ADOPTABLE_SURFACE_PATHS).describe('Harness settings file that was adopted.'),
-    source: SurfacePath.describe('Where the adopted copy now lives, under cockpit/adopted/.'),
-    sha256: SurfaceSha256.describe('SHA-256 of the bytes that were moved, as a record for review.'),
-    adopted_on: z.string().date().describe('Date the file was adopted.'),
-    provenance: Provenance.describe('Where the adoption came from; its kind must be declared.'),
-}).strict().superRefine((row, ctx) => {
-    if (row.source !== `${ADOPTED_SURFACE_ROOT}/${row.path}`) {
-        ctx.addIssue({ code: 'custom', path: ['source'], message: `an adopted surface is kept at ${ADOPTED_SURFACE_ROOT}/<path>` })
-    }
-    if (row.provenance.kind !== 'declared') {
-        ctx.addIssue({ code: 'custom', path: ['provenance', 'kind'], message: 'an adopted surface is declared by the team that owns it' })
-    }
-})
-
-const HarnessMechanism = z.object({
-    module: SurfacePath.describe('Module that implements the capability.'),
-    export: z.string().regex(/^[A-Za-z_$][A-Za-z0-9_$]*$/).max(128).describe('Export of the module that implements the capability.'),
-}).strict()
-
-const HarnessCapabilityBase = {
-    feature: z.enum(SURFACE_FEATURES).describe('Surface feature this row describes.'),
-    measured_on: z.string().date().describe('Date the capability was measured.'),
-} as const
-
-const HarnessEmittedCapability = {
-    ...HarnessCapabilityBase,
-    spelling: SurfacePath.describe('File the harness reads for this feature.'),
-    control: SurfacePath.describe('Path of the deliberately broken control file the capability was measured against.'),
-    mechanism: HarnessMechanism.describe('Code that emits the surface.'),
-} as const
-
-const CustomHarnessCapability = z.discriminatedUnion('state', [
-    z.object({
-        ...HarnessEmittedCapability,
-        state: z.literal('enforced').describe('Whether the harness enforces, only instructs, or lacks this capability.'),
-        evidence: z.object({ reference: SurfacePath.describe('Probe record or file, relative to the cockpit.'), sha256: SurfaceSha256.describe('SHA-256 of the evidence.') }).strict().describe('Evidence that the harness enforces the capability.'),
-    }).strict(),
-    z.object({
-        ...HarnessEmittedCapability,
-        state: z.literal('instructed').describe('Whether the harness enforces, only instructs, or lacks this capability.'),
-    }).strict(),
-    z.object({
-        ...HarnessCapabilityBase,
-        state: z.literal('unavailable').describe('Whether the harness enforces, only instructs, or lacks this capability.'),
-        reason: DeclarationReason.describe('Why the capability is unavailable.'),
-    }).strict(),
-])
-
-export const CustomHarness = z.object({
-    name: SurfaceName.regex(new RegExp(`^(?!(?:${SURFACE_TARGETS.join('|')})$)`), 'custom harness names cannot replace shipped targets').describe('Name of the custom harness; cannot reuse a shipped one.'),
-    capabilities: z.array(CustomHarnessCapability).length(SURFACE_FEATURES.length).describe('One row per surface feature saying what the harness supports.'),
-}).strict().superRefine((harness, ctx) => {
-    const features = harness.capabilities.map((capability) => capability.feature)
-    if (hasDuplicate(features) || SURFACE_FEATURES.some((feature) => !features.includes(feature))) {
-        ctx.addIssue({ code: 'custom', path: ['capabilities'], message: 'capabilities must hold exactly one row for each surface feature' })
-    }
-    const spellings = harness.capabilities.flatMap((capability) => capability.state === 'unavailable' ? [] : [capability.spelling])
-    if (hasDuplicate(spellings)) {
-        ctx.addIssue({ code: 'custom', path: ['capabilities'], message: 'emitted capability spellings must be unique' })
-    }
-})
-
 const Surfaces = z.object({
     // A list rather than per-tool switches so `tool add` and `tool remove` edit one line. A cockpit with
     // no guarded tool would render instructions and skills and enforce nothing, so one must be listed.
@@ -899,18 +820,9 @@ const Surfaces = z.object({
             `list at least one tool cockpit has a guard for (${GUARD_SURFACE_TARGETS.join(', ')})`)
         .describe(`Agent tools whose instructions, skills and settings sync writes and check compares. Defaults to the tools whose guard is measured (${DEFAULT_SURFACE_TOOLS.join(', ')}); the other shipped targets are written only when listed.`),
     overlays: z.array(SurfaceOverlay).max(256).default([]).describe('Team-owned rules, subagents, skills and hooks added to the generated surfaces.'),
-    harnesses: z.array(CustomHarness).max(64).default([]).describe('Agent tools beyond the shipped ones, with measured capabilities.'),
-    bundles: z.array(z.enum(SURFACE_BUNDLE_FORMATS)).max(SURFACE_BUNDLE_FORMATS.length).default([]).describe('Bundle formats to publish, such as a Claude plugin bundle.'),
-    adopted: z.array(SurfaceAdoption).max(ADOPTABLE_SURFACE_PATHS.length).default([]).describe('Harness settings files cockpit merges with its own output.'),
 }).strict().superRefine((surfaces, ctx) => {
-    if (hasDuplicate(surfaces.adopted.map((row) => row.path))) {
-        ctx.addIssue({ code: 'custom', path: ['adopted'], message: 'each harness settings file is adopted at most once' })
-    }
     if (hasDuplicate(surfaces.overlays.map((overlay) => overlay.name))) {
         ctx.addIssue({ code: 'custom', path: ['overlays'], message: 'overlay names must be unique' })
-    }
-    if (hasDuplicate(surfaces.harnesses.map((harness) => harness.name))) {
-        ctx.addIssue({ code: 'custom', path: ['harnesses'], message: 'custom harness names must be unique' })
     }
 })
 
@@ -1113,9 +1025,6 @@ type SurfaceSource = z.infer<typeof SurfaceSource>
 type SurfaceOverrideReference = z.infer<typeof SurfaceOverrideReference>
 export type SurfaceDeclaration = z.infer<typeof SurfaceDeclaration>
 export type SurfaceOverlay = z.infer<typeof SurfaceOverlay>
-export type SurfaceAdoption = z.infer<typeof SurfaceAdoption>
-type CustomHarnessCapability = z.infer<typeof CustomHarnessCapability>
-export type CustomHarness = z.infer<typeof CustomHarness>
 export type Surfaces = z.infer<typeof Surfaces>
 
 /** Rows the stack bind-mounts under the given profile set — the projection's import list. */

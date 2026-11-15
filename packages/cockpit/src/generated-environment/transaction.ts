@@ -540,112 +540,6 @@ export async function readAnchoredEntry(
     } catch { /* a failed anchored read is invalid; the caller refuses it. */ return { kind: 'invalid' } } finally { if (directory) await rm(directory, { recursive: true, force: true }) }
 }
 
-export type AnchoredRelocation = Readonly<{ kind: 'complete'; sha256: string }>
-    | Readonly<{ kind: 'refusal'; recovery: 'unchanged' | 'indeterminate'; failure?: string; recoveryFailures?: readonly string[]; retainedPaths?: readonly string[] }>
-
-/** Move one authenticated regular file to a portable authored destination through the publication helper. */
-export async function relocateAnchoredFile(
-    root: string,
-    sourcePath: string,
-    destinationPath: string,
-    maxBytes: number,
-    expectedSha256: string,
-    node: NodeAuthority,
-    adapters: PublicationAdapters,
-): Promise<AnchoredRelocation> {
-    return relocateAnchoredFileWithDestinationPolicy(root, sourcePath, destinationPath, maxBytes, expectedSha256,
-        node, adapters, 'relocate-file', safePublicationSegment)
-}
-
-async function relocateAnchoredFileWithDestinationPolicy(
-    root: string,
-    sourcePath: string,
-    destinationPath: string,
-    maxBytes: number,
-    expectedSha256: string,
-    node: NodeAuthority,
-    adapters: PublicationAdapters,
-    action: 'relocate-file' | 'restore-file',
-    destinationSegment: (value: unknown) => value is string,
-): Promise<AnchoredRelocation> {
-    const sourceTarget = confined(root, sourcePath)
-    const destinationTarget = confined(root, destinationPath)
-    if (!sourceTarget || !destinationTarget || sourceTarget === destinationTarget || !SHA256.test(expectedSha256)
-        || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_GENERATED_BYTES) {
-        return { kind: 'refusal', recovery: 'unchanged' }
-    }
-    const sourceParts = relative(root, sourceTarget).split(sep)
-    const destinationParts = relative(root, destinationTarget).split(sep)
-    if (sourceParts.some(part => !safeAnchoredSegment(part)) || destinationParts.some(part => !destinationSegment(part))) {
-        return { kind: 'refusal', recovery: 'unchanged' }
-    }
-    const source = await readAnchoredFile(root, sourcePath, maxBytes, node, adapters)
-    const destination = await readAnchoredEntry(root, destinationPath, maxBytes, node, adapters)
-    if (source.kind !== 'complete' || source.sha256 !== expectedSha256 || destination.kind !== 'missing') {
-        return { kind: 'refusal', recovery: 'unchanged' }
-    }
-    const nonce = randomBytes(16).toString('hex')
-    const request = {
-        version: 1, nonce, action, identity: source.identity.root,
-        source: {
-            chain: sourceParts.slice(0, -1).map((name, index) => ({ name, ...source.identity.chain[index]! })),
-            name: sourceParts.at(-1), file: source.identity.file, sha256: source.sha256, maxBytes,
-        },
-        destination: { segments: destinationParts.slice(0, -1), name: destinationParts.at(-1) },
-    }
-    const receipt = await runHelper(adapters, helperStep(node, root, 'adoption', request, [], Date.now() + HELPER_TIMEOUT_MS))
-    const complete = helperRecord(receipt, ['version', 'nonce', 'action', 'kind', 'sha256'])
-    if (complete?.version === 1 && complete.nonce === nonce && complete.action === action
-        && complete.kind === 'complete' && complete.sha256 === expectedSha256) {
-        return { kind: 'complete', sha256: expectedSha256 }
-    }
-    const refusal = ownRecord(receipt)
-    const safeFailure = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 512
-    const recovered = refusal && exactKeys(refusal, ['version', 'nonce', 'action', 'kind', 'reason', 'failure'])
-        && refusal.version === 1 && refusal.nonce === nonce && refusal.action === action
-        && refusal.kind === 'refusal' && refusal.reason === 'relocate-failed' && safeFailure(refusal.failure)
-    const recoveryFailed = refusal && exactKeys(refusal, ['version', 'nonce', 'action', 'kind', 'reason', 'failure', 'recoveryFailures', 'retained'])
-        && refusal.version === 1 && refusal.nonce === nonce && refusal.action === action
-        && refusal.kind === 'refusal' && refusal.reason === 'relocate-recovery-failed' && Array.isArray(refusal.retained)
-        && safeFailure(refusal.failure) && Array.isArray(refusal.recoveryFailures)
-        && refusal.recoveryFailures.length > 0 && refusal.recoveryFailures.every(safeFailure)
-        && refusal.retained.every(path => typeof path === 'string' && confined(root, path) !== undefined)
-    const retainedPaths = recoveryFailed
-        ? (refusal.retained as string[]) : undefined
-    const possibleCaptures = [
-        [...sourceParts.slice(0, -1), `.cockpit-adopt-source-${nonce}`].join('/'),
-        [...destinationParts.slice(0, -1), `.cockpit-adopt-destination-${nonce}`].join('/'),
-    ]
-    return {
-        kind: 'refusal', recovery: recovered ? 'unchanged' : 'indeterminate',
-        ...((recovered || recoveryFailed) ? { failure: refusal.failure as string } : { failure: 'filesystem-helper-receipt-unavailable' }),
-        ...(recoveryFailed ? { recoveryFailures: refusal.recoveryFailures as string[] } : {}),
-        ...(!recovered ? { retainedPaths: retainedPaths ?? possibleCaptures } : {}),
-    }
-}
-
-/** Confirm or restore the original side of an anchored relocation without following either path. */
-export async function restoreAnchoredFile(
-    root: string,
-    originalPath: string,
-    relocatedPath: string,
-    maxBytes: number,
-    expectedSha256: string,
-    node: NodeAuthority,
-    adapters: PublicationAdapters,
-): Promise<AnchoredRelocation> {
-    const original = await readAnchoredFile(root, originalPath, maxBytes, node, adapters)
-    const relocated = await readAnchoredFile(root, relocatedPath, maxBytes, node, adapters)
-    if (original.kind === 'complete' && original.sha256 === expectedSha256 && relocated.kind === 'missing') {
-        return { kind: 'complete', sha256: expectedSha256 }
-    }
-    if (original.kind === 'missing' && relocated.kind === 'complete' && relocated.sha256 === expectedSha256) {
-        return relocateAnchoredFileWithDestinationPolicy(root, relocatedPath, originalPath, maxBytes, expectedSha256,
-            node, adapters, 'restore-file', safeAnchoredSegment)
-    }
-    return { kind: 'refusal', recovery: 'indeterminate' }
-}
-
 interface AnchoredBatchReadRequest {
     readonly path: string
     readonly maxBytes: number
@@ -865,11 +759,6 @@ export async function readAnchoredConfigSource(
     return read.kind === 'complete'
         ? { bytes: read.bytes, sha256: read.sha256, identity: read.identity }
         : undefined
-}
-
-function safeAnchoredSegment(value: unknown): value is string {
-    return typeof value === 'string' && value.length > 0 && value !== '.' && value !== '..'
-        && !value.includes('/') && !value.includes('\\') && !value.includes('\0')
 }
 
 function safePublicationSegment(value: unknown): value is string {

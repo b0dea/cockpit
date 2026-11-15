@@ -3,8 +3,7 @@ import { isAbsolute } from 'node:path'
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
 
 import { snapshotGeneratedJson, type JsonSnapshot, type JsonSnapshotObject, tryParseJson } from '../environment/contract.js'
-import { CustomHarness, type CustomHarness as CustomHarnessValue } from '../schema.js'
-import { safeSurfacePath as safePath, type SurfaceFeature, type SurfaceTarget } from './contract.js'
+import { safeSurfacePath as safePath, type SurfaceTarget } from './contract.js'
 import { GUARD_SURFACE_TARGETS, SURFACE_TARGETS, harnessFact } from './harness-registry.js'
 import { RULESYNC_VERSION, type SurfaceGenerationOutcome, type SurfaceGenerationWarning } from './generator-adapter.js'
 import type { SurfaceMergeResult } from './merge.js'
@@ -23,10 +22,6 @@ import { exactKeys } from '../exact-keys.js'
 export type SurfaceInputEvidence =
     | Readonly<{ kind: 'guide'; root: string; path: string; sha256: string; identity: string }>
     | Readonly<{ kind: 'mcp'; root: string; path: string; sha256: string; identity: string }>
-    | Readonly<{
-          kind: 'custom-harness'; harness: string; feature: SurfaceFeature; state: 'enforced' | 'instructed'; measuredOn: string
-          module: string; export: string; sourceSha256: string; resultSha256: string
-      }>
 
 interface NativeSurfaceFragment {
     readonly target: SurfaceTarget
@@ -34,18 +29,6 @@ interface NativeSurfaceFragment {
     readonly baseSha256: string
     readonly bytes: string
     readonly sha256: string
-}
-
-export interface CustomSurfaceReceipt {
-    readonly harness: string
-    readonly feature: SurfaceFeature
-    readonly state: 'enforced' | 'instructed'
-    readonly measuredOn: string
-    readonly module: string
-    readonly export: string
-    readonly sourceSha256: string
-    readonly resultSha256: string
-    readonly files: readonly Readonly<{ path: string; bytes: string; sha256: string; scope: 'always' | 'scoped' }>[]
 }
 
 type SurfaceRenderResult =
@@ -80,9 +63,7 @@ interface SurfaceRenderInput {
     readonly browserReference: string | null
     readonly skillReferences: readonly SkillReference[]
     readonly testing: unknown | null
-    readonly customHarnesses: readonly CustomHarnessValue[]
-    readonly customReceipts: readonly CustomSurfaceReceipt[]
-    readonly sourceEvidence: readonly Extract<SurfaceInputEvidence, { kind: 'guide' | 'mcp' }>[]
+    readonly sourceEvidence: readonly SurfaceInputEvidence[]
 }
 
 const SHA256 = /^[a-f0-9]{64}$/
@@ -196,48 +177,6 @@ function hookJson(contributions: readonly Contribution[]): string | undefined {
     return composed.kind === 'complete' ? `${JSON.stringify(composed.value, null, 2)}\n` : undefined
 }
 
-function customReceipts(
-    harnesses: readonly CustomHarnessValue[],
-    value: JsonSnapshot | undefined,
-): { readonly contributions: readonly { receipt: CustomSurfaceReceipt; file: CustomSurfaceReceipt['files'][number] }[]; readonly evidence: readonly SurfaceInputEvidence[] } | undefined {
-    if (!Array.isArray(value) || value.length > 384) return undefined
-    const available = new Map<string, CustomHarnessValue['capabilities'][number]>()
-    for (const harness of harnesses) for (const capability of harness.capabilities) {
-        if (capability.state !== 'unavailable') available.set(`${harness.name}\0${capability.feature}`, capability)
-    }
-    const seen = new Set<string>()
-    const contributions: Array<{ receipt: CustomSurfaceReceipt; file: CustomSurfaceReceipt['files'][number] }> = []
-    const evidence: SurfaceInputEvidence[] = []
-    for (const candidate of value) {
-        if (!object(candidate) || !exactKeys(candidate, ['harness', 'feature', 'state', 'measuredOn', 'module', 'export', 'sourceSha256', 'resultSha256', 'files'])
-            || typeof candidate.harness !== 'string' || typeof candidate.feature !== 'string'
-            || candidate.state !== 'enforced' && candidate.state !== 'instructed' || typeof candidate.measuredOn !== 'string' || !DATE.test(candidate.measuredOn)
-            || typeof candidate.module !== 'string' || typeof candidate.export !== 'string'
-            || typeof candidate.sourceSha256 !== 'string' || !SHA256.test(candidate.sourceSha256)
-            || typeof candidate.resultSha256 !== 'string' || !SHA256.test(candidate.resultSha256)
-            || !Array.isArray(candidate.files) || candidate.files.length === 0) return undefined
-        const identity = `${candidate.harness}\0${candidate.feature}`
-        const declaration = available.get(identity)
-        if (!declaration || seen.has(identity) || declaration.state !== candidate.state || declaration.measured_on !== candidate.measuredOn
-            || declaration.mechanism.module !== candidate.module || declaration.mechanism.export !== candidate.export) return undefined
-        const files: CustomSurfaceReceipt['files'][number][] = []
-        for (const file of candidate.files) {
-            if (!object(file) || !exactKeys(file, ['path', 'bytes', 'sha256', 'scope']) || !validFileFields(file)
-                || file.scope !== 'always' && file.scope !== 'scoped') return undefined
-            files.push(file as unknown as CustomSurfaceReceipt['files'][number])
-        }
-        if (surfaceModelSha256(files) !== candidate.resultSha256) return undefined
-        const receipt = candidate as unknown as CustomSurfaceReceipt
-        for (const file of files) contributions.push({ receipt, file })
-        evidence.push({ kind: 'custom-harness', harness: receipt.harness, feature: receipt.feature, state: receipt.state,
-            measuredOn: receipt.measuredOn, module: receipt.module, export: receipt.export,
-            sourceSha256: receipt.sourceSha256, resultSha256: receipt.resultSha256 })
-        seen.add(identity)
-    }
-    if ([...available.keys()].some(identity => !seen.has(identity))) return undefined
-    return { contributions, evidence }
-}
-
 function nativeFragments(value: JsonSnapshot | undefined, expectedDigest: string, targets: ReadonlySet<string>): readonly NativeSurfaceFragment[] | undefined {
     if (!object(value) || !exactKeys(value, ['modelSha256', 'fragments']) || value.modelSha256 !== expectedDigest || !Array.isArray(value.fragments)) return undefined
     const result: NativeSurfaceFragment[] = []
@@ -292,9 +231,9 @@ function mergeBrowserMcp(path: string, base: string, browser: string): string | 
 
 export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     const captured = snapshotGeneratedJson(input)
-    const required = ['configuredHarnesses', 'merge', 'generated', 'projection', 'mcp', 'restrictions', 'instructions', 'nativeMcp', 'nativeGrants', 'browser', 'browserReference', 'skillReferences', 'testing', 'customHarnesses', 'customReceipts', 'sourceEvidence']
+    const required = ['configuredHarnesses', 'merge', 'generated', 'projection', 'mcp', 'restrictions', 'instructions', 'nativeMcp', 'nativeGrants', 'browser', 'browserReference', 'skillReferences', 'testing', 'sourceEvidence']
     if (!object(captured) || !exactKeys(captured, required) || !Array.isArray(captured.configuredHarnesses)
-        || !Array.isArray(captured.customHarnesses) || !Array.isArray(captured.sourceEvidence)
+        || !Array.isArray(captured.sourceEvidence)
         || !object(captured.merge) || captured.merge.kind !== 'complete' || !Array.isArray(captured.merge.surfaces)
         || !Array.isArray(captured.merge.overrides) || !Array.isArray(captured.merge.findings)
         || !object(captured.generated) || !exactKeys(captured.generated, ['kind', 'status', 'diagnostics', 'mechanism', 'files', ...(Object.hasOwn(captured.generated, 'warnings') ? ['warnings'] : [])])
@@ -328,15 +267,10 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         return refuse('SURFACE_INPUT_INVALID', 'configured harness identities must be sorted and unique')
     }
     const configuredSet = new Set(configured as readonly string[])
-    const parsedHarnesses = CustomHarness.array().safeParse(captured.customHarnesses)
-    const customNames = new Set(parsedHarnesses.success ? parsedHarnesses.data.map(harness => harness.name) : [])
     // The listed built-in tools: any non-empty subset that includes a guarded one, as the schema admits.
     const listedNative = new Set([...NATIVE_BUILT_INS].filter(target => configuredSet.has(target)))
-    if (!parsedHarnesses.success || parsedHarnesses.data.some(harness => !configuredSet.has(harness.name))
-        || [...configuredSet].some(name => !customNames.has(name) && !BUILT_INS.has(name as SurfaceTarget))
-        || listedNative.size === 0) return refuse('SURFACE_INPUT_INVALID', 'custom and built-in harness identities do not match the configured set')
-    const custom = customReceipts(parsedHarnesses.data, captured.customReceipts)
-    if (!custom) return refuse('SURFACE_INPUT_INVALID', 'custom capability receipt is missing or does not match its authenticated declaration')
+    if ([...configuredSet].some(name => !BUILT_INS.has(name as SurfaceTarget))
+        || listedNative.size === 0) return refuse('SURFACE_INPUT_INVALID', 'configured harness identities must be built-in tools including a guarded one')
     const browser = captured.browser === null ? null : object(captured.browser)
         && exactKeys(captured.browser, ['rows', 'files', 'mcp', 'clients', 'graderBrowserAccess'])
         && captured.browser.graderBrowserAccess === 'retained' && Array.isArray(captured.browser.rows)
@@ -371,15 +305,14 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         }
     }
     const testing = captured.testing === null ? null : object(captured.testing)
-        && exactKeys(captured.testing, ['tierGuide', 'nativeHooks']) && object(captured.testing.tierGuide)
+        && exactKeys(captured.testing, ['tierGuide']) && object(captured.testing.tierGuide)
         && exactKeys(captured.testing.tierGuide, ['kind', 'bytes', 'lines', 'costs'])
         && captured.testing.tierGuide.kind === 'complete' && typeof captured.testing.tierGuide.bytes === 'string'
-        && Buffer.byteLength(captured.testing.tierGuide.bytes) <= 65_536 && object(captured.testing.nativeHooks)
+        && Buffer.byteLength(captured.testing.tierGuide.bytes) <= 65_536
         ? captured.testing : undefined
     if (testing === undefined) return refuse('SURFACE_INPUT_INVALID', 'testing projection must be an exact bounded accepted leaf result')
     const tierGuide = testing && object(testing.tierGuide) ? testing.tierGuide : null
-    const nativeHooks = testing && object(testing.nativeHooks) ? testing.nativeHooks : null
-    if (testing && (!tierGuide || !nativeHooks)) return refuse('SURFACE_INPUT_INVALID', 'testing projection must retain its validated objects')
+    if (testing && !tierGuide) return refuse('SURFACE_INPUT_INVALID', 'testing projection must retain its validated objects')
     if (tierGuide && (typeof tierGuide.bytes !== 'string' || typeof tierGuide.lines !== 'number' || !Number.isSafeInteger(tierGuide.lines) || tierGuide.lines < 1
         || tierGuide.lines !== (tierGuide.bytes as string).trimEnd().split('\n').length
         || !Array.isArray(tierGuide.costs) || tierGuide.costs.length !== listedNative.size
@@ -488,34 +421,10 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     if (typeof captured.instructions === 'string') for (const [target, path] of instructionPaths) {
         add(markdown, path, { harnesses: [target], scope: 'always', capability: 'instructed', bytes: captured.instructions })
     }
-    if (testing && tierGuide && nativeHooks) {
+    if (testing && tierGuide) {
         for (const [target, path] of instructionPaths) {
             add(markdown, path, { harnesses: [target], scope: 'always', capability: 'instructed', bytes: stripDevelopmentMarkers(tierGuide.bytes as string) })
         }
-        const hooks = nativeHooks
-        if (hooks.kind === 'complete') {
-            if (!exactKeys(hooks, ['kind', 'entries', 'cost', 'activation']) || !Array.isArray(hooks.entries) || hooks.entries.length !== 1) {
-                return refuse('SURFACE_INPUT_INVALID', 'native hook projection is malformed')
-            }
-            if (!object(hooks.cost) || !exactKeys(hooks.cost, ['kind', 'scope', 'executionSha256', 'limitMs', 'measuredMs'])
-                || hooks.cost.kind !== 'within-budget' || hooks.cost.scope !== 'supplied-execution-environment'
-                || typeof hooks.cost.executionSha256 !== 'string' || !SHA256.test(hooks.cost.executionSha256)
-                || typeof hooks.cost.limitMs !== 'number' || !Number.isSafeInteger(hooks.cost.limitMs) || hooks.cost.limitMs < 1
-                || typeof hooks.cost.measuredMs !== 'number' || !Number.isSafeInteger(hooks.cost.measuredMs) || hooks.cost.measuredMs < 0 || hooks.cost.measuredMs > hooks.cost.limitMs
-                || !object(hooks.activation) || !exactKeys(hooks.activation, ['kind', 'hooksPath', 'mode'])
-                || hooks.activation.kind !== 'explicit-native-install' || hooks.activation.hooksPath !== '.githooks'
-                || hooks.activation.mode !== 493) return refuse('SURFACE_INPUT_INVALID', 'native hook projection is malformed')
-            const hook = hooks.entries[0]
-            if (!object(hook) || !exactKeys(hook, ['path', 'kind', 'ownership', 'harnesses', 'writer', 'schemaVersion', 'scope', 'capability', 'bytes', 'sha256'])
-                || hook.path !== '.githooks/pre-push' || hook.kind !== 'file' || hook.ownership !== 'whole-file'
-                || hook.writer !== 'cockpit' || hook.schemaVersion !== 1 || hook.scope !== 'scoped' || hook.capability !== 'instructed'
-                || !Array.isArray(hook.harnesses) || hook.harnesses.length === 0 || hook.harnesses.some(value => typeof value !== 'string' || !configuredSet.has(value))
-                || !validFileFields(hook)) return refuse('SURFACE_INPUT_INVALID', 'native hook projection is malformed')
-            add(whole, hook.path, { harnesses: hook.harnesses as string[], scope: 'scoped', capability: 'instructed', bytes: hook.bytes as string })
-        } else if ((hooks.kind !== 'not-installed' && hooks.kind !== 'ci-required' && hooks.kind !== 'refusal')
-            || !exactKeys(hooks, ['kind', 'reason']) || typeof hooks.reason !== 'string' || hooks.reason.length === 0
-            || Buffer.byteLength(hooks.reason) > 4_096) return refuse('SURFACE_INPUT_INVALID', 'native hook projection is malformed')
-        else if (hooks.kind !== 'not-installed') return refuse('SURFACE_INPUT_INVALID', hooks.reason, '.githooks/pre-push')
     }
     for (const fragment of [...mcpNative, ...grantNative]) native.set(fragment.path, [...native.get(fragment.path) ?? [], fragment])
     for (const wrapper of captured.mcp.result.wrappers) {
@@ -558,9 +467,6 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
             readonly.set(fragment.path as string, fragment.bytes as string)
         }
     }
-    for (const { receipt, file } of custom.contributions) add(MARKDOWN_PATHS.has(file.path) ? markdown : whole, file.path, {
-        harnesses: [receipt.harness], scope: file.scope, capability: receipt.state, bytes: file.bytes,
-    })
 
     for (const [path, fragments] of native) {
         const finalBytes = new Set(fragments.map(fragment => fragment.bytes))
@@ -647,6 +553,6 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     const ownership = classifySurfaceOwnership({ configuredHarnesses: configured, entries })
     if (ownership.kind === 'refusal') return ownership
     const result = snapshotGeneratedJson({ kind: 'complete', entries: ownership.entries, warnings,
-        inputs: [...evidence, ...custom.evidence].sort((left, right) => JSON.stringify(left) < JSON.stringify(right) ? -1 : JSON.stringify(left) > JSON.stringify(right) ? 1 : 0) })
+        inputs: [...evidence].sort((left, right) => JSON.stringify(left) < JSON.stringify(right) ? -1 : JSON.stringify(left) > JSON.stringify(right) ? 1 : 0) })
     return result ? result as unknown as SurfaceRenderResult : refuse('SURFACE_BOUNDS', 'surface render result exceeds the captured bounds')
 }

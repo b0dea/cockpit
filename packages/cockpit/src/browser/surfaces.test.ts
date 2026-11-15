@@ -324,11 +324,11 @@ describe('browser transport surfaces', () => {
         expect(() => renderBrowserSurfaces({ ...input, testPackage: { ...nativePackage, module: input.testPackage!.module } as never })).toThrow('canonical')
     })
 
-    it('omits unsupported versions and unapproved servers without inventing controls', async () => {
+    it('drives current harness versions and omits unapproved servers without inventing controls', async () => {
         const input = await fixture()
-        const unknown = renderBrowserSurfaces({ ...input, harnesses: [{ target: 'claudecode', version: '99.0.0' }] })
-        expect(unknown.files).toEqual([])
-        expect(unknown.rows.every(row => row.declaration === 'unavailable' && row.callable === 'unavailable')).toBe(true)
+        const current = renderBrowserSurfaces({ ...input, harnesses: [{ target: 'claudecode', version: '99.0.0' }] })
+        expect(current.clients.map(client => [client.target, client.version])).toEqual([['claudecode', '99.0.0']])
+        expect(current.rows.filter(row => row.declaration === 'instructed').map(row => row.transport)).toEqual(['mcp', 'cli'])
         const unapproved = renderBrowserSurfaces({ ...input, approved: false })
         expect(unapproved.rows.filter(row => row.transport === 'mcp').every(row => row.declaration === 'unavailable')).toBe(true)
         expect(unapproved.files.some(file => file.path === '.mcp.json' || file.path === '.codex/config.toml' || file.path === 'opencode.jsonc')).toBe(false)

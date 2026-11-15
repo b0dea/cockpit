@@ -666,7 +666,6 @@ artifacts = { mcp = ".browser/mcp", cli = ".browser/cli", auth = ".browser/auth"
 [testing]
 stages = [{ id = "unit", command = ["npm", "test"], requires_stack = false }]
 gates = [{ id = "focused", tier = "targeted", stages = ["unit"], changes = "Isolated behavior" }]
-native_hooks = { install = "inspect" }
 `
             if (variant.serialized) {
                 await mkdir(join(fixture.root, '.browser/auth'), { recursive: true })

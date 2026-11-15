@@ -50,69 +50,10 @@ sources = [
         return { root, configPath, application: outcome.result.application }
     }
 
-    async function issuedCustomApplication(enforced = false) {
-        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-selftest-custom-')))
-        roots.push(root)
-        await mkdir(join(root, 'app'), { recursive: true })
-        await mkdir(join(root, 'fixtures'), { recursive: true })
-        await mkdir(join(root, 'adapters'), { recursive: true })
-        const evidenceBytes = '{"control":"synthetic paired probe"}\n'
-        if (enforced) {
-            await mkdir(join(root, 'evidence'), { recursive: true })
-            await writeFile(join(root, 'evidence/rules.json'), evidenceBytes)
-        }
-        await writeFile(join(root, 'app/AGENTS.md'), 'Synthetic sibling instruction canary.\n')
-        await writeFile(join(root, 'fixtures/personas.json'), '[{"id":"first"}]\n')
-        const outputBytes = 'synthetic custom rules\n'
-        const output = [{
-            path: 'app/custom-rules.md', bytes: outputBytes,
-            sha256: createHash('sha256').update(outputBytes).digest('hex'), scope: 'always',
-        }]
-        await writeFile(join(root, 'adapters/synthetic.mjs'), `export async function renderRules(input) {
-  if (input.harness !== "synthetic-harness" || input.feature !== "rules" || !Array.isArray(input.sources)) {
-    process.stderr.write("MODULE_REJECTED_CONTROL\\n")
-    throw new Error("invalid custom input")
-  }
-  return { kind: "complete", files: ${JSON.stringify(output)} }
-}
-/*${'x'.repeat(65_536)}*/
-`)
-        const capabilities = ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'].map((feature) => feature === 'rules'
-            ? `{ feature = "rules", state = "${enforced ? 'enforced' : 'instructed'}", measured_on = "2026-09-26", spelling = "app/custom-rules.md", control = "controls/rules.json", mechanism = { module = "adapters/synthetic.mjs", export = "renderRules" }${enforced ? ', evidence = { reference = "evidence/rules.json", sha256 = "' + createHash('sha256').update(evidenceBytes).digest('hex') + '" }' : ''} }`
-            : `{ feature = ${JSON.stringify(feature)}, state = "unavailable", measured_on = "2026-09-26", reason = "No synthetic ${feature} mechanism" }`)
-        const baseDeclaration = (await readFile(fixture, 'utf8')).replace(
-            'name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."',
-        ).replace(
-            'purpose = "Synthetic application"', 'purpose = "Synthetic application"\nguides = ["AGENTS.md"]',
-        ) + `
-[[surfaces.overlays]]
-name = "synthetic-skill"
-feature = "skills"
-source = "surfaces/synthetic-skill.json"
-sources = [${await syntheticSkillSources(['alpha'])}]
-`
-        const customDeclaration = `
-[[surfaces.overlays]]
-name = "synthetic-rules"
-feature = "rules"
-source = "surfaces/synthetic-rules.json"
-sources = [{ path = "rules/synthetic.md", bytes = "Read the synthetic sibling guide before editing.\\n" }]
-
-[[surfaces.harnesses]]
-name = "synthetic-harness"
-capabilities = [${capabilities.join(', ')}]
-`
-        const configPath = join(root, 'cockpit.toml')
-        await writeFile(configPath, baseDeclaration + customDeclaration)
-        const outcome = await syncGeneratedEnvironment({ configPath })
-        if (outcome.kind !== 'complete') throw new Error(outcome.diagnostics.map((row) => row.message).join('; '))
-        return { root, configPath, application: outcome.result.application }
-    }
-
     function specifications(application: Awaited<ReturnType<typeof issuedApplication>>['application']): readonly SelftestProbeSpecification[] {
         const expectation = surfaceSelftestExpectation(application.surfaceSelftest)
         if (!expectation) throw new Error('selftest expectation unavailable')
-        return expectation.cells.flatMap((cell) => cell.harness.kind !== 'builtin' ? [] : [{
+        return expectation.cells.map((cell) => ({
             harness: cell.harness,
             capability: cell.capability,
             invocation: ['{executable}', '--probe', cell.capability, '{control}'],
@@ -125,7 +66,7 @@ capabilities = [${capabilities.join(', ')}]
             sample: cell.capability === 'skill-parity'
                 ? { skill: cell.skill, features: ['name', 'trigger', 'body-load', 'tools', 'non-goals'] }
                 : null,
-        }])
+        }))
     }
 
     // With `signIn`, each tool behaves like a signed-in CLI: it reads its sign-in from a file under
@@ -200,7 +141,6 @@ ${typeof sensitiveOutput === 'string' ? `process.stdout.write(${JSON.stringify(s
     return {
         fakeHarnesses,
         issuedApplication,
-        issuedCustomApplication,
         specifications,
         syntheticExecutableAuthorities,
         syntheticOperatorApprovals,

@@ -10,7 +10,7 @@ Every diagnostic message names what failed and how to fix it. The sections below
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | The saved bootstrap stage and generated ownership disagree. | Restore the committed ownership metadata, then rerun the same `./node_modules/@b00dea/cockpit/bin/cockpit.mjs init . --target <tool>` command. |
 | `SURFACE_SOURCE_UNAVAILABLE` | A declared sibling source cannot be read or checked. | Restore the named checkout at its declared path, then rerun `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
 | `SURFACE_OWNERSHIP_INVALID` | Cockpit cannot tell which settings it may replace. | Restore the last committed ownership metadata, then rerun `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
-| `SURFACE_STATE_CONFLICT` | Sync would overwrite a hand edit or a file cockpit has no record of writing. | Move a hand edit into `cockpit.toml` or a surface overlay and ask a person before discarding it; for a team's own settings file, have a person approve `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --adopt <path> --config cockpit.toml`. |
+| `SURFACE_STATE_CONFLICT` | Sync would overwrite a hand edit or a file cockpit has no record of writing. | Move a hand edit into `cockpit.toml` or a surface overlay and ask a person before discarding it; for a team's own settings file, have a person move it to `cockpit/adopted/<the same path>` and run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
 | `GENERATED_ARTIFACT_DRIFT` | Generated files no longer match the canonical configuration. | Review the diff, run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`, then retry. |
 | `GENERATED_OWNERSHIP_INVALID` | Cockpit has no trustworthy record of which files it owns. | Restore the committed ownership metadata, then rerun `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
 | `GUARD_AUTHORITY_UNAVAILABLE` | The guard cannot read the current policy it needs to decide safely. | Restore `cockpit.toml` and generated guard files, then have a human run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
@@ -44,7 +44,7 @@ a `[[guards.allow]]` rule, rather than rewording it.
 | `… sets <NAME>, which changes what Git, its hooks, Docker, the shell or the command search path runs` | A prefixed or exported `GIT_*`, `DOCKER_*`, `HOME`, `HUSKY`, `SKIP`, `LEFTHOOK` or relative `PATH` assignment. | Run the command without that assignment. |
 | `Refusing \`--no-verify\`` / `Refusing \`git -c <key>\`` | Skipping hooks, or a configuration key that chooses a program Git runs. | Run without it and fix what the hook reports. |
 | `… is not a development tool the guard knows, or runs inline code it cannot judge` | The executable is not a tool the guard knows, or the command runs inline code: `python3 -c`, `node -e`, an interpreter reading a script from standard input, `find -exec`, `make --eval`, `go -exec`, `rsync -e`, an `awk` program that calls `system` or writes with `print >`, a `sed` `e` or `w` command. `psql` asks as an unknown program. In Codex and OpenCode the ask is a refusal. | A person approves or runs the command, or adds a `[[guards.allow]]` rule for the program to `cockpit.toml` and runs `sync`. Do not reword it. |
-| `… is a cockpit command an agent does not run unprompted` / `… is a cockpit command that publishes policy or is not one an agent runs` | A cockpit command the command table does not admit to an agent: `sync --interactive`, `sync --adopt`, `reset` and the other commands that change what agents may do, however spelled. `sync` and `upgrade` themselves run only where `[autonomy] sync = "agent"`. | A person runs it in a terminal. |
+| `… is a cockpit command an agent does not run unprompted` / `… is a cockpit command that publishes policy or is not one an agent runs` | A cockpit command the command table does not admit to an agent: `sync --interactive`, `reset` and the other commands that change what agents may do, however spelled. `sync` and `upgrade` themselves run only where `[autonomy] sync = "agent"`. | A person runs it in a terminal. |
 | `Refusing to sync the cockpit` / `Refusing to run cockpit upgrade` | An agent ran it while `cockpit.toml` holds an unapproved edit that widens what agents may do. | A person reviews the edit and runs `sync --interactive`, or reverts it. |
 | `Refusing … it runs sync or upgrade from a copy of cockpit` / `… runs a copy of cockpit outside the installed package` | `node <copy>/dist/cli.js sync` would bind the guard to a copy an agent can edit. | A person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` in a terminal; an agent runs the installed package. |
 | `… downloads files whose names the guard cannot see into <dir>, which holds guard files` | `gh run download`, or `gh release download` without `-p`, writes into a directory that holds guard files, such as the cockpit root. | Download into another directory, such as `build/`, or name the release assets with `-p`. |
@@ -166,14 +166,11 @@ delete the existing path as a workaround.
 longer matches the bytes cockpit wrote. Keep the current bytes: a hand edit belongs in
 `cockpit.toml` or a surface overlay, and discarding it, or deleting a file cockpit has no record of
 writing, is the person's decision. For a team's own `.claude/settings.json`, `.codex/config.toml` or
-`.codex/hooks.json`, the fix names the `sync --adopt` command that keeps it; see
+`.codex/hooks.json`, move it to `cockpit/adopted/<the same path>` and sync again; see
 [Adopt existing agent settings](getting-started.md#adopt-existing-agent-settings).
 `SURFACE_ADOPTION_REFUSED` names the adopted key that would switch off or bypass the guard, or that
 cockpit writes with a different value; remove it from the named file and sync again.
 `SURFACE_SOURCE_UNAVAILABLE` means a declared source or active sibling could not be read or checked. Restore that source at its declared root and retry the dry run.
-`SURFACE_CUSTOM_REFUSED` means the named custom harness module did not return a complete result
-bound to its declaration and source digest, or an `enforced` row's evidence file was missing or
-did not match its declared SHA-256. Inspect the module, the evidence file reference, and the broken control.
 
 `GENERATED_STALE_APPROVAL_REQUIRED` means a dry run found stale entries but the apply has no
 approval for their exact digest. Run `sync --interactive` from a terminal outside CI, review the
@@ -238,11 +235,10 @@ A sibling guide holding one of cockpit's own `<!-- cockpit:instructions:` or `<!
 markers is refused as `PROJECTION_INPUT_INVALID`, because its copy would end or split cockpit's
 region of the root **AGENTS.md**; remove the marker from the guide.
 
-For `SKILL_INPUT_INVALID`, `SKILL_FRONTMATTER_INVALID`, `SKILL_CONTRACT_INVALID`,
-`SKILL_IDENTITY_INVALID`, `SKILL_NAME_DUPLICATE`, `SKILL_TOOL_EQUIVALENCE_MISSING`,
-`SKILL_PROCEDURE_MISSING`, `SKILL_COMMAND_UNDECLARED`, `SKILL_ENTRY_POINT_EXCEEDED`, or
-`SKILL_DECISION_LOGIC_EMBEDDED`, correct the shipped skill entry point or shared procedure named
-by the diagnostic. `SKILL_RENDER_INVALID` and `SKILL_RENDER_INVENTORY_INVALID` mean generated
+For `SKILL_INPUT_INVALID`, `SKILL_FRONTMATTER_INVALID`, `SKILL_IDENTITY_INVALID`,
+`SKILL_NAME_DUPLICATE` or `SKILL_PROCEDURE_MISSING`, correct the skill entry point or procedure
+named by the diagnostic: every skill needs a unique `name` matching its directory and a
+`description`. `SKILL_RENDER_INVALID` and `SKILL_RENDER_INVENTORY_INVALID` mean generated
 files do not match the skill contract. `SKILL_STANDING_COST_EXCEEDED` means the always-loaded
 skill entry points are too large. Shrink them; moving decision logic into another always-loaded
 file is not a repair.
@@ -450,7 +446,6 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `RUNTIME_UNAVAILABLE` | [see above](#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [see above](#common-refusal-guidance) |
 | `SECRET_FILE_TRACKED` | a person decides with the repository owner: stop tracking each file with git rm --cached <file>, add it to .gitignore, commit, and rotate any credential it held; commit a .env.example with the variable names instead |
-| `SELFTEST_CUSTOM_PROBE_UNSUPPORTED` | measure the custom harness capability by hand with a candidate and a deliberately broken control, then record what you saw as its state and measured_on in cockpit.toml (enforced needs an evidence file); do not add a row for it |
 | `SELFTEST_EXECUTION_INVALID` | [see above](#selftest-and-override-inspection) |
 | `SELFTEST_GUARD_IDENTITY_MISMATCH` | [see above](#selftest-and-override-inspection) |
 | `SELFTEST_SOURCE_INVALID` | [see above](#selftest-and-override-inspection) |
@@ -468,10 +463,6 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SIBLING_INSTRUCTIONS_MISSING` | a person writes AGENTS.md with what an agent must know to work in the repository, then runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> --write-instruction-files to add the CLAUDE.md that imports it |
 | `SIBLING_INSTRUCTIONS_TOOL_ONLY` | a person moves the instructions every tool needs from those files into AGENTS.md, and keeps only settings specific to one tool where they are |
 | `SIBLING_INSTRUCTIONS_UNLINKED` | a person merges the instructions every tool needs into AGENTS.md, then makes CLAUDE.md a line reading @AGENTS.md followed only by instructions that apply to Claude Code alone |
-| `SKILL_COMMAND_UNDECLARED` | [see above](#sibling-projection-and-skills) |
-| `SKILL_CONTRACT_INVALID` | [see above](#sibling-projection-and-skills) |
-| `SKILL_DECISION_LOGIC_EMBEDDED` | [see above](#sibling-projection-and-skills) |
-| `SKILL_ENTRY_POINT_EXCEEDED` | [see above](#sibling-projection-and-skills) |
 | `SKILL_FRONTMATTER_INVALID` | [see above](#sibling-projection-and-skills) |
 | `SKILL_IDENTITY_INVALID` | [see above](#sibling-projection-and-skills) |
 | `SKILL_INPUT_INVALID` | [see above](#sibling-projection-and-skills) |
@@ -480,7 +471,6 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SKILL_RENDER_INVALID` | [see above](#sibling-projection-and-skills) |
 | `SKILL_RENDER_INVENTORY_INVALID` | [see above](#sibling-projection-and-skills) |
 | `SKILL_STANDING_COST_EXCEEDED` | [see above](#sibling-projection-and-skills) |
-| `SKILL_TOOL_EQUIVALENCE_MISSING` | [see above](#sibling-projection-and-skills) |
 | `STACKS_ORPHANED` | [see above](#clear-cockpit-state) |
 | `STATE_FORMAT_UNSUPPORTED` | [see above](#clear-cockpit-state) |
 | `STATE_LOCKED` | [see above](#clear-cockpit-state) |
@@ -491,7 +481,6 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SURFACE_ARTIFACT_INVALID` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_BOUNDS` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_CLEANUP_FAILED` | [see above](#merge-ownership-and-generation) |
-| `SURFACE_CUSTOM_REFUSED` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_FEATURE_COVERAGE` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_GENERATION_FAILED` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_GENERATOR_TRUST_WARNING` | [see above](#merge-ownership-and-generation) |
