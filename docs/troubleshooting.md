@@ -239,12 +239,7 @@ files do not match the skill contract. `SKILL_STANDING_COST_EXCEEDED` means the 
 skill entry points are too large. Shrink them; moving decision logic into another always-loaded
 file is not a repair.
 
-### Guard Node and override inspection
-
-`GUARD_NODE_DIFFERS` means the Node running this command is not the one `sync` recorded for the
-guard hook. When the Node at the recorded path was upgraded in place, no Node runs what `sync`
-recorded and the guard holds its calls until `sync` runs again, so run `sync`. When another Node
-runs this command (a version manager's shell, say), the guard is unaffected and nothing is needed.
+### Override inspection
 
 `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE`, `SURFACE_OVERRIDE_INSPECTION_REFUSED`,
 `SURFACE_OVERRIDE_INSPECTION_INVALID`, and `SURFACE_OVERRIDE_INSPECTION_PATH_MISMATCH` mean
@@ -366,7 +361,6 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `GUARD_AUTHORITY_UNAVAILABLE` | [see above](#common-refusal-guidance) |
 | `GUARD_CONFIG_WIDENED` | [see above](#guard-refusals) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_NODE_DIFFERS` | [see above](#guard-node-and-override-inspection) |
 | `GUARD_RECORD_MISMATCH` | review what changed the guard script, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal; [see above](#codex-hooks-in-linked-worktrees) |
 | `GUARD_REFUSED` | [see above](#common-refusal-guidance) |
 | `GUARD_SEARCH_PATH_RELATIVE` | check PATH in the shell or launcher that starts the agent harness; if it contains relative or empty entries, remove them there and restart the harness |
@@ -441,10 +435,10 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SURFACE_NAME_DUPLICATE` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_NODE_UNAVAILABLE` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_OUTPUT_COVERAGE` | [see above](#merge-ownership-and-generation) |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [see above](#guard-node-and-override-inspection) |
-| `SURFACE_OVERRIDE_INSPECTION_PATH_MISMATCH` | [see above](#guard-node-and-override-inspection) |
-| `SURFACE_OVERRIDE_INSPECTION_REFUSED` | [see above](#guard-node-and-override-inspection) |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [see above](#guard-node-and-override-inspection) |
+| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [see above](#override-inspection) |
+| `SURFACE_OVERRIDE_INSPECTION_PATH_MISMATCH` | [see above](#override-inspection) |
+| `SURFACE_OVERRIDE_INSPECTION_REFUSED` | [see above](#override-inspection) |
+| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [see above](#override-inspection) |
 | `SURFACE_OVERRIDE_INVALID` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_OWNERSHIP_INVALID` | [see above](#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [see above](#merge-ownership-and-generation) |

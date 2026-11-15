@@ -448,8 +448,9 @@ asks you to name that version.
 
 An agent may run `upgrade` exactly where it may run a writing `sync`. Under `person` or `ci` the
 guard asks, and the sync child refuses outside CI under `ci`. `--dry-run` is never gated. Until
-`sync` finishes, the guard holds every guarded agent tool call, because it trusts only the cockpit,
-Node and `cockpit.toml` it was generated for. A built-in that one of your overlays replaces and the
+`sync` finishes, the guard holds every guarded agent tool call, because it trusts only the cockpit
+and `cockpit.toml` it was generated for. A Node upgrade or a second Node install does not hold
+calls: the hook runs Node by the path sync found on the search path. A built-in that one of your overlays replaces and the
 release changed is reported as `OVERRIDDEN_CORE_CHANGED`. Then review `git diff` and commit
 `package.json`, the lockfile and the regenerated files together.
 

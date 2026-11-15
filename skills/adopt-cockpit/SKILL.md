@@ -117,9 +117,9 @@ has been cleared or reported to the human. Cockpit is usable once `check` passes
   previews). By hand, install the new version, then run
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml`,
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --dry-run` and
-  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. The guard trusts only the cockpit, Node
-  and `cockpit.toml` it was generated for, so after an upgrade, a Node switch or a `cockpit.toml`
-  edit can hold tool calls. Follow the refusal as **Running cockpit** describes: a restrictive
+  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. The guard trusts only the cockpit
+  and `cockpit.toml` it was generated for, so after an upgrade or a `cockpit.toml`
+  edit it can hold tool calls. Follow the refusal as **Running cockpit** describes: a restrictive
   configuration edit can be synced under existing agent authority; a changed executable or widened
   authority needs the person. Guide: *Upgrade cockpit*.
 

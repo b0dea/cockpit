@@ -192,7 +192,7 @@ const LOCKFILE_INSTALLS: readonly (readonly [string, string])[] = [['pnpm-lock.y
 function versionDrift(identity: GuardHandlerIdentity, generated: string | undefined): string {
     const installed = installedPackageMetadata.version
     const order = generated === undefined ? undefined : versionOrder(installed, generated)
-    const why = 'the guard trusts only the cockpit, Node and configuration it was generated for'
+    const why = 'the guard trusts only the cockpit and configuration it was generated for'
     if (order === undefined || order > 0) {
         const what = generated === undefined || generated === installed
             ? 'the installed cockpit version changed (its handler bytes differ) since the guards were generated'
@@ -291,7 +291,7 @@ export async function runGuardEvaluationApplication(
             || data.guardRoot !== identity.root
             ) return unavailable('Installed guard location does not match this application.')
         const changed = (what: string) => unavailable(guardHeld(identity, `${what} since the guards were generated`,
-            'the guard trusts only the cockpit, Node and configuration it was generated for'))
+            'the guard trusts only the cockpit and configuration it was generated for'))
         if (realpathSync(fileURLToPath(new URL('../../../dist/cli.js', import.meta.url))) !== identity.module) return changed('a different cockpit installation is running')
         const roots = new Map<string, Stats>()
         for (const [path, directory] of [[identity.root, true], [identity.configPath, false]] as const) {
@@ -312,15 +312,13 @@ export async function runGuardEvaluationApplication(
             }
             roots.set(path, status)
         }
-        // Re-hashing a 100 MB Node binary in every guard process dominated each call. The local record
-        // carries the fingerprint sync hashed; an identical path, inode, size, mode and timestamps
-        // stand in for the re-hash, and the local record is checked against this identity below.
-        const nodePath = realpathSync(process.execPath)
-        if (nodePath === identity.node && fileFingerprint(nodePath, lstatSync(nodePath)) === identity.nodeFingerprint) {
-            recordVerifiedDigest(identity.nodeFingerprint, identity.nodeSha256)
-        }
+        // Whichever Node the hook ran: the record pins its path, not the binary behind it. Re-hashing a
+        // 100 MB Node binary dominated each call, so the Node file sync hashed, unchanged by path, inode,
+        // size, mode and timestamps, keeps the digest sync recorded.
+        const running = realpathSync(process.execPath)
+        if (fileFingerprint(running, lstatSync(running)) === identity.nodeFingerprint) recordVerifiedDigest(identity.nodeFingerprint, identity.nodeSha256)
         const node = await nodeAuthority()
-        if (!node || node.canonicalPath !== identity.node || node.sha256 !== identity.nodeSha256) return changed(`the Node executable changed (now ${node?.canonicalPath ?? 'unreadable'})`)
+        if (!node) return unavailable(`The Node executable ${process.execPath} could not be read.`)
         const read = async (root: string, path: string, maxBytes: number) => {
             const result = await readAnchoredFile(root, path, maxBytes, node, { execute: adapters.execute ?? executeProbe })
             if (result.kind !== 'complete') throw new RefusalError('Guard authority file is missing, changed, oversized or crosses a symlink boundary.')
@@ -824,7 +822,7 @@ export async function runGuardEvaluationApplication(
             // A write path still never takes a program planted in a search path directory, nor the Node the guard runs.
             ...agentAreas,
             ...policy.writePaths?.length || agentRoots.length ? { externalSearchDirectories: externalSearchDirectories(searchPath, policy.allowedRoots),
-                guardRuntime: [...new Set([identity.node, dirname(dirname(identity.node)), process.execPath])].filter(path => path !== '/') } : {},
+                guardRuntime: [...new Set([identity.node, node.canonicalPath, dirname(dirname(node.canonicalPath))])].filter(path => path !== '/') } : {},
             // The guard script on disk is the one the person's sync recorded, so staging it stages what a person ran sync for.
             ...inspectGuardRecord(identity.root) === 'match' ? { recordedGuardScript: true } : {},
             ripgrepConfigActive: data.ripgrepConfigActive === true }, inspect)
