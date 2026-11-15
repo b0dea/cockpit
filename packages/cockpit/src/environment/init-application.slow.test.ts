@@ -335,7 +335,7 @@ it.each(['scalar', 'artifact'] as const)('refuses an unreviewable defaults draft
         },
         classifyEstate: input => classifyEstateObservation(input, { observe: observePublicEstate }),
     }
-    const input = { ...f.input, registry: undefined }
+    const input = f.input
     const preview = await runInitApplication(input, adapters)
     const accepted = { ...input, accepted: true, acceptedPreviewSha256: preview.result!.previewSha256 }
     let outcome = await runInitApplication(accepted, adapters)

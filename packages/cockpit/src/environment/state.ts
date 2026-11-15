@@ -167,7 +167,6 @@ const GreenfieldAnswerSchema = z.object({
     provenance: z.enum(ANSWER_PROVENANCES),
 }).strict()
 const GreenfieldStateSchema = z.object({
-    mode: z.enum(['estate', 'registry']).optional(),
     stage: z.enum(['question-pending', 'answers-recorded', 'resolved']),
     classification: z.enum(['one-sibling', 'incomplete-multi-repository', 'no-runnable-product', 'ready-multi-repository']).optional(),
     sourceObservationSha256: z.string().regex(digest),
@@ -187,11 +186,8 @@ const GreenfieldStateSchema = z.object({
         || (value.stage === 'resolved' && (value.questions.length !== 0 || value.answers.length !== 0))) {
         context.addIssue({ code: 'custom', message: 'greenfield answers do not match the interview stage' })
     }
-    if ((value.mode ?? 'estate') === 'estate' && (!value.classification || !value.notice)) {
+    if (!value.classification || !value.notice) {
         context.addIssue({ code: 'custom', message: 'estate interview provenance is incomplete' })
-    }
-    if (value.mode === 'registry' && (value.classification || value.notice)) {
-        context.addIssue({ code: 'custom', message: 'registry interview cannot claim estate classification provenance' })
     }
     if (value.stage === 'resolved' && value.classification === 'incomplete-multi-repository') {
         context.addIssue({ code: 'custom', message: 'an incomplete estate cannot be resolved without recorded answers' })
@@ -1278,7 +1274,6 @@ function validateRecordForAddress(
             ? nextGreenfield === undefined || nextGreenfield.answers.length === 0
                 && (nextGreenfield.stage === 'question-pending' || nextGreenfield.stage === 'resolved')
             : nextGreenfield !== undefined
-                && nextGreenfield.mode === currentGreenfield.mode
                 && nextGreenfield.classification === currentGreenfield.classification
                 && nextGreenfield.sourceObservationSha256 === currentGreenfield.sourceObservationSha256
                 && nextGreenfield.notice === currentGreenfield.notice
@@ -1438,7 +1433,6 @@ export async function refreshBootstrapObservation(
         if (!parsed.success || !Number.isInteger(input.expectedRevision) || input.expectedRevision < 0
             || !digest.test(input.expectedSourceObservationSha256)
             || !isCanonicalTimestamp(input.updatedAt) || parsed.data.answers.length !== 0
-            || (parsed.data.mode ?? 'estate') !== 'estate'
             || parsed.data.sourceObservationSha256 === input.expectedSourceObservationSha256) {
             return observationRefreshRefusal('invalid', 'fresh estate observation replacement is malformed')
         }
@@ -1452,7 +1446,6 @@ export async function refreshBootstrapObservation(
         const greenfield = current?.value.greenfield
         if (current === null || current.revision !== stableInput.expectedRevision
             || current.value.stage !== 'surface-published' || !greenfield
-            || (greenfield.mode ?? 'estate') !== 'estate'
             || greenfield.sourceObservationSha256 !== stableInput.expectedSourceObservationSha256) {
             return abortStateTransaction(observationRefreshRefusal('stale',
                 'bootstrap estate observation no longer matches the exact persisted interview'))

@@ -702,27 +702,12 @@ describe('bootstrap state', () => {
         })).resolves.toMatchObject({ kind: 'refusal' })
     })
 
-    it('does not refresh registry interviews or a bootstrap stage that already owns a draft', async () => {
+    it('does not refresh a bootstrap stage that already owns a draft', async () => {
         const fresh = { stage: 'question-pending' as const, classification: 'one-sibling' as const,
             sourceObservationSha256: '8'.repeat(64), notice: 'one runnable product was observed', questions: [{
                 id: `question:${'7'.repeat(64)}`, field: 'sibling', source: 'configuration:fresh',
                 why: 'the runnable sibling declaration is unresolved',
             }], answers: [] }
-        const registrySelection = await selectedBootstrapNamespace()
-        const registryOwner = bootstrapHolderId({ checkoutId: registrySelection.address.checkoutId, sessionId: 'registry-session' })
-        const registry: BootstrapStateRecord = { ...bootstrapRecord(registrySelection.address), value: {
-            ...bootstrapRecord(registrySelection.address).value, stage: 'surface-published', destination: null,
-            artifactBytes: null, artifactSha256: null, greenfield: { mode: 'registry', stage: 'question-pending',
-                sourceObservationSha256: '6'.repeat(64), questions: [{ id: `question:${'5'.repeat(64)}`,
-                    field: 'sibling', source: 'registry', why: 'the sibling declaration is unresolved' }], answers: [] },
-        } }
-        expect(await transactState(registrySelection.namespace, registrySelection.address, { ownerId: registryOwner }, () => registry))
-            .toMatchObject({ kind: 'complete' })
-        expect(await refreshBootstrapObservation(registrySelection.namespace, registrySelection.address, {
-            ownerId: registryOwner, expectedRevision: 0, expectedSourceObservationSha256: '6'.repeat(64),
-            greenfield: fresh, updatedAt: '2026-09-07T12:01:00.000Z',
-        })).toMatchObject({ kind: 'refusal', reason: 'stale' })
-
         const draftSelection = await selectedBootstrapNamespace()
         const draftOwner = bootstrapHolderId({ checkoutId: draftSelection.address.checkoutId, sessionId: 'draft-session' })
         const draftBase = bootstrapRecord(draftSelection.address)

@@ -235,8 +235,8 @@ describe('selected bootstrap target', () => {
         const advanced = await transactState(selected.value, address, {
             ownerId: bootstrapHolderId({ checkoutId: address.checkoutId, sessionId: 'refresh-race' }),
         }, current => ({ ...current!, revision: current!.revision + 1, updatedAt: '2026-10-25T12:01:00.000Z',
-            value: { ...current!.value, greenfield: { mode: 'registry' as const, stage: 'resolved' as const,
-                sourceObservationSha256: digest('registry'), questions: [], answers: [] } } }))
+            value: { ...current!.value, greenfield: { stage: 'resolved' as const, classification: 'one-sibling' as const,
+                notice: 'one runnable product was observed', sourceObservationSha256: digest('estate'), questions: [], answers: [] } } }))
         if (advanced.kind !== 'complete') throw new Error('bootstrap race state advance was refused')
         currentRevision = advanced.value.revision
         expect(await applySelectedBootstrapSurface(refreshed.authority)).toMatchObject({ kind: 'refusal' })

@@ -1,7 +1,9 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join, relative, resolve, sep } from 'node:path'
+import { createHash } from 'node:crypto'
 import type { InitApplicationAdapters, InitApplicationInput } from '../src/environment/init-application.js'
+import type { EstateClassificationOutcome, EstateClassificationResult } from '../src/init/draft.js'
 import type { SurfaceTarget } from '../src/surfaces/contract.js'
 
 // Shared by the init application tests and their slow end-to-end cases.
@@ -11,6 +13,23 @@ export function removeInitApplicationFixtures() {
     for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true })
 }
 export const digest = (character: string) => character.repeat(64)
+
+/** A complete estate classification of `root`, digest-bound to the classification and root. */
+export function estate(root: string, classification: 'one-sibling' | 'incomplete-multi-repository' | 'no-runnable-product'): EstateClassificationOutcome {
+    const multi = classification === 'incomplete-multi-repository'
+    const noRunnable = classification === 'no-runnable-product'
+    return { kind: 'complete', status: 0, diagnostics: [], result: {
+        sourceObservationSha256: createHash('sha256').update(`estate:${classification}:${root}`).digest('hex'),
+        classification,
+        notice: `${classification} at ${root}`,
+        gaps: multi ? [{ field: 'api.runnable', source: 'api/package.json', why: 'runnable command is unknown' }]
+            : noRunnable ? [{ field: 'runnable-product', source: 'assets/package.json', why: 'no runnable product exists' }] : [],
+        runnable: multi ? [{ slug: 'web', path: 'web', disposition: 'confirmed' },
+            { slug: 'api', path: 'api', disposition: 'unknown' }]
+            : noRunnable ? [{ slug: 'assets', path: 'assets', disposition: 'absent' }]
+                : [{ slug: 'app', path: 'app', disposition: 'confirmed' }],
+    } as EstateClassificationResult & { readonly sourceObservationSha256: string } }
+}
 
 export function fixture() {
     const directory = mkdtempSync(join(tmpdir(), 'cockpit-init-application-'))
@@ -43,6 +62,7 @@ export function fixture() {
     })
     let prepared = preview
     const adapters: InitApplicationAdapters = {
+        classifyEstate: async ({ root: observed }) => estate(observed, 'one-sibling'),
         now: () => '2026-10-25T00:00:00.000Z',
         prepareBootstrap: async ({ target }) => {
             calls.push('prepare')
@@ -83,7 +103,7 @@ export function fixture() {
         preflight: async () => { calls.push('preflight'); return { kind: 'complete', status: 0, diagnostics: [], result: { verdict: 'pass' } } },
     }
     const input: InitApplicationInput = {
-        root: resolve(root), target: 'codexcli', tools: ['codexcli'], registry: join(root, 'env/registry.sh'), accepted: false,
+        root: resolve(root), target: 'codexcli', tools: ['codexcli'], accepted: false,
         sessionId: 'synthetic-session', platform: 'linux', home, xdgStateHome: join(home, 'state'),
     }
     return {
