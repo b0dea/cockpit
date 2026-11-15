@@ -118,12 +118,6 @@ The `[[sibling]]` entry for one product repository: its stable slug, directory, 
 mount modes, toolchain and generated guidance. `setup` and `preflight` check that the checkout
 exists and matches it.
 
-## Cockpit product registry
-
-An optional, validated description of an existing product's repositories, environment, surfaces,
-guards, grading and adoption state, used as input when adopting an established setup. The
-<!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml` draft it produces still needs your review.
-
 ## Cockpit lifecycle record
 
 The state cockpit keeps for one checkout and its shared runtime: which setup and bring-up stages

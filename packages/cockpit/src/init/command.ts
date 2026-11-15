@@ -17,7 +17,6 @@ interface InitCommandInput {
     readonly target: SurfaceTarget
     /** Every chosen tool, target first; just the target when only one was given. */
     readonly tools?: readonly SurfaceTarget[]
-    readonly registry?: string
     readonly sessionId?: string
     readonly platform?: 'darwin' | 'linux'
     readonly home?: string
@@ -272,7 +271,6 @@ async function drive(
         root: input.root,
         target: input.target,
         tools: input.tools ?? [input.target],
-        ...(input.registry === undefined ? {} : { registry: input.registry }),
         sessionId: input.sessionId ?? randomUUID(),
         platform: input.platform,
         home: input.home ?? process.env.HOME,

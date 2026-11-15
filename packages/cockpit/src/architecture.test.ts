@@ -72,7 +72,6 @@ const CONFINED: readonly (readonly [capability: string, pattern: RegExp, allowed
     ['reclaim drain recovery is reclaim\'s', /\b(?:inspectFailedReclaimRecovery|reclaimDrainStep|matchReclaimDrainContinuation)\b/,
         [`${ENV}claims.ts`, `${ENV}reclaim.ts`]],
     ['port leases consult the drain guard', /\b(?:isDrainActive|releaseClaim)\b/, [`${ENV}claims.ts`, `${ENV}ports.ts`]],
-    ['one registry parser', /\bfunction\s+parseRegistry\b|\bparseRegistry\s*=/, [`${SRC}registry-resolve/registry.ts`]],
     ['guard input is parsed only for the guard application', /\bparseGuardInput\b/, [`${SRC}guards/invocation-parser.ts`, `${ENV}application/guard.ts`]],
     ['guard policy is evaluated only by the guard application', /\bevaluateGuard\b/, [`${SRC}guards/evaluator.ts`, `${ENV}application/guard.ts`]],
     ['ordinary invocations are admitted through the command table', /\bresolveOrdinaryInvocation\b/,

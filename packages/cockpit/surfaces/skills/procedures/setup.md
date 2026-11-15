@@ -92,8 +92,8 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
    files nobody has tested them loading (see
    `./node_modules/@b00dea/cockpit/docs/capability-matrix.md`), so propose them only when the team
    uses them. Done when you hold the `--target` value.
-2. **Preview.** Run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs init . --target <tool> --json`, adding
-   `--registry` only when adopting an existing registry. The preview writes nothing. Read
+2. **Preview.** Run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs init . --target <tool> --json`.
+   The preview writes nothing. Read
    `result.interview.outstanding`: every field the interview will ask, each with its `proposals`
    (each with `provenance.kind` `derived`, `measured` or `inferred`, and the file it came from) and
    `confirmedBy`. Read `result.writes`: every path, relative to the cockpit root, that init creates

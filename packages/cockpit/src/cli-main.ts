@@ -23,10 +23,6 @@ import { runInitOperatorCommand, type UnattendedInit } from './init/command.js'
 import { composeFindings, deriveInferredFacts } from './init/derive.js'
 import { runInitApplication, type InitApplicationInput, type InitApplicationOutcome, type InitResult } from './environment/init-application.js'
 import { nodeAuthority, readAnchoredBatches } from './generated-environment/transaction.js'
-import {
-    registryResolveCommand,
-    type RegistryResolveCommandInput,
-} from './registry-resolve/command.js'
 import { setupCommand, type SetupCommandInput } from './setup/command.js'
 import {
     beginOperatorReset as beginOperatorResetApplication,
@@ -187,7 +183,6 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
         json: boolean
     }>
     preflight: PreflightCommandInput
-    'registry-resolve': RegistryResolveCommandInput
     reset: ResetCommandInput
     runtime: Readonly<{ configPath: string; image: string }>
     sibling: Readonly<{ operation: 'add'; input: Omit<SiblingAddInput, 'env'> }> | Readonly<{ operation: 'remove'; input: Omit<SiblingRemoveInput, 'env'> }>
@@ -689,7 +684,6 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             },
             preflight: ({ configPath }) => runPreflightApplication({ configPath }, healthAdapters(configPath)),
         }),
-        'registry-resolve': registryResolveCommand,
         setup: (input) => setupCommand({ ...input, env }, defaultSetupAdapters),
         sync: async ({ authorizeStaleRemoval, ...input }) => {
             return syncTeamGeneratedEnvironment(input, authorizeStaleRemoval ? { authorizeStaleRemoval } : {})
@@ -1116,15 +1110,13 @@ async function decodeRequest(
         const root = explicitRoot ?? '.'
         const scaffoldOnly = ['command', 'port', 'with'].find(name => parsed.values[name] !== undefined)
         if (scaffoldOnly) return usageOutcome('CLI_USAGE_INVALID', `--${scaffoldOnly} belongs to --scaffold-compose`, `--${scaffoldOnly}`)
-        const registry = parsed.values.registry
         // `--target a,b` chooses several tools; the first is the one whose setup skill init publishes
         // before the interview. One comma list rather than a repeated flag keeps the guard's
         // single-value grammar for --target.
         const tools = typeof parsed.values.target === 'string' ? parsed.values.target.split(',')
             : parsed.values.target === undefined ? [...DEFAULT_SURFACE_TOOLS] : []
         if (extraRoots.length || tools.length === 0 || !tools.every(tool => SURFACE_TARGETS.some(value => value === tool))
-            || new Set(tools).size !== tools.length
-            || registry !== undefined && (typeof registry !== 'string' || registry.length === 0)) {
+            || new Set(tools).size !== tools.length) {
             return usageOutcome('CLI_USAGE_INVALID', `init takes at most one root (default: the current directory) and --target with one or more distinct tools, comma-separated: ${SURFACE_TARGETS.join('|')} (default: ${DEFAULT_SURFACE_TOOLS.join(',')})`)
         }
         if (!tools.some(tool => isGuardSurfaceTarget(tool))) {
@@ -1151,7 +1143,6 @@ async function decodeRequest(
                 return usageOutcome('CLI_USAGE_INVALID', '--reset-answer is a standalone preview or exact acceptance operation')
             }
             return { handler, input: { root: absoluteRoot, target, tools: chosen,
-                ...(typeof registry === 'string' ? { registry: resolve(absoluteRoot, registry) } : {}),
                 accepted: false, sessionId: randomUUID(), platform: process.platform, home: runtimeEnv.HOME,
                 ...(runtimeEnv.XDG_STATE_HOME ? { xdgStateHome: runtimeEnv.XDG_STATE_HOME } : {}),
                 resetAnswer: { field: resetField, ...(typeof acceptedReset === 'string'
@@ -1161,7 +1152,6 @@ async function decodeRequest(
             interactive?: boolean; answers?: string; 'accept-preview'?: string; 'accept-defaults'?: string })
         if ('status' in unattended) return unattended
         return { handler, input: { root: absoluteRoot, target, tools: chosen,
-            ...(typeof registry === 'string' ? { registry: resolve(absoluteRoot, registry) } : {}),
             accepted: false, sessionId: randomUUID(), platform: process.platform, home: runtimeEnv.HOME,
             ...(runtimeEnv.XDG_STATE_HOME ? { xdgStateHome: runtimeEnv.XDG_STATE_HOME } : {}),
             ...(unattended.value ? { unattended: unattended.value } : {}) } }
@@ -1398,43 +1388,13 @@ async function decodeRequest(
         return { handler, input: { configPath: values.config } }
     }
 
-    if (handler === 'tool') {
-        const values = parsed.values as { config?: string; 'dry-run'?: boolean }
-        const [operation, tool, ...extra] = parsed.positionals
-        if ((operation !== 'add' && operation !== 'remove') || !tool || extra.length > 0) {
-            return usageOutcome('CLI_USAGE_INVALID', `tool requires an operation and one tool: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs tool add|remove <${SURFACE_TARGETS.join('|')}> --config <your cockpit.toml> [--dry-run]`)
-        }
-        if (!values.config) return missingConfig()
-        return { handler, input: { operation, configPath: values.config, tool, dryRun: values['dry-run'] === true } }
+    const values = parsed.values as { config?: string; 'dry-run'?: boolean }
+    const [operation, tool, ...extra] = parsed.positionals
+    if ((operation !== 'add' && operation !== 'remove') || !tool || extra.length > 0) {
+        return usageOutcome('CLI_USAGE_INVALID', `tool requires an operation and one tool: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs tool add|remove <${SURFACE_TARGETS.join('|')}> --config <your cockpit.toml> [--dry-run]`)
     }
-
-    const values = parsed.values as {
-        registry?: string
-        'siblings-root'?: string
-        adoption?: string
-        json?: boolean
-    }
-    if (parsed.positionals.length > 0) {
-        return usageOutcome('REGISTRY_POSITIONAL_UNSUPPORTED', 'registry-resolve accepts named inputs only')
-    }
-    if (!values.registry) {
-        return usageOutcome('REGISTRY_SOURCE_REQUIRED', 'provide --registry <file>', '--registry')
-    }
-    if (!values['siblings-root']) {
-        return usageOutcome('REGISTRY_SIBLINGS_ROOT_REQUIRED', 'provide --siblings-root <path>', '--siblings-root')
-    }
-    if (!values.adoption) {
-        return usageOutcome('REGISTRY_ADOPTION_REQUIRED',
-            'provide --adoption <file>: five lines registry=, environment=, surfaces=, guards=, grading=, each migrated or documented-only (see the adoption guide)', '--adoption')
-    }
-    return {
-        handler,
-        input: {
-            registry: values.registry,
-            siblingsRoot: values['siblings-root'],
-            adoption: values.adoption,
-        },
-    }
+    if (!values.config) return missingConfig()
+    return { handler, input: { operation, configPath: values.config, tool, dryRun: values['dry-run'] === true } }
 }
 
 type InvocationOptions = { readonly interactive: boolean; readonly apply?: boolean; readonly json: boolean; readonly ci: string | undefined;
@@ -1548,7 +1508,6 @@ async function dispatchHandler(
             try { return await prompt.question(`Enter a JSON value for ${question.field} (strings need quotes): `) } finally { prompt.close() }
         },
     }, handlers.init ?? (async () => refusalOutcome('INIT_UNAVAILABLE', 'init application is unavailable')))
-    if (request.handler === 'registry-resolve') return handlers['registry-resolve']?.(request.input) ?? unavailable()
     if (request.handler === 'setup') return handlers.setup?.(request.input) ?? unavailable()
     if (request.handler === 'sync') return runSyncOperatorCommand(request.input, options, { ...io, env: options.env }, handlers.sync ?? (async () => unavailable()), operators.loadPolicy ?? loadOperatorPolicy)
     if (request.handler === 'check') return handlers.check?.(request.input) ?? unavailable()
@@ -1727,13 +1686,10 @@ export async function runCli(
             : `${group} requires a subcommand: ${groupMembers(group).map(member => member.name.slice(group.length + 1)).join(', ')}`)
     } else if (!definition) {
         outcome = usageOutcome('CLI_UNKNOWN_COMMAND', `unknown command "${commandName}"${respelled ? `; did you mean "${respelled.name}"?` : ''}`)
-    } else if (definition.handler === 'registry-resolve' && optionCount(optionArgs, 'output') > 0) {
-        outcome = usageOutcome('REGISTRY_OUTPUT_UNSUPPORTED', 'registry-resolve writes artifact bytes to stdout', '--output')
     } else if (duplicateOption !== undefined) {
         // Each code is a literal in its own arm so the diagnostic inventory lists it under its command only.
         const message = `each ${definition.name} option may be supplied only once`
-        outcome = definition.handler === 'registry-resolve' ? usageOutcome('REGISTRY_OPTION_DUPLICATE', message, `--${duplicateOption}`)
-            : definition.handler === 'setup' ? usageOutcome(ENVIRONMENT_CODES.SETUP_OPTION_DUPLICATE, message, `--${duplicateOption}`)
+        outcome = definition.handler === 'setup' ? usageOutcome(ENVIRONMENT_CODES.SETUP_OPTION_DUPLICATE, message, `--${duplicateOption}`)
             : usageOutcome('CLI_USAGE_INVALID', message, `--${duplicateOption}`)
     } else {
         let parsed: ParsedCommandArguments | undefined

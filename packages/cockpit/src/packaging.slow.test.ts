@@ -285,8 +285,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
             expect.arrayContaining([
                 'bin/cockpit.mjs',
                 'dist/cli.js',
-                'dist/registry-resolve/command.js',
-                'dist/registry-resolve/render-shell.js',
                 'dist/environment/setup.js',
                 'dist/environment/application/guard.js',
                 'dist/environment/application/setup.js',
@@ -413,31 +411,13 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         } as const
 
         const help = execFileSync(process.execPath, [launcher, '--help'], options)
-        expect(help).toContain('registry-resolve')
-        expect(help).toContain('sync              Write the Compose ownership override and agent files from cockpit.toml')
-        expect(help).toContain('check             Report generated files that no longer match cockpit.toml')
+        expect(help).toContain('sync       Write the Compose ownership override and agent files from cockpit.toml')
+        expect(help).toContain('check      Report generated files that no longer match cockpit.toml')
         expect(help).toContain('selftest')
         const metadata = JSON.parse(readFileSync(join(packedPackageRoot(), 'package.json'), 'utf8'))
         expect(execFileSync(process.execPath, [launcher, '--version'], options)).toBe(
             `${metadata.name} ${metadata.version} (Node ${metadata.engines.node}; source ${metadata.cockpitSourceRevision})\n`,
         )
-        // A packed source build is the install route before a release, so the resolver must work
-        // on it and report the unstamped revision instead of refusing every input.
-        const adoption = join(packScratch, 'adoption.state')
-        writeFileSync(adoption, 'registry=migrated\nenvironment=documented-only\nsurfaces=documented-only\nguards=documented-only\ngrading=documented-only\n')
-        const runResolver = (registry: string) => spawnSync(
-            process.execPath,
-            [launcher, 'registry-resolve', '--registry', registry, '--siblings-root', join(packScratch, 'siblings'), '--adoption', adoption],
-            { ...options, encoding: 'utf8' },
-        )
-        const resolver = runResolver(join(repoRoot, 'fixtures/registries/tier-dialect.sh'))
-        expect(resolver.status, resolver.stderr).toBe(0)
-        expect(resolver.stdout).toContain(`COCKPIT_SOURCE_REVISION='${metadata.cockpitSourceRevision}'`)
-        expect(resolver.stderr).toContain('COCKPIT_REVISION_UNSTAMPED')
-        const malformed = runResolver(join(repoRoot, 'fixtures/registries/malformed.sh'))
-        expect(malformed.status).toBe(2)
-        expect(malformed.stdout).toBe('')
-        expect(malformed.stderr).toContain('REGISTRY_ROW_SKIPPED')
 
         for (const command of ['sync', 'check', 'selftest', 'work status', 'work accept', 'work check', 'work note', 'work answer', 'work grade', 'work signoff', 'work recover', 'work verify', 'grade', 'browser drive', 'browser screenshot', 'test-run']) {
             const invalid = spawnSync(process.execPath, [launcher, ...command.split(' '), '--json'], options)

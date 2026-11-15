@@ -13,7 +13,7 @@ throwaway example first, follow the [tutorial](tutorial.md).
 | One repository, one agent tool, no Docker | [Chapter 1](#chapter-1-one-repository-one-tool-no-docker) |
 | You want an agent to do the setup | [Set up with an agent](#set-up-with-an-agent) |
 | Several repositories, or a stack to run | [Chapter 2](#chapter-2-several-repositories-and-a-compose-stack) |
-| A setup you already run with scripts or a shell registry | [Adopt an existing setup](#adopt-an-existing-setup) |
+| A setup you already run with scripts | [Adopt an existing setup](#adopt-an-existing-setup) |
 | A teammate's cockpit you are joining | [Joining a team's cockpit](joining-a-team.md) |
 
 ## Chapter 1: one repository, one tool, no Docker
@@ -421,32 +421,30 @@ cold-start time of the services it started.
 
 ## Adopt an existing setup
 
-For teams that already run a multi-repository product with their own scripts or a shell-registry
-cockpit, moving one layer at a time. Keep the old path runnable until the cockpit path passes the
+For teams that already run a multi-repository product with their own scripts,
+moving one layer at a time. Keep the old path runnable until the cockpit path passes the
 same checks.
 
-### Bootstrap from the registry
+### Start from init
 
 Preview for one harness, then accept. Replace `<tool>` with its [target](#install-cockpit); the
 first command writes nothing, and the second needs a terminal to confirm that exact preview:
 
 ```sh
-./node_modules/@b00dea/cockpit/bin/cockpit.mjs init . --target <tool> --registry ./env/lib/instance.sh --json
-./node_modules/@b00dea/cockpit/bin/cockpit.mjs init . --target <tool> --registry ./env/lib/instance.sh --interactive
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs init . --target <tool> --json
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs init . --target <tool> --interactive
 ```
 
-`init` reads the registry's repositories, marks every value the registry did not state with its
-source and the reason it was inferred or defaulted, and asks for the rest, such as
-<!-- cockpit:ref schema=ports.bases --> `ports.bases`, which no registry dialect records. A missing
-registry file is refused with `REGISTRY_NOT_FOUND`. When `init` finds repositories directly beneath
-the cockpit root instead of reading a registry, it records `siblings_root = "."` as an inference for
-you to confirm.
+`init` observes the repositories, marks every value it did not read with its source and the reason
+it was inferred or defaulted, and asks for the rest, such as
+<!-- cockpit:ref schema=ports.bases --> `ports.bases`. When `init` finds repositories directly
+beneath the cockpit root, it records `siblings_root = "."` as an inference for you to confirm.
 
 ### Adopt in layers
 
 Keep each layer's old path until the new one passes:
 
-1. **Registry.** Get the reviewed configuration to validate.
+1. **Configuration.** Get the reviewed configuration to validate.
 2. **Surfaces.** Run `sync --dry-run`, `sync` and `check`, and read the dry run before every `sync`.
 3. **Runtime.** Run `up` and `preflight` against the same configuration.
 4. **Guards, grading and more harnesses.** Add them once the earlier layers are stable. The
@@ -464,34 +462,6 @@ Two rules matter in the surfaces layer:
 - **Secrets after the ignore boundary.** Let `sync` create the ignore boundary before adopting
   environment credentials, then follow
   [Secret sources and environment schemas](environment.md#secret-sources-and-environment-schemas).
-
-### Keep shell scripts on the registry while you migrate
-
-`registry-resolve` validates the shell registry and prints the same rows as data a script can
-`source`, so old scripts and cockpit read one checked copy:
-
-```sh
-./node_modules/@b00dea/cockpit/bin/cockpit.mjs registry-resolve \
-  --registry ./env/lib/instance.sh --siblings-root .. --adoption ./adoption.state > resolved.sh
-```
-
-`--adoption` names a five-line file recording how far each layer has moved, in this order, each
-`migrated` or `documented-only`, with migrated layers first:
-
-```text
-registry=migrated
-environment=documented-only
-surfaces=documented-only
-guards=documented-only
-grading=documented-only
-```
-
-The output assigns `COCKPIT_REGISTRY_ROWS`, `COCKPIT_SIBLING_PATHS`, `COCKPIT_SIBLING_VARIABLES` and
-`COCKPIT_ADOPTION_STATES`, exports one `*_DIR` variable per sibling, and records the registry digest
-in `COCKPIT_REGISTRY_SHA256`. `COCKPIT_SOURCE_REVISION` is the cockpit commit that produced the
-data; a tarball packed from source has no release commit, so the value is `development` and the
-command warns with `COCKPIT_REVISION_UNSTAMPED`. Nothing is printed unless every input passed
-validation.
 
 ### Adopt existing agent settings
 

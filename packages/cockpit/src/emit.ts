@@ -1,21 +1,14 @@
 import { stringify } from 'smol-toml'
 import type { CockpitConfig } from './schema.js'
-import type { DocumentedSibling, Gap } from './registry-resolve/registry.js'
+import type { DocumentedSibling, Gap } from './documented-sibling.js'
 
-/**
- * Render a config as `cockpit.toml`.
- *
- * The round trip this closes is the acceptance test for the whole schema: a registry read
- * out of an existing harness, emitted here, and parsed back must mean the same thing. Until
- * this existed the "round trip" stopped at an in-memory object, which proves the parser
- * agrees with itself and nothing else.
- */
+/** Render a config as `cockpit.toml`. */
 export function emitToml(config: CockpitConfig): string {
     return stringify(config as unknown as Record<string, unknown>)
 }
 
 /**
- * Render the gaps a registry draft could not answer, as commented TOML.
+ * Render the gaps an init draft could not answer, as commented TOML.
  *
  * Deliberately emitted as comments rather than placeholder values: a placeholder is a value,
  * and a value is indistinguishable from an answer the moment the file is read by anything

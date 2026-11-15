@@ -12,8 +12,8 @@ describe('invocation record', () => {
             input.verb = 'sync'
             expect(record.verb).toBe('check')
         }
-        expect(createInvocationRecord({ verb: 'registry resolve', durationMs: 0, exitCode: 0, resolvedConfigPath: null }))
-            .toEqual({ verb: 'registry resolve', durationMs: 0, exitCode: 0, resolvedConfigPath: null })
+        expect(createInvocationRecord({ verb: 'sibling add', durationMs: 0, exitCode: 0, resolvedConfigPath: null }))
+            .toEqual({ verb: 'sibling add', durationMs: 0, exitCode: 0, resolvedConfigPath: null })
     })
 
     it('refuses invalid durations, verbs, exits and unresolved or hostile config paths', () => {

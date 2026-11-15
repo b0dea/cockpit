@@ -123,10 +123,6 @@ describe('diagnostic inventory', () => {
         const expectedOwners = new Map<string, readonly string[]>([
             ['DOCUMENT_DEFAULT', ['packages/cockpit/src/init/draft.ts']],
             ['DOCUMENT_INFERRED', ['packages/cockpit/src/init/draft.ts']],
-            ['ADOPTION_STATE_INVALID', ['packages/cockpit/src/registry-resolve/command.ts']],
-            ['ADOPTION_RECORD_INVALID', ['packages/cockpit/src/registry-resolve/command.ts']],
-            ['REGISTRY_ENCODING_INVALID', ['packages/cockpit/src/init/draft.ts', 'packages/cockpit/src/registry-resolve/command.ts']],
-            ['REGISTRY_ROW_SKIPPED', ['packages/cockpit/src/init/draft.ts', 'packages/cockpit/src/registry-resolve/command.ts']],
             ['SURFACE_OVERRIDE_INSPECTION_REFUSED', ['packages/cockpit/src/environment/health-composition.ts']],
             ['COCKPIT_VERSION_MISMATCH', ['packages/cockpit/src/environment/contract.ts', 'packages/cockpit/src/team-metadata.ts']],
         ])

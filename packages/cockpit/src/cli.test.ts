@@ -11,7 +11,6 @@ import { createInvocationRecord } from './invocation.js'
 import { runSyncOperatorCommand } from './generated-environment/command.js'
 import { loadCockpitConfig } from './config/load.js'
 import { renderHumanDiagnostics } from './diagnostics.js'
-import type { RegistryResolveCommandInput, RegistryResolveOutcome } from './registry-resolve/command.js'
 import { RefusalError, type EnvironmentCommandOutcome, type ExecutionStep } from './environment/contract.js'
 import type { SetupResult } from './environment/setup.js'
 import type { SurfaceSelftestDraftInput, SurfaceSelftestHandlerInput } from './environment/selftest-application.js'
@@ -58,16 +57,16 @@ describe('invocation publication', () => {
         let stdout = '', stderr = ''
         const io: CliIo = { stdout: { write: text => ((stdout += text), true) }, stderr: { write: text => ((stderr += text), true) } }
         const resolver = async () => ({ status: 0, result: null, diagnostics: [], artifact: 'exact artifact bytes\n' })
-        const args = ['registry-resolve', '--registry', 'synthetic.sh', '--siblings-root', '.', '--adoption', 'adoption.toml']
+        const args = ['check', '--config', 'cockpit.toml']
         const clock = vi.spyOn(performance, 'now').mockReturnValueOnce(10.25).mockReturnValueOnce(19.99)
         try {
-            const status = await runCli(args, io, { 'registry-resolve': resolver })
+            const status = await runCli(args, io, { check: resolver })
             expect(status).toBe(0)
             expect(stdout).toBe('exact artifact bytes\n')
             expect(humanStderr(stderr)).toBe('')
             stdout = ''
             clock.mockReset().mockReturnValueOnce(10.25).mockReturnValueOnce(19.99)
-            await runCli([...args, '--json'], io, { 'registry-resolve': resolver })
+            await runCli([...args, '--json'], io, { check: resolver })
             expect(JSON.parse(stdout).invocation.durationMs).toBe(9)
         } finally { clock.mockRestore() }
     })
@@ -165,7 +164,6 @@ describe('closed ordinary invocation metadata', () => {
 
     it('admits exactly the public ordinary profiles with bounded roles', () => {
         const cases = [
-            ['registry-resolve', '--registry', 'registry.sh', '--siblings-root', '/workspace/app', '--adoption', 'adoption.toml'],
             ['setup'], ['sync', '--dry-run'], ['sync'], ['reset', '--apply'], ['check'],
             ['selftest', '--probe-specifications', 'probes.json'],
             ['up'], ['up', '--profile', 'jobs', '--profile=mail.v2'], ['sleep'], ['down'], ['preflight'], ['doctor'],
@@ -195,7 +193,7 @@ describe('closed ordinary invocation metadata', () => {
             ...UNCONFIRMABLE_ANSWERS.map(answer => ['confirm', answer]), ['confirm', 'ports.bases', '--json'],
         ]
         for (const args of cases) {
-            const argv = args[0] === 'registry-resolve' ? args : [...args, '--config', authority.configPath]
+            const argv = [...args, '--config', authority.configPath]
             const { reads: _reads, ...profile } = ordinary(argv) ?? {}
             expect(profile, argv.join(' ')).toEqual({ executable: authority.executable, cwd: authority.canonicalRoot, argv })
         }
@@ -259,7 +257,6 @@ describe('closed ordinary invocation metadata', () => {
 
     it('refuses all ambiguous, repeated, escaping, unavailable or differently spelled forms', () => {
         const cases = [
-            ['registry-resolve', '--registry', 'registry.sh'], ['registry-resolve', '.', '--registry', 'registry.sh', '--siblings-root', '.', '--adoption', 'adoption'],
             ['sync', '--interactive'], ['sync', '--interactive=false'], ['selftest'], ['selftest', '--probe-specifications', 'probe', '--interactive'],
             ['selftest', '--probe-specifications', 'probe', '--write-probe-specifications', 'draft'],
             ['logs'], ['logs', '--service', 'other'], ['logs', '--service', 'app', '--tail', '0'], ['logs', '--service', 'app', '--tail', '10001'],
@@ -297,12 +294,12 @@ describe('closed ordinary invocation metadata', () => {
             ['confirm'], ['confirm', 'ports'], ['confirm', 'ports.bases', 'guards'],
         ]
         for (const args of cases) {
-            const argv = args[0] === 'registry-resolve' || args.some(arg => arg === '--config') ? args : [...args, '--config', authority.configPath]
+            const argv = args.some(arg => arg === '--config') ? args : [...args, '--config', authority.configPath]
             expect(ordinary(argv), argv.join(' ')).toBeUndefined()
         }
         for (const row of commands) {
             if (row.ordinary.availability !== 'available') continue
-            const required = row.name === 'init' ? ['.', '--target', 'codexcli'] : row.name === 'registry-resolve' ? ['--registry', 'r', '--siblings-root', '.', '--adoption', 'a'] : ['--config', authority.configPath, ...(requiredWords[row.name] ?? [])]
+            const required = row.name === 'init' ? ['.', '--target', 'codexcli'] : ['--config', authority.configPath, ...(requiredWords[row.name] ?? [])]
             for (const [name, option] of Object.entries(row.ordinary.options)) {
                 const value = option.kind === 'flag' ? [] : [name === 'target' ? 'codexcli' : name === 'config' ? authority.configPath : name === 'service' ? 'app' : name === 'tail' ? '1' : name === 'since' ? '1m'
                     : name === 'gate' ? 'quick' : name === 'mode' ? 'full' : name === 'select' ? 'test:refresh' : name === 'accept-reset' ? 'a'.repeat(64) : name === 'question' || name === 'decision' ? '1' : name === 'evaluator' ? 'codexcli'
@@ -529,42 +526,41 @@ describe('CLI help', () => {
         expect(result.stdout).toBe(
             'Usage: cockpit <command> [options]\n\n' +
             'Set up:\n' +
-            '  init              Preview, then accept, a first cockpit setup for one or more agent tools\n' +
-            '  setup             Clone or locate the declared sibling repositories and link them\n' +
-            '  use               Serve a sibling from another of its checkouts, such as a worktree\n' +
-            '  pull              Fast-forward the cockpit and its siblings to their upstreams\n' +
-            '  sibling           Add or remove a repository in cockpit.toml (sibling add, sibling remove)\n' +
-            '  tool              Add or remove an agent tool in cockpit.toml (tool add, tool remove)\n' +
-            '  confirm           Confirm an init answer no person stated by running the observation that verifies it\n' +
-            '  registry-resolve  Turn a validated shell registry into data shell scripts can source\n' +
-            '  upgrade           Move the exact cockpit pin to a newer version and re-run sync\n\n' +
+            '  init       Preview, then accept, a first cockpit setup for one or more agent tools\n' +
+            '  setup      Clone or locate the declared sibling repositories and link them\n' +
+            '  use        Serve a sibling from another of its checkouts, such as a worktree\n' +
+            '  pull       Fast-forward the cockpit and its siblings to their upstreams\n' +
+            '  sibling    Add or remove a repository in cockpit.toml (sibling add, sibling remove)\n' +
+            '  tool       Add or remove an agent tool in cockpit.toml (tool add, tool remove)\n' +
+            '  confirm    Confirm an init answer no person stated by running the observation that verifies it\n' +
+            '  upgrade    Move the exact cockpit pin to a newer version and re-run sync\n\n' +
             'Generate and verify:\n' +
-            '  sync              Write the Compose ownership override and agent files from cockpit.toml\n' +
-            '  check             Report generated files that no longer match cockpit.toml\n' +
-            '  selftest          Measure supported agent capabilities and report unverified cells\n\n' +
+            '  sync       Write the Compose ownership override and agent files from cockpit.toml\n' +
+            '  check      Report generated files that no longer match cockpit.toml\n' +
+            '  selftest   Measure supported agent capabilities and report unverified cells\n\n' +
             'Run the stack:\n' +
-            '  runtime           Measure the local container runtime (runtime measure) and record the result for this machine\n' +
-            '  up                Start or resume the declared environment\n' +
-            '  preflight         Check that the environment is healthy and ready for work\n' +
-            '  session           Keep the environment available for one command, then release it\n' +
-            '  logs              Show recent logs for one declared service\n' +
-            '  ps                Show the state and health of each service in this checkout\'s stack\n' +
-            '  restart           Restart one service of this checkout\'s stack and wait until it is healthy\n' +
-            '  rebuild           Rebuild one service\'s image, replace its container and wait until it is healthy\n' +
-            '  exec              Run a command inside one service\'s container of this checkout\'s stack\n' +
-            '  sleep             Release this checkout and stop the stack if no other holder remains\n' +
-            '  down              Stop and remove the stack (on the active local Docker context)\n' +
-            '  reset             Preview a reset, then approve it interactively or apply it as [autonomy] reset allows (on the active local Docker context)\n' +
-            '  stacks            List every stack on this machine, or preview and remove those whose checkout is gone (stacks prune)\n\n' +
+            '  runtime    Measure the local container runtime (runtime measure) and record the result for this machine\n' +
+            '  up         Start or resume the declared environment\n' +
+            '  preflight  Check that the environment is healthy and ready for work\n' +
+            '  session    Keep the environment available for one command, then release it\n' +
+            '  logs       Show recent logs for one declared service\n' +
+            '  ps         Show the state and health of each service in this checkout\'s stack\n' +
+            '  restart    Restart one service of this checkout\'s stack and wait until it is healthy\n' +
+            '  rebuild    Rebuild one service\'s image, replace its container and wait until it is healthy\n' +
+            '  exec       Run a command inside one service\'s container of this checkout\'s stack\n' +
+            '  sleep      Release this checkout and stop the stack if no other holder remains\n' +
+            '  down       Stop and remove the stack (on the active local Docker context)\n' +
+            '  reset      Preview a reset, then approve it interactively or apply it as [autonomy] reset allows (on the active local Docker context)\n' +
+            '  stacks     List every stack on this machine, or preview and remove those whose checkout is gone (stacks prune)\n\n' +
             'Diagnose:\n' +
-            '  doctor            Report environment problems without changing anything\n' +
-            '  env               Read what environment schemas declare with nothing resolved: variable names, or one schema\'s text\n\n' +
+            '  doctor     Report environment problems without changing anything\n' +
+            '  env        Read what environment schemas declare with nothing resolved: variable names, or one schema\'s text\n\n' +
             'Test and grade:\n' +
-            '  test-run          Run a declared product test gate and report which tests it selected\n' +
-            '  work              Accept, check, grade and close work orders\n' +
-            '  grade             Independently grade uncommitted work against a criteria file, with no work order\n' +
-            '  browser           Drive, inspect and capture the declared application in a browser\n' +
-            '  docs              Check living documents and decision records against the repositories\n\n' +
+            '  test-run   Run a declared product test gate and report which tests it selected\n' +
+            '  work       Accept, check, grade and close work orders\n' +
+            '  grade      Independently grade uncommitted work against a criteria file, with no work order\n' +
+            '  browser    Drive, inspect and capture the declared application in a browser\n' +
+            '  docs       Check living documents and decision records against the repositories\n\n' +
             "Run 'cockpit <command> --help' for its options, and 'cockpit work --help', 'cockpit browser --help', 'cockpit docs --help' or 'cockpit env --help' for its subcommands.\n",
         )
         expect(humanStderr(result.stderr)).toBe('')
@@ -1738,111 +1734,6 @@ describe('setup process contract', () => {
     })
 })
 
-describe('registry-resolve process contract', () => {
-    function completeRegistryOutcome(): RegistryResolveOutcome {
-        return {
-            kind: 'complete',
-            artifact: "COCKPIT_REGISTRY_FORMAT='1'\n",
-            destination: null,
-            diagnostics: [],
-            result: {
-                registry: {
-                    format: '1',
-                    cockpitSourceRevision: '0123456789abcdef0123456789abcdef01234567',
-                    registrySha256: 'a'.repeat(64),
-                    dialect: 'tier',
-                    siblingCount: 1,
-                    adoption: [
-                        { layer: 'registry', state: 'migrated' },
-                        { layer: 'environment', state: 'documented-only' },
-                        { layer: 'surfaces', state: 'documented-only' },
-                        { layer: 'guards', state: 'documented-only' },
-                        { layer: 'grading', state: 'documented-only' },
-                    ],
-                },
-            },
-            status: 0,
-        }
-    }
-
-    function captureIo() {
-        let stdout = ''
-        let stderr = ''
-        const io = {
-            stdout: { write: (text: string) => ((stdout += text), true) },
-            stderr: { write: (text: string) => ((stderr += text), true) },
-        } as unknown as CliIo
-        return { io, output: () => ({ stdout, stderr }) }
-    }
-
-    it('decodes required named inputs and writes only artifact bytes to stdout', async () => {
-        const capture = captureIo()
-        let received: RegistryResolveCommandInput | undefined
-
-        const status = await runCli(
-            ['registry-resolve', '--registry', 'registry.sh', '--siblings-root', '../siblings', '--adoption', 'adoption.state'],
-            capture.io,
-            {
-                'registry-resolve': async (input) => {
-                    received = input
-                    return completeRegistryOutcome()
-                },
-            },
-        )
-
-        expect(status).toBe(0)
-        expect(received).toEqual({ registry: 'registry.sh', siblingsRoot: '../siblings', adoption: 'adoption.state' })
-        expect({ ...capture.output(), stderr: humanStderr(capture.output().stderr) })
-            .toEqual({ stdout: "COCKPIT_REGISTRY_FORMAT='1'\n", stderr: '' })
-    })
-
-    it('emits one JSON result and no artifact bytes or stderr', async () => {
-        const capture = captureIo()
-
-        const status = await runCli(
-            ['registry-resolve', '--registry', 'registry.sh', '--siblings-root', '../siblings', '--adoption', 'adoption.state', '--json'],
-            capture.io,
-            { 'registry-resolve': async () => completeRegistryOutcome() },
-        )
-        const output = capture.output()
-        const response = JSON.parse(output.stdout) as { result: unknown; diagnostics: unknown[] }
-
-        expect(status).toBe(0)
-        expect(response.result).toEqual(completeRegistryOutcome().result)
-        expect(response.diagnostics).toEqual([])
-        expect(output.stdout).not.toContain('COCKPIT_REGISTRY_FORMAT')
-        expect(output.stderr).toBe('')
-    })
-
-    it.each([
-        [['registry-resolve'], 'REGISTRY_SOURCE_REQUIRED'],
-        [['registry-resolve', '--registry', 'registry.sh'], 'REGISTRY_SIBLINGS_ROOT_REQUIRED'],
-        [['registry-resolve', '--registry', 'registry.sh', '--siblings-root', '../siblings'], 'REGISTRY_ADOPTION_REQUIRED'],
-        [['registry-resolve', 'positional', '--registry', 'registry.sh', '--siblings-root', '../siblings', '--adoption', 'adoption.state'], 'REGISTRY_POSITIONAL_UNSUPPORTED'],
-        [['registry-resolve', '--registry', 'registry.sh', '--siblings-root', '../siblings', '--adoption', 'adoption.state', '--output', 'artifact.sh'], 'REGISTRY_OUTPUT_UNSUPPORTED'],
-        [['registry-resolve', '--registry', 'one.sh', '--registry', 'two.sh', '--siblings-root', '../siblings', '--adoption', 'adoption.state'], 'REGISTRY_OPTION_DUPLICATE'],
-        [['registry-resolve', '--registry', 'one.sh', '--siblings-root', '../siblings', '--adoption', 'adoption.state', '--', '--output', 'artifact.sh'], 'REGISTRY_POSITIONAL_UNSUPPORTED'],
-        [['registry-resolve', '--registry', 'one.sh', '--siblings-root', '../siblings', '--adoption', 'adoption.state', '--', '--registry', 'two.sh'], 'REGISTRY_POSITIONAL_UNSUPPORTED'],
-    ])('refuses resolver misuse with its own code and no document diagnostic', (args, code) => {
-        const result = run(args)
-
-        expect(result.status).not.toBe(0)
-        expect(result.stdout).toBe('')
-        expect(result.stderr).toContain(code)
-        expect(result.stderr).not.toContain('DOCUMENT_')
-    })
-
-    it('keeps a resolver refusal as one null JSON result', () => {
-        const result = run(['registry-resolve', '--json'])
-        const response = JSON.parse(result.stdout) as { result: unknown; diagnostics: { code: string }[] }
-
-        expect(result.status).not.toBe(0)
-        expect(response.result).toBeNull()
-        expect(response.diagnostics.map(({ code }) => code)).toEqual(['REGISTRY_SOURCE_REQUIRED'])
-        expect(result.stderr).toBe('')
-    })
-})
-
 describe('terminal-safe diagnostics', () => {
     it.each([false, true])('projects arbitrary guidance and admitted fixes once per human/JSON publication (%s)', async json => {
         const admission = fixCatalogue.admitDiagnosticFix
@@ -2422,7 +2313,6 @@ describe('init command admission', () => {
             ['.', '.', '--target', 'codexcli'], ['.', '.'],
             ['.', '--target', 'unknown'], ['.', '--target', 'codexcli', '--target', 'opencode'], ['.', '--target', 'codexcli,codexcli'], ['.', '--target', 'codexcli,unknown'],
             ['.', '--target', 'cursor,grokcli'],
-            ['.', '--target', 'codexcli', '--registry', 'a', '--registry', 'b'],
         ]) {
             const application = vi.fn()
             expect(await runCli(['init', ...args, '--json'], { stdout: { write: () => true }, stderr: { write: () => true } }, { init: application })).toBe(2)

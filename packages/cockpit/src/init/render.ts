@@ -2,7 +2,7 @@ import { AUTONOMY_DEFAULTS, GATE_DEFAULTS } from '../autonomy.js'
 import { unconfirmedFix } from '../guards/answer-confirmation.js'
 import type { CockpitConfig, configurationDefaults, UNCONFIRMABLE_ANSWERS } from '../schema.js'
 import { emitGaps, emitToml, toSiblingRows } from '../emit.js'
-import type { DocumentedSibling, Gap } from '../registry-resolve/registry.js'
+import type { DocumentedSibling, Gap } from '../documented-sibling.js'
 
 /**
  * Who gave an interview answer: a person, the setup agent choosing a default it was allowed to
@@ -60,7 +60,7 @@ const PERSON_CONFIRMED_TARGETS: ReadonlySet<string> = new Set(['guards.protected
 
 /**
  * Who confirms a surfaced value: the setup agent for a schema default or the cockpit's own layout,
- * which bring-up proves, and a person for a security boundary or a value a registry dialect left
+ * which bring-up proves, and a person for a security boundary or a value left
  * to a guess.
  */
 export function confirmedBy(attribution: Attribution): 'agent' | 'person' {
@@ -94,7 +94,7 @@ function renderAttributions(attributions: readonly Attribution[]): string {
 function draftConfig(model: DocumentModel): Record<string, unknown> {
     // Written, the guard hosts read as a decision that none exists, even as the schema default [].
     const { hosted_db_hosts: _hosted, vendor_endpoint_hosts: _vendors, ...guards } = model.defaults.guards
-    // No registry dialect records the work-order time budgets, grading, gates, evaluator tools or
+    // No source records the work-order time budgets, grading, gates, evaluator tools or
     // autonomy, so a draft that wrote the schema's values would present them as this product's
     // decisions; left out, the loader applies the same defaults.
     const { autonomy: _autonomy, ...defaults } = model.defaults
