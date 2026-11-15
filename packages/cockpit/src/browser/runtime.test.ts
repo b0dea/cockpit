@@ -141,13 +141,12 @@ describe('shared browser runtime', () => {
         for (const maxClients of [0, -1, 1.5, Number.NaN, 65]) await expect(attempt({ ...input, maxClients })).rejects.toThrow('cap')
     })
 
-    it('uses the owner checker for missing, mismatched, forged and stale posture authority', async () => {
+    it('uses the owner checker for missing, mismatched and stale posture authority', async () => {
         for (const tags of ['missing', '[{ requirement = "synthetic-browser", addressing = "port", authentication = "real" }]']) {
             const { input } = await fixture('hostname', 'real', tags)
             await expect(attempt(input)).rejects.toThrow('posture')
         }
         const { input, configPath } = await fixture()
-        await expect(attempt({ ...input, postures: { ...input.postures, authorities: [{ ...input.postures.authorities[0]! }] } })).rejects.toThrow('authority')
         await writeFile(configPath, '# changed')
         await expect(attempt(input)).rejects.toThrow('configuration changed')
     })

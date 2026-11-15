@@ -847,11 +847,12 @@ async function healthSourceFixture(
     const producers = Object.freeze(Object.fromEntries(
         healthProducerNames.map((name) => [name, producer(name)]),
     ))
+    const expectedCockpitId = cockpitId({
+        name: loaded.result.config.cockpit.name,
+        mainCheckoutPath: value.candidate.mainCheckoutPath,
+    })
     const expectedStackId = stackId({
-        cockpitId: cockpitId({
-            name: loaded.result.config.cockpit.name,
-            mainCheckoutPath: value.candidate.mainCheckoutPath,
-        }),
+        cockpitId: expectedCockpitId,
         checkoutId: checkoutId({ checkoutPath: value.candidate.mainCheckoutPath }),
         variant: { kind: 'shared' },
     })
@@ -865,9 +866,11 @@ async function healthSourceFixture(
         ? preflight
         : Object.freeze({
             authorities: Object.freeze([Object.freeze({
+                cockpitId: expectedCockpitId,
                 stackId: expectedStackId,
                 evaluatedAt: value.candidate.observedAt,
                 validThrough,
+                windowExpiresAt: Date.parse(value.candidate.observedAt) + 300_000,
                 revision: loaded.result.source.sha256,
                 source: loaded.result.source.path,
                 postures: Object.freeze(['environment']),
@@ -879,7 +882,7 @@ async function healthSourceFixture(
                 stage: requestedStage,
                 observedAt: value.candidate.observedAt,
                 validThrough,
-            })]),
+            }) as unknown as PreflightContext['stages'][number]]),
         })
     const load = async (_input: unknown, issue: (source: HealthObservationSourceInput) => HealthObservationSource | undefined) => {
         const source = await withSetupCheckoutProjection(observed, {

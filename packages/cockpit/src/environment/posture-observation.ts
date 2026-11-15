@@ -22,8 +22,6 @@ function boundedArray(value: unknown): readonly unknown[] | undefined {
     return Array.isArray(value) && value.length <= STRUCTURED_INPUT_ENTRY_LIMIT ? value : undefined
 }
 
-const issuedPostureAuthorities = new WeakMap<object, CockpitId>()
-const postureRefreshWindows = new WeakMap<object, Readonly<{ cockpitId: CockpitId; expiresAt: number }>>()
 const POSTURE_AUTHORITY_LIFETIME_MS = 30_000
 const PREFLIGHT_OBSERVATION_WINDOW_MS = 300_000
 const CONFIGURATION_BYTE_LIMIT = 1_048_576
@@ -63,9 +61,12 @@ function currentConfigurationRevision(path: string): string | undefined {
 }
 
 export interface ResolvedPostureAuthority {
+    readonly cockpitId: CockpitId
     readonly stackId: StackId
     readonly evaluatedAt: string
     readonly validThrough: string
+    /** The end of the bounded window refreshes of this authority stay within. */
+    readonly windowExpiresAt: number
     readonly revision: string
     readonly source: string
     readonly postures: readonly string[]
@@ -129,14 +130,13 @@ async function issueObservationPostures(
     if (loaded.result.source.path !== configuration.source || loaded.result.source.sha256 !== configuration.observed.value) {
         throw new RefusalError('resolved posture configuration changed after observation')
     }
-    const previousWindow = previous === undefined ? undefined : postureRefreshWindows.get(previous)
-    if (previous !== undefined && (!previousWindow || previousWindow.cockpitId !== identity.cockpitId
+    if (previous !== undefined && (previous.cockpitId !== identity.cockpitId
         || previous.stackId !== configuration.stackId || previous.source !== loaded.result.source.path
         || previous.revision !== loaded.result.source.sha256)) {
         throw new RefusalError('resolved posture refresh does not match its initial authority')
     }
     const evaluatedAt = previous?.evaluatedAt ?? configuration.observed.observedAt
-    const windowExpiresAt = previousWindow?.expiresAt ?? Date.parse(evaluatedAt) + PREFLIGHT_OBSERVATION_WINDOW_MS
+    const windowExpiresAt = previous?.windowExpiresAt ?? Date.parse(evaluatedAt) + PREFLIGHT_OBSERVATION_WINDOW_MS
     if (!Number.isSafeInteger(windowExpiresAt) || issuedAt > windowExpiresAt) {
         throw new RefusalError('resolved posture refresh window expired')
     }
@@ -149,10 +149,12 @@ async function issueObservationPostures(
         if (sibling.mount === 'host') postures.add('host')
         else postures.add('mounted')
     }
-    const authority = {
+    return {
+        cockpitId: identity.cockpitId as CockpitId,
         stackId: configuration.stackId,
         evaluatedAt,
         validThrough: new Date(Math.min(issuedAt + POSTURE_AUTHORITY_LIFETIME_MS, windowExpiresAt)).toISOString(),
+        windowExpiresAt,
         revision: loaded.result.source.sha256,
         source: loaded.result.source.path,
         postures: [...postures].sort(compareCodeUnits),
@@ -163,9 +165,6 @@ async function issueObservationPostures(
         postureRequirements: (loaded.result.config.environment.posture_requirements ?? [])
             .map((requirement) => ({ ...requirement })),
     }
-    issuedPostureAuthorities.set(authority, identity.cockpitId as CockpitId)
-    postureRefreshWindows.set(authority, Object.freeze({ cockpitId: identity.cockpitId as CockpitId, expiresAt: windowExpiresAt }))
-    return authority
 }
 
 export async function resolveObservationPostures(input: ObservationPostureInput): Promise<ResolvedPostureAuthority> {
@@ -241,8 +240,6 @@ export function authenticateObservationPostureContext(context: PreflightContext)
     let windowEnd = Number.POSITIVE_INFINITY
     for (const authorityInput of authorityInputs) {
         const authority = authorityInput as ResolvedPostureAuthority
-        const cockpitId = issuedPostureAuthorities.get(authority)
-        if (!cockpitId) throw new RefusalError('preflight needs resolved posture authority')
         if (authorities.has(authority.stackId)) throw new RefusalError('preflight contains duplicate posture authority')
         const currentRevision = currentConfigurationRevision(authority.source)
         if (currentRevision !== authority.revision) throw new RefusalError('configuration changed after posture resolution')
@@ -258,14 +255,13 @@ export function authenticateObservationPostureContext(context: PreflightContext)
     if (!stageInputs || stageInputs.length !== authorityInputs.length) throw new RefusalError('preflight needs lifecycle stage authority')
     const stages = new Map<StackId, ObservationLifecycleStage>()
     for (const stageInput of stageInputs) {
-        if (stageInput === null || typeof stageInput !== 'object') throw new RefusalError('preflight needs lifecycle stage authority')
-        const stageStackId = (stageInput as { stackId?: unknown }).stackId
-        const authority = typeof stageStackId === 'string' ? authorities.get(stageStackId as StackId) : undefined
+        const stageAuthority = stageInput as LifecycleStageAuthority
+        const authority = authorities.get(stageAuthority.stackId)
         if (!authority || stages.has(authority.stackId)) throw new RefusalError('preflight needs one matching lifecycle stage authority per stack')
         const stage = authenticateLifecycleStageAuthority(
-            stageInput,
+            stageAuthority,
             authority.stackId,
-            issuedPostureAuthorities.get(authority)!,
+            authority.cockpitId,
             Date.parse(authority.evaluatedAt),
             Date.parse(authority.validThrough),
             evaluationInstant,

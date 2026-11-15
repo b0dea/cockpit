@@ -49,7 +49,6 @@ const HistoryValue = z.object({ status: z.enum(['started', 'seeded']) }).strict(
 const STACK_ID = /^stack:[a-f0-9]{64}$/
 const HOLDER_ID = /^holder:[a-f0-9]{64}:session$/
 const AUTHORITY_LIFETIME_MS = 30_000
-const issuedAuthorities = new WeakMap<object, LifecycleAuthorityBinding>()
 const issuedLifecycleStageProjections = new WeakMap<object, LifecycleStageEvidence>()
 
 export interface LifecycleRecordValue extends LifecycleProgress {
@@ -195,6 +194,8 @@ export interface LifecycleStageAuthority {
     readonly stage: ObservationLifecycleStage
     readonly observedAt: string
     readonly validThrough: string
+    /** The lifecycle files the stage was read from, re-checked on disk before the stage is used. */
+    readonly binding: LifecycleAuthorityBinding
 }
 
 declare const lifecycleStageProjectionBrand: unique symbol
@@ -373,8 +374,8 @@ async function inspect(input: StableInput): Promise<LifecycleStageResolution> {
         stage,
         observedAt: input.observedAt,
         validThrough: new Date(issuedAt + AUTHORITY_LIFETIME_MS).toISOString(),
+        binding: bindingAfter,
     }
-    issuedAuthorities.set(authority, bindingAfter)
     const observation: EnvironmentObservation = {
         code: ENVIRONMENT_CODES.STATE_UNSEEDED,
         owner: OWNER,
@@ -425,15 +426,14 @@ function validAuthorityExpectation(value: LifecycleAuthorityExpectation): boolea
 }
 
 function consumeLifecycleStageAuthority(
-    value: unknown,
+    authority: LifecycleStageAuthority,
     expected: LifecycleAuthorityExpectation,
     trustedCurrentTime: number,
 ): ObservationLifecycleStage | undefined {
-    if (value === null || typeof value !== 'object' || !validAuthorityExpectation(expected)
+    if (!validAuthorityExpectation(expected)
         || !Number.isSafeInteger(trustedCurrentTime) || expected.evaluatedAt > trustedCurrentTime) return undefined
-    const binding = issuedAuthorities.get(value)
-    if (!binding || binding.cockpitId !== expected.cockpitId) return undefined
-    const authority = value as LifecycleStageAuthority
+    const binding = authority.binding
+    if (binding.cockpitId !== expected.cockpitId) return undefined
     const observedAt = Date.parse(authority.observedAt)
     const validThrough = Date.parse(authority.validThrough)
     if (authority.stackId !== expected.stackId || !Number.isFinite(observedAt) || !Number.isFinite(validThrough)
@@ -444,12 +444,11 @@ function consumeLifecycleStageAuthority(
         ? lifecycleBinding(namespace, binding.cockpitId, binding.historyPath, binding.lifecyclePath)
         : undefined
     if (!currentBinding || !sameBinding(binding, currentBinding)) return undefined
-    issuedAuthorities.delete(value)
     return authority.stage
 }
 
 export function authenticateLifecycleStageAuthority(
-    value: unknown,
+    value: LifecycleStageAuthority,
     stackId: StackId,
     cockpitId: string,
     earliest: number,

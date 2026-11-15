@@ -832,36 +832,9 @@ describe('deterministic preflight and doctor', () => {
         })
     })
 
-    it('rejects copied, replayed, expired, missing, and wrong-stack stage authority', async () => {
-        const firstState = await namespace()
-        const firstStage = await resolveLifecycleStage({ namespace: firstState, stackId, observedAt: now })
-        if (firstStage.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
+    it('rejects expired, missing, and wrong-stack stage authority', async () => {
         const firstPosture = await context()
-        expect(() => aggregateObservations([[]], {
-            authorities: firstPosture.authorities, stages: [{ ...firstStage.authority }],
-        })).toThrow('lifecycle stage authority')
-        let proxyTrapCalls = 0
-        const proxiedAuthority = new Proxy(firstStage.authority, {
-            getOwnPropertyDescriptor: (target, key) => {
-                proxyTrapCalls += 1
-                return Reflect.getOwnPropertyDescriptor(target, key)
-            },
-        })
-        expect(() => aggregateObservations([[]], {
-            authorities: firstPosture.authorities, stages: [proxiedAuthority],
-        })).toThrow('lifecycle stage authority')
-        expect(proxyTrapCalls).toBe(0)
         expect(() => aggregateObservations([[]], { authorities: firstPosture.authorities, stages: [] })).toThrow('lifecycle stage authority')
-
-        const replayState = await namespace()
-        const replayStage = await resolveLifecycleStage({ namespace: replayState, stackId, observedAt: now })
-        if (replayStage.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
-        const replayPosture = await context()
-        aggregateObservations([[replayStage.observation]], { authorities: replayPosture.authorities, stages: [replayStage.authority] })
-        const nextPosture = await context()
-        expect(() => aggregateObservations([[]], {
-            authorities: nextPosture.authorities, stages: [replayStage.authority],
-        })).toThrow('lifecycle stage authority')
 
         const otherState = await namespace()
         const otherStage = await resolveLifecycleStage({ namespace: otherState, stackId: otherStackId, observedAt: now })
@@ -885,9 +858,7 @@ describe('deterministic preflight and doctor', () => {
 
     it('requires an explicit timestamp whenever missing evidence is synthesized', async () => {
         const current = await observation()
-        const issued = await context()
         expect(() => aggregateObservations([[current]], {} as never)).toThrow('resolved posture authority')
-        expect(() => aggregateObservations([[current]], { authorities: [{ ...issued.authorities[0] }] } as never)).toThrow('resolved posture authority')
     })
 
     it('derives temporal freshness and is stable across differing timestamp permutations', async () => {
