@@ -186,12 +186,12 @@ function search(argv: readonly string[], table: OptionTable, recursiveByDefault:
     const operands = listOnly || explicitPattern ? parsed.positionals : parsed.positionals.slice(1)
     if (!listOnly && !explicitPattern && parsed.positionals.length === 0) return undefined
     const recursive = recursiveByDefault || ['-r', '-R', '--recursive', '--dereference-recursive'].some(name => parsed.present.has(name))
-    // grep follows symlinks only with -R; that reads through links the inspection never sees.
-    if (parsed.present.has('-R') || parsed.present.has('--dereference-recursive')) return undefined
+    // grep follows symlinks with -R, so its walk is judged through every link it would follow.
+    const followsLinks = parsed.present.has('-R') || parsed.present.has('--dereference-recursive')
     // ripgrep given no path searches its standard input when that is a pipe, not the working directory.
     const paths = operands.length ? operands : recursive && !(recursiveByDefault && piped) ? ['.'] : []
     if (listOnly) return { reads: parsed.files, trees: [], listings: paths }
-    return recursive ? { reads: parsed.files, trees: paths, listings: [] } : { reads: [...parsed.files, ...paths], trees: [], listings: [] }
+    return recursive ? { reads: parsed.files, trees: paths, listings: [], ...followsLinks ? { followsLinks: true as const } : {} } : { reads: [...parsed.files, ...paths], trees: [], listings: [] }
 }
 
 // Only `p` and `d` commands on line-number, last-line or pattern addresses, and `s` substitutions whose

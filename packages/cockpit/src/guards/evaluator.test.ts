@@ -1391,7 +1391,7 @@ describe('allow by default', () => {
         // A stash moved around a rebase in one call.
         'git stash && git rebase main && git stash pop',
         // Conditions, cases, arithmetic and a sourced script are cut into their commands, each judged as it stands.
-        'if [ -f a ]; then echo y; fi', 'case $x in a) echo 1;; esac', 'n=3; sed -n "$((n-1)),$((n+3))p" README.md', 'source .venv/bin/activate && pytest',
+        'grep -R needle src', 'if [ -f a ]; then echo y; fi', 'case $x in a) echo 1;; esac', 'n=3; sed -n "$((n-1)),$((n+3))p" README.md', 'source .venv/bin/activate && pytest',
     ]
     it.each(friction)('allows the everyday call %s', (command) => {
         expect(run(command).decision).toBe('allow')
@@ -2089,6 +2089,9 @@ describe('allow by default', () => {
         ['configured push refspec', 'git push origin', undefined, { facts: { pushRefspecs: true } }],
         ...['diff -rN empty app', 'zip -qr build/app.zip src', 'rsync -a src/ build/copy/', 'scp -r src host:', 'unzip -p build/app.zip']
             .map(command => ['source tree holds a secret', command, undefined, { facts: { sourceSecret: true } }] as const),
+        // grep -R follows links as it walks, and is judged as the search it is.
+        ...['grep -R API_KEY .', 'grep -Rn API_KEY src', 'grep --dereference-recursive API_KEY .']
+            .map(command => ['search follows links into a secret', command, undefined, { decision: 'deny', facts: { sourceSecret: true } }] as const),
         ['stash of untracked secrets', 'git stash push -u', undefined, { facts: { sourceSecret: true } }], ['stash of untracked secrets', 'git stash -a', undefined, { facts: { sourceSecret: true } }],
         ['stash content', "git show 'stash@{0}^3'"], ['stash content', 'git log -p --all'], ['stash content', "git diff 'stash@{0}^1' 'stash@{0}^3'"],
         ['stash push', 'git push origin refs/stash:refs/heads/leak'],
