@@ -123,7 +123,7 @@ describe('executable remedy catalogue', () => {
 // install, every configured command refuses without --config, and down and reset refuse until the
 // Docker daemon is named.
 describe('printed cockpit commands', () => {
-    const VERBS = 'sibling add|sibling remove|runtime measure|setup|sync|check|confirm|selftest|up|sleep|session|down|reset|preflight|doctor|logs'
+    const VERBS = 'sibling add|sibling remove|runtime measure|setup|sync|check|confirm|up|sleep|session|down|reset|preflight|doctor|logs'
     // Every work, browser and test command reads --config too; they are spelled through their own owners, not cockpitCommand.
     const SCANNED = `${VERBS}|test-run|${commandGroups.map(group => `${group.name} [a-z][a-z-]*`).join('|')}`
     const runnable = new RegExp(`(?:npx --no cockpit|\\./node_modules/(?:\\.bin/cockpit|@b00dea/cockpit/bin/cockpit\\.mjs)) (${SCANNED})(?![\\w-])`, 'g')
@@ -316,8 +316,7 @@ describe('printed cockpit commands', () => {
         await writeFile(join(root, 'answers.toml'), '')
         const env = { PATH: process.env.PATH ?? '', HOME: root }
         const io = { confirmInit: async () => undefined, answerInitQuestion: async () => undefined, confirmReset: async () => false,
-            confirmWorkOrder: async () => undefined, confirmSelftestExecutable: async () => undefined,
-            confirmSelftestProbeSpecifications: async () => undefined, confirmStaleRemoval: async () => undefined }
+            confirmWorkOrder: async () => undefined, confirmStaleRemoval: async () => undefined }
 
         let reached = false
         const stop = () => { reached = true; throw new Error('stopped before work') }

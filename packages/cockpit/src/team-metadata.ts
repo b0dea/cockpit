@@ -591,8 +591,7 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
                     : `reinstall cockpit with ${(await rootPackageManager(root)).manager} install in ${root}, then rerun doctor`,
             })
         }
-        // The guard hook runs the Node sync recorded, so it keeps working; only selftest, which binds the
-        // guard this process would install, cannot measure it from here.
+        // The guard hook runs the Node sync recorded, so it keeps working under another Node.
         const runningNode = await realpath(process.execPath)
         // The same path with other bytes (an in-place upgrade) breaks the guard until sync. The fingerprint
         // sync recorded spares the 100 MB hash unless the file moved or was rewritten.
@@ -610,7 +609,7 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
             severity: 'info' as const,
             // A literal, so the diagnostic inventory captures the fix beside the code.
             code: 'GUARD_NODE_DIFFERS' satisfies typeof ENVIRONMENT_CODES.GUARD_NODE_DIFFERS,
-            message: `the guard hook runs the Node at ${identity.node}; this command runs the Node at ${runningNode}. The guard is unaffected, and an interactive selftest reruns itself under the guard's Node`,
+            message: `the guard hook runs the Node at ${identity.node}; this command runs the Node at ${runningNode}. The guard is unaffected`,
             target: GUARD_LOCAL_PATHS.identity,
             fix: 'nothing is needed; to have the guard hook run this Node instead, run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> under it',
         })

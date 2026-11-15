@@ -101,9 +101,7 @@ the generated hooks in the original checkout through its normal change process, 
 independent clone instead. Cockpit never writes that checkout. Matching definitions are not native
 evidence: the generated commands select the guard of the session's own checkout with `pwd -P`, so
 start Codex in the cockpit root and measure the guard with a deliberately broken control, a
-harmless rejected operation and a successful permitted companion. The
-[selftest](#skills-and-selftest-evidence) measures Codex instruction and skill body loading; it leaves Codex guard firing
-unverified and does not replace this paired native guard measurement.
+harmless rejected operation and a successful permitted companion.
 
 Trust is recorded per user in Codex's own configuration (`~/.codex/config.toml`, or `$CODEX_HOME`),
 keyed by the hook source's path and a hash of its command, so it is needed once per machine and again
@@ -401,7 +399,7 @@ longer project **AGENTS.md**. Cockpit reports the line cost per harness only wit
 how it loads guidance; without one the cost is `unavailable`, not zero. When a harness loads every
 rule regardless of scope, scoped text still counts toward the total.
 
-## Skills and selftest evidence
+## Skills
 
 `sync` installs the `cockpit-*` skills for the tools `[surfaces] tools` lists. They call cockpit's
 own commands, so an agent drives the stack, the tests and the grading the same way in each tool.
@@ -419,165 +417,9 @@ A skill you add through a `skills` overlay needs only a `name` matching its dire
 `description` saying when to use it; it may carry any files of its own. The renderer refuses
 duplicate names and skill sets over the always-loaded size limit.
 
-`selftest` is optional. Cockpit is usable once `check` passes; selftest gathers native evidence
-of what the tools on your machine actually load and enforce, and a person runs it, when they want
-that evidence, with one command:
-
-```sh
-./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config ./cockpit.toml --interactive
-```
-
-An agent never blocks adoption on selftest and does not ask the person to run it unless they ask
-about native evidence; it cannot approve a run itself.
-
-`selftest` measures native instruction loading for Claude Code and Codex, explicit skill body
-loading for both, and Claude guard firing where the registry declares a vendor endpoint hostname.
-The [capability matrix](capability-matrix.md) records the native versions and measurement dates.
-Each protocol compares the generated source with a deliberately broken control through the
-approved executable. Its identity rests on the executable digest you approve: cockpit cannot tell
-that an approved file is really the named harness.
-
-Codex instruction loading uses `codex debug prompt-input` in separate directories with native
-`AGENTS.md` filenames. An empty `.git` directory ends the inherited instruction chain above these
-controls. Both instruction probes load the whole root `AGENTS.md` as `sync` leaves it, your own
-text around cockpit's region included, because that is the file the tools load; the region must
-appear in it exactly once. The validator compares those exact bytes with replacement instructions; a
-guide the tool truncates fails that cell. Claude uses the generated `CLAUDE.md` import, or your own
-`CLAUDE.md` that cockpit left in place because it imports `AGENTS.md` once, as `sync` read it, and
-captures its native model request, allowing only Claude's removal of standalone one-line HTML
-comments. Notes beside that import are fine, as are package names and handles. An `@` token that can
-reach a file (an absolute, home or parent-relative path, or one naming a file beside the guide) in
-either file, or an HTML comment in `AGENTS.md` spanning several lines, keeps the Claude cell pending
-as `native_protocol_unsupported`, because the probe cannot bind what it would load; the record says
-which, and how to make the cell measurable.
-Instruction loading establishes that the guidance reached the tool, not that it obeys it.
-
-Skill probes explicitly invoke each generated skill and capture its body in the native model
-request. Codex's broken twin lacks front-matter and must be named in native stderr. Claude's twin
-sets `user-invocable: false`; it must make no model request and the native result must name the
-refusal. Dynamic skill context and agent-spawning metadata remain pending. Successful body loading
-records only `body-load`; trigger selection, silence, tool behavior and non-goals still need review.
-
-Model requests go to a bounded, nonce-bound loopback listener with synthetic responses. These probes
-use isolated home and harness configuration directories without owner credentials. Claude loader
-settings exclude ancestor memory and rules while leaving its generated import available. The
-listener supplies no tools for loading probes, so no paid model call or assistant claim is needed.
-
-The Claude guard probe runs from the generated cockpit root with an exact copy of its generated
-settings and a broken twin whose guard command does not exist. Only cockpit's guard command
-differs: the team's own hooks in that file stay byte for byte and run under both controls, and one
-that refuses a probe command fails the guard cell with its reason and registration. It grants only a fixed `printf`
-command and a bounded `curl` request to a declared vendor hostname, forced to the local listener
-with proxies and curl configuration disabled. It changes no persistent permission or trust file.
-The native hook must deny the candidate request, the ordinary command must succeed, and the broken
-registration must be named while its request reaches the listener. Linked native tool results and
-listener receipts establish enforcement even when both parent processes exit successfully. This
-measures the explicitly supplied registration; it does not attest project hook trust or every guard
-rule. With no host under `[guards] vendor_endpoint_hosts`, the probe has no request the guard
-refuses, so the cell stays pending as `guard_host_undeclared` until you declare one and run `sync`.
-
-Native streams and model requests can contain loaded instructions. Public output shows only their
-digest and size. Full evidence stays under the ignored `.cockpit/local/probes`, readable only by
-you; delete it when no longer needed. Credential-shaped text that evidence redaction changes cannot
-match the generated source and fails that cell. The existing Codex instruction dump and legacy
-probes can still inherit global instructions.
-
-Codex guard firing and OpenCode native protocols remain `human_needed` with
-`native_protocol_unsupported` on every run. Unsupported rows execute no commands and request no executable
-approval. This is an adapter limitation, not a claim that the harness lacks the capability. Codex
-hook trust remains person-owned; selftest does not create it. A successful process or malformed
-settings silently ignored by a tool never establishes enforcement.
-
-The probe-specification file has one row per built-in cell, bound to the current `cockpit.toml` and
-generated manifest. New files contain closed native protocol rows; no diagnostic codes need to be
-invented. Protocol fields and command vectors must match the built-in protocol exactly.
-
-Run `selftest --interactive` without a file, as above, in a terminal outside CI and outside an
-agent session, and it writes fresh specifications for that run to a new file under the ignored
-`.cockpit/local/probes`, then shows them for approval. Each run writes its own, so a file from
-before an upgrade or a `cockpit.toml` edit is never reused. To keep the specifications under review
-in your tree instead, use two steps:
-
-1. After `sync`, write the file (`--replace` writes over an existing one):
-
-   ```sh
-   ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config ./cockpit.toml \
-     --write-probe-specifications ./probe-specifications.json
-   ```
-
-2. Review the file, then run in a terminal outside CI and outside an agent session:
-
-   ```sh
-   ./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --interactive --config ./cockpit.toml \
-     --probe-specifications ./probe-specifications.json
-   ```
-
-When the Claude Code guard probe would run, cockpit first compares the guard identity `sync`
-installed with the one this process would install, before asking for any approval. `sync` records
-the Node it ran under and the guard hook runs that Node, so in a shell whose `node` differs (a
-Node version manager, say) an interactive selftest prints that it is rerunning under the recorded
-Node and runs again under it, with the same arguments and terminal, once that Node's SHA-256
-matches the record. When that Node is gone or changed, or the run is not interactive, selftest
-refuses with `SELFTEST_GUARD_IDENTITY_MISMATCH`, naming both Nodes; run `sync` under the current
-Node first.
-
-Cockpit shows canonical paths, fingerprints and runnable command vectors; rows that differ only in
-their skill are shown once, with `{skill}` in its place and the skills it runs for, and any row
-that template does not reproduce exactly is shown whole. Unsupported rows are counted separately
-and execute nothing. When the Claude Code guard probe runs, it also lists each
-hook registration in the generated `.claude/settings.json` that cockpit did not generate, with its
-event, matcher and command: Claude Code can run every one of them during the probe, with the
-script as it is on disk. The list comes from the generated manifest that the approved file's
-digest binds, so a changed registration makes the file stale. Answer `yes` to approve the displayed artifact, then
-the executable found on `PATH`. Any other answer or closed input declines. Cockpit binds each
-confirmation to the exact displayed digest internally and revalidates the artifact, configuration,
-generated manifest and consumed executable; typing a hash is unnecessary. Approval lasts only
-for that run. Without `--interactive`, or in CI or JSON mode, no commands in the file run.
-
-The terminal leads with each cell whose measurement failed, what failed and what to do, then
-measured and pending cells, then the skill reviews. Those reviews are a person's judgement of each
-skill's trigger, silence, body loading, tools and non-goals; cockpit cannot perform or record them,
-so they are listed on every run. Unsupported cells are grouped with what, if anything, would make
-them measurable, installation and authentication need an operator, and isolation failures remain
-unavailable. A measured unavailable capability is reported separately.
-Unsupported protocols remain `human_needed` in the evidence contract for compatibility; they are
-not operator commands or successful measurements. A cell whose probe fails is recorded
-`human_needed` with `probe_failed` and its reason; the other cells are still measured and kept, and
-the command exits non-zero. A change to the reviewed artifact, configuration, generated manifest,
-approved executable or guard runtime, an unusable probe directory, or evidence that fails validation
-still stops the whole run; a changed input is named with its path. `summary.measurementComplete` is
-true only when every cell with a supported protocol produced evidence, the Claude guard included;
-cells cockpit has no protocol for and skill reviews remain outside it.
-
-Each completed run prints a path to its private structured JSON report under `.cockpit/local/probes`.
-It retains the bundle, validation results, per-cell reasons, diagnostics and summary from that run;
-`--json` retains those fields too. Native instruction streams remain withheld from both and stay
-in their private transcripts. Read the saved report for detail without repeating probes or approvals.
-
-When a file you keep goes stale, carry forward its unchanged rows, writing over it in place:
-
-```sh
-./node_modules/@b00dea/cockpit/bin/cockpit.mjs selftest --config ./cockpit.toml \
-  --write-probe-specifications ./probe-specifications.json \
-  --probe-specifications ./probe-specifications.json --replace
-```
-
-Previously completed legacy rows without `protocol` remain supported unchanged. They require an
-invocation containing exactly one `{control}`, exact native diagnostic lines in `candidateCode` and
-`brokenCode`, and a nonzero rejected broken control. Use these only when the actual harness emits
-that contract; assistant prose, echo commands and substitute executables are not proof. To replace
-legacy rows with the native defaults, write a new file without the previous-file argument.
-
-Legacy probes and the Codex instruction dump inherit only the
-[non-secret tool environment](../packages/cockpit/src/environment/contract.ts), including `HOME` for
-stored sign-in. Model capture probes use the isolated environment described above. Existing project
-trust and policy files remain unchanged. Missing executables or authentication leave an explicit
-operator remainder; unsupported output shapes, size limits and failed controls fail their cell.
-The [validator](../packages/cockpit/libexec/validate-harness-evidence.mjs) holds the evidence limits.
-
-Claude Code and Codex skill reviews stay pending until the required review results exist. A passing
-skill review must bind successful evidence covering every declared skill feature; unavailable or
-partial evidence cannot substantiate all passing checks.
+What each tool actually loads and enforces is in the [capability matrix](capability-matrix.md),
+with the tool version and date of each measurement. The cockpit maintainers measure it by driving
+each tool beside a deliberately broken control; nothing on your machine needs to run.
 
 ## Upgrade cockpit
 

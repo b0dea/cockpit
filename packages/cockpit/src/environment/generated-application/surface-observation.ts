@@ -14,7 +14,7 @@ export function observeGeneratedApplicationSurfaces(
     const record = application !== null && typeof application === 'object'
         ? issuedApplicationProjections.get(application)
         : undefined
-    if (!record?.currentPublication || record.surfaceSelftest !== application.surfaceSelftest) return undefined
+    if (!record?.currentPublication || record.surfaceManifest !== application.surfaceManifest) return undefined
     const grantsSha256 = surfaceModelSha256(record.surfaceHealth.grants)
     const availableGuideCosts = record.surfaceHealth.guideCosts.filter(
         (cost): cost is Exclude<StandingCost, { status: 'unavailable' }> => cost.status !== 'unavailable',
@@ -30,9 +30,9 @@ export function observeGeneratedApplicationSurfaces(
     const observations = [
         snapshotEnvironmentObservation({
             code: ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE, owner: OWNER, stackId: record.stackId,
-            source: `surface-manifest:${record.surfaceSelftest.manifestSha256}`,
-            observed: { state: 'available', value: { manifestSha256: record.surfaceSelftest.manifestSha256,
-                harnesses: record.surfaceSelftest.configuredHarnesses, entries: record.surfaceSelftest.entries.length }, observedAt },
+            source: `surface-manifest:${record.surfaceManifest.manifestSha256}`,
+            observed: { state: 'available', value: { manifestSha256: record.surfaceManifest.manifestSha256,
+                harnesses: record.surfaceManifest.configuredHarnesses, entries: record.surfaceManifest.entries.length }, observedAt },
             expectation: { kind: 'present' }, applicability: required('environment'), freshness: { state: 'current' },
             remedy: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs preflight --config <your cockpit.toml>',
         }),
@@ -49,7 +49,7 @@ export function observeGeneratedApplicationSurfaces(
         }),
         snapshotEnvironmentObservation({
             code: ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED, owner: OWNER, stackId: record.stackId,
-            source: `surface-guide-costs:${record.surfaceSelftest.manifestSha256}`,
+            source: `surface-guide-costs:${record.surfaceManifest.manifestSha256}`,
             observed: { state: 'available', value: guideValue, observedAt }, expectation: { kind: 'maximum', value: guideCap },
             applicability: required('environment'), freshness: { state: 'current' },
             remedy: 'move conditional guidance behind its scoped or pull-loaded surface, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>',

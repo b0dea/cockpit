@@ -138,7 +138,7 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         expect(execute.mock.calls.some(([step]) => step.argv.includes('up') || step.argv.includes('stop'))).toBe(false)
         const guide = join(candidate.checkout, 'AGENTS.md')
         if (published.kind !== 'complete') throw new Error('published surface projection is unavailable')
-        const entry = published.result.application.surfaceSelftest.entries.find(row => row.path === 'AGENTS.md')
+        const entry = published.result.application.surfaceManifest.entries.find(row => row.path === 'AGENTS.md')
         if (!entry || entry.kind !== 'shared-region' || entry.region.format !== 'markdown-delimited') throw new Error('published guide region is unavailable')
         const guideBytes = await readFile(guide, 'utf8')
         expect(guideBytes).toContain(entry.region.bytes)

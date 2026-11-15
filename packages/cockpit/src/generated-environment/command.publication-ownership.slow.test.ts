@@ -125,33 +125,22 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             expect(pinned.diagnostics).not.toContainEqual(expect.objectContaining({ code: 'OVERRIDDEN_CORE_CHANGED' }))
         }, 120_000)
 
-        it('projects authenticated selftest inputs without issuing cloned authority', async () => {
-            const fixture = await surfaceConsumer('selftest-projection', { rules: true })
+        it('projects the authenticated surface manifest without issuing cloned authority', async () => {
+            const fixture = await surfaceConsumer('surface-manifest', { rules: true })
             const synced = await syncGeneratedEnvironment({ configPath: fixture.configPath })
             expect(synced.kind).toBe('complete')
-            if (synced.kind !== 'complete') throw new Error('selftest projection producer refused')
+            if (synced.kind !== 'complete') throw new Error('surface manifest producer refused')
             const application = generatedApplicationProjection(synced.result.application)
             expect(application).toBe(synced.result.application)
             expect(generatedApplicationProjection({ ...application })).toBeUndefined()
-            const projection = application!.surfaceSelftest
-            const { schema, configuredHarnesses, entries, guardProbeHost, guardHookCommand, cockpitHookCommands, rootGuideFile } = projection
-            expect(projection.manifestSha256).toBe(createHash('sha256').update(JSON.stringify({
-                schema, configuredHarnesses, entries, guardProbeHost, guardHookCommand, cockpitHookCommands, rootGuideFile,
-            })).digest('hex'))
-            // The digest binds the root AGENTS.md as the tools load it, exactly as sync wrote it.
-            expect(rootGuideFile).toBe(await readFile(join(fixture.root, 'AGENTS.md'), 'utf8'))
-            expect(cockpitHookCommands).toContain(guardHookCommand)
-            expect(guardProbeHost).toBe('api.vendor.example.test')
-            // The exact command of cockpit's own Claude Code registration, as the published settings carry it.
-            const settings = entries.find(entry => entry.path === '.claude/settings.json')
-            expect(settings?.kind === 'file' && JSON.parse(settings.bytes).hooks.PreToolUse.flatMap((group: { hooks: { command: string }[] }) => group.hooks)
-                .filter((hook: { command: string }) => hook.command === guardHookCommand)).toHaveLength(1)
-            expect(guardHookCommand).toContain('.cockpit/guards/bash-guard.sh')
+            const projection = application!.surfaceManifest
+            const { schema, configuredHarnesses, entries } = projection
+            expect(projection.manifestSha256).toBe(createHash('sha256').update(JSON.stringify({ schema, configuredHarnesses, entries })).digest('hex'))
             expect(configuredHarnesses).toEqual([...DEFAULT_SURFACE_TOOLS].sort())
             const checked = await checkGeneratedEnvironment({ configPath: fixture.configPath })
             expect(checked.kind).toBe('complete')
-            if (checked.kind !== 'complete') throw new Error('selftest projection check refused')
-            expect(checked.result.application.surfaceSelftest).toEqual(projection)
+            if (checked.kind !== 'complete') throw new Error('surface manifest check refused')
+            expect(checked.result.application.surfaceManifest).toEqual(projection)
         }, 180_000)
 
         it('reconciles generated whole files and copied sibling guides and removes exact stale ownership', async () => {

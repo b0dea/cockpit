@@ -33,7 +33,6 @@ export type HandlerIdentifier = WorkHandlerIdentifier
     | 'restart'
     | 'runtime'
     | 'setup'
-    | 'selftest'
     | 'sibling'
     | 'tool'
     | 'session'
@@ -124,7 +123,6 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     partial: 'Close the order as partly done; --note says what is left',
     port: 'With --scaffold-compose: the port the app listens on inside its container',
     profile: 'Compose profile to activate beside environment.profiles; repeat it for several',
-    'probe-specifications': 'Path to the harness probe specifications; with --write-probe-specifications, the earlier file whose filled rows for unchanged cells carry forward',
     purpose: 'Short purpose of the sibling repository',
     question: 'Number of the open question to answer, as work status lists it',
     reason: 'With --none: why the decision is not a lasting one',
@@ -135,7 +133,6 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     'reset-answer': 'Preview clearing one recorded init answer field',
     remote: 'Repository remote URL recorded for the sibling',
     'replace-from': 'With env schema: replace that schema with this draft file, or create it, instead of printing it',
-    replace: 'With --write-probe-specifications: write over the file at that path when it exists',
     role: 'Declared browser role',
     'from-subagent': 'Under [work] grading = "subagent": states that --verdict and --note came from the evaluator subagent you spawned; cockpit cannot verify it',
     'fail-on-findings': 'Exit 2 when a route has console errors, uncaught errors or failed requests, for a criterion that wants a clean route',
@@ -151,7 +148,6 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     verdict: 'Under [work] grading = "self" or "subagent": met or unmet',
     with: 'With --scaffold-compose: backing services to add, from postgres and redis, separated by commas',
     'work-order': 'Work-order identifier',
-    'write-probe-specifications': 'Write a probe-specification file for the current manifest to this new path, for you to review and approve',
     'write-instruction-pointers': 'Write the reviewed instruction links into opted-in sibling guides',
     'write-instruction-files': 'Write the reviewed AGENTS.md and CLAUDE.md changes that let every agent tool load a sibling\'s instructions',
 })
@@ -375,17 +371,6 @@ const sources = [
         visibility: 'public',
         ordinary: ordinary('check'),
         flags: configured,
-    },
-    {
-        name: 'selftest',
-        stage: 'generate-and-verify',
-        summary: 'Measure supported agent capabilities and report unverified cells',
-        handler: 'selftest',
-        visibility: 'public',
-        ordinary: ordinary('selftest', { forbidden: Object.freeze({ presence: Object.freeze(['interactive']) }) }),
-        // --write-probe-specifications and --replace write a file a person reviews, so no agent passes them.
-        flags: { config: configFlag, 'probe-specifications': str(value('confined-path', true)), 'write-probe-specifications': str(),
-            replace: bool(), interactive: bool(), json: jsonFlag },
     },
     {
         name: 'runtime',

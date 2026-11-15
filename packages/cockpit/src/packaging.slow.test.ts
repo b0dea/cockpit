@@ -310,7 +310,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
                 'dist/environment/runtime.js',
                 'dist/environment-exec/execute.js',
                 'dist/generated-environment/command.js',
-                'dist/surfaces/selftest.js',
                 'dist/setup/command.js',
                 'cockpit.schema.json',
                 'libexec/browser-operation.cjs',
@@ -413,13 +412,12 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         const help = execFileSync(process.execPath, [launcher, '--help'], options)
         expect(help).toContain('sync       Write the Compose ownership override and agent files from cockpit.toml')
         expect(help).toContain('check      Report generated files that no longer match cockpit.toml')
-        expect(help).toContain('selftest')
         const metadata = JSON.parse(readFileSync(join(packedPackageRoot(), 'package.json'), 'utf8'))
         expect(execFileSync(process.execPath, [launcher, '--version'], options)).toBe(
             `${metadata.name} ${metadata.version} (Node ${metadata.engines.node}; source ${metadata.cockpitSourceRevision})\n`,
         )
 
-        for (const command of ['sync', 'check', 'selftest', 'work status', 'work accept', 'work check', 'work note', 'work answer', 'work grade', 'work signoff', 'work recover', 'work verify', 'grade', 'browser drive', 'browser screenshot', 'test-run']) {
+        for (const command of ['sync', 'check', 'work status', 'work accept', 'work check', 'work note', 'work answer', 'work grade', 'work signoff', 'work recover', 'work verify', 'grade', 'browser drive', 'browser screenshot', 'test-run']) {
             const invalid = spawnSync(process.execPath, [launcher, ...command.split(' '), '--json'], options)
             expect(invalid.status).toBe(2)
             expect(invalid.stderr).toBe('')

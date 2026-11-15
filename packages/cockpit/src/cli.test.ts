@@ -13,7 +13,6 @@ import { loadCockpitConfig } from './config/load.js'
 import { renderHumanDiagnostics } from './diagnostics.js'
 import { RefusalError, type EnvironmentCommandOutcome, type ExecutionStep } from './environment/contract.js'
 import type { SetupResult } from './environment/setup.js'
-import type { SurfaceSelftestDraftInput, SurfaceSelftestHandlerInput } from './environment/selftest-application.js'
 import { commands, describePublicOption, internalCommands, resolveOrdinaryInvocation } from './command-table.js'
 import { effectivePolicy } from './autonomy.js'
 import { Autonomy, UNCONFIRMABLE_ANSWERS, Work } from './schema.js'
@@ -131,7 +130,7 @@ describe('closed ordinary invocation metadata', () => {
     const ordinary = (argv: string[], patch = {}) => resolveOrdinaryInvocation({ executable: authority.executable, cwd: authority.canonicalRoot, argv, ...patch }, authority, () => true)
     // The words each available config-bearing row needs besides --config.
     const requiredWords: Readonly<Record<string, readonly string[]>> = {
-        selftest: ['--probe-specifications', 'probes.json'], logs: ['--service', 'app'], runtime: ['measure', '--image', 'node:22-alpine'],
+        logs: ['--service', 'app'], runtime: ['measure', '--image', 'node:22-alpine'],
         restart: ['--service', 'app'], rebuild: ['--service', 'app'], exec: ['--service', 'app'], 'env schema': ['--path', 'api:services/web/.env.schema'],
         'test-run': ['--gate', 'quick'], reset: ['--apply'], grade: ['--criteria', 'criteria.md'], use: ['app'], tool: ['add', 'codexcli'], confirm: ['ports.bases'],
         ...Object.fromEntries(['accept', 'check', 'acknowledge', 'grade', 'signoff', 'recover'].map(sub => [`work ${sub}`, ['--work-order', 'WO-1']])),
@@ -165,7 +164,6 @@ describe('closed ordinary invocation metadata', () => {
     it('admits exactly the public ordinary profiles with bounded roles', () => {
         const cases = [
             ['setup'], ['sync', '--dry-run'], ['sync'], ['reset', '--apply'], ['check'],
-            ['selftest', '--probe-specifications', 'probes.json'],
             ['up'], ['up', '--profile', 'jobs', '--profile=mail.v2'], ['sleep'], ['down'], ['preflight'], ['doctor'],
             ['ps'], ['ps', '--json'], ['restart', '--service', 'app'], ['rebuild', '--service=app', '--json'],
             ['logs', '--service', 'app'], ['logs', '--service', 'app', '--tail', '1', '--since', '15m', '--follow'],
@@ -235,7 +233,7 @@ describe('closed ordinary invocation metadata', () => {
 
     it('requires the exact resolved config for every available config-bearing row', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
-        expect(rows.map(row => row.name)).toEqual(['setup', 'use', 'pull', 'tool', 'confirm', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'ps', 'restart', 'rebuild', 'exec',
+        expect(rows.map(row => row.name)).toEqual(['setup', 'use', 'pull', 'tool', 'confirm', 'upgrade', 'sync', 'check', 'runtime', 'up', 'preflight', 'logs', 'ps', 'restart', 'rebuild', 'exec',
             'sleep', 'down', 'reset', 'stacks', 'doctor', 'env keys', 'env schema',
             'test-run', 'work status', 'work accept', 'work check', 'work note', 'work decide', 'work answer', 'work acknowledge', 'work grade', 'work signoff', 'work retry', 'work recover', 'work verify', 'grade',
             'browser drive', 'browser screenshot', 'docs check'])
@@ -257,8 +255,7 @@ describe('closed ordinary invocation metadata', () => {
 
     it('refuses all ambiguous, repeated, escaping, unavailable or differently spelled forms', () => {
         const cases = [
-            ['sync', '--interactive'], ['sync', '--interactive=false'], ['selftest'], ['selftest', '--probe-specifications', 'probe', '--interactive'],
-            ['selftest', '--probe-specifications', 'probe', '--write-probe-specifications', 'draft'],
+            ['sync', '--interactive'], ['sync', '--interactive=false'],
             ['logs'], ['logs', '--service', 'other'], ['logs', '--service', 'app', '--tail', '0'], ['logs', '--service', 'app', '--tail', '10001'],
             ['logs', '--service', 'app', '--tail', '1.5'], ['logs', '--service', 'app', '--since', '1m;id'], ['logs', '--service', 'app', '--since', 'x'.repeat(65)],
             ['up', '--profile', 'Jobs'], ['up', '--profile', '-jobs'], ['up', '--profile', 'x'.repeat(65)], ['ps', 'app'],
@@ -536,8 +533,7 @@ describe('CLI help', () => {
             '  upgrade    Move the exact cockpit pin to a newer version and re-run sync\n\n' +
             'Generate and verify:\n' +
             '  sync       Write the Compose ownership override and agent files from cockpit.toml\n' +
-            '  check      Report generated files that no longer match cockpit.toml\n' +
-            '  selftest   Measure supported agent capabilities and report unverified cells\n\n' +
+            '  check      Report generated files that no longer match cockpit.toml\n\n' +
             'Run the stack:\n' +
             '  runtime    Measure the local container runtime (runtime measure) and record the result for this machine\n' +
             '  up         Start or resume the declared environment\n' +
@@ -611,18 +607,14 @@ const personStalePolicy = async () => ({ current: effectivePolicy({ work: Work.p
 
 describe('generated environment process contract', () => {
     function captureIo(
-        confirmSelftestExecutable?: CliIo['confirmSelftestExecutable'],
         confirmStaleRemoval?: (request: unknown) => Promise<string | undefined>,
-        confirmSelftestProbeSpecifications?: CliIo['confirmSelftestProbeSpecifications'],
     ) {
         let stdout = ''
         let stderr = ''
         const io = {
             stdout: { write: (text: string) => ((stdout += text), true) },
             stderr: { write: (text: string) => ((stderr += text), true) },
-            ...(confirmSelftestExecutable ? { confirmSelftestExecutable } : {}),
             ...(confirmStaleRemoval ? { confirmStaleRemoval } : {}),
-            ...(confirmSelftestProbeSpecifications ? { confirmSelftestProbeSpecifications } : {}),
         } as unknown as CliIo
         return { io, output: () => ({ stdout, stderr }) }
     }
@@ -753,7 +745,7 @@ describe('generated environment process contract', () => {
         }
         expect(createReleaseMetadataTransport).not.toHaveBeenCalled()
         expect(transport).not.toHaveBeenCalled()
-        for (const command of ['check', 'sync', 'selftest', 'up', 'sleep', 'down', 'reset', 'preflight', 'logs', 'setup']) {
+        for (const command of ['check', 'sync', 'up', 'sleep', 'down', 'reset', 'preflight', 'logs', 'setup']) {
             const capture = captureIo()
             await runCli([command, '--config', '/synthetic/missing.toml', '--json'], capture.io, {}, { env: {}, createReleaseMetadataTransport })
         }
@@ -926,7 +918,7 @@ describe('generated environment process contract', () => {
         }
         const calls: unknown[] = []
         const approvals: unknown[] = []
-        const capture = captureIo(undefined, async (request) => {
+        const capture = captureIo(async (request) => {
             approvals.push(request)
             return staleRemoval.digest
         })
@@ -962,7 +954,7 @@ describe('generated environment process contract', () => {
         expect(calls).toBe(0)
         expect(await runCli(
             ['sync', '--config', 'cockpit.toml', '--interactive'],
-            captureIo(undefined, async () => 'd'.repeat(64)).io,
+            captureIo(async () => 'd'.repeat(64)).io,
             { sync, loadPolicy: personStalePolicy },
             { env: {} },
         )).toBe(2)
@@ -975,7 +967,7 @@ describe('generated environment process contract', () => {
             calls += 1
             return { status: 0, diagnostics: [], result: { action: 'sync', dryRun: true, changes: [] } }
         }
-        const confirmed = captureIo(undefined, async () => 'a'.repeat(64))
+        const confirmed = captureIo(async () => 'a'.repeat(64))
 
         expect(await runCli(
             ['sync', '--config', 'cockpit.toml', '--interactive', '--json'],
@@ -994,7 +986,7 @@ describe('generated environment process contract', () => {
     it('applies interactive sync without prompting when its preview has no stale removal', async () => {
         const calls: unknown[] = []
         let confirmations = 0
-        const capture = captureIo(undefined, async () => {
+        const capture = captureIo(async () => {
             confirmations += 1
             return undefined
         })
@@ -1013,12 +1005,12 @@ describe('generated environment process contract', () => {
         const applied = async (input: { dryRun?: boolean }) => ({ status: 0, diagnostics: [], result: input.dryRun === true
             ? { action: 'sync', dryRun: true, changes: [] }
             : { action: 'sync', dryRun: false, paths: ['AGENTS.md', 'CLAUDE.md'], changes: [{ operation: 'write', path: 'AGENTS.md' }] } })
-        const first = captureIo(undefined, async () => undefined)
+        const first = captureIo(async () => undefined)
         expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], first.io, { loadPolicy: personStalePolicy, sync: applied }, { env: {} })).toBe(0)
         expect(first.output().stdout).toBe('write "AGENTS.md"\nwrite ".cockpit/policy.json"\n'
             + 'Sync wrote 2 files; 1 generated file was already current. Review them with git status --short and commit them so teammates get the same files.\n')
         const recordedPolicy = async () => ({ ...await personStalePolicy(), recorded: (await personStalePolicy()).current })
-        const unchanged = captureIo(undefined, async () => undefined)
+        const unchanged = captureIo(async () => undefined)
         expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], unchanged.io, { loadPolicy: recordedPolicy,
             sync: async (input) => ({ status: 0, diagnostics: [], result: { action: 'sync', dryRun: input.dryRun === true, paths: ['AGENTS.md', 'CLAUDE.md'], changes: [] } }) }, { env: {} })).toBe(0)
         expect(unchanged.output().stdout).toBe('Nothing to sync: all 2 generated files were already current.\n')
@@ -1033,7 +1025,7 @@ describe('generated environment process contract', () => {
         }
         const changed = { ...preview, generation: 'generation-2', digest: 'd'.repeat(64) }
         let calls = 0
-        const capture = captureIo(undefined, async () => preview.digest)
+        const capture = captureIo(async () => preview.digest)
 
         expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], capture.io, {
             loadPolicy: personStalePolicy,
@@ -1057,149 +1049,7 @@ describe('generated environment process contract', () => {
         expect(JSON.parse(json.output().stdout)).toMatchObject({ result: { dryRun: true } })
     })
 
-    it('requires a measured selftest artifact', async () => {
-        const selftestCalls: unknown[] = []
-        const selftest = captureIo()
-        expect(await runCli(['selftest', '--config', 'cockpit.toml', '--probe-specifications', 'probe.json', '--json'], selftest.io, {
-            selftest: async (input) => {
-                selftestCalls.push(input)
-                return { status: 0, diagnostics: [], result: { pending: ['native'] } }
-            },
-        }, { env: { PATH: '/synthetic/bin' } })).toBe(0)
-        expect(selftestCalls).toEqual([{ configPath: 'cockpit.toml', probeSpecificationsPath: 'probe.json', env: { PATH: '/synthetic/bin' } }])
-        const missing = captureIo()
-        expect(await runCli(['selftest', '--config', 'cockpit.toml'], missing.io)).toBe(2)
-        expect(missing.output().stderr).toContain('write one with --write-probe-specifications <new file> first')
-        selftestCalls.length = 0
-        expect(await runCli(['selftest', '--config', 'cockpit.toml', '--write-probe-specifications', 'probe.json'], captureIo().io, {
-            selftest: async (input) => {
-                selftestCalls.push(input)
-                return { status: 0, diagnostics: [], result: null }
-            },
-        })).toBe(0)
-        // Agents add --json to every command; writing the file still happens and the envelope names it.
-        const draftDirectory = mkdtempSync(join(tmpdir(), 'cockpit-probe-draft-json-'))
-        const draft = join(draftDirectory, 'probe.json')
-        const json = captureIo()
-        expect(await runCli(['selftest', '--config', 'cockpit.toml', '--write-probe-specifications', draft, '--json'], json.io, {
-            selftest: async () => ({ status: 0, diagnostics: [], artifact: '{"schema":"synthetic"}\n', destination: draft, result: { probeSpecifications: draft } }),
-        })).toBe(0)
-        expect(readFileSync(draft, 'utf8')).toBe('{"schema":"synthetic"}\n')
-        expect(JSON.parse(json.output().stdout)).toMatchObject({ result: { probeSpecifications: draft } })
-        rmSync(draftDirectory, { recursive: true, force: true })
-        for (const conflict of [['--interactive'], ['--probe-specifications=']]) {
-            expect(await runCli(['selftest', '--config', 'cockpit.toml', '--write-probe-specifications', 'probe.json', ...conflict],
-                captureIo().io, { selftest: async (input) => { selftestCalls.push(input); return { status: 0, diagnostics: [], result: null } } }),
-            conflict.join(' ')).toBe(2)
-        }
-        // --replace overwrites only the file --write-probe-specifications names.
-        const replaceAlone = captureIo()
-        expect(await runCli(['selftest', '--config', 'cockpit.toml', '--probe-specifications', 'probe.json', '--replace'], replaceAlone.io,
-            { selftest: async (input) => { selftestCalls.push(input); return { status: 0, diagnostics: [], result: null } } })).toBe(2)
-        expect(replaceAlone.output().stderr).toContain('--replace only applies with --write-probe-specifications')
-        expect(await runCli(['selftest', '--config', 'cockpit.toml', '--write-probe-specifications', 'probe.json', '--probe-specifications', 'earlier.json'],
-            captureIo().io, { selftest: async (input) => { selftestCalls.push(input); return { status: 0, diagnostics: [], result: null } } })).toBe(0)
-        expect(selftestCalls).toEqual([
-            { configPath: 'cockpit.toml', writeProbeSpecificationsPath: 'probe.json' },
-            { configPath: 'cockpit.toml', writeProbeSpecificationsPath: 'probe.json', previousProbeSpecificationsPath: 'earlier.json' },
-        ])
-    })
-
-    it('preserves only the selftest search path, the non-secret tool variables and undefined own values for injected handlers', async () => {
-        const unrelated = vi.fn(() => { throw new Error('unrelated environment value must not be read') })
-        const env = Object.defineProperty({
-            PATH: undefined, Path: '/synthetic/harnesses', HOME: '/synthetic/home', UNRELATED_DATA: 'synthetic-unrelated-canary',
-            ANTHROPIC_API_KEY: 'synthetic-key-canary',
-        }, 'UNRELATED_ACCESSOR', { enumerable: true, get: unrelated })
-        const selftest = vi.fn(async (_input: SurfaceSelftestHandlerInput | SurfaceSelftestDraftInput) => ({
-            status: 0, diagnostics: [], result: { pending: ['native'] },
-        }))
-        const capture = captureIo()
-
-        expect(await runCli([
-            'selftest', '--config', 'cockpit.toml', '--probe-specifications', 'probe.json', '--json',
-        ], capture.io, { selftest }, { env })).toBe(0)
-
-        expect(selftest).toHaveBeenCalledExactlyOnceWith({
-            configPath: 'cockpit.toml', probeSpecificationsPath: 'probe.json',
-            env: { PATH: undefined, HOME: '/synthetic/home' },
-        })
-        const dispatched = selftest.mock.calls[0]?.[0]
-        expect(dispatched && 'env' in dispatched ? dispatched.env : null).toStrictEqual({ PATH: undefined, HOME: '/synthetic/home' })
-        expect(unrelated).not.toHaveBeenCalled()
-        expect(capture.output().stdout + capture.output().stderr).not.toMatch(/synthetic-unrelated-canary|synthetic-key-canary/)
-    })
-
-    it('refuses a selftest PATH accessor before reading or dispatching it', async () => {
-        const selected = vi.fn(() => { throw new Error('selected search accessor must not be read') })
-        const env = Object.defineProperty({}, 'PATH', { enumerable: true, get: selected })
-        const selftest = vi.fn(async () => ({ status: 0, diagnostics: [], result: null }))
-        const capture = captureIo()
-
-        expect(await runCli([
-            'selftest', '--config', 'cockpit.toml', '--probe-specifications', 'probe.json', '--json',
-        ], capture.io, { selftest }, { env })).toBe(2)
-
-        expect(capture.output().stdout).toContain('CLI_USAGE_INVALID')
-        expect(selected).not.toHaveBeenCalled()
-        expect(selftest).not.toHaveBeenCalled()
-    })
-
-    it('adds probe and executable authority only through interactive exact-digest operator decisions', async () => {
-        const candidate = {
-            harness: 'Codex' as const,
-            canonicalPath: '/synthetic/bin/codex',
-            sha256: 'a'.repeat(64),
-        }
-        const decisions: unknown[] = []
-        const specificationCandidate = {
-            canonicalPath: '/synthetic/probe.json',
-            sha256: 'b'.repeat(64),
-            sourceSha256: 'c'.repeat(64),
-            generatedManifestSha256: 'd'.repeat(64),
-            commandVectors: [{
-                harness: 'Codex', capability: 'instruction-loading', skill: null,
-                invocation: ['{executable}', '--probe', '{control}'] as const,
-                versionCommand: ['{executable}', '--version'] as const,
-                helpCommand: ['{executable}', '--help'] as const,
-            }],
-        }
-        const specificationDecisions: unknown[] = []
-        const capture = captureIo(async (shown) => {
-            decisions.push(shown)
-            return shown.sha256
-        }, undefined, async (shown) => {
-            specificationDecisions.push(shown)
-            return shown.sha256
-        })
-        expect(await runCli([
-            'selftest', '--config', 'cockpit.toml', '--probe-specifications', 'probe.json', '--interactive',
-        ], capture.io, {
-            selftest: async (input) => {
-                if ('writeProbeSpecificationsPath' in input) throw new Error('an interactive run must not reach the file writer')
-                expect(await input.requestProbeSpecificationsApproval?.(specificationCandidate)).toBe(specificationCandidate.sha256)
-                expect(await input.requestExecutableApproval?.(candidate)).toBe(candidate.sha256)
-                return { status: 0, diagnostics: [], result: { pending: [] } }
-            },
-        }, { env: { PATH: '/synthetic/bin' } })).toBe(0)
-        expect(decisions).toEqual([candidate])
-        expect(specificationDecisions).toEqual([specificationCandidate])
-
-        let calls = 0
-        const handler = async () => {
-            calls += 1
-            return { status: 0, diagnostics: [], result: null }
-        }
-        expect(await runCli([
-            'selftest', '--config', 'cockpit.toml', '--probe-specifications', 'probe.json', '--interactive', '--json',
-        ], captureIo(async () => candidate.sha256, undefined, async () => specificationCandidate.sha256).io, { selftest: handler })).toBe(2)
-        expect(await runCli([
-            'selftest', '--config', 'cockpit.toml', '--probe-specifications', 'probe.json', '--interactive',
-        ], captureIo().io, { selftest: handler })).toBe(2)
-        expect(calls).toBe(0)
-    })
-
-    it('shows preview changes and selftest evidence in human mode', async () => {
+    it('shows preview changes in human mode', async () => {
         const preview = captureIo()
         expect(await runCli(['sync', '--config', 'cockpit.toml', '--dry-run'], preview.io, {
             sync: async () => ({ status: 0, diagnostics: [], result: {
@@ -1207,13 +1057,6 @@ describe('generated environment process contract', () => {
             } }),
         })).toBe(0)
         expect(preview.output().stdout).toContain('write ".agents/skills/cockpit-fix/SKILL.md"')
-
-        const selftest = captureIo()
-        expect(await runCli(['selftest', '--config', 'cockpit.toml', '--probe-specifications', 'probe.json'], selftest.io, {
-            selftest: async () => ({ status: 0, diagnostics: [], result: { evidence: { human_needed: ['native'] } } }),
-        })).toBe(0)
-        expect(selftest.output().stdout).toContain('human_needed')
-        expect(selftest.output().stdout).not.toContain('{')
     })
 })
 

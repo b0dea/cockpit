@@ -41,10 +41,10 @@ Every module below is under `packages/cockpit/src/`. All process dispatch goes t
 | Checking publication inputs | [environment/generated-application/publication.ts](../../packages/cockpit/src/environment/generated-application/publication.ts) | `packages/cockpit/src/generated-environment/command.authentication.slow.test.ts` |
 | Durable manifest and publication | [environment/generated-application/publication.ts](../../packages/cockpit/src/environment/generated-application/publication.ts) | `packages/cockpit/src/generated-environment/command.publication-bounds.slow.test.ts`, `packages/cockpit/src/generated-environment/command.publication-core.slow.test.ts`, `packages/cockpit/src/generated-environment/command.publication-custom.slow.test.ts`, `packages/cockpit/src/generated-environment/command.publication-native.slow.test.ts` |
 | Repair and recovery | [environment/generated-application/check.ts](../../packages/cockpit/src/environment/generated-application/check.ts), [environment/generated-application/sync.ts](../../packages/cockpit/src/environment/generated-application/sync.ts) | `packages/cockpit/src/generated-environment/command.test.ts` |
-| Selftest | [surfaces/selftest.ts](../../packages/cockpit/src/surfaces/selftest.ts), [environment/selftest-application.ts](../../packages/cockpit/src/environment/selftest-application.ts) | `packages/cockpit/src/selftest/command.configured-artifact.slow.test.ts`, `packages/cockpit/src/selftest/command.native-execution.slow.test.ts`, `packages/cockpit/src/selftest/command.custom-operator.slow.test.ts` |
 | Human approval prompts | [environment/operator-application.ts](../../packages/cockpit/src/environment/operator-application.ts) | `packages/cockpit/src/environment/operator-application.test.ts` |
 
-Repository tests check source behavior; they do not replace a selftest of the real tool.
+Repository tests check source behavior; they do not replace driving the real tool
+([verify-harness-capability](../../.agents/skills/verify-harness-capability/SKILL.md)).
 
 ## Focused harness verification
 

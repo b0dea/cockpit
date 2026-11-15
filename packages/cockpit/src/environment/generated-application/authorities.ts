@@ -26,16 +26,6 @@ export function generatedApplicationProjection(value: unknown): GeneratedApplica
         ? value as GeneratedApplicationProjection : undefined
 }
 
-export function generatedSelftestGuardRuntime(application: GeneratedApplicationProjection, root: string) {
-    const record = issuedApplicationProjections.get(application)
-    return record?.currentPublication && record.root === root ? record.guardRuntime : undefined
-}
-
-export function generatedSelftestGuardHandler(application: GeneratedApplicationProjection, root: string) {
-    const record = issuedApplicationProjections.get(application)
-    return record?.currentPublication && record.root === root ? record.guardHandler : undefined
-}
-
 export function projectWorkApplicationAuthorities(
     application: GeneratedApplicationProjection,
 ): WorkApplicationAuthoritiesProjection | undefined {

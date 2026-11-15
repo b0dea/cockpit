@@ -1,4 +1,3 @@
-import { isUtf8 } from 'node:buffer'
 import { lstat, readFile, realpath } from 'node:fs/promises'
 import { openCodePatternUnsafe } from '../served-checkout-grants.js'
 import { basename, dirname, join, relative, resolve } from 'node:path'
@@ -21,7 +20,6 @@ import { effectivePolicy } from '../../autonomy.js'
 import { collectMcpDeclarations, mcpApprovalDigest, parseMcpDeclarationFile } from '../../surfaces/mcp.js'
 import {
     bindSurfaceOwnershipIdentity,
-    renderSharedPostimage,
     type SurfaceDesiredEntry,
     type SurfacePriorOwnedEntry,
 } from '../../surfaces/ownership.js'
@@ -53,7 +51,7 @@ import {
     type ConsumedWorkApplicationAuthorities,
     type GeneratedEnvironmentCommandAdapters,
     type GeneratedSurfaceHealthEvidence,
-    type GeneratedSurfaceSelftestProjection,
+    type GeneratedSurfaceManifestProjection,
     MAX_GENERATED_BYTES,
     MAX_OWNED_FILES,
     MAX_SURFACE_FILE_BYTES,
@@ -471,7 +469,6 @@ export async function prepareSurfaces(
     const adopted = await mergeAdoptedSurfaces(prepared, rendered.entries, configuredHarnesses, adapters)
     if ('status' in adopted) return adopted
     let adoptedEntries = adopted.entries
-    let teamClaudeGuide: string | undefined
     if (adopted.entries.some(entry => entry.path === 'CLAUDE.md')) {
         const existingClaude = await readAnchoredEntry(prepared.root, 'CLAUDE.md', MAX_SURFACE_FILE_BYTES, prepared.node, adapters)
         if (existingClaude.kind === 'invalid') return refuse('SURFACE_STATE_CONFLICT', 'the existing Claude guide could not be observed safely', 'CLAUDE.md')
@@ -497,7 +494,6 @@ export async function prepareSurfaces(
             }
             if (imports.length === 1) {
                 adoptedEntries = adopted.entries.filter(entry => entry.path !== 'CLAUDE.md')
-                teamClaudeGuide = bytes
             }
         }
     }
@@ -532,14 +528,6 @@ export async function prepareSurfaces(
     if (!rootGuide || rootGuide.kind !== 'shared-region' || rootGuide.region.format !== 'markdown-delimited') {
         return refuse('SURFACE_INPUT_INVALID', 'the published always-loaded root guide is unavailable', 'AGENTS.md')
     }
-    // Every tool loads the root AGENTS.md whole, the team's own text included, so selftest measures the
-    // file as sync leaves it: the same postimage sync writes. A file sync would refuse carries none, and
-    // the instruction probes then refuse to measure; sync and check name the problem.
-    const existingGuide = await readAnchoredEntry(prepared.root, 'AGENTS.md', MAX_SURFACE_FILE_BYTES, prepared.node, adapters)
-    const existingText = existingGuide.kind === 'missing' ? ''
-        : existingGuide.kind === 'file' && isUtf8(existingGuide.bytes) ? existingGuide.bytes.toString('utf8') : undefined
-    const postimage = existingText === undefined ? undefined : renderSharedPostimage(existingText, rootGuide, priorOwned.find(entry => entry.path === 'AGENTS.md'))
-    const rootGuideFile = postimage?.kind === 'complete' ? postimage.bytes : undefined
     const characterizedGuideCosts = tierGuide.costs.filter(
         (cost): cost is Exclude<StandingCost, { status: 'unavailable' }> => cost.status !== 'unavailable',
     )
@@ -563,37 +551,11 @@ export async function prepareSurfaces(
     if (prepared.owned.length + surfaceEntries.length > MAX_OWNED_FILES) {
         return refuse('SURFACE_BOUNDS', 'combined generated ownership exceeds the entry bound', 'surfaces')
     }
-    const guardProbeHost = config.guards.vendor_endpoint_hosts.find(host => host.length <= 253 && /^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(host))
-    // The guard probe breaks cockpit's registration and no other. A team's adopted hooks sit beside
-    // it in the same settings file, so the probe is given the exact command cockpit generated.
-    const claudeRegistration = listedRestrictions.targets.find(row => row.target === 'claudecode')?.files
-        .find(row => row.path === '.claude/settings.json')
-    const claudeHooks: unknown = claudeRegistration && JSON.parse(claudeRegistration.bytes)?.hooks
-    const guardHookCommand: unknown = (claudeHooks as { PreToolUse?: { hooks?: { command?: unknown }[] }[] } | undefined)?.PreToolUse?.[0]?.hooks?.[0]?.command
-    // The guard probe runs every hook in that file; the approval names the ones cockpit did not generate.
-    const cockpitHookCommands = claudeHooks && typeof claudeHooks === 'object' ? Object.values(claudeHooks).flatMap((groups: unknown) =>
-        (Array.isArray(groups) ? groups : []).flatMap((group: { hooks?: unknown }) => Array.isArray(group?.hooks) ? group.hooks : [])
-            .flatMap((hook: { command?: unknown }) => typeof hook?.command === 'string' ? [hook.command] : [])) : []
-    const selftestPayload = {
-        schema: 'cockpit-generated-surface-selftest/v1' as const,
-        configuredHarnesses,
-        entries: surfaceEntries,
-        ...(guardProbeHost ? { guardProbeHost } : {}),
-        ...(typeof guardHookCommand === 'string' ? { guardHookCommand } : {}),
-        ...(cockpitHookCommands.length > 0 ? { cockpitHookCommands } : {}),
-        ...(teamClaudeGuide === undefined ? {} : { teamClaudeGuide }),
-        ...(rootGuideFile === undefined ? {} : { rootGuideFile }),
-    }
-    const captured = snapshotGeneratedJson(selftestPayload) as unknown as Omit<GeneratedSurfaceSelftestProjection, 'manifestSha256'> | undefined
-    if (!captured) return refuse('SURFACE_BOUNDS', 'authenticated selftest inputs exceed the captured bounds', 'surfaces')
-    const payload = { schema: captured.schema, configuredHarnesses: selftestPayload.configuredHarnesses,
-        entries: surfaceEntries,
-        ...(captured.guardProbeHost ? { guardProbeHost: captured.guardProbeHost } : {}),
-        ...(captured.guardHookCommand ? { guardHookCommand: captured.guardHookCommand } : {}),
-        ...(captured.cockpitHookCommands ? { cockpitHookCommands: captured.cockpitHookCommands } : {}),
-        ...(captured.teamClaudeGuide === undefined ? {} : { teamClaudeGuide: captured.teamClaudeGuide }),
-        ...(captured.rootGuideFile === undefined ? {} : { rootGuideFile: captured.rootGuideFile }) }
-    const surfaceSelftest = { ...payload, manifestSha256: sha256(JSON.stringify(payload)) }
+    const manifestPayload = { schema: 'cockpit-generated-surface-manifest/v1' as const, configuredHarnesses, entries: surfaceEntries }
+    const captured = snapshotGeneratedJson(manifestPayload) as unknown as Omit<GeneratedSurfaceManifestProjection, 'manifestSha256'> | undefined
+    if (!captured) return refuse('SURFACE_BOUNDS', 'the generated surface manifest exceeds the captured bounds', 'surfaces')
+    const payload = { schema: captured.schema, configuredHarnesses, entries: surfaceEntries }
+    const surfaceManifest = { ...payload, manifestSha256: sha256(JSON.stringify(payload)) }
     const skillInventory = surfaceEntries.filter((entry): entry is Extract<SurfaceDesiredEntry, { kind: 'file' }> =>
         entry.kind === 'file').flatMap(entry => entry.harnesses.flatMap(target => {
         if (!SURFACE_TARGETS.includes(target as SurfaceTarget)) return []
@@ -644,7 +606,7 @@ export async function prepareSurfaces(
     return { ...prepared, guardHandler, openCodeGrantRoots, unapprovedMcpServers, mcpTransportGaps, mcpServers: mcp.result.servers,
         surfaces: surfaceEntries, compactSurfacePaths, configuredHarnesses,
         activeSurfaceOverrides: merge.overrides, changedOverrideOriginals: merge.findings,
-        surfaceSelftest,
+        surfaceManifest,
         surfaceHealth,
         guideSources: {
             requests: guideRequests,
