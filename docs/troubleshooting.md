@@ -42,8 +42,8 @@ the command to a person, or proposes a `[[guards.allow]]` rule, rather than rewo
 | `… sets <NAME>, which changes where Git looks for its repository and configuration, what a shell runs as it starts, or whether an agent is marked as running` | A prefixed or exported `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_CONFIG*`, `GIT_EXEC_PATH`, `HOME`, `XDG_CONFIG_HOME`, `BASH_ENV`, `ENV` or session-marker assignment. | Run the command without that assignment. |
 | `The guard does not read this shell form` | The call uses shell the parser does not read: `case`, `[[ … ]]`, `eval`, `watch`, `xargs -I`, arithmetic over a name, an expanding heredoc, or a `cd` inside a loop or `if` or after `!`. What runs inside it is unknown, so it asks; Codex and OpenCode refuse it. | Write it as plain commands joined with `&&`, use `[ … ] &&` or `if`, or put it in a script file. |
 | `Refusing \`--no-verify\`` / `Refusing \`git -c <key>\`` | Skipping hooks, or a configuration key that chooses a program Git runs. | Run without it and fix what the hook reports. |
-| `… is a cockpit command an agent does not run unprompted` / `… is a cockpit command that publishes policy or is not one an agent runs` | A cockpit command the command table does not admit to an agent: `sync --interactive`, `reset` and the other commands that change what agents may do, however spelled. `sync` and `upgrade` themselves run only where `[autonomy] sync = "agent"`. | A person runs it in a terminal. |
-| `Refusing to sync the cockpit` / `Refusing to run cockpit upgrade` | An agent ran it while `cockpit.toml` holds an unapproved edit that widens what agents may do. | A person reviews the edit and runs `sync --interactive`, or reverts it. |
+| `… is a cockpit command an agent does not run unprompted` / `… is a cockpit command that publishes policy or is not one an agent runs` | A cockpit command the command table does not admit to an agent: `sync --interactive`, `reset --interactive` and the other commands that change what agents may do or ask for a person, however spelled. | A person runs it in a terminal. |
+| `Refusing to sync the cockpit` / `Refusing to run cockpit upgrade` | An agent ran it while `cockpit.toml` holds an unsynced edit that widens what agents may do (`GUARD_CONFIG_WIDENED`). | A person reviews the edit and runs `sync --interactive`, or reverts it. |
 | `Refusing … it runs sync or upgrade from a copy of cockpit` / `… runs a copy of cockpit outside the installed package` | `node <copy>/dist/cli.js sync` would bind the guard to a copy an agent can edit. | A person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` in a terminal; an agent runs the installed package. |
 | `… downloads files whose names the guard cannot see into <dir>, which holds guard files` | `gh run download`, or `gh release download` without `-p`, writes into a directory that holds guard files, such as the cockpit root. | Download into another directory, such as `build/`, or name the release assets with `-p`. |
 | `… names <path>, which holds guard files, and the guard does not know whether it writes them` | A Git command, an operand writer such as `rsync`, or a program with a declared allow rule names a directory that holds guard files: `git restore --source=<rev> .`, `git pull . <branch>`, `git clone . <dir>`. In Codex and OpenCode the ask is a refusal. | Name the files it needs, or run it from a subdirectory; otherwise a person approves or runs it. |
@@ -69,7 +69,7 @@ the command to a person, or proposes a `[[guards.allow]]` rule, rather than rewo
 | `Refusing to change a checkout [guards] related_checkouts names` | Related checkouts are read only: files, searches and read-only `git -C <checkout>` commands. | Change it from a session started in that checkout. |
 | `… A person can admit it for good by adding this entry …` (appended) | An ask that a `[[guards.allow]]` entry would admit names that exact entry. | Propose the entry to a person, who adds it and syncs. |
 | `… [guards] unresolved = "deny" … refuses what would wait for a person` | The cockpit refuses asks instead of prompting. | Take the route the reason names: the allow entry, or a literal local target the guard can judge. |
-| `… does not load` | `cockpit.toml` does not parse or match the schema; guarded calls are held until it loads. | Mend it with an edit that leaves `[work]`, `[autonomy]` and MCP restrictions alone, and read `check --config cockpit.toml` or `sync --dry-run --config cockpit.toml` run alone from the cockpit root. |
+| `… does not load` | `cockpit.toml` does not parse or match the schema; guarded calls are held until it loads. | Mend it with an edit of `cockpit.toml` alone, and read `check --config cockpit.toml` or `sync --dry-run --config cockpit.toml` run alone from the cockpit root. |
 | `… only once the file's TOML \u escapes are read as the characters they stand for` | The edit's old text holds a character the file spells as an escape such as `\u2014`. | Spell the escape with its backslash in the old and new text (`\\u2014` in the tool's JSON), or edit a span without escapes. |
 | `the installed cockpit is older than the one that generated the guards` | The checkout's dependencies install an older cockpit than the one that generated its guards, as after a branch switch. | Run the install the message names, such as `npm ci`; sync only when the older version is intended. |
 | `cockpit guard failed (<status>): <script>; sync the cockpit` | The hook could not run the guard script, or it failed: 127 means the script is missing. | Start the agent from the cockpit root on a branch that has the cockpit, or a person runs sync. |
@@ -168,9 +168,8 @@ writing, is the person's decision. For a team's own `.claude/settings.json`, `.c
 cockpit writes with a different value; remove it from the named file and sync again.
 `SURFACE_SOURCE_UNAVAILABLE` means a declared source or active sibling could not be read or checked. Restore that source at its declared root and retry the dry run.
 
-`GENERATED_STALE_APPROVAL_REQUIRED` means a dry run found stale entries but the apply has no
-approval for their exact digest. Run `sync --interactive` from a terminal outside CI, review the
-listed entries, and explicitly confirm only if every removal is intended.
+`GENERATED_STALE_APPROVAL_REQUIRED` means a dry run found stale entries the apply could not
+remove. Run `sync`, which removes the entries it generated before and lists them.
 `GENERATED_STALE_APPROVAL_INVALID` means the request could not be bound safely; inspect the
 reported path and current ownership before retrying. Neither code permits deleting the path by
 hand.
@@ -202,11 +201,10 @@ same-name environment reference, confined working directory, or remote server UR
 reference or `headersHelper` named by the message.
 `MCP_COMMAND_CONFLICT` means two sources give one server name different commands; make them agree or give them distinct names. `MCP_NOT_APPROVED` leaves a declared
 server disabled because `[mcp.approved]` has no entry for it, or its declaration changed since it
-was approved; a person, only after reviewing its command, arguments, working directory, environment
-names and sources, sets its name to the sha256 in the message under `[mcp.approved]` and runs `sync`.
-While `[autonomy] mcp_approve` is `person`, the default, the guard refuses an agent adding or
-changing an approval or widening tool access; an agent may remove an unchanged approval and add or
-narrow an exact allowlist under `[mcp.allowed_tools]`, which grant nothing new.
+was approved; a person runs `sync --interactive` in a terminal, reads the server's name, what it
+runs and where it is declared, and answers yes, which writes the entry. An agent may remove an
+approval and narrow an exact allowlist under `[mcp.allowed_tools]`, which grant nothing new; adding
+an approval or widening tool access waits for that yes.
 `MCP_APPROVAL_UNKNOWN` means the allowlist names no declaration. `MCP_EXECUTABLE_UNAVAILABLE` comes from the generated wrapper when its declared
 executable is absent or not executable; restore that executable rather than changing the wrapper.
 `MCP_TRANSPORT_UNAVAILABLE` names a remote server left out of the tools that cannot carry its
@@ -325,8 +323,6 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `AGENT_HOOKS_DISABLED` | remove disableAllHooks from the named Claude Code settings file; a person makes this change; [see above](#codex-hooks-in-linked-worktrees) |
 | `AGENT_NESTED_REPOSITORY` | declare the repository as a [[sibling]], move it outside the cockpit root, or remove its .git entry; a person makes this change; [see above](#codex-hooks-in-linked-worktrees) |
 | `AGENT_SETTINGS_NESTED` | review each file a person did not intend, and remove it, or move what it holds into the cockpit root's settings and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; [see above](#codex-hooks-in-linked-worktrees) |
-| `AUTONOMY_CI_ONLY` | push the change and let the CI job run the command, or have a person change the field in cockpit.toml and accept the change at sync |
-| `AUTONOMY_PERSON_REQUIRED` | a person runs the same command with --interactive in a terminal outside CI, or a person changes the field in cockpit.toml and accepts the change at sync |
 | `BROWSER_ROUTE_FINDINGS` | this run asked for a clean route (--fail-on-findings). Read result.receipt.surfaces[].diagnostics, including excerpt.messages where present: fix the product for each console error, uncaught page error and failed request that matters, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs browser drive --config <your cockpit.toml> --route <name> --fail-on-findings; third-party traffic never counts |
 | `CLAIM_CO_TENANT` | [see above](#common-refusal-guidance) |
 | `CLAUDE_LOCAL_HOOK_MISSING` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal; if sync cannot read .claude/settings.local.json, make it a JSON object or remove it first; [see above](#codex-hooks-in-linked-worktrees) |
@@ -361,8 +357,8 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `GENERATED_OWNERSHIP_DRIFT` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [see above](#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [see above](#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | [see above](#merge-ownership-and-generation) |
-| `GENERATED_STALE_ARTIFACT` | a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal and confirms the stale-file removals it shows with yes |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>, which removes the stale entries it lists; [see above](#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>, which removes it |
 | `GUARD_AUTHORITY_UNAVAILABLE` | [see above](#common-refusal-guidance) |
 | `GUARD_CONFIG_WIDENED` | [see above](#guard-refusals) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
@@ -394,6 +390,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `PROJECTION_RESULT_BOUNDS` | [see above](#sibling-projection-and-skills) |
 | `PROJECTION_ROOT_AMBIGUOUS` | [see above](#sibling-projection-and-skills) |
 | `REGISTRY_INPUT_INVALID` | [see above](#harness-surface-failures) |
+| `RESET_CONFIRMATION_REQUIRED` | a person runs the same command with --interactive in a terminal outside CI and answers the preview, or the team declares [environment] seed in cockpit.toml |
 | `RESTRICTION_ADAPTER_INVALID` | [see above](#mcp-and-restrictions) |
 | `RESTRICTION_EVENT_UNADAPTED` | [see above](#mcp-and-restrictions) |
 | `RESTRICTION_INPUT_INVALID` | [see above](#mcp-and-restrictions) |
@@ -410,8 +407,8 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SETUP_REMOTE_MISMATCH` | [see above](#common-refusal-guidance) |
 | `SETUP_REMOTE_UNRESOLVABLE` | make the remote path readable, or declare the remote as a URL or an absolute path to an existing repository, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> again |
 | `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> |
-| `SIBLING_INSTRUCTIONS_AGENTS_ONLY` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> to see the CLAUDE.md it proposes (one line, @AGENTS.md); once a person approves it, or without one where [autonomy] instruction_files = "agent", run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> --write-instruction-files |
-| `SIBLING_INSTRUCTIONS_CLAUDE_ONLY` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> to see the move it proposes (CLAUDE.md copied byte for byte to AGENTS.md, CLAUDE.md replaced by @AGENTS.md) and, once a person approves it, or without one where [autonomy] instruction_files = "agent", rerun it with --write-instruction-files; when CLAUDE.md imports other files with @, setup proposes nothing and a person moves the shared instructions into AGENTS.md by hand |
+| `SIBLING_INSTRUCTIONS_AGENTS_ONLY` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> to see the CLAUDE.md it proposes (one line, @AGENTS.md), then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> --write-instruction-files |
+| `SIBLING_INSTRUCTIONS_CLAUDE_ONLY` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> to see the move it proposes (CLAUDE.md copied byte for byte to AGENTS.md, CLAUDE.md replaced by @AGENTS.md), then rerun it with --write-instruction-files; when CLAUDE.md imports other files with @, setup proposes nothing and a person moves the shared instructions into AGENTS.md by hand |
 | `SIBLING_INSTRUCTIONS_MISSING` | a person writes AGENTS.md with what an agent must know to work in the repository, then runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> --write-instruction-files to add the CLAUDE.md that imports it |
 | `SIBLING_INSTRUCTIONS_TOOL_ONLY` | a person moves the instructions every tool needs from those files into AGENTS.md, and keeps only settings specific to one tool where they are |
 | `SIBLING_INSTRUCTIONS_UNLINKED` | a person merges the instructions every tool needs into AGENTS.md, then makes CLAUDE.md a line reading @AGENTS.md followed only by instructions that apply to Claude Code alone |
