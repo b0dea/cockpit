@@ -157,7 +157,7 @@ a deprecation period. It waits on:
 - **A cold-start journey that needs no help.** In a new repository, an agent in each measured tool
   sets cockpit up from the guide; a second, fresh session in the same repository then fixes a
   planted bug with the guard denying a planted secret read and a push to the protected branch.
-- **Settled defaults.** The autonomy defaults, the work-order format and the `cockpit.toml` schema
+- **Settled defaults.** The rule for what widens agents' authority, the work-order format and the `cockpit.toml` schema
   have been used on real products long enough that changes to them are rare.
 - **Published and reproducible.** `cockpit upgrade` moves a real consumer across a release without
   manual edits.

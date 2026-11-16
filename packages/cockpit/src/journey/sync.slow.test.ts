@@ -3,7 +3,7 @@ import { createProduct, JOURNEY_TIMEOUT, ok, removeScratch } from '../test-suppo
 
 afterAll(removeScratch)
 
-it('applies a narrowing edit to cockpit.toml on an agent\'s sync and refuses a widening one until a person syncs', () => {
+it('applies a narrowing edit to cockpit.toml on an agent\'s sync, and a widening one only on a person\'s yes at a terminal', () => {
     const shop = createProduct('shop')
     ok(shop, ['sync'])
     shop.git('add', '--all')
@@ -28,4 +28,12 @@ reason = "Deploys a throwaway preview"
     expect(sync.status).toBe(2)
     expect(sync.errors).toContain('GUARD_CONFIG_WIDENED')
     expect(shop.read('.claude/settings.json')).toBe(settings)
+
+    // A person runs it in a terminal of their own, reads what widens and answers yes; no digest is typed.
+    const confirmed = shop.cockpit(['sync', '--interactive'], { json: false, answer: 'yes' })
+    expect(confirmed.status, confirmed.stdout).toBe(0)
+    expect(confirmed.stdout).toContain('guards.allow')
+    expect(confirmed.stdout.match(/\[yes\/no\]/g)).toHaveLength(1)
+    // check failed with GUARD_CONFIG_WIDENED before the yes; it passes once the edit is applied.
+    ok(shop, ['check'])
 }, JOURNEY_TIMEOUT)

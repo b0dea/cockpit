@@ -99,7 +99,7 @@ describe('init application', () => {
         expect(blocked).toEqual(expect.objectContaining({ kind: 'refusal', status: 2 }))
         // cockpit.toml is written now, so the stop also says how to finish rather than leaving the
         // agent to try --reset-answer or a bare sync.
-        const finish = initCommand({ root: f.root, target: 'codexcli', args: `--accept-preview ${digest('3')}` })
+        const finish = initCommand({ root: f.root, target: 'codexcli', args: '--answers <your answers file>' })
         expect(blocked.diagnostics).toEqual([...syncRefusal.diagnostics, expect.objectContaining({ severity: 'info',
             code: 'INIT_VERIFICATION_INCOMPLETE', fix: expect.stringContaining(`then rerun ${finish} to finish verifying it`) })])
         expect(blocked.result?.ownerOutcome).toBe(syncRefusal)
@@ -226,7 +226,7 @@ describe('init application', () => {
             questionId: question.result!.question!.id, bytes: '[]', provenance: 'operator-confirmed',
         } })).toMatchObject({ kind: 'pending', result: { question: { field: 'configuration.defaults' } } })
 
-        const io: InitCommandIo = { terminal: false, confirm: async () => undefined, writeArtifact: async () => undefined }
+        const io: InitCommandIo = { terminal: false, writeArtifact: async () => undefined }
         const command = (resetAnswer: NonNullable<InitApplicationInput['resetAnswer']>) => runInitOperatorCommand({
             root: f.root, target: 'codexcli', sessionId: 'separate-public-invocation', platform: 'linux',
             home: f.input.home, xdgStateHome: f.input.xdgStateHome, resetAnswer,
@@ -265,13 +265,13 @@ describe('init application', () => {
             classifyEstate: async input => estate(input.root, 'one-sibling'),
             document: interviewDocument(join(root, 'cockpit.toml'), ['cockpit.name', 'sibling']),
         }
-        const io: InitCommandIo = { terminal: false, confirm: async () => undefined,
+        const io: InitCommandIo = { terminal: false,
             createCockpitRoot: async path => { mkdirSync(path, { recursive: true }) },
             // The persisted draft is 'name = "synthetic"\n'; writing it makes the destination match.
             writeArtifact: async () => f.setDestination({ kind: 'available', sha256: '010fb9b6053c7bfa4b9936cf8c372cc028feddd5bf4b848f65de048f198c1a3e' }) }
         const run = (answers: Record<string, unknown>) => runInitOperatorCommand({ root: f.root, target: 'codexcli',
             sessionId: 'separate-public-invocation', platform: 'linux', home: f.input.home, xdgStateHome: f.input.xdgStateHome },
-        { interactive: false, json: true, unattended: { previewSha256: digest('3'), answers } }, io,
+        { interactive: false, json: true, unattended: { answers } }, io,
         input => runInitApplication(input, adapters))
         const answers = { cockpit: { root: placement, name: 'checkout' }, sibling: [] }
 
@@ -451,14 +451,13 @@ describe('init application', () => {
         }
         const command = { root: f.root, target: 'codexcli' as const, sessionId: 'synthetic-session',
             platform: 'linux' as const, home: f.input.home, xdgStateHome: f.input.xdgStateHome }
-        const io: InitCommandIo = { terminal: false, confirm: async () => undefined,
+        const io: InitCommandIo = { terminal: false,
             writeArtifact: async (path, artifact) => {
                 await writeFile(path, artifact)
                 f.setDestination({ kind: 'available', sha256: createHash('sha256').update(artifact).digest('hex') })
             } }
-        const run = (answers: Record<string, unknown>, defaultsSha256?: string) => runInitOperatorCommand(command,
-            { interactive: false, json: true, unattended: { previewSha256: digest('3'), answers,
-                ...(defaultsSha256 ? { defaultsSha256 } : {}) } }, io, input => runInitApplication(input, adapters))
+        const run = (answers: Record<string, unknown>) => runInitOperatorCommand(command,
+            { interactive: false, json: true, unattended: { answers } }, io, input => runInitApplication(input, adapters))
         // The sibling keeps toolchain "none", for which no install policy can exist, so none is asked.
         const answers = { cockpit: { name: 'app-cockpit' },
             sibling: [{ slug: 'app', dir: 'app', mount: 'always', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic application' }],
@@ -469,7 +468,7 @@ describe('init application', () => {
             question: { field: 'testing' } } })
         expect(pending.result!.interview!.answered).toEqual(['cockpit.name', 'sibling', 'ports.bases',
             'environment.test_data', 'environment.compose_files'])
-        expect(pending.result!.interview!.outstanding.map(row => row.field)).toEqual(['testing', 'guards', 'work.grading', 'configuration.defaults'])
+        expect(pending.result!.interview!.outstanding.map(row => row.field)).toEqual(['testing', 'guards', 'work.grading'])
         const beforeResume = measurements
         expect(await run(answers)).toMatchObject({ kind: 'pending', result: { question: pending.result!.question } })
         expect(measurements).toBe(beforeResume)
@@ -493,9 +492,7 @@ describe('init application', () => {
             gates: [{ id: 'full', tier: 'full', stages: ['unit'], changes: 'Any behavior' }] }
         const completeAnswers = { ...answers, testing,
             guards: { hosted_db_hosts: ['db.shared.example.invalid'], vendor_endpoint_hosts: ['api.vendor.example.invalid'] }, work: { grading: 'independent' } }
-        const defaults = await run(completeAnswers)
-        expect(defaults).toMatchObject({ kind: 'pending', result: { question: { field: 'configuration.defaults' } } })
-        const completed = await run(completeAnswers, defaults.result!.question!.expectedSha256)
+        const completed = await run(completeAnswers)
         expect(completed, JSON.stringify(completed.diagnostics)).toMatchObject({ kind: 'complete', status: 0,
             diagnostics: [{ severity: 'info', code: 'ENVIRONMENT_NOT_DECLARED' }] })
         const loaded = await loadCockpitConfig(f.destination)
@@ -506,7 +503,7 @@ describe('init application', () => {
             diagnostics: [{ severity: 'error', code: 'ENVIRONMENT_NOT_DECLARED' }] })
     })
 
-    it('recommends a grading mode from the listed tools on PATH with its reason, which an agent may accept, and keeps any other choice of an agent unconfirmed', async () => {
+    it('recommends a grading mode from the listed tools on PATH with its reason, which an agent may accept, and names any other choice of an agent as no person\'s', async () => {
         expect(['checks', 'independent', 'independent'].map((value, found) => recommendGrading(['claudecode', 'codexcli'], ['claudecode', 'codexcli'].slice(0, found))))
             .toEqual([
                 expect.objectContaining({ value: 'checks', reason: expect.stringContaining('checks needs no agent tool') }),
@@ -518,22 +515,18 @@ describe('init application', () => {
             const seen = { written: '' }
             const adapters: InitApplicationAdapters = { ...f.adapters, classifyEstate: input => classifyEstateObservation(input, { observe: observePublicEstate }),
                 document: draftFromEstate, infer: deriveInferredFacts, proposeGrading: async tools => recommendGrading(tools, tools) }
-            const io: InitCommandIo = { terminal: false, confirm: async () => undefined, writeArtifact: async (_path, artifact) => {
+            const io: InitCommandIo = { terminal: false, writeArtifact: async (_path, artifact) => {
                 seen.written = artifact
                 f.setDestination({ kind: 'available', sha256: createHash('sha256').update(artifact).digest('hex') })
             } }
-            const run = (answers: Record<string, unknown>, defaultsSha256?: string) => runInitOperatorCommand({ root: f.root, target: 'codexcli',
+            const run = (answers: Record<string, unknown>) => runInitOperatorCommand({ root: f.root, target: 'codexcli',
                 sessionId: 'synthetic-session', platform: 'linux', home: f.input.home, xdgStateHome: f.input.xdgStateHome },
-            { interactive: false, json: true, unattended: { previewSha256: digest('3'), answers, ...(defaultsSha256 ? { defaultsSha256 } : {}) } }, io, input => runInitApplication(input, adapters))
+            { interactive: false, json: true, unattended: { answers } }, io, input => runInitApplication(input, adapters))
             return { run, seen, preview: () => runInitApplication(f.input, adapters) }
         }
         const answers = { cockpit: { name: 'synthetic' }, sibling: [{ slug: 'app', dir: 'app', mount: 'none', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic application' }],
             ports: { bases: {} }, guards: { hosted_db_hosts: [], vendor_endpoint_hosts: [] } }
-        const complete = async (run: ReturnType<typeof interview>['run'], file: Record<string, unknown>) => {
-            const defaults = await run(file)
-            expect(defaults, JSON.stringify(defaults.diagnostics)).toMatchObject({ kind: 'pending', result: { question: { field: 'configuration.defaults' } } })
-            return run(file, defaults.result!.question!.expectedSha256)
-        }
+        const complete = async (run: ReturnType<typeof interview>['run'], file: Record<string, unknown>) => run(file)
         const first = interview()
         const asked = (await first.preview()).result!.interview!.outstanding.find(row => row.field === 'work.grading')!
         // A trust decision: the recommendation and its reason are shown, and a person decides.
@@ -549,14 +542,14 @@ describe('init application', () => {
         const byAgent = await complete(chosen.run, { ...answers, work: { grading: 'independent' }, provenance: { 'work.grading': 'agent-default' } })
         expect(byAgent, JSON.stringify(byAgent.diagnostics)).toMatchObject({ kind: 'complete', result: { unconfirmed: [{ field: 'sibling', provenance: 'unattributed' },
             { field: 'guards', provenance: 'unattributed' }, { field: 'work.grading', provenance: 'agent-default' }] } })
-        expect(parseToml(chosen.seen.written)).toMatchObject({ unconfirmed: ['sibling', 'guards', 'work.grading'], work: { grading: 'independent' } })
-        expect(chosen.seen.written).toContain('# Unconfirmed: work.grading was chosen by the setup agent as a default; no person stated it.')
+        expect(parseToml(chosen.seen.written)).toMatchObject({ work: { grading: 'independent' } })
+        expect(chosen.seen.written).toContain('# Not stated by a person: work.grading was chosen by the setup agent as a default; no person stated it; review it in this diff.')
 
-        // A file that claims a person chose the mode cannot show it, so the mode waits for a person all the same.
+        // A file that claims a person chose the mode cannot show it, so the diff names the mode as no person's all the same.
         const stated = interview()
         await complete(stated.run, { ...answers, work: { grading: 'off' }, provenance: { work: { grading: 'human' } } })
-        expect(parseToml(stated.seen.written)).toMatchObject({ unconfirmed: ['sibling', 'guards', 'work.grading'], work: { grading: 'off' } })
-        expect(stated.seen.written).toContain('# Unconfirmed: work.grading came from an answers file, which cannot show who chose it; no person is known to have stated it.')
+        expect(parseToml(stated.seen.written)).toMatchObject({ work: { grading: 'off' } })
+        expect(stated.seen.written).toContain('# Not stated by a person: work.grading came from an answers file, which cannot show who chose it; no person is known to have stated it; review it in this diff.')
     })
 
     it('lets the setup agent accept what init read from exact sources, and keeps security boundaries and guesses with a person', async () => {
@@ -569,13 +562,13 @@ describe('init application', () => {
             classifyEstate: input => classifyEstateObservation(input, { observe: observePublicEstate }),
             document: draftFromEstate, infer: deriveInferredFacts,
             measureMachine: async () => ({ kind: 'complete', memoryMb: 8192, cpus: 4, observedAt: '2026-10-25T00:00:00.000Z' }) }
-        const io: InitCommandIo = { terminal: false, confirm: async () => undefined, writeArtifact: async (_path, artifact) => {
+        const io: InitCommandIo = { terminal: false, writeArtifact: async (_path, artifact) => {
             written = artifact
             f.setDestination({ kind: 'available', sha256: createHash('sha256').update(artifact).digest('hex') })
         } }
-        const run = (answers: Record<string, unknown>, defaultsSha256?: string) => runInitOperatorCommand({ root: f.root, target: 'codexcli',
+        const run = (answers: Record<string, unknown>) => runInitOperatorCommand({ root: f.root, target: 'codexcli',
             sessionId: 'synthetic-session', platform: 'linux', home: f.input.home, xdgStateHome: f.input.xdgStateHome },
-        { interactive: false, json: true, unattended: { previewSha256: digest('3'), answers, ...(defaultsSha256 ? { defaultsSha256 } : {}) } }, io,
+        { interactive: false, json: true, unattended: { answers } }, io,
         input => runInitApplication(input, adapters))
 
         const preview = await runInitApplication(f.input, adapters)
@@ -612,28 +605,17 @@ describe('init application', () => {
         expect(await run({ ...unanswered, provenance: { ...answers.provenance, guards: 'derived' } })).toMatchObject({ kind: 'refusal',
             diagnostics: [{ code: 'INIT_ANSWER_INVALID', message: expect.stringContaining('provenance.guards is "derived", but init read no complete value') }] })
 
-        const defaults = await run(answers)
-        expect(defaults).toMatchObject({ kind: 'pending', result: { question: { field: 'configuration.defaults' } } })
-        const draft = defaults.result!.question!.document!
-        const line = (prefix: string) => draft.findIndex(row => row.startsWith(prefix))
-        // The defaults digest is what a person accepts, so the draft shows which values it covers.
-        const order = [line('# The setup agent accepts these'), line('# [default] ports.step'), line('# A person confirms these'),
-            line('# [default] guards.protected_branches')]
-        expect(order[0]).toBeGreaterThanOrEqual(0)
-        expect([...order].sort((left, right) => left - right)).toEqual(order)
-
-        const complete = await run(answers, defaults.result!.question!.expectedSha256)
+        const complete = await run(answers)
         expect(complete, JSON.stringify(complete.diagnostics)).toMatchObject({ kind: 'complete', result: {
             derived: [{ field: 'cockpit.name', source: 'the cockpit root directory name' }, { field: 'ports.bases', source: 'app/compose.yml:4' },
                 { field: 'environment.compose_files', source: 'app/compose.yml' }],
             // The machine floor holds a free disk and cold start no file records, and an answers file cannot show a
-            // person made a trust decision, so each stays the person's to confirm.
+            // person made a trust decision, so cockpit.toml names each as no person's for the review.
             unconfirmed: ['sibling', 'environment.machine', 'environment.posture', 'testing', 'guards', 'work.grading']
                 .map(field => ({ field, provenance: 'unattributed' })) } })
         expect(written).toContain('# Derived: ports.bases was read from app/compose.yml:4 and accepted by the setup agent; bring-up proves it.')
-        expect(written).toContain('unconfirmed = [ "sibling", "environment.machine", "environment.posture", "testing", "guards", "work.grading" ]\n')
-        // An answer an observation can verify points the agent at the command that does, not at a person.
-        expect(written).toMatch(/# To confirm: run \.\/node_modules\/@b00dea\/cockpit\/bin\/cockpit\.mjs confirm environment\.machine\b/)
+        expect(written).toContain('# Not stated by a person: environment.machine came from an answers file')
+        expect(parseToml(written)).not.toHaveProperty('unconfirmed')
     })
 
     it('names the deferred greenfield dependency without fabricating a configuration', async () => {

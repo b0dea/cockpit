@@ -2,10 +2,10 @@
 // run apply, `work grade` against an order's accepted contract and `grade --criteria` with no order.
 import { posix } from 'node:path'
 
-import type { EffectivePolicy } from '../autonomy.js'
 import { RefusalError } from '../environment/contract.js'
 import type { GradingSubject, Verdict } from '../grading/grade.js'
-import { GRADING, isGradeMode, type Decider, type GradeMode, type WorkGrading } from '../schema.js'
+import { GRADING, isGradeMode, type GradeMode, type WorkGrading } from '../schema.js'
+import type { Decider } from './contract.js'
 import { runGate } from '../testing/gates.js'
 import { describeWeakening, testWeakeningDigest, type RepositoryWeakening } from '../testing/weakening.js'
 import { scopeMatcher, type AmendmentReview, type WorkOrderCriterion } from './contract.js'
@@ -51,11 +51,11 @@ export interface AcknowledgeRule {
     readonly counts: (row: Readonly<{ by: Decider }>) => boolean
 }
 // Under checks no model reads the change, so the acknowledgement alone passes test protection, and an
-// agent acknowledging its own weakened tests would pass them unseen. There a person or CI acknowledges
-// whatever [work.gates] says, and an acknowledgement the agent recorded under another mode does not count.
-export function acknowledgeRule(policy: Pick<EffectivePolicy, 'grading' | 'gates'>): AcknowledgeRule {
+// agent acknowledging its own weakened tests would pass them unseen. There a person acknowledges, and
+// an acknowledgement the agent recorded under another mode does not count.
+export function acknowledgeRule(policy: Readonly<{ grading: WorkGrading }>): AcknowledgeRule {
     const checks = policy.grading === 'checks'
-    return { decider: checks && policy.gates.acknowledge === 'agent' ? 'person' : policy.gates.acknowledge, counts: row => !checks || row.by !== 'agent' }
+    return { decider: checks ? 'person' : 'agent', counts: row => !checks || row.by !== 'agent' }
 }
 // Tests weakened since the base, judged by rule where no model reads the change. An acknowledgement
 // covers exactly the findings it was recorded for, so any further weakening fails again.
@@ -65,8 +65,7 @@ function protection(weak: Weakening, record: WorkRecord | undefined, rule: Ackno
     const acknowledged = weak.findings.length ? record?.acknowledgements.find(row => row.digest === digest && rule.counts(row)) : undefined
     const gate = rule.decider
     const how = !record ? 'a work order lets it be acknowledged; there is none for this grade'
-        : gate === 'person' ? `a person records it with ${ACKNOWLEDGE} --interactive` : gate === 'ci' ? `acknowledge it with ${ACKNOWLEDGE}, which the work verify job confirms in CI`
-            : `acknowledge it with ${ACKNOWLEDGE}`
+        : gate === 'person' ? `a person records it with ${ACKNOWLEDGE} --interactive` : `acknowledge it with ${ACKNOWLEDGE}`
     const verdict: Pick<Verdict, 'verdict' | 'note'> | undefined = !weak.findings.length ? undefined
         : acknowledged ? { verdict: 'met', note: `weakening acknowledged by ${acknowledged.by}: ${acknowledged.note}`.slice(0, 4_000) }
             : { verdict: 'unmet', note: `tests were weakened since the base (${rows.join('; ')}; test files from ${weak.patterns.source}); revert it, or ${how}`.slice(0, 4_000) }

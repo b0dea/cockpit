@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { ENTRYPOINT_KINDS } from './entrypoint-kinds.js'
 import { browserPreapprovalRequested } from './config/load.js'
-import { Autonomy, Browser, Docs, EntrypointDerivative, Environment, InstallPolicy, Sibling, Testing, Work } from './schema.js'
+import { Browser, Docs, EntrypointDerivative, Environment, InstallPolicy, Sibling, Testing, Work } from './schema.js'
 import { CockpitConfig, Guards, SurfaceDeclaration, SurfaceOverlay } from './schema.js'
 import { renderCockpitSchema } from './schema-json.js'
 import { compileDraft04Schema } from '../test-support/draft04-validator.js'
@@ -259,7 +259,6 @@ describe('environment declarations', () => {
         ['an empty seed command', (config: typeof stackConfig) => { config.environment.seed.argv = [] }],
         ['a seed timeout past one hour', (config: typeof stackConfig) => { config.environment.seed.timeout_seconds = 3601 }],
         ['an unknown seed field', (config: typeof stackConfig) => { Reflect.set(config.environment.seed, 'cwd', 'app') }],
-        ['an inferred unconfirmed provenance', (config: typeof stackConfig) => { config.sibling[0]!.derives.mcp_sources[0]!.provenance = { ...provenance, kind: 'inferred' } }],
     ])('rejects %s through runtime and editor schemas', (_name, mutate) => {
         const config = structuredClone(stackConfig)
         mutate(config)
@@ -289,8 +288,8 @@ describe('environment declarations', () => {
         expect(validate(minimal), JSON.stringify(validate.errors)).toBe(true)
     })
 
-    // Nothing reads a provenance's date or kind; they were required only because the schema said so.
-    it('accepts a provenance that names only its source and reason', async () => {
+    // Nothing reads a provenance; it is there for the person reviewing the diff, so it is optional.
+    it('accepts an inferred provenance, one that names only its source and reason, or none', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'cockpit-provenance-'))
         try {
             const path = join(directory, 'cockpit.toml')
@@ -300,8 +299,11 @@ describe('environment declarations', () => {
             expect((await loadCockpitConfig(path)).kind).toBe('complete')
             expect(publishedCockpitValidator(config), JSON.stringify(publishedCockpitValidator.errors)).toBe(true)
             config.sibling[0]!.derives.mcp_sources[0]!.provenance = { source: 'docs/runtime.md', reason: 'Guessed', kind: 'inferred' } as typeof provenance
-            expect(CockpitConfig.safeParse(config).success).toBe(false)
-            expect(publishedCockpitValidator(config)).toBe(false)
+            expect(CockpitConfig.safeParse(config).success).toBe(true)
+            expect(publishedCockpitValidator(config), JSON.stringify(publishedCockpitValidator.errors)).toBe(true)
+            Reflect.deleteProperty(config.sibling[0]!.derives.mcp_sources[0]!, 'provenance')
+            expect(CockpitConfig.safeParse(config).success).toBe(true)
+            expect(publishedCockpitValidator(config), JSON.stringify(publishedCockpitValidator.errors)).toBe(true)
         } finally {
             await rm(directory, { recursive: true, force: true })
         }
@@ -432,8 +434,8 @@ describe('work and browser declarations', () => {
         expect(CockpitConfig.safeParse({ ...stackConfig, environment, browser: { ...signedOut, authentication: browser.authentication } }).success).toBe(false)
     })
 
-    it('keeps WIP and attempt controls lower-only and each decision to agent, person or ci', () => {
-        expect(Work.parse({})).toEqual({ grading: 'independent', attempt_cap: 2, wip_cap: 3, gates: {},
+    it('keeps WIP and attempt controls lower-only', () => {
+        expect(Work.parse({})).toEqual({ grading: 'independent', attempt_cap: 2, wip_cap: 3,
             verification_timeout_seconds: 1_800, evaluator_timeout_seconds: 900 })
         expect(Work.parse({ evaluators: ['opencode', 'claudecode'] })).toMatchObject({ evaluators: ['opencode', 'claudecode'] })
         for (const evaluators of [[], ['cursor'], ['claudecode', 'claudecode']]) expect(Work.safeParse({ evaluators }).success, JSON.stringify(evaluators)).toBe(false)
@@ -444,13 +446,6 @@ describe('work and browser declarations', () => {
         for (const value of [0, 4, 1.5]) expect(Work.safeParse({ wip_cap: value }).success).toBe(false)
         for (const value of [0, 3]) expect(Work.safeParse({ attempt_cap: value }).success).toBe(false)
         expect(Work.safeParse({ grading: 'vibes' }).success).toBe(false)
-        expect(Work.safeParse({ gates: { accept: 'ci', signoff: 'person' } }).success).toBe(true)
-        expect(Work.safeParse({ gates: { accept: 'anyone' } }).success).toBe(false)
-        expect(Work.safeParse({ gates: { merge: 'agent' } }).success).toBe(false)
-        expect(Autonomy.safeParse({ reset: 'ci', sync: 'person' }).success).toBe(true)
-        // An MCP approval is a digest a person records, which CI cannot add to.
-        expect(Autonomy.safeParse({ mcp_approve: 'ci' }).success).toBe(false)
-        expect(Autonomy.safeParse({ commit: 'agent' }).success).toBe(false)
     })
 
     it('lets an MCP pre-release share the project driver\'s major.minor', () => {

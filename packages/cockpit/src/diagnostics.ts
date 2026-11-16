@@ -319,15 +319,11 @@ export function renderHumanDiagnostics(
             const changes = outcome.result.changes as readonly { operation: unknown; path: unknown }[]
             if (!changes.every((change) => change && (change.operation === 'write' || change.operation === 'remove')
                 && typeof change.path === 'string')) return ''
-            const stale = 'staleRemoval' in outcome.result ? outcome.result.staleRemoval as { digest?: unknown } | undefined : undefined
-            const approval = typeof stale?.digest === 'string' && /^[a-f0-9]{64}$/.test(stale.digest)
-                ? `${escapeForTerminal(`Stale-removal digest ${stale.digest}: to approve these removals, a person runs `
-                    + `${bindConfigPath(cockpitCommand('sync', { args: '--interactive' }), fixContext)} in a terminal and confirms the displayed removals.`)}\n` : ''
-            return (changes.length === 0 ? 'No generated changes.\n'
-                : `${changes.map((change) => `${change.operation} ${terminalSafeJson(change.path)}`).join('\n')}\n`) + approval
+            return changes.length === 0 ? 'No generated changes.\n'
+                : `${changes.map((change) => `${change.operation} ${terminalSafeJson(change.path)}`).join('\n')}\n`
         }
-        // An applied sync printed nothing, so a person confirming answers at a terminal could not tell
-        // that it ran, or that it left files to commit.
+        // An applied sync printed nothing, so a person at a terminal could not tell that it ran, or that
+        // it left files to commit.
         if (command === 'sync' && 'dryRun' in outcome.result && outcome.result.dryRun === false
             && 'changes' in outcome.result && Array.isArray(outcome.result.changes)
             && 'paths' in outcome.result && Array.isArray(outcome.result.paths)) {

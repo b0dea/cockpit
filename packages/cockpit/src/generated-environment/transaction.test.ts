@@ -581,7 +581,7 @@ describe('generated publication transaction', () => {
         expect(await authorizePublicationPlan(admitted.plan, { execute: executeProbe, authorizeStaleRemoval })).toMatchObject({
             kind: 'refusal', diagnostics: [{ code: 'GENERATED_STALE_APPROVAL_REQUIRED',
                 message: expect.stringContaining(`stale-removal digest ${admitted.plan.staleRemoval!.digest}`),
-                fix: expect.stringContaining('./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive') }],
+                fix: expect.stringContaining('./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>, which removes') }],
         })
         expect(await runPublicationPlan(admitted.plan, { execute: executeProbe, authorizeStaleRemoval: approve, revalidate: async () => true }))
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'GENERATED_STALE_APPROVAL_REQUIRED' }] })

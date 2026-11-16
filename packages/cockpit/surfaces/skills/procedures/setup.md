@@ -26,9 +26,9 @@ budget: uncapped
   follows a reinstall of cockpit or Node, or an edit to `cockpit.toml` the guard cannot build a policy
   from, and clears only when a person acts on its fix in a terminal. Any other edit to `cockpit.toml`
   holds nothing. One that does not widen what agents may do is judged as written, so run
-  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself where `[autonomy] sync =
-  "agent"`; one that widens is judged under the configuration last synced, and each refusal says so,
-  until a person runs that sync with `--interactive` in a terminal. When the guard refuses a
+  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself; one that widens
+  is judged under the configuration last synced, and each refusal says so, until a person runs that
+  sync with `--interactive` in a terminal and answers its one yes. When the guard refuses a
   command, read the reason. To read a file, use your tool's own file reading instead of the shell. A
   refusal for secrets, writes outside the cockpit, protected branches, declared hosts or the guard
   itself is the person's: hand them the exact command and why. A command refused as an unknown
@@ -60,8 +60,7 @@ subjects are unchanged. An answers file still cannot attest that a person made a
   credentials and native trust. Do not restart the architecture interview.
 - **Interrupted initialization:** inspect the current `init` preview and readiness, preserve
   generated files and recorded answers, then resume the same root and targets. Verify effects on
-  disk before retrying a write. Reuse an already authorized current digest; review a changed preview
-  before accepting it. Later authenticated draft stages resume without a second preview approval.
+  disk before retrying a write. Rerun with the same `--answers` file.
 - **Existing instructions or guards:** inventory them before generating surfaces. Keep the team's text,
   hooks and scripts; use the documented adoption or overlay flow for conflicts. Do not remove an
   old guard until equivalent protection has been measured.
@@ -79,7 +78,7 @@ follow what it reports rather than redoing any of that by hand. Rerunning the sa
 the same root and `--target`, resumes where it stopped; a different target refuses with
 `INIT_TARGET_CHANGED`, and a repository or draft that changed underneath it refuses with a code
 such as `INIT_STATE_STALE` or `INIT_DRAFT_CHANGED` whose fix says what to restore or redo. Inside an
-installed cockpit the guard asks before any `init` that carries `--answers` or an `--accept-` flag.
+installed cockpit the guard asks before any `init` that carries `--answers`.
 If cockpit is not installed in the cockpit root yet, rerun `init` with the executable that started
 it until the `cockpit-installed` gap is cleared; use it only where existing permissions allow.
 
@@ -97,15 +96,14 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
    `result.interview.outstanding`: every field the interview will ask, each with its `proposals`
    (each with `provenance.kind` `derived`, `measured` or `inferred`, and the file it came from) and
    `confirmedBy`. Read `result.writes`: every path, relative to the cockpit root, that init creates
-   or changes once the preview is accepted, beside the setup skill in `result.files`; a path ending
+   or changes, beside the setup skill in `result.files`; a path ending
    in `/` stands for files under it. In a product repository these include its **AGENTS.md**,
    **package.json** and **.gitignore**; existing team text stays outside the regions cockpit writes.
-   No question is asked before acceptance: the first, `result.question`, comes with the accepted
-   run. Done when you hold `result.previewSha256`, the outstanding fields and the writes.
+   Done when you hold the outstanding fields and the writes.
 3. **Explore, then ask in one small round.** Read the repositories for each outstanding field
    before asking, ask only for what the files and CLI output cannot answer. A field with
    `confirmedBy = "agent"` is yours to accept as read (step 4); present every other proposal with
-   its source for confirmation. Always settle these with the person:
+   its source for the person to confirm. Always settle these with the person:
    - **The name.** `init` proposes the cockpit root's directory name for `cockpit.name`. It scopes
      the cockpit's Compose projects, state and generated files, so changing it after the first sync
      means following the *Rename a cockpit* section of
@@ -150,11 +148,6 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
      is not wanted. A tool without subagents, or a sandbox that blocks a nested CLI, changes the
      path and not the rule: list another tool, or let the person choose `checks`, `self` or `off`,
      and never pick something weaker yourself without marking it.
-   - **How much the agent decides.** Offer the person the three columns of the table in *Who
-     decides* in `./node_modules/@b00dea/cockpit/docs/safety-and-autonomy.md`: the shipped defaults,
-     a stricter setting, or the *Fully agentic setup*, which hands every process gate to the agent and
-     keeps every guardrail. The `[autonomy]` and `[work.gates]` fields are theirs to write: never
-     write or loosen one yourself.
    - **Environment access.** Inspect filenames and declared scripts without opening plaintext
      dotenv or credential files. If a repository has dotenv files or templates, follow **Secret
      handling** even when `.env.schema` is absent. Reuse an existing Varlock setup; otherwise
@@ -166,30 +159,24 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
 4. **Write the answers file**, TOML keyed by field. Being told to "use sensible defaults" or
    "proceed without asking" covers interview answers only. Mark every answer you chose yourself in
    the file's `[provenance]` table, for example `"environment.machine" = "agent-default"`: init then
-   writes the field under `unconfirmed` in `cockpit.toml` with a comment saying the setup agent
-   chose it, and `doctor` reports `DECLARATION_UNCONFIRMED` until it is confirmed (step 7). Mark a
-   field with `confirmedBy = "agent"` as `"derived"` instead, with no value needed: init answers it
-   with what it read, refuses one that differs (`DOCUMENT_CONFIGURATION_ANSWER_NOT_DERIVED`), and
-   records the file it came from. An unmarked answer is recorded as the person's, except a trust
-   decision (`sibling`, `environment.install_policies`, `environment.posture`, `testing`, `guards`,
-   `work.grading`): the file cannot show a person made it, so init writes it under `unconfirmed`
-   whatever the file says, and the stronger default holds until a person confirms it (step 7).
-   Done when the file holds every answer and marks each one you chose.
-5. **Accept.** Show the person the answers file, the preview's `writes` and its digest: accepting
-   it authorizes init to write those paths. Then rerun with
-   `--accept-preview <previewSha256> --answers <file>`. A run stops at the first field the file
-   leaves out, with `result.interview.outstanding` listing only what the file still lacks; add those
-   and rerun. Otherwise it stops at `configuration.defaults`:
-   once the person has read the values the draft in `result.question.document` lists under
-   "A person confirms these" (the digest covers only those), rerun adding
-   `--accept-defaults` with `result.question.expectedSha256`. Each digest binds consent to the bytes
-   the person saw, so take it only from the latest pending run; any other is refused
-   (`INIT_PREVIEW_NOT_ACCEPTED`, `INIT_DEFAULTS_NOT_ACCEPTED`). A different value for an answer
-   already recorded refuses with `INIT_ANSWER_CONFLICT`; `--reset-answer <field>` previews clearing
-   it. A person at a terminal can run `--interactive` instead and confirm the displayed preview and defaults; an agent session
-   has no terminal, so there it refuses with `INIT_TERMINAL_REQUIRED`. Done when the run has passed
-   `configuration.defaults`.
-6. **Work through the expected stops**, rerunning the same accepted command after each:
+   names the field in a `# Not stated by a person: …; review it in this diff.` comment in
+   `cockpit.toml`. Mark a field with `confirmedBy = "agent"` as `"derived"` instead, with no value
+   needed: init answers it with what it read, refuses one that differs
+   (`DOCUMENT_CONFIGURATION_ANSWER_NOT_DERIVED`), and records the file it came from. An unmarked
+   answer is recorded as the person's, except a trust decision (`sibling`,
+   `environment.install_policies`, `environment.posture`, `testing`, `guards`, `work.grading`): the
+   file cannot show a person made it, so init names it in the same comment. Done when the file
+   holds every answer and marks each one you chose.
+5. **Write.** Show the person the answers file and the preview's `writes`: init writes only inside
+   the cockpit root, and the person reviews the diff before committing. Then rerun the
+   step 2 command with `--answers <file>` added. A
+   run stops at the first field the file leaves out, with `result.interview.outstanding` listing
+   only what the file still lacks; add those and rerun. The configuration defaults are written as
+   drafted. A different value for an answer already recorded refuses with `INIT_ANSWER_CONFLICT`;
+   `--reset-answer <field>` previews clearing it. A person at a terminal can run `--interactive`
+   instead, which asks the questions and writes; an agent session has no terminal, so there it
+   refuses with `INIT_TERMINAL_REQUIRED`. Done when the run has written `cockpit.toml`.
+6. **Work through the expected stops**, rerunning the same command after each:
    - Where a runtime is declared, preflight needs a completed first bring-up, so the run stops with
      `STATE_UNSEEDED` (exit 2, stage `draft-observed`); the diagnostics beside it name every other
      gap found without a running stack. Bring the stack up as step 7 of **Create a local setup**
@@ -223,8 +210,8 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
    - If `cockpit-installed` is reported, clear it first using the repository's package manager
      and reviewed manifest/lockfile delta within the authorized installation scope. An existing
      project-local installation needs no reinstall. Then run
-     `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` where the current guard and policy
-     permit it; hand it to the person only when the refusal requires their terminal. Done when
+     `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`; hand it to the
+     person with `--interactive` only when the refusal (`GUARD_CONFIG_WIDENED`) says a widening waits. Done when
      `doctor` no longer reports the installation gap.
    - If anyone will run Codex in this cockpit, a person must trust its guard hook on each machine,
      and again whenever sync changes the hook: Codex silently skips a project hook nobody has
@@ -232,27 +219,10 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
      person to run `codex -C <cockpit root>` in a terminal (not `codex exec`), trust the folder if
      asked, and choose **Trust all and continue** when Codex shows **Hooks need review**. `doctor`
      reports `CODEX_HOOK_UNTRUSTED` until it is done.
-   - `DECLARATION_UNCONFIRMED` lists the answers no person stated. Of `ports.bases` (with the stack
-     up), `environment.compose_files` and `environment.machine`, confirm by observation, one at a
-     time, each that `unconfirmed` lists; a derived answer is never listed and needs no confirming:
-     `./node_modules/@b00dea/cockpit/bin/cockpit.mjs confirm ports.bases --config cockpit.toml --json` runs the
-     observation that verifies the answer and, when it passes, removes the entry and records what
-     ran. Then run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` where `[autonomy] sync =
-     "agent"`, or hand it to the person, before confirming the next one. A refusal
-     (`CONFIRM_OBSERVATION_FAILED`) names what the observation saw: fix that, or the value, and
-     confirm again. Never delete an `unconfirmed` entry by hand: `CONFIRM_PERSON_REQUIRED` marks the
-     answers only a person confirms (the trust decisions, `work.grading` among them, `cockpit.name`,
-     `estate.runnable`, `environment.test_data`), so list them in your report with their values and
-     prepare one review of the outstanding trust entries and their consequences. After accepting
-     those exact values, the person removes those entries together with their `# Unconfirmed`
-     comments, then runs
-     `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a terminal outside the
-     agent. Sync lists the files it wrote; the person commits them with `cockpit.toml`, together with
-     `.cockpit/policy.json` if an earlier sync wrote it and it is still uncommitted. Until then grading runs as `independent` and the guard admits no install policy's commands.
-     Where `[autonomy] confirm_answers = "agent"`, confirm `cockpit.name`, `estate.runnable` and
-     `environment.test_data` yourself instead, as in
-     `./node_modules/@b00dea/cockpit/bin/cockpit.mjs confirm cockpit.name --config cockpit.toml --json`; the record says
-     you decided them.
+   - A declared MCP server stays disabled (`MCP_NOT_APPROVED`) until a person approves it: they run
+     `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a
+     terminal outside the agent, which shows the servers a yes would enable and the fields that
+     widen, and asks once. List the servers and fields in your report, and hand them the command.
    Done when `doctor` reports no required gap and every other gap is cleared or reported. Report
    four things separately, because none implies another: **configuration generated** (`check`
    passes), **machine ready** (`doctor`, run where it can read this machine, has no required gap),
@@ -321,10 +291,9 @@ guesses. So derive each value from what the repository shows, record it as infer
    or no product file was written.
 6. Finish the configuration with the init flow in **Bootstrap**. On an existing cockpit, the guard
    judges calls under an edit to `cockpit.toml` that does not widen what agents may do, so run
-   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself where `[autonomy] sync =
-   "agent"`. While an edit widens it, calls are judged under the configuration last synced, every
+   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself. While an edit widens it, calls are judged under the configuration last synced, every
    refusal names the widened fields, and a person runs that sync with `--interactive` in a terminal
-   and confirms the change. Then run
+   and answers its one yes. Then run
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml --json`. Done when the check exits 0.
 7. Where a runtime is declared, start the stack with
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml`. When Docker is missing
@@ -412,13 +381,10 @@ and every refusal names `surfaces.tools`.
    `tool remove`) and show the person the list it prints. Done when they agree to that list.
 2. Run it without `--dry-run`. Before `tool remove`, tell the person it waits for their sync. Done
    when the command exits 0.
-3. Sync: after `tool add`, run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself
-   where `[autonomy] sync = "agent"`; after `tool remove`, the person runs it with `--interactive` in a
-   terminal and confirms the change. An added
-   tool's files are written from the same sources as the others, and a removed tool's files are
-   deleted as `[autonomy] stale_delete` allows. When sync refuses with
-   `GENERATED_STALE_APPROVAL_REQUIRED`, they rerun it with `--interactive` in a terminal and
-   confirm the stale-file removals it shows with `yes`. Done when
+3. Sync: after `tool add`, run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself;
+   after `tool remove`, the person runs it with `--interactive` in a terminal and answers its one
+   yes. An added tool's files are written from the same sources as the others, and a removed tool's
+   files are deleted by that sync. Done when
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml --json` exits 0.
 
 ## Add or remove a repository
@@ -499,9 +465,9 @@ never applied silently. Installing a new cockpit also makes the guard hold every
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config cockpit.toml --dry-run` resolves the target and
    prints the commands; show them to the person. `./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config cockpit.toml`
    (or `upgrade <version>`) then installs that exact release with the package manager the lockfile
-   names, runs `sync` in a new process, and prints the `Upgrade:` lines. An agent may run it where
-   `[autonomy] sync = "agent"`, the default; otherwise the guard asks, and the person runs it. When
-   its sync fails (`UPGRADE_SYNC_FAILED`, for example on stale removals that need approval), the new
+   names, runs `sync` in a new process, and prints the `Upgrade:` lines. An agent may run it
+   unless a widening waits for a person. When
+   its sync fails (`UPGRADE_SYNC_FAILED`, for example on a change that widens what agents may do), the new
    version is already installed and the guard holds every guarded call: a person acts on what sync
    reported and runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a
    terminal. Done when the command exits 0 and its sync wrote the new files.
@@ -552,8 +518,8 @@ gives one to the person.
    stack with its checkout and verdict; `./node_modules/@b00dea/cockpit/bin/cockpit.mjs stacks prune --config cockpit.toml`
    previews what would go, and
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs stacks prune --config cockpit.toml --apply` removes this cockpit's
-   orphans only. A prune that deletes volumes runs only where `[autonomy] reset = "agent"`, and
-   another cockpit's orphans need a person: for either, hand the person
+   orphans only. A prune that deletes volumes runs only where `[environment] seed` is declared and no widening
+   is unsynced, and another cockpit's orphans need a person: for either, hand the person
    `stacks prune --interactive` for a terminal. A stack whose worktree Git still registers, or marks
    locked, is kept until `git worktree prune` (after `git worktree unlock` for a locked one) runs in
    its main checkout. Done when `stacks` lists no orphaned stack, or the person has the command.
@@ -579,13 +545,11 @@ report before you work. Act on the fix it names:
 
 1. **A sibling guide's copy is stale** (the message names the guide). Run
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`, review the regenerated `AGENTS.md`, and
-   commit it together with the guide change. Under `[autonomy] sync = "person"` or `"ci"` the guard
-   stops that sync: ask the person to run it.
+   commit it together with the guide change.
 2. **A generated file was edited by hand** (`SURFACE_STATE_CONFLICT`). Move the change into
    `cockpit.toml` or a `[surfaces].overlays` entry, then sync. Editing the generated file again only
    moves the drift.
-3. **A formerly generated file is still on disk.** If the fix says to run `sync`, `[autonomy]
-   stale_delete` lets it remove the file: run it and review what it removed. If the fix asks a
-   person to approve a digest, stop and ask them.
+3. **A formerly generated file is still on disk.** Run `sync`, which removes the file,
+   and review what it removed.
 
 Done when `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml --json` exits 0.

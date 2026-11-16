@@ -31,8 +31,8 @@ function plannedRow({ row, resources, files }: ObservedStack): PlannedStack {
 }
 
 /**
- * Whose orphans a prune removes. An agent's `--apply` passes this cockpit's `[autonomy]` policy, which
- * says nothing for another cockpit's stacks, so it covers this cockpit's stacks and the state folders
+ * Whose orphans a prune removes. An agent's `--apply` passes this cockpit's rule (a declared seed lets
+ * an agent delete data), which says nothing for another cockpit's stacks, so it covers this cockpit's stacks and the state folders
  * earlier builds left; a person who approved the preview covers the machine.
  */
 export type StacksPruneScope = 'this-cockpit' | 'machine'
@@ -54,8 +54,8 @@ function otherCockpitsWarning(stacks: readonly ObservedStack[], configPath: stri
     if (stacks.length === 0) return []
     return [{ severity: 'warning', target: 'stacks',
         code: 'STACKS_PRUNE_UNCONFIRMED' as const satisfies typeof ENVIRONMENT_CODES.STACKS_PRUNE_UNCONFIRMED,
-        message: `orphaned stacks of other cockpits are removed only with a person's approval, because this cockpit's [autonomy] policy does not speak for them; an agent's --apply leaves ${stacks.map(({ row }) => row.stackId).join(', ')}`,
-        fix: `a person runs ${cockpitCommand('stacks prune', { config: configPath, args: '--interactive' })} in a terminal outside CI, reads the preview and types its digest` }]
+        message: `orphaned stacks of other cockpits are removed only with a person's approval, because this cockpit's configuration does not speak for them; an agent's --apply leaves ${stacks.map(({ row }) => row.stackId).join(', ')}`,
+        fix: `a person runs ${cockpitCommand('stacks prune', { config: configPath, args: '--interactive' })} in a terminal outside CI, reads the preview and answers yes` }]
 }
 
 /** What a person or an agent approves: the exact prune a fresh observation shows, and how to apply it. */

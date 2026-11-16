@@ -4,11 +4,10 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 
-import { decide, type WorkGate } from '../autonomy.js'
 import { RefusalError } from '../environment/contract.js'
 import { REPOSITORY_FILE } from '../repository-path.js'
-import { GRADING, type Decider } from '../schema.js'
-import { WORK_ORDER_ID, workOrderDigest, type WorkOrder } from './contract.js'
+import { GRADING } from '../schema.js'
+import { WORK_ORDER_ID, workOrderDigest, type Decider, type WorkOrder } from './contract.js'
 import type { CheckResult, WorkRecord, WorkStore } from './store.js'
 import type { WorkApplicationComposition } from './composition.js'
 
@@ -83,6 +82,7 @@ export function openQuestions(record: WorkRecord): readonly number[] {
 // The id each check an order declares is recorded under: its criterion's, or its gate's with a prefix.
 const gateCheckId = (gate: string) => `gate:${gate}`
 export type WorkRequest = Exclude<WorkApplicationRequest, { operation: 'test-run' | `browser-${string}` }>
+type WorkGate = 'accept' | 'amend' | 'answer' | 'signoff' | 'acknowledge'
 
 export interface WorkContext {
     readonly composition: WorkApplicationComposition
@@ -96,7 +96,7 @@ export interface WorkContext {
     readonly attemptCap: number
     /** The records under [docs] decisions, read once per command. */
     readonly decisionRecords: () => Promise<ReadonlyMap<string, string>>
-    /** What clears an order at the attempt cap, for whoever [work.gates] names. */
+    /** What clears an order at the attempt cap. */
     readonly capRemedy: (orderId: string) => string
     readonly gated: (gate: WorkGate | 'retry', decider: Decider, lines: readonly string[], verb: string,
         apply: (by: Decider) => Promise<WorkApplicationOutcome>) => Promise<WorkApplicationOutcome>
@@ -127,33 +127,26 @@ export function workContext(composition: WorkApplicationComposition, operation: 
     let records: Promise<ReadonlyMap<string, string>> | undefined
     const decisionRecords = () => records ??= composition.decisionRecords()
 
-    // Who passed a gate: the agent; a person, after typing the digest of exactly what they were shown;
-    // or CI, which locally records the step as awaiting the `work verify` job and passes it there.
+    // Who passed a step: the agent, or a person after typing the digest of exactly what they were shown,
+    // where the step would otherwise let the agent lower the bar its own work is held to.
     const gated = async (gate: WorkGate | 'retry', decider: Decider, lines: readonly string[], verb: string,
         apply: (by: Decider) => Promise<WorkApplicationOutcome>): Promise<WorkApplicationOutcome> => {
-        const decision = decide(decider, composition.env)
-        if (decision === 'proceed') return apply(decider === 'ci' ? 'ci' : 'agent')
-        if (decision === 'ci-only') return apply('ci')
+        if (decider === 'agent') return apply('agent')
         const digest = createHash('sha256').update(JSON.stringify({ gate, lines })).digest('hex')
         let used = false
         return { kind: 'human-needed', operation, continuation: { digest,
-            prompt: [...lines.map(shown), `${gate === 'retry' ? 'work retry is always a person\'s step' : `[work.gates] ${gate} = person`}. To ${verb} exactly this, type ${verb} ${digest}`].join('\n'),
+            prompt: [...lines.map(shown), `${gate === 'retry' ? 'work retry is always a person\'s step' : `this ${gate} is a person's step`}. To ${verb} exactly this, type ${verb} ${digest}`].join('\n'),
             decide: async (answer: string) => {
                 if (used) return refusal(operation, `this prompt was already answered; rerun work ${operation.slice('work-'.length)}`)
                 used = true
                 return answer.trim() === `${verb} ${digest}` ? apply('person') : refusal(operation, `Nothing was recorded: the person did not type ${verb} ${digest}`)
             } } }
     }
-    // Who closes a capped order is whoever [work.gates] says; a sentence naming a person where the policy names the agent is a control that is not there.
-    // Fresh attempts are a person's (or, through an amendment, CI's where it passes amend): an amendment the agent accepts keeps the count, or the cap
-    // would not stop an agent retrying its own failed work.
-    const capRemedy = (orderId: string) => {
-        const by = (gate: WorkGate, verb: string, command: string) => policy.gates[gate] === 'person' ? `a person ${verb} it with ${command} --interactive`
-            : `${verb.replace(/s$/, '')} it with ${command}${policy.gates[gate] === 'ci' ? ', which the work verify job confirms in CI' : ''}`
-        return [`record the root cause with work note, then ${by('signoff', 'closes', `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work signoff --config <your cockpit.toml> --work-order ${orderId} --partial|--abandon --note <why>`)}`,
-            ...policy.gates.amend === 'agent' ? [] : [by('amend', 'amends', `an edit to workorders/${orderId}.md and ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config <your cockpit.toml> --work-order ${orderId}`)],
-            `a person grants it fresh attempts with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work retry --config <your cockpit.toml> --work-order ${orderId} --note <the root cause> --interactive`].join(', or ')
-    }
+    // Fresh attempts are a person's: an amendment the agent accepts keeps the count, or the cap would not
+    // stop an agent retrying its own failed work.
+    const capRemedy = (orderId: string) => [
+        `record the root cause with work note, then close it with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work signoff --config <your cockpit.toml> --work-order ${orderId} --partial|--abandon --note <why>`,
+        `a person grants it fresh attempts with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work retry --config <your cockpit.toml> --work-order ${orderId} --note <the root cause> --interactive`].join(', or ')
     const current = async (orderId: string): Promise<Readonly<{ row: Observed; record: WorkRecord; order: WorkOrder }>> => {
         const row = await observe(orderId)
         if (!row.record) throw new RefusalError(`${orderId} is not accepted yet; run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config <your cockpit.toml> --work-order ${orderId}`)

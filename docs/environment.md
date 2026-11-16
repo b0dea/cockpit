@@ -481,9 +481,9 @@ preview read, under the lock `up` takes to lease ports. A failed step stops with
 fresh inventory no longer lists what was removed.
 
 Removing an orphan is housekeeping, so `--apply` runs for an agent. A prune that deletes volumes
-deletes data and follows the reset gate: it runs only where `[autonomy] reset` lets the caller
-reset, and otherwise a person runs `stacks prune --interactive` in a terminal and types the digest.
-That gate is this cockpit's own policy, so `--apply` removes only this cockpit's orphans and the
+deletes data and follows the reset rule: it runs for an agent only where `[environment] seed` is
+declared and no widening is unsynced, and otherwise a person runs `stacks prune --interactive` in a
+terminal and answers "Remove these stacks? [yes/no]". That rule is this cockpit's own policy, so `--apply` removes only this cockpit's orphans and the
 state folders an earlier build left. The preview lists every orphan, marks each with `thisCockpit`,
 and warns with `STACKS_PRUNE_UNCONFIRMED` that another cockpit's are removed only by a person's
 `stacks prune --interactive`, which covers the whole machine. `doctor` warns with `STACKS_ORPHANED`
@@ -508,9 +508,9 @@ stack in place. To apply one, for example a `[ports.bases]` edit:
    read the Compose files `sync` publishes, and the guard judges
    [agent calls](safety-and-autonomy.md#edits-the-guard-has-not-applied) under the edited file, or
    under the one last synced while the edit widens what agents may do. An agent may run
-   it where `[autonomy] sync = "agent"` and the edit does not widen what agents may do, as a
-   `[ports.bases]` edit does not; otherwise a person runs it in a terminal with `--interactive` and
-   answers yes to the change it shows.
+   it where the edit does not widen what agents may do, as a `[ports.bases]` edit does not;
+   otherwise a person runs it in a terminal with `--interactive` and answers yes to the change it
+   shows.
 3. Run `cockpit down --config cockpit.toml`. It finds the stack and its lease by the stack, not by
    the edited declaration, and refuses with `CLAIM_CO_TENANT` while another holder remains.
 4. Run `cockpit up --config cockpit.toml --json` and use the newly returned ports and entrypoints.
@@ -756,17 +756,15 @@ file and shared-file region in the ownership manifest (see
 an output. `sync --dry-run` lists the writes and removals, in order, without changing anything.
 `sync` writes the full set as one recoverable filesystem transaction.
 
-Team package metadata is prepared separately: a known surface conflict, an input overlap or a
-refused stale-removal approval leaves it unchanged. A later I/O failure or concurrent input change
+Team package metadata is prepared separately: a known surface conflict or an input overlap
+leaves it unchanged. A later I/O failure or concurrent input change
 can still leave those metadata updates in place while the transaction reports its own recovery
 result.
 
-Removing a stale file needs a separate approval of the exact path, operation and current bytes the
-dry run showed. Plain `sync` refuses; `sync --interactive` asks you to confirm the displayed removals. After
-approval and a final recheck, cockpit can remove an unchanged whole file, or its own region in a
-shared file. When every stale path is the MCP-only file of a tool still listed, removing it only
-narrows access, so `sync` applies it without that approval. Files cockpit did not write, and bytes
-outside its regions, are kept. A stale path that changed or is unsafe needs manual reconciliation.
+`sync` removes a file it generated before and no longer generates, as the dry run listed it, after
+a final recheck: an unchanged whole file, or its own region in a shared file. Files cockpit did not
+write, and bytes outside its regions, are kept. A stale path that changed or is unsafe needs manual
+reconciliation.
 
 Generated content for a shared Markdown region is rejected if it contains either region delimiter,
 and shared JSON updates keep the whitespace outside cockpit's property group. If cockpit cannot
@@ -822,8 +820,9 @@ rather than guess. `seed` requires `resettable_volumes`, because those volumes t
 is gone. To seed from inside the stack, see
 [Compose patterns](compose-patterns.md#seed-or-restore-data).
 
-Applying a reset wipes data, so it needs a person by default: `reset --interactive` in a terminal,
-or `reset --apply` when `[autonomy] reset` allows the caller. The next `up` seeds again.
+Applying a reset wipes data. An agent may run `reset --apply` where `[environment] seed` is declared
+and no widening is unsynced; otherwise it is refused (`RESET_CONFIRMATION_REQUIRED`) and a person
+runs `reset --interactive` in a terminal and answers y. The next `up` seeds again.
 
 ```sh human-only: resets data and requires the declared local stack
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml

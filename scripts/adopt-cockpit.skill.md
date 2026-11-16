@@ -22,15 +22,15 @@ installed directory.
 
 A clean-looking configuration with invented values in it is the failure cockpit exists to prevent.
 Follow these rules throughout. Reuse explicit authorization already given for the stated scope;
-ask when scope is missing or an exact preview still needs acceptance:
+ask when scope is missing or an exact preview still needs review:
 
 1. Ask the human before creating a Git remote or hosted repository, running a destructive command
-   (`reset`, approving removals), moving a team's settings file under `cockpit/adopted/`, accepting an `init` digest, or adopting a
+   (`reset`), moving a team's settings file under `cockpit/adopted/`, or adopting a
    test framework or dependency outside already authorized product-change scope. A Dockerfile, Compose file or `.env.schema`
    the product needs goes on a new branch in that sibling's checkout, started with no uncommitted
    changes; show its diff against the starting branch in your report. Nothing is pushed.
-2. Show the exact preview first: the `sync --dry-run` listing, the `init` preview and its
-   `previewSha256`, the answers file, or the defaults digest. Consent binds to those bytes.
+2. Show the exact preview first: the `sync --dry-run` listing, the `init` preview or the answers
+   file.
 3. Take every value (port, image, command, health check, purpose, name) from a file you read or
    from the human. When neither has it, name the gap and ask.
 4. Accept as read only a field `init` marks `confirmedBy = "agent"` (a `derived` proposal), by
@@ -43,15 +43,15 @@ ask when scope is missing or an exact preview still needs acceptance:
 7. "Use sensible defaults" covers `init` answers only, never another change inside a product
    repository: an **AGENTS.md** pointer or a `package.json` change needs explicit product-change
    authorization covering its reviewed scope, which can already have been given. For the files
-   `init` writes, that scope is the `writes` list of the preview the human accepts. Mark every answer you chose as `"agent-default"` in the answers file's
+   `init` writes, that scope is the `writes` list of the preview the human reviews. Mark every answer you chose as `"agent-default"` in the answers file's
    `[provenance]` table, and end your report with every default you chose, its field and value.
 8. Every trust answer the answers file supplies (`sibling`, `environment.install_policies`,
-   `environment.posture`, `testing`, `guards`, `work.grading`) lands under `unconfirmed` whatever the
-   file says, and the stronger default holds until a person confirms it. Prepare one review of
-   the outstanding trust entries, their values and consequences. After accepting those values,
-   the human removes the reviewed entries from `unconfirmed` together, then runs
-   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a terminal outside the agent
-   (the confirm command refuses these).
+   `environment.posture`, `testing`, `guards`, `work.grading`) is named in a `# Not stated by a
+   person: …` comment in `cockpit.toml`. Prepare one review of those values and their consequences;
+   the person reads it in the diff before committing. A change that widens what agents may do waits
+   for the person's one yes at
+   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a
+   terminal outside the agent.
 
 ## Install cockpit if it is missing
 
@@ -90,7 +90,7 @@ Look at the directory before asking. Several cases can apply; bootstrap first.
 |---|---|---|
 | Inside an existing product repository (a Git checkout with a language manifest, Dockerfile or Compose file at its root) | A single repository gets an in-repo cockpit by default. If the human wants the cockpit in a folder of its own beside several repositories, put `cockpit.root = "dedicated"` in the answers file; never choose that for them. | *Chapter 1* and *The init interview* |
 | An empty directory, or only documents and decisions | Follow **Bootstrap** below. With no manifest, `init` builds a surfaces-only cockpit whose first sibling is the root itself (`dir = "."`, `mount = "none"`); the purpose comes from the human. Add each repository later with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add <slug> --config cockpit.toml --create --purpose "<purpose>" --json` and hand the human its `result.publish.command` (`gh repo create`). | *The init interview* |
-| One or several repositories with services | From the directory that holds them, follow **Bootstrap** below: `./node_modules/@b00dea/cockpit/bin/cockpit.mjs init "$(pwd)" --target <tool> --json`, then the same command with `--accept-preview` and `--answers`, then with `--accept-defaults` as well. | *The init interview* |
+| One or several repositories with services | From the directory that holds them, follow **Bootstrap** below: `./node_modules/@b00dea/cockpit/bin/cockpit.mjs init "$(pwd)" --target <tool> --json`, then the same command with `--answers <file>`. | *The init interview* |
 | Repositories scattered across the disk | Moving them is the human's call. Otherwise declare each with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sibling add <slug> --config cockpit.toml --from <path> --purpose "<purpose>" --json`, then run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config cockpit.toml --json`. | *Other situations* |
 | An existing Compose file | Answer `environment.compose_files = ["compose.yml"]`. For a Compose file inside a product repository, declare that repository as a sibling and point `compose_files` at the file in its checkout. Ask the human for the `environment.machine` floors and the `environment.posture` (how the product is reached and signed into) that `init` asks next. | *Chapter 2* |
 | A service with no local setup | Follow **Create a local setup** below. | *Other situations* |

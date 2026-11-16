@@ -8,7 +8,6 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { parse as parseToml } from 'smol-toml'
 import { runInitApplication, type InitApplicationAdapters, type InitApplicationInput } from './init-application.js'
 import { runCli } from '../cli.js'
-import { renderHumanValue } from '../diagnostics.js'
 import { cockpitCommand, initCommand } from '../fix-catalogue.js'
 import { classifyEstateObservation, draftFromEstate, observePublicEstate } from '../init/draft.js'
 import { composeFindings } from '../init/derive.js'
@@ -86,19 +85,6 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
                 result: { question: { document: defaultsDocument!.split('\n') } } })
             expect(question.document!.join('\n')).toBe(defaultsDocument)
             expect(existsSync(f.destination)).toBe(false)
-            let interactiveReview = ''
-            expect(await runCli(['init', f.root, '--target', 'codexcli', '--interactive'], {
-                stdout: { write: () => true }, stderr: { write: () => true },
-                answerInitQuestion: async current => {
-                    interactiveReview = renderHumanValue(current)
-                    return undefined
-                },
-            }, { init: () => runInitApplication(greenfieldInput, adapters) })).toBe(2)
-            expect(interactiveReview).toContain(question.expectedSha256)
-            expect(interactiveReview).toContain(sourceConfig.sibling[0]!.purpose)
-            for (const line of defaultsDocument!.split('\n').filter(line => line.startsWith('# [default]') || line.startsWith('# [inferred]'))) {
-                expect(interactiveReview).toContain(line)
-            }
             for (const json of [false, true]) {
                 let stdout = ''
                 expect(await runCli(['init', f.root, '--target', 'codexcli', ...(json ? ['--json'] : [])], {
@@ -226,11 +212,11 @@ it.each([
         } }, adapters)
     }
     expect(outcome.kind, JSON.stringify(outcome)).toBe('artifact')
-    const drafted = parseToml(outcome.artifact!) as { cockpit: { name: string }; unconfirmed: string[] }
+    const drafted = parseToml(outcome.artifact!) as { cockpit: { name: string } }
     expect(drafted.cockpit.name).toBe('synthetic-shop')
-    // Values the agent chose are not recorded as the operator's: each says who chose it, and stays listed until a person confirms it.
-    expect(drafted.unconfirmed).toEqual(['environment.machine', 'guards'])
-    expect(outcome.artifact).toMatch(/^# Unconfirmed: environment\.machine was chosen by the setup agent as a default/m)
+    // Values the agent chose are not recorded as the operator's: each says who chose it, for the person reviewing the diff.
+    expect(drafted).not.toHaveProperty('unconfirmed')
+    expect(outcome.artifact).toMatch(/^# Not stated by a person: environment\.machine was chosen by the setup agent as a default/m)
     expect(outcome.artifact).toContain('# Decision: guards: the setup agent assumed, as a default, that no non-local environment')
     expect(outcome.artifact).not.toContain('the operator stated that no non-local environment')
     expect(outcome.result).toMatchObject({ unconfirmed: [{ field: 'environment.machine', provenance: 'agent-default' },
@@ -274,7 +260,7 @@ it.each([
     // refuses again, so the remedy names both ways out.
     await writeFile(join(f.root, 'compose.yml'), composeBytes.replace('web:1', 'web:2'))
     for (let rerun = 0; rerun < 2; rerun += 1) expect(await runInitApplication(accepted, adapters)).toMatchObject({ kind: 'refusal',
-        diagnostics: [{ code: 'DOCUMENT_ESTATE_OBSERVATION_CHANGED', fix: `restore the product files changed since init drafted cockpit.toml, then rerun ${initCommand({ root: f.root, target: f.input.target, args: `--accept-preview ${accepted.acceptedPreviewSha256}` })}; to keep the change instead, finish without init: run ${cockpitCommand('sync', { config: f.destination })}, then ${cockpitCommand('check', { config: f.destination })}` }] })
+        diagnostics: [{ code: 'DOCUMENT_ESTATE_OBSERVATION_CHANGED', fix: `restore the product files changed since init drafted cockpit.toml, then rerun ${initCommand({ root: f.root, target: f.input.target, args: '--answers <your answers file>' })}; to keep the change instead, finish without init: run ${cockpitCommand('sync', { config: f.destination })}, then ${cockpitCommand('check', { config: f.destination })}` }] })
     await writeFile(join(f.root, 'compose.yml'), composeBytes)
 
     preflight = f.adapters.preflight

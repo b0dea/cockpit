@@ -26,9 +26,9 @@ budget: uncapped
   follows a reinstall of cockpit or Node, or an edit to `cockpit.toml` the guard cannot build a policy
   from, and clears only when a person acts on its fix in a terminal. Any other edit to `cockpit.toml`
   holds nothing. One that does not widen what agents may do is judged as written, so run
-  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself where `[autonomy] sync =
-  "agent"`; one that widens is judged under the configuration last synced, and each refusal says so,
-  until a person runs that sync with `--interactive` in a terminal. When the guard refuses a
+  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself; one that widens
+  is judged under the configuration last synced, and each refusal says so, until a person runs that
+  sync with `--interactive` in a terminal and answers its one yes. When the guard refuses a
   command, read the reason. To read a file, use your tool's own file reading instead of the shell. A
   refusal for secrets, writes outside the cockpit, protected branches, declared hosts or the guard
   itself is the person's: hand them the exact command and why. A command refused as an unknown
@@ -56,14 +56,14 @@ not the thinking: reuse the planning skills the harness already has.
 0. **Is this a work order?** If nobody else sets the criteria and nothing must carry on in a later
    session, stop and use the cockpit-fix skill. Otherwise read
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work status --config cockpit.toml --json`: `result.wip` says how many
-   accepted orders are open against `work.wip_cap`, `result.gates` who passes each step, and
+   accepted orders are open against `work.wip_cap`, and
    `result.grading` how an order earns done (under `off`, skip steps 5 and 6: nothing grades, and step 8
    closes the order without a grade, though an open question, a stale contract, an unresolved decision
    or an unfinished dependency still holds it). If the order already exists, resume it at the step its
    state names: draft at step 2, accepted at step 3, checked at step 5, graded at step 8; **stale**
    (its file or a source changed since acceptance) goes back to step 2 to accept the change, and
    **blocked** waits on the answer or decision step 3 or step 7 describes. Done when you can say who
-   accepts, who grades, and which step you start at.
+   grades and which step you start at.
 1. **Write the order.** Create `workorders/WO-001.md`, using an ID `work status` does not list in
    place of `WO-001` here and below, whose YAML front-matter holds `id`, `objective`, `scope`, `depends_on`, `gates`, `criteria`
    and `non_goals`, as the *Write a work order* section of
@@ -75,20 +75,19 @@ not the thinking: reuse the planning skills the harness already has.
 2. **Accept it** with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config cockpit.toml --work-order WO-001`.
    Acceptance records the commit each repository stands at, and grading counts every change since
    then against `scope`, so first ask the person what to do with uncommitted changes already in the
-   checkout. Under `accept = "agent"` it is accepted; under `ci` it is accepted pending the
-   `work verify` job; under `person` it answers `WORK_PERSON_REQUIRED`: stop, and ask the person to
-   run the same command with `--interactive` in a terminal. Never type the digest yourself. Past
+   checkout. Past
    `work.wip_cap` it refuses until an open order closes. Done when `work status` reports it accepted.
 3. **Work test-first inside scope.** Write the failing test for a criterion, then the code, changing
    only what `scope` names; a file outside it that the change needs (a lockfile, a regenerated
    reference, a changeset) is judged at grading, so change nothing else. If the work needs more, edit
    the order and run `work accept` again to accept the amendment: dropping a criterion or gate always
    needs a person, a rewritten criterion or widened scope needs one under `checks` grading, and
-   otherwise the next grade judges whether your amendment lowered the bar. When you
+   otherwise the next grade judges whether your amendment lowered the bar. A person's step answers
+   `WORK_PERSON_REQUIRED`: stop, and ask the person to run the same command with `--interactive` in a
+   terminal. Never type the digest yourself. When you
    need a person's input, run
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work note --config cockpit.toml --work-order WO-001 --ask --text "<question>"`
-   and stop: the order is blocked until it is answered with `work answer`, which under `answer =
-   "person"` only a person can run. When `work accept` or `work status` lists `relatedDecisions`,
+   and stop: the order is blocked until it is answered with `work answer`. When `work accept` or `work status` lists `relatedDecisions`,
    read those decision records before changing the code they name. When the work makes a lasting
    decision (a format, a boundary, a dependency, an option rejected), record it with
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work note --config cockpit.toml --work-order WO-001 --decision --text "<title>"`
@@ -135,15 +134,14 @@ not the thinking: reuse the planning skills the harness already has.
    (`WORK_GRADE_UNSATISFIED`) lists each criterion's verdict and note under `result.criteria` and
    failed checks under `result.checks`: go back to step 3 for each, reverting a change outside scope
    or a test change the grade calls unneeded. `WORK_TEST_WEAKENED` means a test change was not accepted: restore the test, or under
-   `checks` grading report a legitimate change for a person (or CI) to acknowledge with `work acknowledge --note <why>`. When
+   `checks` grading report a legitimate change for a person to acknowledge with `work acknowledge --note <why> --interactive`. When
    `amendments-hold-bar` is unmet, the next amendment is a person's: report it. When the person names a grader ("use Codex to
    grade", "use Claude for everything"), pass `--evaluator <tool>` (`codexcli`, `claudecode` or
    `opencode`) on every grade for the rest of the session; only that tool runs, with no fallback.
    Done when the grade passes.
 7. **Attempt cap.** Each failed check or grade counts an attempt; at `work.attempt_cap` the order is
    blocked. Record the root cause with `work note`, then do what the refusal names: close it with
-   `work signoff --partial` or `--abandon`, yourself where `[work.gates]` gives that step to the agent,
-   and otherwise hand the person the command; or, when the contract is right and the cause is fixed,
+   `work signoff --partial` or `--abandon`, yourself; or, when the contract is right and the cause is fixed,
    hand the person `work retry --note <the root cause> --interactive`, which is always theirs. An
    amendment you accept keeps the count. Done when the order is closed or given fresh attempts, or
    the person has the cause and the command.
@@ -151,7 +149,8 @@ not the thinking: reuse the planning skills the harness already has.
    once graded, or under `off` when the work is finished: it closes as `ungraded`, listing any check that
    failed or never ran, so report those, and pass a `--note` saying why if one failed (expected, not
    enforced). A grade made under a weaker mode than the one now in force does not close as done:
-   grade again. Under `signoff = "person"` it answers `WORK_PERSON_REQUIRED` as step 2 describes.
+   grade again. After an `amendments-hold-bar` finding, or where it would leave another order's
+   changes ungraded, it answers `WORK_PERSON_REQUIRED` as step 3 describes.
    It refuses while a recorded decision is unresolved or its record still holds placeholders.
    An order that cannot be finished closes with `--partial --note <what is left>` or
    `--abandon --note <why>`. A command refused because another holds the order's lock: when that

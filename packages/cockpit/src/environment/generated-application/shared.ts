@@ -69,6 +69,8 @@ export type GuardWideningApproval = Readonly<{ configSha256: string }>
 export interface GeneratedEnvironmentSyncInput extends GeneratedEnvironmentCommandInput {
     readonly dryRun?: boolean
     readonly guardWidening?: GuardWideningApproval
+    /** With dryRun: preview every declared MCP server as approved, and report the ones cockpit.toml does not approve yet. */
+    readonly approveDeclaredMcp?: boolean
     readonly bootstrapState?: Readonly<{
         readonly publication: StateResult<BootstrapStateRecord>
         readonly address: BootstrapStateAddress
@@ -177,6 +179,8 @@ export interface PreparedEnvironment {
     readonly warnings: readonly SurfaceGenerationWarning[]
     // Declared MCP servers left out of `[mcp].approved`: rendered disabled, and said so on every sync and check.
     readonly unapprovedMcpServers: readonly Readonly<{ name: string; sources: readonly string[]; sha256: string }>[]
+    // Every server a preview with approveDeclaredMcp rendered approved, and whether `[mcp].approved` already approves it.
+    readonly mcpApprovals: readonly Readonly<{ name: string; sha256: string; approved: boolean; sources: readonly string[]; runs: string; environment: readonly string[]; headers: readonly string[] }>[]
     // Declared remote servers a listed tool cannot carry the credential of: left out of that tool's file.
     readonly mcpTransportGaps: readonly Readonly<{ name: string; targets: readonly string[]; reason: string }>[]
     // Every declared MCP server as rendered, so doctor can check what each one needs to start.
@@ -604,8 +608,8 @@ export function complete(
                 })),
             ...prepared.unapprovedMcpServers.map(server => ({
                 severity: 'warning' as const, code: 'MCP_NOT_APPROVED' as const satisfies McpDiagnostic['code'], target: server.name,
-                message: `MCP server ${server.name}, declared in ${server.sources.join(', ')}, has no approval in [mcp.approved] for its current declaration (command, arguments, working directory and environment names for a local server; URL, header references and headers helper for a remote one) (sha256 ${server.sha256}), so every harness keeps it disabled`,
-                fix: 'a person reviews its declaration, sets its name to the sha256 in this message under [mcp.approved] in cockpit.toml and runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; while [autonomy] mcp_approve is person, the default, the guard refuses an agent enabling or changing approvals or widening tool access. Agents may remove unchanged approvals and add or narrow exact tool allowlists under [mcp.allowed_tools]. To keep it off, nothing is needed',
+                message: `MCP server ${server.name}, declared in ${server.sources.join(', ')}, has no approval in [mcp.approved] for its current declaration (command, arguments, working directory and environment names for a local server; URL, header references and headers helper for a remote one), so every harness keeps it disabled`,
+                fix: 'to enable it, a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal outside the agent, reviews the declaration it shows and answers yes, which records the approval. A sync an agent runs keeps it off; to keep it off at that yes too, which approves every server it lists, remove it from the MCP source the sibling declares',
             })),
             ...prepared.mcpTransportGaps.map(gap => ({
                 severity: 'warning' as const, code: 'MCP_TRANSPORT_UNAVAILABLE' as const satisfies McpDiagnostic['code'], target: gap.name,
@@ -625,6 +629,7 @@ export function complete(
             paths: [...prepared.owned.map(({ path }) => path), ...prepared.surfaces.map(({ path }) => path)].sort(compareCodeUnits),
             application,
             ...(staleRemoval ? { staleRemoval } : {}),
+            ...(prepared.mcpApprovals.length ? { mcpApprovals: prepared.mcpApprovals } : {}),
         },
     }
 }

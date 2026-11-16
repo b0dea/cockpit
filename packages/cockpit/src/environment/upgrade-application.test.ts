@@ -83,6 +83,16 @@ describe('cockpit upgrade', () => {
             message: `installed ${installedPackageMetadata.version} is newer than the latest published 0.0.1` }] })
     })
 
+    // An agent may run upgrade unprompted, so it only moves forward: an older cockpit would run its own sync.
+    it('refuses to move to an older version, dry run or not, before running anything', async () => {
+        const f = fixture('9.9.9')
+        for (const dryRun of [false, true]) {
+            expect(await f.run({ version: '0.0.1', dryRun })).toMatchObject({ status: 2, diagnostics: [{ severity: 'error', code: 'UPGRADE_VERSION_INVALID',
+                message: `0.0.1 is older than the installed ${installedPackageMetadata.version}; upgrade only moves forward` }] })
+        }
+        expect(f.calls()).toEqual([])
+    })
+
     // A wrapper around npm (such as a supply-chain scanner) may print notices beside the answer.
     it('reads the latest version past notices on the lookup output, and shows an unusable answer', async () => {
         const noisy = fixture('9.9.9', ['package-lock.json'], 'notice: some versions were suppressed\n"9.9.9"\nnotice: see the scanner documentation')

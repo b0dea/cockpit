@@ -423,14 +423,6 @@ describe('restriction expansion', () => {
         expect(call('glob', { pattern: '**/*.env', path: join(directory, 'env') })).toMatchObject({ status: 0, stderr: '' })
         expect(call('grep', { pattern: "it's", path: join(directory, 'env/service.env.example') })).toMatchObject({ status: 0, stderr: '' })
         expect(call('read', {})).toMatchObject({ status: 1, stderr: expect.stringContaining('malformed applicable payload') })
-        // The plugin hands the guard an edit's new text for the configuration only, so the policy pin
-        // can apply it: a new [autonomy] table is refused, an edit elsewhere in the file is not.
-        const config = join(directory, 'cockpit.toml')
-        const lines = readFileSync(config, 'utf8').split('\n')
-        const anchor = lines.find(line => line.trim() && lines.filter(other => other === line).length === 1)!
-        expect(call('edit', { filePath: config, oldString: anchor, newString: `${anchor}\n` })).toMatchObject({ status: 0, stderr: '' })
-        expect(call('edit', { filePath: config, oldString: anchor, newString: `[autonomy]\nreset = "agent"\n\n${anchor}` }))
-            .toMatchObject({ status: 1, stderr: expect.stringContaining('Refusing to change gate authority or widen MCP access in [work], [work.gates], [autonomy]') })
     }, 60_000)
 
     it('runs the generated Codex hook from a cockpit directory inside a larger Git repository', async () => {

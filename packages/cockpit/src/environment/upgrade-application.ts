@@ -179,6 +179,11 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
             message: order === 0 ? `already on ${installed}` : `installed ${installed} is newer than the latest published ${target}`,
             fix: 'nothing to upgrade; to move to another version name it: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version>' }] }
 
+    // An agent runs upgrade unprompted, so it never installs an older cockpit, whose sync would then run;
+    // going back is a package-manager install, which the guard asks a person about.
+    if (order < 0) return refused({ severity: 'error' as const, code: 'UPGRADE_VERSION_INVALID' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_VERSION_INVALID, target: '<version>',
+        message: `${target} is older than the installed ${installed}; upgrade only moves forward`,
+        fix: `to go back, a person installs it with the package manager, such as ${formatShellCommand([lockfile.manager, lockfile.verb, ...lockfile.flags, `${name}@${target}`])}, and runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive` })
     const spec = `${name}@${target}`
     const installArgv = [lockfile.manager, lockfile.verb, ...lockfile.flags, spec]
     // Sync runs from the newly installed package's own entrypoint with this Node: a package manager's

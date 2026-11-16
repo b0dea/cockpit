@@ -186,8 +186,6 @@ const GUARD_CONTROL_FILES = [
     ...SURFACE_EXECUTION_CONTROL_PATHS,
     '.claude/settings.local.json', '.codex/hooks.json', 'opencode.json',
     'cockpit/adopted/.claude/settings.json', 'cockpit/adopted/.codex/hooks.json', 'cockpit/adopted/.codex/config.toml',
-    // The policy the last sync accepted: an agent that rewrote it could present its own weakening as accepted.
-    '.cockpit/policy.json',
 ] as const
 // OpenCode loads every module in its plugin directories at start, and the generated Claude plugin
 // bundle carries its own MCP servers and hook registration, so no file below them is data. Every
@@ -366,7 +364,7 @@ function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
         || p.protectedIdentities.some((item) => !record(item) || !keys(item, ['path', 'identity', 'ancestors']) || !confined(item.path)
             || item.identity !== null && !identity(item.identity) || !Array.isArray(item.ancestors) || !item.ancestors.every(identity))) return undefined
     // A policy that omits an identity would silently fall back to spellings, so coverage is exact.
-    const expected = new Set([...p.instances.map((item) => (item as JsonSnapshotObject).path as string), ...p.secretPaths ?? [], p.configPath as string,
+    const expected = new Set([...p.instances.map((item) => (item as JsonSnapshotObject).path as string), ...p.secretPaths ?? [],
         ...GUARD_ROOT_PROTECTIONS.map((item) => `${p.canonicalRoot}/${item.path}`)])
     const carried = new Set(p.protectedIdentities.map((item) => (item as JsonSnapshotObject).path as string))
     if (carried.size !== p.protectedIdentities.length || carried.size !== expected.size || [...expected].some((path) => !carried.has(path))) return undefined
@@ -2092,8 +2090,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const dotenvDenial = deny('Refusing to read or write an environment file: `.env` and `.env.*` hold secrets unless named .env.example, .env.sample, .env.template or .env.schema, or declared as a template. '
         + 'Fix: an agent runs the trusted process through a declared project command or script that wraps Varlock; a person in a terminal runs that same command, or `VARLOCK_TELEMETRY_DISABLED=true varlock run -- <cmd>`, without `--redact-stdout`, which Varlock refuses on a terminal. List variable names with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs env keys --config <your cockpit.toml>`.')
     const manifestPath = absolute(GUARD_CONTROL_FILES[1])
-    const structural = [resolved.configPath, manifestPath]
-    const structuralDenial = deny(`Refusing to delete, rename, truncate, relink or make unreadable ${posix.basename(resolved.configPath)} or ${GUARD_CONTROL_FILES[1]}: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit ${posix.basename(resolved.configPath)} in place instead.`)
+    // cockpit.toml is not here: the guard judges calls under the configuration last synced whatever state the file is in.
+    const structural = [manifestPath]
+    const structuralDenial = deny(`Refusing to delete, rename, truncate, relink or make unreadable ${GUARD_CONTROL_FILES[1]}: every later guarded call reads it, so losing it holds the agent until a human restores it.`)
     const executionDenial = deny('Refusing to change the installed cockpit, a node_modules/.bin directory or a command search path directory: code there runs as the guard or in place of a permitted command. To refresh dependencies, reinstall with your package manager\'s clean install instead of removing node_modules.')
     const linkDenial = deny('Refusing to link to a secrets directory, a declared environment instance, a guard control or the installed cockpit: the link would reach it under a name the guard does not protect.')
     // The guard admits `npx --no cockpit` only from a root without an .npmrc, but checks that before

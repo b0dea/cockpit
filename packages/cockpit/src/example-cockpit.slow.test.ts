@@ -208,7 +208,7 @@ describe('the compose-first and docs-only example cockpits', () => {
         expect(unconfirmed.status).toBe(2)
         expect(unconfirmed.response.diagnostics).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED' })])
         expect(await runCli(['sync', '--config', realpathSync(configPath), '--interactive'], { stdout: { write: () => true }, stderr: { write: () => true },
-            confirmPolicyWeakening: async request => request.digest } as CliIo, {}, { env: {} })).toBe(0)
+            confirmWidening: async () => true } as CliIo, {}, { env: {} })).toBe(0)
         const unmounted = run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
         expect(unmounted.status, unmounted.stdout).toBe(2)
         expect(unmounted.response.diagnostics.filter((row: { severity: string }) => row.severity === 'error')).toEqual([
