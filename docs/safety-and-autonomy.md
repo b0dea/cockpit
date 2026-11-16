@@ -879,6 +879,7 @@ runs after `--` is judged as a call of its own.
 | `browser drive` and `browser screenshot` | allowed where `browser.request_preapproval` is on, otherwise a prompt | They sign in and capture the declared application, so they run unprompted only on the isolated, non-production data the configuration declares. Preapproval is on by default exactly when `browser.data` is isolated, not restored and not reaching production, and off otherwise; an explicit `request_preapproval` wins, and `true` on a posture that does not qualify is refused. |
 | `use <slug> <checkout>` | allowed for a checkout inside the configured roots, named without `..`; otherwise a prompt | It records the checkout and grants agents its directory, so a checkout elsewhere would widen what they reach. |
 | `session` and `exec` with words before `--` | a prompt | The CLI runs those words as the command, which the guard judges only after `--`. |
+| any command on a configuration other than this cockpit's own, named with `--config <file>` or `--config=<file>` or, for `init`, by the root it names; resolved as the CLI resolves it, links included | a prompt, which Codex and OpenCode turn into a denial | Another configuration has no guard of this one's to judge an edit against, and `sync` would publish guards and settings from a file the agent wrote. A person may approve working in another cockpit. |
 | any command with `--interactive`; `init` with `--answers`, `--scaffold-compose`, `--command`, `--port` or `--with`; `sibling add`, `sibling remove` and `tool remove` | a prompt, which Codex and OpenCode turn into a denial | They ask for a person at a terminal, record a person's setup answers, or rewrite `cockpit.toml` and the guard. |
 
 A command counts as cockpit when the program it runs names cockpit: `cockpit`, a path to `cockpit` or
@@ -1095,8 +1096,8 @@ protected branch takes effect on the next call, and `check` reports the edit as
 `GUARD_CONFIG_UNSYNCED` until sync records it; an agent's plain `sync` applies it. An edit that
 widens is not applied: the guard keeps judging every call under the configuration last synced, as `.cockpit/local/guard-config` records
 it, so the agent keeps working and the widened rule is not yet in force. While it waits, an agent's
-`cockpit sync` or `cockpit upgrade` is refused (`GUARD_CONFIG_WIDENED`), work-order commands refuse
-and `test-run` refuses, while a `[work]` or `[testing]` field is changed that way, and every refusal ends with a sentence naming the widened fields and `sync --interactive`.
+`cockpit sync` or `cockpit upgrade` is refused (`GUARD_CONFIG_WIDENED`), work-order commands, `test-run`
+and the browser commands refuse while a `[work]`, `[testing]` or `[browser]` field is changed that way, and every refusal ends with a sentence naming the widened fields and `sync --interactive`.
 
 Sync itself refuses to publish a widening that nobody confirmed (`GUARD_CONFIG_WIDENED`), whoever
 runs it: a person runs `sync --interactive`, reads the preview and answers `yes`. Sync judges
