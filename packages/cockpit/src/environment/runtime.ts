@@ -14,6 +14,7 @@ import {
     snapshotExecutionPlan,
     snapshotExecutionStep,
     snapshotJson,
+    OBSERVATION_REASON_BYTE_LIMIT,
     type EnvironmentCommandOutcome,
     type EnvironmentObservation,
     type ExecutionFailureCode,
@@ -2322,6 +2323,25 @@ function exactRuntimePorts(
     return remaining.size === 0
 }
 
+const PORT_MISMATCH_GUIDANCE = 'stop the process holding a leased port (find it with `lsof -nP -iTCP:<port> -sTCP:LISTEN`), '
+    + 'or restart the stack with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml>` to restore a missing listener'
+
+/**
+ * Names up to eight mismatched listeners, fewer when their text would pass the observation's remedy
+ * limit: four leased ports held by another program on both loopbacks, each with its owner, ran past it.
+ */
+export function portMismatchRemedy(mismatches: readonly string[]): string {
+    const remedy = (count: number): string => {
+        const rest = mismatches.length - count
+        const named = count === 0 ? `${rest} leased-port listeners do not match the stack`
+            : `${mismatches.slice(0, count).join('; ')}${rest > 0 ? `; and ${rest} more` : ''}`
+        return `${named}: ${PORT_MISMATCH_GUIDANCE}`
+    }
+    let count = Math.min(8, mismatches.length)
+    while (count > 0 && Buffer.byteLength(remedy(count)) > OBSERVATION_REASON_BYTE_LIMIT) count -= 1
+    return remedy(count)
+}
+
 export async function observeRuntimePortFamily(input: {
     readonly topology: RuntimeTopologyEvidence
     readonly services: readonly RuntimeServiceEvidence[]
@@ -2409,7 +2429,7 @@ export async function observeRuntimePortFamily(input: {
         const foreign = new Map(owners?.ports.filter(({ owned }) => !owned).map(({ port, reason }) => [port, reason]) ?? [])
         if (owners) mismatched = mismatched.filter(({ port, listening }) => !listening || foreign.has(port))
         if (mismatched.length > 0) {
-            const named = mismatched.slice(0, 8).map(({ probeHost, port, listening }) => listening
+            const named = mismatched.map(({ probeHost, port, listening }) => listening
                 ? `${probeHost === '::1' ? `[${probeHost}]` : probeHost}:${port} has a listener outside the stack${foreign.has(port) ? ` (${foreign.get(port)})` : ''}`
                 : `${probeHost === '::1' ? `[${probeHost}]` : probeHost}:${port} has no stack listener`)
             return {
@@ -2418,9 +2438,7 @@ export async function observeRuntimePortFamily(input: {
                 observed: { state: 'available', value: false, observedAt: observed.observedAt },
                 expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'running-stack' },
                 freshness: { state: 'current' },
-                remedy: `${named.join('; ')}${mismatched.length > named.length ? `; and ${mismatched.length - named.length} more` : ''}: `
-                    + 'stop the process holding a leased port (find it with `lsof -nP -iTCP:<port> -sTCP:LISTEN`), '
-                    + 'or restart the stack with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml>` to restore a missing listener',
+                remedy: portMismatchRemedy(named),
             }
         }
         if (!await revalidatePortLeaseProjection({ projection: lease, namespace })) {

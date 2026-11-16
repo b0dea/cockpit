@@ -5,6 +5,7 @@ import {
     ENVIRONMENT_CODES,
     errorCause,
     isCanonicalTimestamp,
+    snapshotEnvironmentObservation,
     type CheckoutId,
     type EnvironmentDiagnostic,
     type EnvironmentObservation,
@@ -349,11 +350,20 @@ async function observeComparisonRemote(
     return observeComparisonRemoteRevalidation(revalidation, revalidationExecution.outcome)
 }
 
+// A row that breaks the observation contract, such as a remedy past its length limit, fails the
+// producer that made it, as that producer's own error would. Left to the aggregate, it refused the
+// whole command and every other producer's rows went unreported with it.
+function wellFormedRows(producer: string, rows: readonly EnvironmentObservation[]): readonly EnvironmentObservation[] {
+    const owned = rows.map((row) => snapshotEnvironmentObservation(row))
+    if (owned.some((row) => row === undefined)) throw new RefusalError(`${producer} observation is malformed`)
+    return owned as readonly EnvironmentObservation[]
+}
+
 export async function evaluateApplicationHealth(
     input: PreparedHealthObservation,
     adapters: ObservationCommandAdapters,
 ): Promise<HealthEvaluation> {
-    const produced = await Promise.allSettled(healthProducerNames.map((name) => input.producers[name]()))
+    const produced = await Promise.allSettled(healthProducerNames.map(async (name) => wellFormedRows(name, await input.producers[name]())))
     const producerFailures = healthProducerNames.filter((_, index) => produced[index]?.status === 'rejected')
     const producerRefusals = produced.flatMap((result) =>
         result.status === 'rejected' && result.reason instanceof ObservationProducerRefusal ? result.reason.diagnostics : [])

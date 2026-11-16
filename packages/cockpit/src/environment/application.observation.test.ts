@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import * as generatedCurrentnessOwner from './generated-application/check.js'
-import { RefusalError } from './contract.js'
+import { ENVIRONMENT_CODES, RefusalError, type EnvironmentObservation, type StackId } from './contract.js'
 import { ObservationProducerRefusal } from './application/health.js'
 import { cockpitPackageVersion } from '../test-support/package-version.js'
 import { observeMcpStartup } from './mcp-observation.js'
@@ -732,6 +732,36 @@ describe('observation application runners', () => {
             code: 'EVIDENCE_UNAVAILABLE', message: 'runtime observation producer failed', target: 'runtime',
         })]))
         expect(JSON.stringify(result)).not.toContain('private runtime detail')
+    })
+
+    it('fails only the producer of a malformed row, and the other producers still report', async () => {
+        let stack: StackId | undefined
+        const row = (code: EnvironmentObservation['code'], owner: string, remedy: string): EnvironmentObservation => ({
+            code, owner, stackId: stack!, source: 'synthetic', observed: { state: 'available', value: true, observedAt: new Date().toISOString() },
+            expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'environment' },
+            freshness: { state: 'current' }, remedy,
+        })
+        // Eight listeners on leased ports, each named with the program holding it, as the port row once spelled them.
+        const listeners = Array.from({ length: 8 }, (_, index) => {
+            const host = index % 2 === 0 ? '127.0.0.1' : '[::1]'
+            const port = 43_000 + Math.floor(index / 2)
+            return `${host}:${port} has a listener outside the stack (pid ${4_000 + index} node /srv/synthetic/other-app/node_modules/.bin/vite --port ${port})`
+        })
+        expect(Buffer.byteLength(`${listeners.join('; ')}: stop the process holding a leased port`)).toBeGreaterThan(1_024)
+        const source = await healthSourceFixture(context, (name) => async () => name === 'claims'
+            ? [row(ENVIRONMENT_CODES.CLAIM_STATE_UNHEALTHY, 'environment-claims', 'no action needed')] as never[]
+            : name === 'runtime'
+                ? [row(ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, 'runtime-planning', `${listeners.join('; ')}: stop the process holding a leased port`)] as never[]
+                : [])
+        stack = source.preflight.authorities[0]!.stackId
+
+        const result = await runPreflight(source.input, { load: source.load, execute: vi.fn() } as never)
+
+        expect(result.result.checks.find(({ code }) => code === ENVIRONMENT_CODES.CLAIM_STATE_UNHEALTHY)).toMatchObject({ verdict: 'pass' })
+        expect(result.result.checks.find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)).toMatchObject({ verdict: 'unavailable' })
+        expect(result.diagnostics).toContainEqual(expect.objectContaining({
+            code: 'EVIDENCE_UNAVAILABLE', message: 'runtime observation producer failed', target: 'runtime',
+        }))
     })
 
     it('reports the refusal a producer failed on in place of its own evidence-unavailable finding', async () => {
