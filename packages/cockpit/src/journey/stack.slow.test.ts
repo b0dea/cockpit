@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterAll, expect, it } from 'vitest'
 import { cloneProduct, createMachine, createProduct, explain, JOURNEY_TIMEOUT, ok, type Product, removeScratch } from '../test-support/journey/harness.js'
 
@@ -100,4 +102,39 @@ it('gives two checkouts of one product their own ports and stacks, and neither c
     expect(ok(first, ['ps']).json?.result.services).toEqual([expect.objectContaining({ state: 'running' })])
     ok(first, ['preflight'])
     ok(first, ['down'])
+}, JOURNEY_TIMEOUT)
+
+it('gives every stage the leased ports of a stack this checkout holds, and leases none for a stage that runs without one', () => {
+    const shop = createProduct('lease', { files: { 'test.mjs': "import { writeFileSync } from 'node:fs'\nwriteFileSync(process.env.TMPDIR + '/port.txt', process.env.APP_PORT ?? 'unset')\n" } })
+    bringUp(shop)
+    // Written outside the checkout, which a stage that changes it would void.
+    const recorded = () => readFileSync(join(shop.env.TMPDIR!, 'port.txt'), 'utf8')
+    ok(shop, ['test-run', '--gate', 'unit'])
+    expect(recorded()).toBe('unset')
+    expect(shop.docker.calls().filter((argv) => argv.includes('up'))).toEqual([])
+
+    const leased = ok(shop, ['up']).json?.result.ports.APP_PORT
+    expect(ok(shop, ['test-run', '--gate', 'unit']).json?.result).toMatchObject({ verdict: 'PASS' })
+    expect(recorded()).toBe(String(leased))
+    ok(shop, ['sleep'])
+}, JOURNEY_TIMEOUT)
+
+it('saves what a failing stage printed and shows where and its last lines, without dumping a passing one', () => {
+    const lines = Array.from({ length: 60 }, (_, index) => `line ${index + 1}`).join('\n')
+    const shop = createProduct('failing', { files: { 'test.mjs': `console.log(${JSON.stringify(lines)})\nconsole.error('FAIL lists products')\nprocess.exit(1)\n` } })
+    bringUp(shop)
+    const failing = shop.cockpit(['test-run', '--gate', 'unit'])
+    const output = failing.json?.result.observations[0].output
+    expect(output.tail).toHaveLength(40)
+    expect(output.tail.at(-1)).toBe('FAIL lists products')
+    expect(output.path).toMatch(/\.cockpit\/local\/test-run-unit-unit$/)
+    expect(shop.read('.cockpit/local/test-run-unit-unit')).toContain('line 1\n')
+    expect(shop.git('status', '--porcelain', '--', '.cockpit/local')).toBe('')
+    const human = shop.cockpit(['test-run', '--gate', 'unit'], { json: false })
+    expect(human.stdout).toContain(output.path)
+    expect(human.stdout).toContain('FAIL lists products')
+    expect(human.stdout).not.toContain('line 1\n')
+
+    shop.write('test.mjs', "console.log('1 test passed')\n")
+    expect(ok(shop, ['test-run', '--gate', 'unit']).json?.result.observations[0]).not.toHaveProperty('output')
 }, JOURNEY_TIMEOUT)

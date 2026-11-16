@@ -676,7 +676,7 @@ export const Testing = z.object({
     stages: z.array(z.object({
         id: TestingName.describe('Name of the stage.'),
         command: TestingCommand.describe('Command to run, as an argument list.'),
-        requires_stack: z.boolean().describe('True when the stage needs the stack running.'),
+        requires_stack: z.boolean().describe('True when the stage needs the stack running. Every stage gets the leased port variables when this checkout holds a stack, whatever this says.'),
         timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(TESTING_STAGE_TIMEOUT_DEFAULT_SECONDS)
             .describe('Seconds the stage may run before it is stopped and the gate reports DEGRADED.'),
         select: TestingSelect.optional()
