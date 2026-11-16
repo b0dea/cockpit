@@ -548,7 +548,7 @@ export function createHealthCommandAdapters(
                         const fix = cockpitCommand('up', { config: loaded.result.source.path })
                         stopped = {
                             severity: 'error' as const, code: ENVIRONMENT_CODES.STATE_UNSEEDED, target: loaded.result.source.path,
-                            message: `lifecycle is still in bootstrap — the stack has never completed a first bring-up, so only the checks that need no running stack ran; fix: ${fix}; then retry the command that stopped`,
+                            message: `no completed bring-up is recorded for this stack (a stack started by an earlier cockpit release counts as not yet up), so only the checks that need no running stack ran; fix: ${fix}; then retry the command that stopped`,
                             fix,
                         }
                     } else stopped = await sleepingStack(namespace.value, currentStack, loaded.result.source.path) ?? null

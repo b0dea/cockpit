@@ -1773,6 +1773,38 @@ const secretVariable = (name: string) => {
 /** Whether an invocation prints the environment or a secret-named variable. */
 // jq's `env` builtin and `$ENV`, not a field or a file name that holds the word, such as `.env.schema`.
 const JQ_ENVIRONMENT = /(?<![\w.$-])env\b|\$ENV\b/
+// A jq filter's code: string literals are text, as `test("local|env")` searches for the word, so they are
+// dropped, except the `\(…)` interpolations they hold, which are code and may read `env`.
+function jqCode(filter: string): string {
+    let code = ''
+    let inString = false
+    const depths: number[] = []
+    for (let at = 0; at < filter.length; at++) {
+        const char = filter[at]!
+        if (inString) {
+            if (char === '\\' && filter[at + 1] === '(') { depths.push(0); inString = false; code += ' '; at++ }
+            else if (char === '\\') at++
+            else if (char === '"') { inString = false; code += ' ' }
+            continue
+        }
+        // A comment's text stays as code, so a quote in it opens no string that would hide what follows.
+        if (char === '#') {
+            const end = filter.indexOf('\n', at)
+            code += end < 0 ? filter.slice(at) : filter.slice(at, end)
+            at = end < 0 ? filter.length : end - 1
+            continue
+        }
+        if (char === '"') { inString = true; code += ' '; continue }
+        if (depths.length && char === '(') depths[depths.length - 1]!++
+        if (depths.length && char === ')') {
+            if (depths.at(-1) === 0) { depths.pop(); inString = true; code += ' '; continue }
+            depths[depths.length - 1]!--
+        }
+        code += char
+    }
+    return code
+}
+const readsJqEnvironment = (filter: string) => JQ_ENVIRONMENT.test(jqCode(filter))
 function dumpsEnvironment(invocation: ParsedInvocation): boolean {
     const program = posix.basename(invocation.executable ?? '')
     const argv = invocation.argv
@@ -1790,14 +1822,14 @@ function dumpsEnvironment(invocation: ParsedInvocation): boolean {
     if (program === 'make') return argv.some(arg => arg === '--print-data-base' || /^-[a-zA-Z]+$/.test(arg) && /^[^CfIjloWE]*p/.test(arg.slice(1)))
     if (['awk', 'gawk', 'mawk', 'nawk'].includes(program)) return argv.some(arg => arg.includes('ENVIRON'))
     // A jq filter reads the environment through `env` and `$ENV`, as gh's does with the token in it.
-    if (['jq', 'gojq', 'jaq'].includes(program)) return argv.some(arg => JQ_ENVIRONMENT.test(arg))
+    if (['jq', 'gojq', 'jaq'].includes(program)) return argv.some(readsJqEnvironment)
     // `docker inspect` prints a container's or image's environment unless a format names other fields.
     if (program === 'docker' && argv.includes('inspect')) {
         const format = argv.find((arg, at) => ['-f', '--format'].includes(argv[at - 1] ?? '') || /^--format=/.test(arg))
         return format === undefined || /env|\{\{\s*(?:json\s+)?\.\s*\}\}|"config"|\.(?:container)?config\s*\}\}/i.test(format)
     }
     // gh's jq filter reads its own environment, the token included, through `env` and `$ENV`.
-    if (program === 'gh') return argv.some((arg, at) => (['-q', '--jq'].includes(argv[at - 1] ?? '') || /^--jq=/.test(arg)) && JQ_ENVIRONMENT.test(arg))
+    if (program === 'gh') return argv.some((arg, at) => (['-q', '--jq'].includes(argv[at - 1] ?? '') || /^--jq=/.test(arg)) && readsJqEnvironment(arg))
     // BSD `ps e` and macOS `ps -E` print each process's environment.
     // A bare letter cluster is BSD syntax; a word after -o, -p and the like is that option's value.
     if (program === 'ps') return argv.some((arg, at) => /^[A-Za-z]+$/.test(arg) && arg.includes('e') && !/^-[A-Za-z]*[oOpqUuGgtk]$/.test(argv[at - 1] ?? '')

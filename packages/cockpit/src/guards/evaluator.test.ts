@@ -1038,7 +1038,12 @@ describe('built-in read-only profile', () => {
         // ACK: `tail -f` left the ask list: following a file inside the roots reads only that file.
         expect(decideInRepositories('tail -f src/a.ts').decision).toBe('allow')
         // A jq filter can read the environment, which holds credentials.
-        for (const command of ["jq -n env", "jq -n '$ENV'", "jq -r '.a + env.TOKEN' src/a.ts"]) expect(decideInRepositories(command).decision, command).toBe('deny')
+        for (const command of ["jq -n env", "jq -n '$ENV'", "jq -r '.a + env.TOKEN' src/a.ts", 'jq -r \'"token: \\(env.TOKEN)"\' src/a.ts',
+            'jq -r \'"a" + ("\\("x" + (env | tostring))")\' src/a.ts', 'jq -r \'. # a "quote\nenv\' src/a.ts']) expect(decideInRepositories(command).decision, command).toBe('deny')
+        // The word inside a string literal is text the filter searches for, not the environment.
+        for (const command of ['jq -c \'{deny: (.permissions.deny // [] | map(select(test("local|clerk|env"))))}\' src/a.ts', 'jq -r \'select(.name == "env")\' src/a.ts']) {
+            expect(decideInRepositories(command).decision, command).not.toBe('deny')
+        }
         expect(decideInRepositories('cat /etc/hosts').reason).toContain('"/etc/hosts" is outside the configured roots')
         // A path is quoted with the characters a harness rejects in a reason escaped, so the refusal still arrives.
         expect(decideInRepositories('cat /tmp/a\u2028b').reason).toContain('"/tmp/a\\u2028b" is outside the configured roots')
