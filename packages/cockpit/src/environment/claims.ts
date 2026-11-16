@@ -590,8 +590,6 @@ async function readCoordinationInventory(
                     `${lock.description}; ${lock.recovery}; remove the residue only after proving that no writer owns it`,
                 )
             }
-            // An execution marker an earlier cockpit left beside a record; nothing reads it now.
-            if (entry?.kind === 'executor') continue
             if (!entry || entry.kind !== 'record') {
                 return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination store contains an unexpected entry', join(directory, name))
             }

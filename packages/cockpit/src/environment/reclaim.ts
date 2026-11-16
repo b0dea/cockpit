@@ -1394,11 +1394,14 @@ export async function planReset(input: PlanResetInput): Promise<ResetPlan | Plan
     }
 }
 
-/** Runs each removal in order, and stops at the first that fails. */
+// Docker's answer for a resource it no longer has; the read after the removals decides what is gone.
+const ALREADY_GONE = /^Error(?: response from daemon)?: No such (?:container|volume|network|image)\b/m
+
+/** Runs each removal in order, and stops at the first that fails for any reason but the resource being gone. */
 export async function removeTargets(targets: readonly RemovalTarget[], execute: Executor): Promise<PlanRefusal | undefined> {
     for (const target of targets) {
         const outcome = await execute(target.step)
-        if (outcome.kind !== 'complete') {
+        if (outcome.kind !== 'complete' && !(target.kind !== 'host-path' && ALREADY_GONE.test(Buffer.from(outcome.stderr).toString('utf8')))) {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH,
                 `removing ${target.kind} ${target.name} (${target.id}) failed (${outcome.code}); what was removed before it stays removed`, target.id,
                 'resolve what blocks that removal, then run the same command again: it removes only what is still there')

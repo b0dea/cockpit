@@ -711,9 +711,6 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
                             const parsed = parseCoordinationStateEntry(entry)
                             if (!parsed) throw new RefusalError('coordination store contains an unexpected entry')
                             await inspect(path, 'file')
-                            if (parsed.kind === 'executor' && snapshots.get(path)!.nlink !== 1n) {
-                                throw new RefusalError('coordination executor marker has multiple links')
-                            }
                             bytes += snapshots.get(path)!.size
                             if (bytes > BigInt(SERIALIZED_RECORD_BYTE_LIMIT)) throw new InventoryBoundaryError('coordination inventory exceeds its aggregate byte boundary')
                         }
@@ -755,13 +752,10 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
 }
 
 export function parseCoordinationStateEntry(name: string):
-Readonly<{ kind: 'record'; stackId: StackId } | { kind: 'temporary' }
-    | { kind: 'executor'; stackId: StackId; attemptId: string }> | undefined {
+Readonly<{ kind: 'record'; stackId: StackId } | { kind: 'temporary' }> | undefined {
     if (/^\.stack_[a-f0-9]{64}\.[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/.test(name)) {
         return { kind: 'temporary' }
     }
-    const executor = /^(stack_[a-f0-9]{64})\.json\.([a-f0-9]{64})\.executor\.json$/.exec(name)
-    if (executor) return { kind: 'executor', stackId: executor[1]!.replace('_', ':') as StackId, attemptId: executor[2]! }
     if (!/^stack_[a-f0-9]{64}\.json$/.test(name)) return undefined
     return { kind: 'record', stackId: name.slice(0, -5).replace('_', ':') as StackId }
 }

@@ -11,6 +11,7 @@ import {
     discoverReclaim,
     inspectionOverflow,
     planReset,
+    removeTargets,
     type ReclaimDiscovery,
     type ReclaimDiscoverySnapshot,
     type ReclaimResource,
@@ -763,6 +764,21 @@ describe('reset planning', () => {
                 pathExecutable: { ...executable('/bin/rm'), sha256: sha('wrong') },
             }))).toEqual(expect.objectContaining({ kind: 'refusal' }))
         } finally { await rm(root, { recursive: true, force: true }) }
+    })
+
+    // The read after the removals decides what is gone, so a resource something else removed first
+    // does not stop the rest.
+    it('treats a resource Docker no longer has as removed, and stops at any other failure', async () => {
+        const target = (id: string) => ({ kind: 'container', id, name: id, step: { id: `remove:${id}` } }) as never
+        const failed = (stderr: string) => ({ kind: 'refusal', code: 'EXECUTION_STEP_FAILED', stderr: Buffer.from(stderr) }) as never
+        const ran: string[] = []
+        expect(await removeTargets([target('a'), target('b')], async (step) => {
+            ran.push(step.id)
+            return step.id === 'remove:a' ? failed('Error response from daemon: No such container: a\n') : { kind: 'complete' } as never
+        })).toBeUndefined()
+        expect(ran).toEqual(['remove:a', 'remove:b'])
+        expect(await removeTargets([target('c')], async () => failed('Error response from daemon: conflict: unable to remove\n')))
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'RECLAIM_ACCOUNTING_MISMATCH' }] })
     })
 
     it('preserves non-ASCII target bytes through the plan and its exact removal', async () => {
