@@ -17,6 +17,7 @@
  *   it the same write was refused.
  * Cursor and Grok Build were not installed, so nothing is written for them.
  */
+import { ADOPTED_SURFACE_ROOT } from '../surfaces/contract.js'
 import { appendFile, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { lstatSync, readdirSync, realpathSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
@@ -437,6 +438,8 @@ export function inspectAgentSettingsHazards(root: string, siblings: readonly str
             if (!nestedAgentConfiguration(foldGuardSpelling(`/${path}`), false)) continue
             // The cockpit root's own files are the generated ones, and its Claude settings are read below anyway.
             if (ROOT_AGENT_SETTINGS.test(path)) continue
+            // A team's own settings moved aside for sync to merge into the root's add nothing the root's do not hold.
+            if (path.startsWith(`${ADOPTED_SURFACE_ROOT}/`) && ROOT_AGENT_SETTINGS.test(path.slice(ADOPTED_SURFACE_ROOT.length + 1))) continue
             nested.push(path)
             if (/(?:^|\/)\.claude\/settings(?:\.local)?\.json$/.test(path)) claudeSettings.push(path)
         }

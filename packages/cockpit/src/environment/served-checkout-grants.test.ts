@@ -120,10 +120,13 @@ describe('Claude Code local guard registration', () => {
     it('flags an agent tool\'s settings below the cockpit root and any settings that switch hooks off', async () => {
         const root = realpathSync(mkdtempSync(join(tmpdir(), 'agent-settings-hazards-')))
         try {
-            for (const directory of ['.claude', 'app/.claude', 'app/web/.codex', 'node_modules/pkg/.claude', 'docs']) mkdirSync(join(root, directory), { recursive: true })
+            for (const directory of ['.claude', 'app/.claude', 'app/web/.codex', 'node_modules/pkg/.claude', 'docs', 'cockpit/adopted/.claude', 'cockpit/adopted/.codex']) mkdirSync(join(root, directory), { recursive: true })
             const write = (path: string, value: unknown) => writeFileSync(join(root, path), `${JSON.stringify(value)}\n`)
             write('.claude/settings.json', { hooks: {} })
             write('docs/settings.json', {})
+            // The team's own settings, moved aside for sync to merge into the root's, are not settings below the root.
+            write('cockpit/adopted/.claude/settings.json', { hooks: {} })
+            writeFileSync(join(root, 'cockpit/adopted/.codex/config.toml'), '')
             expect(inspectAgentSettingsHazards(root)).toEqual([])
             write('app/.claude/settings.json', { hooks: {} })
             writeFileSync(join(root, 'app/web/.codex/config.toml'), '')
