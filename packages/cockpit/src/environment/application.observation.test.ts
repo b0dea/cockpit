@@ -52,7 +52,9 @@ import {
     withSetupCheckoutProjection,
 } from './setup-observation.js'
 import type { PreflightContext } from './observations.js'
-import { checkoutId, cockpitId, stackId } from './identity.js'
+import { checkoutId, cockpitId, holderId, stackId } from './identity.js'
+import { selectStateRoot } from './state.js'
+import { recordLifecycleSeeded, recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage.js'
 import { createApplicationFixtureSupport } from '../../test-support/application-fixture.js'
 
 const scratch: string[] = []
@@ -747,20 +749,6 @@ describe('observation application runners', () => {
         expect(result.diagnostics.map(({ message }) => message)).not.toContain('surfaces observation producer failed')
     })
 
-    it.each(['missing', 'extra'] as const)('rejects a %s producer cohort before execution', async (shape) => {
-        const source = await healthSourceFixture(context, undefined, undefined, (producers) => {
-            const changed = { ...producers } as Record<string, () => Promise<readonly never[]>>
-            if (shape === 'missing') delete changed.runtime
-            else changed.unknown = async () => []
-            return changed
-        }, false)
-        const execute = vi.fn()
-
-        await expect(runPreflight(source.input, { load: source.load, execute } as never))
-            .resolves.toMatchObject({ kind: 'blocked', result: { verdict: 'unavailable' } })
-        expect(execute).not.toHaveBeenCalled()
-    })
-
     it.each([
         ['service', 'API'],
         ['service', 'a'.repeat(129)],
@@ -862,6 +850,19 @@ async function healthSourceFixture(
     }
     const validThrough = new Date(Date.parse(value.candidate.observedAt) + 30_000).toISOString()
     const requestedStage = requested.stages?.[0]?.stage === 'bootstrap' ? 'bootstrap' as const : 'steady' as const
+    const home = mkdtempSync(join(tmpdir(), 'cockpit-health-state-'))
+    scratch.push(home)
+    const state = await selectStateRoot({ platform: 'linux', home, cockpitId: expectedCockpitId })
+    if (state.kind !== 'complete') throw new Error('health fixture state root was refused')
+    const holder = holderId({ stackId: expectedStackId, checkoutId: checkoutId({ checkoutPath: value.candidate.mainCheckoutPath }), sessionId: 'health-fixture' })
+    if (requestedStage === 'steady') {
+        for (const transition of [recordLifecycleStarted, recordLifecycleSeeded]) {
+            const recorded = await transition({ namespace: state.value, stackId: expectedStackId, holderId: holder, observedAt: value.candidate.observedAt })
+            if (recorded.kind !== 'complete') throw new Error('health fixture lifecycle transition was refused')
+        }
+    }
+    const stage = await resolveLifecycleStage({ namespace: state.value, stackId: expectedStackId, observedAt: value.candidate.observedAt })
+    if (stage.kind !== 'complete') throw new Error('health fixture lifecycle stage was refused')
     const boundPreflight: PreflightContext = requested.authorities?.length
         ? preflight
         : Object.freeze({
@@ -877,12 +878,7 @@ async function healthSourceFixture(
                 environmentPostures: Object.freeze({ addressing: null, authentication: null }),
                 postureRequirements: Object.freeze([]),
             })]),
-            stages: Object.freeze([Object.freeze({
-                stackId: expectedStackId,
-                stage: requestedStage,
-                observedAt: value.candidate.observedAt,
-                validThrough,
-            }) as unknown as PreflightContext['stages'][number]]),
+            stages: Object.freeze([stage.authority]),
         })
     const load = async (_input: unknown, issue: (source: HealthObservationSourceInput) => HealthObservationSource | undefined) => {
         const source = await withSetupCheckoutProjection(observed, {

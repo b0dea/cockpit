@@ -18,7 +18,7 @@ export const POSTURE_REQUIREMENT_OWNER = 'posture-requirements'
 
 const compareCodeUnits = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0
 
-function boundedArray(value: unknown): readonly unknown[] | undefined {
+function boundedArray<T>(value: readonly T[] | undefined): readonly T[] | undefined {
     return Array.isArray(value) && value.length <= STRUCTURED_INPUT_ENTRY_LIMIT ? value : undefined
 }
 
@@ -238,8 +238,7 @@ export function authenticateObservationPostureContext(context: PreflightContext)
     const authorities = new Map<StackId, ResolvedPostureAuthority>()
     let windowStart = Number.NEGATIVE_INFINITY
     let windowEnd = Number.POSITIVE_INFINITY
-    for (const authorityInput of authorityInputs) {
-        const authority = authorityInput as ResolvedPostureAuthority
+    for (const authority of authorityInputs) {
         if (authorities.has(authority.stackId)) throw new RefusalError('preflight contains duplicate posture authority')
         const currentRevision = currentConfigurationRevision(authority.source)
         if (currentRevision !== authority.revision) throw new RefusalError('configuration changed after posture resolution')
@@ -254,8 +253,7 @@ export function authenticateObservationPostureContext(context: PreflightContext)
     if (windowStart > windowEnd) throw new RefusalError('preflight posture authorities are incoherent')
     if (!stageInputs || stageInputs.length !== authorityInputs.length) throw new RefusalError('preflight needs lifecycle stage authority')
     const stages = new Map<StackId, ObservationLifecycleStage>()
-    for (const stageInput of stageInputs) {
-        const stageAuthority = stageInput as LifecycleStageAuthority
+    for (const stageAuthority of stageInputs) {
         const authority = authorities.get(stageAuthority.stackId)
         if (!authority || stages.has(authority.stackId)) throw new RefusalError('preflight needs one matching lifecycle stage authority per stack')
         const stage = authenticateLifecycleStageAuthority(
