@@ -13,6 +13,16 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.20
+
+### Patch Changes
+
+- 7129d02: Commands behave better on a busy machine:
+  - `doctor` and `preflight` name a probe that ran out of time and how long it had, instead of reporting only that an observation producer failed. A failed producer's own refusal reason now follows its name.
+  - A runtime version probe that timed out no longer tells the reader to install or start Docker.
+  - `down`, `reset` and reclaim wait, within a bound, for a container or volume removal Docker is still finishing, instead of failing on the first timeout; if Docker never finishes, the message says so and names the timeout.
+- 5dd8b86: An independent grader's `met` that cockpit reads as unclear because its quote is not in the cited diff or output no longer spends one of the order's grading attempts, and the grader is told to copy quotes character for character.
+
 ## 0.1.19
 
 ### Patch Changes
