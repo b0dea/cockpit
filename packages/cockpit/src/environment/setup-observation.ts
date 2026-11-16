@@ -31,6 +31,7 @@ import { GIT_CHILD_CONFIG, observationEnvironment, resolveGitExecutable, resolve
 import { createGitRunner } from './sibling-checkouts.js'
 import { checkoutId as deriveCheckoutId } from './identity.js'
 import { cockpitId as deriveCockpitId } from './identity.js'
+import { confinedPath, sameSource } from './application/shared.js'
 
 const OWNER = 'setup-observation'
 
@@ -392,9 +393,9 @@ function ignoreFiles(root: string, declarations: EnvironmentFileValue): readonly
     const result = new Set<string>()
     for (const relativePath of [declarations.instance, declarations.template]) {
         const absolute = resolve(root, relativePath)
-        if (!confined(root, absolute)) return undefined
+        if (!confinedPath(root, absolute)) return undefined
         let cursor = dirname(absolute)
-        while (confined(root, cursor)) {
+        while (confinedPath(root, cursor)) {
             result.add(resolve(cursor, '.gitignore'))
             if (cursor === root) break
             cursor = dirname(cursor)
@@ -1004,7 +1005,7 @@ async function attemptSetupCheckout(value: SetupCheckoutInput): Promise<Checkout
         sourceChecks,
     )
     if (current === 'moved') return checkoutMoved()
-    if (!current || !confined(current.topLevel, value.source.path)) {
+    if (!current || !confinedPath(current.topLevel, value.source.path)) {
         return setupCheckoutFailure('Git could not authenticate the current checkout; setup requires a Git working tree to bound repository writes. '
             + `Inspect it with ${formatShellCommand(['git', '-C', startingDirectory.canonicalPath, 'rev-parse', '--show-toplevel'])}; `
             + `if this is a new directory, initialize it with ${formatShellCommand(['git', '-C', startingDirectory.canonicalPath, 'init'])}, `
@@ -1178,10 +1179,6 @@ async function attemptSetupCheckout(value: SetupCheckoutInput): Promise<Checkout
     const observation: SetupCheckoutObservation = { state: 'available', producer: OWNER, observedAt: value.observedAt, validThrough }
     issuedSetupCheckoutObservations.set(observation, binding)
     return observation
-}
-
-function sameSource(left: SourceProvenance, right: SourceProvenance): boolean {
-    return left.path === right.path && left.byteLength === right.byteLength && left.sha256 === right.sha256
 }
 
 function snapshotSetupCheckoutContext(value: unknown): SetupCheckoutObservationContext | undefined {
@@ -1505,7 +1502,7 @@ async function askGitForCheckout(
     } catch (error) {
         return setupCheckoutFailure(`Git named a checkout path that cannot be resolved: ${errorCause(error)}`)
     }
-    if (!confined(topLevel, sourcePath)) return { reason: `Git's working tree for ${gitEntry} is ${topLevel}, which does not hold ${sourcePath}` }
+    if (!confinedPath(topLevel, sourcePath)) return { reason: `Git's working tree for ${gitEntry} is ${topLevel}, which does not hold ${sourcePath}` }
     // A linked checkout's common directory belongs to its main checkout. One kept outside a working
     // tree names no other checkout, so it stands for the main checkout itself.
     const mainCheckoutPath = gitDirectory === commonDirectory ? topLevel
@@ -1560,11 +1557,6 @@ export async function revalidateGeneratedCheckoutIdentity(identity: GeneratedChe
         issuedGeneratedCheckoutIdentities.delete(refreshed)
     }
     return true
-}
-
-function confined(root: string, candidate: string): boolean {
-    const fromRoot = relative(root, candidate)
-    return fromRoot !== '..' && !fromRoot.startsWith(`..${sep}`) && !isAbsolute(fromRoot)
 }
 
 function probeStep(
@@ -1776,8 +1768,8 @@ export async function observeSetupPath(
     }
     if (
         resolve(topLevel) !== canonicalTarget ||
-        !confined(canonicalRoot, canonicalGitDirectory) ||
-        !confined(canonicalRoot, canonicalCommonDirectory)
+        !confinedPath(canonicalRoot, canonicalGitDirectory) ||
+        !confinedPath(canonicalRoot, canonicalCommonDirectory)
     ) return outsideRoot()
     const identityDirectories = await Promise.all(
         [...new Set([canonicalTarget, canonicalGitDirectory, canonicalCommonDirectory])].map(canonicalDirectory),

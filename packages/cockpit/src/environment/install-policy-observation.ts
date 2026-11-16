@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { BigIntStats } from 'node:fs'
 import { lstat, realpath } from 'node:fs/promises'
-import { isAbsolute, join, normalize, relative, sep } from 'node:path'
+import { isAbsolute, join, normalize } from 'node:path'
 
 import { InstallPolicy, type InstallPolicy as InstallPolicyValue } from '../schema.js'
 import {
@@ -15,6 +15,7 @@ import {
     type SourceProvenance,
 } from './contract.js'
 import { checkoutId as deriveCheckoutId } from './identity.js'
+import { confinedPath, sameSource } from './application/shared.js'
 
 const OWNER = 'install-policy-lockfile-observation'
 
@@ -108,11 +109,6 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
     }
 }
 
-function confined(root: string, candidate: string): boolean {
-    const fromRoot = relative(root, candidate)
-    return fromRoot === '' || (fromRoot !== '..' && !fromRoot.startsWith(`..${sep}`) && !isAbsolute(fromRoot))
-}
-
 function identity(stat: BigIntStats): FileIdentity {
     return {
         dev: stat.dev.toString(),
@@ -127,10 +123,6 @@ function identity(stat: BigIntStats): FileIdentity {
 
 function sameIdentity(left: FileIdentity, right: FileIdentity): boolean {
     return Object.keys(left).every((key) => left[key as keyof FileIdentity] === right[key as keyof FileIdentity])
-}
-
-function sameSource(left: SourceProvenance, right: SourceProvenance): boolean {
-    return left.path === right.path && left.byteLength === right.byteLength && left.sha256 === right.sha256
 }
 
 function validSource(value: unknown): value is SourceProvenance {
@@ -189,7 +181,7 @@ async function inspectLockfile(root: string, relativePath: string): Promise<Obse
     let current = root
     for (let index = 0; index < parts.length; index += 1) {
         current = join(current, parts[index]!)
-        if (!confined(root, current)) return 'invalid'
+        if (!confinedPath(root, current)) return 'invalid'
         try {
             const before = await lstat(current, { bigint: true })
             if (before.isSymbolicLink()) return 'invalid'
@@ -197,7 +189,7 @@ async function inspectLockfile(root: string, relativePath: string): Promise<Obse
             const after = await lstat(canonicalPath, { bigint: true })
             const beforeIdentity = identity(before)
             const afterIdentity = identity(after)
-            if (!confined(root, canonicalPath) || canonicalPath !== current
+            if (!confinedPath(root, canonicalPath) || canonicalPath !== current
                 || after.isSymbolicLink() || !sameIdentity(beforeIdentity, afterIdentity)) return 'invalid'
             if (index < parts.length - 1) {
                 if (!after.isDirectory()) return 'invalid'

@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { dirname, isAbsolute, normalize, relative, resolve, sep } from 'node:path'
+import { realpath } from 'node:fs/promises'
 import { parseDocument } from 'yaml'
+import { readBoundedFile } from '../bounded-read.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { MAX_COLD_START_SECONDS } from '../schema.js'
 import { consumeMachineFloorConfigProjection, type MachineFloorConfigProjection } from '../config/load.js'
@@ -105,6 +107,44 @@ export interface ComposeArtifact {
     canonicalPath: string
     source: string
     sha256: string
+}
+
+const COMPOSE_BYTE_LIMIT = 1_048_576
+
+/** The caller's variables the Docker client reads, and nothing else. */
+export function dockerClientEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
+    return Object.fromEntries(Object.entries(env)
+        .filter((entry): entry is [string, string] => DOCKER_CLIENT_ENVIRONMENT.has(entry[0]) && typeof entry[1] === 'string'))
+}
+
+/** A Compose file inside `root`, read once by its canonical path; undefined when it escapes, moved, or does not hold `expectedSha256`. */
+export async function readComposeArtifact(root: string, reference: string, expectedSha256?: string): Promise<ComposeArtifact | undefined> {
+    if (typeof reference !== 'string' || reference.length === 0 || reference.includes('\0')) return undefined
+    const expected = resolve(root, reference)
+    const relation = relative(root, expected)
+    if (relation === '..' || relation.startsWith(`..${sep}`) || isAbsolute(relation)) return undefined
+    try {
+        const canonicalPath = await realpath(expected)
+        if (canonicalPath !== expected) return undefined
+        const read = readBoundedFile(canonicalPath, COMPOSE_BYTE_LIMIT)
+        if (read.kind !== 'complete') return undefined
+        const source = new TextDecoder('utf-8', { fatal: true }).decode(read.bytes)
+        const sha256 = createHash('sha256').update(read.bytes).digest('hex')
+        return expectedSha256 === undefined || sha256 === expectedSha256 ? { reference, canonicalPath, source, sha256 } : undefined
+    } catch {
+        // Callers treat any unreadable or changed artifact as no file authority and refuse or report unavailable.
+        return undefined
+    }
+}
+
+export async function readComposeArtifacts(root: string, references: readonly string[]): Promise<readonly ComposeArtifact[] | undefined> {
+    const artifacts: ComposeArtifact[] = []
+    for (const reference of references) {
+        const artifact = await readComposeArtifact(root, reference)
+        if (!artifact) return undefined
+        artifacts.push(artifact)
+    }
+    return artifacts
 }
 
 /** Each `[[sibling]] var` and the absolute sibling directory it names. */

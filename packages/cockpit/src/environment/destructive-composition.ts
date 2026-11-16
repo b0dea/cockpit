@@ -29,6 +29,7 @@ import { discoverReclaim, type ReclaimDiscovery } from './reclaim.js'
 import { readState } from './state.js'
 import { earlierNameRefusalMessage, findStackUnderEarlierName } from './lifecycle-stage.js'
 import type { LeasePortFamilyResult } from './ports.js'
+import { sameSource } from './application/shared.js'
 
 export interface DestructiveCompositionInput {
     readonly configPath: string
@@ -100,13 +101,6 @@ function refusal(
     code: EnvironmentDiagnostic['code'] = ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
 ): EnvironmentCommandOutcome<DestructiveRunContext> {
     return forwardedRefusal([{ severity: 'error', code, message, target }])
-}
-
-function sameSource(
-    left: LifecycleRunContext['source'],
-    right: LifecycleRunContext['source'],
-): boolean {
-    return left.path === right.path && left.byteLength === right.byteLength && left.sha256 === right.sha256
 }
 
 function executionEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
