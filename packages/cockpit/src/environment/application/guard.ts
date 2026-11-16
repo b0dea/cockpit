@@ -870,11 +870,11 @@ function externalSearchDirectories(searchPath: string, roots: readonly string[])
 }
 
 // The guard runs against the configuration sync generated it from, or one that does not widen it, so
-// the policy read here grants nothing the last sync did not. An agent syncs and writes sibling
-// instruction files; it resets only where a declared seed refills the data a reset deletes.
+// the policy read here grants nothing the last sync did not. An agent resets only where a declared seed
+// refills the data a reset deletes.
 function ordinaryGrants(config: CockpitConfig): readonly OrdinaryGrant[] {
     return [...config.browser && browserPreapprovalRequested(config.browser) ? ['browser-preapproval' as const] : [],
-        'autonomy-sync', 'autonomy-instruction-files', ...config.environment.seed ? ['autonomy-reset' as const] : []]
+        ...config.environment.seed ? ['seeded-reset' as const] : []]
 }
 
 // `up --profile` and `session --profile` start that profile's services for one run. Only the default

@@ -34,7 +34,9 @@ export type McpApproval = Readonly<{ name: string; sha256: string; approved: boo
  * the guards this machine was generated from, and whether a seed refills the data a reset deletes.
  * `approveMcp` records a person's approvals in exactly the bytes read here, and returns their digest.
  */
-export type OperatorPolicy = Readonly<{ configSha256: string; widened: readonly string[]; seeded: boolean
+// `unrecorded`: a guard was generated here, but the record of the configuration it was generated from is
+// missing or no longer loads, as after an upgrade that changed the schema, so no change can be shown.
+export type OperatorPolicy = Readonly<{ configSha256: string; widened: readonly string[]; unrecorded: boolean; seeded: boolean
     approveMcp: (approvals: readonly McpApproval[]) => Promise<string | OperatorCommandOutcome> }>
 
 interface OperatorCommandOutcome {
@@ -62,7 +64,8 @@ export type GeneratedEnvironmentSyncHandlerInput = GeneratedEnvironmentSyncInput
 }>
 
 /** What `sync --interactive` shows a person before the one yes: what widens, and the MCP servers it enables. */
-export type WideningPreview = Readonly<{ widens: readonly string[]; mcpServers: readonly McpApproval[] }>
+// `unrecorded` says the change since the last sync cannot be shown, so the person reads cockpit.toml itself.
+export type WideningPreview = Readonly<{ widens: readonly string[]; unrecorded: boolean; mcpServers: readonly McpApproval[] }>
 
 interface SyncOperatorApplicationAdapters {
     readonly synchronize: (input: GeneratedEnvironmentSyncHandlerInput) => Promise<OperatorCommandOutcome>
@@ -78,7 +81,8 @@ export async function loadOperatorPolicy(configPath: string): Promise<OperatorPo
     if (loaded.kind !== 'complete') return { status: 2, result: null, diagnostics: loaded.diagnostics }
     const { config, source } = loaded.result
     const change = await observeGuardConfigChange(dirname(source.path), { sha256: source.sha256, config })
-    return { configSha256: source.sha256, widened: change?.kind === 'widening' ? change.fields : [], seeded: config.environment.seed !== undefined,
+    return { configSha256: source.sha256, widened: change?.kind === 'widening' ? change.fields : [], unrecorded: change?.kind === 'unrecorded',
+        seeded: config.environment.seed !== undefined,
         approveMcp: async approvals => {
             const read = await readBoundedInput(source.path)
             if (read.kind !== 'complete' || sha256Hex(read.bytes) !== source.sha256) return refusal(ENVIRONMENT_CODES.CONFIG_CHANGED_DURING_EXECUTION,
@@ -94,8 +98,8 @@ export async function loadOperatorPolicy(configPath: string): Promise<OperatorPo
 // cockpit.toml carries no edit that widens what agents may do: an agent could declare a volume
 // resettable and a seed in the same edit.
 function resetRefusal(policy: OperatorPolicy, configPath: string, unchanged: string): OperatorCommandOutcome | undefined {
-    if (policy.widened.length) {
-        const diagnostic = guardWideningUnconfirmedDiagnostic(policy.widened, configPath)
+    if (policy.widened.length || policy.unrecorded) {
+        const diagnostic = guardWideningUnconfirmedDiagnostic(policy.unrecorded ? 'unrecorded' : policy.widened, configPath)
         return { status: 2, result: null, diagnostics: [{ ...diagnostic, message: `${diagnostic.message}; ${unchanged}` }] }
     }
     if (policy.seeded) return undefined
@@ -241,9 +245,10 @@ export async function runSyncOperatorApplication(
         'run sync --interactive again and review the fresh preview')
     if ((preview.result as { sourceSha256?: unknown }).sourceSha256 !== policy.configSha256) return changed()
     let configSha256 = policy.configSha256
-    if (policy.widened.length || mcpServers.length) {
-        if (!await adapters.confirmWidening({ widens: policy.widened, mcpServers })) {
-            const declined = guardWideningUnconfirmedDiagnostic([...new Set([...policy.widened, ...mcpServers.map(row => `mcp.approved.${row.name}`)])], input.configPath)
+    if (policy.widened.length || policy.unrecorded || mcpServers.length) {
+        if (!await adapters.confirmWidening({ widens: policy.widened, unrecorded: policy.unrecorded, mcpServers })) {
+            const declined = guardWideningUnconfirmedDiagnostic(policy.unrecorded ? 'unrecorded'
+                : [...new Set([...policy.widened, ...mcpServers.map(row => `mcp.approved.${row.name}`)])], input.configPath)
             return { status: 2, result: null, diagnostics: [{ ...declined, message: 'the displayed change was not approved; nothing was written' }] }
         }
         if (approvals.length) {

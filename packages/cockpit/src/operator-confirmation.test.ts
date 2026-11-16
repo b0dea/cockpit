@@ -2,7 +2,7 @@ import { PassThrough, Writable } from 'node:stream'
 import { expect, it } from 'vitest'
 import type { GeneratedEnvironmentSyncHandlerInput, OperatorPolicy } from './environment/operator-application.js'
 
-const policy = async (): Promise<OperatorPolicy> => ({ configSha256: 'a'.repeat(64), widened: ['guards.allow'], seeded: false, approveMcp: async () => 'a'.repeat(64) })
+const policy = async (): Promise<OperatorPolicy> => ({ configSha256: 'a'.repeat(64), widened: ['guards.allow'], unrecorded: false, seeded: false, approveMcp: async () => 'a'.repeat(64) })
 const preview = async (input: GeneratedEnvironmentSyncHandlerInput) => ({ status: 0, diagnostics: [], result: input.dryRun
     ? { dryRun: true, sourceSha256: 'a'.repeat(64), mcpApprovals: [{ name: 'docs', sha256: 'd'.repeat(64), approved: false, sources: ['web:.mcp.json'], runs: 'node docs-server.mjs' }] }
     : null })

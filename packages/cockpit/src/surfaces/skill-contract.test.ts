@@ -507,7 +507,7 @@ describe('shipped procedure commands', () => {
                 // A prune reads the machine's stacks, which a routing check has none of.
                 beginStacksPrune: async () => { invoked = true; return { status: 0, result: null, diagnostics: [] } },
                 // What sync decides by, in place of a cockpit.toml on disk.
-                loadPolicy: async () => ({ configSha256: 'a'.repeat(64), widened: [], seeded: false, approveMcp: async () => 'a'.repeat(64) }),
+                loadPolicy: async () => ({ configSha256: 'a'.repeat(64), widened: [], unrecorded: false, seeded: false, approveMcp: async () => 'a'.repeat(64) }),
                 ...Object.fromEntries(commands.filter(command => command.handler !== 'init').map(command => [command.handler, handler])),
                 sync: async input => { invoked = true; return { status: 0, diagnostics: [], result: {
                     action: 'sync' as const, dryRun: input.dryRun === true, sourceSha256: 'a'.repeat(64), changes: [],

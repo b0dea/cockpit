@@ -2,6 +2,7 @@ import { agentSessionVariable, confirmYes } from '../operator-confirmation.js'
 import { renderHumanValue } from '../diagnostics.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { loadOperatorPolicy, runSyncOperatorApplication, type WideningPreview } from '../environment/operator-application.js'
+import { GUARD_LOCAL_PATHS } from '../guards/local-identity.js'
 import {
     applySelectedBootstrapSurface as applyBootstrap,
     prepareSelectedBootstrapSurface as prepareBootstrap,
@@ -154,6 +155,7 @@ export async function runSyncOperatorCommand(
             if (io.confirmWidening) return io.confirmWidening(preview)
             if (!io.stdin || agentRefusal(io)) return false
             io.stderr.write(renderHumanValue({ ...preview.widens.length ? { widens: preview.widens } : {},
+                ...preview.unrecorded ? { unrecorded: `cockpit cannot show what changed since the last sync, as ${GUARD_LOCAL_PATHS.generatedConfig} is missing or no longer loads; read cockpit.toml before answering` } : {},
                 ...preview.mcpServers.length ? { enablesMcpServers: preview.mcpServers.map(({ name, runs, sources }) => ({ name, runs, declaredIn: sources })) } : {} }))
             return confirmYes(io, 'Apply this change to what agents may do?')
         },

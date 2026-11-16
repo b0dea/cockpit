@@ -129,7 +129,7 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
         expect(await generatedFrom()).toBe(synced)
         const shown: WideningPreview[] = []
         expect((await sync(['--interactive'], async preview => { shown.push(preview); return true })).status).toBe(0)
-        expect(shown).toEqual([{ widens: ['guards.allow'], mcpServers: [] }])
+        expect(shown).toEqual([{ widens: ['guards.allow'], unrecorded: false, mcpServers: [] }])
         expect(await generatedFrom()).toBe(await digestOf())
         await writeFile(configPath, original)
         expect((await sync(['--json'])).status).toBe(0)
@@ -146,6 +146,27 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
         } }, { env: {} })).toBe(2)
         expect(stdout).toMatch(/GUARD_CONFIG_WIDENED .*\(guards\.allow\); nothing was written/)
         expect(await generatedFrom()).toBe(narrowed)
+    })
+
+    // After an upgrade that changed the schema, the record of the configuration last synced no longer loads,
+    // so no edit can be shown not to widen: an agent's sync waits, and a person's names what it cannot show.
+    it('refuses an agent\'s sync while the configuration last synced no longer loads, and asks a person who reads cockpit.toml', async () => {
+        const { root, configPath } = await consumer()
+        expect(await initializeTeamMetadata(configPath)).toMatchObject({ kind: 'complete' })
+        const original = await readFile(configPath, 'utf8')
+        const previous = `${original}\n[autonomy]\nreset = "agent"\n`
+        const identity = parseGuardLocalIdentity(await readFile(join(root, GUARD_LOCAL_PATHS.identity), 'utf8'))!
+        expect(await writeGuardLocalIdentity(root, { ...identity, configSha256: createHash('sha256').update(previous).digest('hex') }, previous)).toEqual({ kind: 'complete' })
+        let stdout = ''
+        const io = (confirm?: (preview: WideningPreview) => Promise<boolean>) => ({ stdout: { write: (text: string) => { stdout += text; return true } },
+            stderr: { write: () => true }, ...confirm ? { confirmWidening: confirm } : {} }) as CliIo
+        expect(await runCli(['sync', '--config', configPath, '--json'], io(), {}, { env: {} })).toBe(2)
+        expect(JSON.parse(stdout).diagnostics).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED', message: expect.stringContaining('no longer loads') })])
+        const shown: WideningPreview[] = []
+        expect(await runCli(['sync', '--config', configPath, '--interactive'], io(async preview => { shown.push(preview); return true }), {}, { env: {} })).toBe(0)
+        expect(shown).toEqual([{ widens: [], unrecorded: true, mcpServers: [] }])
+        expect(parseGuardLocalIdentity(await readFile(join(root, GUARD_LOCAL_PATHS.identity), 'utf8'))!.configSha256)
+            .toBe(createHash('sha256').update(await readFile(configPath)).digest('hex'))
     })
 
     it('uses one admission and the same plan for catalogue repair with single consumption', async () => {

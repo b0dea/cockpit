@@ -181,7 +181,7 @@ export function guardConfigChange(generatedSha256: string, recorded: Uint8Array 
 export function guardConfigHeldReason(change: Exclude<GuardConfigChange, Readonly<{ kind: 'unchanged' | 'non-widening' }>>): string {
     return change.kind === 'widening'
         ? `it widens what agents may do (${change.fields.join(', ')})`
-        : `the configuration they were generated from is not recorded in ${GUARD_LOCAL_PATHS.generatedConfig}, so the edit cannot be shown not to widen what agents may do`
+        : `the configuration they were generated from is missing from ${GUARD_LOCAL_PATHS.generatedConfig} or no longer loads there, so the edit cannot be shown not to widen what agents may do`
 }
 
 /** What restoring the recorded configuration costs, for every message that offers it. */
@@ -208,11 +208,15 @@ export async function observeGuardConfigChange(root: string,
     return guardConfigChange(identity.configSha256, await local(GUARD_LOCAL_PATHS.generatedConfig), current)
 }
 
-/** Sync's refusal of an edit that widens the guard, until a person confirms it. */
-export function guardWideningUnconfirmedDiagnostic(fields: readonly string[], configPath: string): EnvironmentDiagnostic {
+/**
+ * Sync's refusal of an edit that widens the guard, or of one it cannot compare because the record of the
+ * configuration last synced is missing or no longer loads, until a person confirms it.
+ */
+export function guardWideningUnconfirmedDiagnostic(fields: readonly string[] | 'unrecorded', configPath: string): EnvironmentDiagnostic {
+    const reason = fields === 'unrecorded' ? guardConfigHeldReason({ kind: 'unrecorded' }) : `widens what agents may do (${fields.join(', ')})`
     return { severity: 'error' as const, target: 'guard',
         code: 'GUARD_CONFIG_WIDENED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_WIDENED,
-        message: `cockpit.toml changed since the guards were generated and widens what agents may do (${fields.join(', ')}); nothing was written, as sync applies it only once a person confirms it`,
+        message: `cockpit.toml changed since the guards were generated and ${reason}; nothing was written, as sync applies it only once a person confirms it`,
         fix: `a person runs ${cockpitCommand('sync', { config: configPath, args: '--interactive' })} in a terminal outside the agent and CI, reads the change it shows and answers yes, or the change is reverted` }
 }
 

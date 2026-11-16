@@ -10,7 +10,7 @@ import {
 
 // The policy adapter in place of cockpit.toml on disk and this machine's guard record.
 const policyOf = (policy: Partial<OperatorPolicy> = {}): OperatorPolicy =>
-    ({ configSha256: 'a'.repeat(64), widened: [], seeded: false, approveMcp: vi.fn(async () => 'e'.repeat(64)), ...policy })
+    ({ configSha256: 'a'.repeat(64), widened: [], unrecorded: false, seeded: false, approveMcp: vi.fn(async () => 'e'.repeat(64)), ...policy })
 const policyAdapter = (policy = policyOf()) => ({ load: vi.fn(async () => policy) })
 
 const preview = Object.freeze({
@@ -181,7 +181,7 @@ describe('operator application admission', () => {
         }
         const approved = await run(true)
         expect(approved.outcome.status).toBe(0)
-        expect(approved.confirmWidening).toHaveBeenCalledExactlyOnceWith({ widens: ['guards.allow'], mcpServers: [server] })
+        expect(approved.confirmWidening).toHaveBeenCalledExactlyOnceWith({ widens: ['guards.allow'], unrecorded: false, mcpServers: [server] })
         expect(approved.approveMcp).toHaveBeenCalledExactlyOnceWith([server])
         expect(approved.writes).toEqual([expect.objectContaining({ guardWidening: { configSha256: 'e'.repeat(64) } })])
         const declined = await run(false)
@@ -196,7 +196,7 @@ describe('operator application admission', () => {
             result: input.dryRun ? { dryRun: true, sourceSha256: 'a'.repeat(64), mcpApprovals: [typed] } : null }))
         expect((await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, interactive, { synchronize, confirmWidening,
             policy: async () => policyOf({ widened: ['mcp.approved.maps'], approveMcp }) })).status).toBe(0)
-        expect(confirmWidening).toHaveBeenCalledExactlyOnceWith({ widens: ['mcp.approved.maps'], mcpServers: [typed] })
+        expect(confirmWidening).toHaveBeenCalledExactlyOnceWith({ widens: ['mcp.approved.maps'], unrecorded: false, mcpServers: [typed] })
         expect(approveMcp).not.toHaveBeenCalled()
     })
 

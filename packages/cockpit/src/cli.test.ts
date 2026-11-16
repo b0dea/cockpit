@@ -126,7 +126,7 @@ describe('invocation publication', () => {
 describe('closed ordinary invocation metadata', () => {
     const authority = { executable: '/workspace/bin/cockpit', canonicalRoot: '/workspace/product',
         allowedRoots: ['/workspace/product', '/workspace/app'], configPath: '/workspace/product/cockpit.toml', services: ['app'], gates: ['quick'],
-        grants: ['browser-preapproval', 'autonomy-sync', 'autonomy-reset', 'autonomy-instruction-files'] as const, profiles: ['jobs', 'mail.v2'] }
+        grants: ['browser-preapproval', 'seeded-reset'] as const, profiles: ['jobs', 'mail.v2'] }
     const ordinary = (argv: string[], patch = {}) => resolveOrdinaryInvocation({ executable: authority.executable, cwd: authority.canonicalRoot, argv, ...patch }, authority, () => true)
     // The words each available config-bearing row needs besides --config.
     const requiredWords: Readonly<Record<string, readonly string[]>> = {
@@ -302,21 +302,20 @@ describe('closed ordinary invocation metadata', () => {
                 else expect(repeated, `${row.name} repeated ${name}`).toBeUndefined()
             }
         }
-        // Browser commands run unprompted only where cockpit.toml preapproves them, and a writing sync, an
-        // upgrade (whose sync child writes), an applied reset or setup's writes into sibling repositories,
-        // which change what every agent session there loads, only where [autonomy] gives the decision to
-        // the agent. A dry run writes nothing, so no grant gates it.
+        // Browser commands run unprompted only where cockpit.toml preapproves them, and an applied reset only
+        // where a declared seed refills the data it deletes. A writing sync, an upgrade (whose sync child
+        // writes) and setup's writes into sibling repositories need no grant: sync itself refuses a widening.
         const resolve = (argv: readonly string[], source: Parameters<typeof resolveOrdinaryInvocation>[1]) => resolveOrdinaryInvocation({ executable: authority.executable,
             cwd: authority.canonicalRoot, argv: [...argv, '--config', authority.configPath] }, source, () => true)
-        for (const [argv, grant] of [[['browser', 'drive'], 'browser-preapproval'], [['sync'], 'autonomy-sync'], [['upgrade'], 'autonomy-sync'],
-            [['upgrade', '1.2.3'], 'autonomy-sync'], [['reset', '--apply'], 'autonomy-reset'],
-            [['setup', '--write-instruction-files'], 'autonomy-instruction-files'], [['setup', '--write-instruction-pointers'], 'autonomy-instruction-files']] as const) {
+        for (const [argv, grant] of [[['browser', 'drive'], 'browser-preapproval'], [['reset', '--apply'], 'seeded-reset']] as const) {
             const without = { ...authority, grants: authority.grants.filter(row => row !== grant) }
             expect(resolve(argv, authority), argv.join(' ')).toBeDefined()
             expect(resolve(argv, without), argv.join(' ')).toBeUndefined()
         }
-        const noSync = { ...authority, grants: authority.grants.filter(row => row !== 'autonomy-sync') }
-        for (const argv of [['sync', '--dry-run'], ['upgrade', '--dry-run'], ['upgrade', '1.2.3', '--dry-run']]) expect(resolve(argv, noSync), argv.join(' ')).toBeDefined()
+        const ungranted = { ...authority, grants: [] }
+        for (const argv of [['sync'], ['upgrade', '1.2.3'], ['setup', '--write-instruction-files'], ['setup', '--write-instruction-pointers']]) {
+            expect(resolve(argv, ungranted), argv.join(' ')).toBeDefined()
+        }
         for (const executable of ['cockpit', '/other/cockpit', 'bash']) expect(ordinary(['check', '--config', authority.configPath], { executable })).toBeUndefined()
         expect(ordinary(['check', '--config', authority.configPath], { cwd: '/workspace/app' })).toBeUndefined()
         expect(ordinary(['sh', '-c', 'cockpit check', '--config', authority.configPath])).toBeUndefined()
@@ -576,7 +575,7 @@ describe('CLI help', () => {
 })
 
 // What sync decides by, in place of a cockpit.toml on disk and this machine's guard record.
-const quietPolicy = async (): Promise<OperatorPolicy> => ({ configSha256: 'a'.repeat(64), widened: [], seeded: false, approveMcp: async () => 'a'.repeat(64) })
+const quietPolicy = async (): Promise<OperatorPolicy> => ({ configSha256: 'a'.repeat(64), widened: [], unrecorded: false, seeded: false, approveMcp: async () => 'a'.repeat(64) })
 const widenedPolicy = async (): Promise<OperatorPolicy> => ({ ...await quietPolicy(), widened: ['guards.allow'] })
 
 describe('generated environment process contract', () => {

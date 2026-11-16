@@ -264,7 +264,7 @@ const sources = [
         summary: 'Clone or locate the declared sibling repositories and link them',
         handler: 'setup',
         visibility: 'public',
-        ordinary: ordinary('setup', { flagGrant: Object.freeze({ flags: Object.freeze(['write-instruction-pointers', 'write-instruction-files']), grant: 'autonomy-instruction-files' as const }) }),
+        ordinary: ordinary('setup'),
         flags: { config: configFlag, 'write-instruction-pointers': bool(flag), 'write-instruction-files': bool(flag), json: jsonFlag },
     },
     {
@@ -323,7 +323,7 @@ const sources = [
         // The install is exact and its sync child decides as sync does, so an agent runs the real upgrade
         // as it runs sync; the version is the one positional.
         ordinary: ordinary('upgrade', {
-            positional: Object.freeze({ min: 0, max: 1, roles: Object.freeze(['version'] as const) }), requires: 'autonomy-sync' }),
+            positional: Object.freeze({ min: 0, max: 1, roles: Object.freeze(['version'] as const) }) }),
         flags: { config: configFlag, 'dry-run': bool(flag), json: jsonFlag },
     },
     {
@@ -334,7 +334,7 @@ const sources = [
         visibility: 'public',
         // A real sync applies an edit that widens what agents may do only once a person confirms it with
         // --interactive, so an agent's sync applies everything else.
-        ordinary: ordinary('sync', { forbidden: Object.freeze({ presence: Object.freeze(['interactive']) }), requires: 'autonomy-sync' }),
+        ordinary: ordinary('sync', { forbidden: Object.freeze({ presence: Object.freeze(['interactive']) }) }),
         flags: { config: configFlag, 'dry-run': bool(flag), interactive: bool(), json: jsonFlag },
     },
     {
@@ -452,7 +452,7 @@ const sources = [
         handler: 'reset',
         visibility: 'public',
         // Reset deletes stack data, so an agent applies one only where a declared seed refills it.
-        ordinary: ordinary('reset', { requires: 'autonomy-reset' }),
+        ordinary: ordinary('reset', { requires: 'seeded-reset' }),
         flags: { config: configFlag, interactive: bool(), apply: bool(Object.freeze({ ...flag, required: true as const })), json: jsonFlag },
     },
     {
@@ -591,13 +591,13 @@ interface OrdinaryInvocationAuthority {
     readonly services: readonly string[]
     /** Test gate ids the configuration declares. */
     readonly gates: readonly string[]
-    /** What the configuration grants an agent: browser preapproval, sync, and reset where a seed is declared. */
+    /** What the configuration grants an agent: browser preapproval, and reset where a seed is declared. */
     readonly grants: readonly OrdinaryGrant[]
     /** Compose profiles an agent may name with --profile; any other starts services no person declared for it. */
     readonly profiles: readonly string[]
 }
-export type OrdinaryGrant = 'browser-preapproval' | 'autonomy-sync' | 'autonomy-reset' | 'autonomy-instruction-files'
-const ORDINARY_GRANTS: readonly OrdinaryGrant[] = ['browser-preapproval', 'autonomy-sync', 'autonomy-reset', 'autonomy-instruction-files']
+export type OrdinaryGrant = 'browser-preapproval' | 'seeded-reset'
+const ORDINARY_GRANTS: readonly OrdinaryGrant[] = ['browser-preapproval', 'seeded-reset']
 
 // The spelling environment.profiles accepts.
 const COMPOSE_PROFILE = /^[a-z0-9][a-z0-9_.-]{0,63}$/
