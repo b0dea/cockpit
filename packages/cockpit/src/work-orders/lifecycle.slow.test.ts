@@ -322,6 +322,11 @@ describe('work-order lifecycle', () => {
             .toMatch(/cockpit\.toml changes work\.grading since the guards were generated, which widens what agents may do; a person runs .* --interactive/)
         // test-run reads the grading to judge test weakening, so it waits for that sync too.
         expect((await work(root, ['test-run', '--gate', 'quick', '--mode', 'canonical'])).diagnostics[0]?.message).toMatch(/changes work\.grading since the guards were generated/)
+        // [testing] says which files hold tests and what each stage runs, so an edit of it waits as well.
+        writeFileSync(join(root, 'cockpit.toml'), `${checksToml}\n[testing]\ntest_files = ["nothing/**"]\n\n[[testing.stages]]\nid = "unit"\ncommand = ["node", "--version"]\nrequires_stack = false\n\n[[testing.gates]]\nid = "quick"\ntier = "targeted"\nstages = ["unit"]\nchanges = "any change"\n`)
+        for (const args of [['work', 'status'], ['test-run', '--gate', 'quick', '--mode', 'canonical']]) {
+            expect((await work(root, args)).diagnostics[0]?.message, args.join(' ')).toMatch(/cockpit\.toml changes testing\S* since the guards were generated/)
+        }
         writeFileSync(join(root, 'cockpit.toml'), checksToml)
         expect((await work(root, ['work', 'status'])).result).toMatchObject({ grading: 'checks' })
     }, 120_000)
